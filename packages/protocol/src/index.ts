@@ -235,6 +235,21 @@ export interface SessionStats {
   startedAt?: string
 }
 
+/**
+ * One message sent through Tether. The hub knows the exact text it typed, so it is the one that
+ * matches it to the agent's record; every device reads the outcome from here.
+ * sending: being typed · sent: submitted, not yet in the agent's record · queued: in the agent's
+ * queue while it works · delivered: in the conversation (`uuid` is that item) · failed: `error`
+ */
+export interface SendState {
+  id: string
+  text: string
+  at: number
+  state: 'sending' | 'sent' | 'queued' | 'delivered' | 'failed'
+  uuid?: string
+  error?: string
+}
+
 export interface ChatInfo {
   /** Live metrics from transcript/API adapters. */
   status?: AgentStatus
@@ -256,6 +271,8 @@ export interface ChatInfo {
   rc?: { url: string; ts: string }
   /** messages typed while the agent was busy, not yet picked up */
   queue: string[]
+  /** recent sends and how far each got, matched by the hub against the agent's own record */
+  sends?: SendState[]
   tasks: BackgroundTask[]
   subagents: SubagentInfo[]
   artifacts: ArtifactInfo[]

@@ -1,4 +1,4 @@
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem, SendState } from '@tether/protocol'
 
 export interface PendingMessage {
   id: string
@@ -6,6 +6,10 @@ export interface PendingMessage {
   status: 'sending' | 'sent' | 'failed'
   at: number
   error?: string
+  /** in the agent's queue: shown as a queued bubble instead */
+  queued?: boolean
+  /** sent from another device; this one can only watch it */
+  remote?: boolean
 }
 
 export const norm = (s: string) => s.replace(/\s+/g, ' ').trim()
@@ -42,4 +46,31 @@ export function reconcile(pending: PendingMessage[], items: ChatItem[]) {
     receipts.splice(receipt, 1)
     return false
   })
+}
+
+/**
+ * This device's sends that still need a bubble. The hub's ledger decides (it matched each send by
+ * id against the agent's own record); comparing text with the conversation is only the fallback
+ * for a send the hub isn't tracking, such as one from before a hub restart.
+ */
+export function settle(pending: PendingMessage[], items: ChatItem[], sends: readonly SendState[] = []): PendingMessage[] {
+  const byId = new Map(sends.map((s) => [s.id, s]))
+  const untracked = reconcile(pending.filter((p) => !byId.has(p.id)), items)
+  return pending.flatMap((p): PendingMessage[] => {
+    const s = byId.get(p.id)
+    if (!s) return untracked.includes(p) ? [p] : []
+    if (s.state === 'delivered') return []
+    if (s.state === 'queued') return [{ ...p, queued: true, status: 'sent' }]
+    // the reply to the request can be lost (a phone asleep); the ledger still knows
+    if (s.state === 'failed' && p.status === 'sent') return [{ ...p, status: 'failed', error: s.error }]
+    return [p.queued ? { ...p, queued: false } : p]
+  })
+}
+
+/** Sends from other devices that haven't reached the agent yet, so every screen shows them. */
+export function othersSends(sends: readonly SendState[] = [], mine: readonly PendingMessage[]): PendingMessage[] {
+  const ids = new Set(mine.map((p) => p.id))
+  return sends
+    .filter((s) => !ids.has(s.id) && (s.state === 'sending' || s.state === 'sent') && Date.now() - s.at < 5 * 60_000)
+    .map((s) => ({ id: s.id, text: s.text, at: s.at, status: s.state === 'sending' ? 'sending' : 'sent', remote: true }))
 }

@@ -42,18 +42,58 @@ const squash = (s: string) => s.replace(/\s+/g, '')
 
 /** agents whose input box Tether can read back off the screen */
 const CHECKED = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'copilot', 'opencode'])
-const activeSends = new Set<string>()
+const lanes = new Map<string, Promise<unknown>>()
 
-/** `fromComposer`: the text came out of the app's message box, so the saved draft goes with it */
-export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false) {
+/** One keyboard per pane: actions that type into it take turns instead of failing each other. */
+function inLane<T>(hostId: string, paneId: string, fn: () => Promise<T>): Promise<T> {
   const key = JSON.stringify([hostId, paneId])
-  if (activeSends.has(key)) throw new HttpError(409, 'Another action is still using this pane. Wait before retrying.')
-  activeSends.add(key)
+  const run = (lanes.get(key) ?? Promise.resolve()).then(fn)
+  const done = run.catch(() => {})
+  lanes.set(key, done)
+  done.then(() => lanes.get(key) === done && lanes.delete(key))
+  return run
+}
+
+/**
+ * Sends a message and follows it until the agent has it. `id` names the send for every device
+ * (the app passes its own, so a retry is the same send); its state is in the chat info's `sends`.
+ * `fromComposer`: the text came out of the app's message box, so the saved draft goes with it.
+ */
+export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`) {
+  const w = watchers.get(hostId, paneId)
+  w.trackSend(id, text)
   try {
-    return await sendMessageToPane(hostId, paneId, text, fromComposer)
+    await inLane(hostId, paneId, () => sendMessageToPane(hostId, paneId, text, fromComposer))
+    await confirmDelivery(hostId, paneId, id, text)
+  } catch (err) {
+    w.settleSend(id, { state: 'failed', error: (err as Error).message })
+    throw err
   } finally {
-    activeSends.delete(key)
+    w.idleLater()
   }
+}
+
+/**
+ * Keys accepted on screen don't prove the agent took the message: a dialog can swallow them, or
+ * the box can be cleared under us. Agents write every message down at once (queued while they
+ * work, or as a new turn), and the ledger matches it, so wait for that. A new conversation's
+ * transcript only appears with its first message, so not following yet is part of the wait.
+ */
+async function confirmDelivery(hostId: string, paneId: string, id: string, text: string) {
+  const w = watchers.get(hostId, paneId)
+  // a slash command often opens a menu or changes a setting without writing anything down
+  if (text.trimStart().startsWith('/')) return w.settleSend(id, { state: 'delivered' })
+  w.settleSend(id, { state: 'sent' })
+  for (let i = 0; i < 48; i++) {
+    const s = w.delivery(id)?.state
+    if (s === 'queued' || s === 'delivered') return
+    await sleep(250)
+  }
+  const agent = registry.findPane(hostId, paneId)?.pane.agent
+  if (agent?.kind === 'claude' && w.following) {
+    throw new HttpError(409, "Claude didn't record the message, so it may not have reached it (a dialog on screen can take the keys). Open the terminal to check before retrying.")
+  }
+  // typed and accepted on screen, but not in a record we can read yet: the ledger keeps looking
 }
 
 /**
@@ -66,7 +106,6 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
   if (!found.pane.agent) throw new HttpError(409, 'No agent is running in this pane')
   if (!text.trim()) throw new HttpError(400, 'Message is empty')
   const startedAt = fromComposer ? Date.now() : 0
-  const sendStart = Date.now()
   if (hasPastePreview(text) && /^\[Pasted[^\n]+\]$/i.test(text.trim())) throw new HttpError(409, 'This saved message contains only a terminal paste preview. Paste the original text again; the preview does not contain the message.')
   if (found.pane.agent.kind === 'opencode' && !viaApi(found.pane.agent.transcriptPath)) {
     const setting = text.trim().match(/^\/(model|effort|agent)\s+(\S+)$/)
@@ -204,7 +243,6 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
           // OpenCode's /undo puts the undone message back in the box
           (isOpenCode && !!s.inputVisible && squash(s.draft ?? '') !== squash(text)))
         if (opensMenu || (checkedInput ? codexAccepted(s, text) : s.prompt || !arrived(s.draft))) {
-          if (found.pane.agent.kind === 'claude' && !slash) await confirmRecorded(hostId, paneId, text, sendStart)
           if (!releaseDraft) watchers.peek(hostId, paneId)?.draftSent(text, startedAt)
           if (isOpenCode && text.trimStart().startsWith('/')) await closeOpenCodeMenu(hostId, paneId)
           if (settingDraft && !releaseDraft) {
@@ -220,21 +258,6 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
   } finally {
     await releaseDraft?.()
   }
-}
-
-/**
- * The box emptied after Enter, but that alone doesn't prove Claude took the message: a dialog on
- * screen can swallow the keystrokes, or the box can be cleared under us. Claude writes every
- * message to its transcript at once (queued while it works, or as a new turn), so wait for that.
- */
-async function confirmRecorded(hostId: string, paneId: string, text: string, since: number) {
-  const w = watchers.peek(hostId, paneId)
-  if (!w?.following) return
-  for (let i = 0; i < 40; i++) {
-    if (w.recorded(text, since)) return
-    await sleep(250)
-  }
-  throw new HttpError(409, "Claude didn't record the message, so it may not have reached it (a dialog on screen can take the keys). Open the terminal to check before retrying.")
 }
 
 /** Answers a dialog that asks for typed input (e.g. the /login code). */
@@ -436,14 +459,7 @@ const MODE_ALIASES: Record<string, RegExp> = {
 
 /** Cycles the permission mode (Shift+Tab) until the target shows on screen (Claude Code, Antigravity). */
 export async function setMode(hostId: string, paneId: string, target: string) {
-  const key = JSON.stringify([hostId, paneId])
-  if (activeSends.has(key)) throw new HttpError(409, 'Another action is still using this pane. Wait before retrying.')
-  activeSends.add(key)
-  try {
-    return await setPaneMode(hostId, paneId, target)
-  } finally {
-    activeSends.delete(key)
-  }
+  return inLane(hostId, paneId, () => setPaneMode(hostId, paneId, target))
 }
 
 async function setPaneMode(hostId: string, paneId: string, target: string) {

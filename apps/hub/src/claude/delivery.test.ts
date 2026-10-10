@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { codexAccepted, inputContains, sameMessage } from './delivery.ts'
+import { codexAccepted, inputContains, sameMessage, SendLedger } from './delivery.ts'
 import { parseScreen } from './screen.ts'
 import { readFileSync } from 'node:fs'
 
@@ -62,4 +62,60 @@ test("an agent's record matches the sent message despite rewrapping, not a short
   // a very long message the transcript cut short still counts
   const long = 'word '.repeat(1000)
   expect(sameMessage(long.slice(0, 2500), long)).toBe(true)
+})
+
+const user = (uuid: string, text: string, extra: object = {}) => ({ kind: 'user', seq: 0, uuid, ts: '2026-10-11T03:00:00Z', text, images: 0, ...extra }) as any
+
+test('the ledger matches a send to the first new record of it, never an older look-alike', () => {
+  const ledger = new SendLedger()
+  const items = [user('a', 'yes')]
+  ledger.track('s1', 'yes', items)
+  // the old "yes" was there before the send
+  expect(ledger.match(items, [])).toBe(false)
+  expect(ledger.get('s1')?.state).toBe('sending')
+  // queued while the agent works, then taken into the conversation
+  expect(ledger.match(items, ['yes'])).toBe(true)
+  expect(ledger.get('s1')?.state).toBe('queued')
+  items.push(user('b', 'yes', { queued: true }))
+  ledger.match(items, [])
+  expect(ledger.get('s1')).toMatchObject({ state: 'delivered', uuid: 'b' })
+})
+
+test('two identical sends claim two records, and a late record clears a failure', () => {
+  const ledger = new SendLedger()
+  const items: any[] = []
+  ledger.track('s1', 'continue', items)
+  ledger.track('s2', 'continue', items)
+  items.push(user('x', 'continue'))
+  ledger.match(items, [])
+  expect(ledger.get('s1')).toMatchObject({ state: 'delivered', uuid: 'x' })
+  expect(ledger.get('s2')?.state).toBe('sending')
+  ledger.settle('s2', { state: 'failed', error: 'timed out' })
+  items.push(user('y', 'continue'))
+  ledger.match(items, [])
+  expect(ledger.get('s2')).toEqual(expect.objectContaining({ state: 'delivered', uuid: 'y', error: undefined }))
+  // and a timeout can't undo a delivery
+  ledger.settle('s1', { state: 'sent' })
+  expect(ledger.get('s1')?.state).toBe('delivered')
+})
+
+test('the ledger reads shell, slash and Codex image records as they were typed', () => {
+  const ledger = new SendLedger()
+  const items: any[] = []
+  ledger.track('sh', '! ls -la', items)
+  ledger.track('cmd', '/compact keep the tests', items)
+  ledger.track('img', 'look at this\n\nAttached files:\n/tmp/t/a.png', items)
+  items.push(user('1', 'ls -la', { shell: true }))
+  items.push({ kind: 'command', seq: 1, uuid: '2', ts: '', name: 'compact', args: 'keep the tests' })
+  items.push(user('3', 'look at this\n\nAttached files:\n[Image #1]<image name=[Image #1] path="/tmp/t/a.png">x</image>'))
+  ledger.match(items, [])
+  expect(ledger.list().map((s) => [s.id, s.state, s.uuid])).toEqual([['sh', 'delivered', '1'], ['cmd', 'delivered', '2'], ['img', 'delivered', '3']])
+})
+
+test('a brand-new transcript (first message of a conversation) still matches', () => {
+  const ledger = new SendLedger()
+  ledger.track('s1', 'hello there', [user('old', 'hello there')])
+  // the watcher switched files: none of the new items were known
+  ledger.match([user('new', 'hello there')], [])
+  expect(ledger.get('s1')).toMatchObject({ state: 'delivered', uuid: 'new' })
 })

@@ -1,8 +1,8 @@
 import { OpenCodeClient } from '../agents/opencode-api.ts'
 import { opencodeSelection, opencodeLive } from '../agents/opencode-controls.ts'
-import type { AgentKind, ChatInfo, ChatItem, ScreenState, ServerMsg } from '@tether/protocol'
+import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg } from '@tether/protocol'
 import { isDriving, startDriving } from './driving.ts'
-import { sameMessage } from './delivery.ts'
+import { SendLedger } from './delivery.ts'
 import { chatKey } from '@tether/protocol'
 import { codexHistory, normalizeCodex } from '../agents/codex.ts'
 import { normalizeCopilot } from '../agents/copilot.ts'
@@ -237,10 +237,28 @@ class ChatWatcher {
     return this.ready && !!this.transcript && !!this.tail
   }
 
-  /** Whether the agent wrote this message down, queued or as a turn, since `since`. */
-  recorded(text: string, since: number) {
-    if (this.meta.queue.some((q) => sameMessage(q, text))) return true
-    return this.items.some((i) => i.kind === 'user' && Date.parse(i.ts) >= since - 30_000 && sameMessage(i.shell ? `!${i.text}` : i.text, text))
+  // ---------- sends (what reached the agent) ----------
+
+  private ledger = new SendLedger()
+
+  trackSend(id: string, text: string) {
+    this.ledger.track(id, text, this.items)
+    this.publishInfo()
+  }
+
+  settleSend(id: string, patch: Partial<Pick<SendState, 'state' | 'error'>>) {
+    this.ledger.settle(id, patch)
+    this.publishInfo()
+  }
+
+  delivery(id: string) {
+    this.ledger.match(this.items, this.currentQueue())
+    return this.ledger.get(id)
+  }
+
+  // Antigravity's queue is only on screen
+  private currentQueue() {
+    return this.meta.queue.length ? this.meta.queue : this.screen.queue ?? []
   }
 
   /** The terminal's input box changed: if someone typed there, adopt it as the draft. */
@@ -256,6 +274,13 @@ class ChatWatcher {
     }
     setDraft(this.key, term ? { text: term, source: 'terminal', at: Date.now(), mirrored: term } : undefined)
     this.broadcastDraft()
+  }
+
+  /** Used without anyone watching (a send from elsewhere): stop later unless someone subscribes. */
+  idleLater() {
+    if (this.subs.size) return
+    clearTimeout(this.idleTimer)
+    this.idleTimer = setTimeout(() => watchers.stop(this.key), IDLE_SHUTDOWN_MS)
   }
 
   unsubscribe(s: Subscriber) {
@@ -301,6 +326,7 @@ class ChatWatcher {
 
   /** Builds ChatInfo from the pane and the transcript summary; broadcasts it when it changed. */
   private publishInfo() {
+    this.ledger.match(this.items, this.currentQueue())
     const found = registry.findPane(this.hostId, this.paneId)
     const agent = found?.pane.agent
     const m = this.meta
@@ -321,8 +347,8 @@ class ChatWatcher {
       mode: this.screen.mode ?? agent?.mode ?? m.mode,
       goal: m.goal,
       rc: m.rc ?? this.remote,
-      // Antigravity's queue is only on screen
-      queue: m.queue.length ? [...m.queue] : [...(this.screen.queue ?? [])],
+      queue: [...this.currentQueue()],
+      sends: this.ledger.list(),
       tasks: [...m.tasks.values()].slice(-40),
       subagents: [...m.subagents.values()].slice(-40),
       artifacts: [...m.artifacts.values()].slice(-40),
