@@ -27,10 +27,13 @@ const archOf = (url: URL) => {
   return arch
 }
 
-/** hash of the node's sources, so a changed tether-node.ts gets rebuilt */
+const LINK_DIR = path.resolve(NODE_DIR, '../../packages/link/src')
+
+/** hash of the node's sources (and the link library it bundles), so any change gets rebuilt */
 function sourceHash() {
   const h = crypto.createHash('sha256')
-  for (const f of ['tether-node.ts', 'win-prelude.sh']) h.update(fs.readFileSync(path.join(NODE_DIR, f)))
+  const files = (dir: string) => fs.readdirSync(dir).filter((f) => /\.(ts|sh)$/.test(f) && !f.endsWith('.test.ts') && !f.endsWith('.d.ts')).sort().map((f) => path.join(dir, f))
+  for (const f of [...files(NODE_DIR), ...files(LINK_DIR)]) h.update(f.slice(NODE_DIR.length - 4)).update(fs.readFileSync(f))
   return h.digest('hex').slice(0, 16)
 }
 
