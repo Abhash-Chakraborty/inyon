@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the prompt-and-tether mark from icon.svg, single colour for the status bar -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="330"
+    android:viewportHeight="330">
+    <group
+        android:translateX="-96"
+        android:translateY="-71">
+        <path
+            android:pathData="M138,150 L224,236 L138,322"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="46"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M266,236 C302,236 300,318 342,326"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="26"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M340,326 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0" />
+    </group>
+</vector>

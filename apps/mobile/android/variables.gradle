@@ -16,4 +16,9 @@ ext {
     sshlibVersion = '2.2.50'
     tinkVersion = '1.23.0'
     securityCryptoVersion = '1.1.0'
+    firebaseMessagingVersion = '25.1.3'
+    // the versions firebase-messaging itself depends on, declared because we call their APIs
+    playServicesBaseVersion = '18.9.0'
+    playServicesTasksVersion = '18.4.0'
+    codeScannerVersion = '16.1.0'
 }
