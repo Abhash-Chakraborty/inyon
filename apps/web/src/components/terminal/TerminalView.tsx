@@ -79,7 +79,12 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     termRef.current = term
     fit.fit()
 
-    const send = (d: string) => socket.send({ t: 'term.in', id, d })
+    // Agents ask the terminal for its colours (OSC 4/10/11/12). If this browser terminal answers,
+    // the reply goes back through tmux as keystrokes and lands in the agent's input box as junk
+    // like "b3b/5454…". Swallow the questions instead; tmux answers them for the pane itself.
+    for (const code of [4, 10, 11, 12]) term.parser.registerOscHandler(code, (data) => data.includes('?'))
+    const reply = /^\x1b\](?:4|1[0-2]);[^\x07\x1b]*(?:\x07|\x1b\\)$/
+    const send = (d: string) => { if (!reply.test(d)) socket.send({ t: 'term.in', id, d }) }
     // Ctrl/Cmd+V: the browser's paste event delivers the text. Passing the key on as ^V would make
     // Codex try to read an image from the machine's own clipboard, which a server doesn't have.
     term.attachCustomKeyEventHandler((e) => !(e.type === 'keydown' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'v'))
