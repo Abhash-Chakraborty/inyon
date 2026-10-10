@@ -46,7 +46,8 @@ export async function uploadFiles(hostId: string, paneId: string | undefined, fi
     if (f.size > maxMB * 1024 * 1024) throw new HttpError(413, `${f.name} is larger than ${maxMB} MB`)
     const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
     const path = `${dir}/${stamp}-${safeName(f.name)}`
-    const r = await host.exec(`mkdir -p ${shq(dir)} && cat > ${shq(path)}`, { input: new Uint8Array(await f.arrayBuffer()), timeoutMs: 120000 })
+    // private to your user on shared machines
+    const r = await host.exec(`umask 077; mkdir -p ${shq(dir)} && cat > ${shq(path)}`, { input: new Uint8Array(await f.arrayBuffer()), timeoutMs: 120000 })
     if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not save ${f.name}`)
     out.push({ name: f.name, path, size: f.size, type: f.type })
   }
