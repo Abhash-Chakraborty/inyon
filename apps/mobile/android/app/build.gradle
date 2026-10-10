@@ -7,7 +7,7 @@ android {
         applicationId "dev.tether.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode (System.getenv("TETHER_VERSION_CODE") ?: "1") as int
+        versionCode Integer.parseInt(System.getenv("TETHER_VERSION_CODE") ?: "1")
         versionName System.getenv("TETHER_VERSION") ?: "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
