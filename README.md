@@ -137,11 +137,37 @@ The hub then picks up each conversation where it left off.
 ## Android app
 
 `apps/mobile` wraps the same web app with Capacitor, but the phone is its own hub. The app runs
-Tether's core in the app (`apps/hub/src/phone`) and opens SSH connections to your servers with a
-native plugin (`TetherSshPlugin`, built on ConnectBot's sshlib). There's no server in between, no
-password and nothing that has to stay on.
+Tether's core in the app (`apps/hub/src/phone`) and reaches your machines itself, in one of two
+ways. There's no server in between and no password.
 
-1. Open the app and tap *Add a server*. Give it `user@host` and a port.
+### A laptop, from anywhere
+
+Most people have a laptop and an internet connection, not a server or a VPN. On the laptop:
+
+```sh
+tether-node pair
+```
+
+It prints a QR code. In the app, tap *Add*, then *Scan the code*. That's the whole setup, and
+the laptop stays paired until you remove it.
+
+`tether-node` opens a free Cloudflare quick tunnel, so the phone reaches the laptop from any
+network without an account or an open port. Phone and laptop talk over Noise (the IK pattern,
+X25519 and ChaCha20-Poly1305), so the tunnel only ever carries ciphertext. The tunnel's address
+changes when it restarts, so the laptop publishes its current addresses under its own key with
+[pkarr](https://pkarr.org) and the phone looks them up by the laptop's id; a forged record fails
+the signature check. `--lan` also answers on the local network, which is faster at home.
+
+Binaries for Linux, macOS and Windows come from the "Latest tether-node build" pre-release
+(`.github/workflows/node.yml`), or run it from a checkout with `bun apps/node/tether-node.ts pair`.
+`tether-node phones` lists paired phones and `tether-node forget <name>` unpairs one.
+
+### A server over SSH
+
+The app opens SSH connections with a native plugin (`TetherSshPlugin`, built on ConnectBot's
+sshlib).
+
+1. Tap *Add*, then *Add a server over SSH instead*. Give it `user@host` and a port.
 2. Pick how it signs in: the phone's own key, a password, or a private key you paste.
 3. The phone's key is an ed25519 key made on the phone the first time you need it. Copy the
    command the app offers and run it once on the server; it adds the key to
@@ -152,8 +178,9 @@ password and nothing that has to stay on.
 
 Passwords, pasted keys and the phone's key are kept in Android's encrypted storage. The server
 list and the chat history the app has seen stay in the app's own storage. The phone has to reach
-the server, so use the same Wi-Fi or a VPN like Tailscale or NetBird. The servers only need tmux
-and your agents, the same as with the hub.
+the server, so use the same Wi-Fi or a VPN like Tailscale or NetBird. A server on Tailscale SSH
+lets the phone in with no key or password. The servers only need tmux and your agents, the same
+as with the hub.
 
 GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main` replaces the
 "Latest Android build" pre-release with a fresh APK, and a `v*` tag makes a release with the APK
@@ -176,9 +203,15 @@ pnpm open:android
 
 The iOS project is in `apps/mobile/ios` but isn't built or tested yet, and it has no SSH plugin.
 
-The SSH connections live while the app is open. Android pauses the app in the background, so
-notifications arrive while it's open or only just backgrounded, and the app reconnects when you
-come back. CI runs the plugin's tests against a real sshd (the `ssh-plugin` job).
+Android freezes apps in the background, which drops their connections. Turn on *Stay connected*
+in Settings and the app keeps a small ongoing notification so it stays alive and alerts arrive
+right away; Android 15 caps this at 6 hours a day, reset each time you open the app. Without it,
+the app checks every connection the moment you come back instead of waiting out a retry timer.
+Push notifications for a closed app need a Firebase project (four repository secrets, see
+`.github/workflows/android.yml`) and a relay that sends them, which isn't built yet.
+
+Images from the keyboard (Gboard's clipboard, stickers, screenshots) paste into the message box
+as attachments. CI runs the SSH plugin's tests against a real sshd (the `ssh-plugin` job).
 
 To use a hub from your phone instead, open its address in the phone's browser.
 

@@ -32,6 +32,24 @@ with a terminal app that has your keys.
 - **Nothing in between.** The app connects straight to each server over SSH. No relay or hub sees
   the traffic.
 
+## Laptops paired with `tether-node pair`
+
+A paired phone gets a shell on the laptop as the user running `tether-node`, the same as SSH.
+
+- **The pairing code is the secret.** It holds a one-time code that works for 10 minutes and for
+  one phone. Don't share a screenshot of it. Pairing again or `tether-node forget` revokes a phone.
+- **End-to-end encrypted.** Phone and laptop run Noise IK (X25519, ChaCha20-Poly1305, SHA-256).
+  The phone already knows the laptop's key from the code, so a tunnel, relay or network in between
+  can't read or change the traffic, or stand in for the laptop. The laptop only lets in phone keys
+  it has paired.
+- **The tunnel is public, the listener isn't open.** The Cloudflare quick tunnel gives the laptop
+  a public address, but it only reaches the link's listener on `127.0.0.1`, which answers nothing
+  until the handshake proves a paired phone. `--lan` also listens on the local network.
+- **Addresses are signed.** The laptop publishes where it can be reached as a pkarr record signed
+  by its own key. The record names addresses only; it says nothing about you or your sessions.
+- **Keys on the laptop** live in `~/.tether-node/` (`identity.json`, `phones.json`), readable only
+  by you. The phone derives its link key from its own ed25519 key in the Android Keystore.
+
 ## What Tether changes on a machine
 
 Only if you turn on the Claude integration: it writes `~/.tether/hook.sh` and
