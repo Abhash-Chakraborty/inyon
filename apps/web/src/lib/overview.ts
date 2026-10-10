@@ -1,4 +1,4 @@
-import type { HostState, PaneInfo, SessionInfo, WindowInfo } from '@tether/protocol'
+import { AGENTS, type HostState, type PaneInfo, type SessionInfo, type WindowInfo } from '@tether/protocol'
 import { paneSlug } from './api.ts'
 
 export interface PaneRef {
@@ -32,6 +32,9 @@ export function paneTitle(r: PaneRef) {
   if (r.pane.label) return r.pane.label
   const t = r.pane.title.replace(/^[^\w\s]\s+/u, '').trim()
   if (r.pane.agent && t && !/^(Claude Code|codex|opencode|gemini|agy|Antigravity)$/i.test(t) && t !== r.host.hostname) return t
+  // a window tmux named after its shell (psmux on Windows names them "powershell") says nothing
+  const auto = !r.window.name || r.window.name === r.pane.command || /^(powershell|pwsh|cmd|bash|zsh|sh|fish|node)$/i.test(r.window.name)
+  if (r.pane.agent && auto) return AGENTS[r.pane.agent.kind]?.name ?? r.pane.command
   return r.window.name || r.pane.command
 }
 
