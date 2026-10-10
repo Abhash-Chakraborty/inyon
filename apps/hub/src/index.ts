@@ -90,6 +90,8 @@ const preflight = (req: Request) =>
           'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE',
           'Access-Control-Allow-Headers': 'authorization, content-type, x-tether-client',
           'Access-Control-Max-Age': '600',
+          // the app's page is local and the hub usually sits on a private (tailnet) address
+          ...(req.headers.get('access-control-request-private-network') ? { 'Access-Control-Allow-Private-Network': 'true' } : {}),
           Vary: 'Origin',
         },
       })

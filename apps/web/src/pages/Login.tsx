@@ -51,7 +51,7 @@ export function Login() {
           <div className="mt-7">
             <Field label="Hub address">
               <input
-                type="url"
+                type="text"
                 inputMode="url"
                 autoCapitalize="none"
                 autoCorrect="off"
