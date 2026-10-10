@@ -98,3 +98,8 @@ export function since(iso?: string | number) {
   if (!t) return ''
   return duration(Math.max(0, Date.now() - t))
 }
+
+/** Opens a web link in a new tab; anything that isn't http(s) is ignored. */
+export function openLink(url: string | undefined) {
+  if (url && /^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener')
+}

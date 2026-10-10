@@ -7,7 +7,7 @@ import {
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@tether/protocol'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
-import { shortPath, since } from '../../lib/format.ts'
+import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
 import { Empty, Sheet, Spinner, inputClass } from '../ui/primitives.tsx'
@@ -229,7 +229,7 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
               icon={<LayoutPanelLeft className="size-4" />}
               title={a.title ?? 'Artifact'}
               sub={`updated ${since(a.updatedAt)} ago`}
-              onClick={() => window.open(a.url, '_blank', 'noopener')}
+              onClick={() => openLink(a.url)}
               right={
                 <div className="flex shrink-0 gap-1">
                   <button type="button" title="Copy link" onClick={() => copyText(a.url).then((ok) => ok && toast({ title: 'Link copied', tone: 'success' }))} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-hover hover:text-fg">
@@ -288,7 +288,7 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
       </form>
       {url ? (
         <div className="flex min-h-0 flex-1 justify-center bg-sunken p-2.5 pt-0">
-          <iframe key={n} src={url} title="Preview" className={clsx('h-full rounded-[10px] border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
+          <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-[10px] border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
         </div>
       ) : (
         <div className="p-3">

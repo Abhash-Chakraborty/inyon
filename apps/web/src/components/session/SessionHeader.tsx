@@ -8,7 +8,7 @@ import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
 import { contextOf, UsageSummary, useTick } from './Usage.tsx'
 import { AgentLogo } from '../../lib/skin.tsx'
-import { liveWindow, shortPath, tokens } from '../../lib/format.ts'
+import { liveWindow, openLink, shortPath, tokens } from '../../lib/format.ts'
 import { paneTitle, terminalName } from '../../lib/overview.ts'
 import { IconButton, Menu } from '../ui/primitives.tsx'
 import { StateDot, StatePill, shownState } from '../ui/status.tsx'
@@ -115,7 +115,7 @@ export function SessionHeader({
             align="end"
             width={240}
             items={[
-              { key: 'open', label: agent === 'antigravity' ? 'Open in Antigravity' : 'Open on claude.ai', icon: <ExternalLink className="size-4" />, onSelect: () => window.open(info.rc!.url, '_blank', 'noopener') },
+              { key: 'open', label: agent === 'antigravity' ? 'Open in Antigravity' : 'Open on claude.ai', icon: <ExternalLink className="size-4" />, onSelect: () => openLink(info.rc!.url) },
               { key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.rc(false) },
             ]}
             trigger={({ toggle, ref: r, open }) => (
