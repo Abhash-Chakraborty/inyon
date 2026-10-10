@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ServerWebSocket } from 'bun'
 import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@tether/protocol'
 import { BIND, DATA_DIR, PORT, ensurePassword, TLS } from './config.ts'
-import { clearCookie, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { APP_ORIGINS, clearCookie, fromApp, isAuthed, issueCookie, issueToken, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
 import { answer, codexRewind, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
@@ -64,6 +64,8 @@ function sameOrigin(req: Request) {
   const origin = req.headers.get('origin')
   if (!origin) return true
   if (ALLOWED_ORIGINS.has(origin)) return true
+  // the phone apps authenticate with a token, never the cookie (see fromApp), so CSRF can't apply
+  if (APP_ORIGINS.has(origin)) return true
   try {
     const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
     return !!host && new URL(origin).host === host
@@ -72,20 +74,43 @@ function sameOrigin(req: Request) {
   }
 }
 
+/** Lets the phone apps (their own origins, see APP_ORIGINS) call the API. */
+function withCors(req: Request, res: Response) {
+  if (!fromApp(req)) return res
+  res.headers.set('Access-Control-Allow-Origin', req.headers.get('origin')!)
+  res.headers.set('Vary', 'Origin')
+  return res
+}
+const preflight = (req: Request) =>
+  fromApp(req)
+    ? new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': req.headers.get('origin')!,
+          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE',
+          'Access-Control-Allow-Headers': 'authorization, content-type, x-tether-client',
+          'Access-Control-Max-Age': '600',
+          Vary: 'Origin',
+        },
+      })
+    : new Response(null, { status: 403 })
+
 /** Wraps an API handler with auth and error handling. */
 const api =
   (fn: Handler, open = false): Handler =>
-  async (req) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
-    if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
-    try {
-      return await fn(req)
-    } catch (err) {
-      if (err instanceof HttpError) return json({ error: err.message }, { status: err.status })
-      console.error(err)
-      return json({ error: String((err as Error)?.message ?? err) }, { status: 500 })
-    }
+  async (req) => (req.method === 'OPTIONS' ? preflight(req) : withCors(req, await handle(fn, open, req)))
+
+async function handle(fn: Handler, open: boolean, req: Request & { params: Record<string, string> }): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
+  if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
+  try {
+    return await fn(req)
+  } catch (err) {
+    if (err instanceof HttpError) return json({ error: err.message }, { status: err.status })
+    console.error(err)
+    return json({ error: String((err as Error)?.message ?? err) }, { status: 500 })
   }
+}
 
 const ok = () => json({ ok: true })
 
@@ -266,6 +291,8 @@ const server = Bun.serve<SocketData>({
         const client = (loopback && req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()) || ip
         const r = await tryLogin(client, String(password ?? ''))
         if (!r.ok) return json({ error: r.error }, { status: 401 })
+        // the phone apps keep a token instead of a cookie
+        if (fromApp(req)) return json({ ok: true, token: issueToken() })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }, true),
     },
@@ -553,6 +580,7 @@ const server = Bun.serve<SocketData>({
   },
   async fetch(req, srv) {
     const url = new URL(req.url)
+    if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) return preflight(req)
     if (url.pathname === '/node') {
       // tether-node machines authenticate with their pairing token
       const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
