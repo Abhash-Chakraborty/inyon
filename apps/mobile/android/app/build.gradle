@@ -34,6 +34,12 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    packaging {
+        resources {
+            // gson, error_prone_annotations and jspecify (pulled in by the SSH and secrets libraries) all ship one
+            excludes += ['META-INF/versions/9/module-info.class']
+        }
+    }
 }
 
 repositories {
@@ -48,6 +54,13 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+    // sshlib's plain `tink` jar holds the same classes as security-crypto's `tink-android`, so only
+    // tink-android stays, pinned to the version sshlib is built against
+    implementation("org.connectbot:sshlib:$sshlibVersion") {
+        exclude group: 'com.google.crypto.tink', module: 'tink'
+    }
+    implementation "com.google.crypto.tink:tink-android:$tinkVersion"
+    implementation "androidx.security:security-crypto:$securityCryptoVersion"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

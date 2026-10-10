@@ -92,3 +92,84 @@ jobs:
               --title "Latest Android build ($VERSION)" \
               --notes "Built from $GITHUB_SHA on main. Install over the previous build; tagged releases are the stable ones."
           fi
+
+  # JVM tests for the native SSH plugin (SshCore) against a throwaway sshd on the runner
+  ssh-plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      # settings.gradle pulls the Capacitor modules from node_modules and the files `cap sync` writes
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: bun node_modules/@capacitor/cli/bin/capacitor sync android
+        working-directory: apps/mobile
+
+      - name: Start sshd
+        run: |
+          d="$RUNNER_TEMP/sshd"
+          mkdir -p "$d"
+          chmod 700 "$d"
+          if [ ! -x /usr/sbin/sshd ]; then
+            sudo apt-get update -q
+            sudo apt-get install -y -q openssh-server
+          fi
+          ssh-keygen -q -t ed25519 -N '' -f "$d/host_ed25519"
+          ssh-keygen -q -t ed25519 -N '' -C tether-test -f "$d/client_ed25519"
+          cp "$d/client_ed25519.pub" "$d/authorized_keys"
+          chmod 600 "$d/authorized_keys"
+          # runs as the runner user, which can only log in as itself; MaxSessions 10 is the
+          # OpenSSH default, spelled out because the tests rely on it to exercise the pool
+          cat > "$d/sshd_config" <<EOF
+          Port 2222
+          ListenAddress 127.0.0.1
+          HostKey $d/host_ed25519
+          PidFile $d/sshd.pid
+          AuthorizedKeysFile $d/authorized_keys
+          PubkeyAuthentication yes
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          UsePAM no
+          StrictModes no
+          MaxSessions 10
+          EOF
+          # OpenSSH 9.8+ throttles sources that connect without logging in, as the probe test does
+          if /usr/sbin/sshd -t -f "$d/sshd_config" -o PerSourcePenalties=no 2>/dev/null; then
+            echo "PerSourcePenalties no" >> "$d/sshd_config"
+          fi
+          /usr/sbin/sshd -f "$d/sshd_config" -E "$d/sshd.log"
+          for i in $(seq 1 20); do
+            ssh -F /dev/null -i "$d/client_ed25519" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null "$(id -un)@127.0.0.1" true 2>/dev/null && break
+            sleep 0.5
+          done
+          ssh -F /dev/null -i "$d/client_ed25519" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null "$(id -un)@127.0.0.1" 'echo sshd is up'
+          {
+            echo "TETHER_SSH_TEST_HOST=127.0.0.1"
+            echo "TETHER_SSH_TEST_PORT=2222"
+            echo "TETHER_SSH_TEST_USER=$(id -un)"
+            echo "TETHER_SSH_TEST_KEY=$d/client_ed25519"
+          } >> "$GITHUB_ENV"
+
+      - name: Unit tests
+        working-directory: apps/mobile/android
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      - name: sshd log
+        if: failure()
+        run: cat "$RUNNER_TEMP/sshd/sshd.log" || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: ssh-plugin-test-report
+          path: apps/mobile/android/app/build/reports/tests/

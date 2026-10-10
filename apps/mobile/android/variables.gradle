@@ -13,4 +13,7 @@ ext {
     androidxJunitVersion = '1.3.0'
     androidxEspressoCoreVersion = '3.7.0'
     cordovaAndroidVersion = '14.0.1'
+    sshlibVersion = '2.2.50'
+    tinkVersion = '1.23.0'
+    securityCryptoVersion = '1.1.0'
 }
