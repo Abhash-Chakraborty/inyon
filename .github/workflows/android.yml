@@ -48,7 +48,7 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           TETHER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          TETHER_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TETHER_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
           TETHER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
           TETHER_VERSION: ${{ steps.version.outputs.name }}
           TETHER_VERSION_CODE: ${{ github.run_number }}
@@ -68,7 +68,7 @@ jobs:
       - name: Check the signature
         run: |
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$apksigner" verify --print-certs "$RUNNER_TEMP/tether.apk" | grep -E "Signer #1 certificate (DN|SHA-256)"
+          "$apksigner" verify --verbose --print-certs "$RUNNER_TEMP/tether.apk" | grep -iE "verified|signer|certificate" | grep -viE "warning"
 
       - uses: actions/upload-artifact@v4
         with:

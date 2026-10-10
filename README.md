@@ -143,9 +143,9 @@ GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main`
 attached. On the phone, open the release, download the APK and install it. Later builds install
 over it and keep you signed in.
 
-Builds are signed with your own key from four repository secrets: `ANDROID_KEYSTORE_BASE64` (the
-keystore, base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and, for a JKS with a separate
-key password, `ANDROID_KEY_PASSWORD`. Keep a backup of the keystore: Android only installs an
+Builds are signed with your own key: the secrets `ANDROID_KEYSTORE_BASE64` (the keystore, base64)
+and `ANDROID_KEYSTORE_PASSWORD`, plus `ANDROID_KEY_PASSWORD` for a JKS with a separate key
+password, and the repository variable `ANDROID_KEY_ALIAS`. Keep a backup of the keystore: Android only installs an
 update signed with the same key. Without the secrets, a fork gets a debug build.
 
 To build it yourself you need Android Studio:
