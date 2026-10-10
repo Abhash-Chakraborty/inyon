@@ -19,8 +19,10 @@ export function AgentSpinner({ kind = 'claude', active, className }: { kind?: Ag
 }
 
 /** What a session shows: an idle agent with shells or tasks still running counts as busy in the background. */
-export type ShownState = AgentState | 'background'
-export const shownState = (a: { state: AgentState; background?: string }): ShownState => (a.state === 'idle' && a.background ? 'background' : a.state)
+export type ShownState = AgentState | 'background' | 'offline'
+/** On a machine that isn't answering, a session is shown as it was last seen: "Offline". */
+export const shownState = (a: { state: AgentState; background?: string }, host?: { status: HostStatus }): ShownState =>
+  host && host.status !== 'online' ? 'offline' : a.state === 'idle' && a.background ? 'background' : a.state
 
 /** "1 background task" → "1 task running in the background" */
 export const backgroundText = (bg: string) => `${bg.replace(/\bbackground /, '')} running in the background`
@@ -32,6 +34,22 @@ const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }
   waiting: { label: 'Needs you', dot: 'bg-warn', pill: 'bg-warn-soft text-warn' },
   idle: { label: 'Idle', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
   unknown: { label: 'Running', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
+  offline: { label: 'Offline', dot: 'bg-fg-3/50', pill: 'bg-sunken text-fg-3' },
+}
+
+/** One line about a machine: its sessions when online, when it was last seen when not. */
+export function hostLine(h: { status: HostStatus; error?: string; lastSeen?: number; offlineSince?: number }, online: string) {
+  if (h.status === 'online') return online
+  if (h.lastSeen) return `Offline · last seen ${ago(h.lastSeen)}`
+  return h.status === 'error' ? h.error ?? 'Not reachable' : 'Connecting…'
+}
+
+function ago(ms: number) {
+  const s = Math.max(0, (Date.now() - ms) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)} min ago`
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`
+  return `${Math.round(s / 86400)} d ago`
 }
 
 export function StatePill({ state, title, className }: { state: ShownState; title?: string; className?: string }) {

@@ -9,7 +9,7 @@ import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { AgentLogo, useAgentAccent } from '../lib/skin.tsx'
-import { HostDot, StatePill, backgroundText, shownState } from './ui/status.tsx'
+import { HostDot, StatePill, backgroundText, hostLine, shownState } from './ui/status.tsx'
 import { Meter } from './ui/primitives.tsx'
 
 /** A session waiting on you, with its answers as buttons. */
@@ -86,7 +86,7 @@ export function SessionCard({ r }: { r: PaneRef }) {
       <div className="flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={a.state === 'working'} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{AGENTS[a.kind].name}</span>
-        <StatePill state={shownState(a)} title={a.background} />
+        <StatePill state={shownState(a, r.host)} title={a.background} />
       </div>
       <div className="min-w-0">
         <div className="truncate text-[15px] font-semibold tracking-tight">{paneTitle(r)}</div>
@@ -202,7 +202,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                 <AgentBadges host={h} size={15} />
               </div>
               <div className="truncate text-[12px] text-fg-3">
-                {h.status === 'error' ? h.error : h.status !== 'online' ? 'Connecting…' : h.tmux === 'missing' ? 'tmux not installed' : `${h.sessions.length} sessions · ${panes} panes${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`}
+                {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${h.sessions.length} sessions · ${panes} panes${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
               </div>
             </div>
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
@@ -243,7 +243,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                     </div>
                   </td>
                   <td className="border-b border-line/60 px-4 py-3 text-fg-2">
-                    {h.status !== 'online' ? '—' : h.tmux === 'missing' ? 'Not installed' : `${h.sessions.length} sessions · ${panes} panes`}
+                    {h.status !== 'online' ? (h.lastSeen ? 'Offline' : '—') : h.tmux === 'missing' ? 'Not installed' : `${h.sessions.length} sessions · ${panes} panes`}
                   </td>
                   <td className="tabular border-b border-line/60 px-4 py-3 text-right font-mono text-[12px] text-fg-2">{h.latencyMs !== undefined ? `${h.latencyMs} ms` : '—'}</td>
                 </tr>

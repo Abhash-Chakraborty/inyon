@@ -95,7 +95,7 @@ export function SessionHeader({
         <AgentLogo kind={agent} size={26} active={s.screen?.working ?? ref?.pane.agent?.state === 'working'} />
         <div className="min-w-0 flex-1 pl-1">
           <h1 className="flex items-center gap-1.5 text-[14.5px] font-semibold leading-tight tracking-tight">
-            {ref?.pane.agent && <StateDot state={shownState(ref.pane.agent)} className="sm:hidden" />}
+            {ref?.pane.agent && <StateDot state={shownState(ref.pane.agent, ref.host)} className="sm:hidden" />}
             <button type="button" onClick={() => ref && setRenaming(true)} title="Rename" className="group/title flex min-w-0 items-center gap-1.5 text-left">
               <span className="truncate">{title}</span>
               <Pencil className="size-3 shrink-0 text-fg-3 opacity-0 transition-opacity group-hover/title:opacity-100 max-md:hidden" />
@@ -105,7 +105,7 @@ export function SessionHeader({
         </div>
         {ref?.pane.agent && (
           <span className="hidden sm:block">
-            <StatePill state={shownState(ref.pane.agent)} title={ref.pane.agent.background} />
+            <StatePill state={shownState(ref.pane.agent, ref.host)} title={ref.pane.agent.background} />
           </span>
         )}
         {agent && <UsageChip s={s} onOpen={() => openSheet('controls')} />}

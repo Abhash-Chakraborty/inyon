@@ -181,13 +181,17 @@ function onMessage(m: ServerMsg) {
 
 function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   const { settings } = useStore.getState()
-  const href = `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
-  useStore.setState({ activity: [{ id: Date.now(), at: Date.now(), host: m.host, pane: m.pane, kind: m.kind, title: m.title, body: m.body, agent: m.agent }, ...useStore.getState().activity].slice(0, 30) })
+  const machine = m.kind === 'offline' || m.kind === 'online'
+  const href = machine ? `/machines/${encodeURIComponent(m.host)}` : `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
+  if (!machine) {
+    const kind = m.kind as ActivityEvent['kind']
+    useStore.setState({ activity: [{ id: Date.now(), at: Date.now(), host: m.host, pane: m.pane, kind, title: m.title, body: m.body, agent: m.agent }, ...useStore.getState().activity].slice(0, 30) })
+  }
   if (m.kind === 'done' && !settings.notifyDone) return
   // don't toast about the conversation you're looking at
   const here = location.pathname === href && document.visibilityState === 'visible'
   if (!here) {
-    toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' ? 'warn' : 'success', href, agent: m.agent })
+    toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
     if (m.kind === 'waiting' && settings.haptics) navigator.vibrate?.([18, 60, 18])
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {

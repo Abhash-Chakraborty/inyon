@@ -10,7 +10,7 @@ import { bytes, shortPath, timeAgo } from '../lib/format.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Empty, SectionLabel, Segmented, Spinner } from '../components/ui/primitives.tsx'
-import { HostDot, StateDot, shownState } from '../components/ui/status.tsx'
+import { HostDot, StateDot, hostLine, shownState } from '../components/ui/status.tsx'
 import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
@@ -55,8 +55,7 @@ export function MachinesPage() {
                 <HostDot status={h.status} />
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
-                {h.status === 'error' ? h.error : h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? (waitingToPair(h) ? 'Waiting for its pairing command' : h.hostname ?? 'Offline') : h.config.target}
-                {h.status === 'online' && ` · ${h.sessions.length} tmux sessions · ${h.latencyMs ?? '?'} ms`}
+                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · ${h.sessions.length} tmux sessions · ${h.latencyMs ?? '?'} ms`)}
               </div>
             </div>
             <AgentBadges host={h} size={20} />
@@ -171,7 +170,7 @@ function SessionsTab({ host }: { host: HostState }) {
                     </div>
                     <div className="truncate text-[11.5px] text-fg-3">{shortPath(p.cwd, 50)}</div>
                   </div>
-                  {p.agent && <StateDot state={shownState(p.agent)} />}
+                  {p.agent && <StateDot state={shownState(p.agent, host)} />}
                   <ChevronRight className="size-4 text-fg-3" />
                 </Link>
               )

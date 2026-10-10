@@ -138,7 +138,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
                 <Link key={`${r.host.config.id}${r.pane.id}`} to={href} className={item(loc.pathname === href)}>
                   <AgentLogo kind={r.pane.agent!.kind} size={17} active={r.pane.agent!.state === 'working'} />
                   <span className="min-w-0 flex-1 truncate">{paneTitle(r)}</span>
-                  <StateDot state={shownState(r.pane.agent!)} />
+                  <StateDot state={shownState(r.pane.agent!, r.host)} />
                 </Link>
               )
             })}

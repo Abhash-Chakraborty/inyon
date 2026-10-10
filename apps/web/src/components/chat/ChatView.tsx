@@ -21,7 +21,10 @@ const NO_PENDING: PendingMessage[] = []
 export function ChatView({ host, pane, agent, onTerminal, controls }: { host: string; pane: string; agent?: AgentKind; onTerminal: () => void; controls?: React.ReactNode }) {
   const key = chatKey(host, pane)
   const chat = useStore((s) => s.chats[key])
-  const connected = useStore((s) => s.connected)
+  const hubUp = useStore((s) => s.connected)
+  const machine = useStore((s) => s.hosts.find((h) => h.config.id === host))
+  const machineDown = !!machine && machine.status !== 'online'
+  const connected = hubUp && !machineDown
   const installed = useStore((s) => s.hosts.find((h) => h.config.id === host)?.agents) ?? NO_AGENTS
   const scroller = useRef<HTMLDivElement>(null)
   const stick = useRef(true)
@@ -226,7 +229,11 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
             )}
             {running && chatCapable && (
               <div className="pb-safe-2 mx-auto w-full max-w-[760px] px-3 pt-1 sm:px-6 sm:pb-4">
-                {!connected && <div className="mb-2 text-center text-[12px] text-fg-3">Reconnecting…</div>}
+                {!hubUp ? (
+                  <div className="mb-2 text-center text-[12px] text-fg-3">Reconnecting…</div>
+                ) : machineDown ? (
+                  <div className="mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
+                ) : null}
                 {prompt ? <PromptCard prompt={prompt} host={host} pane={pane} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} />}
               </div>
             )}
