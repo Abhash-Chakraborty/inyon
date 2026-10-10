@@ -3,6 +3,7 @@ import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind } from '@tether/protocol'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
+import { reconcile } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
@@ -42,8 +43,14 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   const prompt = screen?.prompt
   const queue = chat?.info?.queue ?? NO_QUEUE
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
-  // a message waiting in the agent's queue shows once, as a queued bubble, until the agent takes it
-  const pending = (chat?.pending ?? NO_PENDING).filter((p) => !queued.has(msgKey(p.text)))
+  // a message waiting in the agent's queue shows once, as a queued bubble, until the agent takes it.
+  // One already in the conversation never shows twice, however its receipt arrived.
+  const stored = chat?.pending ?? NO_PENDING
+  const unconfirmed = useMemo(() => (stored.length ? reconcile(stored, chat?.items ?? []) : NO_PENDING), [stored, chat?.items])
+  const pending = unconfirmed.filter((p) => !queued.has(msgKey(p.text)))
+  useEffect(() => {
+    if (unconfirmed.length < stored.length) patchChat(key, (c) => ({ pending: c.pending.filter((p) => unconfirmed.some((u) => u.id === p.id)) }))
+  }, [key, stored, unconfirmed])
   const chatCapable = agent ? AGENTS[agent].chat : true
   const tasks = chat?.info?.tasks
   const subagents = chat?.info?.subagents

@@ -28,3 +28,14 @@ test('native shell input confirms the corresponding ! command', () => {
   expect(reconcile([pending('! printf hello')], [{ ...receipt('printf hello'), shell: true } as ChatItem])).toHaveLength(0)
   expect(reconcile([pending('!printf goodbye')], [{ ...receipt('printf hello'), shell: true } as ChatItem])).toHaveLength(1)
 })
+
+test('a long paste confirms despite its wrapper, rewrapping and quote style', () => {
+  const sent = "So I would request you to add it.\nIt's my laptop and it failed."
+  const saved = '\n\n<pasted_content id="28ce">\nSo I would  request you to add it. It’s my laptop and it failed.\n</pasted_content id="28ce">\n'
+  expect(reconcile([pending(sent)], [receipt(saved)])).toHaveLength(0)
+  expect(reconcile([pending(sent)], [receipt(saved.replace('laptop', 'server'))])).toHaveLength(1)
+})
+
+test('a device clock a little ahead of the agent machine still confirms', () => {
+  expect(reconcile([pending('hello')], [receipt('hello', -20_000)])).toHaveLength(0)
+})

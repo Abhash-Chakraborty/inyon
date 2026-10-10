@@ -22,15 +22,22 @@ const clean = (s: string) => {
 }
 export const msgKey = (s: string) => clean(s).slice(0, 400)
 export const PENDING_MS = 10 * 60_000
+// A receipt and its message share their words. Spacing, quotes and markup can differ: agents
+// rewrap pastes, and some swap straight quotes for curly ones.
+const loose = (s: string) => clean(s).toLowerCase().replace(/[^\p{L}\p{N}!/]+/gu, '')
+// The transcript is stamped by the agent's machine and the message by this device; phones and
+// laptops can be several seconds apart.
+const SKEW_MS = 30_000
 
 /** Only a new transcript entry can confirm a send; consume each receipt at most once. */
 export function reconcile(pending: PendingMessage[], items: ChatItem[]) {
   const receipts = items.flatMap((item) => item.kind === 'user'
-    ? [{ text: clean(item.shell ? `!${item.text}` : item.text), at: Date.parse(item.ts) }]
-    : item.kind === 'command' && item.name ? [{ text: clean(`/${item.name.replace(/^\/+/, '')} ${item.args}`), at: Date.parse(item.ts) }] : [])
+    ? [{ text: loose(item.shell ? `!${item.text}` : item.text), at: Date.parse(item.ts) }]
+    : item.kind === 'command' && item.name ? [{ text: loose(`/${item.name.replace(/^\/+/, '')} ${item.args}`), at: Date.parse(item.ts) }] : [])
   return pending.filter((message) => {
-    const text = clean(message.text)
-    const receipt = receipts.findIndex((entry) => entry.at >= message.at - 5000 && (entry.text === text || entry.text.length >= 24_000 && text.startsWith(entry.text)))
+    const text = loose(message.text)
+    // very long messages are cut short in some transcripts
+    const receipt = receipts.findIndex((entry) => entry.at >= message.at - SKEW_MS && (entry.text === text || entry.text.length >= 20_000 && text.startsWith(entry.text)))
     if (receipt < 0) return true
     receipts.splice(receipt, 1)
     return false
