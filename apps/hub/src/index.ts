@@ -1,8 +1,9 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import type { ServerWebSocket } from 'bun'
 import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@tether/protocol'
-import { BIND, PORT, ensurePassword, TLS } from './config.ts'
-import { clearCookie, isAuthed, issueCookie, tryLogin } from './auth.ts'
+import { BIND, DATA_DIR, PORT, ensurePassword, TLS } from './config.ts'
+import { clearCookie, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
 import { answer, codexRewind, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
@@ -36,7 +37,9 @@ const WEB_DIST = path.resolve(import.meta.dir, '../../web/dist')
 
 const json = (data: unknown, init: ResponseInit = {}) => Response.json(data, init)
 
-async function body<T = any>(req: Request): Promise<T> {
+async function body<T = any>(req: Request, limit = 1024 * 1024): Promise<T> {
+  // JSON bodies are small; refuse big ones before reading them into memory
+  if (Number(req.headers.get('content-length') ?? 0) > limit) throw new HttpError(413, 'Request too large')
   try {
     return (await req.json()) as T
   } catch {
@@ -49,10 +52,30 @@ const paneParam = (p: string) => (p.startsWith('%') ? p : `%${p}`)
 
 type Handler = (req: Request & { params: Record<string, string> }) => Promise<Response> | Response
 
+/**
+ * A browser request made by this app's own pages. Other sites can share the hub's cookie when they
+ * run on the same host (a dev server on another port, a sibling subdomain), so anything that
+ * changes state, and the WebSocket, must come from the hub's own origin. Requests without an
+ * Origin header don't come from a web page (curl, the node agent) and carry no ambient cookie risk.
+ */
+const ALLOWED_ORIGINS = new Set((process.env.TETHER_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
+function sameOrigin(req: Request) {
+  const origin = req.headers.get('origin')
+  if (!origin) return true
+  if (ALLOWED_ORIGINS.has(origin)) return true
+  try {
+    const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
+    return !!host && new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
 /** Wraps an API handler with auth and error handling. */
 const api =
   (fn: Handler, open = false): Handler =>
   async (req) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
     if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
     try {
       return await fn(req)
@@ -69,7 +92,8 @@ function validateHost(b: Partial<HostConfig>): Omit<HostConfig, 'id'> {
   const name = String(b.name ?? '').trim()
   const target = String(b.target ?? '').trim()
   if (!name) throw new HttpError(400, 'Give the machine a name')
-  if (!/^[\w.@-]+$/.test(target)) throw new HttpError(400, 'Use user@host or an alias from ~/.ssh/config')
+  // a leading "-" would be read by ssh as an option
+  if (!/^[\w.@-]+$/.test(target) || target.startsWith('-')) throw new HttpError(400, 'Use user@host or an alias from ~/.ssh/config')
   const port = b.port ? Number(b.port) : undefined
   if (port !== undefined && !(port > 0 && port < 65536)) throw new HttpError(400, 'Port must be 1-65535')
   const identityFile = b.identityFile?.trim() || undefined
@@ -175,17 +199,29 @@ function onClose(ws: ServerWebSocket<SocketData>) {
 
 // ---------- static files (production build of apps/web) ----------
 
+// no framing by other sites; images only from the hub itself, so agent output can't make the
+// browser fetch an outside URL (a prompt-injected agent could put data in one)
+const PAGE_HEADERS = {
+  'Content-Security-Policy': "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'",
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'same-origin',
+}
+
 async function serveStatic(pathname: string) {
-  const rel = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[/\\])+/, '')
+  let decoded = pathname
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {}
+  const rel = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '')
   const file = Bun.file(path.join(WEB_DIST, rel))
   if (rel !== '/' && (await file.exists())) {
     const immutable = rel.startsWith('/assets/')
     return new Response(file, {
-      headers: { 'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache' },
+      headers: { 'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache', ...PAGE_HEADERS },
     })
   }
   const index = Bun.file(path.join(WEB_DIST, 'index.html'))
-  if (await index.exists()) return new Response(index, { headers: { 'Cache-Control': 'no-cache' } })
+  if (await index.exists()) return new Response(index, { headers: { 'Cache-Control': 'no-cache', ...PAGE_HEADERS } })
   return new Response('Web app not built. Run `pnpm build`.', { status: 503 })
 }
 
@@ -197,6 +233,12 @@ startUploadJanitor()
 setInterval(() => ensureSessions().catch(() => {}), 30_000)
 setTimeout(() => ensureSessions().catch(() => {}), 5_000)
 
+/** HTTPS directly, or behind a local HTTPS proxy (Tailscale Serve, Caddy…) where the hub only sees http. */
+function secureRequest(req: Request): boolean {
+  const ip: string = server.requestIP(req)?.address ?? ''
+  return new URL(req.url).protocol === 'https:' || (/^(127\.|::1$|::ffff:127\.)/.test(ip) && req.headers.get('x-forwarded-proto') === 'https')
+}
+
 const q = (req: Request, name: string) => new URL(req.url).searchParams.get(name) ?? ''
 
 const server = Bun.serve<SocketData>({
@@ -206,21 +248,29 @@ const server = Bun.serve<SocketData>({
   idleTimeout: 120,
   maxRequestBodySize: 2048 * 1024 * 1024,
   routes: {
-    '/api/session': api((req) => json({ authed: isAuthed(req) }), true),
+    '/api/session': api((req) => {
+      const authed = isAuthed(req)
+      // sliding sign-in: a session in use keeps going, one left alone for 30 days ends
+      const cookie = authed ? refreshCookie(req, secureRequest(req)) : undefined
+      return json({ authed }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
+    }, true),
     '/api/login': {
       POST: api(async (req) => {
-        const { password } = await body<{ password: string }>(req)
+        const { password } = await body<{ password: string }>(req, 8 * 1024)
         const ip = server.requestIP(req)?.address ?? '?'
-        const r = await tryLogin(ip, String(password ?? ''))
+        // behind a local proxy every request comes from loopback: count guesses per real client
+        const loopback = /^(127\.|::1$|::ffff:127\.)/.test(ip)
+        const client = (loopback && req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()) || ip
+        const r = await tryLogin(client, String(password ?? ''))
         if (!r.ok) return json({ error: r.error }, { status: 401 })
-        // behind a local HTTPS proxy (Tailscale Serve, Caddy…) the hub itself only sees http
-        const local = /^(127\.|::1$|::ffff:127\.)/.test(ip)
-        const secure = new URL(req.url).protocol === 'https:' || (local && req.headers.get('x-forwarded-proto') === 'https')
-        return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secure) } })
+        return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }, true),
     },
     '/api/logout': {
-      POST: api(() => json({ ok: true }, { headers: { 'Set-Cookie': clearCookie() } }), true),
+      POST: api((req) => {
+        revokeSession(req)
+        return json({ ok: true }, { headers: { 'Set-Cookie': clearCookie() } })
+      }, true),
     },
     '/api/hosts': {
       GET: api(() => json(registry.configs().map(publicConfig))),
@@ -322,6 +372,9 @@ const server = Bun.serve<SocketData>({
     '/api/hosts/:id/uploads': {
       GET: api(async (req) => json(await uploadUsage(req.params.id))),
       POST: api(async (req) => {
+        // refuse an oversized upload before it's read into memory
+        const { maxMB } = loadSettings().uploads
+        if (Number(req.headers.get('content-length') ?? 0) > (maxMB + 1) * 1024 * 1024) throw new HttpError(413, `Uploads are limited to ${maxMB} MB`)
         const form = await req.formData().catch(() => {
           throw new HttpError(400, 'Expected multipart form data')
         })
@@ -510,6 +563,7 @@ const server = Bun.serve<SocketData>({
       return new Response('Upgrade failed', { status: 400 })
     }
     if (url.pathname === '/ws') {
+      if (!sameOrigin(req)) return new Response('Cross-site connection refused', { status: 403 })
       if (!isAuthed(req)) return new Response('Not signed in', { status: 401 })
       const client: Client = { kind: 'client', overview: false, chats: new Set(), terms: new Map(), send: () => {} }
       if (srv.upgrade(req, { data: client })) return
@@ -537,5 +591,10 @@ const server = Bun.serve<SocketData>({
 console.log(`Tether hub listening on ${TLS ? 'https' : 'http'}://${server.hostname}:${server.port}`)
 prebuildNode()
 if (firstPassword) {
-  console.log(`\n  First run: your Tether password is  ${firstPassword}\n  Change it with: pnpm --filter @tether/hub set-password\n`)
+  // a service's output ends up in the journal: only show the password on an interactive terminal
+  const file = path.join(DATA_DIR, 'initial-password')
+  fs.writeFileSync(file, firstPassword + '\n', { mode: 0o600 })
+  if (process.stdout.isTTY) console.log(`\n  First run: your Tether password is  ${firstPassword}`)
+  else console.log(`\n  First run: your Tether password is in ${file}`)
+  console.log('  Change it with: pnpm --filter @tether/hub set-password (then delete that file)\n')
 }
