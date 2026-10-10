@@ -49,6 +49,9 @@ A small hub runs on one machine you trust. It talks to each machine in one of th
 | A laptop or desktop | It runs `tether-node`, which connects **out** to the hub. No open ports. |
 | A server | SSH, using your existing `~/.ssh/config`, keys and jump hosts |
 
+The Android app works without a hub. It runs the same core on the phone and connects to your
+servers over SSH by itself (see [Android app](#android-app)).
+
 On each machine the hub reads tmux and the agents' own records:
 
 | What | Where it comes from |
@@ -92,16 +95,16 @@ put it behind an HTTPS reverse proxy. To keep it running, see `deploy/tether-hub
 
 ## Where everything runs
 
-There's one thing to host: the hub. It's a single Bun process on a machine that stays on, like a
-home server, a VPS or a desktop that doesn't sleep. The hub serves the web app itself, so there's
-nothing to deploy to Vercel or a CDN.
+For the browser there's one thing to host: the hub. It's a single Bun process on a machine that
+stays on, like a home server, a VPS or a desktop that doesn't sleep. The hub serves the web app
+itself, so there's nothing to deploy to Vercel or a CDN. The Android app needs nothing hosted.
 
 - **In a browser**, the hub's address is the app: `http://my-server:4777` over Tailscale or
   NetBird, or `https://tether.example.com` behind a reverse proxy. The same page works on a phone.
 - **Installed on a phone** from the browser ("Add to Home Screen"), with system notifications, it
   needs HTTPS. Put the hub behind Caddy or `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`.
-- **The Android app** comes from the GitHub release. Open it and type the hub address once. Plain
-  http is fine there, as long as the phone is on the same Tailscale or NetBird network as the hub.
+- **The Android app** comes from the GitHub release and talks to your servers directly over SSH.
+  No hub, no password, nothing to keep running.
 - **Other machines** don't host anything. They run tmux and your agents, and the hub reaches them
   as described below.
 
@@ -133,15 +136,29 @@ The hub then picks up each conversation where it left off.
 
 ## Android app
 
-`apps/mobile` wraps the same web app with Capacitor. The app asks for your hub address once, signs
-in with a token instead of a cookie, and adds haptics, system notifications and the Android back
-button. The hub only accepts tokens from the app's own origins, so a random page on `localhost`
-can't use your session.
+`apps/mobile` wraps the same web app with Capacitor, but the phone is its own hub. The app runs
+Tether's core in the app (`apps/hub/src/phone`) and opens SSH connections to your servers with a
+native plugin (`TetherSshPlugin`, built on ConnectBot's sshlib). There's no server in between, no
+password and nothing that has to stay on.
+
+1. Open the app and tap *Add a server*. Give it `user@host` and a port.
+2. Pick how it signs in: the phone's own key, a password, or a private key you paste.
+3. The phone's key is an ed25519 key made on the phone the first time you need it. Copy the
+   command the app offers and run it once on the server; it adds the key to
+   `~/.ssh/authorized_keys`. The private half never leaves the phone.
+4. The app shows the server's host key fingerprint before it signs in for the first time. Compare
+   it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server and trust it. If the
+   key ever changes, the app refuses to connect until you confirm the new one.
+
+Passwords, pasted keys and the phone's key are kept in Android's encrypted storage. The server
+list and the chat history the app has seen stay in the app's own storage. The phone has to reach
+the server, so use the same Wi-Fi or a VPN like Tailscale or NetBird. The servers only need tmux
+and your agents, the same as with the hub.
 
 GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main` replaces the
 "Latest Android build" pre-release with a fresh APK, and a `v*` tag makes a release with the APK
 attached. On the phone, open the release, download the APK and install it. Later builds install
-over it and keep you signed in.
+over it and keep your servers.
 
 Builds are signed with your own key: the secrets `ANDROID_KEYSTORE_BASE64` (the keystore, base64)
 and `ANDROID_KEYSTORE_PASSWORD`, plus `ANDROID_KEY_PASSWORD` for a JKS with a separate key
@@ -157,10 +174,13 @@ bun node_modules/@capacitor/cli/bin/capacitor sync android
 pnpm open:android
 ```
 
-The iOS project is in `apps/mobile/ios` but isn't built or tested yet.
+The iOS project is in `apps/mobile/ios` but isn't built or tested yet, and it has no SSH plugin.
 
-Notifications arrive while the app is open or recently in the background. Phones close idle
-connections after a while, and real push (FCM) isn't wired up yet.
+The SSH connections live while the app is open. Android pauses the app in the background, so
+notifications arrive while it's open or only just backgrounded, and the app reconnects when you
+come back. CI runs the plugin's tests against a real sshd (the `ssh-plugin` job).
+
+To use a hub from your phone instead, open its address in the phone's browser.
 
 ## Security
 
@@ -190,6 +210,7 @@ cd apps/hub && bun test
 
 ```
 apps/hub           Bun server: machines, tmux, agent readers, API, WebSocket
+                   (src/phone runs the same core inside the Android app)
 apps/web           React + Vite app (also served by the hub)
 apps/node          tether-node, the outbound connector for laptops
 apps/mobile        Capacitor shell for the Android and iOS apps

@@ -8,8 +8,10 @@ agents run as. Treat the hub like an SSH jump host.
 - **Keep the hub private.** It binds to `127.0.0.1` by default. Reach it over a private network
   (Tailscale, NetBird, WireGuard, your LAN) or put it behind HTTPS with a reverse proxy. Don't
   expose plain HTTP to the internet.
-- **One strong password.** The hub generates one on first start and stores only a scrypt hash.
-  Sign-in attempts are rate limited. Sessions are signed, HttpOnly cookies.
+- **One strong password.** The first visit creates it; when the hub listens beyond localhost, that
+  visit also needs the setup code the hub prints. The hub stores only a scrypt hash. Sign-in
+  attempts are rate limited. Sessions are signed, HttpOnly cookies, and the API only accepts
+  changes from the hub's own origin.
 - **Laptops connect out, not in.** Machines paired with `tether-node` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
@@ -17,6 +19,18 @@ agents run as. Treat the hub like an SSH jump host.
   private address.
 - **Servers can use SSH.** The hub uses your existing `ssh` config, keys and known hosts. It never
   stores SSH keys.
+
+## The Android app
+
+The app is its own hub, so whoever holds the unlocked phone can reach your servers, the same as
+with a terminal app that has your keys.
+
+- **Host keys are pinned.** The app shows a server's fingerprint before the first sign-in and
+  stores the one you trust. A different key later stops the connection until you confirm it.
+- **Secrets stay on the phone.** The app's ed25519 key, passwords and pasted keys live in
+  EncryptedSharedPreferences (Android Keystore). Android backups are off for the app.
+- **Nothing in between.** The app connects straight to each server over SSH. No relay or hub sees
+  the traffic.
 
 ## What Tether changes on a machine
 
