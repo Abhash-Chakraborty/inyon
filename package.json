@@ -1,0 +1,26 @@
+{
+  "name": "tether",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Drive Claude Code, Codex, Gemini CLI and OpenCode in tmux on all your machines from your phone or browser.",
+  "packageManager": "pnpm@12.4.2",
+  "scripts": {
+    "dev:hub": "pnpm --filter @tether/hub dev",
+    "dev:web": "pnpm --filter @tether/web dev",
+    "build": "pnpm --filter @tether/web build",
+    "start": "pnpm --filter @tether/hub start",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "license": "MIT",
+  "author": "Abhash Chakraborty",
+  "keywords": [
+    "claude-code",
+    "codex",
+    "gemini-cli",
+    "opencode",
+    "tmux",
+    "remote",
+    "mobile",
+    "agents"
+  ]
+}
