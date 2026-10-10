@@ -18,6 +18,8 @@ import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
 
 const PAGE = 160
+/** messages kept per open chat; older ones stay in the transcript file (and the terminal) */
+const KEEP = 4000
 /** fallback screen poll; tmux control mode triggers re-reads as soon as the pane changes */
 const SCREEN_MS = 2000
 const IDLE_SHUTDOWN_MS = 120_000
@@ -197,6 +199,11 @@ class ChatWatcher {
     if (!this.subs.size) {
       this.idleTimer = setTimeout(() => watchers.stop(this.key), IDLE_SHUTDOWN_MS)
     }
+  }
+
+  /** A very long session keeps only its latest messages in memory (in chunks, not on every push). */
+  private trim() {
+    if (this.items.length > KEEP + 500) this.items.splice(0, this.items.length - KEEP)
   }
 
   more(s: Subscriber, before: number) {
@@ -411,6 +418,7 @@ class ChatWatcher {
       for (const line of await codexHistory(host, path).catch(() => [] as string[])) {
         try {
           this.items.push(...normalizeCodex(JSON.parse(line), this.meta).map((d) => ({ ...d, seq: seq++ }) as ChatItem))
+          this.trim()
         } catch {}
       }
       if (gen !== this.generation || this.stopped) return
@@ -436,6 +444,7 @@ class ChatWatcher {
       const items = (codex ? normalizeCodex(entry, this.meta) : this.agent === 'copilot' ? normalizeCopilot(entry, this.meta) : normalize(entry, this.meta)).map((d) => ({ ...d, seq: seq++ }) as ChatItem)
       if (items.length) {
         this.items.push(...items)
+        this.trim()
         if (this.ready) this.queue(items)
       }
       if (!this.ready && remaining <= 0) {

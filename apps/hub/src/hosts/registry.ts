@@ -469,6 +469,10 @@ class Registry {
       if (!a.statusStopped || !a.sessionId) continue
       // first, without touching the session: point its project settings at the status line
       if (!rt.reconnected.has(a.sessionId)) {
+        // a hub that runs for months sees many sessions: forget ones from days ago
+        if (rt.reconnected.size > 500) {
+          for (const [id, at] of rt.reconnected) if (Date.now() - at > 86_400_000) rt.reconnected.delete(id), rt.resumed.delete(id)
+        }
         rt.reconnected.set(a.sessionId, Date.now())
         console.log(`reconnect ${id} ${p.id} ${a.sessionId}: stopped reporting live numbers`)
         const { reconnectAgent } = await import('../claude/actions.ts')

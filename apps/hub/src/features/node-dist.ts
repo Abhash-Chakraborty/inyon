@@ -42,6 +42,14 @@ function once(key: string, make: () => Promise<string>) {
   return p
 }
 
+/** Earlier builds of tether-node (about 80 MB each for Windows) are never served again. */
+function pruneOldBuilds() {
+  const keep = sourceHash()
+  try {
+    for (const f of fs.readdirSync(OUT)) if (f.startsWith('tether-node-') && !f.includes(keep)) fs.rmSync(path.join(OUT, f), { force: true })
+  } catch {}
+}
+
 async function nodeScript() {
   const file = path.join(OUT, `tether-node-${sourceHash()}.js`)
   if (fs.existsSync(file)) return file
@@ -50,6 +58,7 @@ async function nodeScript() {
     const r = await Bun.build({ entrypoints: [path.join(NODE_DIR, 'tether-node.ts')], target: 'bun' })
     if (!r.success) throw new HttpError(500, `Could not bundle tether-node: ${r.logs.join(' ')}`)
     fs.writeFileSync(file, await r.outputs[0].text())
+    pruneOldBuilds()
     return file
   })
 }
@@ -69,6 +78,7 @@ async function nodeExe(arch: string) {
     const built = fs.existsSync(`${file}.tmp.exe`) ? `${file}.tmp.exe` : `${file}.tmp`
     if (code !== 0 || !fs.existsSync(built)) throw new HttpError(500, `Could not build tether-node.exe: ${err.trim().split('\n').at(-1)}`)
     fs.renameSync(built, file)
+    pruneOldBuilds()
     return file
   })
 }

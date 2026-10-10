@@ -153,7 +153,8 @@ function onMessage(ws: ServerWebSocket<SocketData>, raw: string | Buffer) {
       return watchers.peek(m.host, m.pane)?.more(c, m.before)
     case 'draft':
       if (typeof m.text !== 'string' || m.text.length > 100_000 || !registry.get(m.host)) return
-      return watchers.get(m.host, m.pane).draftFromApp(m.text, c)
+      // only for a chat this client watches: a bare draft must not start a watcher nobody stops
+      return watchers.peek(m.host, m.pane)?.draftFromApp(m.text, c)
     case 'term.open': {
       if (c.terms.has(m.id) || c.terms.size >= 8) return
       try {
@@ -575,6 +576,10 @@ const server = Bun.serve<SocketData>({
   websocket: {
     perMessageDeflate: true,
     idleTimeout: 120,
+    // a client that can't keep up is closed instead of silently losing messages; the app
+    // reconnects and gets a fresh copy of everything it watches
+    backpressureLimit: 4 * 1024 * 1024,
+    closeOnBackpressureLimit: true,
     open(ws) {
       if (ws.data.kind === 'node') return nodeLinks.attach(ws.data.hostId, ws as any)
       const c = ws.data

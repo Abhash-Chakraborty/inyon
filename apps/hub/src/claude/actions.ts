@@ -380,12 +380,15 @@ async function openCodeModel(hostId: string, paneId: string, id: string) {
     const after = await waitScreen(hostId, paneId, on, 3000)
     picked = on(after) && after.inputVisible !== false
   } finally {
-    const now = await currentScreen(hostId, paneId)
-    if (now.inputVisible === false && !now.prompt) {
-      await sendKeys(host, paneId, ['Escape'])
-      const closed = await waitScreen(hostId, paneId, (s) => s.inputVisible !== false, 1500)
-      picked ||= closed.inputVisible !== false && !!closed.model && modelFromFooter(catalog.models, closed.model)?.id === id
-    }
+    // the driving flag must end even if the screen can't be read, or prompts stay hidden
+    try {
+      const now = await currentScreen(hostId, paneId)
+      if (now.inputVisible === false && !now.prompt) {
+        await sendKeys(host, paneId, ['Escape'])
+        const closed = await waitScreen(hostId, paneId, (s) => s.inputVisible !== false, 1500)
+        picked ||= closed.inputVisible !== false && !!closed.model && modelFromFooter(catalog.models, closed.model)?.id === id
+      }
+    } catch {}
     stopDriving()
     if (release) await release()
     else if (draft) await typeText(host, paneId, draft).catch(() => {})
