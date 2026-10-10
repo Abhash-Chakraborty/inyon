@@ -251,7 +251,7 @@ export function GoalRow({ row }: { row: Extract<Row, { type: 'goal' }> }) {
     <div className={clsx('flex items-start gap-2.5 rounded-[12px] border px-3.5 py-2.5 text-[13.5px]', item.met ? 'border-ok/30 bg-ok-soft/60' : 'border-dashed border-line-strong')}>
       <Target className={clsx('mt-0.5 size-4 shrink-0', item.met ? 'text-ok' : 'text-fg-3')} />
       <div className="min-w-0">
-        <div className="font-medium">{item.met ? 'Goal met' : 'Goal set'}</div>
+        <div className="font-medium">{item.met ? 'Goal met' : item.cleared ? 'Goal cleared' : 'Goal set'}</div>
         <div className="mt-0.5 line-clamp-3 text-fg-2">{item.condition}</div>
         {item.met && item.reason && <div className="mt-1 line-clamp-3 text-[12.5px] text-fg-3">{item.reason}</div>}
       </div>

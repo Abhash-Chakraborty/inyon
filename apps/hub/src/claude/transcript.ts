@@ -263,6 +263,11 @@ function attachmentItems(e: any, base: { uuid: string; ts: string }, meta: Trans
       return []
     case 'goal_status': {
       const prev = meta.goal
+      // "/goal clear" is recorded as a met goal with the sentinel flag: the goal is gone, not achieved
+      if (a.sentinel && a.met) {
+        meta.goal = undefined
+        return prev && !prev.met ? [{ kind: 'goal', ...base, condition: prev.condition, met: false, cleared: true }] : []
+      }
       meta.goal = { condition: a.condition ?? '', met: !!a.met, reason: a.reason, ts: base.ts }
       if (!prev || prev.condition !== meta.goal.condition || prev.met !== meta.goal.met) {
         return [{ kind: 'goal', ...base, condition: meta.goal.condition, met: meta.goal.met, reason: a.reason }]

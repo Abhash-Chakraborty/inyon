@@ -188,7 +188,7 @@ export type ChatItem =
   | { kind: 'command'; seq: number; uuid: string; ts: string; name: string; args: string; output?: string }
   | { kind: 'notice'; seq: number; uuid: string; ts: string; level: 'info' | 'warn' | 'error'; subtype: string; text: string }
   | { kind: 'turn_end'; seq: number; uuid: string; ts: string; durationMs: number }
-  | { kind: 'goal'; seq: number; uuid: string; ts: string; condition: string; met: boolean; reason?: string }
+  | { kind: 'goal'; seq: number; uuid: string; ts: string; condition: string; met: boolean; reason?: string; cleared?: boolean }
 
 export interface BackgroundTask {
   id: string
