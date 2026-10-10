@@ -89,19 +89,33 @@ export class Host {
 
   async exec(cmd: string, opts: { input?: string | Uint8Array; timeoutMs?: number } = {}): Promise<ExecResult> {
     if (this.isNode) return this.nodeExec(cmd, opts)
+    // its own process group, so a timeout kills the whole pipeline: killing only /bin/sh leaves
+    // children holding the output open, the call never returns and the host stops being polled
     const proc = Bun.spawn(this.argv(cmd), {
       stdin: opts.input === undefined ? 'ignore' : typeof opts.input === 'string' ? new TextEncoder().encode(opts.input) : opts.input,
       stdout: 'pipe',
       stderr: 'pipe',
-      timeout: opts.timeoutMs ?? 20000,
-      killSignal: 'SIGKILL',
+      detached: true,
     })
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
-    return { code: proc.signalCode ? 124 : code, stdout, stderr: proc.signalCode ? `${stderr}timed out` : stderr }
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      try {
+        process.kill(-proc.pid, 'SIGKILL')
+      } catch {
+        proc.kill('SIGKILL')
+      }
+    }, opts.timeoutMs ?? 20000)
+    try {
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ])
+      return { code: timedOut ? 124 : code, stdout, stderr: timedOut ? `${stderr}timed out` : stderr }
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /** Long-running command; calls onLine for each stdout line (e.g. `tail -F`). */
