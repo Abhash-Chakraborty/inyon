@@ -8,7 +8,8 @@ import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Segmented, Spinner, Toggle } from '../components/ui/primitives.tsx'
-import { HostDot } from '../components/ui/status.tsx'
+import { HostDot, hostLine } from '../components/ui/status.tsx'
+import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 
@@ -49,7 +50,13 @@ export function Settings() {
   const hosts = useStore((s) => s.hosts)
   const setAuthed = useStore((s) => s.setAuthed)
   const [hub, setHub] = useState<HubSettings | null>(null)
-  const [perm, setPerm] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
+  const native = isNative()
+  const [perm, setPerm] = useState<string>(native ? 'default' : typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
+  useEffect(() => {
+    if (native) plugin('LocalNotifications')?.checkPermissions().then((p: { display: string }) => setPerm(p.display === 'granted' ? 'granted' : p.display === 'denied' ? 'denied' : 'default')).catch(() => {})
+  }, [native])
+  const secure = native || window.isSecureContext
+  const allow = () => (native ? askNativeNotifications().then((ok) => setPerm(ok ? 'granted' : 'denied')) : Notification.requestPermission().then(setPerm))
 
   useEffect(() => {
     api.settings().then(setHub).catch(() => {})
@@ -188,9 +195,9 @@ export function Settings() {
             <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
               <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />
             </Row>
-            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!window.isSecureContext ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : 'Alerts while Tether is in the background'}>
-              {perm !== 'granted' && perm !== 'unsupported' && window.isSecureContext && (
-                <button type="button" onClick={() => Notification.requestPermission().then(setPerm)} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : perm === 'denied' ? 'Turned off in your phone\'s settings for Tether' : 'Alerts while Tether is in the background'}>
+              {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
+                <button type="button" onClick={allow} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
                   Allow
                 </button>
               )}
@@ -203,7 +210,7 @@ export function Settings() {
                 <HostDot status={h.status} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium">{h.config.name}</span>
-                  <span className="block truncate text-[12px] text-fg-3">{h.config.kind === 'local' ? 'This hub' : h.config.target} · integration {h.integration === 'installed' ? 'on' : 'off'}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
                 </span>
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>

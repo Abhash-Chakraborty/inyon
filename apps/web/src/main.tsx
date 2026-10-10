@@ -17,6 +17,8 @@ import { PanePage } from './pages/PanePage.tsx'
 import { Settings } from './pages/Settings.tsx'
 import { MachinePage, MachinesPage } from './pages/Machines.tsx'
 import { installTapHaptics } from './lib/haptics.ts'
+import { needsHub } from './lib/hub.ts'
+import { installNative, isNative, nativeTheme } from './lib/native.ts'
 
 function useTheme() {
   const theme = useStore((s) => s.settings.theme)
@@ -26,6 +28,7 @@ function useTheme() {
       const t = theme === 'system' ? (mq.matches ? 'dark' : 'light') : theme
       document.documentElement.dataset.theme = t
       useStore.setState({ resolvedTheme: t })
+      nativeTheme(t)
       document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#0a0a0b' : '#fafafa'))
     }
     apply()
@@ -40,7 +43,8 @@ function App() {
   useTheme()
 
   useEffect(() => {
-    api.session().then((s) => setAuthed(s.authed)).catch(() => setAuthed(false))
+    if (needsHub()) setAuthed(false)
+    else api.session().then((s) => setAuthed(s.authed)).catch(() => setAuthed(false))
     const out = () => setAuthed(false)
     window.addEventListener('tether:signed-out', out)
     return () => window.removeEventListener('tether:signed-out', out)
@@ -80,6 +84,7 @@ function App() {
 }
 
 installTapHaptics()
+installNative()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -90,6 +95,6 @@ createRoot(document.getElementById('root')!).render(
 )
 
 // Offline shell for the installed app (service workers need HTTPS or localhost).
-if ('serviceWorker' in navigator && window.isSecureContext && import.meta.env.PROD) {
+if ('serviceWorker' in navigator && window.isSecureContext && import.meta.env.PROD && !isNative()) {
   navigator.serviceWorker.register('/sw.js').catch(() => {})
 }

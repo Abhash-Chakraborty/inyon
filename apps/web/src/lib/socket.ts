@@ -1,4 +1,5 @@
 import type { ClientMsg, ServerMsg } from '@tether/protocol'
+import { apiUrl, authHeaders, wsUrl } from './hub.ts'
 
 type Listener = (msg: ServerMsg) => void
 
@@ -39,14 +40,13 @@ class Socket {
 
   private connect() {
     if (!this.started) return
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     // one connection at a time: a second one would deliver every message twice
     const old = this.ws
     if (old && old.readyState !== WebSocket.CLOSED) {
       old.onclose = old.onmessage = old.onopen = null
       old.close()
     }
-    const ws = new WebSocket(`${proto}://${location.host}/ws`)
+    const ws = new WebSocket(wsUrl())
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
@@ -74,7 +74,7 @@ class Socket {
       const delay = Math.min(8000, 400 * 2 ** this.retry++)
       this.timer = setTimeout(() => this.connect(), delay)
       // the hub rejects the upgrade when the session expired
-      fetch('/api/session').then((r) => r.json()).then((s) => {
+      fetch(apiUrl('/api/session'), { headers: authHeaders() }).then((r) => r.json()).then((s) => {
         if (!s.authed) window.dispatchEvent(new Event('tether:signed-out'))
       }).catch(() => {})
     }

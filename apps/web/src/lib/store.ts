@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@tether/protocol'
 import { socket } from './socket.ts'
+import { haptic } from './haptics.ts'
+import { isNative, nativeNotify } from './native.ts'
 
 import { reconcile, PENDING_MS, type PendingMessage } from './pending.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
@@ -192,7 +194,11 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   const here = location.pathname === href && document.visibilityState === 'visible'
   if (!here) {
     toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
-    if (m.kind === 'waiting' && settings.haptics) navigator.vibrate?.([18, 60, 18])
+    if (m.kind === 'waiting' || m.kind === 'offline') haptic('warning')
+  }
+  if (document.visibilityState === 'hidden' && isNative()) {
+    void nativeNotify(m.title, m.body, href)
+    return
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
     try {

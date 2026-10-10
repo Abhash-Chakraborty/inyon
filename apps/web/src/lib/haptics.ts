@@ -1,4 +1,5 @@
 import { useStore } from './store.ts'
+import { plugin } from './native.ts'
 
 export type HapticKind = 'tap' | 'select' | 'success' | 'warning' | 'error'
 
@@ -20,6 +21,16 @@ const isIOS = typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigato
  */
 export function haptic(kind: HapticKind = 'tap') {
   if (!useStore.getState().settings.haptics) return
+  // the phone apps use the system haptic engine (Taptic Engine on iPhone)
+  const native = plugin('Haptics')
+  if (native) {
+    const run =
+      kind === 'tap' ? native.impact({ style: 'LIGHT' })
+      : kind === 'select' ? native.selectionChanged()
+      : native.notification({ type: kind === 'success' ? 'SUCCESS' : kind === 'warning' ? 'WARNING' : 'ERROR' })
+    run?.catch(() => {})
+    return
+  }
   try {
     if ('vibrate' in navigator && !isIOS) {
       navigator.vibrate(PATTERNS[kind])

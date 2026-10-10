@@ -1,4 +1,5 @@
 import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@tether/protocol'
+import { apiUrl, authHeaders, hubOrigin, setHubToken } from './hub.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -7,10 +8,10 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, url: string, body?: unknown, timeoutMs?: number): Promise<T> {
-  const res = await fetch(url, {
+  const res = await fetch(apiUrl(url), {
     method,
     credentials: 'same-origin',
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers: { ...authHeaders(), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   })
@@ -88,12 +89,20 @@ export interface HubSettings {
 
 export const api = {
   session: () => request<{ authed: boolean }>('GET', '/api/session'),
-  login: (password: string) => request('POST', '/api/login', { password }),
-  logout: () => request('POST', '/api/logout'),
+  // the phone apps get a token back (a browser gets a cookie)
+  login: async (password: string) => {
+    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/login', { password })
+    if (r.token) setHubToken(r.token)
+    return r
+  },
+  logout: async () => {
+    await request('POST', '/api/logout').catch(() => {})
+    setHubToken('')
+  },
   addHost: (b: { name: string; target: string; port?: number; identityFile?: string }) => request<{ id: string }>('POST', '/api/hosts', b),
   updateHost: (id: string, b: Record<string, unknown>) => request('PATCH', h(id), b),
-  repair: (id: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', `${h(id)}/pair`, { origin: location.origin }),
-  pair: (name: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', '/api/hosts/pair', { name, origin: location.origin }),
+  repair: (id: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', `${h(id)}/pair`, { origin: hubOrigin() }),
+  pair: (name: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', '/api/hosts/pair', { name, origin: hubOrigin() }),
   removeHost: (id: string) => request('DELETE', h(id)),
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
   launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; model?: string; mode?: string; prompt?: string }) =>
@@ -141,7 +150,8 @@ export const api = {
       form.append('files', file, file.name)
       if (pane) form.append('pane', paneSlug(pane))
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', `${h(host)}/uploads`)
+      xhr.open('POST', apiUrl(`${h(host)}/uploads`))
+      for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v)
       xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
       xhr.onload = () => {
         let data: any = {}
