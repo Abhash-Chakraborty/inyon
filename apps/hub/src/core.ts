@@ -73,6 +73,14 @@ export function validateHost(b: Partial<HostConfig>): Omit<HostConfig, 'id'> {
   return { name, kind: 'ssh', target, port, identityFile }
 }
 
+/** A readable id for a new machine, unique among the ones already added. */
+export function newHostId(name: string) {
+  const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'host'
+  let unique = id
+  for (let i = 2; registry.get(unique); i++) unique = `${id}-${i}`
+  return unique
+}
+
 // ---------- websocket clients ----------
 
 export interface Client extends Subscriber {
@@ -176,11 +184,9 @@ export const coreRoutes: Routes = {
     GET: api(() => json(registry.configs().map(publicConfig))),
     POST: api(async (req) => {
       const cfg = validateHost(await body(req))
-      const id = cfg.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'host'
-      let unique = id
-      for (let i = 2; registry.get(unique); i++) unique = `${id}-${i}`
-      registry.add({ ...cfg, id: unique })
-      return json({ id: unique })
+      const id = newHostId(cfg.name)
+      registry.add({ ...cfg, id })
+      return json({ id })
     }),
   },
   '/api/hosts/:id': {

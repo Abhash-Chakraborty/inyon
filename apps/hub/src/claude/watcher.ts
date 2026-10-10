@@ -18,6 +18,22 @@ import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
 import { loadChat, saveChat } from './chat-cache.ts'
 
+const DEBUG = typeof process !== 'undefined' && !!process.env?.TETHER_DEBUG
+
+/** Bytes a string takes as UTF-8, without encoding it (transcript lines can be megabytes). */
+function utf8Length(s: string) {
+  let n = s.length
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i)
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
+      n += 2 // a surrogate pair is 4 bytes, 2 already counted
+      i++
+    } else if (c > 0x7ff) n += 2
+    else if (c > 0x7f) n += 1
+  }
+  return n
+}
+
 const PAGE = 160
 /** messages kept per open chat; older ones stay in the transcript file (and the terminal) */
 const KEEP = 4000
@@ -454,7 +470,7 @@ class ChatWatcher {
     if (path.includes('/.gemini/tmp/')) return this.followDoc(path, gen, new GeminiDoc())
     if (path.includes('/.gemini/antigravity-cli/brain/')) return this.followDoc(path, gen, new AntigravityDoc())
     const t0 = performance.now()
-    if (process.env.TETHER_DEBUG) console.log('[follow] start', this.key, path)
+    if (DEBUG) console.log('[follow] start', this.key, path)
     const host = registry.host(this.hostId)
     const sizeRes = await host.exec(`wc -c < ${shq(path)} 2>/dev/null || echo 0`)
     if (gen !== this.generation || this.stopped) return
@@ -473,7 +489,7 @@ class ChatWatcher {
     }
     const finishInitial = () => {
       if (this.ready || gen !== this.generation) return
-      if (process.env.TETHER_DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
+      if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
       this.ready = true
       this.publishInfo()
       this.broadcast(this.resetMsg())
@@ -482,7 +498,7 @@ class ChatWatcher {
     const fallback = setTimeout(finishInitial, remaining ? 8000 : 0)
     this.tail = host.stream(`exec tail -c +1 -F ${shq(path)} 2>/dev/null`, (line) => {
       if (gen !== this.generation) return
-      remaining -= Buffer.byteLength(line) + 1
+      remaining -= utf8Length(line) + 1
       let entry: any
       try {
         entry = JSON.parse(line)
