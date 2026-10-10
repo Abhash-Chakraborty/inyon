@@ -12,6 +12,7 @@ import { copyText } from '../lib/clipboard.ts'
 import { isPhone } from '../lib/phone.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { ServerSheet } from './ServerSheet.tsx'
+import { LaptopSheet } from './LaptopSheet.tsx'
 
 /** Pairing a machine that connects out to the hub: nothing is opened on that machine. */
 export function PairMachine({ onClose, existing }: { onClose?: () => void; existing?: string }) {
@@ -93,11 +94,18 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
   )
 }
 
-type MachineSheetProps = { open: boolean; onClose: () => void; edit?: HostConfig }
+type MachineSheetProps = { open: boolean; onClose: () => void; edit?: HostConfig; link?: string }
 
-/** The hub adds machines by pairing or over its own SSH; the phone app SSHes in itself. */
+/**
+ * The hub adds machines by pairing or over its own SSH. The phone app pairs a laptop by its code,
+ * or SSHes into a server itself.
+ */
 export function MachineSheet(props: MachineSheetProps) {
-  return isPhone() ? <ServerSheet {...props} /> : <HubMachineSheet {...props} />
+  const [ssh, setSsh] = useState(false)
+  useOpened(props.open, props.edit?.id, () => setSsh(false))
+  if (!isPhone()) return <HubMachineSheet {...props} />
+  if (props.edit) return props.edit.kind === 'link' ? <LaptopSheet {...props} /> : <ServerSheet {...props} />
+  return ssh ? <ServerSheet {...props} onLaptop={() => setSsh(false)} /> : <LaptopSheet {...props} onServer={() => setSsh(true)} />
 }
 
 function HubMachineSheet({ open, onClose, edit }: MachineSheetProps) {

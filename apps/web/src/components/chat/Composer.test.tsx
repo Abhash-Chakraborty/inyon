@@ -135,3 +135,35 @@ describe('Composer send button', () => {
     expect(sendButton().disabled).toBe(true)
   })
 })
+
+describe('the phone app hands over keyboard images', () => {
+  test('a pasteFile event becomes an attachment, and stops when the composer goes', async () => {
+    const listeners: Record<string, ((e: unknown) => void)[]> = {}
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: {
+        TetherDevice: {
+          addListener: (e: string, f: (e: unknown) => void) => {
+            ;(listeners[e] ||= []).push(f)
+            return Promise.resolve({ remove: () => (listeners[e] = listeners[e]!.filter((x) => x !== f)) })
+          },
+        },
+      },
+    }
+    try {
+      const { unmount } = await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+      const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+      act(() => listeners.pasteFile!.forEach((f) => f({ name: 'sticker.png', type: 'image/png', data: png })))
+      await flush()
+      expect(screen.getByLabelText('Remove sticker.png')).toBeTruthy()
+      const [, , file] = api.upload.mock.calls.at(-1) as [string, string, File]
+      expect([file.name, file.type, file.size]).toEqual(['sticker.png', 'image/png', 70])
+      unmount()
+      await flush()
+      expect(listeners.pasteFile).toEqual([])
+    } finally {
+      delete (window as any).Capacitor
+    }
+  })
+})

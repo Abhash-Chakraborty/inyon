@@ -186,10 +186,14 @@ function listen(id: Identity, config: LinkConfig) {
   return server
 }
 
+// container and VM bridges only reach this machine's own guests, never a phone
+const VIRTUAL = /^(docker|br-|veth|virbr|vmnet|vboxnet|cni|flannel|podman|lxc|lxd|kube|cali|vEthernet)/i
+
 function lanUrls(port: number) {
-  return Object.values(os.networkInterfaces())
-    .flat()
-    .filter((a): a is os.NetworkInterfaceInfo => !!a && a.family === 'IPv4' && !a.internal)
+  return Object.entries(os.networkInterfaces())
+    .filter(([name]) => !VIRTUAL.test(name))
+    .flatMap(([, list]) => list ?? [])
+    .filter((a) => a.family === 'IPv4' && !a.internal)
     .map((a) => `ws://${a.address}:${port}/link`)
 }
 

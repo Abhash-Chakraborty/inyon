@@ -1,13 +1,13 @@
 import type { HostBackend } from './host.ts'
 import { nodeLinks } from './node-link.ts'
+import { fromBase64, toBase64 } from '../platform/base64.ts'
 
-const b64 = (u: Uint8Array) => Buffer.from(u).toString('base64')
 
 /** Machines running tether-node: commands travel over the node's outbound WebSocket. */
 export const nodeBackend: HostBackend = {
   exec(config, cmd, opts) {
     return new Promise((resolve, reject) => {
-      const input = opts.input === undefined ? undefined : typeof opts.input === 'string' ? b64(new TextEncoder().encode(opts.input)) : b64(opts.input)
+      const input = opts.input === undefined ? undefined : toBase64(opts.input)
       let op: ReturnType<typeof nodeLinks.start>
       const timer = setTimeout(() => {
         op?.send({ op: 'kill' })
@@ -52,7 +52,7 @@ export const nodeBackend: HostBackend = {
     let finish!: (code: number) => void
     const exited = new Promise<number>((r) => (finish = r))
     const op = nodeLinks.start(config.id, { op: 'pty', cmd, cols, rows }, (m) => {
-      if (m.type === 'data') onData(Buffer.from(m.data, 'base64'))
+      if (m.type === 'data') onData(fromBase64(m.data))
       else if (m.type === 'exit' || m.type === 'error') {
         op.done()
         finish(m.code ?? 1)

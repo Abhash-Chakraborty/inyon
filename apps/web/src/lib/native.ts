@@ -31,6 +31,16 @@ export function installNative() {
     if (href) go(href)
   })
   plugin('StatusBar')?.setOverlaysWebView({ overlay: true }).catch(() => {})
+  // a tether://pair link (a laptop's code scanned with the camera) opens the pairing sheet
+  plugin('App')?.addListener('appUrlOpen', ({ url }: { url: string }) => {
+    if (/^tether:\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
+  })
+  // back from the background: sockets may have died while the phone slept, so check them now
+  const resume = () => {
+    if (document.visibilityState === 'visible') import('./phone.ts').then(({ phone }) => phone()).then((r) => r.resume(), () => {})
+  }
+  plugin('App')?.addListener('resume', resume)
+  document.addEventListener('visibilitychange', resume)
 }
 
 /** Keeps the status bar text readable on the current theme. */
@@ -61,4 +71,19 @@ export async function askNativeNotifications() {
   } catch {
     return false
   }
+}
+
+/** A file the phone app handed over (keyboard image, clipboard), as base64. */
+export interface NativeFile {
+  name: string
+  type: string
+  data: string
+}
+
+export const nativeFile = (f: NativeFile) => new File([Uint8Array.from(atob(f.data), (c) => c.charCodeAt(0))], f.name || 'pasted', { type: f.type || 'application/octet-stream' })
+
+/** Listens to a native plugin event; returns a function that stops listening. */
+export function onNative<T>(name: string, event: string, fn: (e: T) => void) {
+  const handle = plugin(name)?.addListener(event, fn) as Promise<{ remove(): void }> | { remove(): void } | undefined
+  return () => void Promise.resolve(handle).then((h) => h?.remove())
 }

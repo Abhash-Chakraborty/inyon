@@ -155,6 +155,8 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     },
     resume() {
       links.resume()
+      // SSH connections that died in the background fail their next command; probe now, not at the next poll
+      for (const c of registry.configs()) registry.refresh(c.id, 0)
     },
     connect(send) {
       const c = newClient(send)

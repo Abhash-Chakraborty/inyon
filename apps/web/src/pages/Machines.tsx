@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Monitor, Pencil, Plug, Plus, RotateCcw, Save, Server, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@tether/protocol'
@@ -40,10 +40,17 @@ function PageHeader({ title, back, right }: { title: React.ReactNode; back?: str
 
 export function MachinesPage() {
   const hosts = useStore((s) => s.hosts)
-  const [sheet, setSheet] = useState(false)
+  // a pairing link opened from outside (a QR code scanned with the camera) lands here
+  const [params, setParams] = useSearchParams()
+  const pairLink = params.get('pair') ?? undefined
+  const [sheet, setSheet] = useState(!!pairLink)
+  const close = () => {
+    setSheet(false)
+    if (pairLink) setParams({}, { replace: true })
+  }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <PageHeader title={isPhone() ? 'Servers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add server' : 'Add machine'}</Button>} />
+      <PageHeader title="Machines" right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
       <div className="mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
         {hosts.map((h) => (
           <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-4 rounded-[16px] border border-line bg-elev p-4 transition-colors hover:border-line-strong">
@@ -56,7 +63,7 @@ export function MachinesPage() {
                 <HostDot status={h.status} />
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
-                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
+                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
               </div>
             </div>
             {/* on a phone the address needs the room more; the server page lists the agents */}
@@ -67,7 +74,7 @@ export function MachinesPage() {
           </Link>
         ))}
       </div>
-      <MachineSheet open={sheet} onClose={() => setSheet(false)} />
+      <MachineSheet open={sheet} onClose={close} link={pairLink} />
     </div>
   )
 }

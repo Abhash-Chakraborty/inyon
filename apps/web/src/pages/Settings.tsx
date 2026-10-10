@@ -10,10 +10,45 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
+import { batteryUnrestricted, keepAliveSupported, keepAliveWanted, openBatterySettings, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
+
+/** The phone app: stay connected while it's in the background, and Android's battery limits. */
+function Background() {
+  const [on, setOn] = useState(keepAliveWanted)
+  const [unrestricted, setUnrestricted] = useState<boolean | undefined>()
+  useEffect(() => {
+    const check = () => batteryUnrestricted().then(setUnrestricted)
+    check()
+    // back from the system settings page
+    document.addEventListener('visibilitychange', check)
+    return () => document.removeEventListener('visibilitychange', check)
+  }, [])
+  const toggle = (v: boolean) => {
+    setOn(v)
+    setKeepAlive(v).catch((err) => {
+      setOn(!v)
+      toast({ title: "Couldn't change that", body: (err as Error).message, tone: 'error' })
+    })
+  }
+  return (
+    <Section id="background" title="In the background">
+      <Row label="Stay connected" hint="Keeps your machines connected while Tether is closed, so alerts arrive right away. Shows a small ongoing notification and uses a little more battery.">
+        <Toggle on={on} onChange={toggle} label="Stay connected" />
+      </Row>
+      {unrestricted === false && (
+        <Row label="Battery limits" hint="Some phones stop background apps anyway. Set Tether to Unrestricted to keep it connected.">
+          <button type="button" onClick={openBatterySettings} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+            Open settings
+          </button>
+        </Row>
+      )}
+    </Section>
+  )
+}
 
 function Section({ id, title, desc, children }: { id?: string; title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -208,13 +243,15 @@ export function Settings() {
             </Row>
           </Section>
 
-          <Section id="machines" title={native ? 'Servers' : 'Machines'}>
+          {keepAliveSupported() && <Background />}
+
+          <Section id="machines" title="Machines">
             {hosts.map((h) => (
               <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3.5 hover:bg-hover/50">
                 <HostDot status={h.status} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium">{h.config.name}</span>
-                  <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : h.config.target} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
                 </span>
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>

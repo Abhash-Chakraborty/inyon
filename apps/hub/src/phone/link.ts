@@ -37,7 +37,7 @@ interface Conn {
 async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: string[]; hello: object }) {
   const machineKey = noiseKeyOf(o.id)
   const via = (url: string, ms: number) =>
-    new Promise<Awaited<ReturnType<typeof connect>>>((ok, fail) => {
+    new Promise<Awaited<ReturnType<typeof connect>> & { url: string }>((ok, fail) => {
       let ws: WebSocket
       try {
         ws = new WebSocket(url)
@@ -46,7 +46,7 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
       }
       const timer = setTimeout(() => (ws.close(), fail(new LinkError('TIMEOUT', `${new URL(url).host} didn't answer`))), ms)
       connect(wsWire(ws), { noise: o.noise, machineKey, hello: o.hello }).then(
-        (r) => (clearTimeout(timer), ok(r)),
+        (r) => (clearTimeout(timer), ok({ ...r, url })),
         (err) => (clearTimeout(timer), fail(err)),
       )
     })
@@ -81,6 +81,13 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
   throw new LinkError('TIMEOUT', found ? "The laptop isn't answering at its addresses. Is `tether-node link` running there?" : "Couldn't find the laptop online. Is `tether-node link` running there?")
 }
 
+/**
+ * Where to try next time: the laptop's own list, with the direct address that just worked first
+ * (a tunnel's address changes, so only a direct one is worth keeping when the laptop didn't list it).
+ */
+const addresses = (worked: string, listed: string[]) =>
+  [...new Set([...(worked.startsWith('ws://') || listed.includes(worked) ? [worked] : []), ...listed])]
+
 export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, saveAddresses: (id: string, urls: string[], relays: string[]) => void) {
   const conns = new Map<string, Conn>()
 
@@ -112,7 +119,7 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
         c.lastError = undefined
         c.channel = r.channel
         const welcome = r.welcome as Welcome
-        const urls = welcome.urls?.length ? welcome.urls : r.urls
+        const urls = addresses(r.url, welcome.urls?.length ? welcome.urls : r.urls)
         if (JSON.stringify([urls, welcome.relays ?? []]) !== JSON.stringify([c.config.urls ?? [], c.config.relays ?? []])) saveAddresses(c.config.id, urls, welcome.relays ?? [])
         const hostId = c.config.id
         const socket = { send: (raw: string) => r.channel.send(JSON.parse(raw)), close: (code?: number, reason?: string) => r.channel.close(code, reason) }
@@ -185,7 +192,7 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
       const r = await reach({ noise: await noise(), id: info.id, urls: info.urls, relays: info.relays, hello: { name: phoneName, pair: info.secret } })
       r.channel.close(1000, 'paired')
       const w = r.welcome as Welcome
-      return { ...w, urls: w.urls?.length ? w.urls : r.urls }
+      return { ...w, urls: addresses(r.url, w.urls?.length ? w.urls : r.urls) }
     },
   }
 }

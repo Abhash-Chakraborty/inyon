@@ -10,5 +10,8 @@
     "LocalNotifications": {
       "iconColor": "#d97757"
     }
+  },
+  "android": {
+    "allowMixedContent": true
   }
 }

@@ -17,6 +17,7 @@ import { PanePage } from './pages/PanePage.tsx'
 import { Settings } from './pages/Settings.tsx'
 import { MachinePage, MachinesPage } from './pages/Machines.tsx'
 import { installTapHaptics } from './lib/haptics.ts'
+import { installKeepAlive } from './lib/keepalive.ts'
 import { installNative, isNative, nativeTheme } from './lib/native.ts'
 
 function useTheme() {
@@ -83,6 +84,7 @@ function App() {
 
 installTapHaptics()
 installNative()
+installKeepAlive()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

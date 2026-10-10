@@ -6,6 +6,7 @@ import { haptic } from '../../lib/haptics.ts'
 import { api, type Uploaded } from '../../lib/api.ts'
 import { patchChat, toast, useStore } from '../../lib/store.ts'
 import { socket } from '../../lib/socket.ts'
+import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.ts'
 import { bytes } from '../../lib/format.ts'
 import { openMenu } from '../ui/primitives.tsx'
 
@@ -269,6 +270,14 @@ export function Composer({
       addFiles([new File([pasted], `pasted-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}.txt`, { type: 'text/plain' })], lines)
       return true
     }
+    // the phone app's own Paste can bring an image the WebView doesn't see: ask for it
+    if (!pasted && plugin('TetherDevice')?.readClipboardFile) {
+      plugin('TetherDevice')!.readClipboardFile().then(
+        (f: Partial<NativeFile>) => f?.data && addFiles([nativeFile(f as NativeFile)]),
+        (err: Error) => toast({ title: "Couldn't paste that", body: err.message, tone: 'error' }),
+      )
+      return true
+    }
     if (insertText && pasted) {
       setText((v) => (v ? `${v}${/\s$/.test(v) ? '' : ' '}${pasted}` : pasted))
       requestAnimationFrame(() => {
@@ -304,6 +313,18 @@ export function Composer({
       document.removeEventListener('paste', onDocPaste)
       document.removeEventListener('keydown', onKey)
     }
+  }, [disabled])
+
+  // the phone app: images from the keyboard (Gboard's clipboard, stickers, GIFs) arrive natively
+  const addRef = useRef(addFiles)
+  addRef.current = addFiles
+  useEffect(() => {
+    if (disabled) return
+    const stops = [
+      onNative<NativeFile>('TetherDevice', 'pasteFile', (f) => addRef.current([nativeFile(f)])),
+      onNative<{ message: string }>('TetherDevice', 'pasteError', (e) => toast({ title: "Couldn't paste that", body: e.message, tone: 'error' })),
+    ]
+    return () => stops.forEach((stop) => stop())
   }, [disabled])
 
   // the box is what this page is for: ready to type on arrival (not on phones, where that pops the keyboard)

@@ -1,18 +1,12 @@
 import type { HostConfig } from '@tether/protocol'
 import { shq, type ExecResult, type HostBackend } from '../hosts/host.ts'
 import type { SshPlugin } from './types.ts'
+import { fromBase64, toBase64 } from '../platform/base64.ts'
 
 /** How a server signs in, read from the phone's keystore when a connection opens. */
 export type Credentials = { password?: string; privateKey?: string; passphrase?: string; ed25519Seed?: string; ed25519Public?: string }
 
-export const toBase64 = (data: string | Uint8Array) => {
-  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  return btoa(s)
-}
-
-export const fromBase64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+export { toBase64, fromBase64 } from '../platform/base64.ts'
 
 /** "user@host" → its parts (the phone has no ~/.ssh/config, so the user is always given). */
 export function splitTarget(target = '') {

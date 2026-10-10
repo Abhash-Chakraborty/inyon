@@ -15,7 +15,7 @@ type Auth = ServerForm['auth']
  * Adding or editing a server in the phone app. The phone connects to it itself over SSH: you give
  * the address and how to sign in, then confirm the server's fingerprint the first time.
  */
-export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: () => void; edit?: HostConfig }) {
+export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; onClose: () => void; edit?: HostConfig; onLaptop?: () => void }) {
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')
   const [port, setPort] = useState('')
@@ -118,7 +118,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
       <form id="server-form" onSubmit={submit} className="space-y-4">
         {!edit && (
           <p className="text-[13px] leading-relaxed text-fg-2">
-            This phone connects to the server itself over SSH. Nothing runs in between and nothing is installed there. The phone has to be able to reach it: same Wi-Fi, or a VPN like Tailscale or NetBird.
+            This phone connects to the server itself over SSH. Nothing runs in between and nothing is installed there. The phone has to be able to reach it: same Wi-Fi, or a VPN like Tailscale or NetBird. A server on Tailscale SSH lets the phone in with no key or password.
           </p>
         )}
         <Field label="Name">
@@ -191,6 +191,11 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
               </span>
             </span>
           </div>
+        )}
+        {onLaptop && (
+          <button type="button" onClick={onLaptop} className="py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+            Pair a laptop instead
+          </button>
         )}
         {edit && known && !asking && (
           <button type="button" onClick={check} className="-my-1.5 py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
