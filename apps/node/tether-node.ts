@@ -12,7 +12,7 @@
  */
 import os from 'node:os'
 import path from 'node:path'
-import { appendFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import WIN_PRELUDE from './win-prelude.sh' with { type: 'text' }
 
 const VERSION = '0.3.0'
@@ -30,8 +30,24 @@ if (WIN) {
   console.error = write
 }
 const [hubArg, tokenArg] = process.argv.slice(2)
-const hub = (hubArg ?? process.env.TETHER_HUB ?? '').replace(/\/+$/, '')
-const token = tokenArg ?? process.env.TETHER_TOKEN ?? ''
+// the installers keep the hub address and token in ~/.tether-node/env (mode 600), so the token
+// never sits in the process list where other users could read it
+const saved = readEnvFile(path.join(os.homedir(), '.tether-node', 'env'))
+const hub = (hubArg ?? process.env.TETHER_HUB ?? saved.TETHER_HUB ?? '').replace(/\/+$/, '')
+const token = tokenArg ?? process.env.TETHER_TOKEN ?? saved.TETHER_TOKEN ?? ''
+
+function readEnvFile(file: string): Record<string, string> {
+  try {
+    return Object.fromEntries(
+      readFileSync(file, 'utf8').split(/\r?\n/).flatMap((l) => {
+        const m = l.match(/^(\w+)=(.*)$/)
+        return m ? [[m[1], m[2]]] : []
+      }),
+    )
+  } catch {
+    return {}
+  }
+}
 
 if (!hub || !token) {
   console.error('usage: tether-node <hub-url> <token>')
@@ -40,6 +56,8 @@ if (!hub || !token) {
 
 function isPrivate(url: URL) {
   const h = url.hostname
+  // IPv6 literals: loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
+  if (h.startsWith('[')) return /^\[(::1|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(h)
   if (h === 'localhost' || h === '::1' || /^127\./.test(h)) return true
   if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return true
   if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true // CGNAT range used by Tailscale and NetBird

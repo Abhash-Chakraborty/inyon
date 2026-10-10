@@ -51,7 +51,7 @@ UNIT
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>dev.tether.node</string>
-  <key>ProgramArguments</key><array><string>$BUN</string><string>$DIR/tether-node.ts</string><string>$HUB</string><string>$TOKEN</string></array>
+  <key>ProgramArguments</key><array><string>$BUN</string><string>$DIR/tether-node.ts</string></array>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
   <key>StandardErrorPath</key><string>$DIR/node.log</string>
 </dict></plist>
@@ -62,5 +62,6 @@ PL
     exit 0 ;;
 esac
 
-nohup "$BUN" "$DIR/tether-node.ts" "$HUB" "$TOKEN" >> "$DIR/node.log" 2>&1 &
+# reads the hub and token from $DIR/env, so the token isn't visible in ps
+nohup "$BUN" "$DIR/tether-node.ts" >> "$DIR/node.log" 2>&1 &
 echo "tether-node started in the background (log: $DIR/node.log)."
