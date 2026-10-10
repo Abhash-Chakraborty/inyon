@@ -1,7 +1,9 @@
 import { opencodeLive } from '../agents/opencode-controls.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
-import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState } from '@tether/protocol'
-import { loadHosts, loadSettings, saveHosts } from '../config.ts'
+import fs from 'node:fs'
+import path from 'node:path'
+import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@tether/protocol'
+import { DATA_DIR, loadHosts, loadSettings, saveHosts } from '../config.ts'
 import { Host, shq } from './host.ts'
 import { capturePanes, guessTranscript, probe, type ProbeResult } from '../tmux/tmux.ts'
 import { parseScreen } from '../claude/screen.ts'
@@ -17,6 +19,7 @@ import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.t
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
 import { sessionName } from './names.ts'
+import { pruneChats } from '../claude/chat-cache.ts'
 
 /** Fallback poll; tmux control mode delivers changes as they happen. */
 const POLL_MS = 4000
@@ -24,11 +27,16 @@ const MAX_BACKOFF_MS = 20000
 
 export type RegistryEvent =
   | { type: 'overview' }
-  | { type: 'notify'; host: string; pane: string; kind: 'waiting' | 'done'; title: string; body: string; agent?: string }
+  | { type: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: string }
   | { type: 'hook'; host: string; pane: string; event: any }
   | { type: 'pane-output'; host: string; pane: string }
 
 interface Runtime {
+  /** the "offline" notification went out for the current outage */
+  offlineNotified?: boolean
+  /** last snapshot written to disk (JSON of the sessions) and when */
+  savedSnapshot?: string
+  savedAt?: number
   host: Host
   state: HostState
   probe?: ProbeResult
@@ -72,6 +80,39 @@ const USAGE_STALE_MS = 20 * 60_000
 /** don't fight a tool that keeps rewriting settings.json */
 const HEAL_EVERY_MS = 10 * 60_000
 
+/** a machine that stops answering for this long gets an "offline" notification */
+const OFFLINE_NOTIFY_MS = 60_000
+const SNAPSHOT_DIR = path.join(DATA_DIR, 'snapshots')
+const snapshotFile = (id: string) => path.join(SNAPSHOT_DIR, `${id.replace(/[^\w.-]/g, '_')}.json`)
+
+/** The last state seen from a machine, so it still shows its sessions while it's unreachable. */
+function loadSnapshot(id: string): HostState | undefined {
+  try {
+    return JSON.parse(fs.readFileSync(snapshotFile(id), 'utf8')) as HostState
+  } catch {
+    return
+  }
+}
+function saveSnapshot(state: HostState) {
+  try {
+    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 })
+    const file = snapshotFile(state.config.id)
+    const tmp = `${file}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify({ ...state, config: publicConfig(state.config) }), { mode: 0o600 })
+    fs.renameSync(tmp, file)
+  } catch (e) {
+    console.error('snapshot:', (e as Error).message)
+  }
+}
+
+/** Sessions as last seen: nothing is known to be running or waiting any more. */
+function offlineSessions(sessions: SessionInfo[]): SessionInfo[] {
+  return sessions.map((s) => ({
+    ...s,
+    windows: s.windows.map((w) => ({ ...w, panes: w.panes.map((p) => (p.agent ? { ...p, agent: { ...p.agent, state: 'unknown' as const, waitingFor: undefined } } : p)) })),
+  }))
+}
+
 export const paneTitle = (p: PaneInfo) => p.title.replace(/^[^\w\s]\s+/u, '').trim()
 
 class Registry {
@@ -87,7 +128,7 @@ class Registry {
       if (!up) {
         rt.live?.stop()
         rt.events = undefined
-        rt.state = { ...rt.state, status: 'connecting', error: 'Waiting for the machine to connect (is tether-node running?)' }
+        this.markDown(rt, 'connecting', 'Waiting for the machine to connect (is tether-node running?)')
         this.emit({ type: 'overview' })
       }
       this.refresh(id, up ? 100 : 1000)
@@ -131,9 +172,14 @@ class Registry {
   }
 
   add(config: HostConfig, persist = true) {
+    // start from the last state seen, so a machine that's unreachable right now still shows
+    // its sessions (marked offline) until it answers again
+    const snap = loadSnapshot(config.id)
     const rt: Runtime = {
       host: new Host(config),
-      state: { config, status: 'connecting', integration: 'unknown', tmux: 'unknown', agents: [], sessions: [], updatedAt: 0 },
+      state: snap
+        ? { ...snap, config, status: 'connecting', error: undefined, latencyMs: undefined, sessions: offlineSessions(snap.sessions ?? []), lastSeen: snap.lastSeen ?? snap.updatedAt, offlineSince: snap.offlineSince }
+        : { config, status: 'connecting', integration: 'unknown', tmux: 'unknown', agents: [], sessions: [], updatedAt: 0 },
       failures: 0,
       polling: false,
       pollAgain: false,
@@ -188,6 +234,8 @@ class Registry {
     rt.live?.stop()
     this.hosts.delete(id)
     if (persist) {
+      fs.rmSync(snapshotFile(id), { force: true })
+      pruneChats(id)
       this.persist()
       this.emit({ type: 'overview' })
     }
@@ -230,7 +278,7 @@ class Registry {
   private async poll(rt: Runtime) {
     if (rt.stopped) return
     if (rt.host.config.kind === 'node' && !nodeLinks.isUp(rt.host.id)) {
-      rt.state = { ...rt.state, status: 'connecting', error: 'Waiting for the machine to connect (is tether-node running?)' }
+      this.markDown(rt, 'connecting', 'Waiting for the machine to connect (is tether-node running?)')
       rt.timer = setTimeout(() => this.poll(rt), 5000)
       return
     }
@@ -254,8 +302,11 @@ class Registry {
         latencyMs: pr.latencyMs,
         sessions: pr.sessions,
         updatedAt: Date.now(),
+        lastSeen: Date.now(),
       }
       rt.failures = 0
+      if (prev.offlineSince) this.cameBack(rt, prev.offlineSince)
+      this.snapshot(rt)
       this.diffNotify(rt, prev)
       if (pr.integration === 'installed' && !rt.events) this.watchEvents(rt)
       this.healIntegration(rt, pr).catch((e) => console.error('integration heal:', e?.message ?? e))
@@ -268,10 +319,9 @@ class Registry {
       rt.failures++
       next = Math.min(MAX_BACKOFF_MS, POLL_MS * 2 ** Math.min(rt.failures, 4))
       const error = String((err as Error)?.message ?? err)
-      if (rt.state.status !== 'error' || rt.state.error !== error) {
-        rt.state = { ...rt.state, status: 'error', error }
-        this.emit({ type: 'overview' })
-      }
+      const before = rt.state
+      this.markDown(rt, 'error', error)
+      if (before.status !== 'error' || before.error !== error || rt.state !== before) this.emit({ type: 'overview' })
     } finally {
       rt.polling = false
     }
@@ -281,6 +331,46 @@ class Registry {
       next = 100
     }
     rt.timer = setTimeout(() => this.poll(rt), next)
+  }
+
+  /**
+   * The machine isn't answering. The first time, its sessions become "last seen" (nothing is known
+   * to be running) and the outage starts; after a minute you're told once.
+   */
+  private markDown(rt: Runtime, status: 'connecting' | 'error', error: string) {
+    const st = rt.state
+    const offlineSince = st.offlineSince ?? (st.status === 'online' ? Date.now() : st.lastSeen ? Date.now() : undefined)
+    if (st.status === status && st.error === error && st.offlineSince === offlineSince) {
+      this.maybeNotifyOffline(rt)
+      return
+    }
+    rt.state = { ...st, status, error, latencyMs: undefined, offlineSince, sessions: st.status === 'online' ? offlineSessions(st.sessions) : st.sessions }
+    if (st.status === 'online') this.snapshot(rt, true)
+    this.maybeNotifyOffline(rt)
+  }
+
+  private maybeNotifyOffline(rt: Runtime) {
+    const since = rt.state.offlineSince
+    if (!since || rt.offlineNotified || Date.now() - since < OFFLINE_NOTIFY_MS) return
+    rt.offlineNotified = true
+    this.emit({ type: 'notify', host: rt.host.id, pane: '', kind: 'offline', title: `${rt.host.config.name} is offline`, body: 'Its sessions show as they were last seen. Tether reconnects by itself.' })
+  }
+
+  private cameBack(rt: Runtime, since: number) {
+    if (rt.offlineNotified) {
+      const mins = Math.max(1, Math.round((Date.now() - since) / 60_000))
+      this.emit({ type: 'notify', host: rt.host.id, pane: '', kind: 'online', title: `${rt.host.config.name} is back online`, body: `Reconnected after ${mins} min. Sessions are up to date.` })
+    }
+    rt.offlineNotified = false
+  }
+
+  /** Saves what the machine looks like now; skipped when nothing changed, at most every 15 s. */
+  private snapshot(rt: Runtime, force = false) {
+    const key = JSON.stringify(rt.state.sessions)
+    if (!force && (key === rt.savedSnapshot || Date.now() - (rt.savedAt ?? 0) < 15_000)) return
+    rt.savedSnapshot = key
+    rt.savedAt = Date.now()
+    saveSnapshot(rt.state)
   }
 
   /** Adds the agent, its session mapping, live status and on-screen state to each agent pane. */

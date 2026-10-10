@@ -21,6 +21,7 @@ import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import crypto from 'node:crypto'
 import { listModels } from './features/models.ts'
 import { sendOnce } from './claude/send-receipts.ts'
+import { pruneChats } from './claude/chat-cache.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
@@ -231,6 +232,7 @@ async function serveStatic(pathname: string) {
 const firstPassword = ensurePassword()
 registry.start()
 startUploadJanitor()
+pruneChats()
 setInterval(() => ensureSessions().catch(() => {}), 30_000)
 setTimeout(() => ensureSessions().catch(() => {}), 5_000)
 

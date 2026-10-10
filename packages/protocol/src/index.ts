@@ -145,6 +145,10 @@ export interface HostState {
   latencyMs?: number
   sessions: SessionInfo[]
   updatedAt: number
+  /** last successful check (ms); kept across hub restarts */
+  lastSeen?: number
+  /** when the machine stopped answering; its sessions are the last ones seen, saved on disk */
+  offlineSince?: number
 }
 
 // ---------- Chat (normalized Claude Code transcript) ----------
@@ -334,7 +338,7 @@ export type ServerMsg =
   | { t: 'chat.draft'; key: string; text: string; source: 'app' | 'terminal'; at: number }
   | { t: 'term.data'; id: string; d: string }
   | { t: 'term.exit'; id: string; reason?: string }
-  | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done'; title: string; body: string; agent?: AgentKind }
+  | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: AgentKind }
   | { t: 'pong' }
 
 export const chatKey = (host: string, pane: string) => `${host}:${pane}`

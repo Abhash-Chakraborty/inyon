@@ -16,6 +16,7 @@ import { newMeta, normalize, type TranscriptMeta } from './transcript.ts'
 import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
+import { loadChat, saveChat } from './chat-cache.ts'
 
 const PAGE = 160
 /** messages kept per open chat; older ones stay in the transcript file (and the terminal) */
@@ -42,7 +43,9 @@ class ChatWatcher {
   private agent?: AgentKind
   screen: ScreenState = { working: false, width: 0 }
   info: ChatInfo
-  private tail?: { kill(): void }
+  private tail?: { kill(): void; exited?: Promise<number> }
+  /** the transcript tail ended by itself (the machine dropped off): follow again once it's back */
+  private tailLost = false
   private transcript?: string
   private ready = false
   private pending: ChatItem[] = []
@@ -58,8 +61,38 @@ class ChatWatcher {
   constructor(public hostId: string, public paneId: string) {
     this.key = chatKey(hostId, paneId)
     this.info = this.emptyInfo()
+    this.fromCache()
     this.sync()
     this.pollScreen()
+  }
+
+  private onRemoteHost() {
+    return registry.get(this.hostId)?.host.config.kind !== 'local'
+  }
+
+  /** The machine isn't answering: show the conversation as it was last saved, if it's this session. */
+  private fromCache() {
+    const rt = registry.get(this.hostId)
+    if (!rt || rt.state.status === 'online' || !this.onRemoteHost()) return
+    const cached = loadChat(this.key)
+    const agent = registry.findPane(this.hostId, this.paneId)?.pane.agent
+    if (!cached || (agent?.sessionId && cached.sessionId && agent.sessionId !== cached.sessionId)) return
+    this.items = cached.items
+    this.info = { ...cached.info, running: !!agent }
+    this.ready = true
+  }
+
+  private cacheTimer?: ReturnType<typeof setTimeout>
+  /** Keeps the saved copy of a remote conversation current (at most every 10 s). */
+  private cacheLater() {
+    if (this.cacheTimer || !this.onRemoteHost()) return
+    this.cacheTimer = setTimeout(() => {
+      this.cacheTimer = undefined
+      if (this.stopped || !this.items.length) return
+      // still loading: try again once the whole conversation is in
+      if (!this.ready) return this.cacheLater()
+      saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items })
+    }, 10_000)
   }
 
   private emptyInfo(): ChatInfo {
@@ -204,6 +237,7 @@ class ChatWatcher {
   /** A very long session keeps only its latest messages in memory (in chunks, not on every push). */
   private trim() {
     if (this.items.length > KEEP + 500) this.items.splice(0, this.items.length - KEEP)
+    this.cacheLater()
   }
 
   more(s: Subscriber, before: number) {
@@ -227,7 +261,9 @@ class ChatWatcher {
     const found = registry.findPane(this.hostId, this.paneId)
     const agent = found?.pane.agent
     if (agent?.kind) this.agent = agent.kind
-    if (agent?.transcriptPath && agent.transcriptPath !== this.transcript) this.follow(agent.transcriptPath)
+    // a machine that isn't answering can't be read: keep what's shown (live or saved) until it's back
+    const online = registry.get(this.hostId)?.state.status === 'online'
+    if (online && agent?.transcriptPath && (agent.transcriptPath !== this.transcript || this.tailLost)) this.follow(agent.transcriptPath)
     if (!this.transcript && found && !agent?.transcriptPath) this.ready = true // nothing to read; show the empty state
     this.publishInfo()
   }
@@ -274,6 +310,7 @@ class ChatWatcher {
 
   private publishSnapshot(items: ChatItem[]) {
     this.items = items
+    this.cacheLater()
     const first = !this.ready
     this.ready = true
     this.publishInfo()
@@ -300,6 +337,7 @@ class ChatWatcher {
       }
       if (!this.snapshotTimer) this.snapshotTimer = setTimeout(rebuild, this.ready ? 350 : 600)
     })
+    this.watchTail(gen)
   }
 
   private followOpenCode(uri: string, gen: number) {
@@ -342,6 +380,7 @@ class ChatWatcher {
     this.tail = host.stream(`exec curl -sN ${shq(`${ep.base}/event`)}`, (line) => {
       if (gen === this.generation && line.startsWith('data:')) later()
     })
+    this.watchTail(gen)
     const poll = setInterval(() => (gen === this.generation && !this.stopped ? later() : clearInterval(poll)), 5000)
   }
 
@@ -393,8 +432,17 @@ class ChatWatcher {
     return ok
   }
 
+  /** Notices when the current tail stops without being asked to (an SSH or paired link dropped). */
+  private watchTail(gen: number) {
+    const t = this.tail
+    t?.exited?.then(() => {
+      if (gen === this.generation && this.tail === t && !this.stopped) this.tailLost = true
+    })
+  }
+
   private async follow(path: string) {
     this.tail?.kill()
+    this.tailLost = false
     this.transcript = path
     this.items = []
     this.meta = newMeta()
@@ -454,6 +502,7 @@ class ChatWatcher {
         this.scheduleInfo()
       }
     })
+    this.watchTail(gen)
   }
 
   private infoTimer?: ReturnType<typeof setTimeout>
@@ -546,6 +595,10 @@ class ChatWatcher {
 
   stop() {
     this.stopped = true
+    clearTimeout(this.cacheTimer)
+    if (this.ready && this.items.length && this.onRemoteHost() && registry.get(this.hostId)?.state.status === 'online') {
+      saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items })
+    }
     this.tail?.kill()
     clearTimeout(this.screenTimer)
     clearTimeout(this.flushTimer)
