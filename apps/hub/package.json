@@ -1,0 +1,19 @@
+{
+  "name": "@tether/hub",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "NODE_ENV=production bun src/index.ts",
+    "set-password": "bun src/cli/set-password.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tether/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  },
+  "license": "MIT"
+}
