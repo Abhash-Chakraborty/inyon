@@ -102,6 +102,41 @@ open ports.
 Each machine's **Setup** tab checks for tmux, Node.js and every agent, installs what's missing,
 and opens sign-in for each agent in a terminal.
 
+## When a machine drops off
+
+Machines on different networks drop off at different times: a server over NetBird, a laptop over
+Tailscale. The hub keeps the last thing it saw from each one on disk. An offline machine stays in
+the list as "Offline · last seen 5m ago", with its sessions and their recent conversation still
+readable. Sending is paused until it's back.
+
+When a machine has been gone for a minute you get a notification, and another when it reconnects.
+The hub then picks up each conversation where it left off.
+
+## Phone apps
+
+`apps/mobile` wraps the same web app for Android and iOS with Capacitor. The app asks for your hub
+address once, signs in with a token instead of a cookie, and adds haptics, system notifications
+and the Android back button. The hub only accepts tokens from the app's own origins, so a random
+page on `localhost` can't use your session.
+
+The apps are built in GitHub Actions (`.github/workflows/mobile.yml`): run it by hand or push a
+`v*` tag. Android gives an APK that installs directly. It's signed when the
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and
+`ANDROID_KEY_PASSWORD` secrets are set, otherwise it's a debug build. iOS gives an unsigned IPA,
+which you sign yourself (AltStore, Sideloadly, or Xcode with your own team).
+
+To build locally you need Android Studio or Xcode:
+
+```sh
+pnpm build
+cd apps/mobile
+bun node_modules/@capacitor/cli/bin/capacitor sync
+pnpm open:android   # or pnpm open:ios
+```
+
+Notifications arrive while the app is open or recently in the background. Phones close idle
+connections after a while, and real push (FCM, APNs) isn't wired up yet.
+
 ## Security
 
 The hub can run commands on every connected machine, so it should be reachable only by you. It
@@ -116,6 +151,7 @@ Paired machines connect out with per-machine tokens that you can revoke. See
 | `PORT` | `4777` | Hub port |
 | `BIND` | `127.0.0.1` | Address to listen on |
 | `TETHER_DATA_DIR` | `~/.tether` | Password hash, machine list, drafts, settings |
+| `TETHER_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
 | `TLS_CERT`, `TLS_KEY` | | Paths to a PEM certificate and key to serve HTTPS. Needed for a real installed app on phones (and clipboard images, notifications) |
 
 ## Development
@@ -131,6 +167,7 @@ cd apps/hub && bun test
 apps/hub           Bun server: machines, tmux, agent readers, API, WebSocket
 apps/web           React + Vite app (also served by the hub)
 apps/node          tether-node, the outbound connector for laptops
+apps/mobile        Capacitor shell for the Android and iOS apps
 packages/protocol  types and the agent registry shared by hub and app
 ```
 
