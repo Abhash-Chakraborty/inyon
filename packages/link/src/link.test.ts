@@ -19,7 +19,7 @@ test('z-base-32 round trips and ids are 52 characters', () => {
   expect(isMachineId(id.id)).toBe(true)
   expect(z32decode(z32encode(id.publicKey))).toEqual(id.publicKey)
   // the machine's Noise key follows from its id alone
-  expect(noiseKeyOf(id.id)).toEqual(id.noise.publicKey)
+  expect([...noiseKeyOf(id.id)]).toEqual([...id.noise.publicKey])
   expect(identityFromSeed(id.seed).id).toBe(id.id)
 })
 
