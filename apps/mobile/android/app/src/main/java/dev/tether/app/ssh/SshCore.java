@@ -505,6 +505,13 @@ public final class SshCore {
         final String user = c.username;
         String[] lastError = new String[1];
 
+        // Tailscale SSH (and any server that trusts the network itself) lets you in with no key or password
+        try {
+            if (conn.authenticateWithNone(user)) return;
+        } catch (IOException | RuntimeException e) {
+            if (link.lost) throw new SshException(UNREACHABLE, "connection lost during authentication: " + describe(e), e);
+        }
+
         if (c.ed25519Seed != null && c.ed25519Public != null) {
             if (c.ed25519Seed.length != 32 || c.ed25519Public.length != 32) {
                 throw new SshException(BAD_REQUEST, "ed25519Seed and ed25519Public must be 32 bytes each");
