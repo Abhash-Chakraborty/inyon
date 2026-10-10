@@ -35,26 +35,9 @@ export function issueCookie(secure: boolean) {
 
 export const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
 
-/**
- * The Tether phone apps load the web app from inside the app (these origins) and talk to your hub
- * across origins. They sign in with a token sent as a header (or, for the WebSocket, in the URL),
- * never with the cookie: a page that merely runs at http://localhost must not borrow a session.
- */
-export const APP_ORIGINS = new Set(['capacitor://localhost', 'http://localhost', 'https://localhost', 'ionic://localhost'])
-export const fromApp = (req: Request) => APP_ORIGINS.has(req.headers.get('origin') ?? '')
-
 function credential(req: Request) {
-  const bearer = req.headers.get('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1]
-  if (bearer) return bearer
-  if (fromApp(req)) return new URL(req.url).pathname === '/ws' ? new URL(req.url).searchParams.get('t') ?? undefined : undefined
   const raw = req.headers.get('cookie') ?? ''
   return raw.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`))?.[1]
-}
-
-/** A session token for the phone apps (the same signed value the cookie carries). */
-export function issueToken() {
-  const payload = Buffer.from(JSON.stringify({ exp: Date.now() + MAX_AGE * 1000, n: crypto.randomUUID(), iat: Date.now() })).toString('base64url')
-  return `${payload}.${sign(payload)}`
 }
 
 function session(req: Request): Session | undefined {

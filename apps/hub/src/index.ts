@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
-import { APP_ORIGINS, clearCookie, fromApp, isAuthed, issueCookie, issueToken, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { clearCookie, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, registry } from './hosts/registry.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
@@ -33,8 +33,6 @@ function sameOrigin(req: Request) {
   const origin = req.headers.get('origin')
   if (!origin) return true
   if (ALLOWED_ORIGINS.has(origin)) return true
-  // the phone apps authenticate with a token, never the cookie (see fromApp), so CSRF can't apply
-  if (APP_ORIGINS.has(origin)) return true
   try {
     const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
     return !!host && new URL(origin).host === host
@@ -43,38 +41,14 @@ function sameOrigin(req: Request) {
   }
 }
 
-/** Lets the phone apps (their own origins, see APP_ORIGINS) call the API. */
-function withCors(req: Request, res: Response) {
-  if (!fromApp(req)) return res
-  res.headers.set('Access-Control-Allow-Origin', req.headers.get('origin')!)
-  res.headers.set('Vary', 'Origin')
-  return res
-}
-const preflight = (req: Request) =>
-  fromApp(req)
-    ? new Response(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': req.headers.get('origin')!,
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE',
-          'Access-Control-Allow-Headers': 'authorization, content-type, x-tether-client',
-          'Access-Control-Max-Age': '600',
-          // the app's page is local and the hub usually sits on a private (tailnet) address
-          ...(req.headers.get('access-control-request-private-network') ? { 'Access-Control-Allow-Private-Network': 'true' } : {}),
-          Vary: 'Origin',
-        },
-      })
-    : new Response(null, { status: 403 })
-
-/** An API handler behind sign-in, the same-origin check and CORS for the phone apps. */
+/** An API handler behind sign-in and the same-origin check. */
 const api =
   (fn: Handler, open = false): Handler => {
     const run = handled(fn)
     return async (req) => {
-      if (req.method === 'OPTIONS') return preflight(req)
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return withCors(req, json({ error: 'Cross-site request refused' }, { status: 403 }))
-      if (!open && !isAuthed(req)) return withCors(req, json({ error: 'Not signed in' }, { status: 401 }))
-      return withCors(req, await run(req))
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
+      if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
+      return run(req)
     }
   }
 
@@ -170,7 +144,6 @@ const server = Bun.serve<SocketData>({
         if (hasPassword()) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
         setPassword(password)
         fs.rmSync(SETUP_CODE_FILE, { force: true })
-        if (fromApp(req)) return json({ ok: true, token: issueToken() })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }, true),
     },
@@ -183,9 +156,8 @@ const server = Bun.serve<SocketData>({
         }
         const problem = passwordProblem(String(b.next ?? ''))
         if (problem) throw new HttpError(400, problem)
-        // a new password signs out every other browser and phone; this one gets a fresh sign-in
+        // a new password signs out every other browser; this one gets a fresh sign-in
         setPassword(String(b.next))
-        if (fromApp(req)) return json({ ok: true, token: issueToken() })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }),
     },
@@ -198,8 +170,6 @@ const server = Bun.serve<SocketData>({
         const client = (loopback && req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()) || ip
         const r = await tryLogin(client, String(password ?? ''))
         if (!r.ok) return json({ error: r.error }, { status: 401 })
-        // the phone apps keep a token instead of a cookie
-        if (fromApp(req)) return json({ ok: true, token: issueToken() })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }, true),
     },
@@ -241,7 +211,6 @@ const server = Bun.serve<SocketData>({
   },
   async fetch(req, srv) {
     const url = new URL(req.url)
-    if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) return preflight(req)
     if (url.pathname === '/node') {
       // tether-node machines authenticate with their pairing token
       const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
