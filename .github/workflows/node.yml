@@ -1,0 +1,64 @@
+name: tether-node
+
+# Builds tether-node as single binaries (Bun included), so a laptop needs nothing else installed.
+#   push to main  -> refreshes the "node-latest" pre-release
+#   tag v1.2.3    -> attached to that release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['apps/node/**', 'packages/link/**', '.github/workflows/node.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: node-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: pnpm install --frozen-lockfile
+      - run: bun test
+        working-directory: apps/node
+
+      - name: Build
+        working-directory: apps/node
+        run: |
+          out="$RUNNER_TEMP/dist"
+          mkdir -p "$out"
+          for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
+            ext=""; [[ $t == windows-* ]] && ext=".exe"
+            bun build --compile --minify --target="bun-$t" tether-node.ts --outfile "$out/tether-node-$t$ext"
+          done
+          (cd "$out" && sha256sum tether-node-* > SHA256SUMS)
+          "$out/tether-node-linux-x64" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tether-node
+          path: ${{ runner.temp }}/dist
+
+      - name: Publish
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=("$RUNNER_TEMP"/dist/*)
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Tether ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
+          else
+            gh release delete node-latest --yes --cleanup-tag 2>/dev/null || true
+            gh release create node-latest "${files[@]}" --prerelease --target "$GITHUB_SHA" \
+              --title "Latest tether-node build" \
+              --notes "Built from $GITHUB_SHA on main. Run \`tether-node pair\` on a laptop and scan the code with the Tether app."
+          fi
