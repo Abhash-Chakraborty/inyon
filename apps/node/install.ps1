@@ -17,6 +17,10 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
+# A shell started over SSH or by another tool can miss the user's PATH (psmux usually lives in
+# ~\.local\bin); read it from the registry like a new terminal would.
+$env:Path = @([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environment]::GetEnvironmentVariable('Path', 'User'), $env:Path) -join ';'
+
 $Hub = $Hub.TrimEnd('/')
 if ($Token -notmatch '^[A-Za-z0-9_-]{20,}$') { throw 'That token does not look right. Copy the command again from the hub.' }
 
@@ -26,10 +30,28 @@ New-Item -ItemType Directory -Force -Path $Dir, $Bin | Out-Null
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'ARM64' { 'arm64' } default { 'x64' } }
 
+# VPN links drop now and then, and a hub restart cuts a download short: try a few times.
 function Get-File([string]$Url, [string]$Out) {
   $tmp = "$Out.download"
-  Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tmp
-  Move-Item -Force $tmp $Out
+  for ($i = 1; $i -le 4; $i++) {
+    try {
+      Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $tmp -TimeoutSec 900
+      Move-Item -Force $tmp $Out
+      return
+    } catch {
+      Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+      if ($i -eq 4) { throw "Could not download $Url ($($_.Exception.Message)). Check that this machine can reach the hub, then run the command again." }
+      Write-Host "  The download was interrupted; trying again ($i of 3)..."
+      Start-Sleep -Seconds (3 * $i)
+    }
+  }
+}
+
+function Expand-Gzip([string]$In, [string]$Out) {
+  $src = [IO.File]::OpenRead($In)
+  $gz = New-Object IO.Compression.GZipStream($src, [IO.Compression.CompressionMode]::Decompress)
+  $dst = [IO.File]::Create($Out)
+  try { $gz.CopyTo($dst) } finally { $dst.Dispose(); $gz.Dispose(); $src.Dispose() }
 }
 
 # Stop a running copy first, or Windows keeps the .exe locked.
@@ -39,8 +61,20 @@ Get-Process -Name 'tether-node' -ErrorAction SilentlyContinue | Stop-Process -Fo
 
 # 1. tether-node itself: the hub compiles tether-node.ts into a single .exe (Bun runtime included,
 #    console window hidden), so Bun does not have to be installed here.
-Write-Host 'Downloading tether-node...'
-Get-File "$Hub/node/tether-node.exe?arch=$arch" (Join-Path $Dir 'tether-node.exe')
+# It comes gzipped (about 40 MB instead of 86) and is checked against the hub's checksum.
+Write-Host 'Downloading tether-node (about 40 MB)...'
+$exePath = Join-Path $Dir 'tether-node.exe'
+Remove-Item -Force "$exePath.download" -ErrorAction SilentlyContinue
+for ($try = 1; ; $try++) {
+  $want = ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/tether-node.exe.sha256?arch=$arch")).Trim().ToLower()
+  Get-File "$Hub/node/tether-node.exe.gz?arch=$arch" "$exePath.gz"
+  Expand-Gzip "$exePath.gz" "$exePath.new"
+  Remove-Item -Force "$exePath.gz"
+  if ((Get-FileHash -Algorithm SHA256 "$exePath.new").Hash.ToLower() -eq $want) { Move-Item -Force "$exePath.new" $exePath; break }
+  Remove-Item -Force "$exePath.new"
+  if ($try -ge 2) { throw 'tether-node.exe did not arrive intact. Run the command again.' }
+  Write-Host '  The file did not match its checksum; downloading it again...'
+}
 
 # 2. A small POSIX shell (busybox-w32). The hub drives every machine with short sh scripts, and this
 #    keeps them working on Windows without Git Bash or WSL. Served (and pinned) by the hub.

@@ -1,6 +1,8 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
+import zlib from 'node:zlib'
 import { DATA_DIR } from '../config.ts'
 import { HttpError } from '../hosts/registry.ts'
 
@@ -83,6 +85,31 @@ async function nodeExe(arch: string) {
   })
 }
 
+/**
+ * The .exe gzipped (86 MB down to about 40 MB), which matters over a VPN. Compressed on a worker
+ * thread, once per build, so the hub keeps answering meanwhile.
+ */
+async function gzipped(file: string) {
+  const gz = `${file}.gz`
+  if (fs.existsSync(gz)) return gz
+  return once(gz, async () => {
+    await pipeline(fs.createReadStream(file), zlib.createGzip({ level: 6 }), fs.createWriteStream(`${gz}.tmp`))
+    fs.renameSync(`${gz}.tmp`, gz)
+    return gz
+  })
+}
+
+/** sha256 of a build, so the installer can tell a cut-off download from a whole one */
+async function sha256(file: string) {
+  const out = `${file}.sha256`
+  if (fs.existsSync(out)) return fs.readFileSync(out, 'utf8')
+  const h = crypto.createHash('sha256')
+  await pipeline(fs.createReadStream(file), h)
+  const hex = h.digest('hex')
+  fs.writeFileSync(out, hex)
+  return hex
+}
+
 async function busybox(arch: string) {
   const { file, sha256 } = BUSYBOX[arch]
   const out = path.join(OUT, file)
@@ -116,6 +143,8 @@ export const nodeRoutes = {
   '/node/install.ps1': route(() => text(path.join(NODE_DIR, 'install.ps1'))),
   '/node/tether-node.ts': route(async () => text(await nodeScript())),
   '/node/tether-node.exe': route(async (req) => binary(await nodeExe(archOf(new URL(req.url))), 'tether-node.exe')),
+  '/node/tether-node.exe.gz': route(async (req) => binary(await gzipped(await nodeExe(archOf(new URL(req.url)))), 'tether-node.exe.gz')),
+  '/node/tether-node.exe.sha256': route(async (req) => new Response(await sha256(await nodeExe(archOf(new URL(req.url)))), { headers: { 'content-type': 'text/plain' } })),
   '/node/busybox.exe': route(async (req) => binary(await busybox(archOf(new URL(req.url))), 'busybox.exe')),
 }
 
@@ -132,5 +161,7 @@ export function pairCommands(hub: string, token: string) {
 /** Builds the Windows binaries in the background so the first pairing doesn't wait for them. */
 export function prebuildNode() {
   nodeScript().catch(() => {})
-  nodeExe('x64').catch((e) => console.error('tether-node.exe build:', e?.message ?? e))
+  nodeExe('x64')
+    .then((f) => Promise.all([gzipped(f), sha256(f)]))
+    .catch((e) => console.error('tether-node.exe build:', e?.message ?? e))
 }
