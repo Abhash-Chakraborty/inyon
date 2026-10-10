@@ -88,7 +88,18 @@ export interface HubSettings {
 }
 
 export const api = {
-  session: () => request<{ authed: boolean }>('GET', '/api/session'),
+  session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean }>('GET', '/api/session'),
+  // a new hub: the first visit picks the password
+  createPassword: async (password: string, code?: string) => {
+    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/setup', { password, code })
+    if (r.token) setHubToken(r.token)
+    return r
+  },
+  changePassword: async (current: string, next: string) => {
+    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/password', { current, next })
+    if (r.token) setHubToken(r.token)
+    return r
+  },
   // the phone apps get a token back (a browser gets a cookie)
   login: async (password: string) => {
     const r = await request<{ ok: boolean; token?: string }>('POST', '/api/login', { password })

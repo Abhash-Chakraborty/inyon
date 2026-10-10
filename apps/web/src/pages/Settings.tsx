@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, ChevronRight, LogOut, Monitor, Moon, Sun, Vibrate } from 'lucide-react'
+import { Bell, ChevronRight, KeyRound, LogOut, Monitor, Moon, Sun, Vibrate } from 'lucide-react'
 import { AGENTS } from '@tether/protocol'
 import { api, type HubSettings } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Segmented, Spinner, Toggle } from '../components/ui/primitives.tsx'
+import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
 import { UploadsCard } from './Machines.tsx'
@@ -218,6 +218,7 @@ export function Settings() {
           </Section>
 
           <Section id="account" title="Account">
+            <ChangePassword />
             <button
               type="button"
               onClick={async () => {
@@ -233,5 +234,53 @@ export function Settings() {
         </div>
       </div>
     </div>
+  )
+}
+
+/** A new password signs out every other browser and phone; this one stays signed in. */
+function ChangePassword() {
+  const [open, setOpen] = useState(false)
+  const [current, setCurrent] = useState('')
+  const [next, setNext] = useState('')
+  const [again, setAgain] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const reset = () => (setOpen(false), setCurrent(''), setNext(''), setAgain(''), setError(''))
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50">
+        <KeyRound className="size-4 text-fg-3" /> Change password
+      </button>
+    )
+  }
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (next.length < 8) return setError('Use at least 8 characters.')
+    if (next !== again) return setError("The two new passwords don't match.")
+    setBusy(true)
+    try {
+      await api.changePassword(current, next)
+      haptic('success')
+      toast({ title: 'Password changed', body: 'Other devices need to sign in again.', tone: 'success' })
+      reset()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form onSubmit={save} className="space-y-2.5 px-4 py-4">
+      <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} placeholder="Current password" className={`${inputClass} h-11`} autoFocus />
+      <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="New password (8+ characters)" className={`${inputClass} h-11`} />
+      <input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} placeholder="New password again" className={`${inputClass} h-11`} />
+      {error && <p className="text-[13px] text-danger">{error}</p>}
+      <p className="text-[12.5px] text-fg-3">Every other browser and phone signed in to this hub will need the new password.</p>
+      <div className="flex justify-end gap-2 pt-1">
+        <Button type="button" variant="ghost" onClick={reset}>Cancel</Button>
+        <Button type="submit" variant="primary" loading={busy} disabled={!current || !next || !again}>Change password</Button>
+      </div>
+    </form>
   )
 }

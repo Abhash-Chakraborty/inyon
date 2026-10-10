@@ -71,13 +71,9 @@ export async function checkPassword(password: string) {
   return a.length === b.length && crypto.timingSafeEqual(a, b)
 }
 
-/** Generates and stores a password on first run so the hub is never open. */
-export function ensurePassword(): string | null {
-  if (hasPassword()) return null
-  const pw = crypto.randomBytes(9).toString('base64url')
-  setPassword(pw)
-  return pw
-}
+/** A password you can type on a phone, and long enough not to guess. */
+export const passwordProblem = (pw: string) =>
+  pw.length < 8 ? 'Use at least 8 characters.' : pw.length > 1024 ? 'That password is too long.' : undefined
 
 // ---------- hosts ----------
 

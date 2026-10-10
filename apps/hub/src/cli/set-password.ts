@@ -1,8 +1,10 @@
-import { setPassword } from '../config.ts'
+import { passwordProblem, setPassword } from '../config.ts'
 
-const pw = process.argv[2] ?? prompt('New Tether password:')
-if (!pw || pw.length < 8) {
-  console.error('Use at least 8 characters.')
+// for a forgotten password; otherwise change it in Settings
+const pw = process.argv[2] ?? prompt('New Tether password:') ?? ''
+const problem = passwordProblem(pw)
+if (problem) {
+  console.error(problem)
   process.exit(1)
 }
 setPassword(pw)

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { ServerWebSocket } from 'bun'
 import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@tether/protocol'
-import { BIND, DATA_DIR, PORT, ensurePassword, TLS } from './config.ts'
+import { BIND, DATA_DIR, PORT, TLS, checkPassword, hasPassword, passwordProblem, setPassword } from './config.ts'
 import { APP_ORIGINS, clearCookie, fromApp, isAuthed, issueCookie, issueToken, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
@@ -256,7 +256,14 @@ async function serveStatic(pathname: string) {
 
 // ---------- server ----------
 
-const firstPassword = ensurePassword()
+// A new hub has no password: the first visit creates one. It listens on localhost by default, so
+// only you can reach it then (through your own tunnel or VPN). Bound to a network address it is
+// open to that network, so creating the password also needs a one-time code from the hub's log.
+const SETUP_CODE_FILE = path.join(DATA_DIR, 'setup-code')
+const exposed = !/^(127\.|::1$|localhost$)/.test(BIND)
+const setupCode = !hasPassword() && exposed ? crypto.randomBytes(4).toString('hex') : undefined
+if (setupCode) fs.writeFileSync(SETUP_CODE_FILE, setupCode + '\n', { mode: 0o600 })
+const setupAttempts = { n: 0, reset: 0 }
 registry.start()
 startUploadJanitor()
 pruneChats()
@@ -282,8 +289,49 @@ const server = Bun.serve<SocketData>({
       const authed = isAuthed(req)
       // sliding sign-in: a session in use keeps going, one left alone for 30 days ends
       const cookie = authed ? refreshCookie(req, secureRequest(req)) : undefined
-      return json({ authed }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
+      return json({ authed, setup: !hasPassword(), setupCode: !!setupCode && !hasPassword() }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
     }, true),
+    '/api/setup': {
+      POST: api(async (req) => {
+        if (hasPassword()) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
+        const b = await body<{ password: string; code?: string }>(req, 8 * 1024)
+        const now = Date.now()
+        if (setupAttempts.reset < now) Object.assign(setupAttempts, { n: 0, reset: now + 60_000 })
+        if (setupCode) {
+          const code = String(b.code ?? '').trim().toLowerCase()
+          if (setupAttempts.n >= 8) throw new HttpError(429, 'Too many attempts. Try again in a minute.')
+          if (code.length !== setupCode.length || !crypto.timingSafeEqual(Buffer.from(code), Buffer.from(setupCode))) {
+            setupAttempts.n++
+            await Bun.sleep(400)
+            throw new HttpError(401, 'That setup code is not right. It is in the hub log, and in ~/.tether/setup-code.')
+          }
+        }
+        const password = String(b.password ?? '')
+        const problem = passwordProblem(password)
+        if (problem) throw new HttpError(400, problem)
+        // a second request racing this one finds the password already set
+        if (hasPassword()) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
+        setPassword(password)
+        fs.rmSync(SETUP_CODE_FILE, { force: true })
+        if (fromApp(req)) return json({ ok: true, token: issueToken() })
+        return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
+      }, true),
+    },
+    '/api/password': {
+      POST: api(async (req) => {
+        const b = await body<{ current: string; next: string }>(req, 8 * 1024)
+        if (!(await checkPassword(String(b.current ?? '')))) {
+          await Bun.sleep(400)
+          throw new HttpError(401, 'Your current password is not right')
+        }
+        const problem = passwordProblem(String(b.next ?? ''))
+        if (problem) throw new HttpError(400, problem)
+        // a new password signs out every other browser and phone; this one gets a fresh sign-in
+        setPassword(String(b.next))
+        if (fromApp(req)) return json({ ok: true, token: issueToken() })
+        return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
+      }),
+    },
     '/api/login': {
       POST: api(async (req) => {
         const { password } = await body<{ password: string }>(req, 8 * 1024)
@@ -627,11 +675,10 @@ const server = Bun.serve<SocketData>({
 
 console.log(`Tether hub listening on ${TLS ? 'https' : 'http'}://${server.hostname}:${server.port}`)
 prebuildNode()
-if (firstPassword) {
-  // a service's output ends up in the journal: only show the password on an interactive terminal
-  const file = path.join(DATA_DIR, 'initial-password')
-  fs.writeFileSync(file, firstPassword + '\n', { mode: 0o600 })
-  if (process.stdout.isTTY) console.log(`\n  First run: your Tether password is  ${firstPassword}`)
-  else console.log(`\n  First run: your Tether password is in ${file}`)
-  console.log('  Change it with: pnpm --filter @tether/hub set-password (then delete that file)\n')
+if (!hasPassword()) {
+  const where = `${TLS ? 'https' : 'http'}://${exposed ? server.hostname : 'localhost'}:${server.port}`
+  console.log(`
+  First run: open ${where} and create your password.`)
+  if (setupCode) console.log(`  It will ask for this setup code: ${setupCode} (also in ${SETUP_CODE_FILE})
+`)
 }
