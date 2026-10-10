@@ -11,10 +11,12 @@ type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent'
 export const Button = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'xs' | 'sm' | 'md' | 'lg'; loading?: boolean }
->(function Button({ variant = 'secondary', size = 'md', loading, className, children, disabled, ...rest }, ref) {
+>(function Button({ variant = 'secondary', size = 'md', loading, className, children, disabled, type = 'button', ...rest }, ref) {
   return (
     <button
       ref={ref}
+      // a button inside a form only submits it when asked to
+      type={type}
       disabled={disabled || loading}
       className={clsx(
         'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] font-medium transition-[background,color,border,opacity] disabled:opacity-45',
