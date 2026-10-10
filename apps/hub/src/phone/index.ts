@@ -6,6 +6,9 @@ import { setLocalHost } from '../config.ts'
 import { splitTarget, sshBackend, toBase64, fromBase64, type Credentials } from './ssh-backend.ts'
 import type { Handler, Method, Routes } from '../core.ts'
 import type { PhoneRuntime, StartPhone, SshPlugin } from './types.ts'
+import { identityFromSeed, parsePairLink } from '@tether/link'
+import { nodeBackend } from '../hosts/node-backend.ts'
+import { linkConnector } from './link.ts'
 
 /**
  * The phone app runs Tether's core itself and SSHes straight into your servers: no hub, no
@@ -17,11 +20,18 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   setLocalHost(undefined)
   const keys = phoneKeys(ssh)
   const conn = sshBackend(ssh, (config) => keys.credentials(config))
-  setHostBackends(() => conn.backend)
+  // laptops paired with `tether-node pair` take the same commands a hub sends to tether-node
+  setHostBackends((config) => (config.kind === 'link' ? nodeBackend : conn.backend))
 
   const core = await import('../core.ts')
   const { registry, HttpError } = await import('../hosts/registry.ts')
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, startCore } = core
+
+  const links = linkConnector(keys.noise, phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
+  const ensureLinks = () => {
+    for (const c of registry.configs()) if (c.kind === 'link') links.ensure(c)
+  }
+  registry.on((e) => e.type === 'overview' && ensureLinks())
 
   /** Server fields from the add/edit form; the secret goes to the keystore, the rest to the list. */
   const serverForm = (b: any, cur?: HostConfig) => {
@@ -76,12 +86,43 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         return json({ id })
       }),
     },
+    '/api/phone/pair': {
+      POST: api(async (req) => {
+        const b = await body(req)
+        const info = parsePairLink(String(b.link ?? ''))
+        if (!info) throw new HttpError(400, "That isn't a Tether pairing code. Run `tether-node pair` on the laptop and scan the code it shows.")
+        let welcome
+        try {
+          welcome = await links.pair(info)
+        } catch (err) {
+          throw new HttpError(502, (err as Error).message)
+        }
+        const same = registry.configs().find((c) => c.kind === 'link' && c.machineId === info.id)
+        const addresses = { urls: welcome.urls ?? info.urls, relays: welcome.relays ?? info.relays }
+        if (same) {
+          registry.note(same.id, addresses)
+          links.resume()
+          return json({ id: same.id })
+        }
+        const name = String(b.name ?? '').trim() || welcome.hostname || info.name || 'Laptop'
+        const id = newHostId(name)
+        registry.add({ id, name, kind: 'link', machineId: info.id, ...addresses })
+        return json({ id })
+      }),
+    },
     '/api/hosts/:id': {
       PATCH: api(async (req) => {
         const id = req.params.id
         const cur = registry.get(id)?.host.config
         if (!cur) throw new HttpError(404, 'Unknown server')
         const b = await body(req)
+        if (cur.kind === 'link') {
+          const name = String(b.name ?? '').trim()
+          if (!name) throw new HttpError(400, 'Give the laptop a name')
+          registry.note(id, { name })
+          registry.refresh(id, 0)
+          return ok()
+        }
         const cfg = serverForm(b, cur)
         const secret = secretFrom(b, cfg.auth)
         if (cfg.auth !== 'phone-key' && cfg.auth !== cur.auth && !secret) throw new HttpError(400, cfg.auth === 'password' ? 'Enter the password' : 'Paste the private key')
@@ -93,6 +134,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
       }),
       DELETE: api(async (req) => {
         const id = req.params.id
+        links.forget(id)
         await conn.forget(id)
         await keys.drop(id)
         registry.remove(id)
@@ -103,12 +145,16 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
 
   const router = makeRouter([phoneRoutes, coreRoutes])
   startCore()
+  ensureLinks()
 
   return {
     async fetch(req) {
       const { handler, params } = router(new URL(req.url).pathname, req.method as Method)
       if (!handler) return json({ error: 'Not found' }, { status: 404 })
       return handler(Object.assign(req, { params }))
+    },
+    resume() {
+      links.resume()
     },
     connect(send) {
       const c = newClient(send)
@@ -150,6 +196,12 @@ function makeRouter(tables: Routes[]) {
  * The phone's own SSH key (made on first use, one for every server, so you add one line to
  * authorized_keys) and each server's password or pasted key, all in the Android keystore.
  */
+/** What a laptop lists this phone as: its model when the WebView says it. */
+function phoneName() {
+  const model = /Android [\d.]+; ([^;)]+)/.exec(globalThis.navigator?.userAgent ?? '')?.[1]?.trim()
+  return model && model !== 'K' && !/^wv$/.test(model) ? model : 'Phone'
+}
+
 function phoneKeys(ssh: SshPlugin) {
   const KEY = 'phone-key'
   let mine: Promise<{ seed: Uint8Array; pub: Uint8Array }> | undefined
@@ -191,6 +243,10 @@ function phoneKeys(ssh: SshPlugin) {
       const saved = (await ssh.getSecret({ key: `server:${config.id}` })).value
       if (!saved) throw new Error('The sign-in for this server is missing. Edit it and enter it again.')
       return JSON.parse(saved)
+    },
+    /** The same key, in the form the encrypted link to a laptop uses. */
+    async noise() {
+      return identityFromSeed((await own()).seed).noise
     },
     save: (id: string, c: Credentials) => ssh.setSecret({ key: `server:${id}`, value: JSON.stringify(c) }),
     drop: (id: string) => ssh.deleteSecret({ key: `server:${id}` }).catch(() => {}),

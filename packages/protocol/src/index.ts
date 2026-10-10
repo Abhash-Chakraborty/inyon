@@ -4,7 +4,7 @@ import type { AgentKind } from './agents.ts'
 export * from './agents.ts'
 
 /** local: the hub itself · ssh: the hub connects out over SSH · node: the machine connects in to the hub (no open ports) */
-export type HostKind = 'local' | 'ssh' | 'node'
+export type HostKind = 'local' | 'ssh' | 'node' | 'link'
 
 export interface HostConfig {
   id: string
@@ -22,6 +22,11 @@ export interface HostConfig {
   tokenHash?: string
   /** node only: when the machine first connected with its token (unset while the command hasn't run) */
   pairedAt?: number
+  /** link only (a laptop the phone app paired with directly): its id, from `tether-node pair` */
+  machineId?: string
+  /** link only: where it was last reachable, and the relays it uses */
+  urls?: string[]
+  relays?: string[]
   /** put the Claude integration back when something replaces ~/.claude/settings.json */
   keepIntegration?: boolean
 }

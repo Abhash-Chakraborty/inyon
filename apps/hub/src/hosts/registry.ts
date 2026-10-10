@@ -105,6 +105,10 @@ function offlineSessions(sessions: SessionInfo[]): SessionInfo[] {
 
 export const paneTitle = (p: PaneInfo) => p.title.replace(/^[^\w\s]\s+/u, '').trim()
 
+/** What a machine reached through tether-node is waiting on. */
+const waitingFor = (c: HostConfig) =>
+  nodeLinks.why(c.id) ?? (c.kind === 'link' ? `Connecting to ${c.name}…` : 'Waiting for the machine to connect (is tether-node running?)')
+
 class Registry {
   private hosts = new Map<string, Runtime>()
   private listeners = new Set<(e: RegistryEvent) => void>()
@@ -118,7 +122,7 @@ class Registry {
       if (!up) {
         rt.live?.stop()
         rt.events = undefined
-        this.markDown(rt, 'connecting', 'Waiting for the machine to connect (is tether-node running?)')
+        this.markDown(rt, 'connecting', waitingFor(rt.host.config))
         this.emit({ type: 'overview' })
       }
       this.refresh(id, up ? 100 : 1000)
@@ -195,6 +199,14 @@ class Registry {
     this.add({ ...rt.host.config, ...patch, id })
   }
 
+  /** Records something about a machine that doesn't change how it's reached right now. */
+  note(id: string, patch: Partial<HostConfig>) {
+    const rt = this.hosts.get(id)
+    if (!rt) return
+    Object.assign(rt.host.config, patch)
+    this.persist()
+  }
+
   /** A fresh pairing token for a node: the old one stops working and it waits to be paired again. */
   setNodeToken(id: string, tokenHash: string) {
     const rt = this.hosts.get(id)
@@ -267,8 +279,8 @@ class Registry {
 
   private async poll(rt: Runtime) {
     if (rt.stopped) return
-    if (rt.host.config.kind === 'node' && !nodeLinks.isUp(rt.host.id)) {
-      this.markDown(rt, 'connecting', 'Waiting for the machine to connect (is tether-node running?)')
+    if ((rt.host.config.kind === 'node' || rt.host.config.kind === 'link') && !nodeLinks.isUp(rt.host.id)) {
+      this.markDown(rt, 'connecting', waitingFor(rt.host.config))
       rt.timer = setTimeout(() => this.poll(rt), 5000)
       return
     }

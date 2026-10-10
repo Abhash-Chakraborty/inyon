@@ -1,5 +1,3 @@
-import type { ServerWebSocket } from 'bun'
-
 /**
  * Machines running `tether-node` keep one outbound WebSocket to the hub. Commands travel over it
  * as JSON frames, so the machine never has to accept incoming connections.
@@ -11,10 +9,17 @@ export interface NodeSocketData {
   hostId: string
 }
 
+/** The hub's WebSocket from a node, or the phone's encrypted channel to a laptop. */
+export interface NodeSocket {
+  send(data: string): unknown
+  close(code?: number, reason?: string): unknown
+}
+
 type Handler = (msg: any) => void
 
 class NodeLinks {
-  private sockets = new Map<string, ServerWebSocket<NodeSocketData>>()
+  private sockets = new Map<string, NodeSocket>()
+  private errors = new Map<string, string>()
   private handlers = new Map<string, Handler>()
   private seq = 0
   private listeners = new Set<(hostId: string, up: boolean) => void>()
@@ -24,19 +29,32 @@ class NodeLinks {
     this.listeners.add(fn)
   }
 
-  attach(hostId: string, ws: ServerWebSocket<NodeSocketData>) {
+  attach(hostId: string, ws: NodeSocket) {
+    this.errors.delete(hostId)
     this.sockets.get(hostId)?.close(4000, 'replaced by a newer connection')
     this.sockets.set(hostId, ws)
     this.info.set(hostId, { connectedAt: Date.now() })
     for (const l of this.listeners) l(hostId, true)
   }
 
-  detach(hostId: string, ws: ServerWebSocket<NodeSocketData>) {
+  detach(hostId: string, ws: NodeSocket) {
     if (this.sockets.get(hostId) !== ws) return
     this.sockets.delete(hostId)
     // fail everything still waiting on this machine
     for (const [id, h] of this.handlers) if (id.startsWith(`${hostId}:`)) h({ type: 'error', error: 'The machine disconnected' })
     for (const l of this.listeners) l(hostId, false)
+  }
+
+  /** Couldn't connect (the phone's side): say why until it does. */
+  fail(hostId: string, error: string) {
+    if (this.sockets.has(hostId) || this.errors.get(hostId) === error) return
+    this.errors.set(hostId, error)
+    for (const l of this.listeners) l(hostId, false)
+  }
+
+  /** Why the machine isn't connected, when something more specific than "waiting" is known. */
+  why(hostId: string) {
+    return this.errors.get(hostId)
   }
 
   isUp(hostId: string) {
@@ -54,7 +72,11 @@ class NodeLinks {
     } catch {
       return
     }
-    if (msg.type === 'hello') {
+    this.receive(hostId, msg)
+  }
+
+  receive(hostId: string, msg: any) {
+    if (msg?.type === 'hello') {
       this.info.set(hostId, { version: msg.version, os: msg.os, connectedAt: Date.now() })
       return
     }

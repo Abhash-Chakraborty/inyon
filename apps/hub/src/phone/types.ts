@@ -60,6 +60,8 @@ export interface PhoneRuntime {
   /** Answers an /api request the way the hub would. */
   fetch(req: Request): Promise<Response>
   connect(send: (msg: ServerMsg) => void): PhoneConnection
+  /** The app is back in the foreground: check connections now, don't wait out a backoff. */
+  resume(): void
 }
 
 export type StartPhone = (o: { store: PhoneStore; ssh: SshPlugin }) => Promise<PhoneRuntime>
