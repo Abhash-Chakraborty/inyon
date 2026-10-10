@@ -17,19 +17,25 @@ class Socket {
   private timer?: ReturnType<typeof setTimeout>
   private pingTimer?: ReturnType<typeof setInterval>
   private started = false
+  /** when the hub last said anything; a socket that went quiet is dead even if it looks open */
+  private heard = 0
   up = false
 
   start() {
     if (this.started) return
     this.started = true
     this.connect()
-    document.addEventListener('visibilitychange', () => {
-      // phones suspend sockets in the background; reconnect right away on return
-      if (document.visibilityState === 'visible' && !this.up && this.ws?.readyState !== WebSocket.CONNECTING) {
-        clearTimeout(this.timer)
-        this.connect()
-      }
-    })
+    // phones suspend sockets in the background and drop them when the network changes (say from
+    // NetBird to Tailscale): reconnect right away on return instead of waiting for the backoff
+    const revive = () => {
+      if (document.visibilityState !== 'visible' || this.ws?.readyState === WebSocket.CONNECTING) return
+      if (this.up && Date.now() - this.heard < 30000) return this.raw({ t: 'ping' })
+      clearTimeout(this.timer)
+      this.retry = 0
+      this.connect()
+    }
+    document.addEventListener('visibilitychange', revive)
+    window.addEventListener('online', revive)
   }
 
   stop() {
@@ -46,6 +52,8 @@ class Socket {
       old.onclose = old.onmessage = old.onopen = null
       old.close()
     }
+    clearInterval(this.pingTimer)
+    if (this.up) this.setUp(false)
     const ws = new WebSocket(wsUrl())
     this.ws = ws
     ws.onopen = () => {
@@ -54,11 +62,17 @@ class Socket {
       this.setUp(true)
       if (this.overview) this.raw({ t: 'sub.overview' })
       for (const c of this.chats.values()) this.raw({ t: 'sub.chat', host: c.host, pane: c.pane })
+      this.heard = Date.now()
       clearInterval(this.pingTimer)
-      this.pingTimer = setInterval(() => this.raw({ t: 'ping' }), 25000)
+      this.pingTimer = setInterval(() => {
+        // two pings without an answer: the connection is gone
+        if (Date.now() - this.heard > 55000) return this.connect()
+        this.raw({ t: 'ping' })
+      }, 25000)
     }
     ws.onmessage = (e) => {
       if (this.ws !== ws) return
+      this.heard = Date.now()
       let msg: ServerMsg
       try {
         msg = JSON.parse(e.data)
