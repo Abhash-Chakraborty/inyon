@@ -1,0 +1,24 @@
+{
+  "name": "@tether/mobile",
+  "private": true,
+  "description": "The Tether phone apps: the web app in a native shell for Android and iOS.",
+  "scripts": {
+    "sync": "pnpm --filter @tether/web build && cap sync",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios",
+    "icons": "bun scripts/icons.ts"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/ios": "^8.5.3",
+    "@capacitor/local-notifications": "^8.3.1",
+    "@capacitor/status-bar": "^8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3",
+    "sharp": "^0.35.5"
+  }
+}
