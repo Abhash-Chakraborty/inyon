@@ -1,0 +1,230 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import clsx from 'clsx'
+import { Bell, ChevronRight, LogOut, Monitor, Moon, Sun, Vibrate } from 'lucide-react'
+import { AGENTS } from '@tether/protocol'
+import { api, type HubSettings } from '../lib/api.ts'
+import { toast, useStore } from '../lib/store.ts'
+import { haptic } from '../lib/haptics.ts'
+import { AgentLogo } from '../lib/skin.tsx'
+import { Segmented, Spinner, Toggle } from '../components/ui/primitives.tsx'
+import { HostDot } from '../components/ui/status.tsx'
+import { UploadsCard } from './Machines.tsx'
+import { Logo } from '../components/AppShell.tsx'
+
+function Section({ id, title, desc, children }: { id?: string; title: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <section id={id} className="scroll-mt-20">
+      <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+      {desc && <p className="mt-0.5 text-[13px] text-fg-3">{desc}</p>}
+      <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">{children}</div>
+    </section>
+  )
+}
+
+function Row({ label, hint, children }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5">
+      <div className="min-w-0 flex-[1_1_220px]">
+        <div className="text-[14px]">{label}</div>
+        {hint && <div className="mt-0.5 text-[12.5px] leading-snug text-fg-3">{hint}</div>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+const NAV = [
+  ['appearance', 'Appearance'],
+  ['agents', 'Agents'],
+  ['uploads', 'Uploads and clipboard'],
+  ['notifications', 'Notifications'],
+  ['machines', 'Machines'],
+  ['account', 'Account'],
+] as const
+
+export function Settings() {
+  const settings = useStore((s) => s.settings)
+  const set = useStore((s) => s.setSettings)
+  const hosts = useStore((s) => s.hosts)
+  const setAuthed = useStore((s) => s.setAuthed)
+  const [hub, setHub] = useState<HubSettings | null>(null)
+  const [perm, setPerm] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
+
+  useEffect(() => {
+    api.settings().then(setHub).catch(() => {})
+    const hash = location.hash.slice(1)
+    if (hash) setTimeout(() => document.getElementById(hash)?.scrollIntoView(), 50)
+  }, [])
+
+  const saveHub = async (p: Partial<HubSettings['uploads']>, extra: Partial<Omit<HubSettings, 'uploads'>> = {}) => {
+    if (!hub) return
+    const next = { ...hub, ...extra, uploads: { ...hub.uploads, ...p } }
+    setHub(next)
+    try {
+      setHub(await api.saveSettings(next))
+    } catch (e) {
+      toast({ title: 'Could not save', body: (e as Error).message, tone: 'error' })
+    }
+  }
+
+  const agentsByKind = Object.values(AGENTS).map((a) => ({ a, on: hosts.filter((h) => h.agents.includes(a.kind)).map((h) => h.config.name) }))
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur-md">
+        <div className="flex h-[52px] items-center gap-3 px-4 lg:px-7">
+          <span className="md:hidden">
+            <Logo />
+          </span>
+          <h1 className="text-[15px] font-semibold tracking-tight">Settings</h1>
+        </div>
+      </header>
+      <div className="mx-auto flex max-w-[1040px] gap-10 px-4 py-7 lg:px-7">
+        <nav className="sticky top-[76px] hidden h-fit w-[190px] shrink-0 space-y-0.5 lg:block">
+          {NAV.map(([id, label]) => (
+            <a key={id} href={`#${id}`} className="block rounded-[8px] px-2.5 py-1.5 text-[13px] text-fg-2 hover:bg-hover hover:text-fg">
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="min-w-0 flex-1 space-y-9 pb-16">
+          <Section id="appearance" title="Appearance">
+            <Row label="Theme">
+              <Segmented
+                value={settings.theme}
+                onChange={(theme) => set({ theme })}
+                options={[
+                  { v: 'light', label: <><Sun className="size-3.5" /> Light</> },
+                  { v: 'dark', label: <><Moon className="size-3.5" /> Dark</> },
+                  { v: 'system', label: <><Monitor className="size-3.5" /> Auto</> },
+                ]}
+              />
+            </Row>
+            <Row label="Match the agent inside sessions" hint="Each agent's colours, logo and reply font. Off keeps the neutral look everywhere.">
+              <div className="flex items-center gap-1.5">
+                {(['claude', 'codex', 'opencode', 'copilot'] as const).map((k) => (
+                  <AgentLogo key={k} kind={k} size={20} />
+                ))}
+                <span className="ml-2">
+                  <Toggle on={settings.agentSkins} onChange={(agentSkins) => set({ agentSkins })} label="Agent skins" />
+                </span>
+              </div>
+            </Row>
+            <Row label="Reply font" hint="Auto uses each agent's own: serif for Claude, sans for Codex, mono for OpenCode.">
+              <Segmented size="sm" value={settings.replyFont} onChange={(replyFont) => set({ replyFont })} options={[{ v: 'auto', label: 'Auto' }, { v: 'serif', label: 'Serif' }, { v: 'sans', label: 'Sans' }, { v: 'mono', label: 'Mono' }]} />
+            </Row>
+            <Row label="Tool calls in chat" hint="Everything shows each command, file and search with its timing, and background jobs with their live state. Compact folds long runs into a few lines.">
+              <Segmented size="sm" value={settings.toolDetail} onChange={(toolDetail) => set({ toolDetail })} options={[{ v: 'all', label: 'Everything' }, { v: 'compact', label: 'Compact' }]} />
+            </Row>
+            <Row label={<span className="flex items-center gap-2"><Vibrate className="size-4 text-fg-3" /> Haptic feedback</span>} hint="Taps, sends and answers buzz on phones (Android, and iPhone with iOS 17.4 or later).">
+              <Toggle on={settings.haptics} onChange={(haptics) => (set({ haptics }), haptics && setTimeout(() => haptic('success'), 30))} label="Haptics" />
+            </Row>
+          </Section>
+
+          <Section id="agents" title="Agents" desc="Found on your machines. Tether picks the right one for each pane automatically.">
+            {agentsByKind.map(({ a, on }) => (
+              <Row
+                key={a.kind}
+                label={
+                  <span className="flex items-center gap-3">
+                    <AgentLogo kind={a.kind} size={28} />
+                    <span>
+                      <span className="block font-medium">{a.name}</span>
+                      <span className="block text-[12px] text-fg-3">{on.length ? `On ${on.join(', ')}` : 'Not installed on any machine'}</span>
+                    </span>
+                  </span>
+                }
+              >
+                <div className="flex items-center gap-3 text-[12px] text-fg-3">
+                  <code className="rounded-[7px] border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch}</code>
+                  <span className={clsx('rounded-[6px] px-2 py-0.5 text-[11.5px]', a.chat ? 'bg-ok-soft text-ok' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
+                </div>
+              </Row>
+            ))}
+          </Section>
+
+          <section id="sessions" className="scroll-mt-20">
+            <h2 className="text-[15px] font-semibold tracking-tight">Live numbers</h2>
+            <p className="mt-0.5 text-[13px] text-fg-3">
+              Plan limits come from each machine's signed-in Claude account, the same numbers as /usage, so they follow account switches by themselves.
+            </p>
+            <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+              {!hub ? (
+                <div className="flex justify-center py-6"><Spinner /></div>
+              ) : (
+                <Row label="Restart sessions that stop reporting" hint="When a session's settings are swapped under it, its cost and effort stop updating. If on, Tether resumes it once it's idle, with nothing typed and no background shells.">
+                  <Toggle on={!!hub.autoResume} onChange={(v) => saveHub({}, { autoResume: v })} label="Restart sessions that stop reporting" />
+                </Row>
+              )}
+            </div>
+          </section>
+
+          <section id="uploads" className="scroll-mt-20">
+            <h2 className="text-[15px] font-semibold tracking-tight">Uploads and clipboard</h2>
+            <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.tether/uploads on the session's machine, and the agent gets their paths.</p>
+            <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+              {!hub ? (
+                <div className="flex justify-center py-6"><Spinner /></div>
+              ) : (
+                <>
+                  <Row label="Delete uploads after" hint="Checked every few hours on every connected machine.">
+                    <Segmented size="sm" value={String(hub.uploads.retentionDays)} onChange={(v) => saveHub({ retentionDays: Number(v) })} options={[{ v: '1', label: '1 day' }, { v: '7', label: '7 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
+                  </Row>
+                  <Row label="Largest file">
+                    <Segmented size="sm" value={String(hub.uploads.maxMB)} onChange={(v) => saveHub({ maxMB: Number(v) })} options={[{ v: '25', label: '25 MB' }, { v: '100', label: '100 MB' }, { v: '500', label: '500 MB' }]} />
+                  </Row>
+                </>
+              )}
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {hosts.map((h) => (
+                <UploadsCard key={h.config.id} host={h} compact />
+              ))}
+            </div>
+          </section>
+
+          <Section id="notifications" title="Notifications">
+            <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
+              <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />
+            </Row>
+            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!window.isSecureContext ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : 'Alerts while Tether is in the background'}>
+              {perm !== 'granted' && perm !== 'unsupported' && window.isSecureContext && (
+                <button type="button" onClick={() => Notification.requestPermission().then(setPerm)} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+                  Allow
+                </button>
+              )}
+            </Row>
+          </Section>
+
+          <Section id="machines" title="Machines">
+            {hosts.map((h) => (
+              <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3.5 hover:bg-hover/50">
+                <HostDot status={h.status} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-medium">{h.config.name}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{h.config.kind === 'local' ? 'This hub' : h.config.target} · integration {h.integration === 'installed' ? 'on' : 'off'}</span>
+                </span>
+                <ChevronRight className="size-4 text-fg-3" />
+              </Link>
+            ))}
+          </Section>
+
+          <Section id="account" title="Account">
+            <button
+              type="button"
+              onClick={async () => {
+                await api.logout().catch(() => {})
+                setAuthed(false)
+              }}
+              className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium text-danger hover:bg-danger-soft/50"
+            >
+              <LogOut className="size-4" /> Sign out
+            </button>
+          </Section>
+          <p className="text-center text-[12px] text-fg-3">Tether 0.2 · agent marks belong to their owners</p>
+        </div>
+      </div>
+    </div>
+  )
+}
