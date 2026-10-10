@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, ChevronRight, KeyRound, LogOut, Monitor, Moon, Sun, Vibrate } from 'lucide-react'
+import { Bell, ChevronRight, Copy, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
 import { AGENTS } from '@tether/protocol'
 import { api, type HubSettings } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -10,6 +10,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
+import { hubBase } from '../lib/hub.ts'
+import { copyText } from '../lib/clipboard.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 
@@ -41,6 +43,7 @@ const NAV = [
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
   ['machines', 'Machines'],
+  ['devices', 'Other devices'],
   ['account', 'Account'],
 ] as const
 
@@ -217,6 +220,8 @@ export function Settings() {
             ))}
           </Section>
 
+          <OtherDevices />
+
           <Section id="account" title="Account">
             <ChangePassword />
             <button
@@ -282,5 +287,38 @@ function ChangePassword() {
         <Button type="submit" variant="primary" loading={busy} disabled={!current || !next || !again}>Change password</Button>
       </div>
     </form>
+  )
+}
+
+/** Where to open Tether from a phone or another computer: this same hub address. */
+function OtherDevices() {
+  const address = isNative() ? hubBase() : window.location.origin
+  const local = /^https?:\/\/(localhost|127\.)/.test(address)
+  const https = address.startsWith('https:')
+  return (
+    <Section id="devices" title="Your other devices" desc="Everything runs on this hub. Open the same address anywhere you want Tether.">
+      <Row
+        label="Hub address"
+        hint={local ? 'This is the hub machine itself. Other devices use its Tailscale or NetBird name or IP with the same port.' : undefined}
+      >
+        <button
+          type="button"
+          onClick={() => copyText(address).then((ok) => ok && toast({ title: 'Address copied', tone: 'success' }))}
+          className="flex max-w-full items-center gap-2 rounded-[9px] border border-line-strong px-3 py-1.5 font-mono text-[12.5px] hover:bg-hover"
+        >
+          <span className="truncate">{address}</span>
+          <Copy className="size-3.5 shrink-0 text-fg-3" />
+        </button>
+      </Row>
+      <Row
+        label={<span className="flex items-center gap-2"><Smartphone className="size-4 text-fg-3" /> On your phone</span>}
+        hint={
+          <>
+            Open the address in the phone's browser while it's on the same Tailscale or NetBird network, or install the Android app and type the address in.
+            {!https && !isNative() && ' Adding it to the home screen as an app, with notifications, needs the hub on HTTPS.'}
+          </>
+        }
+      />
+    </Section>
   )
 }

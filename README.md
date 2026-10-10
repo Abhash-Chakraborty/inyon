@@ -84,11 +84,30 @@ pnpm build
 pnpm start
 ```
 
-The hub listens on `127.0.0.1:4777` and prints a generated password on first start. Change it
-with `pnpm --filter @tether/hub set-password`.
+The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password.
+Change it later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
 
 Open it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
 put it behind an HTTPS reverse proxy. To keep it running, see `deploy/tether-hub.service`.
+
+## Where everything runs
+
+There's one thing to host: the hub. It's a single Bun process on a machine that stays on, like a
+home server, a VPS or a desktop that doesn't sleep. The hub serves the web app itself, so there's
+nothing to deploy to Vercel or a CDN.
+
+- **In a browser**, the hub's address is the app: `http://my-server:4777` over Tailscale or
+  NetBird, or `https://tether.example.com` behind a reverse proxy. The same page works on a phone.
+- **Installed on a phone** from the browser ("Add to Home Screen"), with system notifications, it
+  needs HTTPS. Put the hub behind Caddy or `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`.
+- **The Android app** comes from the GitHub release. Open it and type the hub address once. Plain
+  http is fine there, as long as the phone is on the same Tailscale or NetBird network as the hub.
+- **Other machines** don't host anything. They run tmux and your agents, and the hub reaches them
+  as described below.
+
+Don't open port 4777 to the internet without HTTPS. The hub can run commands on every machine
+you add, so anyone who can reach it gets to try your password. Settings shows the address to use
+on your other devices.
 
 ## Adding machines
 
@@ -133,6 +152,8 @@ cd apps/mobile
 bun node_modules/@capacitor/cli/bin/capacitor sync
 pnpm open:android   # or pnpm open:ios
 ```
+
+iOS isn't being built for now; the project is there for later.
 
 Notifications arrive while the app is open or recently in the background. Phones close idle
 connections after a while, and real push (FCM, APNs) isn't wired up yet.
