@@ -1,8 +1,6 @@
 import { expect, test } from 'bun:test'
 import { SendReceipts } from './send-receipts.ts'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import { kv } from '../platform/store.ts'
 
 const receipts = new SendReceipts()
 const sendOnce = receipts.sendOnce.bind(receipts)
@@ -24,9 +22,8 @@ test('a rejected send can be retried with the same id', async () => {
 })
 
 test('accepted and interrupted sends remain protected after a hub restart', async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tether-send-test-'))
+  const file = `send-test-${crypto.randomUUID()}`
   try {
-    const file = path.join(directory, 'receipts.json')
     const before = new SendReceipts(file)
     await before.sendOnce('accepted', 'hello', async () => undefined)
     let finish!: () => void
@@ -37,8 +34,8 @@ test('accepted and interrupted sends remain protected after a hub restart', asyn
     await after.sendOnce('accepted', 'hello', async () => { duplicates++ })
     await expect(after.sendOnce('interrupted', 'world', async () => { duplicates++ })).rejects.toThrow('hub restarted')
     expect(duplicates).toBe(0)
-    expect(fs.readFileSync(file, 'utf8')).not.toContain('hello')
+    expect(JSON.stringify(kv.get(file))).not.toContain('hello')
     finish()
     await pending
-  } finally { fs.rmSync(directory, { recursive: true }) }
+  } finally { kv.del(file) }
 })

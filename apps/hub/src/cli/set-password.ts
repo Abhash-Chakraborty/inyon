@@ -1,4 +1,5 @@
-import { passwordProblem, setPassword } from '../config.ts'
+import '../env.ts'
+import { passwordProblem, setPassword } from '../password.ts'
 
 // for a forgotten password; otherwise change it in Settings
 const pw = process.argv[2] ?? prompt('New Tether password:') ?? ''

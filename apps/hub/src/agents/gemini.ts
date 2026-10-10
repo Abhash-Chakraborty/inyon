@@ -1,4 +1,4 @@
-import crypto from 'node:crypto'
+import { sha256Hex } from '../platform/store.ts'
 import type { ChatItem } from '@tether/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'
@@ -19,7 +19,7 @@ export async function guessGeminiSession(
   const r = await host.exec(
     `find ${shq(home + '/.gemini/tmp')} -path '*/chats/session-*.json*' -mmin -${ageMin} 2>/dev/null | while read -r f; do echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $f $(head -c 3000 "$f" | head -n 1)"; done`,
   )
-  const hash = proc.cwd ? crypto.createHash('sha256').update(proc.cwd).digest('hex') : ''
+  const hash = proc.cwd ? sha256Hex(proc.cwd) : ''
   const rows = r.stdout
     .split('\n')
     .map((l) => l.match(/^(\d+) (\S+) (.*)$/))

@@ -1,3 +1,4 @@
+import { sleep } from '../platform/store.ts'
 import { AGENTS, agyModelId, type AgentKind } from '@tether/protocol'
 import { shq } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
@@ -151,7 +152,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
     // Claude, Codex and agy show their input box, so the text can be checked into place before Enter
     if (!CHECKED.has(found.pane.agent.kind)) {
       await typeText(host, paneId, text)
-      await Bun.sleep(300)
+      await sleep(300)
       await sendKeys(host, paneId, ['Enter'])
       watchers.peek(hostId, paneId)?.draftSent()
       return nudge(hostId, paneId)
@@ -173,7 +174,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
         if (draft) await clearInput(hostId, paneId, draft.split('\n').length + 2)
         await typeText(host, paneId, text)
         for (let i = 0; i < 15; i++) {
-          await Bun.sleep(i < 3 ? 80 : 150)
+          await sleep(i < 3 ? 80 : 150)
           const now = await currentScreen(hostId, paneId)
           draft = now.draft
           readable = !!now.inputVisible
@@ -191,7 +192,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       }
       await sendKeys(host, paneId, [isCodex && beforeSubmit?.working && !text.trimStart().startsWith('!') ? 'Tab' : 'Enter'])
       for (let i = 0; i < 8; i++) {
-        await Bun.sleep(140)
+        await sleep(140)
         const s = await currentScreen(hostId, paneId)
         // a command that opens the agent's own menu (e.g. a bare /model) has arrived once the menu shows
         const slash = text.trimStart().startsWith('/')
@@ -222,7 +223,7 @@ export async function inputAnswer(hostId: string, paneId: string, text: string) 
   const s = await currentScreen(hostId, paneId)
   if (!s.prompt?.input) throw new HttpError(409, 'That prompt is no longer on screen')
   await typeText(host, paneId, text)
-  await Bun.sleep(250)
+  await sleep(250)
   await sendKeys(host, paneId, ['Enter'])
   nudge(hostId, paneId)
 }
@@ -283,7 +284,7 @@ export async function answer(hostId: string, paneId: string, option: number, tex
   }
   await sendKeys(host, paneId, [String(option)])
   if (text?.trim()) {
-    await Bun.sleep(250)
+    await sleep(250)
     await typeText(host, paneId, text, true)
   }
   nudge(hostId, paneId)
@@ -311,7 +312,7 @@ async function openCodeReady(hostId: string, paneId: string) {
 async function waitScreen(hostId: string, paneId: string, done: (s: Awaited<ReturnType<typeof currentScreen>>) => boolean, ms = 2000) {
   let s = await currentScreen(hostId, paneId)
   for (let t = 0; !done(s) && t < ms; t += 150) {
-    await Bun.sleep(150)
+    await sleep(150)
     s = await currentScreen(hostId, paneId)
   }
   return s
@@ -372,7 +373,7 @@ async function openCodeModel(hostId: string, paneId: string, id: string) {
     const menu = await waitScreen(hostId, paneId, (s) => s.inputVisible === false, 2500)
     if (menu.inputVisible !== false) throw new HttpError(409, 'OpenCode did not open its model menu. Open the terminal to check.')
     await typeText(host, paneId, model.label.split(' · ').pop()!)
-    await Bun.sleep(350)
+    await sleep(350)
     await sendKeys(host, paneId, ['Enter'])
     // the footer shows the new model at once, even under the "Select variant" menu that the first
     // pick of a model with variants opens (closed below with Esc, which keeps the default)
@@ -451,7 +452,7 @@ async function setPaneMode(hostId: string, paneId: string, target: string) {
     if (kind === 'antigravity' && !s.inputVisible) throw new HttpError(409, 'Antigravity input is not visible. Open the terminal to check.')
     if ((s.mode !== undefined && want.test(s.mode.trim())) || (kind === 'claude' && s.mode === undefined && target === 'default')) return nudge(hostId, paneId)
     await sendKeys(host, paneId, ['BTab'])
-    await Bun.sleep(260)
+    await sleep(260)
   }
   throw new HttpError(409, 'That mode is not available in this session')
 }
@@ -470,7 +471,7 @@ const bare = (label: string) => label.replace(/\s*\((default|current)\)/gi, '').
 /** Waits for a Codex menu whose body matches `title`; undefined if the composer came back instead. */
 async function codexMenu(hostId: string, paneId: string, title: RegExp) {
   for (let i = 0; i < 30; i++) {
-    await Bun.sleep(150)
+    await sleep(150)
     const s = await currentScreen(hostId, paneId)
     if (s.prompt?.body.some((l) => title.test(l))) return s.prompt
     if (i > 12 && !s.prompt && s.model) return undefined
@@ -484,7 +485,7 @@ async function codexChoose(hostId: string, paneId: string, p: { options: { n: nu
   const from = p.options.find((o) => o.selected)?.n ?? 1
   const d = n - from
   await sendKeys(host, paneId, [...Array(Math.abs(d)).fill(d > 0 ? 'Down' : 'Up')])
-  await Bun.sleep(120)
+  await sleep(120)
   await sendKeys(host, paneId, [key])
 }
 
@@ -492,7 +493,7 @@ async function codexChoose(hostId: string, paneId: string, p: { options: { n: nu
 async function codexComposer(hostId: string, paneId: string, ms = 4000) {
   let s = await currentScreen(hostId, paneId)
   for (let t = 0; !s.model && !s.prompt && t < ms; t += 150) {
-    await Bun.sleep(150)
+    await sleep(150)
     s = await currentScreen(hostId, paneId)
   }
   return s
@@ -509,8 +510,8 @@ async function codexCommand(hostId: string, paneId: string, cmd: string) {
   if (s.draft) await clearInput(hostId, paneId, s.draft.split('\n').length + 2)
   await typeText(host, paneId, cmd)
   // an Enter that lands while Codex is still taking in the typing gets lost
-  for (let i = 0; i < 10 && (await currentScreen(hostId, paneId)).draft?.trim() !== cmd; i++) await Bun.sleep(100)
-  await Bun.sleep(400)
+  for (let i = 0; i < 10 && (await currentScreen(hostId, paneId)).draft?.trim() !== cmd; i++) await sleep(100)
+  await sleep(400)
   await sendKeys(host, paneId, ['Enter'])
 }
 
@@ -617,10 +618,10 @@ export async function codexRewind(hostId: string, paneId: string, text?: string)
   if (s.draft) await clearInput(hostId, paneId, s.draft.split('\n').length + 2)
   const browse = async () => codexBrowsing((await capturePanes(host, [paneId])).get(paneId) ?? [])
   await sendKeys(host, paneId, ['Escape'])
-  await Bun.sleep(200)
+  await sleep(200)
   await sendKeys(host, paneId, ['Escape'])
   let b: { selected?: string; screen?: string } | undefined
-  for (let i = 0; i < 10 && !(b = await browse())?.selected; i++) await Bun.sleep(150)
+  for (let i = 0; i < 10 && !(b = await browse())?.selected; i++) await sleep(150)
   if (!b?.selected) {
     if (b) await sendKeys(host, paneId, ['Escape'])
     throw new HttpError(409, 'Codex has no earlier message to go back to')
@@ -635,13 +636,13 @@ export async function codexRewind(hostId: string, paneId: string, text?: string)
     }
     // ←/→ step between your messages (↑/↓ only scroll)
     await sendKeys(host, paneId, ['Left'])
-    await Bun.sleep(150)
+    await sleep(150)
     const before = b!.screen
     b = await browse()
     // nothing moved: the oldest message, so it isn't there (two messages can read the same, so
     // compare the whole screen, not just the highlighted text)
     if (b?.screen === before) {
-      await Bun.sleep(200)
+      await sleep(200)
       b = await browse()
     }
     if (!b?.selected || b.screen === before) break
@@ -670,7 +671,7 @@ async function pickCodexMode(hostId: string, paneId: string, target: string) {
   if (!label) throw new HttpError(400, 'Unknown mode')
   if (inPlan) {
     await sendKeys(host, paneId, ['BTab'])
-    await Bun.sleep(250)
+    await sleep(250)
   }
   const menu = await codexOpen(hostId, paneId, '/permissions', /Permissions$/)
   const opt = menu.options.find((o) => bare(o.label) === label.toLowerCase())
@@ -739,7 +740,7 @@ export async function interrupt(hostId: string, paneId: string) {
     // OpenCode stops on the second Esc ("esc again to interrupt")
     await sendKeys(host, paneId, found.pane.agent?.kind === 'opencode' ? ['Escape', 'Escape'] : ['Escape'])
     for (let i = 0; i < 8; i++) {
-      await Bun.sleep(250)
+      await sleep(250)
       if (!(await currentScreen(hostId, paneId)).working) {
         nudge(hostId, paneId)
         registry.refresh(hostId, 100)
@@ -821,7 +822,7 @@ export async function restartAgent(hostId: string, paneId: string) {
     await typeText(host, paneId, EXIT_COMMAND[a.kind] ?? '/exit', true)
     let gone = false
     for (let i = 0; i < 40 && !gone; i++) {
-      await Bun.sleep(250)
+      await sleep(250)
       gone = !(await host.exec(`kill -0 ${proc.pid} 2>/dev/null && echo alive`)).stdout.includes('alive')
     }
     if (!gone) throw new HttpError(504, 'It did not exit; restart it from the terminal')
@@ -830,7 +831,7 @@ export async function restartAgent(hostId: string, paneId: string) {
       await paneDead(host, p)
       await host.exec(`tmux respawn-pane -t ${p} ${cwd} ${shq(cmd)}`)
     } else {
-      await Bun.sleep(400)
+      await sleep(400)
       await typeText(host, paneId, withBin(cmd, await launchBin(host, a.kind)), true)
     }
   } finally {
@@ -843,7 +844,7 @@ export async function restartAgent(hostId: string, paneId: string) {
 async function paneDead(host: { exec: (cmd: string) => Promise<{ stdout: string }> }, p: string) {
   for (let i = 0; i < 20; i++) {
     if ((await host.exec(`tmux display -p -t ${p} '#{pane_dead}'`)).stdout.trim() === '1') return
-    await Bun.sleep(100)
+    await sleep(100)
   }
 }
 
@@ -863,7 +864,7 @@ export async function exitAgent(hostId: string, paneId: string) {
   const alive = async () => !proc || (await host.exec(`kill -0 ${proc.pid} 2>/dev/null && echo alive`)).stdout.includes('alive')
   const waitGone = async (ms: number) => {
     for (let t = 0; t < ms; t += 250) {
-      await Bun.sleep(250)
+      await sleep(250)
       if (!(await alive())) return true
     }
     return false
@@ -874,7 +875,7 @@ export async function exitAgent(hostId: string, paneId: string) {
   // a dialog (permission, folder trust): back out of it before typing the command
   if (s.prompt && !s.prompt.api) {
     await sendKeys(host, paneId, ['Escape'])
-    await Bun.sleep(300)
+    await sleep(300)
   }
   // started as the pane's own command (`tmux new agy`): keep the pane, and give it a shell after
   const direct = !!proc && proc.pid === proc.panePid
@@ -896,7 +897,7 @@ export async function exitAgent(hostId: string, paneId: string) {
   }
   for (let i = 0; i < 2; i++) {
     await sendKeys(host, paneId, ['C-c'])
-    await Bun.sleep(300)
+    await sleep(300)
     await sendKeys(host, paneId, ['C-c'])
     if (await waitGone(2500)) return done()
   }
@@ -951,7 +952,7 @@ export async function launch(hostId: string, opts: LaunchOpts) {
       parts.push(agent === 'antigravity' || agent === 'copilot' || agent === 'gemini' ? `-i ${text}` : agent === 'opencode' ? `--prompt ${text}` : text)
     }
     parts[0] = withBin(parts[0], await launchBin(host, agent))
-    await Bun.sleep(300)
+    await sleep(300)
     await typeText(host, paneId, parts.join(' '), true)
   }
   registry.refresh(hostId, agent ? 1500 : 100)
@@ -966,7 +967,7 @@ export async function remoteControl(hostId: string, paneId: string, on: boolean)
   if (kind !== 'claude') throw new HttpError(400, 'Remote Control works with Claude Code and Antigravity')
   await sendMessage(hostId, paneId, '/remote-control')
   for (let i = 0; i < 12; i++) {
-    await Bun.sleep(300)
+    await sleep(300)
     const s = await currentScreen(hostId, paneId)
     const opt = s.prompt?.options.find((o) => (on ? /^continue/i : /disconnect/i).test(o.label))
     if (s.prompt && opt) {

@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@noble/hashes": "^2.4.0",
     "@tether/protocol": "workspace:*"
   },
   "devDependencies": {

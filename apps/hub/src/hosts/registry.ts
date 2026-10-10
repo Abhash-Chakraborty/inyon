@@ -1,9 +1,8 @@
 import { opencodeLive } from '../agents/opencode-controls.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
-import fs from 'node:fs'
-import path from 'node:path'
 import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@tether/protocol'
-import { DATA_DIR, loadHosts, loadSettings, saveHosts } from '../config.ts'
+import { loadHosts, loadSettings, saveHosts } from '../config.ts'
+import { keyPart, kv } from '../platform/store.ts'
 import { Host, shq } from './host.ts'
 import { capturePanes, guessTranscript, probe, type ProbeResult } from '../tmux/tmux.ts'
 import { parseScreen } from '../claude/screen.ts'
@@ -82,24 +81,15 @@ const HEAL_EVERY_MS = 10 * 60_000
 
 /** a machine that stops answering for this long gets an "offline" notification */
 const OFFLINE_NOTIFY_MS = 60_000
-const SNAPSHOT_DIR = path.join(DATA_DIR, 'snapshots')
-const snapshotFile = (id: string) => path.join(SNAPSHOT_DIR, `${id.replace(/[^\w.-]/g, '_')}.json`)
+const snapshotKey = (id: string) => `snapshots/${keyPart(id)}`
 
 /** The last state seen from a machine, so it still shows its sessions while it's unreachable. */
 function loadSnapshot(id: string): HostState | undefined {
-  try {
-    return JSON.parse(fs.readFileSync(snapshotFile(id), 'utf8')) as HostState
-  } catch {
-    return
-  }
+  return kv.get<HostState>(snapshotKey(id))
 }
 function saveSnapshot(state: HostState) {
   try {
-    fs.mkdirSync(SNAPSHOT_DIR, { recursive: true, mode: 0o700 })
-    const file = snapshotFile(state.config.id)
-    const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify({ ...state, config: publicConfig(state.config) }), { mode: 0o600 })
-    fs.renameSync(tmp, file)
+    kv.set(snapshotKey(state.config.id), { ...state, config: publicConfig(state.config) })
   } catch (e) {
     console.error('snapshot:', (e as Error).message)
   }
@@ -234,7 +224,7 @@ class Registry {
     rt.live?.stop()
     this.hosts.delete(id)
     if (persist) {
-      fs.rmSync(snapshotFile(id), { force: true })
+      kv.del(snapshotKey(id))
       pruneChats(id)
       this.persist()
       this.emit({ type: 'overview' })

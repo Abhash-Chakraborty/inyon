@@ -1,6 +1,4 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { DATA_DIR } from '../config.ts'
+import { kv } from '../platform/store.ts'
 import type { Host } from '../hosts/host.ts'
 import { OpenCodeClient, opencodeCapabilities, type OpenCodeSelection } from './opencode-api.ts'
 
@@ -10,8 +8,8 @@ import { OpenCodeClient, opencodeCapabilities, type OpenCodeSelection } from './
 type Stored = { selection: OpenCodeSelection; afterMessage?: string }
 export class OpenCodeSelections {
   private entries: Record<string, Stored> = {}
-  constructor(private file = path.join(DATA_DIR, 'opencode-selections.json')) {
-    try { this.entries = JSON.parse(fs.readFileSync(file, 'utf8')) } catch {}
+  constructor(private storeKey = 'opencode-selections') {
+    this.entries = kv.get<Record<string, Stored>>(storeKey) ?? {}
   }
   private key(host: string, uri: string) { return JSON.stringify([host, uri]) }
   get(host: string, uri: string, messages: any[]): OpenCodeSelection {
@@ -24,10 +22,7 @@ export class OpenCodeSelections {
   put(host: string, uri: string, selection: OpenCodeSelection, messages: any[]) {
     const latest = [...messages].reverse().find((m) => (m.info ?? m).role === 'user')?.info
     this.entries[this.key(host, uri)] = { selection, afterMessage: latest?.id }
-    fs.mkdirSync(path.dirname(this.file), { recursive: true })
-    const tmp = `${this.file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(this.entries), { mode: 0o600 })
-    fs.renameSync(tmp, this.file)
+    kv.set(this.storeKey, this.entries)
   }
 }
 export function openCodeSelectionFromMessages(messages: any[]): OpenCodeSelection {

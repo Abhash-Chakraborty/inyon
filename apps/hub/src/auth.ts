@@ -1,7 +1,6 @@
 import crypto from 'node:crypto'
-import fs from 'node:fs'
-import path from 'node:path'
-import { DATA_DIR, checkPassword, sessionSecret } from './config.ts'
+import { checkPassword, sessionSecret } from './password.ts'
+import { kv } from './platform/store.ts'
 
 export const COOKIE = 'tether_session'
 /** a session ends after 30 days without use; using it pushes the end back (see refreshCookie) */
@@ -18,21 +17,11 @@ interface Session {
 }
 
 // signed-out sessions, by nonce, until they would have expired anyway
-const REVOKED_FILE = path.join(DATA_DIR, 'revoked.json')
-const revoked = new Map<string, number>(Object.entries(readRevoked()))
-function readRevoked(): Record<string, number> {
-  try {
-    return JSON.parse(fs.readFileSync(REVOKED_FILE, 'utf8'))
-  } catch {
-    return {}
-  }
-}
+const revoked = new Map<string, number>(Object.entries(kv.get<Record<string, number>>('revoked') ?? {}))
 function saveRevoked() {
   const now = Date.now()
   for (const [n, exp] of revoked) if (exp < now) revoked.delete(n)
-  const tmp = `${REVOKED_FILE}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(revoked)), { mode: 0o600 })
-  fs.renameSync(tmp, REVOKED_FILE)
+  kv.set('revoked', Object.fromEntries(revoked))
 }
 
 function cookieFor(session: Session, secure: boolean) {

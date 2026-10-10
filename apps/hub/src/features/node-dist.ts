@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
-import { DATA_DIR } from '../config.ts'
+import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 
 /**

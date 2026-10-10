@@ -1,6 +1,4 @@
-import fs from 'node:fs'
-import path from 'node:path'
-import { DATA_DIR } from '../config.ts'
+import { kv } from '../platform/store.ts'
 import { registry } from '../hosts/registry.ts'
 import { sendKeys, typeText } from '../tmux/tmux.ts'
 
@@ -12,23 +10,14 @@ export interface Draft {
   mirrored?: string
 }
 
-const FILE = path.join(DATA_DIR, 'drafts.json')
-const drafts = new Map<string, Draft>(Object.entries(readFile()))
+const drafts = new Map<string, Draft>(Object.entries(kv.get<Record<string, Draft>>('drafts') ?? {}))
 let saveTimer: ReturnType<typeof setTimeout> | undefined
-
-function readFile(): Record<string, Draft> {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, 'utf8'))
-  } catch {
-    return {}
-  }
-}
 
 function save() {
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     try {
-      fs.writeFileSync(FILE, JSON.stringify(Object.fromEntries(drafts)), { mode: 0o600 })
+      kv.set('drafts', Object.fromEntries(drafts))
     } catch {}
   }, 500)
 }

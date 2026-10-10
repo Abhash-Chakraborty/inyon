@@ -1,3 +1,4 @@
+import { sleep } from '../platform/store.ts'
 import { Host, shq } from '../hosts/host.ts'
 import { ACCOUNT_SH, MARKER } from '../claude/integration-sh.ts'
 import { SIGNED_IN_SH } from '../agents/auth-sh.ts'
@@ -320,7 +321,7 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
       throw new Error(result.stderr.trim() || 'Could not paste text into the terminal')
     }
     if (submit) {
-      await Bun.sleep(150)
+      await sleep(150)
       await sendKeys(host, pane, ['Enter'])
     }
     return
