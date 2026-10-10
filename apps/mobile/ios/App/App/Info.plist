@@ -66,14 +66,7 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
-	<key>NSAppTransportSecurity</key>
-	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
-		<true/>
-	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Tether connects to the hub you run on your own network.</string>
+	<string>Tether connects to servers on your own network over SSH.</string>
 </dict>
 </plist>

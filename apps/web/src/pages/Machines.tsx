@@ -15,6 +15,7 @@ import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets
 import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
+import { isPhone } from '../lib/phone.ts'
 import { AgentBadges } from '../components/Overview.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
@@ -42,7 +43,7 @@ export function MachinesPage() {
   const [sheet, setSheet] = useState(false)
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <PageHeader title="Machines" right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> Add machine</Button>} />
+      <PageHeader title={isPhone() ? 'Servers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add server' : 'Add machine'}</Button>} />
       <div className="mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
         {hosts.map((h) => (
           <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-4 rounded-[16px] border border-line bg-elev p-4 transition-colors hover:border-line-strong">

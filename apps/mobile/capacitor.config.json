@@ -2,13 +2,6 @@
   "appId": "dev.tether.app",
   "appName": "Tether",
   "webDir": "../web/dist",
-  "server": {
-    "androidScheme": "http",
-    "cleartext": true
-  },
-  "android": {
-    "allowMixedContent": true
-  },
   "ios": {
     "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false

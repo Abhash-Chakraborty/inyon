@@ -1,5 +1,6 @@
 import type { ClientMsg, ServerMsg } from '@tether/protocol'
-import { apiUrl, authHeaders, wsUrl } from './hub.ts'
+import { wsUrl } from './hub.ts'
+import { isPhone, PhoneSocket } from './phone.ts'
 
 type Listener = (msg: ServerMsg) => void
 
@@ -8,7 +9,7 @@ type Listener = (msg: ServerMsg) => void
  * subscriptions, so views only declare what they want to watch.
  */
 class Socket {
-  private ws?: WebSocket
+  private ws?: WebSocket | PhoneSocket
   private listeners = new Set<Listener>()
   private statusListeners = new Set<(up: boolean) => void>()
   private chats = new Map<string, { host: string; pane: string; refs: number }>()
@@ -54,7 +55,8 @@ class Socket {
     }
     clearInterval(this.pingTimer)
     if (this.up) this.setUp(false)
-    const ws = new WebSocket(wsUrl())
+    // the phone app talks to the core running inside it
+    const ws = isPhone() ? new PhoneSocket() : new WebSocket(wsUrl())
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
@@ -70,7 +72,7 @@ class Socket {
         this.raw({ t: 'ping' })
       }, 25000)
     }
-    ws.onmessage = (e) => {
+    ws.onmessage = (e: { data: string }) => {
       if (this.ws !== ws) return
       this.heard = Date.now()
       let msg: ServerMsg
@@ -88,7 +90,8 @@ class Socket {
       const delay = Math.min(8000, 400 * 2 ** this.retry++)
       this.timer = setTimeout(() => this.connect(), delay)
       // the hub rejects the upgrade when the session expired
-      fetch(apiUrl('/api/session'), { headers: authHeaders() }).then((r) => r.json()).then((s) => {
+      if (isPhone()) return
+      fetch('/api/session').then((r) => r.json()).then((s) => {
         if (!s.authed) window.dispatchEvent(new Event('tether:signed-out'))
       }).catch(() => {})
     }

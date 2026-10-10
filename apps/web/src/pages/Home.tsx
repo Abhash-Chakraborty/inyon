@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plug, Search, WifiOff } from 'lucide-react'
+import { Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes } from '../lib/overview.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, NeedsYouCard, SessionCard } from '../components/Overview.tsx'
@@ -10,6 +10,8 @@ import { api } from '../lib/api.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { toast } from '../lib/store.ts'
 import type { AgentPaneInfo } from '@tether/protocol'
+import { MachineSheet } from '../components/Sheets.tsx'
+import { isPhone } from '../lib/phone.ts'
 
 /** working, or idle with shells or tasks still running */
 const busy = (a: AgentPaneInfo) => a.state === 'working' || (a.state === 'idle' && !!a.background)
@@ -19,6 +21,7 @@ export function Home() {
   const loaded = useStore((s) => s.hostsLoaded)
   const connected = useStore((s) => s.connected)
   const [filter, setFilter] = useState<'all' | 'working' | 'idle'>('all')
+  const [adding, setAdding] = useState(false)
   const panes = agentPanes(hosts)
   const waiting = panes.filter((r) => r.pane.agent!.state === 'waiting')
   const rest = panes.filter((r) => r.pane.agent!.state !== 'waiting').filter((r) => filter === 'all' || (filter === 'working' ? busy(r.pane.agent!) : !busy(r.pane.agent!)))
@@ -44,7 +47,7 @@ export function Home() {
           </span>
           <h1 className="text-[15px] font-semibold tracking-tight">Overview</h1>
           <span className="hidden text-[12.5px] text-fg-3 sm:inline">
-            {hosts.length} machine{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} panes
+            {hosts.length} {isPhone() ? 'server' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} panes
           </span>
           {!connected && (
             <span className="ml-auto flex items-center gap-1.5 text-[12px] text-warn">
@@ -69,6 +72,22 @@ export function Home() {
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="skeleton h-[150px] rounded-[16px]" />
               ))}
+            </div>
+          ) : !hosts.length ? (
+            <div className="rounded-[16px] border border-dashed border-line-strong">
+              <Empty
+                icon={<Server className="size-5" />}
+                title={isPhone() ? 'Add your first server' : 'No machines yet'}
+                action={
+                  <Button variant="primary" onClick={() => setAdding(true)}>
+                    <Plus className="size-3.5" /> {isPhone() ? 'Add a server' : 'Add a machine'}
+                  </Button>
+                }
+              >
+                {isPhone()
+                  ? 'This phone connects straight to your servers over SSH, then shows the coding agents running in tmux on them. Nothing else to set up.'
+                  : 'Pair a machine or add one over SSH to see the coding agents running in tmux on it.'}
+              </Empty>
             </div>
           ) : (
             <>
@@ -145,12 +164,13 @@ export function Home() {
               </section>
 
               <section>
-                <SectionLabel right={<Link to="/machines" className="text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>Machines</SectionLabel>
+                <SectionLabel right={<Link to="/machines" className="text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Servers' : 'Machines'}</SectionLabel>
                 <MachinesTable hosts={hosts} />
               </section>
             </>
           )}
         </div>
+        <MachineSheet open={adding} onClose={() => setAdding(false)} />
         <aside className="flex w-full flex-[1_1_280px] flex-col gap-4 lg:max-w-[340px]">
           <LimitsCard hosts={hosts} />
           <ActivityFeed />

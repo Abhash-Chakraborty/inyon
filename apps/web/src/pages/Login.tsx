@@ -3,13 +3,34 @@ import { api } from '../lib/api.ts'
 import { useStore } from '../lib/store.ts'
 import { Logo } from '../components/AppShell.tsx'
 import { Button, Field, inputClass } from '../components/ui/primitives.tsx'
-import { isNative } from '../lib/native.ts'
-import { hubBase, normalizeHub, setHubBase, setHubToken } from '../lib/hub.ts'
+import { isPhone, phone } from '../lib/phone.ts'
 
 export function Login() {
-  const native = isNative()
-  // the phone apps ask where your hub is; a browser is already on it
-  const [hub, setHub] = useState(() => hubBase())
+  // the phone app has nothing to sign in to; it only lands here when its core couldn't start
+  if (isPhone()) return <PhoneFailed />
+  return <SignIn />
+}
+
+function PhoneFailed() {
+  const [error, setError] = useState('')
+  useEffect(() => {
+    phone().then(() => window.location.reload(), (err) => setError(String((err as Error)?.message ?? err)))
+  }, [])
+  return (
+    <div className="flex min-h-dvh items-center justify-center px-6">
+      <div className="w-full max-w-[360px]">
+        <Logo className="size-12 rounded-2xl" />
+        <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">Tether couldn't start</h1>
+        <p className="mt-1.5 text-[15px] text-fg-2">{error || 'Starting…'}</p>
+        <Button variant="primary" size="lg" className="mt-6 w-full" onClick={() => window.location.reload()}>
+          Try again
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function SignIn() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [code, setCode] = useState('')
@@ -20,35 +41,14 @@ export function Login() {
   const setAuthed = useStore((s) => s.setAuthed)
 
   useEffect(() => {
-    if (native) return
     api.session().then((s) => s.setup && setSetup({ code: !!s.setupCode })).catch(() => {})
-  }, [native])
+  }, [])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setBusy(true)
     setError('')
     try {
-      if (native) {
-        const url = normalizeHub(hub)
-        try {
-          new URL(url)
-        } catch {
-          throw new Error('Enter your hub address, like http://my-server:4777')
-        }
-        if (url !== hubBase() || !setup) {
-          setHubBase(url)
-          setHubToken('')
-          // the phone app learns the hub is new once it can reach it
-          const s = await api.session()
-          if (s.setup && !setup) {
-            setSetup({ code: !!s.setupCode })
-            setConfirm('')
-            return
-          }
-          if (!s.setup) setSetup(null)
-        }
-      }
       if (setup) {
         if (password.length < 8) throw new Error('Use at least 8 characters.')
         if (password !== confirm) throw new Error("The two passwords don't match.")
@@ -56,9 +56,7 @@ export function Login() {
       } else await api.login(password)
       setAuthed(true)
     } catch (err) {
-      const msg = (err as Error).message
-      // fetch says "Failed to fetch" / "Load failed" when the address can't be reached at all
-      setError(native && /fetch|load failed|network/i.test(msg) ? `Can't reach ${normalizeHub(hub)}. Check the address, and that this phone is on the same Tailscale or NetBird network.` : msg)
+      setError((err as Error).message)
     } finally {
       setBusy(false)
     }
@@ -70,35 +68,16 @@ export function Login() {
         <Logo className="size-12 rounded-2xl" />
         <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">{setup ? 'Create your password' : 'Welcome back'}</h1>
         <p className="mt-1.5 text-[15px] text-fg-2">
-          {setup
-            ? "This hub is new. Pick the password you'll use to sign in from your browser and phone."
-            : native ? 'Connect to your Tether hub to reach your machines and coding agents.' : 'Sign in to reach your machines and coding agents.'}
+          {setup ? "This hub is new. Pick the password you'll use to sign in from your browsers." : 'Sign in to reach your machines and coding agents.'}
         </p>
-        {native && (
-          <div className="mt-7">
-            <Field label="Hub address">
-              <input
-                type="text"
-                inputMode="url"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                value={hub}
-                onChange={(e) => setHub(e.target.value)}
-                placeholder="http://my-server:4777"
-                className={`${inputClass} h-12 font-mono text-[14px]`}
-              />
-            </Field>
-          </div>
-        )}
         <input
           type="password"
-          autoFocus={!native}
+          autoFocus
           autoComplete={setup ? 'new-password' : 'current-password'}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={setup ? 'New password (8+ characters)' : 'Password'}
-          className={`${inputClass} ${native ? 'mt-3' : 'mt-7'} h-12`}
+          className={`${inputClass} mt-7 h-12`}
         />
         {setup && (
           <input
@@ -125,7 +104,7 @@ export function Login() {
           </div>
         )}
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
-        <Button type="submit" variant="primary" size="lg" className="mt-4 w-full" loading={busy} disabled={!password || (native && !hub.trim()) || (!!setup && !confirm) || (!!setup?.code && !code.trim())}>
+        <Button type="submit" variant="primary" size="lg" className="mt-4 w-full" loading={busy} disabled={!password || (!!setup && !confirm) || (!!setup?.code && !code.trim())}>
           {setup ? 'Create password' : 'Continue'}
         </Button>
       </form>

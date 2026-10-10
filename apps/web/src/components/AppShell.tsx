@@ -7,6 +7,10 @@ import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/
 import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StateDot, shownState } from './ui/status.tsx'
 import { NewSessionSheet } from './Sheets.tsx'
+import { isPhone } from '../lib/phone.ts'
+
+// the phone app connects to servers itself; the hub talks about its machines
+const machinesLabel = isPhone() ? 'Servers' : 'Machines'
 
 /** Tether's mark: a terminal prompt with a cable running out to a node (same art as public/icon.svg). */
 export function Logo({ className }: { className?: string }) {
@@ -125,7 +129,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
           <LayoutGrid className="size-4" /> Overview
         </NavLink>
         <NavLink to="/machines" className={({ isActive }) => item(isActive)}>
-          <Monitor className="size-4" /> Machines
+          <Monitor className="size-4" /> {machinesLabel}
         </NavLink>
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
@@ -198,7 +202,7 @@ function TabBar({ onNew }: { onNew: () => void }) {
       </button>
       <NavLink to="/machines" className={tab}>
         <Monitor className="size-[21px]" />
-        Machines
+        {machinesLabel}
       </NavLink>
       <NavLink to="/settings" className={tab}>
         <Settings className="size-[21px]" />

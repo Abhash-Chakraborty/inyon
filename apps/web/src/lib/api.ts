@@ -1,5 +1,6 @@
 import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@tether/protocol'
-import { apiUrl, authHeaders, hubOrigin, setHubToken } from './hub.ts'
+import { hubOrigin } from './hub.ts'
+import { isPhone, phone } from './phone.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -7,14 +8,25 @@ export class ApiError extends Error {
   }
 }
 
+/** The hub over HTTP in a browser; the core running inside the phone app. */
+async function send(req: Request): Promise<Response> {
+  if (!isPhone()) return fetch(req)
+  const rt = await phone()
+  // an in-process call can't be cut off, but the caller's timeout still applies
+  return new Promise((resolve, reject) => {
+    req.signal.addEventListener('abort', () => reject(new ApiError(0, 'The server took too long to answer')), { once: true })
+    rt.fetch(req).then(resolve, reject)
+  })
+}
+
 async function request<T>(method: string, url: string, body?: unknown, timeoutMs?: number): Promise<T> {
-  const res = await fetch(apiUrl(url), {
+  const res = await send(new Request(new URL(url, location.href), {
     method,
     credentials: 'same-origin',
-    headers: { ...authHeaders(), ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
+    headers: body !== undefined ? { 'content-type': 'application/json' } : {},
     body: body !== undefined ? JSON.stringify(body) : undefined,
     signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
-  })
+  }))
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
     if (res.status === 401 && !url.endsWith('/login')) window.dispatchEvent(new Event('tether:signed-out'))
@@ -82,6 +94,17 @@ export interface SetupReport {
   keepSession: boolean
 }
 
+export interface ServerForm {
+  name: string
+  target: string
+  port?: number
+  hostKey: string
+  auth: 'phone-key' | 'password' | 'key'
+  password?: string
+  privateKey?: string
+  passphrase?: string
+}
+
 export interface HubSettings {
   uploads: { retentionDays: number; maxMB: number; longPasteLines: number }
   autoResume?: boolean
@@ -90,27 +113,16 @@ export interface HubSettings {
 export const api = {
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean }>('GET', '/api/session'),
   // a new hub: the first visit picks the password
-  createPassword: async (password: string, code?: string) => {
-    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/setup', { password, code })
-    if (r.token) setHubToken(r.token)
-    return r
-  },
-  changePassword: async (current: string, next: string) => {
-    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/password', { current, next })
-    if (r.token) setHubToken(r.token)
-    return r
-  },
-  // the phone apps get a token back (a browser gets a cookie)
-  login: async (password: string) => {
-    const r = await request<{ ok: boolean; token?: string }>('POST', '/api/login', { password })
-    if (r.token) setHubToken(r.token)
-    return r
-  },
-  logout: async () => {
-    await request('POST', '/api/logout').catch(() => {})
-    setHubToken('')
-  },
+  createPassword: (password: string, code?: string) => request<{ ok: boolean }>('POST', '/api/setup', { password, code }),
+  changePassword: (current: string, next: string) => request<{ ok: boolean }>('POST', '/api/password', { current, next }),
+  login: (password: string) => request<{ ok: boolean }>('POST', '/api/login', { password }),
+  logout: () => request('POST', '/api/logout').catch(() => {}),
   addHost: (b: { name: string; target: string; port?: number; identityFile?: string }) => request<{ id: string }>('POST', '/api/hosts', b),
+  // the phone app: servers it SSHes into itself
+  addServer: (b: ServerForm) => request<{ id: string }>('POST', '/api/hosts', b),
+  editServer: (id: string, b: Partial<ServerForm>) => request('PATCH', h(id), b),
+  probe: (target: string, port?: number) => request<{ fingerprint: string; keyType: string }>('POST', '/api/phone/probe', { target, port }, 20_000),
+  phoneKey: () => request<{ publicKey: string }>('GET', '/api/phone/key'),
   updateHost: (id: string, b: Record<string, unknown>) => request('PATCH', h(id), b),
   repair: (id: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', `${h(id)}/pair`, { origin: hubOrigin() }),
   pair: (name: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', '/api/hosts/pair', { name, origin: hubOrigin() }),
@@ -156,13 +168,21 @@ export const api = {
 
   /** Uploads with progress (fetch can't report upload progress). */
   upload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {
+    const form = new FormData()
+    form.append('files', file, file.name)
+    if (pane) form.append('pane', paneSlug(pane))
+    // in the phone app the file goes over SSH from here; the core reports when it's all there
+    if (isPhone()) {
+      return send(new Request(new URL(`${h(host)}/uploads`, location.href), { method: 'POST', body: form })).then(async (res) => {
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.files?.[0]) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`)
+        onProgress?.(1)
+        return data.files[0] as Uploaded
+      })
+    }
     return new Promise((resolve, reject) => {
-      const form = new FormData()
-      form.append('files', file, file.name)
-      if (pane) form.append('pane', paneSlug(pane))
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', apiUrl(`${h(host)}/uploads`))
-      for (const [k, v] of Object.entries(authHeaders())) xhr.setRequestHeader(k, v)
+      xhr.open('POST', `${h(host)}/uploads`)
       xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
       xhr.onload = () => {
         let data: any = {}

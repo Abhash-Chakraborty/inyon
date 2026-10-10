@@ -9,6 +9,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react'
 import { copyText } from '../lib/clipboard.ts'
+import { isPhone } from '../lib/phone.ts'
+import { ServerSheet } from './ServerSheet.tsx'
 
 /** Pairing a machine that connects out to the hub: nothing is opened on that machine. */
 export function PairMachine({ onClose, existing }: { onClose?: () => void; existing?: string }) {
@@ -90,7 +92,14 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
   )
 }
 
-export function MachineSheet({ open, onClose, edit }: { open: boolean; onClose: () => void; edit?: HostConfig }) {
+type MachineSheetProps = { open: boolean; onClose: () => void; edit?: HostConfig }
+
+/** The hub adds machines by pairing or over its own SSH; the phone app SSHes in itself. */
+export function MachineSheet(props: MachineSheetProps) {
+  return isPhone() ? <ServerSheet {...props} /> : <HubMachineSheet {...props} />
+}
+
+function HubMachineSheet({ open, onClose, edit }: MachineSheetProps) {
   const [mode, setMode] = useState<'pair' | 'ssh'>('pair')
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')

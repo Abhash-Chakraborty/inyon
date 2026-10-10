@@ -17,7 +17,6 @@ import { PanePage } from './pages/PanePage.tsx'
 import { Settings } from './pages/Settings.tsx'
 import { MachinePage, MachinesPage } from './pages/Machines.tsx'
 import { installTapHaptics } from './lib/haptics.ts'
-import { needsHub } from './lib/hub.ts'
 import { installNative, isNative, nativeTheme } from './lib/native.ts'
 
 function useTheme() {
@@ -43,8 +42,7 @@ function App() {
   useTheme()
 
   useEffect(() => {
-    if (needsHub()) setAuthed(false)
-    else api.session().then((s) => setAuthed(s.authed)).catch(() => setAuthed(false))
+    api.session().then((s) => setAuthed(s.authed)).catch(() => setAuthed(false))
     const out = () => setAuthed(false)
     window.addEventListener('tether:signed-out', out)
     return () => window.removeEventListener('tether:signed-out', out)

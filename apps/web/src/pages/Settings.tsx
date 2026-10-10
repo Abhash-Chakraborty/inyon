@@ -10,8 +10,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
-import { hubBase } from '../lib/hub.ts'
 import { copyText } from '../lib/clipboard.ts'
+import { authorizeCommand } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 
@@ -42,9 +42,10 @@ const NAV = [
   ['agents', 'Agents'],
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
-  ['machines', 'Machines'],
-  ['devices', 'Other devices'],
-  ['account', 'Account'],
+  ['machines', isNative() ? 'Servers' : 'Machines'],
+  ...(isNative()
+    ? ([['phone-key', "This phone's key"]] as const)
+    : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
 ] as const
 
 export function Settings() {
@@ -207,7 +208,7 @@ export function Settings() {
             </Row>
           </Section>
 
-          <Section id="machines" title="Machines">
+          <Section id="machines" title={native ? 'Servers' : 'Machines'}>
             {hosts.map((h) => (
               <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3.5 hover:bg-hover/50">
                 <HostDot status={h.status} />
@@ -220,6 +221,10 @@ export function Settings() {
             ))}
           </Section>
 
+          {native ? (
+            <PhoneKey />
+          ) : (
+            <>
           <OtherDevices />
 
           <Section id="account" title="Account">
@@ -235,6 +240,8 @@ export function Settings() {
               <LogOut className="size-4" /> Sign out
             </button>
           </Section>
+            </>
+          )}
           <p className="text-center text-[12px] text-fg-3">Tether 0.2 · agent marks belong to their owners</p>
         </div>
       </div>
@@ -290,9 +297,43 @@ function ChangePassword() {
   )
 }
 
+/** The phone app signs in to servers with its own key: one line to add to authorized_keys. */
+function PhoneKey() {
+  const [key, setKey] = useState('')
+  const [error, setError] = useState('')
+  useEffect(() => {
+    api.phoneKey().then((k) => setKey(k.publicKey), (e) => setError((e as Error).message))
+  }, [])
+  const copy = (text: string, title: string) => copyText(text).then((ok) => ok && toast({ title, tone: 'success' }))
+  return (
+    <Section id="phone-key" title="This phone's key" desc="The phone connects to your servers itself, over SSH. Servers set to use this key accept it once it's in their ~/.ssh/authorized_keys.">
+      <div className="px-4 py-3.5">
+        {error ? (
+          <p className="text-[13px] text-danger">{error}</p>
+        ) : !key ? (
+          <Spinner />
+        ) : (
+          <>
+            <p className="break-all rounded-[10px] bg-sunken px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{key}</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => copy(key, 'Key copied')}>
+                <Copy className="size-3.5" /> Copy key
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => copy(authorizeCommand(key), 'Command copied')}>
+                <KeyRound className="size-3.5" /> Copy the command that adds it
+              </Button>
+            </div>
+            <p className="mt-2.5 text-[12.5px] leading-snug text-fg-3">Run that command on each server (in a terminal you already have there). The private half never leaves this phone.</p>
+          </>
+        )}
+      </div>
+    </Section>
+  )
+}
+
 /** Where to open Tether from a phone or another computer: this same hub address. */
 function OtherDevices() {
-  const address = isNative() ? hubBase() : window.location.origin
+  const address = window.location.origin
   const local = /^https?:\/\/(localhost|127\.)/.test(address)
   const https = address.startsWith('https:')
   return (
@@ -314,8 +355,8 @@ function OtherDevices() {
         label={<span className="flex items-center gap-2"><Smartphone className="size-4 text-fg-3" /> On your phone</span>}
         hint={
           <>
-            Open the address in the phone's browser while it's on the same Tailscale or NetBird network, or install the Android app and type the address in.
-            {!https && !isNative() && ' Adding it to the home screen as an app, with notifications, needs the hub on HTTPS.'}
+            Open the address in the phone's browser while it's on the same Tailscale or NetBird network. The Android app doesn't need this hub: it connects to your servers over SSH by itself.
+            {!https && ' Adding it to the home screen as an app, with notifications, needs the hub on HTTPS.'}
           </>
         }
       />
