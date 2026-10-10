@@ -131,32 +131,36 @@ readable. Sending is paused until it's back.
 When a machine has been gone for a minute you get a notification, and another when it reconnects.
 The hub then picks up each conversation where it left off.
 
-## Phone apps
+## Android app
 
-`apps/mobile` wraps the same web app for Android and iOS with Capacitor. The app asks for your hub
-address once, signs in with a token instead of a cookie, and adds haptics, system notifications
-and the Android back button. The hub only accepts tokens from the app's own origins, so a random
-page on `localhost` can't use your session.
+`apps/mobile` wraps the same web app with Capacitor. The app asks for your hub address once, signs
+in with a token instead of a cookie, and adds haptics, system notifications and the Android back
+button. The hub only accepts tokens from the app's own origins, so a random page on `localhost`
+can't use your session.
 
-The apps are built in GitHub Actions (`.github/workflows/mobile.yml`): run it by hand or push a
-`v*` tag. Android gives an APK that installs directly. It's signed when the
-`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and
-`ANDROID_KEY_PASSWORD` secrets are set, otherwise it's a debug build. iOS gives an unsigned IPA,
-which you sign yourself (AltStore, Sideloadly, or Xcode with your own team).
+GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main` replaces the
+"Latest Android build" pre-release with a fresh APK, and a `v*` tag makes a release with the APK
+attached. On the phone, open the release, download the APK and install it. Later builds install
+over it and keep you signed in.
 
-To build locally you need Android Studio or Xcode:
+Builds are signed with your own key from four repository secrets: `ANDROID_KEYSTORE_BASE64` (the
+keystore, base64), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and, for a JKS with a separate
+key password, `ANDROID_KEY_PASSWORD`. Keep a backup of the keystore: Android only installs an
+update signed with the same key. Without the secrets, a fork gets a debug build.
+
+To build it yourself you need Android Studio:
 
 ```sh
 pnpm build
 cd apps/mobile
-bun node_modules/@capacitor/cli/bin/capacitor sync
-pnpm open:android   # or pnpm open:ios
+bun node_modules/@capacitor/cli/bin/capacitor sync android
+pnpm open:android
 ```
 
-iOS isn't being built for now; the project is there for later.
+The iOS project is in `apps/mobile/ios` but isn't built or tested yet.
 
 Notifications arrive while the app is open or recently in the background. Phones close idle
-connections after a while, and real push (FCM, APNs) isn't wired up yet.
+connections after a while, and real push (FCM) isn't wired up yet.
 
 ## Security
 
