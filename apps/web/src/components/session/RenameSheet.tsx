@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
+import { useOpened } from '../../lib/useOpened.ts'
 import { Button, Field, Sheet, inputClass } from '../ui/primitives.tsx'
 
 /** Names a session (or a plain terminal's tmux window). Empty goes back to the automatic name. */
 export function RenameSheet({ host, pane, current, agent, open, onClose }: { host: string; pane: string; current: string; agent: boolean; open: boolean; onClose: () => void }) {
   const [name, setName] = useState(current)
   const [busy, setBusy] = useState(false)
+  useOpened(open, pane, () => setName(current))
   const save = async (value: string) => {
     setBusy(true)
     try {

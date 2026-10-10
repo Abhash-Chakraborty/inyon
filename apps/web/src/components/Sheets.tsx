@@ -10,6 +10,7 @@ import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx
 import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react'
 import { copyText } from '../lib/clipboard.ts'
 import { isPhone } from '../lib/phone.ts'
+import { useOpened } from '../lib/useOpened.ts'
 import { ServerSheet } from './ServerSheet.tsx'
 
 /** Pairing a machine that connects out to the hub: nothing is opened on that machine. */
@@ -107,14 +108,13 @@ function HubMachineSheet({ open, onClose, edit }: MachineSheetProps) {
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (!open) return
+  useOpened(open, edit?.id, () => {
     setMode('pair')
     setName(edit?.name ?? '')
     setTarget(edit?.target ?? '')
     setPort(edit?.port ? String(edit.port) : '')
     setKey(edit?.identityFile ?? '')
-  }, [open, edit])
+  })
 
   const local = edit?.kind === 'local' || edit?.kind === 'node'
   const submit = async (e: React.FormEvent) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import clsx from 'clsx'
 import { Copy, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
@@ -6,6 +6,7 @@ import { api, type ServerForm } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
+import { useOpened } from '../lib/useOpened.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 
 type Auth = ServerForm['auth']
@@ -27,8 +28,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
   const [found, setFound] = useState<{ fingerprint: string; keyType: string; at: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (!open) return
+  useOpened(open, edit?.id, () => {
     setName(edit?.name ?? '')
     setTarget(edit?.target ?? '')
     setPort(edit?.port ? String(edit.port) : '')
@@ -38,7 +38,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
     setPassphrase('')
     setFound(null)
     api.phoneKey().then((k) => setPhoneKey(k.publicKey), () => {})
-  }, [open, edit])
+  })
 
   const address = `${target.trim()}:${port || 22}`
   const known = edit?.hostKey && `${edit.target}:${edit.port ?? 22}` === address ? edit.hostKey : undefined
