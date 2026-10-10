@@ -4,8 +4,10 @@ export function shortPath(p: string | undefined, max = 42) {
   let s = p.replace(/^\/(home\/[^/]+|Users\/[^/]+|root)(?=\/|$)/, '~')
   if (s.length <= max) return s
   const parts = s.split('/')
+  const n = parts.length
   while (parts.length > 2 && parts.join('/').length > max - 2) parts.splice(1, 1)
-  return parts.length > 1 ? `${parts[0]}/…/${parts.slice(1).join('/')}` : s
+  // nothing to drop (one long name): show it whole rather than a "…" that hides nothing
+  return parts.length < n ? `${parts[0]}/…/${parts.slice(1).join('/')}` : s
 }
 
 export const basename = (p: string | undefined) => (p ?? '').replace(/\/+$/, '').split('/').pop() || p || ''
@@ -35,7 +37,8 @@ export function clock(ts: string) {
 
 export function modelName(id?: string) {
   if (!id) return ''
-  const m = id.match(/claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-|$)/)
+  // "claude-opus-4-6[1m]" is the 1M-context variant of the same model
+  const m = id.match(/claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:[-[]|$)/)
   if (!m) return id
   return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] && m[3].length < 3 ? `.${m[3]}` : ''}`
 }
@@ -45,7 +48,8 @@ export const paneLabel = (id: string) => id.replace(/^%/, '')
 
 export function tokens(n?: number) {
   if (n === undefined || n === null || Number.isNaN(n)) return '—'
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M`
+  // 999.5k and up would otherwise read "1000k"
+  if (n >= 999_500) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, '')}M`
   if (n >= 1000) return `${Math.round(n / 1000)}k`
   return String(n)
 }

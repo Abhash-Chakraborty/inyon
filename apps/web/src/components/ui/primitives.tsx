@@ -82,7 +82,7 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       aria-checked={on}
       aria-label={label}
       onClick={() => onChange(!on)}
-      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors', on ? 'bg-ok' : 'bg-line-strong')}
+      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-ok' : 'bg-line-strong')}
     >
       <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full bg-white shadow-sm transition-transform', on ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
     </button>

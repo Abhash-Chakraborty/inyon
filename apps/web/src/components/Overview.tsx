@@ -202,7 +202,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                 <AgentBadges host={h} size={15} />
               </div>
               <div className="truncate text-[12px] text-fg-3">
-                {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${h.sessions.length} sessions · ${panes} panes${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
+                {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
               </div>
             </div>
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
@@ -243,7 +243,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                     </div>
                   </td>
                   <td className="border-b border-line/60 px-4 py-3 text-fg-2">
-                    {h.status !== 'online' ? (h.lastSeen ? 'Offline' : '—') : h.tmux === 'missing' ? 'Not installed' : `${h.sessions.length} sessions · ${panes} panes`}
+                    {h.status !== 'online' ? (h.lastSeen ? 'Offline' : '—') : h.tmux === 'missing' ? 'Not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}`}
                   </td>
                   <td className="tabular border-b border-line/60 px-4 py-3 text-right font-mono text-[12px] text-fg-2">{h.latencyMs !== undefined ? `${h.latencyMs} ms` : '—'}</td>
                 </tr>
@@ -279,3 +279,5 @@ export function ActivityFeed() {
     </section>
   )
 }
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`

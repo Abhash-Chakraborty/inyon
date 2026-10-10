@@ -53,12 +53,19 @@ export function haptic(kind: HapticKind = 'tap') {
   } catch {}
 }
 
-/** Haptics on every button press in the app (light tap), installed once. */
+/**
+ * Haptics on every button press in the app (light tap), installed once. It fires on the click, not
+ * on touch-down: a finger that lands on a tool row or link to scroll the chat isn't a press.
+ */
 export function installTapHaptics() {
+  let touch = 0
+  document.addEventListener('pointerdown', (e) => void (touch = e.pointerType === 'touch' ? Date.now() : 0), { passive: true, capture: true })
   document.addEventListener(
-    'pointerdown',
+    'click',
     (e) => {
-      if (e.pointerType !== 'touch') return
+      // only taps (a click soon after a touch), never mouse clicks or keyboard presses
+      if (!touch || Date.now() - touch > 800) return
+      touch = 0
       const el = (e.target as HTMLElement)?.closest?.('button, a, [role="switch"], [role="radio"], [role="tab"], [role="option"], [role="menuitem"]')
       if (el && !(el as HTMLButtonElement).disabled) haptic('tap')
     },

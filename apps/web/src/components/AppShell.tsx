@@ -6,7 +6,7 @@ import { useStore } from '../lib/store.ts'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StateDot, shownState } from './ui/status.tsx'
-import { NewSessionSheet } from './Sheets.tsx'
+import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 
 // the phone app connects to servers itself; the hub talks about its machines
@@ -75,7 +75,7 @@ function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) 
             placeholder="Jump to a session or terminal…"
             className="h-12 flex-1 bg-transparent text-[15px] placeholder:text-fg-3"
           />
-          <kbd className="rounded-[5px] border border-line px-1.5 font-mono text-[11px] text-fg-3">esc</kbd>
+          <kbd className="rounded-[5px] border border-line px-1.5 font-mono text-[11px] text-fg-3 pointer-coarse:hidden">esc</kbd>
         </div>
         <div className="max-h-[50vh] overflow-y-auto p-1.5">
           {items.map((it, n) => (
@@ -232,6 +232,8 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const online = useStore((s) => s.hosts.some((h) => h.status === 'online'))
+
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar onNew={() => setNewOpen(true)} onSearch={() => setSearch(true)} />
@@ -241,7 +243,8 @@ export function AppShell() {
         </div>
         {!inSession && <TabBar onNew={() => setNewOpen(true)} />}
       </main>
-      <NewSessionSheet open={newOpen} onClose={() => setNewOpen(false)} />
+      {/* nothing to start a session on yet: + adds a machine instead of an empty form */}
+      {online ? <NewSessionSheet open={newOpen} onClose={() => setNewOpen(false)} /> : <MachineSheet open={newOpen} onClose={() => setNewOpen(false)} />}
       <QuickSwitch open={search} onClose={() => setSearch(false)} />
     </div>
   )

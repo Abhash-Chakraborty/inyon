@@ -56,10 +56,13 @@ export function MachinesPage() {
                 <HostDot status={h.status} />
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
-                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · ${h.sessions.length} tmux sessions · ${h.latencyMs ?? '?'} ms`)}
+                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
               </div>
             </div>
-            <AgentBadges host={h} size={20} />
+            {/* on a phone the address needs the room more; the server page lists the agents */}
+            <span className="hidden sm:contents">
+              <AgentBadges host={h} size={20} />
+            </span>
             <ChevronRight className="size-4 text-fg-3" />
           </Link>
         ))}

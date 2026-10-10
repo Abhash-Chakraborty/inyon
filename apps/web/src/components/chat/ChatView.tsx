@@ -3,7 +3,7 @@ import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind } from '@tether/protocol'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
-import { reconcile } from '../../lib/pending.ts'
+import { othersSends, settle as settleSends } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
@@ -28,10 +28,19 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   const connected = hubUp && !machineDown
   const installed = useStore((s) => s.hosts.find((h) => h.config.id === host)?.agents) ?? NO_AGENTS
   const scroller = useRef<HTMLDivElement>(null)
+  const list = useRef<HTMLDivElement>(null)
+  // follow new output only while the reader is at the bottom; any move up turns it off
   const stick = useRef(true)
+  // the first rows on screen and where they were, so content changing above them doesn't move what's
+  // read (several: the top one is rebuilt when older messages join its turn)
+  const anchor = useRef<{ el: Element; top: number }[]>([])
+  const lastTop = useRef(0)
+  const touchY = useRef<number | null>(null)
+  // when the reader last touched, wheeled or keyed: only then is a move up theirs (content shrinking
+  // below also moves the scroll position up, and that mustn't stop following)
+  const inputAt = useRef(0)
   const [atBottom, setAtBottom] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
-  const prevHeight = useRef(0)
   const font = useReplyFont(agent)
 
   useEffect(() => socket.subscribeChat(host, pane), [host, pane])
@@ -43,13 +52,17 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   const prompt = screen?.prompt
   const queue = chat?.info?.queue ?? NO_QUEUE
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
-  // a message waiting in the agent's queue shows once, as a queued bubble, until the agent takes it.
-  // One already in the conversation never shows twice, however its receipt arrived.
+  // the hub follows every send into the agent's record (info.sends); a bubble lasts until it's there.
+  // One waiting in the agent's queue shows once, as a queued bubble, until the agent takes it.
   const stored = chat?.pending ?? NO_PENDING
-  const unconfirmed = useMemo(() => (stored.length ? reconcile(stored, chat?.items ?? []) : NO_PENDING), [stored, chat?.items])
-  const pending = unconfirmed.filter((p) => !queued.has(msgKey(p.text)))
+  const sends = chat?.info?.sends
+  const unconfirmed = useMemo(() => (stored.length ? settleSends(stored, chat?.items ?? [], sends) : NO_PENDING), [stored, chat?.items, sends])
+  const pending = useMemo(
+    () => [...unconfirmed.filter((p) => !p.queued && !queued.has(msgKey(p.text))), ...othersSends(sends, stored).filter((p) => !queued.has(msgKey(p.text)))],
+    [unconfirmed, queued, sends, stored],
+  )
   useEffect(() => {
-    if (unconfirmed.length < stored.length) patchChat(key, (c) => ({ pending: c.pending.filter((p) => unconfirmed.some((u) => u.id === p.id)) }))
+    if (JSON.stringify(unconfirmed) !== JSON.stringify(stored)) patchChat(key, (c) => ({ pending: settleSends(c.pending, c.items, c.info?.sends) }))
   }, [key, stored, unconfirmed])
   const chatCapable = agent ? AGENTS[agent].chat : true
   const tasks = chat?.info?.tasks
@@ -59,50 +72,111 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
     [tasks, subagents],
   )
 
+  const saveAnchor = () => {
+    const el = scroller.current
+    if (!el || !list.current) return
+    const top = el.getBoundingClientRect().top
+    const rows = [...list.current.children]
+    const first = rows.findIndex((row) => row.getBoundingClientRect().bottom > top)
+    anchor.current = first < 0 ? [] : rows.slice(first, first + 3).map((row) => ({ el: row, top: row.getBoundingClientRect().top - top }))
+  }
+
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
-    const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    stick.current = bottom
-    setAtBottom(bottom)
+    const away = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (away < 24) stick.current = true
+    else if (el.scrollTop < lastTop.current - 2 && Date.now() - inputAt.current < 1200) stick.current = false
+    lastTop.current = el.scrollTop
+    setAtBottom(away < 80)
+    saveAnchor()
   }, [])
 
   const toBottom = (smooth = false) => {
     const el = scroller.current
-    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    lastTop.current = el.scrollTop
   }
 
-  // keep pinned to the latest message while output streams in
-  useLayoutEffect(() => {
+  /** After content changes: follow the bottom, or keep the row being read exactly where it was. */
+  const settle = () => {
     const el = scroller.current
     if (!el) return
-    if (loadingMore && prevHeight.current) {
-      el.scrollTop += el.scrollHeight - prevHeight.current
-      prevHeight.current = 0
-      setLoadingMore(false)
-      return
+    if (stick.current) return toBottom()
+    const a = anchor.current.find((x) => x.el.isConnected)
+    if (!a) return saveAnchor()
+    const delta = a.el.getBoundingClientRect().top - el.getBoundingClientRect().top - a.top
+    if (Math.abs(delta) >= 1) {
+      el.scrollTop += delta
+      lastTop.current = el.scrollTop
     }
-    if (stick.current) toBottom()
-  }, [rows, working, prompt, loadingMore, pending.length, queue.length])
+  }
+
+  // sending a message yourself always goes to the bottom and follows again, wherever you were
+  const sentIds = useRef<Set<string> | null>(null)
+  useLayoutEffect(() => {
+    const ids = new Set(stored.map((p) => p.id))
+    const fresh = sentIds.current && [...ids].some((id) => !sentIds.current!.has(id))
+    sentIds.current = ids
+    if (fresh) stick.current = true
+  }, [stored])
+
+  useLayoutEffect(settle, [rows, working, prompt, pending.length, queue.length, stored])
+
+  // older messages arrived (they're prepended; settle() kept the reading position)
+  const firstSeq = chat?.items[0]?.seq
+  useEffect(() => setLoadingMore(false), [firstSeq])
 
   useEffect(() => {
     stick.current = true
     requestAnimationFrame(() => toBottom())
   }, [key, chat?.loaded])
 
+  // images, highlighted code and opened tool rows change heights after render
   useEffect(() => {
     const el = scroller.current
     if (!el) return
-    const ro = new ResizeObserver(() => stick.current && toBottom())
+    const ro = new ResizeObserver(() => settle())
     ro.observe(el)
-    return () => ro.disconnect()
-  }, [])
+    if (list.current) ro.observe(list.current)
+    // a finger or wheel moving the conversation down (reading back) stops following at once,
+    // before the first scroll event, so streaming output can't pull the reader back
+    const wheel = (e: WheelEvent) => {
+      inputAt.current = Date.now()
+      if (e.deltaY < 0) stick.current = false
+    }
+    const start = (e: TouchEvent) => {
+      inputAt.current = Date.now()
+      touchY.current = e.touches[0]?.clientY ?? null
+    }
+    const move = (e: TouchEvent) => {
+      inputAt.current = Date.now()
+      const y = e.touches[0]?.clientY
+      if (touchY.current !== null && y !== undefined && y > touchY.current + 4) stick.current = false
+    }
+    // keys (PageUp, arrows) and dragging the scrollbar
+    const other = () => void (inputAt.current = Date.now())
+    el.addEventListener('wheel', wheel, { passive: true })
+    el.addEventListener('touchstart', start, { passive: true })
+    el.addEventListener('touchmove', move, { passive: true })
+    el.addEventListener('keydown', other)
+    el.addEventListener('pointerdown', other)
+    return () => {
+      ro.disconnect()
+      el.removeEventListener('wheel', wheel)
+      el.removeEventListener('touchstart', start)
+      el.removeEventListener('touchmove', move)
+      el.removeEventListener('keydown', other)
+      el.removeEventListener('pointerdown', other)
+    }
+  }, [chat?.loaded])
 
   // a sent message the agent hasn't written yet: keep the bubble, but say so after a while
   useEffect(() => {
-    if (!pending.some((p) => p.status === 'sent')) return
-    const t = setInterval(() => patchChat(key, (c) => ({ pending: c.pending.map((p) => p.status === 'sent' && Date.now() - p.at >= PENDING_MS
-      ? { ...p, status: 'failed', error: 'Delivery could not be confirmed. Check the terminal before retrying.' }
+    if (!pending.some((p) => p.status === 'sent' && !p.remote)) return
+    const t = setInterval(() => patchChat(key, (c) => ({ pending: c.pending.map((p) => p.status === 'sent' && !p.queued && Date.now() - p.at >= PENDING_MS
+      ? { ...p, status: 'failed', error: "Still not in the conversation after 10 minutes. Check the terminal before retrying." }
       : p) })), 5000)
     return () => clearInterval(t)
   }, [key, pending])
@@ -110,7 +184,8 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   const loadMore = () => {
     const first = chat?.items[0]
     if (!first || loadingMore) return
-    prevHeight.current = scroller.current?.scrollHeight ?? 0
+    stick.current = false
+    saveAnchor()
     setLoadingMore(true)
     socket.send({ t: 'chat.more', host, pane, before: first.seq })
   }
@@ -147,7 +222,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
     <ChatJobs.Provider value={jobs}>
       <ReplyFont.Provider value={font}>
         <div className="flex min-h-0 flex-1 flex-col">
-          <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
             <div className="mx-auto w-full max-w-[760px] px-4 pt-5 pb-6 sm:px-6">
               {!chat?.loaded ? (
                 <div className="space-y-4 pt-4">
@@ -175,7 +250,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                       Messages you send here are typed into the terminal, exactly as if you typed them there.
                     </Empty>
                   )}
-                  <div className="space-y-5">
+                  <div ref={list} className="space-y-5">
                     {rows.map((r) => {
                       switch (r.type) {
                         case 'user':
@@ -225,8 +300,9 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
               <button
                 type="button"
                 onClick={() => {
+                  // straight there in one tap: a glide is slow over a long chat and new output cuts it short
                   stick.current = true
-                  toBottom(true)
+                  toBottom()
                 }}
                 className="animate-fade-in absolute -top-12 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float hover:text-fg"
                 aria-label="Jump to latest"

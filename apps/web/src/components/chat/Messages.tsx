@@ -107,12 +107,12 @@ export function PendingBubble({ p, onRetry, onDismiss }: { p: PendingMessage; on
       <div className="mt-1 flex h-6 items-center gap-1.5 px-1 text-[11.5px] text-fg-3">
         {p.status === 'sending' && (
           <>
-            <Loader2 className="size-3 animate-spin" /> Sending
+            <Loader2 className="size-3 animate-spin" /> {p.remote ? 'Sending from another device' : 'Sending'}
           </>
         )}
         {p.status === 'sent' && (
           <>
-            <Check className="size-3" /> Awaiting confirmation
+            <Check className="size-3" /> {p.remote ? 'Sent from another device' : 'Sent'}
           </>
         )}
         {p.status === 'failed' && (

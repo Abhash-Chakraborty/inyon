@@ -217,6 +217,15 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
     setKind(inst.includes('claude') ? 'claude' : inst[0] ?? 'shell')
   }, [open])
 
+  // opened before the machines arrived (app starting, phone reconnecting): pick one once they do
+  const firstHost = hostId ?? hosts[0]?.config.id
+  useEffect(() => {
+    if (!open || host || !firstHost) return
+    setHost(firstHost)
+    const inst = hosts.find((x) => x.config.id === firstHost)?.agents ?? []
+    setKind(inst.includes('claude') ? 'claude' : inst[0] ?? 'shell')
+  }, [open, host, firstHost])
+
   const def = kind !== 'shell' ? AGENTS[kind] : undefined
 
   const submit = async (e: React.FormEvent) => {
@@ -282,7 +291,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Machine">
+          <Field label={isPhone() ? 'Server' : 'Machine'}>
             <select className={inputClass} value={host} onChange={(e) => (setHost(e.target.value), setSession(''))}>
               {hosts.map((x) => (
                 <option key={x.config.id} value={x.config.id}>{x.config.name}</option>
@@ -290,13 +299,13 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
             </select>
           </Field>
           <Field label="Folder">
-            <input className={clsx(inputClass, 'font-mono text-[13.5px]')} value={cwd} onChange={(e) => setCwd(e.target.value)} autoCapitalize="off" spellCheck={false} />
+            <input className={clsx(inputClass, 'font-mono text-[13.5px]')} value={cwd} onChange={(e) => setCwd(e.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
           </Field>
         </div>
         {recent.length > 0 && (
           <div className="-mt-2 flex flex-wrap gap-1.5">
             {recent.map((r) => (
-              <button key={r} type="button" title={r} onClick={() => setCwd(r)} className={clsx('max-w-full truncate rounded-[7px] border px-2 py-0.5 font-mono text-[11.5px]', cwd === r ? 'border-fg text-fg' : 'border-line text-fg-3 hover:text-fg-2')}>
+              <button key={r} type="button" title={r} onClick={() => setCwd(r)} className={clsx('max-w-full truncate rounded-[7px] border px-2 py-0.5 font-mono text-[11.5px] pointer-coarse:px-2.5 pointer-coarse:py-1.5', cwd === r ? 'border-fg text-fg' : 'border-line text-fg-3 hover:text-fg-2')}>
                 {shortPath(r)}
               </button>
             ))}
@@ -346,7 +355,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           </Field>
           {!session && (
             <Field label="Session name">
-              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'shell' ? 'shell' : kind} autoCapitalize="off" />
+              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'shell' ? 'shell' : kind} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             </Field>
           )}
         </div>

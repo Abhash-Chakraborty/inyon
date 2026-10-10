@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Copy, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
@@ -27,6 +27,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
   // the fingerprint the server showed, waiting for a yes; and the address it belongs to
   const [found, setFound] = useState<{ fingerprint: string; keyType: string; at: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const fingerprint = useRef<HTMLDivElement>(null)
 
   useOpened(open, edit?.id, () => {
     setName(edit?.name ?? '')
@@ -40,7 +41,13 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
     api.phoneKey().then((k) => setPhoneKey(k.publicKey), () => {})
   })
 
+  // the fingerprint appears under the fold of a phone-sized sheet: bring it into view to be read
+  useEffect(() => {
+    if (found) fingerprint.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [found?.fingerprint, found?.at])
+
   const address = `${target.trim()}:${port || 22}`
+  const noUser = !!target.trim() && !target.includes('@')
   const known = edit?.hostKey && `${edit.target}:${edit.port ?? 22}` === address ? edit.hostKey : undefined
   const confirmed = found?.at === address ? found.fingerprint : known
   const keptSecret = !!edit && edit.auth === auth
@@ -118,7 +125,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Work server" autoFocus={!edit} />
         </Field>
         <div className="grid grid-cols-[1fr_92px] gap-3">
-          <Field label="User and address">
+          <Field label="User and address" hint={noUser ? 'Add the user name too, like you@server' : undefined}>
             <input
               className={clsx(inputClass, 'font-mono text-[13.5px]')}
               value={target}
@@ -136,7 +143,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
         </div>
 
         <Field label="Sign in with">
-          <Segmented full value={auth} onChange={setAuth} options={[{ v: 'phone-key', label: "This phone's key" }, { v: 'password', label: 'Password' }, { v: 'key', label: 'Private key' }]} />
+          <Segmented full value={auth} onChange={setAuth} options={[{ v: 'phone-key', label: 'Phone key' }, { v: 'password', label: 'Password' }, { v: 'key', label: 'Private key' }]} />
         </Field>
         {auth === 'phone-key' && (
           <div className="rounded-[12px] border border-line bg-code p-3">
@@ -174,7 +181,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
         )}
 
         {asking && found && (
-          <div className={clsx('flex gap-3 rounded-[12px] px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-ok-soft/60 text-fg-2')}>
+          <div ref={fingerprint} className={clsx('flex scroll-mb-4 gap-3 rounded-[12px] px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-ok-soft/60 text-fg-2')}>
             {changed ? <ShieldAlert className="mt-0.5 size-4 shrink-0" /> : <ShieldCheck className="mt-0.5 size-4 shrink-0 text-ok" />}
             <span className="min-w-0">
               {changed ? "The server's key is different from the one you trusted before. Only continue if you reinstalled it or changed its keys." : 'The server says its key is:'}
@@ -186,7 +193,7 @@ export function ServerSheet({ open, onClose, edit }: { open: boolean; onClose: (
           </div>
         )}
         {edit && known && !asking && (
-          <button type="button" onClick={check} className="text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+          <button type="button" onClick={check} className="-my-1.5 py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
             Check the server's key again
           </button>
         )}

@@ -4,7 +4,7 @@ import { socket } from './socket.ts'
 import { haptic } from './haptics.ts'
 import { isNative, nativeNotify } from './native.ts'
 
-import { reconcile, PENDING_MS, type PendingMessage } from './pending.ts'
+import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
 
 export interface ChatState {
@@ -151,13 +151,20 @@ function onMessage(m: ServerMsg) {
       useStore.setState({ hosts: m.hosts, hostsLoaded: true })
       break
     case 'chat.reset':
-      patchChat(m.key, (c) => ({ info: m.info, items: m.items, hasMore: m.hasMore, loaded: true, pending: reconcile(c.pending, m.items) }))
+      patchChat(m.key, (c) => {
+        // Gemini, Antigravity and OpenCode resend their latest page on every step: keep the earlier
+        // messages this screen already loaded, or someone reading back jumps on each update
+        const head = m.items[0]
+        const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
+        const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, pending: settle(c.pending, m.items, m.info.sends) }
+      })
       break
     case 'chat.append':
       patchChat(m.key, (c) => {
         const last = c.items[c.items.length - 1]?.seq ?? -1
         const fresh = m.items.filter((i) => i.seq > last)
-        return { items: [...c.items, ...fresh], pending: reconcile(c.pending, fresh) }
+        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends) }
       })
       break
     case 'chat.more':

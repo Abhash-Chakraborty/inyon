@@ -149,7 +149,7 @@ export function Settings() {
               >
                 <div className="flex items-center gap-3 text-[12px] text-fg-3">
                   <code className="rounded-[7px] border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch}</code>
-                  <span className={clsx('rounded-[6px] px-2 py-0.5 text-[11.5px]', a.chat ? 'bg-ok-soft text-ok' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
+                  <span className={clsx('shrink-0 whitespace-nowrap rounded-[6px] px-2 py-0.5 text-[11.5px]', a.chat ? 'bg-ok-soft text-ok' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
                 </div>
               </Row>
             ))}

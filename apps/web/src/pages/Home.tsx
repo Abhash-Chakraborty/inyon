@@ -47,7 +47,7 @@ export function Home() {
           </span>
           <h1 className="text-[15px] font-semibold tracking-tight">Overview</h1>
           <span className="hidden text-[12.5px] text-fg-3 sm:inline">
-            {hosts.length} {isPhone() ? 'server' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} panes
+            {hosts.length} {isPhone() ? 'server' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}
           </span>
           {!connected && (
             <span className="ml-auto flex items-center gap-1.5 text-[12px] text-warn">
@@ -157,14 +157,14 @@ export function Home() {
                 ) : (
                   <div className="rounded-[16px] border border-dashed border-line-strong">
                     <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
-                      {panes.length ? 'Try another filter.' : 'Start Claude Code, Codex or another agent in tmux on any machine, or press N to start one from here.'}
+                      {panes.length ? 'Try another filter.' : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'server' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
                     </Empty>
                   </div>
                 )}
               </section>
 
               <section>
-                <SectionLabel right={<Link to="/machines" className="text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Servers' : 'Machines'}</SectionLabel>
+                <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Servers' : 'Machines'}</SectionLabel>
                 <MachinesTable hosts={hosts} />
               </section>
             </>

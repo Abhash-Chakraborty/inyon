@@ -232,7 +232,8 @@ select:focus-visible {
 }
 .prose-reply > :first-child { margin-top: 0; }
 .prose-reply > :last-child { margin-bottom: 0; }
-.prose-reply p { margin: 0.65em 0; }
+/* agents write one line per thought and the terminal shows each on its own line; so does the chat */
+.prose-reply p { margin: 0.65em 0; white-space: pre-line; }
 .prose-reply h1,
 .prose-reply h2,
 .prose-reply h3,
@@ -325,3 +326,12 @@ select:focus-visible {
 .xterm .xterm-viewport { background: transparent !important; }
 .xterm-viewport::-webkit-scrollbar { width: 6px; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+
+/* phones zoom into a field under 16px when it gets focus, and leave the page zoomed afterwards */
+@media (pointer: coarse) {
+  input:not([type='checkbox'], [type='radio'], [type='range']),
+  textarea:not(.xterm-helper-textarea),
+  select {
+    font-size: 16px;
+  }
+}
