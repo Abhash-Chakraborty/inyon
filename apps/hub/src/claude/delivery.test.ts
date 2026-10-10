@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { codexAccepted, inputContains } from './delivery.ts'
+import { codexAccepted, inputContains, sameMessage } from './delivery.ts'
 import { parseScreen } from './screen.ts'
 import { readFileSync } from 'node:fs'
 
@@ -51,4 +51,15 @@ test('Codex collapsed content preserves the real draft and checks its size', asy
   expect(inputContains('[Pasted Content 1823 chars]', text)).toBe(false)
   expect(inputContains('[Pasted Content 1824 chars] extra', text)).toBe(false)
   expect(hasPastePreview('[Pasted text #1 +20 lines]')).toBe(true)
+})
+
+test("an agent's record matches the sent message despite rewrapping, not a shorter draft", () => {
+  const sent = "why can't I paste images? it says \"not supported\" really\n\nAttached files:\n/home/u/.tether/uploads/a.png"
+  expect(sameMessage(`<pasted_content id="x">${sent.replace(/\n/g, ' ')}</pasted_content>`, sent)).toBe(true)
+  expect(sameMessage(sent.replace(/"/g, '“'), sent)).toBe(true)
+  // a draft mirrored before the last edits is a prefix, and must not count as the message
+  expect(sameMessage("why can't I paste images? it says \"not supported\" real", sent)).toBe(false)
+  // a very long message the transcript cut short still counts
+  const long = 'word '.repeat(1000)
+  expect(sameMessage(long.slice(0, 2500), long)).toBe(true)
 })

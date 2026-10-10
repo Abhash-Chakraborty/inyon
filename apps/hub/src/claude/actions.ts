@@ -66,6 +66,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
   if (!found.pane.agent) throw new HttpError(409, 'No agent is running in this pane')
   if (!text.trim()) throw new HttpError(400, 'Message is empty')
   const startedAt = fromComposer ? Date.now() : 0
+  const sendStart = Date.now()
   if (hasPastePreview(text) && /^\[Pasted[^\n]+\]$/i.test(text.trim())) throw new HttpError(409, 'This saved message contains only a terminal paste preview. Paste the original text again; the preview does not contain the message.')
   if (found.pane.agent.kind === 'opencode' && !viaApi(found.pane.agent.transcriptPath)) {
     const setting = text.trim().match(/^\/(model|effort|agent)\s+(\S+)$/)
@@ -157,11 +158,14 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       watchers.peek(hostId, paneId)?.draftSent()
       return nudge(hostId, paneId)
     }
-    const tail = squash(text).slice(-16)
+    const full = squash(text)
     const arrived = (d?: string) => {
       if (checkedInput) return inputContains(d, text)
       const now = squash(d ?? '')
-      return now.includes(tail) || /\[Pastedtext#\d+/.test(now) || now.length >= squash(text).length * 0.6
+      // the whole message, Claude's paste preview, or the end of a long one whose start has
+      // scrolled out of the box. Never "most of it": a draft mirrored from the app before the last
+      // edits is a shorter prefix, and pressing Enter on it sends the old text.
+      return inputContains(d, text) || /\[Pastedtext#\d+/.test(now) || (now.length >= 200 && full.endsWith(now))
     }
     // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
     if (squash(screen.draft ?? '') !== squash(text)) {
@@ -200,6 +204,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
           // OpenCode's /undo puts the undone message back in the box
           (isOpenCode && !!s.inputVisible && squash(s.draft ?? '') !== squash(text)))
         if (opensMenu || (checkedInput ? codexAccepted(s, text) : s.prompt || !arrived(s.draft))) {
+          if (found.pane.agent.kind === 'claude' && !slash) await confirmRecorded(hostId, paneId, text, sendStart)
           if (!releaseDraft) watchers.peek(hostId, paneId)?.draftSent(text, startedAt)
           if (isOpenCode && text.trimStart().startsWith('/')) await closeOpenCodeMenu(hostId, paneId)
           if (settingDraft && !releaseDraft) {
@@ -215,6 +220,21 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
   } finally {
     await releaseDraft?.()
   }
+}
+
+/**
+ * The box emptied after Enter, but that alone doesn't prove Claude took the message: a dialog on
+ * screen can swallow the keystrokes, or the box can be cleared under us. Claude writes every
+ * message to its transcript at once (queued while it works, or as a new turn), so wait for that.
+ */
+async function confirmRecorded(hostId: string, paneId: string, text: string, since: number) {
+  const w = watchers.peek(hostId, paneId)
+  if (!w?.following) return
+  for (let i = 0; i < 40; i++) {
+    if (w.recorded(text, since)) return
+    await sleep(250)
+  }
+  throw new HttpError(409, "Claude didn't record the message, so it may not have reached it (a dialog on screen can take the keys). Open the terminal to check before retrying.")
 }
 
 /** Answers a dialog that asks for typed input (e.g. the /login code). */

@@ -2,6 +2,7 @@ import { OpenCodeClient } from '../agents/opencode-api.ts'
 import { opencodeSelection, opencodeLive } from '../agents/opencode-controls.ts'
 import type { AgentKind, ChatInfo, ChatItem, ScreenState, ServerMsg } from '@tether/protocol'
 import { isDriving, startDriving } from './driving.ts'
+import { sameMessage } from './delivery.ts'
 import { chatKey } from '@tether/protocol'
 import { codexHistory, normalizeCodex } from '../agents/codex.ts'
 import { normalizeCopilot } from '../agents/copilot.ts'
@@ -92,9 +93,12 @@ class ChatWatcher {
     if (!rt || rt.state.status === 'online' || !this.onRemoteHost()) return
     const cached = loadChat(this.key)
     const agent = registry.findPane(this.hostId, this.paneId)?.pane.agent
-    if (!cached || (agent?.sessionId && cached.sessionId && agent.sessionId !== cached.sessionId)) return
+    if (!cached || (agent?.sessionId && agent.sessionId !== cached.sessionId)) return
     this.items = cached.items
-    this.info = { ...cached.info, running: !!agent }
+    // without the session id the copy may be an older conversation in this pane: show what was
+    // said, but not a goal or queue that may be long gone
+    const sure = !!agent?.sessionId
+    this.info = { ...cached.info, running: !!agent, ...(sure ? {} : { goal: undefined, queue: [] }) }
     this.ready = true
   }
 
@@ -226,6 +230,17 @@ class ChatWatcher {
     if (!text || !current || current.at <= startedAt || squash(text).startsWith(squash(current.text))) setDraft(this.key, undefined)
     else this.mirrorTimer = setTimeout(() => this.mirror(), 1600)
     this.broadcastDraft()
+  }
+
+  /** Following the agent's transcript, so `recorded` can be trusted. */
+  get following() {
+    return this.ready && !!this.transcript && !!this.tail
+  }
+
+  /** Whether the agent wrote this message down, queued or as a turn, since `since`. */
+  recorded(text: string, since: number) {
+    if (this.meta.queue.some((q) => sameMessage(q, text))) return true
+    return this.items.some((i) => i.kind === 'user' && Date.parse(i.ts) >= since - 30_000 && sameMessage(i.shell ? `!${i.text}` : i.text, text))
   }
 
   /** The terminal's input box changed: if someone typed there, adopt it as the draft. */

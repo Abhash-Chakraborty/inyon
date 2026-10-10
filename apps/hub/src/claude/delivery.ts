@@ -25,3 +25,13 @@ export function codexAccepted(screen: ScreenState, text: string): boolean {
   return (!!screen.model || !!screen.inputVisible) && !screen.prompt && !screen.draft?.trim()
     || !!screen.queue?.some((queued) => inputContains(queued, text))
 }
+
+/** Words and their order only: agents rewrap pastes, drop markup and swap quotes. */
+const looseText = (s: string) => s.replace(/<\/?pasted_content\b[^>]*>/g, '').toLowerCase().replace(/[^\p{L}\p{N}!/]+/gu, '')
+
+/** Whether the agent's own record of a message is the one that was sent (long ones get cut short). */
+export function sameMessage(recorded: string, sent: string): boolean {
+  const a = looseText(recorded)
+  const b = looseText(sent)
+  return a === b || (a.length >= 2000 && b.startsWith(a))
+}
