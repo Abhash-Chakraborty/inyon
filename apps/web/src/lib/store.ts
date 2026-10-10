@@ -203,4 +203,16 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
 }
 
 socket.on(onMessage)
+// a chat you left keeps its draft and unsent messages; its history reloads when you come back,
+// so the app doesn't hold every conversation you ever opened. A short delay keeps quick
+// back-and-forth navigation instant.
+const forget = new Map<string, ReturnType<typeof setTimeout>>()
+socket.onChatClosed((key) => {
+  clearTimeout(forget.get(key))
+  forget.set(key, setTimeout(() => {
+    forget.delete(key)
+    const c = useStore.getState().chats[key]
+    if (c && !socket.watching(key)) patchChat(key, () => ({ items: [], hasMore: false, loaded: false, screen: undefined }))
+  }, 60_000))
+})
 socket.onStatus((connected) => useStore.setState({ connected }))

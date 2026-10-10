@@ -24,7 +24,7 @@ class Socket {
     this.connect()
     document.addEventListener('visibilitychange', () => {
       // phones suspend sockets in the background; reconnect right away on return
-      if (document.visibilityState === 'visible' && !this.up) {
+      if (document.visibilityState === 'visible' && !this.up && this.ws?.readyState !== WebSocket.CONNECTING) {
         clearTimeout(this.timer)
         this.connect()
       }
@@ -40,9 +40,16 @@ class Socket {
   private connect() {
     if (!this.started) return
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    // one connection at a time: a second one would deliver every message twice
+    const old = this.ws
+    if (old && old.readyState !== WebSocket.CLOSED) {
+      old.onclose = old.onmessage = old.onopen = null
+      old.close()
+    }
     const ws = new WebSocket(`${proto}://${location.host}/ws`)
     this.ws = ws
     ws.onopen = () => {
+      if (this.ws !== ws) return
       this.retry = 0
       this.setUp(true)
       if (this.overview) this.raw({ t: 'sub.overview' })
@@ -51,6 +58,7 @@ class Socket {
       this.pingTimer = setInterval(() => this.raw({ t: 'ping' }), 25000)
     }
     ws.onmessage = (e) => {
+      if (this.ws !== ws) return
       let msg: ServerMsg
       try {
         msg = JSON.parse(e.data)
@@ -90,6 +98,17 @@ class Socket {
     return () => void this.listeners.delete(fn)
   }
 
+  watching(key: string) {
+    return this.chats.has(key)
+  }
+
+  private closedListeners = new Set<(key: string) => void>()
+  /** A chat nobody watches any more (its messages can be let go; they reload on return). */
+  onChatClosed(fn: (key: string) => void) {
+    this.closedListeners.add(fn)
+    return () => void this.closedListeners.delete(fn)
+  }
+
   onStatus(fn: (up: boolean) => void) {
     this.statusListeners.add(fn)
     return () => void this.statusListeners.delete(fn)
@@ -115,6 +134,7 @@ class Socket {
       if (--c.refs <= 0) {
         this.chats.delete(key)
         this.raw({ t: 'unsub.chat', host, pane })
+        for (const fn of this.closedListeners) fn(key)
       }
     }
   }

@@ -336,7 +336,11 @@ export function Composer({
       setTextState('')
       setOrigin(null)
     }
-    setFiles([])
+    // the image previews aren't shown any more: free them (phones run out of memory otherwise)
+    setFiles((cur) => {
+      for (const f of cur) if (f.preview) URL.revokeObjectURL(f.preview)
+      return []
+    })
     setPop(null)
     try {
       await api.send(host, pane, msg, id)
