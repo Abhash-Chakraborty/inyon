@@ -11,7 +11,7 @@ import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Sheet, inputClass } from './ui/primitives.tsx'
 
 const PAIR_COMMAND = 'tether-node pair'
-const DOWNLOADS = 'https://github.com/Abhash-Chakraborty/tether/releases/latest/download'
+const DOWNLOADS = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download'
 /** One line that downloads tether-node, starts it in the background and shows the code. */
 export const SETUP_COMMANDS = {
   unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${DOWNLOADS}/get.sh | sh` },

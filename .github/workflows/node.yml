@@ -2,7 +2,8 @@ name: tether-node
 
 # Builds tether-node as single binaries (Bun included), so a laptop needs nothing else installed.
 #   push to main  -> refreshes the "node-latest" pre-release
-#   tag v1.2.3    -> attached to that release
+#   tag v1.2.3    -> attached to that release, and copied to the public downloads repo
+#                    (Abhash-Chakraborty/tether-releases) that the one-line installers fetch from
 on:
   push:
     branches: [main]
@@ -64,3 +65,14 @@ jobs:
               --title "Latest tether-node build" \
               --notes "Built from $GITHUB_SHA on main. Run \`tether-node pair\` on a laptop and scan the code with the Tether app."
           fi
+
+      # this repo is private, so the installers download from a public one; needs a fine-grained
+      # token with contents: write on tether-releases, saved as the RELEASES_TOKEN secret
+      - name: Publish downloads
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "No RELEASES_TOKEN secret: skipping the public downloads"; exit 0; fi
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* -R Abhash-Chakraborty/tether-releases \
+            --title "tether-node ${GITHUB_REF_NAME#v}" --notes "tether-node ${GITHUB_REF_NAME#v}. See the README for the one-line setup." --latest

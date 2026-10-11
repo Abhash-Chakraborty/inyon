@@ -140,34 +140,48 @@ The hub then picks up each conversation where it left off.
 Tether's core in the app (`apps/hub/src/phone`) and reaches your machines itself, in one of two
 ways. There's no server in between and no password.
 
-### A laptop, from anywhere
+### Any computer, from anywhere
 
-Most people have a laptop and an internet connection, not a server or a VPN. On the laptop:
+Most people have a laptop and an internet connection, not a VPN. On a Mac or Linux machine, run
+this in a terminal (on a server, in your SSH session):
 
 ```sh
-tether-node pair
+curl -fsSL https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.sh | sh
 ```
 
-It prints a QR code. In the app, tap *Add*, then *Scan the code*. That's the whole setup, and
-the laptop stays paired until you remove it.
+On Windows, in PowerShell:
 
-`tether-node` opens a free Cloudflare quick tunnel, so the phone reaches the laptop from any
-network without an account or an open port. Phone and laptop talk over Noise (the IK pattern,
+```powershell
+irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.ps1 | iex
+```
+
+It downloads `tether-node`, checks it against the release's SHA256SUMS and prints a QR code. In
+the app, tap *Add a computer*, then *Scan the code*. The computer stays paired until you remove it.
+
+Setup also installs `tether-node` as a background service, so it comes back after a restart: a
+systemd user unit on Linux, launchd on macOS and a logon task on Windows. A box without systemd
+user services gets a background process and an `@reboot` cron line instead. `tether-node
+uninstall` removes the service and leaves your pairings alone.
+
+`tether-node` opens a free Cloudflare quick tunnel, so the phone reaches the computer from any
+network without an account or an open port. Phone and computer talk over Noise (the IK pattern,
 X25519 and ChaCha20-Poly1305), so the tunnel only ever carries ciphertext. The tunnel's address
-changes when it restarts, so the laptop publishes its current addresses under its own key with
-[pkarr](https://pkarr.org) and the phone looks them up by the laptop's id; a forged record fails
+changes when it restarts, so the computer publishes its current addresses under its own key with
+[pkarr](https://pkarr.org) and the phone looks them up by the computer's id; a forged record fails
 the signature check. `--lan` also answers on the local network, which is faster at home.
 
-Binaries for Linux, macOS and Windows come from the "Latest tether-node build" pre-release
-(`.github/workflows/node.yml`), or run it from a checkout with `bun apps/node/tether-node.ts pair`.
-`tether-node phones` lists paired phones and `tether-node forget <name>` unpairs one.
+The binaries for Linux, macOS and Windows are built by `.github/workflows/node.yml` and published
+to [tether-releases](https://github.com/Abhash-Chakraborty/tether-releases). From a checkout,
+`bun apps/node/tether-node.ts pair` does the same. `tether-node phones` lists paired phones and
+`tether-node forget <name>` unpairs one.
 
 ### A server over SSH
 
-The app opens SSH connections with a native plugin (`TetherSshPlugin`, built on ConnectBot's
-sshlib).
+If you can't install anything on a server, the phone can reach it over SSH instead. The app opens
+SSH connections with a native plugin (`TetherSshPlugin`, built on ConnectBot's sshlib).
 
-1. Tap *Add*, then *Add a server over SSH instead*. Give it `user@host` and a port.
+1. Tap *Add a computer*, then *Can't install anything? Connect over SSH instead*. Give it
+   `user@host` and a port.
 2. Pick how it signs in: the phone's own key, a password, or a private key you paste.
 3. The phone's key is an ed25519 key made on the phone the first time you need it. Copy the
    command the app offers and run it once on the server; it adds the key to
