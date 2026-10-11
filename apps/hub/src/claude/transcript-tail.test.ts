@@ -6,6 +6,7 @@ import type { ServerMsg } from '@tether/protocol'
 import { metaCommand, parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
+import { loadChat, saveChat } from './chat-cache.ts'
 import { newMeta, normalize } from './transcript.ts'
 import { watchers } from './watcher.ts'
 
@@ -311,6 +312,21 @@ test('a long conversation opens on its last stretch and reads earlier messages a
   expect(w.items.find((i) => i.kind === 'user' && num(i) === 1000)).toMatchObject({ images: 1 })
   console.log(`opened a ${(statSync(file).size / 1e6).toFixed(1)} MB conversation in ${Math.round(opened)} ms`)
   watchers.stop(w.key)
+
+  // a copy saved before this doesn't say where its first message is: it's read afresh, not scrolled from
+  ;(watchers as any).parked.clear()
+  const saved = loadChat(w.key)!
+  expect(saved.at?.older).toBeGreaterThan(0)
+  delete saved.at!.older
+  saveChat(w.key, saved)
+  streams.mockClear()
+  got.length = 0
+  const again = watchers.get('tail-test', '%3')
+  again.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  expect(streams.mock.calls.some((c) => String(c[0]).includes('grep -E'))).toBe(true)
+  expect((got.find((m) => m.t === 'chat.reset') as any).hasMore).toBe(true)
+  watchers.stop(again.key)
 }, 60_000)
 
 test('the summary of a long conversation leaves out what was said', () => {

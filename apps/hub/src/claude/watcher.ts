@@ -133,7 +133,10 @@ class ChatWatcher {
     const agent = registry.findPane(this.hostId, this.paneId)?.pane.agent
     if (!cached || (agent?.sessionId && agent.sessionId !== cached.sessionId)) return
     const at = cached.at
-    if (at && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
+    // a Claude chat saved before long conversations opened on their last stretch doesn't say where
+    // its first message is in the file; reading it afresh is quick now, scrolling up from it isn't
+    const outdated = at && !at.codex && at.agent !== 'copilot' && at.older === undefined
+    if (at && !outdated && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
       try {
         const meta = loadMeta(at.meta)
         return this.unpark({ at: cached.savedAt, transcript: cached.transcript, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info, older: at.older })
@@ -182,8 +185,11 @@ class ChatWatcher {
     let older = this.olderFrom
     if (first > 0 && older !== undefined) {
       const line = (i: number) => this.lineAt.get(this.items[i]!.seq)
-      while (first < this.items.length && line(first) !== undefined && line(first) === line(first - 1)) first++
+      // messages restored from a saved copy have no known line, so the cut moves on past them too;
+      // with none known the copy is saved without a place and read afresh next time
+      while (first < this.items.length && (line(first) === undefined || line(first) === line(first - 1))) first++
       older = first < this.items.length ? line(first) : undefined
+      if (older === undefined) first = Math.max(0, this.items.length - CACHE_KEEP)
     }
     const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta), older } : undefined
     if (!at && !this.onRemoteHost()) return
