@@ -146,7 +146,7 @@ export interface SessionInfo {
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
 /** Tether's version, the same for the app, the hub and tether-node (the root package.json's). */
-export const VERSION = '0.6.3'
+export const VERSION = '0.6.4'
 
 /**
  * A tether-node that can be updated from the app, or an update the app started. `latest` is the
