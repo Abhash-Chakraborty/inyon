@@ -15,6 +15,7 @@ import { AgentLogo } from '../../lib/skin.tsx'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
+import { readClipboard } from '../../lib/native.ts'
 
 const LIGHT: ITheme = {
   background: '#faf9f5', foreground: '#1f1e1d', cursor: '#c96442', cursorAccent: '#faf9f5',
@@ -169,11 +170,11 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
   }
   const paste = async () => {
     try {
-      const t = await navigator.clipboard.readText()
+      const t = await readClipboard()
       if (t) socket.send({ t: 'term.in', id: idRef.current, d: `\x1b[200~${t}\x1b[201~` })
+      else toast({ title: 'Nothing to paste', body: 'Copy some text first, then tap Paste.', tone: 'info' })
     } catch {
-      const t = prompt('Paste text to send to the terminal')
-      if (t) socket.send({ t: 'term.in', id: idRef.current, d: t })
+      toast({ title: "Couldn't read the clipboard", body: 'Long-press in the terminal and paste from the keyboard instead.', tone: 'error' })
     }
     termRef.current?.focus()
   }

@@ -15,6 +15,7 @@ import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
 import { backgroundText } from '../ui/status.tsx'
+import { confirmAction } from '../Confirm.tsx'
 
 const NO_AGENTS: AgentKind[] = []
 /** away longer than this, coming back jumps to the latest message */
@@ -229,7 +230,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
 
   const rewind = useCallback(async (text: string) => {
     const short = text.length > 60 ? `${text.slice(0, 60)}…` : text
-    if (!confirm(`Rewind to before "${short}"? Codex forgets that message and everything after it.`)) return
+    if (!(await confirmAction({ title: 'Rewind the conversation?', body: `Codex forgets "${short}" and everything after it.`, yes: 'Rewind', danger: true }))) return
     try {
       await api.rewind(host, pane, text)
       toast({ title: 'Conversation rewound', tone: 'success' })

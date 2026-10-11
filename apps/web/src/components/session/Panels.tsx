@@ -15,6 +15,7 @@ import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
+import { confirmAction } from '../Confirm.tsx'
 
 // ---------- changes ----------
 
@@ -235,7 +236,7 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
                   <button type="button" title="Copy link" onClick={() => copyText(a.url).then((ok) => ok && toast({ title: 'Link copied', tone: 'success' }))} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-hover hover:text-fg">
                     <Copy className="size-3.5" />
                   </button>
-                  <button type="button" title="Ask the agent to delete it" onClick={() => confirm(`Ask the agent to delete “${a.title ?? a.url}”?`) && s.actions.send(`Delete the artifact ${a.url}`)} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-danger-soft hover:text-danger">
+                  <button type="button" title="Ask the agent to delete it" onClick={async () => (await confirmAction({ title: 'Delete this artifact?', body: `The agent is asked to delete “${a.title ?? a.url}”.`, yes: 'Ask to delete', danger: true })) && s.actions.send(`Delete the artifact ${a.url}`)} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-danger-soft hover:text-danger">
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>

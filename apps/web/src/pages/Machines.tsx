@@ -17,6 +17,7 @@ import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { AgentBadges } from '../components/Overview.tsx'
+import { confirmAction } from '../components/Confirm.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
@@ -99,7 +100,7 @@ export function MachinePage() {
   const nav = useNavigate()
   if (!host) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
   const remove = async () => {
-    if (!confirm(`Remove ${host.config.name}? Its tmux sessions keep running.`)) return
+    if (!(await confirmAction({ title: `Remove ${host.config.name}?`, body: 'Its tmux sessions keep running on the computer.', yes: 'Remove', danger: true }))) return
     try {
       await api.removeHost(host.config.id)
       nav('/machines')
@@ -275,7 +276,7 @@ function ConfigTab({ host }: { host: HostState }) {
               <button
                 key={f.path}
                 type="button"
-                onClick={() => (dirty && !confirm('Discard unsaved changes?') ? null : setSel(f.path))}
+                onClick={async () => (dirty && !(await confirmAction({ title: 'Discard unsaved changes?', yes: 'Discard', danger: true })) ? null : setSel(f.path))}
                 className={clsx('flex w-full items-center gap-2 rounded-[8px] px-2.5 py-1.5 text-left text-[12.5px]', sel === f.path ? 'bg-hover' : 'hover:bg-hover/60')}
               >
                 <span className={clsx('min-w-0 flex-1 truncate', !f.exists && 'text-fg-3')}>{f.label}</span>
@@ -323,7 +324,7 @@ export function UploadsCard({ host, compact }: { host: HostState; compact?: bool
     if (host.status === 'online') api.uploadUsage(host.config.id).then(setUsage).catch(() => {})
   }, [host.config.id, host.status])
   const clean = async (days: number) => {
-    if (days === 0 && !confirm(`Delete every uploaded file on ${host.config.name}?`)) return
+    if (days === 0 && !(await confirmAction({ title: 'Delete every uploaded file?', body: `All files sent from the app to ${host.config.name} are removed.`, yes: 'Delete all', danger: true }))) return
     setBusy(String(days))
     try {
       setUsage(await api.cleanUploads(host.config.id, days))

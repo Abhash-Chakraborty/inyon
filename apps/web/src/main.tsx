@@ -8,6 +8,7 @@ import { socket } from './lib/socket.ts'
 import { useStore } from './lib/store.ts'
 import { AppShell } from './components/AppShell.tsx'
 import { Toasts } from './components/Toasts.tsx'
+import { ConfirmHost } from './components/Confirm.tsx'
 import { Spinner } from './components/ui/primitives.tsx'
 import { Home } from './pages/Home.tsx'
 import { Login } from './pages/Login.tsx'
@@ -78,6 +79,7 @@ function App() {
         </Route>
       </Routes>
       <Toasts />
+      <ConfirmHost />
     </>
   )
 }

@@ -208,9 +208,12 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   if (m.kind === 'done' && !settings.notifyDone) return
   // don't toast about the conversation you're looking at
   const here = location.pathname === href && document.visibilityState === 'visible'
-  if (!here) {
-    toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
-    if (m.kind === 'waiting' || m.kind === 'offline') haptic('warning')
+  if (!here) toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
+  // two pulses when an agent needs you or finishes, even on its own screen; a buzz for a lost machine
+  if (document.visibilityState === 'visible') {
+    if (m.kind === 'waiting' || (m.kind === 'done' && !here)) haptic('event')
+    else if (m.kind === 'done') haptic('success')
+    else if (m.kind === 'offline' && !here) haptic('warning')
   }
   const tag = notifyTag(m.host, machine ? undefined : m.pane)
   if (document.visibilityState === 'hidden' && isNative()) {

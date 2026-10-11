@@ -5,6 +5,7 @@ import { toast, useStore } from '../../lib/store.ts'
 import { allPanes } from '../../lib/overview.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { useAgentCatalog } from './useAgentCatalog.ts'
+import { confirmAction } from '../Confirm.tsx'
 
 /** Everything a session view needs: pane ref, live status, transcript summary, and actions. */
 export function useSession(host: string, pane: string) {
@@ -67,21 +68,21 @@ export function useSession(host: string, pane: string) {
         await api.rc(host, pane, on)
         toast({ title: on ? 'Remote Control on' : 'Remote Control off', tone: 'success' })
       }),
-    rewind: () => {
+    rewind: async () => {
       if (agent === 'claude' || agent === 'antigravity') return send('/rewind')
       if (agent === 'opencode') {
-        if (!confirm('Undo your last message? OpenCode reverts it and its file changes, and puts the message back in its input box.')) return
+        if (!(await confirmAction({ title: 'Undo your last message?', body: 'OpenCode reverts it and its file changes, and puts the message back in its input box.', yes: 'Undo', danger: true }))) return
         return send('/undo', 'Could not undo')
       }
-      if (agent !== 'codex' || !confirm('Rewind to before your last message? Codex forgets it and its reply. To go further back, use the rewind button under any message.')) return
+      if (agent !== 'codex' || !(await confirmAction({ title: 'Rewind your last message?', body: 'Codex forgets it and its reply. To go further back, use the rewind button under any message.', yes: 'Rewind', danger: true }))) return
       return run('Could not rewind', async () => {
         await api.rewind(host, pane)
         toast({ title: 'Conversation rewound', tone: 'success' })
       })
     },
     interrupt: () => run('Could not interrupt', () => api.interrupt(host, pane)),
-    exit: () => {
-      if (!def || !confirm(`Exit ${def.name}? The conversation is saved; the pane goes back to its shell.`)) return
+    exit: async () => {
+      if (!def || !(await confirmAction({ title: `Exit ${def.name}?`, body: 'The conversation is saved; the pane goes back to its shell.', yes: 'Exit' }))) return
       return run(`Could not exit ${def.name}`, async () => {
         await api.exit(host, pane)
         toast({ title: `${def.name} exited`, tone: 'success' })
