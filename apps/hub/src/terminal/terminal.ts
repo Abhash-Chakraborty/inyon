@@ -1,6 +1,7 @@
 import { shq, type PtyHandle } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { VIEW_PREFIX } from '../tmux/tmux.ts'
+import { openMirror } from './mirror.ts'
 
 /**
  * Mouse bindings for the view's own key table: wheel scrolls into tmux's history, clicks and drags
@@ -28,9 +29,13 @@ export function openTerminal(
 ): PtyHandle {
   const found = registry.findPane(hostId, paneId)
   if (!found) throw new HttpError(404, 'Pane not found')
-  // psmux runs one server per session, so a view session can't link another session's window
-  if (registry.get(hostId)?.state?.os === 'Windows') throw new HttpError(501, "The terminal view doesn't work with psmux yet. Use the chat, or the terminal on the laptop.")
   const host = registry.host(hostId)
+  // psmux runs one server per session, so a view session can't link another session's window
+  if (registry.get(hostId)?.state?.os === 'Windows') {
+    return openMirror(host, paneId, Math.max(10, cols), Math.max(4, rows), onData, (fn) =>
+      registry.on((e) => e.type === 'pane-output' && e.host === hostId && e.pane === paneId && fn()),
+    )
+  }
   const view = `${VIEW_PREFIX}${Math.random().toString(36).slice(2, 8)}`
   const v = shq(view)
   const cmd = [

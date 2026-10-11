@@ -883,7 +883,8 @@ export async function restartAgent(hostId: string, paneId: string) {
   const p = shq(paneId)
   // started as the pane's own command: keep the pane open across the exit, then respawn it
   const direct = proc.pid === proc.panePid
-  if (direct) await host.exec(`tmux set-option -p -t ${p} remain-on-exit on`)
+  const win = onPsmux(hostId)
+  if (direct) await host.exec(remainOnExit(win, p, true))
   try {
     await sendKeys(host, paneId, ['C-u'])
     await typeText(host, paneId, EXIT_COMMAND[a.kind] ?? '/exit', true)
@@ -896,16 +897,28 @@ export async function restartAgent(hostId: string, paneId: string) {
     if (direct) {
       const cwd = proc.cwd ? `-c ${shq(proc.cwd)}` : ''
       await paneDead(host, p)
-      await host.exec(`tmux respawn-pane -t ${p} ${cwd} ${shq(cmd)}`)
+      await host.exec(`tmux respawn-pane ${win ? '-k ' : ''}-t ${p} ${cwd} ${shq(cmd)}`)
     } else {
       await sleep(400)
       await typeText(host, paneId, withBin(cmd, await launchBin(host, a.kind)), true)
     }
   } finally {
-    if (direct) await host.exec(`tmux set-option -p -t ${p} -u remain-on-exit`)
+    if (direct) await host.exec(remainOnExit(win, p, false))
   }
   registry.refresh(hostId, 1500)
 }
+
+/**
+ * psmux (tmux on Windows) keeps remain-on-exit on the window rather than the pane, and its panes
+ * run PowerShell, not $SHELL.
+ */
+const onPsmux = (hostId: string) => registry.get(hostId)?.state?.os === 'Windows'
+export const remainOnExit = (win: boolean, p: string, on: boolean) => `tmux set-option ${win ? '-w' : '-p'} -t ${p} ${on ? 'remain-on-exit on' : '-u remain-on-exit'}`
+/** The command that gives a pane its shell back once the agent it ran has exited. */
+export const respawnShell = (win: boolean, p: string, cwd?: string) =>
+  win
+    ? `tmux respawn-pane -k -t ${p} ${cwd ? `-c ${shq(cwd)}` : ''} "$(command -v pwsh.exe >/dev/null 2>&1 && echo pwsh.exe || echo powershell.exe)"`
+    : `tmux respawn-pane -t ${p} ${cwd ? `-c ${shq(cwd)}` : ''} "\${SHELL:-/bin/sh}" -l`
 
 /** tmux marks a pane dead a moment after its process is gone, and refuses to respawn it before that. */
 async function paneDead(host: { exec: (cmd: string) => Promise<{ stdout: string }> }, p: string) {
@@ -947,12 +960,13 @@ export async function exitAgent(hostId: string, paneId: string) {
   // started as the pane's own command (`tmux new agy`): keep the pane, and give it a shell after
   const direct = !!proc && proc.pid === proc.panePid
   const p = shq(paneId)
-  if (direct) await host.exec(`tmux set-option -p -t ${p} remain-on-exit on`)
+  const win = onPsmux(hostId)
+  if (direct) await host.exec(remainOnExit(win, p, true))
   const done = async () => {
     if (direct) {
       await paneDead(host, p)
       // with no command tmux would rerun the agent; ask for the login shell instead
-      await host.exec(`tmux respawn-pane -t ${p} ${proc.cwd ? `-c ${shq(proc.cwd)}` : ''} "\${SHELL:-/bin/sh}" -l; tmux set-option -p -t ${p} -u remain-on-exit`)
+      await host.exec(`${respawnShell(win, p, proc.cwd)}; ${remainOnExit(win, p, false)}`)
     }
     registry.refresh(hostId, 300)
   }
@@ -968,7 +982,7 @@ export async function exitAgent(hostId: string, paneId: string) {
     await sendKeys(host, paneId, ['C-c'])
     if (await waitGone(2500)) return done()
   }
-  if (direct) await host.exec(`tmux set-option -p -t ${p} -u remain-on-exit`)
+  if (direct) await host.exec(remainOnExit(win, p, false))
   registry.refresh(hostId, 300)
   throw new HttpError(504, `${AGENTS[a.kind].name} did not exit; close it from the terminal`)
 }

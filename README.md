@@ -157,6 +157,12 @@ On Windows, in PowerShell:
 irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.ps1 | iex
 ```
 
+On Windows, Tether drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for
+Windows, and setup installs it with winget if it's missing. Sessions, chats, sending, approvals,
+sign-in and the terminal work as they do on Linux. psmux runs each session in its own server, so
+the terminal there is drawn from the pane's screen instead of a second tmux client. It shows what
+is on screen now; the laptop's own scrollback stays on the laptop.
+
 It downloads `tether-node`, checks it against the release's SHA256SUMS and prints a QR code. In
 the app, tap *Add a computer*, then *Scan the code*. The computer stays paired until you remove it.
 
@@ -278,7 +284,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to add an agent or fix a parser.
 
 ## Status
 
-Tether is young. Linux and macOS work today; Windows (psmux) is next. Expect rough edges with
+Tether is young. Linux, macOS and Windows (through psmux) work today. Expect rough edges with
 the beta readers.
 
 ## License

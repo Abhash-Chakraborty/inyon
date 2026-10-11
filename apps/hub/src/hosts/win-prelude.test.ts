@@ -46,3 +46,26 @@ test('ps reads the snapshot the node wrote; pgrep finds nothing', () => {
   const r = Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\nps -e -o pid=; pgrep -f claude || echo none`], { env: { PATH: `${bin}:/usr/bin:/bin`, TETHER_PS: snap } })
   expect(r.stdout.toString()).toBe('4 0 100 claude claude --resume x\nnone\n')
 })
+
+test("the terminal's commands reach the right psmux pane", async () => {
+  const { readCommand, inputCommand } = await import('../terminal/mirror.ts')
+  const r = run(`${readCommand('%14.1')}; ${inputCommand('%14.1', { keys: ['C-c', 'Up'] }).cmd}; ${inputCommand('%14.1', { hex: ['1b', '5b'] }).cmd}`)
+  expect(await r.argv).toBe(
+    '[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}]\n' +
+      '[capture-pane][-p][-e][-t][$14:.%1]\n' +
+      '[send-keys][-t][$14:.%1][C-c][Up]\n' +
+      '[send-keys][-t][$14:.%1][-H][1b][5b]\n',
+  )
+})
+
+test('an agent that exits on Windows leaves PowerShell behind, and remain-on-exit is set on the window', async () => {
+  const { remainOnExit, respawnShell } = await import('../claude/actions.ts')
+  const r = run(`${remainOnExit(true, "'%14.1'", true)}; ${respawnShell(true, "'%14.1'")}; ${remainOnExit(true, "'%14.1'", false)}`)
+  expect(await r.argv).toBe('[set-option][-w][-t][$14:.%1][remain-on-exit][on]\n[respawn-pane][-k][-t][$14:.%1][powershell.exe]\n[set-option][-w][-t][$14:.%1][-u][remain-on-exit]\n')
+})
+
+test('a sign-in on Windows is a PowerShell line that prints the exit mark', async () => {
+  const { signInWindows } = await import('../features/signin.ts')
+  expect(signInWindows('gemini')).toBe(`$env:NO_BROWSER='true'; gemini; Write-Output ''; Write-Output "[tether-exit $([int]$LASTEXITCODE)]"`)
+  expect(signInWindows('codex')).toStartWith('codex login --device-auth; ')
+})

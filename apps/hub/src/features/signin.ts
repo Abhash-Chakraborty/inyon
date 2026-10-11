@@ -4,6 +4,7 @@ import { shq } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { LOGIN_PREFIX, sendKeys, typeText } from '../tmux/tmux.ts'
 import { PATHS } from './setup.ts'
+import { shellReady } from '../claude/actions.ts'
 
 /**
  * Sign-in commands that work without a browser on the machine: a device code (Codex) or a link
@@ -18,6 +19,16 @@ const SIGN_IN: Record<AgentKind, string> = {
   // signs in on first run: a menu, then a link and a prompt for the code the page shows. It runs
   // in an empty folder (so it never asks to trust your home) and is closed once the token lands.
   antigravity: `F="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"; d=$(mktemp -d); cd "$d"; ( while [ ! -s "$F" ]; do sleep 1; done; sleep 2; pkill -P $$ -x agy ) & agy; cd /; rmdir "$d" 2>/dev/null; test -s "$F"`,
+}
+
+/**
+ * The same on Windows, typed into PowerShell: psmux panes run PowerShell, and there's no sh to
+ * hand a script to. Antigravity stays open after signing in there; closing the sign-in ends it.
+ */
+const SIGN_IN_WINDOWS: Record<AgentKind, string> = {
+  ...SIGN_IN,
+  gemini: "$env:NO_BROWSER='true'; gemini",
+  antigravity: 'agy',
 }
 
 const EXIT_MARK = /^\[tether-exit (\d+)\]$/
@@ -54,14 +65,22 @@ export async function startSignIn(hostId: string, kind: AgentKind) {
   if (!AGENT_KINDS.includes(kind)) throw new HttpError(400, 'Unknown agent')
   const host = registry.host(hostId)
   const name = `${LOGIN_PREFIX}${kind}-${Math.random().toString(36).slice(2, 7)}`
+  const windows = registry.get(hostId)?.state?.os === 'Windows'
   const script = `${PATHS}; ${SIGN_IN[kind]}; s=$?; echo; echo "[tether-exit $s]"; exec sleep 3600`
   // wide, so links wrap as little as possible; capture -J re-joins what still wraps
-  const r = await host.exec(`tmux new-session -d -s ${shq(name)} -x 220 -y 50 -P -F '#{pane_id}' ${shq(`sh -c ${shq(script)}`)}`)
+  const r = await host.exec(`tmux new-session -d -s ${shq(name)} -x 220 -y 50 -P -F '#{pane_id}'${windows ? '' : ` ${shq(`sh -c ${shq(script)}`)}`}`)
   const pane = r.stdout.trim()
   if (r.code !== 0 || !/^%\d+(\.\d+)?$/.test(pane)) throw new HttpError(500, r.stderr.trim() || 'Could not start the sign-in')
+  if (windows) {
+    await shellReady(host, pane)
+    await typeText(host, pane, signInWindows(kind), true)
+  }
   seen(hostId, pane)
   return { pane }
 }
+
+/** The PowerShell line for a sign-in on Windows; it prints the same exit mark as the sh script. */
+export const signInWindows = (kind: AgentKind) => `${SIGN_IN_WINDOWS[kind]}; Write-Output ''; Write-Output "[tether-exit $([int]$LASTEXITCODE)]"`
 
 async function ownPane(hostId: string, pane: string) {
   if (!/^%\d+(\.\d+)?$/.test(pane)) throw new HttpError(400, 'Bad pane')
