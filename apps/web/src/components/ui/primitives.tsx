@@ -1,5 +1,5 @@
 import {
-  forwardRef, useEffect, useLayoutEffect, useRef, useState,
+  forwardRef, useEffect, useId, useLayoutEffect, useRef, useState,
   type ButtonHTMLAttributes, type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -153,6 +153,10 @@ export function Segmented<T extends string>({
   )
 }
 
+/** Open sheets, newest last: Tab stays inside the one on top. */
+const openSheets: HTMLElement[] = []
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
 /** Bottom sheet on phones, centered dialog on larger screens. */
 export function Sheet({
   open,
@@ -172,6 +176,13 @@ export function Sheet({
   wide?: boolean
 }) {
   const [shown, setShown] = useState(open)
+  const titleId = useId()
+  const panel = useRef<HTMLDivElement | null>(null)
+  // where focus was before it opened, taken while rendering so a field's autoFocus can't get there first
+  const opener = useRef<Element | null>(null)
+  const wasOpen = useRef(false)
+  if (open && !wasOpen.current) opener.current = document.activeElement
+  wasOpen.current = open
   useBackCloses(open, onClose)
   useEffect(() => {
     if (open) setShown(true)
@@ -186,13 +197,52 @@ export function Sheet({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
+  // focus goes into the sheet, Tab and Shift-Tab go round inside it, and closing hands focus back
+  useEffect(() => {
+    const el = panel.current
+    if (!open || !shown || !el) return
+    if (!el.contains(document.activeElement)) el.focus({ preventScroll: true })
+    openSheets.push(el)
+    const onTab = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || openSheets.at(-1) !== el) return
+      const all = [...el.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => !x.hidden)
+      const at = document.activeElement
+      const first = all[0]
+      const last = all[all.length - 1]
+      if (!first || !last) {
+        e.preventDefault()
+        el.focus({ preventScroll: true })
+      } else if (!el.contains(at) || (e.shiftKey ? at === first || at === el : at === last)) {
+        e.preventDefault()
+        ;(e.shiftKey ? last : first).focus()
+      }
+    }
+    document.addEventListener('keydown', onTab)
+    return () => {
+      document.removeEventListener('keydown', onTab)
+      openSheets.splice(openSheets.indexOf(el), 1)
+    }
+  }, [open, shown])
+  useEffect(() => {
+    if (!open) return
+    return () => {
+      const back = opener.current
+      opener.current = null
+      const at = document.activeElement
+      // unless something else took focus meanwhile
+      const free = !at || at === document.body || !at.isConnected || !!panel.current?.contains(at)
+      if (free && back instanceof HTMLElement && back.isConnected) back.focus({ preventScroll: true })
+    }
+  }, [open])
   if (!shown) return null
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal>
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal aria-labelledby={titleId}>
       <div className={clsx('absolute inset-0 bg-black/45', open ? 'animate-fade-in' : 'animate-fade-out')} onClick={onClose} />
       <div
+        ref={panel}
+        tabIndex={-1}
         className={clsx(
-          'relative flex max-h-[92dvh] w-full flex-col rounded-t-[22px] border border-line bg-elev text-fg shadow-float sm:rounded-[18px]',
+          'relative flex max-h-[92dvh] w-full flex-col rounded-t-[22px] border border-line bg-elev text-fg shadow-float outline-none sm:rounded-[18px]',
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
           // phones: slides up on the spring; desktop: settles in from just above
           open ? 'animate-sheet-in sm:animate-pop' : 'animate-sheet-out sm:animate-fade-out',
@@ -201,7 +251,7 @@ export function Sheet({
         <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-line-strong sm:hidden" />
         <div className="flex items-center gap-2.5 px-5 pt-3 pb-1 sm:pt-4">
           {icon}
-          <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold tracking-tight">{title}</h2>
+          <h2 id={titleId} className="min-w-0 flex-1 truncate text-[16px] font-semibold tracking-tight">{title}</h2>
           <IconButton label="Close" onClick={onClose} className="-mr-2">
             <X className="size-4" />
           </IconButton>
@@ -259,30 +309,57 @@ export function Menu({
     return () => window.removeEventListener('tether:open-menu', onOpen)
   }, [name])
   const ref = useRef<HTMLButtonElement | null>(null)
-  const [pos, setPos] = useState<{ top: number; left: number; up: boolean }>({ top: 0, left: 0, up: false })
+  const menu = useRef<HTMLDivElement | null>(null)
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ left: 0, width, maxHeight: 420 })
   const [active, setActive] = useState(0)
 
   useLayoutEffect(() => {
-    if (!open || !ref.current) return
-    const r = ref.current.getBoundingClientRect()
-    const up = r.bottom + 320 > window.innerHeight && r.top > 320
-    const left = align === 'end' ? r.right - width : r.left
-    setPos({ top: up ? r.top - 6 : r.bottom + 6, left: Math.max(8, Math.min(left, window.innerWidth - width - 8)), up })
+    if (!open) return
     setActive(Math.max(0, items.findIndex((i) => i.selected)))
+    // opens on whichever side has room for it, and shrinks to fit when neither does (a phone on
+    // its side, or with the keyboard up); again whenever the viewport changes under it
+    const place = () => {
+      if (!ref.current) return
+      const r = ref.current.getBoundingClientRect()
+      const vv = window.visualViewport
+      const top = (vv?.offsetTop ?? 0) + 8
+      const bottom = (vv ? vv.offsetTop + vv.height : window.innerHeight) - 8
+      const below = Math.max(0, bottom - r.bottom - 6)
+      const above = Math.max(0, r.top - 6 - top)
+      const wanted = Math.min(420, menu.current?.scrollHeight ?? 0)
+      const up = below < wanted && above > below
+      const w = Math.min(width, window.innerWidth - 16)
+      const left = align === 'end' ? r.right - w : r.left
+      setPos({
+        ...(up ? { bottom: window.innerHeight - Math.max(top, r.top - 6) } : { top: Math.min(r.bottom + 6, bottom) }),
+        left: Math.max(8, Math.min(left, window.innerWidth - w - 8)),
+        width: w,
+        maxHeight: Math.min(420, up ? above : below),
+      })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.visualViewport?.addEventListener('resize', place)
+    window.visualViewport?.addEventListener('scroll', place)
+    return () => {
+      window.removeEventListener('resize', place)
+      window.visualViewport?.removeEventListener('resize', place)
+      window.visualViewport?.removeEventListener('scroll', place)
+    }
   }, [open])
 
   useEffect(() => {
     if (!open) return
+    // the menu owns these keys while it's open: caught before they reach the focused field, or
+    // the Enter that picks a model would also send the message in the composer
     const onKey = (e: KeyboardEvent) => {
+      if (!['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
       if (e.key === 'Escape') setOpen(false)
-      else if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setActive((a) => Math.min(items.length - 1, a + 1))
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setActive((a) => Math.max(0, a - 1))
-      } else if (e.key === 'Enter') {
-        e.preventDefault()
+      else if (e.key === 'ArrowDown') setActive((a) => Math.min(items.length - 1, a + 1))
+      else if (e.key === 'ArrowUp') setActive((a) => Math.max(0, a - 1))
+      else {
         const it = items[active]
         if (it && !it.disabled) {
           it.onSelect()
@@ -290,9 +367,13 @@ export function Menu({
         }
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [open, active, items])
+
+  useEffect(() => {
+    if (open) menu.current?.querySelectorAll('[role=menuitem]')[active]?.scrollIntoView({ block: 'nearest' })
+  }, [open, active])
 
   return (
     <>
@@ -302,9 +383,10 @@ export function Menu({
           <>
             <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)} />
             <div
+              ref={menu}
               role="menu"
-              className="animate-pop fixed z-[71] max-h-[min(420px,70dvh)] overflow-y-auto rounded-[14px] border border-line bg-elev p-1 text-fg shadow-float"
-              style={{ top: pos.up ? undefined : pos.top, bottom: pos.up ? window.innerHeight - pos.top : undefined, left: pos.left, width }}
+              className="animate-pop fixed z-[71] overflow-y-auto rounded-[14px] border border-line bg-elev p-1 text-fg shadow-float"
+              style={pos}
             >
               {header && <div className="px-2.5 pt-1.5 pb-1 text-[11.5px] font-medium text-fg-3">{header}</div>}
               {items.map((it, i) => (
