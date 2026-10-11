@@ -338,7 +338,10 @@ class ChatWatcher {
     clearTimeout(this.mirrorTimer)
     this.sendingUntil = Date.now() + 1500
     const current = getDraft(this.key)
-    if (!text || !current || current.at <= startedAt || squash(text).startsWith(squash(current.text))) setDraft(this.key, undefined)
+    // with a start time, a draft written since survives unless it is this message (pushed just
+    // before the send, arriving just after), or this message before its attached files were added
+    const sent = !!text && !!current && (squash(text) === squash(current.text) || squash(text).startsWith(`${squash(current.text)}Attachedfiles:`))
+    if (!text || !current || (startedAt ? current.at <= startedAt || sent : sent || squash(text).startsWith(squash(current.text)))) setDraft(this.key, undefined)
     else this.mirrorTimer = setTimeout(() => this.mirror(), 1600)
     this.broadcastDraft()
   }

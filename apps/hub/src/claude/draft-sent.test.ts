@@ -39,3 +39,37 @@ test("a phone keyboard putting a sent message back in the box doesn't make it a 
   w.draftFromApp('and another thing', phone)
   expect(getDraft(KEY)?.text).toBe('and another thing')
 })
+
+test('finishing a send keeps a new draft typed meanwhile, even one that starts the same way', () => {
+  const w = watchers.get('draft-test', '%9')
+  const startedAt = Date.now() - 2000
+  setDraft(KEY, { text: 'Fix', source: 'app', at: startedAt + 1 })
+  w.draftSent('Fix the login bug', startedAt)
+  expect(getDraft(KEY)?.text).toBe('Fix')
+  // but the message itself, pushed just before the send and arriving after it began, goes
+  setDraft(KEY, { text: 'Fix the login bug', source: 'app', at: startedAt + 1 })
+  w.draftSent('Fix the login bug\n\nAttached files:\n/x/a.png', startedAt)
+  expect(getDraft(KEY)).toBeUndefined()
+})
+
+test("emptying the box isn't undone by a screen read from before the terminal caught up", () => {
+  const w = watchers.get('draft-test', '%9')
+  const got: ServerMsg[] = []
+  w.subscribe({ send: (m: ServerMsg) => got.push(m) })
+  setDraft(KEY, { text: 'old text here', source: 'app', at: Date.now(), mirrored: 'old text here' })
+  const read = (draft?: string) => {
+    // a busy agent redraws all the time, so the screen is read again before the box is cleared
+    Object.assign(w as any, { screen: { working: true, width: 120, inputVisible: true, draft }, mirroringUntil: 0, sendingUntil: 0 })
+    ;(w as any).syncDraftFromScreen()
+  }
+  w.draftFromApp('')
+  read('old text here')
+  expect(getDraft(KEY)?.text ?? '').toBe('')
+  expect(got.filter((m) => m.t === 'chat.draft' && m.source === 'terminal')).toEqual([])
+  // once the terminal's box is empty too, nothing is left over
+  read(undefined)
+  expect(getDraft(KEY)).toBeUndefined()
+  // and typing at the terminal is still picked up
+  read('typed on the laptop')
+  expect(getDraft(KEY)).toMatchObject({ text: 'typed on the laptop', source: 'terminal' })
+})

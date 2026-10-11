@@ -42,7 +42,9 @@ export function getDraft(key: string) {
 }
 
 export function setDraft(key: string, d: Draft | undefined) {
-  if (!d || !d.text) drafts.delete(key)
+  // a box emptied in the app is still a draft until the terminal's box is empty too: without what
+  // it holds, a screen read in between would take the old text for typing there and bring it back
+  if (!d || (!d.text && !d.mirrored)) drafts.delete(key)
   else drafts.set(key, d)
   save()
 }
