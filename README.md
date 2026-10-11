@@ -87,11 +87,13 @@ pnpm build
 pnpm start
 ```
 
-The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password.
-Change it later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
+The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password,
+with the setup code the hub prints when it starts (also in `~/.tether/setup-code`). Change the
+password later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
 
 Open it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
-put it behind an HTTPS reverse proxy. To keep it running, see `deploy/tether-hub.service`.
+put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
+`TETHER_ALLOWED_HOSTS`. To keep it running, see `deploy/tether-hub.service`.
 
 ## Where everything runs
 
@@ -244,6 +246,7 @@ Paired machines connect out with per-machine tokens that you can revoke. See
 | `BIND` | `127.0.0.1` | Address to listen on |
 | `TETHER_DATA_DIR` | `~/.tether` | Password hash, machine list, drafts, settings |
 | `TETHER_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
+| `TETHER_ALLOWED_HOSTS` | | Extra comma-separated host names the hub answers to. IP addresses, single-label names, localhost and Tailscale/NetBird names always work; add a public domain your proxy uses. `*` turns the check off |
 | `TLS_CERT`, `TLS_KEY` | | Paths to a PEM certificate and key to serve HTTPS. Needed for a real installed app on phones (and clipboard images, notifications) |
 
 ## Development

@@ -6,6 +6,7 @@ import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
 import { clearCookie, clientAddress, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, registry } from './hosts/registry.ts'
+import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, startCore, type Client, type Handler, type Routes } from './core.ts'
@@ -41,11 +42,31 @@ function sameOrigin(req: Request) {
   }
 }
 
+/**
+ * Sent to a name the hub answers to (see hostnames.ts), including the one a local proxy forwards.
+ * A signed-in browser passes under any name: its cookie can only have been set by the hub itself.
+ */
+const knownHost = allowedHosts(process.env, BIND)
+const refusedHosts = new Set<string>()
+function rightHost(req: Request) {
+  if (isAuthed(req)) return true
+  const names = [req.headers.get('host'), ...(req.headers.get('x-forwarded-host')?.split(',').map((h) => h.trim()) ?? [])].filter((h) => h !== null)
+  const wrong = names.find((h) => !knownHost(h)) ?? (names.length ? undefined : '(none)')
+  if (wrong === undefined) return true
+  if (!refusedHosts.has(wrong) && refusedHosts.size < 50) {
+    refusedHosts.add(wrong)
+    console.log(`Refused a request for host ${JSON.stringify(wrong.slice(0, 200))}. If that is this hub's address, add it to TETHER_ALLOWED_HOSTS.`)
+  }
+  return false
+}
+const WRONG_HOST = "This hub doesn't answer to that address. If it's yours, add it to TETHER_ALLOWED_HOSTS on the hub."
+
 /** An API handler behind sign-in and the same-origin check. */
 const api =
   (fn: Handler, open = false): Handler => {
     const run = handled(fn)
     return async (req) => {
+      if (!rightHost(req)) return json({ error: WRONG_HOST }, { status: 421 })
       if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
       if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
       return run(req)
@@ -93,12 +114,11 @@ async function serveStatic(pathname: string) {
 
 // ---------- server ----------
 
-// A new hub has no password: the first visit creates one. It listens on localhost by default, so
-// only you can reach it then (through your own tunnel or VPN). Bound to a network address it is
-// open to that network, so creating the password also needs a one-time code from the hub's log.
+// A new hub has no password: the first visit creates one, with a one-time code from the hub's log.
+// The code is asked for even on localhost, since a page in your browser can reach localhost too.
 const SETUP_CODE_FILE = path.join(DATA_DIR, 'setup-code')
 const exposed = !/^(127\.|::1$|localhost$)/.test(BIND)
-const setupCode = !hasPassword() && exposed ? crypto.randomBytes(4).toString('hex') : undefined
+const setupCode = !hasPassword() ? crypto.randomBytes(4).toString('hex') : undefined
 if (setupCode) fs.writeFileSync(SETUP_CODE_FILE, setupCode + '\n', { mode: 0o600 })
 const setupAttempts = { n: 0, reset: 0 }
 startCore()
@@ -128,14 +148,13 @@ const server = Bun.serve<SocketData>({
         const b = await body<{ password: string; code?: string }>(req, 8 * 1024)
         const now = Date.now()
         if (setupAttempts.reset < now) Object.assign(setupAttempts, { n: 0, reset: now + 60_000 })
-        if (setupCode) {
-          const code = String(b.code ?? '').trim().toLowerCase()
-          if (setupAttempts.n >= 8) throw new HttpError(429, 'Too many attempts. Try again in a minute.')
-          if (code.length !== setupCode.length || !crypto.timingSafeEqual(Buffer.from(code), Buffer.from(setupCode))) {
-            setupAttempts.n++
-            await Bun.sleep(400)
-            throw new HttpError(401, 'That setup code is not right. It is in the hub log, and in ~/.tether/setup-code.')
-          }
+        if (!setupCode) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
+        const code = String(b.code ?? '').trim().toLowerCase()
+        if (setupAttempts.n >= 8) throw new HttpError(429, 'Too many attempts. Try again in a minute.')
+        if (code.length !== setupCode.length || !crypto.timingSafeEqual(Buffer.from(code), Buffer.from(setupCode))) {
+          setupAttempts.n++
+          await Bun.sleep(400)
+          throw new HttpError(401, 'That setup code is not right. It is in the hub log, and in ~/.tether/setup-code.')
         }
         const password = String(b.password ?? '')
         const problem = passwordProblem(password)
@@ -228,6 +247,7 @@ const server = Bun.serve<SocketData>({
       return new Response('Upgrade failed', { status: 400 })
     }
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, { status: 404 })
+    if (!rightHost(req)) return new Response(`${WRONG_HOST}\n`, { status: 421, headers: PAGE_HEADERS })
     return serveStatic(url.pathname)
   },
   websocket: {
