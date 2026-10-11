@@ -46,6 +46,14 @@ const backend = (config: HostConfig) => {
   return pick(config)
 }
 
+/**
+ * tmux only writes UTF-8 when the locale says so, and a non-interactive SSH shell often has no
+ * locale at all: then its field separator and every non-ASCII character come out as "_", and a
+ * machine with sessions running lists none. -u makes it write UTF-8 whatever the locale. Only for
+ * the real binary: on Windows `tmux` is already a shell function around psmux.
+ */
+export const UTF8_TMUX = `case "$(command -v tmux 2>/dev/null)" in /*) tmux() { command tmux -u "$@"; };; esac\n`
+
 /** Runs POSIX shell snippets on one machine, whichever way it's reached. */
 export class Host {
   constructor(public config: HostConfig) {}
@@ -55,11 +63,11 @@ export class Host {
   }
 
   exec(cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
-    return backend(this.config).exec(this.config, cmd, opts)
+    return backend(this.config).exec(this.config, UTF8_TMUX + cmd, opts)
   }
 
   stream(cmd: string, onLine: (line: string) => void, opts: { keepStdin?: boolean } = {}): StreamHandle {
-    return backend(this.config).stream(this.config, cmd, onLine, opts)
+    return backend(this.config).stream(this.config, UTF8_TMUX + cmd, onLine, opts)
   }
 
   pty(cmd: string, cols: number, rows: number, onData: (d: Uint8Array) => void): PtyHandle {

@@ -93,9 +93,17 @@ fi
 echo "@@CLIENTS"
 tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
 echo "@@PS"
-ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null
+# etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
+ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{
+  n = split($3, t, /[-:]/); d = 0; h = 0
+  if ($3 ~ /-/) { d = t[1]; h = t[2]; m = t[3]; s = t[4] } else if (n == 3) { h = t[1]; m = t[2]; s = t[3] } else { m = t[1]; s = t[2] }
+  $3 = d * 86400 + h * 3600 + m * 60 + s; print }'
 echo "@@CWD"
-for p in $(pgrep -f 'claude|codex|opencode|gemini|command-?code|agy' 2>/dev/null); do echo "$p $(readlink /proc/$p/cwd 2>/dev/null)"; done
+# no /proc on macOS: lsof knows the working directory there
+for p in $(pgrep -f 'claude|codex|opencode|gemini|command-?code|agy' 2>/dev/null); do
+  c=$(readlink /proc/$p/cwd 2>/dev/null) || c=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+  echo "$p $c"
+done
 echo "@@AGY"
 # each Antigravity CLI holds ~/.gemini/antigravity-cli/presence/<conversation>.lock open; the newest fd wins
 agy_ids=""
@@ -186,7 +194,8 @@ export async function probe(host: Host): Promise<ProbeResult> {
   for (const line of sections.get('PS') ?? []) {
     const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
     if (!m) continue
-    const p: Proc = { pid: +m[1], ppid: +m[2], etimes: +m[3], comm: m[4], args: m[5] }
+    // macOS gives the executable's full path
+    const p: Proc = { pid: +m[1], ppid: +m[2], etimes: +m[3], comm: m[4].slice(m[4].lastIndexOf('/') + 1), args: m[5] }
     procs.set(p.pid, p)
     if (!children.has(p.ppid)) children.set(p.ppid, [])
     children.get(p.ppid)!.push(p.pid)

@@ -39,7 +39,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     const target = String(b.target ?? cur?.target ?? '').trim()
     if (!name) throw new HttpError(400, 'Give the server a name')
     const { username, host } = splitTarget(target)
-    if (!username || !/^[\w.-]+$/.test(username)) throw new HttpError(400, 'Use user@host, like abhash@100.64.0.5')
+    if (!username || !/^[\w.-]+$/.test(username)) throw new HttpError(400, 'Use user@host, like me@100.64.0.5')
     if (!/^[\w.:-]+$/.test(host) || host.startsWith('-')) throw new HttpError(400, 'The address has unexpected characters')
     const port = b.port ? Number(b.port) : cur?.port
     if (port !== undefined && !(port > 0 && port < 65536)) throw new HttpError(400, 'Port must be 1-65535')

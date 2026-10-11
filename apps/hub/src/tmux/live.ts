@@ -27,7 +27,8 @@ export class LiveTmux {
   }
 
   private attach(id: string) {
-    const cmd = `exec tmux -C attach-session -t ${shq(id)} -f read-only,ignore-size`
+    // exec skips the tmux() function that adds -u, so add it here (not for psmux, where tmux is a function)
+    const cmd = `exec tmux $([ "$(command -v tmux)" = tmux ] || echo -u) -C attach-session -t ${shq(id)} -f read-only,ignore-size`
     const s = this.host.stream(
       cmd,
       (line) => {
