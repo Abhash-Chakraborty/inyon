@@ -298,9 +298,10 @@ test('a long conversation opens on its last stretch and reads earlier messages a
   expect(cmds.some((c) => c.includes('grep -E'))).toBe(true)
   expect(reset.items.filter((i) => i.kind === 'user').map(num).at(-1)).toBe(1999)
   expect(reset.hasMore).toBe(true)
-  // what's known about the whole conversation still came through
-  expect(reset.info.goal?.condition).toBe('early goal')
-  expect(reset.info.stats.turns).toBe(21)
+  // what's known about the whole conversation follows a moment later, as if it were all read
+  const latest = () => (got.findLast((m) => m.t === 'chat.info' || m.t === 'chat.reset') as any)?.info
+  await until(() => latest()?.goal?.condition === 'early goal')
+  expect(latest().stats.turns).toBe(21)
   expect(w.items.length).toBeLessThan(2000)
 
   // scrolling up: every earlier message once, in order, until the start of the file

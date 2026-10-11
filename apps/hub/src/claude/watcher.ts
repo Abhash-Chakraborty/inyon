@@ -41,9 +41,10 @@ const FIRST_LINE_MS = 8000
 /**
  * A long Claude conversation opens on its last stretch of file, and earlier messages are read
  * backwards, a piece at a time, as you scroll up. Messages read that way are numbered down from
- * TAIL_SEQ, so they still sort before the ones after them.
+ * TAIL_SEQ, so they still sort before the ones after them. The stretch is small so the chat shows
+ * quickly; a page is filled in from before it once it's on screen.
  */
-const TAIL_BYTES = 1_500_000
+const TAIL_BYTES = 256_000
 const OLDER_BYTES = 1_000_000
 const TAIL_SEQ = 1_000_000_000
 const QUIET_MS = 5000
@@ -91,6 +92,11 @@ class ChatWatcher {
   private lineAt = new Map<number, number>()
   /** opened on the last stretch and no line read yet: the first one read is where older ones end */
   private tailStart = false
+  /**
+   * Lines read since a long conversation opened, while the summary of the part before them is
+   * still on its way. Once it lands they're replayed onto it, so it ends up as a full read's.
+   */
+  private replay?: any[]
   private codex = false
   private ready = false
   /**
@@ -178,7 +184,8 @@ class ChatWatcher {
   }
 
   private save() {
-    if (!this.ready || !this.items.length) return
+    // a summary still missing the part before the last stretch would be saved as if it were whole
+    if (!this.ready || !this.items.length || this.replay) return
     // the read position is saved only with the summary and messages read up to it
     // only the latest messages are saved: cut between lines and remember where the first one starts
     let first = Math.max(0, this.items.length - CACHE_KEEP)
@@ -432,13 +439,13 @@ class ChatWatcher {
    * part before its last stretch: only the lines that carry it are sent, and what they say goes
    * into the summary, not the chat.
    */
-  private async readMeta(path: string, to: number) {
+  private async readMeta(path: string, to: number, meta: TranscriptMeta) {
     const host = registry.host(this.hostId)
     const reader = new TranscriptReader()
     await new Promise<void>((done) => {
       const t = host.stream(metaCommand(path, to, this.onRemoteHost()), (line) => {
         const r = reader.line(line)
-        if (r?.entry) normalize(r.entry, this.meta)
+        if (r?.entry) normalize(r.entry, meta)
       })
       t.exited ? t.exited.then(() => done(), () => done()) : done()
       setTimeout(() => (t.kill(), done()), 30_000)
@@ -751,6 +758,7 @@ class ChatWatcher {
       this.olderFrom = undefined
       this.lineAt.clear()
       this.tailStart = false
+      this.replay = undefined
     }
     if (!again) restart()
     if (path.startsWith('opencode://')) return this.followOpenCode(path, gen)
@@ -775,10 +783,19 @@ class ChatWatcher {
       if (!this.codex && this.agent !== 'copilot') {
         this.olderFrom = 0
         if (size > TAIL_BYTES) {
-          // a long conversation: what's known about it as a whole first, then only its last stretch
+          // a long conversation: only its last stretch, shown as soon as it's in, while what's
+          // known about it as a whole (title, goal, tasks) is read alongside
           const from = size - TAIL_BYTES
-          await this.readMeta(path, from)
-          if (gen !== this.generation || this.stopped) return
+          const replay: any[] = (this.replay = [])
+          const prefix = newMeta()
+          void this.readMeta(path, from, prefix).then(() => {
+            if (gen !== this.generation || this.stopped || this.replay !== replay) return
+            for (const e of replay) normalize(e, prefix)
+            this.meta = prefix
+            this.replay = undefined
+            if (this.ready && !this.behind) this.publishInfo()
+            this.cacheLater()
+          })
           this.seq = TAIL_SEQ
           this.reader = new TranscriptReader(from)
           this.olderFrom = size
@@ -809,11 +826,19 @@ class ChatWatcher {
     const finishInitial = () => {
       clearTimeout(quiet)
       if (!reading() || gen !== this.generation) return
-      // the last stretch was mostly one screenshot: read back until there's a page to show
-      if (this.seq >= TAIL_SEQ && this.items.length < PAGE && this.olderInFile() && !filling) {
+      // short of a page: with nothing at all to show (the stretch was one screenshot), read back
+      // first; otherwise show what's there now and fill the page in from before it
+      const short = this.seq >= TAIL_SEQ && this.items.length < PAGE && this.olderInFile() && !filling
+      if (short && !this.items.length) {
         filling = true
         void this.loadOlder().finally(finishInitial)
         return
+      }
+      if (short) {
+        filling = true
+        void this.loadOlder().then(() => {
+          if (gen === this.generation && this.ready && !this.behind) this.broadcast(this.resetMsg())
+        })
       }
       if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
       this.ready = true
@@ -841,6 +866,7 @@ class ChatWatcher {
           this.olderFrom = at
           this.tailStart = false
         }
+        this.replay?.push(e)
         const items = (this.codex ? normalizeCodex(e, this.meta) : this.agent === 'copilot' ? normalizeCopilot(e, this.meta) : normalize(e, this.meta)).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem)
         if (this.olderFrom !== undefined) for (const it of items) this.lineAt.set(it.seq, at)
         if (items.length) {

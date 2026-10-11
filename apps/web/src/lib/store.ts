@@ -13,6 +13,8 @@ export interface ChatState {
   hasMore: boolean
   loaded: boolean
   screen?: ScreenState
+  /** when earlier messages last came back (with or without any), so a wait for them can end */
+  moreAt?: number
   /** catching up on what was said while away, as a fraction read; cleared by the next reset */
   catchingUp?: number
   /** sent from this device, not yet seen in the transcript */
@@ -176,7 +178,7 @@ function onMessage(m: ServerMsg) {
     case 'chat.more':
       patchChat(m.key, (c) => {
         const first = c.items[0]?.seq ?? Infinity
-        return { items: [...m.items.filter((i) => i.seq < first), ...c.items], hasMore: m.hasMore }
+        return { items: [...m.items.filter((i) => i.seq < first), ...c.items], hasMore: m.hasMore, moreAt: Date.now() }
       })
       break
     case 'chat.info':

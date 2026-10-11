@@ -6,6 +6,7 @@ import { GoalRow } from './Messages.tsx'
 import { buildRows } from '../../lib/chat.ts'
 import { patchChat, useStore } from '../../lib/store.ts'
 import { api } from '../../lib/api.ts'
+import { socket } from '../../lib/socket.ts'
 import { emit } from '../../test/fakes.ts'
 import { chatInfo, host, item } from '../../test/fixtures.ts'
 import { flush } from '../../test/render.tsx'
@@ -98,6 +99,39 @@ describe('ChatView', () => {
     expect(screen.getAllByText('Goal met').length).toBeGreaterThan(0)
     expect(screen.getByText('Earlier messages')).toBeTruthy()
     expect(screen.getByRole('textbox')).toBeTruthy()
+  })
+
+  test('scrolling up near the top loads earlier messages by itself', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    const sent = spyOn(socket, 'send').mockImplementation(() => {})
+    const { container } = render(view())
+    load(longConversation(10))
+    await flush()
+    const el = container.querySelector('.overflow-y-auto') as HTMLElement
+    let top = 4000
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 5000 })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 800 })
+    Object.defineProperty(el, 'scrollTop', { configurable: true, get: () => top, set: (v) => void (top = v) })
+    const scrollTo = (y: number) => act(() => {
+      top = y
+      el.dispatchEvent(new Event('scroll'))
+    })
+    scrollTo(4200)
+    // the reader wheels up: far from the top nothing is fetched, near it the earlier page is
+    act(() => void el.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })))
+    scrollTo(2500)
+    expect(sent.mock.calls.some(([m]) => m.t === 'chat.more')).toBe(false)
+    scrollTo(300)
+    expect(sent.mock.calls.filter(([m]) => m.t === 'chat.more')).toHaveLength(1)
+    expect(screen.getByText('Loading earlier messages…')).toBeTruthy()
+    // only one request at a time, and an empty answer still ends the wait
+    scrollTo(100)
+    expect(sent.mock.calls.filter(([m]) => m.t === 'chat.more')).toHaveLength(1)
+    act(() => emit({ t: 'chat.more', key: 'box:%1', items: [], hasMore: true }))
+    await flush()
+    expect(screen.queryByText('Loading earlier messages…')).toBeNull()
+    expect(screen.getByText('Earlier messages')).toBeTruthy()
+    sent.mockRestore()
   })
 
   test('keeps rendering as items stream in and the ledger moves', async () => {

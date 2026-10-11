@@ -85,12 +85,17 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
     anchor.current = first < 0 ? [] : rows.slice(first, first + 3).map((row) => ({ el: row, top: row.getBoundingClientRect().top - top }))
   }
 
+  // the latest loadMore, for the scroll handler (which is made once)
+  const more = useRef<() => void>(() => {})
+
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
     const away = el.scrollHeight - el.scrollTop - el.clientHeight
     if (away < 24) stick.current = true
     else if (el.scrollTop < lastTop.current - 2 && Date.now() - inputAt.current < 1200) stick.current = false
+    // scrolling up towards the top fetches earlier messages before the reader gets there
+    if (!stick.current && el.scrollTop < lastTop.current && el.scrollTop < Math.max(400, el.clientHeight)) more.current()
     lastTop.current = el.scrollTop
     setAtBottom(away < 80)
     saveAnchor()
@@ -130,7 +135,13 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
 
   // older messages arrived (they're prepended; settle() kept the reading position)
   const firstSeq = chat?.items[0]?.seq
-  useEffect(() => setLoadingMore(false), [firstSeq])
+  useEffect(() => setLoadingMore(false), [firstSeq, chat?.moreAt])
+  // a reply lost with the connection shouldn't leave the top spinning
+  useEffect(() => {
+    if (!loadingMore) return
+    const t = setTimeout(() => setLoadingMore(false), 30_000)
+    return () => clearTimeout(t)
+  }, [loadingMore])
 
   useEffect(() => {
     stick.current = true
@@ -205,12 +216,13 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
 
   const loadMore = () => {
     const first = chat?.items[0]
-    if (!first || loadingMore) return
+    if (!first || loadingMore || !chat?.hasMore) return
     stick.current = false
     saveAnchor()
     setLoadingMore(true)
     socket.send({ t: 'chat.more', host, pane, before: first.seq })
   }
+  more.current = loadMore
 
   const retry = async (id: string, text: string) => {
     patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sending', at: Date.now(), retryable: false } : p)) }))
@@ -268,10 +280,16 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
               ) : (
                 <>
                   {chat.hasMore && (
-                    <div className="mb-4 flex justify-center">
-                      <Button size="sm" variant="ghost" onClick={loadMore} loading={loadingMore}>
-                        <History className="size-4" /> Earlier messages
-                      </Button>
+                    <div className="mb-4 flex h-8 justify-center">
+                      {loadingMore ? (
+                        <span role="status" className="animate-fade-in flex items-center gap-2 text-[12.5px] text-fg-3">
+                          <Spinner className="size-3.5" /> Loading earlier messages…
+                        </span>
+                      ) : (
+                        <Button size="sm" variant="ghost" onClick={loadMore}>
+                          <History className="size-4" /> Earlier messages
+                        </Button>
+                      )}
                     </div>
                   )}
                   {!rows.length && !pending.length && (
