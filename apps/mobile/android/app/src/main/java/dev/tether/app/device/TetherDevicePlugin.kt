@@ -223,6 +223,30 @@ class TetherDevicePlugin : Plugin() {
         call.resolve(JSObject().put("ignoring", pm != null && pm.isIgnoringBatteryOptimizations(context.packageName)))
     }
 
+    /**
+     * Android's own "let this app run in the background?" prompt: one tap, unlike the settings list.
+     * Resolves once it's answered, with whether Tether is now unrestricted.
+     */
+    @PluginMethod
+    fun requestBatteryExemption(call: PluginCall) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
+        if (pm == null || pm.isIgnoringBatteryOptimizations(context.packageName)) return call.resolve(JSObject().put("ignoring", pm != null))
+        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${context.packageName}"))
+        try {
+            startActivityForResult(call, intent, "batteryExemptionResult")
+        } catch (_: ActivityNotFoundException) {
+            // some phones leave the prompt out: the settings list is the next best thing
+            openBatterySettings(call)
+        }
+    }
+
+    @ActivityCallback
+    private fun batteryExemptionResult(call: PluginCall?, @Suppress("UNUSED_PARAMETER") result: ActivityResult) {
+        if (call == null) return
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
+        call.resolve(JSObject().put("ignoring", pm != null && pm.isIgnoringBatteryOptimizations(context.packageName)))
+    }
+
     /** The system list where the user can exempt Tether; the app details page where that list is missing. */
     @PluginMethod
     fun openBatterySettings(call: PluginCall) {

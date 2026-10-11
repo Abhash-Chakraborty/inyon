@@ -3,7 +3,7 @@ import type { ChatItem } from '@tether/protocol'
 import { notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
 import { emit } from '../test/fakes.ts'
-import { chatInfo, host, item } from '../test/fixtures.ts'
+import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
 
 const chat = (key: string) => useStore.getState().chats[key]
 const seqs = (items: ChatItem[]) => items.map((i) => i.seq)
@@ -209,6 +209,37 @@ describe('notify', () => {
         { title: 'box is offline', body: 'b', href: '/machines/box', tag: 'machine:box', kind: 'offline' },
       ])
       clearNativeNotification(notifyTag('box', '%3'))
+      expect(cleared).toEqual(['box:%3'])
+    } finally {
+      delete (window as any).Capacitor
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+  })
+
+  test('a question answered somewhere else takes its notification with it', async () => {
+    const cleared: string[] = []
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: { TetherDevice: { postNotification: async () => ({ ok: true }), clearNotification: async (o: any) => void cleared.push(o.tag) } },
+    }
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    const box = (state: 'waiting' | 'working' | 'idle', status: 'online' | 'error' = 'online') => host('box', { status, panes: [agentPane('%3', 'claude', { agent: { kind: 'claude', pid: 1, state } })] })
+    try {
+      note('waiting')
+      emit({ t: 'overview', hosts: [box('waiting')] })
+      // still asking, or the machine went quiet: it stays
+      emit({ t: 'overview', hosts: [box('working', 'error')] })
+      expect(cleared).toEqual([])
+      // answered on the computer
+      emit({ t: 'overview', hosts: [box('working')] })
+      expect(cleared).toEqual(['box:%3'])
+      emit({ t: 'overview', hosts: [box('idle')] })
+      expect(cleared).toEqual(['box:%3'])
+      // a finished notice replaced it: nothing to take back
+      note('waiting')
+      note('done')
+      emit({ t: 'overview', hosts: [box('idle')] })
       expect(cleared).toEqual(['box:%3'])
     } finally {
       delete (window as any).Capacitor

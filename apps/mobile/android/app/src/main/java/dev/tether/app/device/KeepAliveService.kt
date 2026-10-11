@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.ServiceCompat
 
@@ -19,9 +20,18 @@ class KeepAliveService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val title = intent?.getStringExtra(EXTRA_TITLE) ?: "Tether"
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Connected"
-        val type = if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
+        // specialUse has no daily limit; dataSync before Android 14, where it has none either
+        val type = when {
+            Build.VERSION.SDK_INT >= 34 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            Build.VERSION.SDK_INT >= 29 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            else -> 0
+        }
         try {
             ServiceCompat.startForeground(this, Notifications.KEEP_ALIVE_ID, Notifications.keepAlive(this, title, text), type)
+            if (wakeLock == null) {
+                val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "tether:incoming").apply { setReferenceCounted(false) }
+            }
             running = true
         } catch (e: RuntimeException) {
             // e.g. the daily dataSync allowance (Android 15+) is used up
@@ -32,13 +42,15 @@ class KeepAliveService : Service() {
         return START_NOT_STICKY
     }
 
-    /** Android 15+: dataSync services get 6 hours a day, reset whenever the app is opened. */
+    /** Android 15+, dataSync only (so before Android 14 never): 6 hours a day, reset when the app opens. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         stop("timeout")
     }
 
     override fun onDestroy() {
         running = false
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
         super.onDestroy()
     }
 
@@ -56,9 +68,34 @@ class KeepAliveService : Service() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_TEXT = "text"
 
+        /** how long the phone stays awake after a machine sends something: enough to read it and post the alert */
+        private const val AWAKE_MS = 10_000L
+
         @Volatile
         var running = false
             private set
+
+        @Volatile
+        private var wakeLock: PowerManager.WakeLock? = null
+
+        @Volatile
+        private var nudgedAt = 0L
+
+        /**
+         * A machine sent something: stay awake a few seconds so the app can act on it (an agent
+         * finishing, say) before the phone sleeps again. Each call pushes the deadline back.
+         */
+        fun nudge() {
+            val lock = wakeLock ?: return
+            val now = System.currentTimeMillis()
+            // a busy stream calls this for every batch of lines; once a second is plenty
+            if (now - nudgedAt < 1000) return
+            nudgedAt = now
+            try {
+                lock.acquire(AWAKE_MS)
+            } catch (_: RuntimeException) {
+            }
+        }
 
         fun intent(ctx: Context, title: String?, text: String?): Intent =
             Intent(ctx, KeepAliveService::class.java).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text)

@@ -45,12 +45,17 @@
             android:name=".device.NotificationActions"
             android:exported="false" />
 
-        <!-- keeps the app (and the web app's sockets) alive in the background while it's on -->
+        <!-- keeps the app (and the web app's sockets) alive in the background while it's on.
+             specialUse from Android 14: dataSync stops after 6 hours a day from Android 15 -->
         <service
             android:name=".device.KeepAliveService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
-            android:stopWithTask="true" />
+            android:foregroundServiceType="dataSync|specialUse"
+            android:stopWithTask="true">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps SSH connections to the user's own computers open so agent alerts arrive while the app is in the background" />
+        </service>
 
         <!-- push: Firebase is initialised by hand only when the build has TETHER_FCM_* values -->
         <service
@@ -95,6 +100,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- a few seconds awake when a machine sends something, so the alert is posted before the phone sleeps -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- the one-tap "don't restrict Tether" prompt; without it, Doze cuts the connection when the screen is off -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- asked for only when the QR scanner or a photo input opens -->
     <uses-permission android:name="android.permission.CAMERA" />

@@ -10,7 +10,7 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
-import { batteryUnrestricted, keepAliveSupported, keepAliveWanted, openBatterySettings, setKeepAlive } from '../lib/keepalive.ts'
+import { allowBackground, batteryUnrestricted, keepAliveSupported, keepAliveWanted, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
@@ -41,9 +41,9 @@ function Background() {
         <Toggle on={on} onChange={toggle} label="Stay connected" />
       </Row>
       {unrestricted === false && (
-        <Row label="Battery limits" hint="Some phones stop background apps anyway. Set Tether to Unrestricted to keep it connected.">
-          <button type="button" onClick={openBatterySettings} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
-            Open settings
+        <Row label="Battery limits" hint="Android is limiting Tether in the background, so it loses its connection once the screen has been off a while. Allow it to run in the background to keep alerts coming.">
+          <button type="button" onClick={() => allowBackground().then((ok) => ok !== undefined && setUnrestricted(ok))} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+            Allow
           </button>
         </Row>
       )}

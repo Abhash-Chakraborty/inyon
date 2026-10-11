@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@tether/protocol'
 import { socket } from './socket.ts'
 import { haptic } from './haptics.ts'
-import { isNative, nativeNotify } from './native.ts'
+import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
@@ -154,6 +154,7 @@ function onMessage(m: ServerMsg) {
   switch (m.t) {
     case 'overview':
       useStore.setState({ hosts: m.hosts, hostsLoaded: true })
+      clearAnswered(m.hosts)
       break
     case 'chat.reset':
       patchChat(m.key, (c) => {
@@ -196,6 +197,25 @@ function onMessage(m: ServerMsg) {
   }
 }
 
+/** Sessions with a "needs you" notification up, by tag. */
+const asking = new Map<string, { host: string; pane: string }>()
+
+/**
+ * A question answered somewhere else (on the computer, say) takes its notification with it, so
+ * what's left in the shade still needs you.
+ */
+function clearAnswered(hosts: HostState[]) {
+  for (const [tag, { host, pane }] of asking) {
+    const h = hosts.find((x) => x.config.id === host)
+    // a machine that went quiet says nothing about the question
+    if (!h || h.status !== 'online') continue
+    const p = h.sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((x) => x.id === pane)
+    if (p?.agent?.state === 'waiting') continue
+    asking.delete(tag)
+    clearNativeNotification(tag)
+  }
+}
+
 /** One notification per session (or machine): the next one replaces it, opening it clears it. */
 export const notifyTag = (host: string, pane?: string) => (pane ? `${host}:${pane}` : `machine:${host}`)
 
@@ -219,6 +239,8 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   }
   const tag = notifyTag(m.host, machine ? undefined : m.pane)
   if (document.visibilityState === 'hidden' && isNative()) {
+    if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
+    else asking.delete(tag)
     void nativeNotify(m.title, m.body, href, tag, m.kind)
     return
   }

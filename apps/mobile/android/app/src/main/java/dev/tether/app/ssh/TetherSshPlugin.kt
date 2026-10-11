@@ -11,6 +11,7 @@ import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
+import dev.tether.app.device.KeepAliveService
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
@@ -32,10 +33,13 @@ class TetherSshPlugin : Plugin() {
         core = SshCore(
             object : SshCore.Events {
                 override fun streamLines(streamId: String, lines: List<String>) {
+                    // in the background this is how alerts start: stay awake long enough to post one
+                    KeepAliveService.nudge()
                     notifyListeners("streamLines", JSObject().put("streamId", streamId).put("lines", JSArray(lines)))
                 }
 
                 override fun streamExit(streamId: String, code: Int) {
+                    KeepAliveService.nudge()
                     notifyListeners("streamExit", JSObject().put("streamId", streamId).put("code", code))
                 }
 
@@ -49,6 +53,7 @@ class TetherSshPlugin : Plugin() {
                 }
 
                 override fun closed(serverId: String, reason: String) {
+                    KeepAliveService.nudge()
                     notifyListeners("closed", JSObject().put("id", serverId).put("reason", reason))
                 }
             },
