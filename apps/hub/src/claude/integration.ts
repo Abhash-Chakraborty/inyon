@@ -138,78 +138,6 @@ export async function installIntegration(host: Host) {
   }
   await writeSettings(host, settings)
   await installAgyIntegration(host)
-  await installCodexIntegration(host)
-}
-
-// ---------- Codex ----------
-
-const CODEX_HOOKS = '$HOME/.codex/hooks.json'
-/** Codex sends the same hook input as Claude (session_id, transcript_path, hook_event_name), so the
- * same script records it: which pane runs which thread, exactly, with no guessing by folder or title */
-const CODEX_EVENTS: { name: string; matcher?: string }[] = [
-  { name: 'SessionStart' },
-  { name: 'UserPromptSubmit' },
-  { name: 'PermissionRequest', matcher: '*' },
-  { name: 'Stop' },
-  { name: 'SessionEnd' },
-]
-
-/** Codex's hooks file, or undefined when Codex isn't on the machine or it's Windows (hooks run in cmd there). */
-async function readCodexHooks(host: Host): Promise<any | undefined> {
-  const r = await host.exec(`[ "$(uname -s 2>/dev/null)" = Windows_NT ] && exit 0; if command -v codex >/dev/null 2>&1 || [ -d "$HOME/.codex" ]; then echo @@; cat "${CODEX_HOOKS}" 2>/dev/null; fi`)
-  if (!r.stdout.startsWith('@@')) return undefined
-  const text = r.stdout.slice(2).trim()
-  if (!text) return {}
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new HttpError(409, '~/.codex/hooks.json on that machine is not valid JSON; fix it first')
-  }
-}
-
-async function writeCodexHooks(host: Host, file: any) {
-  const f = CODEX_HOOKS
-  const cmd = [
-    'mkdir -p "$HOME/.codex"',
-    `[ -f "${f}" ] && [ ! -f "${f}.tether-backup" ] && cp "${f}" "${f}.tether-backup"`,
-    `cat > "${f}.tether-tmp" && mv "${f}.tether-tmp" "${f}"`,
-  ].join('; ')
-  const r = await host.exec(cmd, { input: JSON.stringify(file, null, 2) + '\n' })
-  if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not write ~/.codex/hooks.json')
-}
-
-/**
- * Adds Tether's hook to ~/.codex/hooks.json, next to any hooks already there. Codex asks once to
- * trust new hooks ("Hooks need review"); sessions started before pick it up when restarted.
- */
-export async function installCodexIntegration(host: Host) {
-  const file = await readCodexHooks(host)
-  if (!file) return false
-  await writeFile(host, '.tether/hook.sh', HOOK_SCRIPT, '700')
-  file.hooks ??= {}
-  let changed = false
-  for (const ev of CODEX_EVENTS) {
-    const groups: any[] = (file.hooks[ev.name] ??= [])
-    if (groups.some((g) => (g.hooks ?? []).some(isOurs))) continue
-    groups.push({ ...(ev.matcher ? { matcher: ev.matcher } : {}), hooks: [{ type: 'command', command: HOOK_CMD, timeout: 5 }] })
-    changed = true
-  }
-  if (changed) await writeCodexHooks(host, file)
-  return true
-}
-
-export async function uninstallCodexIntegration(host: Host) {
-  const file = await readCodexHooks(host)
-  if (!file?.hooks) return
-  let changed = false
-  for (const [name, groups] of Object.entries<any[]>(file.hooks)) {
-    const kept = groups.map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurs(h)) })).filter((g) => g.hooks.length)
-    if (kept.length !== groups.length || kept.some((g, i) => g.hooks.length !== (groups[i]?.hooks ?? []).length)) changed = true
-    if (kept.length) file.hooks[name] = kept
-    else delete file.hooks[name]
-  }
-  if (!Object.keys(file.hooks).length) delete file.hooks
-  if (changed) await writeCodexHooks(host, file)
 }
 
 const AGY_SETTINGS = '$HOME/.gemini/antigravity-cli/settings.json'
@@ -339,5 +267,4 @@ export async function uninstallIntegration(host: Host) {
   await writeSettings(host, settings)
   await host.exec('rm -f "$HOME/.tether/hook.sh" "$HOME/.tether/statusline.sh" "$HOME/.tether/statusline.orig"')
   await uninstallAgyIntegration(host)
-  await uninstallCodexIntegration(host)
 }

@@ -369,7 +369,7 @@ function IntegrationCard({ host }: { host: HostState }) {
     setBusy(true)
     try {
       await api.integration(host.config.id, !on)
-      toast({ title: on ? 'Integration turned off' : 'Integration on', body: on ? undefined : host.agents.includes('codex') ? 'Restart running Claude and Codex sessions to pick it up. Codex asks once to trust the hook.' : 'Restart running Claude sessions to pick it up.', tone: 'success' })
+      toast({ title: on ? 'Integration turned off' : 'Integration on', body: on ? undefined : 'Restart running Claude sessions to pick it up.', tone: 'success' })
     } catch (e) {
       toast({ title: 'Failed', body: (e as Error).message, tone: 'error' })
     } finally {
@@ -382,7 +382,7 @@ function IntegrationCard({ host }: { host: HostState }) {
         <div className="flex items-center gap-3">
           <Plug className={clsx('size-5', on ? 'text-ok' : 'text-fg-3')} />
           <div className="flex-1">
-            <div className="text-[15px] font-semibold">Agent integration</div>
+            <div className="text-[15px] font-semibold">Claude Code integration</div>
             <div className="text-[12.5px] text-fg-3">{on ? 'On' : host.integration === 'missing' ? 'Off' : host.integration === 'unknown' ? 'Unknown' : INTEGRATION_TEXT[host.integration]}</div>
           </div>
           <Button variant={on ? 'danger' : 'primary'} onClick={toggle} loading={busy} disabled={host.status !== 'online'}>
@@ -393,12 +393,6 @@ function IntegrationCard({ host }: { host: HostState }) {
           <li>• Adds a tiny hook that records which tmux pane runs which session, for exact matching and instant updates.</li>
           <li>• Wraps your status line so Tether sees model, effort, context window, cost and 5-hour/weekly limits. Your status line still shows exactly as before.</li>
           <li>• Backs up <span className="font-mono text-[12px]">~/.claude/settings.json</span> first. Turning it off restores your original status line.</li>
-          {host.agents.includes('codex') && (
-            <li>
-              • For Codex, adds the same hook to <span className="font-mono text-[12px]">~/.codex/hooks.json</span>, next to any hooks of yours, so each pane is matched to its exact thread. Codex asks once to trust it; pick <span className="font-medium text-fg">Trust all and continue</span>.
-              {on && host.codexIntegration === 'missing' && <span className="text-fg-3"> Not added yet; it goes in on the next check.</span>}
-            </li>
-          )}
         </ul>
       </div>
       <SectionLabel>Agents installed on this machine</SectionLabel>

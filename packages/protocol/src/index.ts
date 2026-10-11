@@ -173,7 +173,6 @@ export interface HostState {
   integration: IntegrationState
   /** Antigravity has its own settings and status wrapper. */
   agyIntegration?: IntegrationState
-  codexIntegration?: IntegrationState
   tmux: 'unknown' | 'ok' | 'no-server' | 'missing'
   /** agent CLIs found on PATH */
   agents: AgentKind[]

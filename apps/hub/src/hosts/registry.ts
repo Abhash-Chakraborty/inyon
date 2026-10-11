@@ -60,7 +60,6 @@ interface Runtime {
   stopped: boolean
   /** last time the agy status line was put back */
   agyHealedAt?: number
-  codexHealedAt?: number
   live?: LiveTmux
   /** panes with fresh output, re-read on a short debounce */
   dirty: Set<string>
@@ -346,7 +345,6 @@ class Registry {
         hostname: pr.hostname,
         integration: pr.integration,
         agyIntegration: pr.agyIntegration ?? 'unknown',
-        codexIntegration: pr.codexIntegration ?? 'unknown',
         tmux: pr.tmux,
         agents: pr.installed,
         signedIn: pr.signedIn,
@@ -452,8 +450,7 @@ class Registry {
       live.add(proc.pid)
       const info: AgentPaneInfo = { kind: proc.kind, pid: proc.pid, state: 'unknown', startedAt: Math.round(proc.startedAt * 1000) }
       const hook = pr.hookPanes.get(p.id)
-      // Claude's hook, and Codex's once the integration is in (the same script, the same fields)
-      if ((proc.kind === 'claude' || proc.kind === 'codex') && hook?.data.transcript_path && hook.ts >= proc.startedAt - 5) {
+      if (proc.kind === 'claude' && hook?.data.transcript_path && hook.ts >= proc.startedAt - 5) {
         info.transcriptPath = hook.data.transcript_path
         info.sessionId = hook.data.session_id
         info.mappedBy = 'hook'
@@ -671,15 +668,6 @@ class Registry {
       console.log(`antigravity integration missing on ${cfg.id}: adding it`)
       const { installAgyIntegration } = await import('../claude/integration.ts')
       await installAgyIntegration(rt.host)
-      return this.refresh(cfg.id, 500)
-    }
-    // the same for Codex: its hook went in after the integration, or hooks.json was replaced
-    if (cfg.keepIntegration && pr.integration === 'installed' && pr.codexIntegration === 'missing' && pr.installed.includes('codex') && pr.os !== 'Windows') {
-      if (rt.codexHealedAt && Date.now() - rt.codexHealedAt < HEAL_EVERY_MS) return
-      rt.codexHealedAt = Date.now()
-      console.log(`codex integration missing on ${cfg.id}: adding it`)
-      const { installCodexIntegration } = await import('../claude/integration.ts')
-      await installCodexIntegration(rt.host)
       return this.refresh(cfg.id, 500)
     }
     if (!cfg.keepIntegration || !pr.installed.includes('claude')) return

@@ -258,35 +258,3 @@ test('a restart keeps a flag value with spaces in it whole, read from the real a
     proc.kill()
   }
 })
-
-describe('Codex integration', () => {
-  const hooksFile = () => join(home, '.codex/hooks.json')
-  test("adds Tether's hook next to the hooks already there, once, and takes only its own out again", async () => {
-    const { installCodexIntegration, uninstallCodexIntegration } = await import('./integration.ts')
-    // earlier tests here installed the whole integration, Codex's part included
-    rmSync(join(home, '.codex'), { recursive: true, force: true })
-    Bun.spawnSync(['mkdir', '-p', join(home, '.codex')])
-    const mine = { hooks: { Stop: [{ hooks: [{ type: 'command', command: 'my-design-check', timeout: 30 }] }] } }
-    writeFileSync(hooksFile(), JSON.stringify(mine))
-    expect(await installCodexIntegration(sandboxHost)).toBe(true)
-    await installCodexIntegration(sandboxHost)
-    const file = JSON.parse(readFileSync(hooksFile(), 'utf8'))
-    for (const ev of ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop', 'SessionEnd']) {
-      const ours = file.hooks[ev].flatMap((g: any) => g.hooks).filter((h: any) => h.command === '~/.tether/hook.sh')
-      expect(ours.length).toBe(1)
-    }
-    expect(file.hooks.Stop[0].hooks[0].command).toBe('my-design-check')
-    // the first version of the file is kept
-    expect(JSON.parse(readFileSync(`${hooksFile()}.tether-backup`, 'utf8'))).toEqual(mine)
-    await uninstallCodexIntegration(sandboxHost)
-    expect(JSON.parse(readFileSync(hooksFile(), 'utf8'))).toEqual(mine)
-  })
-
-  test('the hook records which pane runs which Codex thread', () => {
-    rmSync(join(home, '.tether'), { recursive: true, force: true })
-    const input = { session_id: '01a124fc-e6ae-75f0-85bf-d9db591d6e90', transcript_path: '/h/.codex/sessions/rollout-x.jsonl', hook_event_name: 'UserPromptSubmit', cwd: '/w' }
-    run(HOOK_SCRIPT, JSON.stringify(input))
-    const saved = JSON.parse(readFileSync(join(home, '.tether/panes/9.json'), 'utf8'))
-    expect(saved.data).toMatchObject({ session_id: input.session_id, transcript_path: input.transcript_path })
-  })
-})
