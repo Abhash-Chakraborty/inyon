@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
-import { clearCookie, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { clearCookie, clientAddress, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, registry } from './hosts/registry.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
@@ -164,10 +164,8 @@ const server = Bun.serve<SocketData>({
     '/api/login': {
       POST: api(async (req) => {
         const { password } = await body<{ password: string }>(req, 8 * 1024)
-        const ip = server.requestIP(req)?.address ?? '?'
         // behind a local proxy every request comes from loopback: count guesses per real client
-        const loopback = /^(127\.|::1$|::ffff:127\.)/.test(ip)
-        const client = (loopback && req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()) || ip
+        const client = clientAddress(server.requestIP(req)?.address ?? '?', req.headers.get('x-forwarded-for'))
         const r = await tryLogin(client, String(password ?? ''))
         if (!r.ok) return json({ error: r.error }, { status: 401 })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
