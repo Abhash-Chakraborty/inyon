@@ -26,19 +26,24 @@ class Socket {
     if (this.started) return
     this.started = true
     this.connect()
-    // phones suspend sockets in the background and drop them when the network changes (say from
-    // NetBird to Tailscale): reconnect right away on return instead of waiting for the backoff
-    const revive = () => {
-      if (document.visibilityState !== 'visible' || this.ws?.readyState === WebSocket.CONNECTING) return
-      // the phone's core runs in this page and can't have dropped: rebuilding it would close open
-      // terminals and resend every chat, so only check on it
-      if (this.up && (isPhone() || Date.now() - this.heard < 30000)) return this.raw({ t: 'ping' })
-      clearTimeout(this.timer)
-      this.retry = 0
-      this.connect()
-    }
-    document.addEventListener('visibilitychange', revive)
-    window.addEventListener('online', revive)
+    // once, however often it's stopped and started again
+    if (this.listening) return
+    this.listening = true
+    document.addEventListener('visibilitychange', this.revive)
+    window.addEventListener('online', this.revive)
+  }
+
+  // phones suspend sockets in the background and drop them when the network changes (say from
+  // NetBird to Tailscale): reconnect right away on return instead of waiting for the backoff
+  private listening = false
+  private revive = () => {
+    if (!this.started || document.visibilityState !== 'visible' || this.ws?.readyState === WebSocket.CONNECTING) return
+    // the phone's core runs in this page and can't have dropped: rebuilding it would close open
+    // terminals and resend every chat, so only check on it
+    if (this.up && (isPhone() || Date.now() - this.heard < 30000)) return this.raw({ t: 'ping' })
+    clearTimeout(this.timer)
+    this.retry = 0
+    this.connect()
   }
 
   stop() {

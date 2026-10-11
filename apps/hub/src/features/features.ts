@@ -125,9 +125,35 @@ export function startUploadJanitor() {
   setInterval(run, 6 * 3600_000)
 }
 
+/** A small cache: entries go after `ttl` ms, and past `max` entries the least recently used go first. */
+export function lruCache<T>(ttl: number, max: number) {
+  const entries = new Map<string, { at: number; value: T }>()
+  return {
+    get(key: string): T | undefined {
+      const hit = entries.get(key)
+      if (!hit) return
+      entries.delete(key)
+      if (Date.now() - hit.at >= ttl) return
+      entries.set(key, hit)
+      return hit.value
+    },
+    set(key: string, value: T) {
+      entries.delete(key)
+      entries.set(key, { at: Date.now(), value })
+      for (const [k, e] of entries) {
+        if (entries.size <= max && Date.now() - e.at < ttl) break
+        entries.delete(k)
+      }
+    },
+    get size() {
+      return entries.size
+    },
+  }
+}
+
 // ---------- slash commands ----------
 
-const cmdCache = new Map<string, { at: number; list: SlashCommand[] }>()
+const cmdCache = lruCache<SlashCommand[]>(60_000, 50)
 
 /** Built-in commands plus skills and custom commands found on the machine. */
 export async function listCommands(hostId: string, paneId: string): Promise<SlashCommand[]> {
@@ -135,14 +161,14 @@ export async function listCommands(hostId: string, paneId: string): Promise<Slas
   const kind: AgentKind = pane.agent?.kind ?? 'claude'
   const key = `${hostId}:${kind}:${pane.cwd}`
   const hit = cmdCache.get(key)
-  if (hit && Date.now() - hit.at < 60_000) return hit.list
+  if (hit) return hit
   const { host } = hostAndHome(hostId)
   if (kind === 'opencode' && pane.agent?.transcriptPath?.startsWith('opencode://')) {
     const rows = await new OpenCodeClient(host, pane.agent.transcriptPath, pane.cwd).request('/command')
     const dynamic: SlashCommand[] = (Array.isArray(rows) ? rows : []).map((c: any) => ({ name: `/${c.name}`, description: c.description ?? '', source: c.source === 'mcp' ? 'plugin' : 'project' }))
     const names = new Set(dynamic.map((c) => c.name))
     const list = [...AGENTS.opencode.commands.filter((c) => !names.has(c.name)), ...dynamic].sort((a, b) => a.name.localeCompare(b.name))
-    cmdCache.set(key, { at: Date.now(), list })
+    cmdCache.set(key, list)
     return list
   }
   const cwd = shq(pane.cwd)
@@ -178,26 +204,26 @@ find "$HOME/.gemini/antigravity-cli/plugins" -maxdepth 4 -path '*/skills/*/SKILL
   }
   const builtins = AGENTS[kind].commands.filter((c) => !seen.has(c.name))
   const list = [...builtins, ...found].sort((a, b) => a.name.localeCompare(b.name))
-  cmdCache.set(key, { at: Date.now(), list })
+  cmdCache.set(key, list)
   return list
 }
 
 // ---------- @ file mentions ----------
 
-const fileCache = new Map<string, { at: number; files: string[] }>()
+const fileCache = lruCache<string[]>(30_000, 20)
 
 export async function listFiles(hostId: string, paneId: string): Promise<{ cwd: string; files: string[] }> {
   const pane = paneOf(hostId, paneId)
   const key = `${hostId}:${pane.cwd}`
   const hit = fileCache.get(key)
-  if (hit && Date.now() - hit.at < 30_000) return { cwd: pane.cwd, files: hit.files }
+  if (hit) return { cwd: pane.cwd, files: hit }
   const { host } = hostAndHome(hostId)
   const r = await host.exec(
     `cd ${shq(pane.cwd)} 2>/dev/null || exit 0; if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git ls-files -co --exclude-standard 2>/dev/null | head -20000; else find . -maxdepth 6 \\( -name node_modules -o -name .git -o -name dist -o -name .venv -o -name __pycache__ \\) -prune -o -type f -print 2>/dev/null | sed 's|^\\./||' | head -20000; fi`,
     { timeoutMs: 15000 },
   )
   const files = r.stdout.split('\n').filter(Boolean)
-  fileCache.set(key, { at: Date.now(), files })
+  fileCache.set(key, files)
   return { cwd: pane.cwd, files }
 }
 

@@ -134,6 +134,21 @@ registry.on((e) => {
 /** A connected app: it gets updates through `send` once added to `clients`. */
 export const newClient = (send: (msg: ServerMsg) => void = () => {}): Client => ({ kind: 'client', overview: false, chats: new Set(), terms: new Map(), send })
 
+/** chats one app can watch at once */
+const MAX_CHATS = 64
+
+/** Runs `fn` once the machine reports the pane, now if it already does; gives up after 30 s. */
+function whenPane(host: string, pane: string, fn: () => void) {
+  if (registry.findPane(host, pane)) return fn()
+  const off = registry.on((e) => {
+    if (e.type !== 'overview' || !registry.findPane(host, pane)) return
+    off()
+    clearTimeout(timer)
+    fn()
+  })
+  const timer = setTimeout(off, 30_000)
+}
+
 /** One message from an app (raw JSON text). */
 export function clientMessage(c: Client, raw: string) {
   let m: ClientMsg
@@ -150,9 +165,12 @@ export function clientMessage(c: Client, raw: string) {
       return c.send({ t: 'overview', hosts: registry.overview() })
     case 'sub.chat': {
       const key = `${m.host}:${m.pane}`
-      if (c.chats.has(key) || !registry.get(m.host)) return
+      if (c.chats.has(key) || !registry.get(m.host) || typeof m.pane !== 'string' || !/^%\d+(\.\d+)?$/.test(m.pane) || c.chats.size >= MAX_CHATS) return
       c.chats.add(key)
-      return watchers.get(m.host, m.pane).subscribe(c)
+      // only a pane the machine has gets a watcher; one just launched may show up a moment later
+      return whenPane(m.host, m.pane, () => {
+        if (clients.has(c) && c.chats.has(key)) watchers.get(m.host, m.pane).subscribe(c)
+      })
     }
     case 'unsub.chat': {
       const key = `${m.host}:${m.pane}`
