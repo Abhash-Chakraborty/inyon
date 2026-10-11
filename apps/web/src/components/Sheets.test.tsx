@@ -116,10 +116,13 @@ describe('NewSessionSheet', () => {
     const user = userEvent.setup()
     useStore.setState({ hosts })
     await render(sheet())
-    const machine = screen.getByDisplayValue('box') as HTMLSelectElement
-    await user.selectOptions(machine, 'pi')
+    const machine = screen.getByRole('combobox', { name: 'Machine' })
+    expect(machine.textContent).toContain('box')
+    await user.click(machine)
+    await user.click(screen.getByRole('option', { name: /^pi/ }))
+    await new Promise((r) => setTimeout(r, 250))
     poll(hosts)
-    expect(machine.value).toBe('pi')
+    expect(screen.getByRole('combobox', { name: 'Machine' }).textContent).toContain('pi')
   })
 
   test('reopening starts a fresh message with the default agent', async () => {

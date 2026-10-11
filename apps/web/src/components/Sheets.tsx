@@ -10,6 +10,7 @@ import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx
 import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react'
 import { copyText } from '../lib/clipboard.ts'
 import { isPhone } from '../lib/phone.ts'
+import { Select } from './ui/Select.tsx'
 import { useOpened } from '../lib/useOpened.ts'
 import { ServerSheet } from './ServerSheet.tsx'
 import { LaptopSheet } from './LaptopSheet.tsx'
@@ -299,12 +300,8 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label={isPhone() ? 'Server' : 'Machine'}>
-            <select className={inputClass} value={host} onChange={(e) => (setHost(e.target.value), setSession(''))}>
-              {hosts.map((x) => (
-                <option key={x.config.id} value={x.config.id}>{x.config.name}</option>
-              ))}
-            </select>
+          <Field label={isPhone() ? 'Computer' : 'Machine'}>
+            <Select title={isPhone() ? 'Computer' : 'Machine'} value={host} onChange={(v) => (setHost(v), setSession(''))} options={hosts.map((x) => ({ value: x.config.id, label: x.config.name, hint: x.config.kind === 'link' ? 'Paired' : x.config.target }))} />
           </Field>
           <Field label="Folder">
             <input className={clsx(inputClass, 'font-mono text-[13.5px]')} value={cwd} onChange={(e) => setCwd(e.target.value)} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
@@ -324,23 +321,13 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           <div className="grid gap-4 sm:grid-cols-2">
             {def.models.length > 0 && (
               <Field label="Model">
-                <select className={inputClass} value={model} onChange={(e) => setModel(e.target.value)}>
-                  <option value="">Default</option>
-                  {def.models.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
+                <Select title="Model" value={model} onChange={setModel} options={[{ value: '', label: 'Default' }, ...def.models.map((m) => ({ value: m.id, label: m.label }))]} />
               </Field>
             )}
             {(kind === 'claude' || kind === 'antigravity') && (
               <Field label="Permissions">
-                <select className={inputClass} value={mode} onChange={(e) => setMode(e.target.value)}>
-                  {/* no flag: the agent's own setting decides */}
-                  <option value="">Default</option>
-                  {def.modes.map((m) => (
-                    <option key={m.id} value={m.id}>{m.label}</option>
-                  ))}
-                </select>
+                {/* Default passes no flag: the agent's own setting decides */}
+                <Select title="Permissions" value={mode} onChange={setMode} options={[{ value: '', label: 'Default' }, ...def.modes.map((m) => ({ value: m.id, label: m.label }))]} />
               </Field>
             )}
           </div>
@@ -354,12 +341,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="tmux">
-            <select className={inputClass} value={session} onChange={(e) => setSession(e.target.value)}>
-              <option value="">New session</option>
-              {(h?.sessions ?? []).map((s) => (
-                <option key={s.id} value={s.name}>New window in “{s.name}”</option>
-              ))}
-            </select>
+            <Select title="tmux" value={session} onChange={setSession} options={[{ value: '', label: 'New session' }, ...(h?.sessions ?? []).map((s) => ({ value: s.name, label: `New window in “${s.name}”` }))]} />
           </Field>
           {!session && (
             <Field label="Session name">

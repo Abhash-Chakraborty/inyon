@@ -5,6 +5,7 @@ import {
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { Check, Loader2, X } from 'lucide-react'
+import { useBackCloses } from '../../lib/back.ts'
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'accent'
 
@@ -19,7 +20,7 @@ export const Button = forwardRef<
       type={type}
       disabled={disabled || loading}
       className={clsx(
-        'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] font-medium transition-[background,color,border,opacity] disabled:opacity-45',
+        'press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] font-medium disabled:opacity-45',
         size === 'xs' && 'h-7 px-2.5 text-[12px]',
         size === 'sm' && 'h-8 px-3 text-[13px]',
         size === 'md' && 'h-9 px-3.5 text-[13.5px]',
@@ -52,7 +53,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={clsx(
-        'inline-flex size-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-40',
+        'press inline-flex size-8 shrink-0 items-center justify-center rounded-lg disabled:opacity-40',
         active ? 'bg-hover text-fg' : 'text-fg-2 hover:bg-hover hover:text-fg',
         className,
       )}
@@ -86,7 +87,7 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       onClick={() => onChange(!on)}
       className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-ok' : 'bg-line-strong')}
     >
-      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full bg-white shadow-sm transition-transform', on ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
+      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full bg-white shadow-sm transition-transform duration-500 ease-spring', on ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
     </button>
   )
 }
@@ -104,8 +105,31 @@ export function Segmented<T extends string>({
   size?: 'sm' | 'md'
   full?: boolean
 }) {
+  // one pill slides under the chosen option instead of each option lighting up on its own
+  const box = useRef<HTMLDivElement>(null)
+  const [pill, setPill] = useState<{ left: number; width: number } | null>(null)
+  const index = options.findIndex((o) => o.v === value)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = box.current?.children[index + 1] as HTMLElement | undefined
+      setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null)
+    }
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
+    if (box.current) ro?.observe(box.current)
+    return () => ro?.disconnect()
+  }, [index, options.length])
+  const moved = useRef(false)
+  useEffect(() => {
+    if (pill) moved.current = true
+  }, [pill?.left])
   return (
-    <div role="radiogroup" className={clsx('flex gap-0.5 rounded-[10px] border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
+    <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-[10px] border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
+      <span
+        aria-hidden
+        className={clsx('absolute top-0.5 bottom-0.5 rounded-[8px] bg-elev shadow-soft', moved.current && 'transition-[left,width] duration-500 ease-out-soft', !pill && 'hidden')}
+        style={pill ?? undefined}
+      />
       {options.map((o) => (
         <button
           key={o.v}
@@ -115,10 +139,11 @@ export function Segmented<T extends string>({
           title={o.title}
           onClick={() => onChange(o.v)}
           className={clsx(
-            'flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] font-medium transition-colors',
+            'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] font-medium',
             size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
             full && 'flex-1',
-            value === o.v ? 'bg-elev text-fg shadow-soft' : 'text-fg-3 hover:text-fg-2',
+            value === o.v ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
+            value === o.v && !pill && 'bg-elev shadow-soft',
           )}
         >
           {o.label}
@@ -147,10 +172,11 @@ export function Sheet({
   wide?: boolean
 }) {
   const [shown, setShown] = useState(open)
+  useBackCloses(open, onClose)
   useEffect(() => {
     if (open) setShown(true)
     else {
-      const t = setTimeout(() => setShown(false), 170)
+      const t = setTimeout(() => setShown(false), 200)
       return () => clearTimeout(t)
     }
   }, [open])
@@ -163,12 +189,13 @@ export function Sheet({
   if (!shown) return null
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal>
-      <div className={clsx('absolute inset-0 bg-black/45 transition-opacity duration-150', open ? 'opacity-100' : 'opacity-0')} onClick={onClose} />
+      <div className={clsx('absolute inset-0 bg-black/45', open ? 'animate-fade-in' : 'animate-fade-out')} onClick={onClose} />
       <div
         className={clsx(
-          'relative flex max-h-[92dvh] w-full flex-col rounded-t-[22px] border border-line bg-elev text-fg shadow-float transition-[transform,opacity] duration-150 sm:rounded-[18px]',
+          'relative flex max-h-[92dvh] w-full flex-col rounded-t-[22px] border border-line bg-elev text-fg shadow-float sm:rounded-[18px]',
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
-          open ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0',
+          // phones: slides up on the spring; desktop: settles in from just above
+          open ? 'animate-sheet-in sm:animate-pop' : 'animate-sheet-out sm:animate-fade-out',
         )}
       >
         <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-line-strong sm:hidden" />
@@ -219,6 +246,7 @@ export function Menu({
   name?: string
 }) {
   const [open, setOpen] = useState(false)
+  useBackCloses(open, () => setOpen(false))
   useEffect(() => {
     if (!name) return
     const onOpen = (e: Event) => {
