@@ -43,6 +43,29 @@ test('pieces only go into the uploads folder', async () => {
   await expect(uploadPiece('up', undefined, p, { total: 200 * 1024 * 1024, offset: 0 })).rejects.toThrow('larger than')
 })
 
+test('the upload route takes a chunked piece and counts what it reads', async () => {
+  const { coreRoutes } = await import('../core.ts')
+  const post = (coreRoutes['/api/hosts/:id/uploads'] as any).POST
+  const send = (form: FormData) => {
+    // re-sent as a stream, so there is no Content-Length to go by
+    const r = new Request('http://hub/api/hosts/up/uploads', { method: 'POST', body: form })
+    return post(Object.assign(new Request(r.url, { method: 'POST', body: r.body, headers: { 'content-type': r.headers.get('content-type')! } }), { params: { id: 'up' } }))
+  }
+  const form = new FormData()
+  form.append('files', new File([video.slice(0, 1000)], 'small.bin'), 'small.bin')
+  form.append('total', '1000')
+  form.append('offset', '0')
+  const res = await send(form)
+  expect(res.status).toBe(200)
+  expect((await res.json()).files[0].size).toBe(1000)
+  // over the 100 MB setting (plus a megabyte for the form itself)
+  const big = new FormData()
+  big.append('files', new File([new Uint8Array(102 * 1024 * 1024)], 'big.bin'), 'big.bin')
+  const refused = await send(big)
+  expect(refused.status).toBe(413)
+  expect((await refused.json()).error).toBe('Uploads are limited to 100 MB')
+})
+
 test('a piece sent twice (its answer was lost, so the phone retried) is written once', async () => {
   const piece = (at: number, n: number) => new File([video.slice(at, at + n)], 'again.mp4', { type: 'video/mp4' })
   const first = await uploadPiece('up', undefined, piece(0, 2_000_000), { total: video.length, offset: 0 })

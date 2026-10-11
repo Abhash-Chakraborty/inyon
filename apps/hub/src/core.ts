@@ -27,11 +27,31 @@ import { lastReply } from './claude/last-reply.ts'
 
 export const json = (data: unknown, init: ResponseInit = {}) => Response.json(data, init)
 
+/**
+ * The request body as it arrives, failing with 413 once it passes `limit` bytes. Content-Length is
+ * checked first, but a chunked body has none, so the bytes are counted as well.
+ */
+export function limitedBody(req: Request, limit: number, message = 'Request too large'): ReadableStream<Uint8Array> {
+  if (Number(req.headers.get('content-length') ?? 0) > limit) throw new HttpError(413, message)
+  let seen = 0
+  return (req.body ?? new Response('').body!).pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, out) {
+        seen += chunk.byteLength
+        if (seen > limit) out.error(new HttpError(413, message))
+        else out.enqueue(chunk)
+      },
+    }),
+  )
+}
+
 export async function body<T = any>(req: Request, limit = 1024 * 1024): Promise<T> {
-  // JSON bodies are small; refuse big ones before reading them into memory
-  if (Number(req.headers.get('content-length') ?? 0) > limit) throw new HttpError(413, 'Request too large')
+  // JSON bodies are small; refuse big ones without reading them into memory
+  const text = await new Response(limitedBody(req, limit)).text().catch((err) => {
+    throw err instanceof HttpError ? err : new HttpError(400, 'Invalid JSON')
+  })
   try {
-    return (await req.json()) as T
+    return JSON.parse(text) as T
   } catch {
     throw new HttpError(400, 'Invalid JSON')
   }
@@ -260,11 +280,11 @@ export const coreRoutes: Routes = {
   '/api/hosts/:id/uploads': {
     GET: api(async (req) => json(await uploadUsage(req.params.id))),
     POST: api(async (req) => {
-      // refuse an oversized upload before it's read into memory
+      // refuse an oversized upload as soon as it passes the limit, chunked or not
       const { maxMB } = loadSettings().uploads
-      if (Number(req.headers.get('content-length') ?? 0) > (maxMB + 1) * 1024 * 1024) throw new HttpError(413, `Uploads are limited to ${maxMB} MB`)
-      const form = await req.formData().catch(() => {
-        throw new HttpError(400, 'Expected multipart form data')
+      const counted = limitedBody(req, (maxMB + 1) * 1024 * 1024, `Uploads are limited to ${maxMB} MB`)
+      const form = await new Response(counted, { headers: { 'content-type': req.headers.get('content-type') ?? '' } }).formData().catch((err) => {
+        throw err instanceof HttpError ? err : new HttpError(400, 'Expected multipart form data')
       })
       const files = form.getAll('files').filter((f) => typeof f !== 'string') as unknown as File[]
       if (!files.length) throw new HttpError(400, 'No files')

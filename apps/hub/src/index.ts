@@ -134,7 +134,9 @@ const server = Bun.serve<SocketData>({
   hostname: BIND,
   ...(TLS ? { tls: { cert: Bun.file(TLS.cert), key: Bun.file(TLS.key) } } : {}),
   idleTimeout: 120,
-  maxRequestBodySize: 2048 * 1024 * 1024,
+  // the largest upload Settings allows; each route also counts its body against its own limit
+  // (8 KB for sign-in, 1 MB for JSON, the upload setting for files)
+  maxRequestBodySize: 2049 * 1024 * 1024,
   routes: {
     '/api/session': api((req) => {
       const authed = isAuthed(req)
