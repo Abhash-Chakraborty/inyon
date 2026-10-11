@@ -121,7 +121,7 @@ async function emptyInput(hostId: string, paneId: string, draft: string) {
  * the text arrived before pressing Enter (a fast Enter can be swallowed while Claude is still
  * taking in the typing), then confirm the box emptied, retrying Enter if it didn't.
  */
-async function sendMessageToPane(hostId: string, paneId: string, text: string, fromComposer: boolean) {
+export async function sendMessageToPane(hostId: string, paneId: string, text: string, fromComposer: boolean) {
   const { host, found } = agentPane(hostId, paneId)
   if (!found.pane.agent) throw new HttpError(409, 'No agent is running in this pane')
   if (!text.trim()) throw new HttpError(400, 'Message is empty')
@@ -218,13 +218,16 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       return nudge(hostId, paneId)
     }
     const full = squash(text)
+    // set once this send has emptied the box and typed the message: only then is a paste preview
+    // known to be this message rather than a shorter draft the mirror put there earlier
+    let typed = false
     const arrived = (d?: string) => {
-      if (checkedInput) return inputContains(d, text)
+      if (checkedInput) return inputContains(d, text, typed)
       const now = squash(d ?? '')
-      // the whole message, Claude's paste preview, or the end of a long one whose start has
+      // the whole message, Claude's paste preview of it, or the end of a long one whose start has
       // scrolled out of the box. Never "most of it": a draft mirrored from the app before the last
       // edits is a shorter prefix, and pressing Enter on it sends the old text.
-      return inputContains(d, text) || onlyPastePreview(now) || (now.length >= 200 && full.endsWith(now))
+      return inputContains(d, text) || (typed && onlyPastePreview(now)) || (now.length >= 200 && full.endsWith(now))
     }
     // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
     if (squash(screen.draft ?? '') !== squash(text)) {
@@ -236,6 +239,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       for (let round = 0; round < 2 && !arrived(draft) && (round === 0 || readable); round++) {
         if (draft) await emptyInput(hostId, paneId, draft)
         await typeText(host, paneId, text)
+        typed = true
         for (let i = 0; i < 15; i++) {
           await sleep(i < 3 ? 80 : 150)
           const now = await currentScreen(hostId, paneId)

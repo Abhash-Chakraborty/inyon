@@ -287,7 +287,8 @@ class ChatWatcher {
     if (!MIRRORS.has(pane?.agent?.kind as AgentKind) || this.screen.prompt || !this.screen.inputVisible) return
     const target = d?.text ?? ''
     const current = this.screen.draft ?? ''
-    if (squash(current) === squash(target) || target && inputContains(current, target)) {
+    // a paste preview in the box is this draft only if the mirror put this draft there
+    if (squash(current) === squash(target) || target && inputContains(current, target, squash(d?.mirrored ?? '') === squash(target))) {
       if (d) setDraft(this.key, { ...d, mirrored: target })
       return
     }

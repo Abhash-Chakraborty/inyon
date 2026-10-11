@@ -5,7 +5,13 @@ const squash = (text: string) => text.replace(/\s+/g, '')
 /** A terminal paste preview is not the underlying editable text. */
 export const hasPastePreview = (text: string) => /\[Pasted (?:text #\d+|Content \d+ chars\]|~\d+ lines?\])/i.test(text)
 
-export function inputContains(draft: string | undefined, text: string): boolean {
+/**
+ * Whether the input box holds `text`. Claude collapses a long paste to "[Pasted text #1]", which
+ * hides what's behind it, so that counts only with `pasted`: when it's known to be this text (just
+ * typed into an emptied box, or what the draft mirror last put there). An older, shorter draft
+ * shows the same preview.
+ */
+export function inputContains(draft: string | undefined, text: string, pasted = false): boolean {
   const value = squash(draft ?? '')
   const preview = /^\[Pasted Content (\d+) chars\]$/i.exec(draft?.trim() ?? '')
   if (preview) return Number(preview[1]) === [...text].length || Number(preview[1]) === text.length
@@ -17,13 +23,13 @@ export function inputContains(draft: string | undefined, text: string): boolean 
   let image = 0
   const rendered = text.replace(/(Attached files:\s*)([\s\S]*)$/, (_, heading, files: string) =>
     heading + files.split('\n').map((path) => /^\/[^\n]+\.(png|jpe?g|gif|webp)$/i.test(path.trim()) ? `[Image #${++image}]` : path).join('\n'))
-  return value === squash(text) || image > 0 && value === squash(rendered) || /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(value)
+  return value === squash(text) || image > 0 && value === squash(rendered) || pasted && /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(value)
 }
 
 /** A missing composer is unknown, rather than evidence that input was submitted. */
 export function codexAccepted(screen: ScreenState, text: string): boolean {
   return (!!screen.model || !!screen.inputVisible) && !screen.prompt && !screen.draft?.trim()
-    || !!screen.queue?.some((queued) => inputContains(queued, text))
+    || !!screen.queue?.some((queued) => inputContains(queued, text, true))
 }
 
 /** Words and their order only: agents rewrap pastes, drop markup and swap quotes. */

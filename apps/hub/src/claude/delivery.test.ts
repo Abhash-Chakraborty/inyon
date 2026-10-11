@@ -15,7 +15,9 @@ test('unrelated or partial input is not enough to submit', () => {
   expect(inputContains('unrelated text of similar length', 'send this message')).toBe(false)
   expect(inputContains('this message', 'send this message')).toBe(false)
   expect(inputContains('send\nthis message', 'send this message')).toBe(true)
-  expect(inputContains('[Pasted text #1 +20 lines]', 'long message')).toBe(true)
+  // a paste preview hides its text: it's this message only when known to be (just typed, or mirrored)
+  expect(inputContains('[Pasted text #1 +20 lines]', 'long message', true)).toBe(true)
+  expect(inputContains('[Pasted text #1 +20 lines]', 'long message')).toBe(false)
   // leftovers of an older draft in front of the paste would be sent along with it
   expect(inputContains('Hey also for mobile I want [Pasted text #1 +20 lines]', 'long message')).toBe(false)
 })
