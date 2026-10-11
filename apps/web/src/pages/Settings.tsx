@@ -8,7 +8,7 @@ import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
-import { HostDot, hostLine } from '../components/ui/status.tsx'
+import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { batteryUnrestricted, keepAliveSupported, keepAliveWanted, openBatterySettings, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
@@ -300,7 +300,7 @@ export function Settings() {
                 <HostDot status={h.status} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium">{h.config.name}</span>
-                  <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : h.config.target} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : sshAddress(h.config, hosts)} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
                 </span>
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>

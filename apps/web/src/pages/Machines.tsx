@@ -10,7 +10,7 @@ import { bytes, shortPath, timeAgo } from '../lib/format.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Empty, SectionLabel, Segmented, Spinner } from '../components/ui/primitives.tsx'
-import { HostDot, StateDot, hostLine, shownState } from '../components/ui/status.tsx'
+import { HostDot, StateDot, hostLine, shownState, sshAddress } from '../components/ui/status.tsx'
 import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
@@ -68,7 +68,7 @@ export function MachinesPage() {
                 <HostDot status={h.status} />
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
-                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
+                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
               </div>
             </div>
             {/* on a phone the address needs the room more; the server page lists the agents */}
@@ -92,6 +92,7 @@ type Tab = 'sessions' | 'setup' | 'config' | 'uploads' | 'integration'
 export function MachinePage() {
   const id = decodeURIComponent(useParams().host!)
   const host = useStore((s) => s.hosts.find((h) => h.config.id === id))
+  const via = useStore((s) => (host?.config.via ? s.hosts.find((h) => h.config.id === host.config.via)?.config.name ?? 'a removed computer' : undefined))
   const needsSetup = !!host && host.status === 'online' && (host.tmux !== 'ok' || !host.agents.length)
   const [tab, setTab] = useState<Tab>(needsSetup ? 'setup' : 'sessions')
   const [edit, setEdit] = useState(false)
@@ -133,7 +134,7 @@ export function MachinePage() {
               ? waitingToPair(host) ? 'Not paired yet' : `Paired machine${host.hostname ? ` · ${host.hostname}` : ''}`
               : host.config.kind === 'link'
                 ? `Paired${host.hostname ? ` · ${host.hostname}` : ''}`
-                : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}`}
+                : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}${via ? ` from ${via}` : ''}`}
           {host.nodeVersion && ` · tether-node ${host.nodeVersion}`}
           {host.os && ` · ${host.os}`}
           {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}

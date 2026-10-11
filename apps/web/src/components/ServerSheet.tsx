@@ -1,25 +1,33 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Copy, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
 import { api, type ServerForm } from '../lib/api.ts'
-import { toast } from '../lib/store.ts'
+import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
+import { Select } from './ui/Select.tsx'
 
-type Auth = ServerForm['auth']
+type Auth = NonNullable<ServerForm['auth']>
 
 /**
- * Adding or editing a server in the phone app. The phone connects to it itself over SSH: you give
- * the address and how to sign in, then confirm the server's fingerprint the first time.
+ * Adding or editing a server in the phone app, for machines Tether can't run on. Either the phone
+ * connects to it itself over SSH (you give the address and how to sign in, then confirm the
+ * server's fingerprint the first time), or a paired computer that can already reach it does, with
+ * its own keys and ~/.ssh/config.
  */
 export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; onClose: () => void; edit?: HostConfig; onLaptop?: () => void }) {
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')
   const [port, setPort] = useState('')
   const [auth, setAuth] = useState<Auth>('phone-key')
+  // '' is the phone itself, otherwise the paired computer that connects
+  const [from, setFrom] = useState('')
+  const hosts = useStore((s) => s.hosts)
+  const computers = useMemo(() => hosts.filter((h) => h.config.kind === 'link'), [hosts])
+  const computer = computers.find((h) => h.config.id === from)
   const [password, setPassword] = useState('')
   const [privateKey, setPrivateKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
@@ -35,6 +43,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
     setTarget(edit?.target ?? '')
     setPort(edit?.port ? String(edit.port) : '')
     setAuth(edit?.auth ?? 'phone-key')
+    setFrom(edit?.via ?? '')
     setPassword('')
     setPrivateKey('')
     setPassphrase('')
@@ -52,8 +61,9 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
   const noUser = !!target.trim() && !target.includes('@')
   const known = edit?.hostKey && `${edit.target}:${edit.port ?? 22}` === address ? edit.hostKey : undefined
   const confirmed = found?.at === address ? found.fingerprint : known
-  const keptSecret = !!edit && edit.auth === auth
-  const ready = !!name.trim() && /^[^@\s]+@[^@\s]+$/.test(target.trim()) && (auth === 'phone-key' || keptSecret || (auth === 'password' ? !!password : !!privateKey.trim()))
+  const keptSecret = !!edit && !edit.via && edit.auth === auth
+  const signedIn = auth === 'phone-key' || auth === 'none' || keptSecret || (auth === 'password' ? !!password : !!privateKey.trim())
+  const ready = !!name.trim() && (computer ? /^[^\s-]\S*$/.test(target.trim()) : /^[^@\s]+@[^@\s]+$/.test(target.trim()) && signedIn)
 
   /** Asks the server for its key, so you can compare it before the phone ever signs in. */
   const check = async () => {
@@ -68,22 +78,25 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
     }
   }
 
-  const save = async (hostKey: string) => {
+  const save = async (hostKey?: string) => {
     setBusy(true)
     try {
-      const body: ServerForm = {
-        name: name.trim(),
-        target: target.trim(),
-        port: port ? Number(port) : undefined,
-        hostKey,
-        auth,
-        password: auth === 'password' && password ? password : undefined,
-        privateKey: auth === 'key' && privateKey.trim() ? privateKey.trim() : undefined,
-        passphrase: auth === 'key' && passphrase ? passphrase : undefined,
-      }
+      const body: ServerForm = computer
+        ? { name: name.trim(), target: target.trim(), port: port ? Number(port) : undefined, via: computer.config.id }
+        : {
+            name: name.trim(),
+            target: target.trim(),
+            port: port ? Number(port) : undefined,
+            via: '',
+            hostKey,
+            auth,
+            password: auth === 'password' && password ? password : undefined,
+            privateKey: auth === 'key' && privateKey.trim() ? privateKey.trim() : undefined,
+            passphrase: auth === 'key' && passphrase ? passphrase : undefined,
+          }
       if (edit) await api.editServer(edit.id, body)
       else await api.addServer(body)
-      toast({ title: edit ? 'Server updated' : 'Server added', body: 'Connecting over SSH…', tone: 'success' })
+      toast({ title: edit ? 'Server updated' : 'Server added', body: computer ? `Connecting from ${computer.config.name}…` : 'Connecting over SSH…', tone: 'success' })
       onClose()
     } catch (err) {
       toast({ title: 'Could not save', body: (err as Error).message, tone: 'error' })
@@ -95,24 +108,26 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!ready || busy) return
+    // the computer's own ssh checks the server's key against its known_hosts
+    if (computer) return save()
     if (found && found.at === address) return save(found.fingerprint)
     if (confirmed) return save(confirmed)
     check()
   }
 
-  const changed = !!known && found?.at === address && found.fingerprint !== known
-  const asking = !!found && found.at === address && found.fingerprint !== known
+  const changed = !computer && !!known && found?.at === address && found.fingerprint !== known
+  const asking = !computer && !!found && found.at === address && found.fingerprint !== known
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={edit ? `Edit ${edit.name}` : 'Add a server'}
+      title={edit ? `Edit ${edit.name}` : 'Connect over SSH'}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" type="submit" form="server-form" loading={busy} disabled={!ready}>
-            {asking ? (edit ? 'Trust and save' : 'Trust and add') : confirmed ? (edit ? 'Save' : 'Add server') : 'Continue'}
+            {asking ? (edit ? 'Trust and save' : 'Trust and add') : confirmed || computer ? (edit ? 'Save' : 'Add server') : 'Continue'}
           </Button>
         </div>
       }
@@ -120,19 +135,33 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
       <form id="server-form" onSubmit={submit} className="space-y-4">
         {!edit && (
           <p className="text-[13px] leading-relaxed text-fg-2">
-            This phone connects to the server itself over SSH. Nothing runs in between and nothing is installed there. The phone has to be able to reach it: same Wi-Fi, or a VPN like Tailscale or NetBird. A server on Tailscale SSH lets the phone in with no key or password.
+            For servers you can't install Tether on. Nothing is installed there: {computers.length ? 'this phone, or a computer you paired that can already reach it, signs in over SSH.' : 'this phone signs in over SSH, so it has to be able to reach it (same Wi-Fi, or a VPN like Tailscale or NetBird).'}
           </p>
+        )}
+        {computers.length > 0 && (
+          <Field label="Connect from">
+            <Select
+              title="Connect from"
+              aria-label="Connect from"
+              value={from}
+              onChange={setFrom}
+              options={[
+                { value: '', label: 'This phone', hint: 'The phone signs in itself. It needs a route to the server.' },
+                ...computers.map((h) => ({ value: h.config.id, label: h.config.name, hint: h.status === 'online' ? 'Uses its own SSH keys and config' : 'Offline right now' })),
+              ]}
+            />
+          </Field>
         )}
         <Field label="Name">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder="Work server" autoFocus={!edit} />
         </Field>
         <div className="grid grid-cols-[1fr_92px] gap-3">
-          <Field label="User and address" hint={noUser ? 'Add the user name too, like you@server' : undefined}>
+          <Field label={computer ? 'Address or SSH alias' : 'User and address'} hint={!computer && noUser ? 'Add the user name too, like you@server' : undefined}>
             <input
               className={clsx(inputClass, 'font-mono text-[13.5px]')}
               value={target}
               onChange={(e) => setTarget(e.target.value.trim())}
-              placeholder="you@100.64.0.5"
+              placeholder={computer ? 'work-db or you@10.0.0.5' : 'you@100.64.0.5'}
               inputMode="email"
               autoCapitalize="none"
               autoCorrect="off"
@@ -144,43 +173,54 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
           </Field>
         </div>
 
-        <Field label="Sign in with">
-          <Segmented full value={auth} onChange={setAuth} options={[{ v: 'phone-key', label: 'Phone key' }, { v: 'password', label: 'Password' }, { v: 'key', label: 'Private key' }]} />
-        </Field>
-        {auth === 'phone-key' && (
-          <div className="rounded-[12px] border border-line bg-code p-3">
-            <p className="text-[12.5px] leading-relaxed text-fg-2">Run this once on the server to let this phone in. The private half of the key never leaves the phone.</p>
-            {phoneKey ? (
-              <Button size="sm" className="mt-2.5" onClick={() => copyText(authorizeCommand(phoneKey)).then((ok) => ok && toast({ title: 'Command copied', tone: 'success' }))}>
-                <Copy className="size-3.5" /> Copy the command
-              </Button>
-            ) : keyError ? (
-              <p className="mt-2 text-[12.5px] text-danger">Couldn't read this phone's key ({keyError}). Sign in with a password or a private key instead.</p>
-            ) : null}
-          </div>
-        )}
-        {auth === 'password' && (
-          <input
-            type="password"
-            className={inputClass}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder={keptSecret ? 'Leave empty to keep the saved password' : 'Password'}
-            autoComplete="off"
-          />
-        )}
-        {auth === 'key' && (
+        {computer ? (
+          <p className="rounded-[12px] border border-line bg-code p-3 text-[12.5px] leading-relaxed text-fg-2">
+            {computer.config.name} runs <code className="font-mono">ssh</code> for every command, with its own keys, <code className="font-mono">~/.ssh/config</code> and known hosts. It has to get in without a password prompt: check that <code className="whitespace-nowrap font-mono">ssh {target.trim() || 'work-db'}</code> works there first.
+          </p>
+        ) : (
           <>
-            <textarea
-              className={clsx(inputClass, 'h-28 py-2 font-mono text-[11.5px] leading-snug')}
-              value={privateKey}
-              onChange={(e) => setPrivateKey(e.target.value)}
-              placeholder={keptSecret ? 'Leave empty to keep the saved key' : '-----BEGIN OPENSSH PRIVATE KEY-----'}
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <input type="password" className={inputClass} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} placeholder="Passphrase, if the key has one" autoComplete="off" />
+            <Field label="Sign in with">
+              <Segmented full value={auth} onChange={setAuth} options={[{ v: 'phone-key', label: 'Phone key' }, { v: 'password', label: 'Password' }, { v: 'key', label: 'Key' }, { v: 'none', label: 'None' }]} />
+            </Field>
+            {auth === 'none' && (
+              <p className="text-[12.5px] leading-relaxed text-fg-3">For servers that let you in without a key or password, like Tailscale SSH or an account with no password.</p>
+            )}
+            {auth === 'phone-key' && (
+              <div className="rounded-[12px] border border-line bg-code p-3">
+                <p className="text-[12.5px] leading-relaxed text-fg-2">Run this once on the server to let this phone in. The private half of the key never leaves the phone.</p>
+                {phoneKey ? (
+                  <Button size="sm" className="mt-2.5" onClick={() => copyText(authorizeCommand(phoneKey)).then((ok) => ok && toast({ title: 'Command copied', tone: 'success' }))}>
+                    <Copy className="size-3.5" /> Copy the command
+                  </Button>
+                ) : keyError ? (
+                  <p className="mt-2 text-[12.5px] text-danger">Couldn't read this phone's key ({keyError}). Sign in with a password or a private key instead.</p>
+                ) : null}
+              </div>
+            )}
+            {auth === 'password' && (
+              <input
+                type="password"
+                className={inputClass}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={keptSecret ? 'Leave empty to keep the saved password' : 'Password'}
+                autoComplete="off"
+              />
+            )}
+            {auth === 'key' && (
+              <>
+                <textarea
+                  className={clsx(inputClass, 'h-28 py-2 font-mono text-[11.5px] leading-snug')}
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  placeholder={keptSecret ? 'Leave empty to keep the saved key' : '-----BEGIN OPENSSH PRIVATE KEY-----'}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+                <input type="password" className={inputClass} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} placeholder="Passphrase, if the key has one" autoComplete="off" />
+              </>
+            )}
           </>
         )}
 
@@ -201,7 +241,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
             Scan a code instead (easiest)
           </button>
         )}
-        {edit && known && !asking && (
+        {edit && known && !asking && !computer && (
           <button type="button" onClick={check} className="-my-1.5 py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
             Check the server's key again
           </button>

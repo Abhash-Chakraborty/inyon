@@ -16,8 +16,18 @@ export interface HostConfig {
   identityFile?: string
   /** ssh from the phone app: the server's host key fingerprint, confirmed when it was added */
   hostKey?: string
-  /** ssh from the phone app: how it signs in (the secret itself stays in the phone's keystore) */
-  auth?: 'phone-key' | 'password' | 'key'
+  /**
+   * ssh from the phone app: how it signs in (the secret itself stays in the phone's keystore).
+   * "none" is for servers that let you in without a key or password (Tailscale SSH, an account
+   * with an empty password).
+   */
+  auth?: 'phone-key' | 'password' | 'key' | 'none'
+  /**
+   * ssh from the phone app: the id of a paired computer that opens the connection instead of the
+   * phone, with its own keys and ~/.ssh/config, for servers only it can reach. `target` may then
+   * be an alias from that config.
+   */
+  via?: string
   /** node only: sha256 of the pairing token (the token itself is never stored) */
   tokenHash?: string
   /** node only: when the machine first connected with its token (unset while the command hasn't run) */

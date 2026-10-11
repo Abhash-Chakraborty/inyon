@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type AgentState, type HostStatus } from '@tether/protocol'
+import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus } from '@tether/protocol'
 
 /**
  * The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). The frames sit in a
@@ -39,6 +39,12 @@ const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }
   idle: { label: 'Idle', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
   unknown: { label: 'Running', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
   offline: { label: 'Offline', dot: 'bg-fg-3/50', pill: 'bg-sunken text-fg-3' },
+}
+
+/** An SSH server's address, and the paired computer it's reached through if it isn't the phone. */
+export function sshAddress(config: HostConfig, hosts: { config: HostConfig }[]) {
+  const via = config.via ? hosts.find((h) => h.config.id === config.via)?.config.name ?? 'a removed computer' : undefined
+  return via ? `${config.target} via ${via}` : config.target ?? ''
 }
 
 /** One line about a machine: its sessions when online, when it was last seen when not. */

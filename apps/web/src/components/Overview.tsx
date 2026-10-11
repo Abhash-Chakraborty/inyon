@@ -9,7 +9,7 @@ import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { AgentLogo, useAgentAccent } from '../lib/skin.tsx'
-import { HostDot, StatePill, backgroundText, hostLine, shownState } from './ui/status.tsx'
+import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
 import { Meter } from './ui/primitives.tsx'
 
 /** A session waiting on you, with its answers as buttons. */
@@ -232,7 +232,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                       <div className="min-w-0">
                         <div className="font-medium">{h.config.name}</div>
                         <div className="truncate text-[11.5px] text-fg-3">
-                          {h.status === 'error' ? h.error : h.config.kind === 'local' ? `This hub${h.os ? ` · ${h.os}` : ''}` : h.config.target}
+                          {h.status === 'error' ? h.error : h.config.kind === 'local' ? `This hub${h.os ? ` · ${h.os}` : ''}` : sshAddress(h.config, hosts)}
                         </div>
                       </div>
                     </Link>

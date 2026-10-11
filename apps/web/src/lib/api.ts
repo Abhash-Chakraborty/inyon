@@ -98,8 +98,11 @@ export interface ServerForm {
   name: string
   target: string
   port?: number
-  hostKey: string
-  auth: 'phone-key' | 'password' | 'key'
+  /** set when the phone connects itself; a paired computer checks the key on its own */
+  hostKey?: string
+  auth?: 'phone-key' | 'password' | 'key' | 'none'
+  /** the paired computer that opens the connection ('' for the phone itself) */
+  via?: string
   password?: string
   privateKey?: string
   passphrase?: string

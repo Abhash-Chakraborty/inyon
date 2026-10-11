@@ -4,7 +4,8 @@ import userEvent from '@testing-library/user-event'
 import type { HostConfig } from '@tether/protocol'
 import { ServerSheet } from './ServerSheet.tsx'
 import { api } from '../test/fakes.ts'
-import { fresh } from '../test/fixtures.ts'
+import { fresh, host } from '../test/fixtures.ts'
+import { useStore } from '../lib/store.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
 
 const work: HostConfig = { id: 's1', name: 'Work', kind: 'ssh', target: 'me@10.0.0.1', port: 2222, auth: 'phone-key', hostKey: 'SHA256:abc' }
@@ -83,7 +84,7 @@ describe('ServerSheet keeps what you type while live data flows', () => {
     rerender(<ServerSheet open onClose={onClose} edit={fresh(work)} />)
     fireEvent.submit(document.getElementById('server-form')!)
     await flush()
-    expect(api.editServer.mock.calls[0]).toEqual(['s1', { name: 'Prod', target: 'me@10.0.0.1', port: 2222, hostKey: 'SHA256:abc', auth: 'phone-key', password: undefined, privateKey: undefined, passphrase: undefined }])
+    expect(api.editServer.mock.calls[0]).toEqual(['s1', { name: 'Prod', target: 'me@10.0.0.1', port: 2222, via: '', hostKey: 'SHA256:abc', auth: 'phone-key', password: undefined, privateKey: undefined, passphrase: undefined }])
   })
 })
 
@@ -95,4 +96,44 @@ test("says why the phone-key command is missing instead of just hiding it", asyn
   await flush()
   expect(screen.getByText(/Couldn't read this phone's key \(keystore locked\)/)).toBeTruthy()
   key.mockRestore()
+})
+
+describe('servers Tether cannot run on', () => {
+  test('a paired computer can connect instead: an alias, no fingerprint, no sign-in', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [host('jump', { config: { id: 'jump', kind: 'link', name: 'Jump box', target: undefined } })] })
+    api.addServer.mockClear()
+    api.probe.mockClear()
+    await render(<ServerSheet open onClose={noop} />)
+    await user.click(screen.getByRole('combobox', { name: 'Connect from', hidden: true }))
+    await user.click(await screen.findByText('Jump box'))
+    expect(screen.queryByText('Sign in with')).toBeNull()
+    await user.type(field('Work server'), 'DB')
+    await user.type(field('work-db or you@10.0.0.5'), 'work-db')
+    expect(screen.getByText(/ssh work-db/)).toBeTruthy()
+    fireEvent.submit(document.getElementById('server-form')!)
+    await flush()
+    expect(api.probe).not.toHaveBeenCalled()
+    expect(api.addServer.mock.calls[0]).toEqual([{ name: 'DB', target: 'work-db', port: undefined, via: 'jump' }])
+    useStore.setState({ hosts: [] })
+  })
+
+  test('"None" signs in with no key or password once the fingerprint is trusted', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [] })
+    api.addServer.mockClear()
+    api.probe.mockResolvedValue({ fingerprint: 'SHA256:xyz', keyType: 'ssh-ed25519' } as any)
+    await render(<ServerSheet open onClose={noop} />)
+    // without a paired computer there's nothing to choose between
+    expect(screen.queryByText('Connect from')).toBeNull()
+    await user.type(field('Work server'), 'Open box')
+    await user.type(field('you@100.64.0.5'), 'me@10.0.0.7')
+    await user.click(screen.getAllByRole('radio', { hidden: true }).find((r) => r.textContent === 'None')!)
+    fireEvent.submit(document.getElementById('server-form')!)
+    await flush()
+    expect(screen.getByText('SHA256:xyz')).toBeTruthy()
+    fireEvent.submit(document.getElementById('server-form')!)
+    await flush()
+    expect(api.addServer.mock.calls[0]![0]).toMatchObject({ target: 'me@10.0.0.7', auth: 'none', hostKey: 'SHA256:xyz', via: '', password: undefined })
+  })
 })

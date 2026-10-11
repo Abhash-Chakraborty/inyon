@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { ClipboardPaste, Copy, ScanLine } from 'lucide-react'
+import { ChevronRight, ClipboardPaste, Copy, ScanLine, SquareTerminal } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
 import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -267,8 +267,19 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
           )}
         </div>
         {onServer && (
-          <button type="button" onClick={onServer} className="py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
-            Can't install anything? Connect over SSH instead
+          <button
+            type="button"
+            onClick={onServer}
+            className="press flex w-full items-center gap-3 rounded-[12px] border border-line px-3.5 py-3 text-left hover:bg-sunken"
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-sunken text-fg-2">
+              <SquareTerminal className="size-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13.5px] font-medium text-fg">Connect over SSH</span>
+              <span className="block text-[12px] leading-snug text-fg-3">Advanced. For servers you can't install Tether on: a key, a password, or none.</span>
+            </span>
+            <ChevronRight className="size-4 shrink-0 text-fg-3" />
           </button>
         )}
       </form>

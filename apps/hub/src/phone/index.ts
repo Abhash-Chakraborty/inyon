@@ -8,6 +8,7 @@ import type { Handler, Method, Routes } from '../core.ts'
 import type { PhoneRuntime, StartPhone, SshPlugin } from './types.ts'
 import { identityFromSeed, parsePairLink, parseShortCode, resolveShortCode } from '@tether/link'
 import { nodeBackend } from '../hosts/node-backend.ts'
+import { viaBackend } from '../hosts/via-backend.ts'
 import { linkConnector } from './link.ts'
 
 /**
@@ -20,11 +21,15 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   setLocalHost(undefined)
   const keys = phoneKeys(ssh)
   const conn = sshBackend(ssh, (config) => keys.credentials(config))
-  // laptops paired with `tether-node pair` take the same commands a hub sends to tether-node
-  setHostBackends((config) => (config.kind === 'link' ? nodeBackend : conn.backend))
+  // laptops paired with `tether-node pair` take the same commands a hub sends to tether-node, and
+  // a server reached through one of them goes as `ssh` commands run there
+  let lookup = (_id: string): HostConfig | undefined => undefined
+  const via = viaBackend((id) => lookup(id))
+  setHostBackends((config) => (config.kind === 'link' ? nodeBackend : config.via ? via : conn.backend))
 
   const core = await import('../core.ts')
   const { registry, HttpError } = await import('../hosts/registry.ts')
+  lookup = (id) => registry.get(id)?.host.config
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, startCore } = core
 
   const links = linkConnector(keys.noise, phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
@@ -38,17 +43,28 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     const name = String(b.name ?? cur?.name ?? '').trim()
     const target = String(b.target ?? cur?.target ?? '').trim()
     if (!name) throw new HttpError(400, 'Give the server a name')
+    const port = b.port ? Number(b.port) : cur?.port
+    if (port !== undefined && !(port > 0 && port < 65536)) throw new HttpError(400, 'Port must be 1-65535')
+    // through a paired computer: its ssh signs in and checks the server's key, and an alias from
+    // its ~/.ssh/config is a fine address
+    const via = String(b.via ?? cur?.via ?? '')
+    if (via) {
+      const computer = registry.get(via)?.host.config
+      if (computer?.kind !== 'link') throw new HttpError(400, 'Pick a paired computer to connect from')
+      if (!/^[\w.@:-]+$/.test(target) || target.startsWith('-')) throw new HttpError(400, 'Use user@host, or a name from that computer\'s ~/.ssh/config')
+      return { name, kind: 'ssh' as const, target, port, via, hostKey: undefined, auth: undefined }
+    }
     const { username, host } = splitTarget(target)
     if (!username || !/^[\w.-]+$/.test(username)) throw new HttpError(400, 'Use user@host, like me@100.64.0.5')
     if (!/^[\w.:-]+$/.test(host) || host.startsWith('-')) throw new HttpError(400, 'The address has unexpected characters')
-    const port = b.port ? Number(b.port) : cur?.port
-    if (port !== undefined && !(port > 0 && port < 65536)) throw new HttpError(400, 'Port must be 1-65535')
     const hostKey = String(b.hostKey ?? cur?.hostKey ?? '')
     if (!hostKey.startsWith('SHA256:')) throw new HttpError(400, "Check the server's fingerprint first")
     const auth = (b.auth ?? cur?.auth ?? 'phone-key') as NonNullable<HostConfig['auth']>
-    if (!['phone-key', 'password', 'key'].includes(auth)) throw new HttpError(400, 'Unknown sign-in method')
-    return { name, kind: 'ssh' as const, target, port, hostKey, auth }
+    if (!['phone-key', 'password', 'key', 'none'].includes(auth)) throw new HttpError(400, 'Unknown sign-in method')
+    return { name, kind: 'ssh' as const, target, port, hostKey, auth, via: undefined }
   }
+
+  const needsSecret = (auth: HostConfig['auth']) => auth === 'password' || auth === 'key'
 
   /** The password or pasted key, when the form brought one (an edit may keep the old one). */
   const secretFrom = (b: any, auth: HostConfig['auth']): Credentials | undefined => {
@@ -79,7 +95,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         const b = await body(req)
         const cfg = serverForm(b)
         const secret = secretFrom(b, cfg.auth)
-        if (cfg.auth !== 'phone-key' && !secret) throw new HttpError(400, cfg.auth === 'password' ? 'Enter the password' : 'Paste the private key')
+        if (needsSecret(cfg.auth) && !secret) throw new HttpError(400, cfg.auth === 'password' ? 'Enter the password' : 'Paste the private key')
         const id = newHostId(cfg.name)
         if (secret) await keys.save(id, secret)
         registry.add({ ...cfg, id })
@@ -129,9 +145,9 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         }
         const cfg = serverForm(b, cur)
         const secret = secretFrom(b, cfg.auth)
-        if (cfg.auth !== 'phone-key' && cfg.auth !== cur.auth && !secret) throw new HttpError(400, cfg.auth === 'password' ? 'Enter the password' : 'Paste the private key')
+        if (needsSecret(cfg.auth) && (cfg.auth !== cur.auth || cur.via) && !secret) throw new HttpError(400, cfg.auth === 'password' ? 'Enter the password' : 'Paste the private key')
         if (secret) await keys.save(id, secret)
-        if (cfg.auth === 'phone-key') await keys.drop(id)
+        if (!needsSecret(cfg.auth)) await keys.drop(id)
         await conn.forget(id)
         registry.update(id, cfg)
         return ok()
@@ -248,6 +264,9 @@ function phoneKeys(ssh: SshPlugin) {
       return `ssh-ed25519 ${toBase64(blob)} tether-phone`
     },
     async credentials(config: HostConfig): Promise<Credentials> {
+      // nothing to sign in with: the server's "none" sign-in is tried first anyway, and an empty
+      // password covers an account that has none
+      if (config.auth === 'none') return { password: '' }
       if ((config.auth ?? 'phone-key') === 'phone-key') {
         const { seed, pub } = await own()
         return { ed25519Seed: toBase64(seed), ed25519Public: toBase64(pub) }

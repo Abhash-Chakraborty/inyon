@@ -6,6 +6,7 @@ import { memoryStore, useStore } from '../platform/store.ts'
 import { setHostBackends } from '../hosts/host.ts'
 import { processBackend } from '../hosts/process-backend.ts'
 import { startPhone } from './index.ts'
+import { registry } from '../hosts/registry.ts'
 import type { SshPlugin } from './types.ts'
 
 const FINGERPRINT = 'SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
@@ -102,6 +103,42 @@ test('adding, editing and removing a server keeps its secret in the keystore', a
 
   expect((await call('DELETE', `/api/hosts/${id}`)).status).toBe(200)
   expect((await call('GET', '/api/hosts')).data.some((h: any) => h.id === id)).toBe(false)
+})
+
+test('a server that needs no key or password signs in with neither', async () => {
+  const add = await call('POST', '/api/hosts', { name: 'Open', target: 'me@10.0.0.7', hostKey: FINGERPRINT, auth: 'none' })
+  expect(add.status).toBe(200)
+  const id = add.data.id as string
+  expect(secrets.has(`server:${id}`)).toBe(false)
+  await until(() => calls.some((c) => c.method === 'connect' && c.args.id === id))
+  const connect = calls.find((c) => c.method === 'connect' && c.args.id === id)!.args
+  expect(connect).toMatchObject({ host: '10.0.0.7', username: 'me', password: '' })
+  expect(connect.ed25519Seed).toBeUndefined()
+  expect((await call('DELETE', `/api/hosts/${id}`)).status).toBe(200)
+})
+
+test('a server can be reached through a paired computer instead of the phone', async () => {
+  // only a paired computer can open it
+  expect((await call('POST', '/api/hosts', { name: 'DB', target: 'work-db', via: 'nowhere' })).status).toBe(400)
+  registry.add({ id: 'jump', name: 'Jump box', kind: 'link', machineId: 'test-machine', urls: [], relays: [] })
+  // an alias from the computer's ssh config, no fingerprint and no sign-in of its own
+  const add = await call('POST', '/api/hosts', { name: 'DB', target: 'work-db', via: 'jump' })
+  expect(add.status).toBe(200)
+  const id = add.data.id as string
+  const saved = (await call('GET', '/api/hosts')).data.find((h: any) => h.id === id)
+  expect(saved).toMatchObject({ kind: 'ssh', target: 'work-db', via: 'jump' })
+  expect(saved.hostKey).toBeUndefined()
+  expect(saved.auth).toBeUndefined()
+  // the phone never dials it itself
+  await new Promise((r) => setTimeout(r, 50))
+  expect(calls.some((c) => c.method === 'connect' && c.args.id === id)).toBe(false)
+
+  // and back to the phone's own connection: then it needs a fingerprint and a sign-in
+  expect((await call('PATCH', `/api/hosts/${id}`, { via: '', target: 'me@10.0.0.9', auth: 'password' })).status).toBe(400)
+  expect((await call('PATCH', `/api/hosts/${id}`, { via: '', target: 'me@10.0.0.9', hostKey: FINGERPRINT, auth: 'password', password: 'pw' })).status).toBe(200)
+  expect((await call('GET', '/api/hosts')).data.find((h: any) => h.id === id).via).toBeUndefined()
+  await call('DELETE', `/api/hosts/${id}`)
+  await call('DELETE', '/api/hosts/jump')
 })
 
 test('unknown routes and methods are refused', async () => {
