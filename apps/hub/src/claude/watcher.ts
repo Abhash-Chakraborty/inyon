@@ -18,22 +18,9 @@ import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
 import { loadChat, saveChat } from './chat-cache.ts'
+import { parseSize, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
 
 const DEBUG = typeof process !== 'undefined' && !!process.env?.TETHER_DEBUG
-
-/** Bytes a string takes as UTF-8, without encoding it (transcript lines can be megabytes). */
-function utf8Length(s: string) {
-  let n = s.length
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i)
-    if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length) {
-      n += 2 // a surrogate pair is 4 bytes, 2 already counted
-      i++
-    } else if (c > 0x7ff) n += 2
-    else if (c > 0x7f) n += 1
-  }
-  return n
-}
 
 const PAGE = 160
 /** messages kept per open chat; older ones stay in the transcript file (and the terminal) */
@@ -43,6 +30,23 @@ const SCREEN_MS = 2000
 const IDLE_SHUTDOWN_MS = 120_000
 /** agents whose input box Tether can read and retype, so a draft follows you between app and terminal */
 const MIRRORS = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'opencode', 'copilot'])
+
+/** a closed chat's state is kept this long, so opening it again carries on instead of re-reading */
+const PARK_MS = 30 * 60_000
+const PARKED_MAX = 6
+
+/** What a stopped watcher leaves behind for the next one on the same pane. */
+interface Parked {
+  at: number
+  transcript: string
+  reader: TranscriptReader
+  seq: number
+  codex: boolean
+  agent?: AgentKind
+  items: ChatItem[]
+  meta: TranscriptMeta
+  info: ChatInfo
+}
 
 export interface Subscriber {
   send(msg: ServerMsg): void
@@ -64,6 +68,10 @@ class ChatWatcher {
   /** the transcript tail ended by itself (the machine dropped off): follow again once it's back */
   private tailLost = false
   private transcript?: string
+  /** how far into the transcript file it has read, so a dropped tail can carry on from there */
+  private reader?: TranscriptReader
+  private seq = 0
+  private codex = false
   private ready = false
   private pending: ChatItem[] = []
   private flushTimer?: ReturnType<typeof setTimeout>
@@ -75,10 +83,11 @@ class ChatWatcher {
   private remote?: { url: string; ts: string }
   private generation = 0
 
-  constructor(public hostId: string, public paneId: string) {
+  constructor(public hostId: string, public paneId: string, parked?: Parked) {
     this.key = chatKey(hostId, paneId)
     this.info = this.emptyInfo()
-    this.fromCache()
+    if (parked) this.unpark(parked)
+    else this.fromCache()
     this.sync()
     this.pollScreen()
   }
@@ -100,6 +109,18 @@ class ChatWatcher {
     const sure = !!agent?.sessionId
     this.info = { ...cached.info, running: !!agent, ...(sure ? {} : { goal: undefined, queue: [] }) }
     this.ready = true
+  }
+
+  /** Picks up where the last watcher on this pane stopped; sync() then follows the file from there. */
+  private unpark(p: Parked) {
+    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: p.info })
+    this.ready = true
+    this.tailLost = true
+  }
+
+  park(): Parked | undefined {
+    if (!this.ready || !this.reader || !this.transcript) return
+    return { at: Date.now(), transcript: this.transcript, reader: this.reader, seq: this.seq, codex: this.codex, agent: this.agent, items: this.items, meta: this.meta, info: this.info }
   }
 
   private cacheTimer?: ReturnType<typeof setTimeout>
@@ -489,45 +510,68 @@ class ChatWatcher {
     return ok
   }
 
+  private retryTimer?: ReturnType<typeof setTimeout>
+  private retries = 0
   /** Notices when the current tail stops without being asked to (an SSH or paired link dropped). */
   private watchTail(gen: number) {
     const t = this.tail
     t?.exited?.then(() => {
-      if (gen === this.generation && this.tail === t && !this.stopped) this.tailLost = true
+      if (gen !== this.generation || this.tail !== t || this.stopped) return
+      this.tailLost = true
+      // try again soon rather than at the next poll; backing off if it keeps ending at once
+      clearTimeout(this.retryTimer)
+      this.retryTimer = setTimeout(() => !this.stopped && this.sync(), Math.min(30_000, 1000 * 2 ** this.retries++))
     })
   }
 
   private async follow(path: string) {
+    const doc = path.startsWith('opencode://') || isOcdb(path) || path.includes('/.gemini/tmp/') || path.includes('/.gemini/antigravity-cli/brain/')
+    // the same file again after a dropped connection: carry on from the byte where it stopped
+    let again = !doc && path === this.transcript && this.ready && !!this.reader
     this.tail?.kill()
     this.tailLost = false
     this.transcript = path
-    this.items = []
-    this.meta = newMeta()
-    this.pending = []
-    this.ready = false
     const gen = ++this.generation
+    const restart = () => {
+      this.items = []
+      this.meta = newMeta()
+      this.pending = []
+      this.ready = false
+      this.reader = undefined
+    }
+    if (!again) restart()
     if (path.startsWith('opencode://')) return this.followOpenCode(path, gen)
     if (isOcdb(path)) return this.followOpenCodeDb(path, gen)
     if (path.includes('/.gemini/tmp/')) return this.followDoc(path, gen, new GeminiDoc())
     if (path.includes('/.gemini/antigravity-cli/brain/')) return this.followDoc(path, gen, new AntigravityDoc())
     const t0 = performance.now()
-    if (DEBUG) console.log('[follow] start', this.key, path)
+    if (DEBUG) console.log('[follow]', again ? 'resume' : 'start', this.key, path)
     const host = registry.host(this.hostId)
-    const sizeRes = await host.exec(`wc -c < ${shq(path)} 2>/dev/null || echo 0`)
+    const { size, aligned } = parseSize((await host.exec(sizeCommand(path, again ? this.reader!.offset : 0))).stdout)
     if (gen !== this.generation || this.stopped) return
-    let remaining = Number(sizeRes.stdout.trim()) || 0
-    let seq = 0
-    const codex = this.agent === 'codex' || /\/\.codex\/sessions\//.test(path)
-    // a Codex segment file starts after a rewind: show the history it continues first
-    if (codex) {
-      for (const line of await codexHistory(host, path).catch(() => [] as string[])) {
-        try {
-          this.items.push(...normalizeCodex(JSON.parse(line), this.meta).map((d) => ({ ...d, seq: seq++ }) as ChatItem))
-          this.trim()
-        } catch {}
-      }
-      if (gen !== this.generation || this.stopped) return
+    // shorter than what was read, or no line starts where it stopped: the file was rewritten (or
+    // the count is off), so read it from the start rather than mid-line
+    if (again && (size < this.reader!.offset || !aligned)) {
+      again = false
+      restart()
     }
+    if (!again) {
+      this.seq = 0
+      this.reader = new TranscriptReader()
+      this.codex = this.agent === 'codex' || /\/\.codex\/sessions\//.test(path)
+      // a Codex segment file starts after a rewind: show the history it continues first
+      if (this.codex) {
+        for (const line of await codexHistory(host, path).catch(() => [] as string[])) {
+          try {
+            this.items.push(...normalizeCodex(JSON.parse(line), this.meta).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem))
+            this.trim()
+          } catch {}
+        }
+        if (gen !== this.generation || this.stopped) return
+      }
+    }
+    const reader = this.reader!
+    let remaining = size - reader.offset
     const finishInitial = () => {
       if (this.ready || gen !== this.generation) return
       if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
@@ -536,21 +580,22 @@ class ChatWatcher {
       this.broadcast(this.resetMsg())
     }
     // If the file is empty or tail never catches up, still show what we have.
-    const fallback = setTimeout(finishInitial, remaining ? 8000 : 0)
-    this.tail = host.stream(`exec tail -c +1 -F ${shq(path)} 2>/dev/null`, (line) => {
+    const fallback = this.ready ? undefined : setTimeout(finishInitial, remaining > 0 ? 8000 : 0)
+    // a remote machine leaves out image data, which is most of a long session's file
+    this.tail = host.stream(tailCommand(path, reader.offset, this.onRemoteHost()), (line) => {
       if (gen !== this.generation) return
-      remaining -= utf8Length(line) + 1
-      let entry: any
-      try {
-        entry = JSON.parse(line)
-      } catch {
-        return
-      }
-      const items = (codex ? normalizeCodex(entry, this.meta) : this.agent === 'copilot' ? normalizeCopilot(entry, this.meta) : normalize(entry, this.meta)).map((d) => ({ ...d, seq: seq++ }) as ChatItem)
-      if (items.length) {
-        this.items.push(...items)
-        this.trim()
-        if (this.ready) this.queue(items)
+      const r = reader.line(line)
+      if (!r) return
+      this.retries = 0
+      remaining -= r.bytes
+      if (r.entry) {
+        const e = r.entry
+        const items = (this.codex ? normalizeCodex(e, this.meta) : this.agent === 'copilot' ? normalizeCopilot(e, this.meta) : normalize(e, this.meta)).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem)
+        if (items.length) {
+          this.items.push(...items)
+          this.trim()
+          if (this.ready) this.queue(items)
+        }
       }
       if (!this.ready && remaining <= 0) {
         clearTimeout(fallback)
@@ -653,6 +698,7 @@ class ChatWatcher {
   stop() {
     this.stopped = true
     clearTimeout(this.cacheTimer)
+    clearTimeout(this.retryTimer)
     if (this.ready && this.items.length && this.onRemoteHost() && registry.get(this.hostId)?.state.status === 'online') {
       saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items })
     }
@@ -665,6 +711,7 @@ class ChatWatcher {
 
 class Watchers {
   private map = new Map<string, ChatWatcher>()
+  private parked = new Map<string, Parked>()
 
   constructor() {
     registry.on((e) => {
@@ -677,7 +724,11 @@ class Watchers {
   get(hostId: string, paneId: string) {
     const key = chatKey(hostId, paneId)
     let w = this.map.get(key)
-    if (!w) this.map.set(key, (w = new ChatWatcher(hostId, paneId)))
+    if (!w) {
+      const p = this.parked.get(key)
+      this.parked.delete(key)
+      this.map.set(key, (w = new ChatWatcher(hostId, paneId, p && Date.now() - p.at < PARK_MS ? p : undefined)))
+    }
     return w
   }
 
@@ -686,8 +737,14 @@ class Watchers {
   }
 
   stop(key: string) {
-    this.map.get(key)?.stop()
+    const w = this.map.get(key)
+    if (!w) return
+    const p = w.park()
+    w.stop()
     this.map.delete(key)
+    if (!p) return
+    this.parked.set(key, p)
+    for (const k of this.parked.keys()) if (this.parked.size > PARKED_MAX) this.parked.delete(k)
   }
 }
 

@@ -59,7 +59,8 @@ export function processBackend(controlDir: string): HostBackend {
 
     stream(config, cmd, onLine, opts) {
       // control-mode tmux exits when stdin closes, so it gets a pipe we never write to
-      const proc = Bun.spawn(argv(config, cmd), { stdin: opts.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore' })
+      // its own process group, so stopping it also stops the rest of a pipeline (tail | awk)
+      const proc = Bun.spawn(argv(config, cmd), { stdin: opts.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore', detached: true })
       ;(async () => {
         // split on newlines without re-copying the buffer per line (transcripts can hold MB-sized lines)
         const decoder = new TextDecoder()
@@ -76,7 +77,14 @@ export function processBackend(controlDir: string): HostBackend {
         }
         if (carry) onLine(carry)
       })().catch(() => {})
-      return { kill: () => proc.kill(), exited: proc.exited }
+      const kill = () => {
+        try {
+          process.kill(-proc.pid, 'SIGTERM')
+        } catch {
+          proc.kill()
+        }
+      }
+      return { kill, exited: proc.exited }
     },
 
     pty(config, cmd, cols, rows, onData) {
