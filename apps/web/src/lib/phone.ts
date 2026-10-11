@@ -19,7 +19,15 @@ export function phone(): Promise<PhoneRuntime> {
     const ssh = plugin('TetherSsh') as unknown as SshPlugin | undefined
     if (!ssh) throw new Error('This build of the app is missing its SSH support')
     const [store, { startPhone }] = await Promise.all([idbStore(), import('@tether/phone')])
-    return startPhone({ store, ssh })
+    const rt = await startPhone({ store, ssh })
+    // a new network (Wi-Fi to mobile data, a VPN switching) breaks the links: reconnect right away
+    let soon: ReturnType<typeof setTimeout> | undefined
+    window.addEventListener('online', () => {
+      clearTimeout(soon)
+      soon = setTimeout(() => rt.resume(), 300)
+    })
+    document.addEventListener('visibilitychange', () => rt.background(document.visibilityState === 'hidden'))
+    return rt
   })())
 }
 

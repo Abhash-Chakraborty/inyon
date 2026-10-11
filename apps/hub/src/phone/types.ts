@@ -62,6 +62,8 @@ export interface PhoneRuntime {
   connect(send: (msg: ServerMsg) => void): PhoneConnection
   /** The app is back in the foreground: check connections now, don't wait out a backoff. */
   resume(): void
+  /** The app went to the background (true) or came back (false): poll less while hidden. */
+  background(hidden: boolean): void
 }
 
 export type StartPhone = (o: { store: PhoneStore; ssh: SshPlugin }) => Promise<PhoneRuntime>

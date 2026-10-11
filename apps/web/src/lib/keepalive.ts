@@ -36,6 +36,10 @@ export async function setKeepAlive(on: boolean) {
 export function installKeepAlive() {
   if (!keepAliveSupported()) return
   if (keepAliveWanted()) device()!.startKeepAlive(NOTICE).catch(() => {})
+  // Android may stop it (a daily limit, memory); it can only be started again from the foreground
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && keepAliveWanted()) device()?.startKeepAlive(NOTICE).catch(() => {})
+  })
   onNative<{ reason: string }>('TetherDevice', 'keepAliveStopped', (e) =>
     toast({
       title: 'Background connection paused',

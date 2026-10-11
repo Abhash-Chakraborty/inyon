@@ -22,6 +22,9 @@ import { pruneChats } from '../claude/chat-cache.ts'
 
 /** Fallback poll; tmux control mode delivers changes as they happen. */
 const POLL_MS = 4000
+/** while nobody is looking (the phone app in the background), poll much less: it costs battery and data */
+const QUIET_POLL_MS = 20000
+let pollMs = POLL_MS
 const MAX_BACKOFF_MS = 20000
 
 export type RegistryEvent =
@@ -266,6 +269,11 @@ class Registry {
     this.hosts.get(id)?.statusCache.clear()
   }
 
+  /** Polls every 20 s instead of 4 s while no one is looking; the next poll picks it up. */
+  quiet(on: boolean) {
+    pollMs = on ? QUIET_POLL_MS : POLL_MS
+  }
+
   refresh(id: string, delay = 120) {
     const rt = this.hosts.get(id)
     if (!rt || rt.stopped) return
@@ -285,7 +293,7 @@ class Registry {
       return
     }
     rt.polling = true
-    let next = POLL_MS
+    let next = pollMs
     try {
       const pr = await probe(rt.host)
       rt.probe = pr
@@ -320,7 +328,7 @@ class Registry {
       }
     } catch (err) {
       rt.failures++
-      next = Math.min(MAX_BACKOFF_MS, POLL_MS * 2 ** Math.min(rt.failures, 4))
+      next = Math.min(Math.max(MAX_BACKOFF_MS, pollMs), pollMs * 2 ** Math.min(rt.failures, 4))
       const error = String((err as Error)?.message ?? err)
       const before = rt.state
       this.markDown(rt, 'error', error)

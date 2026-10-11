@@ -6,6 +6,8 @@ export interface PendingMessage {
   status: 'sending' | 'sent' | 'failed'
   at: number
   error?: string
+  /** failed because the connection dropped, not because it was refused: sent again once it's back */
+  retryable?: boolean
   /** in the agent's queue: shown as a queued bubble instead */
   queued?: boolean
   /** sent from another device; this one can only watch it */

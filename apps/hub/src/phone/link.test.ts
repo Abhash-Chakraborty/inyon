@@ -41,6 +41,16 @@ test('pairs from the code, runs commands, and reconnects after the laptop restar
   const r = await nodeBackend.exec(config, 'echo hi from the laptop', {})
   expect(r).toMatchObject({ code: 0, stdout: 'hi from the laptop\n' })
 
+  // a laptop that stops answering is noticed on every check, not just the first one
+  links.resume()
+  await Bun.sleep(600) // the pong for that check arrives
+  service.kill('SIGSTOP')
+  links.resume()
+  expect(await until(() => !nodeLinks.isUp('laptop'), 6000)).toBe(true)
+  service.kill('SIGCONT')
+  links.resume()
+  expect(await until(() => nodeLinks.isUp('laptop'), 8000)).toBe(true)
+
   // the laptop goes away: the machine shows as down, and comes back once the service does
   service.kill()
   await service.exited

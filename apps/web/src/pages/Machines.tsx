@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Monitor, Pencil, Plug, Plus, RotateCcw, Save, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Loader2, Monitor, Pencil, Plug, Plus, RotateCcw, Save, Server, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@tether/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -44,16 +44,20 @@ export function MachinesPage() {
   const [params, setParams] = useSearchParams()
   const pairLink = params.get('pair') ?? undefined
   const [sheet, setSheet] = useState(!!pairLink)
+  // a code scanned while this page is already open
+  useEffect(() => {
+    if (pairLink) setSheet(true)
+  }, [pairLink])
   const close = () => {
     setSheet(false)
     if (pairLink) setParams({}, { replace: true })
   }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <PageHeader title="Machines" right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
-      <div className="mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
-        {hosts.map((h) => (
-          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-4 rounded-[16px] border border-line bg-elev p-4 transition-colors hover:border-line-strong">
+      <PageHeader title={isPhone() ? 'Computers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
+      <div className="stagger mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
+        {hosts.map((h, i) => (
+          <Link key={h.config.id} style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="press flex items-center gap-4 rounded-[16px] border border-line bg-elev p-4 hover:border-line-strong">
             <span className="flex size-10 items-center justify-center rounded-[11px] border border-line bg-sunken">
               {h.config.kind === 'local' ? <Server className="size-[18px] text-fg-2" /> : <Monitor className="size-[18px] text-fg-2" />}
             </span>
@@ -63,7 +67,7 @@ export function MachinesPage() {
                 <HostDot status={h.status} />
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
-                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
+                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : h.config.target} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
               </div>
             </div>
             {/* on a phone the address needs the room more; the server page lists the agents */}
@@ -90,6 +94,7 @@ export function MachinePage() {
   const needsSetup = !!host && host.status === 'online' && (host.tmux !== 'ok' || !host.agents.length)
   const [tab, setTab] = useState<Tab>(needsSetup ? 'setup' : 'sessions')
   const [edit, setEdit] = useState(false)
+  const [repair, setRepair] = useState(false)
   const [newOpen, setNewOpen] = useState(false)
   const nav = useNavigate()
   if (!host) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
@@ -126,16 +131,20 @@ export function MachinePage() {
             : host.config.kind === 'node'
               ? waitingToPair(host) ? 'Not paired yet' : `Paired machine${host.hostname ? ` · ${host.hostname}` : ''}`
               : host.config.kind === 'link'
-                ? `Laptop${host.hostname ? ` · ${host.hostname}` : ''}`
+                ? `Paired${host.hostname ? ` · ${host.hostname}` : ''}`
                 : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}`}
           {host.nodeVersion && ` · tether-node ${host.nodeVersion}`}
           {host.os && ` · ${host.os}`}
           {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}
         </p>
-        {host.status === 'error' && (
-          <div className="mb-4 flex items-start gap-2 rounded-[12px] bg-danger-soft px-3.5 py-3 text-[13px] text-danger">
-            <AlertCircle className="mt-0.5 size-4 shrink-0" />
-            <span className="break-words">{host.error}</span>
+        {host.error && host.status !== 'online' && (
+          <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-[12px] px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
+            {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />}
+            <span className="min-w-0 flex-1 break-words">{host.error}</span>
+            {/* unpaired on the computer: scanning a fresh code fixes it, in place */}
+            {host.config.kind === 'link' && /paired/i.test(host.error) && (
+              <Button size="xs" variant="secondary" className="-my-0.5" onClick={() => setRepair(true)}>Pair again</Button>
+            )}
           </div>
         )}
         {waitingToPair(host) ? (
@@ -158,6 +167,7 @@ export function MachinePage() {
         )}
       </div>
       <MachineSheet open={edit} edit={host.config} onClose={() => setEdit(false)} />
+      <MachineSheet open={repair} onClose={() => setRepair(false)} />
       <NewSessionSheet open={newOpen} hostId={host.config.id} onClose={() => setNewOpen(false)} />
     </div>
   )

@@ -41,7 +41,8 @@ const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }
 export function hostLine(h: { status: HostStatus; error?: string; lastSeen?: number; offlineSince?: number }, online: string) {
   if (h.status === 'online') return online
   if (h.lastSeen) return `Offline · last seen ${ago(h.lastSeen)}`
-  return h.status === 'error' ? h.error ?? 'Not reachable' : 'Connecting…'
+  // the reason, when there is one, beats a bare "Connecting…"
+  return h.status === 'error' ? h.error ?? 'Not reachable' : h.error ?? 'Connecting…'
 }
 
 function ago(ms: number) {

@@ -56,9 +56,11 @@ async function writeUpload(host: ReturnType<typeof hostAndHome>['host'], path: s
   for (let at = 0; at < data.size || at === 0; at += PIECE) {
     const input = new Uint8Array(await data.slice(at, at + PIECE).arrayBuffer())
     // private to your user on shared machines
+    // a later piece goes on the end only where the file stops; one that's already there (the app
+    // retrying after its answer got lost) is skipped, so a retry never doubles a piece
     const cmd = from + at === 0
       ? `umask 077; mkdir -p ${shq(dir)} && cat > ${shq(path)}`
-      : `[ "$(wc -c < ${shq(path)} | tr -d ' ')" = ${from + at} ] && cat >> ${shq(path)}`
+      : `n="$(wc -c < ${shq(path)} | tr -d ' ')"; if [ "$n" = ${from + at + input.length} ]; then cat > /dev/null; else [ "$n" = ${from + at} ] && cat >> ${shq(path)}; fi`
     const r = await host.exec(cmd, { input, timeoutMs: 120000 })
     if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not save ${path.slice(path.lastIndexOf('/') + 1)}`)
   }

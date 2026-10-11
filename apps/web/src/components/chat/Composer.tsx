@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { ArrowUp, Camera, FileText, Folder, Paperclip, Square, X } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@tether/protocol'
 import { haptic } from '../../lib/haptics.ts'
-import { api, type Uploaded } from '../../lib/api.ts'
+import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
 import { patchChat, toast, useStore } from '../../lib/store.ts'
 import { socket } from '../../lib/socket.ts'
 import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.ts'
@@ -364,11 +364,13 @@ export function Composer({
     })
     setPop(null)
     try {
-      await api.send(host, pane, msg, id)
+      // the same id on every try: the hub submits it once however many times it arrives
+      await withRetries(() => api.send(host, pane, msg, id))
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sent' } : p)) }))
       haptic('success')
     } catch (e) {
-      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message } : p)) }))
+      haptic('error')
+      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message, retryable: isTransient(e) } : p)) }))
     }
   }
 

@@ -50,16 +50,28 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
         (err) => (clearTimeout(timer), fail(err)),
       )
     })
-  const firstOf = async (urls: string[], ms: number) => {
-    if (!urls.length) throw new LinkError('CLOSED', 'No address to try')
-    try {
-      return await Promise.any(urls.map((u) => via(u, ms)))
-    } catch (err) {
-      // a refusal (not paired, wrong machine) says more than a timeout
-      const errors = (err as AggregateError).errors ?? [err]
-      throw errors.find((e) => e instanceof LinkError && (e.code === 'NOT_PAIRED' || e.code === 'BAD_KEY' || e.code === 'REFUSED')) ?? errors[0]
-    }
-  }
+  /** The first address to answer wins; the others are closed, even ones that answer later. */
+  const firstOf = (urls: string[], ms: number) =>
+    new Promise<Awaited<ReturnType<typeof via>>>((ok, fail) => {
+      if (!urls.length) return fail(new LinkError('CLOSED', 'No address to try'))
+      let won = false
+      const errors: unknown[] = []
+      for (const u of urls) {
+        via(u, ms).then(
+          (r) => {
+            if (won) return r.channel.close(1000, 'another address answered first')
+            won = true
+            ok(r)
+          },
+          (err) => {
+            errors.push(err)
+            if (won || errors.length < urls.length) return
+            // a refusal (not paired, wrong machine) says more than a timeout
+            fail(errors.find((e) => e instanceof LinkError && (e.code === 'NOT_PAIRED' || e.code === 'BAD_KEY' || e.code === 'REFUSED')) ?? errors[0])
+          },
+        )
+      }
+    })
   const tried = new Set<string>()
   try {
     o.urls.forEach((u) => tried.add(u))
@@ -78,7 +90,7 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
     }
   }
   if (relays.length) return { ...(await firstOf(relays.map((r) => relayWs(r, phonePath(o.id))), DIRECT_MS * 2)), urls: found?.urls ?? o.urls }
-  throw new LinkError('TIMEOUT', found ? "The laptop isn't answering at its addresses. Is `tether-node link` running there?" : "Couldn't find the laptop online. Is `tether-node link` running there?")
+  throw new LinkError('TIMEOUT', found ? "The computer isn't answering at its addresses. Is `tether-node link` running there?" : "Couldn't find the computer online. Is `tether-node link` running there? It needs to be on and connected to the internet.")
 }
 
 /**
@@ -94,6 +106,7 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
   const drop = (c: Conn, why: string) => {
     clearInterval(c.ping)
     clearTimeout(c.awaitingPong)
+    c.awaitingPong = undefined
     const ch = c.channel
     c.channel = undefined
     if (ch) {
@@ -124,12 +137,18 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
         const hostId = c.config.id
         const socket = { send: (raw: string) => r.channel.send(JSON.parse(raw)), close: (code?: number, reason?: string) => r.channel.close(code, reason) }
         r.channel.onmessage = (m) => {
-          if (m?.type === 'pong') return clearTimeout(c.awaitingPong)
+          if (m?.type === 'pong') {
+            // answered: the next check can send its own ping
+            clearTimeout(c.awaitingPong)
+            c.awaitingPong = undefined
+            return
+          }
           nodeLinks.receive(hostId, m)
         }
         r.channel.onclose = () => {
           clearInterval(c.ping)
           clearTimeout(c.awaitingPong)
+          c.awaitingPong = undefined
           c.channel = undefined
           nodeLinks.detach(hostId, socket)
           schedule(c)
@@ -139,10 +158,13 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
         nodeLinks.receive(hostId, { type: 'hello', version: (welcome as any).version, os: welcome.os })
       } catch (err) {
         c.lastError = (err as Error).message
-        // not paired any more: retrying won't help until it pairs again
+        // not paired any more: retrying won't help until it pairs again (coming back to the app
+        // still tries once more, in case it was paired again meanwhile)
         if (err instanceof LinkError && (err.code === 'NOT_PAIRED' || err.code === 'BAD_KEY')) nodeLinks.fail(c.config.id, c.lastError)
-        else nodeLinks.fail(c.config.id, `Connecting to ${c.config.name}… (${c.lastError})`)
-        schedule(c)
+        else {
+          nodeLinks.fail(c.config.id, `Connecting to ${c.config.name}… (${c.lastError})`)
+          schedule(c)
+        }
       } finally {
         c.connecting = undefined
       }

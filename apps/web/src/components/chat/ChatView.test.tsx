@@ -5,6 +5,7 @@ import { ChatView } from './ChatView.tsx'
 import { GoalRow } from './Messages.tsx'
 import { buildRows } from '../../lib/chat.ts'
 import { patchChat, useStore } from '../../lib/store.ts'
+import { api } from '../../lib/api.ts'
 import { emit } from '../../test/fakes.ts'
 import { chatInfo, host, item } from '../../test/fixtures.ts'
 import { flush } from '../../test/render.tsx'
@@ -68,6 +69,24 @@ function longConversation(turns: number): ChatItem[] {
 describe('ChatView', () => {
   const view = () => <ChatView host="box" pane="%1" agent="claude" onTerminal={() => {}} />
   const load = (items: ChatItem[], info = chatInfo()) => act(() => emit({ t: 'chat.reset', key: 'box:%1', info, items, hasMore: true }))
+
+  test('a message that failed because the connection dropped goes out again once it is back', async () => {
+    useStore.setState({ connected: false, hosts: [host('box')] })
+    const send = spyOn(api, 'send').mockResolvedValue({ ok: true } as any)
+    render(view())
+    load(longConversation(1))
+    act(() => patchChat('box:%1', () => ({ pending: [
+      { id: 'lost', text: 'run the tests', status: 'failed', at: Date.now(), error: 'Network error', retryable: true },
+      { id: 'refused', text: 'nope', status: 'failed', at: Date.now(), error: 'pane is gone' },
+    ] })))
+    await flush()
+    expect(send).not.toHaveBeenCalled()
+    act(() => useStore.setState({ connected: true }))
+    await flush()
+    expect(send.mock.calls.map((c) => c[3])).toEqual(['lost'])
+    expect(useStore.getState().chats['box:%1'].pending.find((p) => p.id === 'lost')?.status).toBe('sent')
+    send.mockRestore()
+  })
 
   test('renders a long conversation without throwing', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })

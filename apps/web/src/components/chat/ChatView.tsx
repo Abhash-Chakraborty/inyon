@@ -6,11 +6,11 @@ import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type Pending
 import { clearNativeNotification } from '../../lib/native.ts'
 import { othersSends, settle as settleSends } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
-import { api } from '../../lib/api.ts'
+import { api, isTransient, withRetries } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
 import { Button, Empty, Spinner } from '../ui/primitives.tsx'
 import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
-import { ReplyFont } from './Markdown.tsx'
+import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
@@ -212,14 +212,20 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   }
 
   const retry = async (id: string, text: string) => {
-    patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sending', at: Date.now() } : p)) }))
+    patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sending', at: Date.now(), retryable: false } : p)) }))
     try {
-      await api.send(host, pane, text, id)
+      await withRetries(() => api.send(host, pane, text, id))
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sent' } : p)) }))
     } catch (e) {
-      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message } : p)) }))
+      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message, retryable: isTransient(e) } : p)) }))
     }
   }
+
+  // messages that failed only because the connection dropped go out by themselves once it's back
+  useEffect(() => {
+    if (!connected) return
+    for (const p of useStore.getState().chats[key]?.pending ?? []) if (p.status === 'failed' && p.retryable && !p.remote) void retry(p.id, p.text)
+  }, [connected, key])
 
   const rewind = useCallback(async (text: string) => {
     const short = text.length > 60 ? `${text.slice(0, 60)}…` : text

@@ -195,6 +195,29 @@ export const api = {
 
 export const UPLOAD_PIECE = 2 * 1024 * 1024
 
+/**
+ * Runs `fn` again when the connection hiccups (a link dropping, a server busy): up to three more
+ * tries, waiting longer each time. Refusals (bad input, too large, not allowed) fail at once.
+ */
+/** A dropped connection or a busy server, as opposed to a refusal that a retry won't change. */
+export function isTransient(err: unknown) {
+  // fetch throws a TypeError when the network is gone
+  if (err instanceof TypeError) return true
+  if (!(err instanceof ApiError)) return false
+  return err.status === 0 || err.status === 408 || err.status === 429 || err.status >= 500
+}
+
+export async function withRetries<T>(fn: () => Promise<T>, waits = [700, 2000, 5000]): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!isTransient(err) || i >= waits.length) throw err
+      await new Promise((r) => setTimeout(r, waits[i]))
+    }
+  }
+}
+
 async function uploadInPieces(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {
   let saved: Uploaded | undefined
   for (let at = 0; at < file.size || at === 0; at += UPLOAD_PIECE) {
@@ -204,10 +227,12 @@ async function uploadInPieces(host: string, pane: string | undefined, file: File
     form.append('total', String(file.size))
     form.append('offset', String(at))
     if (saved) form.append('path', saved.path)
-    const res = await send(new Request(new URL(`${h(host)}/uploads`, location.href), { method: 'POST', body: form }))
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok || !data.files?.[0]) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`)
-    saved = data.files[0] as Uploaded
+    saved = await withRetries(async () => {
+      const res = await send(new Request(new URL(`${h(host)}/uploads`, location.href), { method: 'POST', body: form }))
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.files?.[0]) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`)
+      return data.files[0] as Uploaded
+    })
     onProgress?.(file.size ? Math.min(1, (at + UPLOAD_PIECE) / file.size) : 1)
   }
   return saved!

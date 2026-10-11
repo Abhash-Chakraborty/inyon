@@ -30,7 +30,9 @@ class Socket {
     // NetBird to Tailscale): reconnect right away on return instead of waiting for the backoff
     const revive = () => {
       if (document.visibilityState !== 'visible' || this.ws?.readyState === WebSocket.CONNECTING) return
-      if (this.up && Date.now() - this.heard < 30000) return this.raw({ t: 'ping' })
+      // the phone's core runs in this page and can't have dropped: rebuilding it would close open
+      // terminals and resend every chat, so only check on it
+      if (this.up && (isPhone() || Date.now() - this.heard < 30000)) return this.raw({ t: 'ping' })
       clearTimeout(this.timer)
       this.retry = 0
       this.connect()

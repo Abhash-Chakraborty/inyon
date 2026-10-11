@@ -42,3 +42,13 @@ test('pieces only go into the uploads folder', async () => {
   }
   await expect(uploadPiece('up', undefined, p, { total: 200 * 1024 * 1024, offset: 0 })).rejects.toThrow('larger than')
 })
+
+test('a piece sent twice (its answer was lost, so the phone retried) is written once', async () => {
+  const piece = (at: number, n: number) => new File([video.slice(at, at + n)], 'again.mp4', { type: 'video/mp4' })
+  const first = await uploadPiece('up', undefined, piece(0, 2_000_000), { total: video.length, offset: 0 })
+  const second = { total: video.length, offset: 2_000_000, path: first.path }
+  await uploadPiece('up', undefined, piece(2_000_000, 2_000_000), second)
+  await uploadPiece('up', undefined, piece(2_000_000, 2_000_000), second)
+  await uploadPiece('up', undefined, piece(4_000_000, video.length - 4_000_000), { ...second, offset: 4_000_000 })
+  expect(new Uint8Array(readFileSync(first.path))).toEqual(video)
+})

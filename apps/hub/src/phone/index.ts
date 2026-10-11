@@ -90,7 +90,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
       POST: api(async (req) => {
         const b = await body(req)
         const info = parsePairLink(String(b.link ?? ''))
-        if (!info) throw new HttpError(400, "That isn't a Tether pairing code. Run `tether-node pair` on the laptop and scan the code it shows.")
+        if (!info) throw new HttpError(400, "That isn't a Tether pairing code. Run `tether-node pair` on the computer and scan the code it shows.")
         let welcome
         try {
           welcome = await links.pair(info)
@@ -118,7 +118,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         const b = await body(req)
         if (cur.kind === 'link') {
           const name = String(b.name ?? '').trim()
-          if (!name) throw new HttpError(400, 'Give the laptop a name')
+          if (!name) throw new HttpError(400, 'Give the computer a name')
           registry.note(id, { name })
           registry.refresh(id, 0)
           return ok()
@@ -153,7 +153,11 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
       if (!handler) return json({ error: 'Not found' }, { status: 404 })
       return handler(Object.assign(req, { params }))
     },
+    background(hidden) {
+      registry.quiet(hidden)
+    },
     resume() {
+      registry.quiet(false)
       links.resume()
       // SSH connections that died in the background fail their next command; probe now, not at the next poll
       for (const c of registry.configs()) registry.refresh(c.id, 0)
