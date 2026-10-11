@@ -72,13 +72,16 @@ function fuzzy(query: string, target: string): number {
 
 type Popover =
   | { kind: 'slash'; query: string; start: number; end: number }
+  | { kind: 'skill'; query: string; start: number; end: number }
   | { kind: 'mention'; query: string; start: number; end: number }
 
-/** Finds a `/command` (at the start) or `@path` token around the cursor. */
-function tokenAt(text: string, cursor: number): Popover | null {
+/** Finds a `/command` (at the start), a Codex `$skill` or an `@path` token around the cursor. */
+function tokenAt(text: string, cursor: number, skills = false): Popover | null {
   const before = text.slice(0, cursor)
   const slash = before.match(/^\/([\w:.-]*)$/)
   if (slash) return { kind: 'slash', query: slash[1], start: 0, end: cursor }
+  const skill = skills && before.match(/(^|\s)\$([\w:.-]*)$/)
+  if (skill) return { kind: 'skill', query: skill[2], start: cursor - skill[2].length - 1, end: cursor }
   const at = before.match(/(^|\s)@([^\s@]*)$/)
   if (at) return { kind: 'mention', query: at[2], start: cursor - at[2].length - 1, end: cursor }
   return null
@@ -183,14 +186,16 @@ export function Composer({
   // ---------- suggestions ----------
 
   useEffect(() => {
-    if (pop?.kind === 'slash' && !commands) api.commands(host, pane).then(setCommands).catch(() => setCommands([]))
+    // fetched each time the list opens, so a skill installed meanwhile shows up; the last list stays
+    // on screen until the new one arrives
+    if (pop?.kind === 'slash' || pop?.kind === 'skill') api.commands(host, pane).then(setCommands).catch(() => setCommands((c) => c ?? []))
     if (pop?.kind === 'mention' && !paths) api.files(host, pane).then((r) => setPaths(r.files)).catch(() => setPaths([]))
   }, [pop?.kind])
 
   const suggestions = useMemo(() => {
     if (!pop) return []
-    if (pop.kind === 'slash') {
-      const list = commands ?? AGENTS[agent ?? 'claude'].commands
+    if (pop.kind === 'slash' || pop.kind === 'skill') {
+      const list = (commands ?? AGENTS[agent ?? 'claude'].commands).filter((c) => c.name.startsWith(pop.kind === 'skill' ? '$' : '/'))
       return list
         .map((c) => ({ c, s: fuzzy(pop.query, c.name.slice(1)) }))
         .filter((x) => x.s >= 0)
@@ -218,7 +223,7 @@ export function Composer({
   const updatePop = () => {
     const el = ta.current
     if (!el) return
-    setPop(tokenAt(el.value, el.selectionStart ?? el.value.length))
+    setPop(tokenAt(el.value, el.selectionStart ?? el.value.length, agent === 'codex'))
   }
 
   const pick = (i: number) => {
@@ -240,6 +245,11 @@ export function Composer({
       const next = `${c.name} ${text.slice(pop.end).trimStart()}`
       setText(next)
       requestAnimationFrame(() => ta.current?.setSelectionRange(c.name.length + 1, c.name.length + 1))
+    } else if (pop.kind === 'skill') {
+      const ins = `${(s.item as SlashCommand).name} `
+      setText(text.slice(0, pop.start) + ins + text.slice(pop.end))
+      const at = pop.start + ins.length
+      requestAnimationFrame(() => ta.current?.setSelectionRange(at, at))
     } else {
       const ins = `@${s.item as string}${(s.item as string).endsWith('/') ? '' : ' '}`
       const next = text.slice(0, pop.start) + ins + text.slice(pop.end)
@@ -455,7 +465,7 @@ export function Composer({
       {pop && suggestions.length > 0 && (
         <div className="animate-pop absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-[14px] border border-line bg-elev shadow-float">
           <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-[11.5px] text-fg-3">
-            {pop.kind === 'slash' ? 'Commands and skills' : `Files in ${paths ? 'this folder' : '…'}`}
+            {pop.kind === 'slash' ? (agent === 'codex' ? 'Commands' : 'Commands and skills') : pop.kind === 'skill' ? 'Skills' : `Files in ${paths ? 'this folder' : '…'}`}
             <span className="ml-auto hidden font-mono sm:inline">↑↓ · ⏎ · esc</span>
           </div>
           <div role="listbox" className="max-h-[min(320px,45dvh)] overflow-y-auto p-1">
@@ -472,9 +482,9 @@ export function Composer({
               >
                 {pop.kind === 'mention' &&
                   (s.tag === 'folder' ? <Folder className="size-4 shrink-0 text-fg-3" /> : <FileText className="size-4 shrink-0 text-fg-3" />)}
-                <span className={clsx('shrink-0 font-mono text-[13px]', pop.kind === 'mention' && 'min-w-0 truncate')}>{s.label}</span>
+                <span className={clsx('font-mono text-[13px]', pop.kind === 'slash' ? 'shrink-0' : 'min-w-0 truncate', pop.kind === 'skill' && 'max-w-[70%]')}>{s.label}</span>
                 {s.hint && <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">{s.hint}</span>}
-                {s.tag && pop.kind === 'slash' && (
+                {s.tag && pop.kind !== 'mention' && (
                   <span className="ml-auto shrink-0 rounded-[5px] border border-line px-1.5 py-px text-[10.5px] text-fg-3">{s.tag}</span>
                 )}
               </button>

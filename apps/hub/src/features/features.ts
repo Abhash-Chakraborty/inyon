@@ -156,7 +156,8 @@ export function lruCache<T>(ttl: number, max: number) {
 
 // ---------- slash commands ----------
 
-const cmdCache = lruCache<SlashCommand[]>(60_000, 50)
+// short, so a skill installed a moment ago shows up the next time the list opens
+const cmdCache = lruCache<SlashCommand[]>(5_000, 50)
 
 /** Built-in commands plus skills and custom commands found on the machine. */
 export async function listCommands(hostId: string, paneId: string): Promise<SlashCommand[]> {
@@ -177,14 +178,23 @@ export async function listCommands(hostId: string, paneId: string): Promise<Slas
   const cwd = shq(pane.cwd)
   // prints "source<TAB>name<TAB>description" per entry
   const desc = `awk 'NR==1&&$0!="---"{exit} NR>1&&$0=="---"{exit} /^description:/{sub(/^description:[ ]*/,""); print; exit}' "$f" 2>/dev/null | cut -c1-180`
+  // the agents read project skills and commands from the folder and each one above it up to the repo root
+  const up = `d=${cwd}; top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || echo "$d"); dirs="$d"; while [ "$d" != "$top" ] && [ "$d" != / ] && [ -n "$d" ]; do d=$(dirname "$d"); dirs="$dirs
+$d"; done`
   const scans: Record<AgentKind, string> = {
-    claude: `
+    claude: `${up}
 for f in "$HOME"/.claude/skills/*/SKILL.md; do [ -f "$f" ] && printf 'skill\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done
-for f in ${cwd}/.claude/skills/*/SKILL.md; do [ -f "$f" ] && printf 'project\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done
+echo "$dirs" | while read -r p; do for f in "$p"/.claude/skills/*/SKILL.md; do [ -f "$f" ] && printf 'project\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done; done
 for f in "$HOME"/.claude/commands/*.md; do [ -f "$f" ] && printf 'user\\t%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done
-for f in ${cwd}/.claude/commands/*.md; do [ -f "$f" ] && printf 'project\\t%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done
+echo "$dirs" | while read -r p; do for f in "$p"/.claude/commands/*.md; do [ -f "$f" ] && printf 'project\\t%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done; done
 find "$HOME/.claude/plugins" -maxdepth 9 -path '*/skills/*/SKILL.md' 2>/dev/null | head -200 | while read -r f; do printf 'plugin\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done`,
-    codex: `for f in "$HOME"/.codex/prompts/*.md; do [ -f "$f" ] && printf 'user\\tprompts:%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done`,
+    // Codex picks skills with "$name" (its "/" menu is built-in commands only); a plugin's skills are
+    // "$plugin:skill", read from the newest cached version of each plugin
+    codex: `${up}
+for f in "$HOME"/.codex/prompts/*.md; do [ -f "$f" ] && printf 'user\\t/prompts:%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done
+echo "$dirs" | while read -r p; do for f in "$p"/.agents/skills/*/SKILL.md; do [ -f "$f" ] && printf 'project\\t$%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done; done
+for f in "$HOME"/.agents/skills/*/SKILL.md "$HOME"/.codex/skills/*/SKILL.md "$HOME"/.codex/skills/.system/*/SKILL.md; do [ -f "$f" ] && printf 'skill\\t$%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done
+find "$HOME/.codex/plugins/cache" -mindepth 6 -maxdepth 6 -path '*/skills/*/SKILL.md' 2>/dev/null | sort -rV | head -300 | while read -r f; do p=\${f%/*/*/*/SKILL.md}; printf 'plugin\\t$%s:%s\\t%s\\n' "\${p##*/}" "$(basename "$(dirname "$f")")" "$(${desc})"; done`,
     opencode: `for f in "$HOME"/.config/opencode/command/*.md "$HOME"/.config/opencode/commands/*.md ${cwd}/.opencode/command/*.md ${cwd}/.opencode/commands/*.md; do [ -f "$f" ] && printf 'user\\t%s\\t%s\\n' "$(basename "$f" .md)" "$(${desc})"; done`,
     gemini: `for f in "$HOME"/.gemini/commands/*.toml ${cwd}/.gemini/commands/*.toml; do [ -f "$f" ] && printf 'user\\t%s\\t%s\\n' "$(basename "$f" .toml)" "$(grep -m1 '^description' "$f" | sed 's/^description *= *//; s/^"//; s/"$//')"; done`,
     copilot: `true`,
@@ -200,7 +210,8 @@ find "$HOME/.gemini/antigravity-cli/plugins" -maxdepth 4 -path '*/skills/*/SKILL
   for (const line of r.stdout.split('\n')) {
     const [source, name, description] = line.split('\t')
     if (!name) continue
-    const full = `/${name}`
+    // Codex skills ("$name") and prompts ("/prompts:name") come with their own prefix
+    const full = /^[$/]/.test(name) ? name : `/${name}`
     if (seen.has(full)) continue
     seen.add(full)
     found.push({ name: full, description: (description || '').replace(/^["'>|-]+\s*|["']$/g, ''), source: source as SlashCommand['source'] })
