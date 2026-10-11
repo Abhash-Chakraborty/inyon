@@ -3,7 +3,7 @@ import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerMsg } from '@tether/protocol'
-import { parseSize, sizeCommand, tailCommand, TranscriptReader, utf8Length } from './transcript-tail.ts'
+import { parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { watchers } from './watcher.ts'
@@ -58,6 +58,22 @@ test.skipIf(!Bun.which('setsid'))('a remote follow ends once its stdin closes, t
   writeFileSync(file, user('quiet'))
   // as over SSH: its own session, stdin a pipe from the hub, and nobody kills the group
   const p = Bun.spawn(['setsid', 'sh', '-c', `${tailCommand(file, 0, true)}; echo exited`], { stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
+  const out = new Response(p.stdout).text()
+  await Bun.sleep(300)
+  const tails = () => Bun.spawnSync(['ps', '-eo', 'args=']).stdout.toString().split('\n').filter((l) => l.startsWith('tail ') && l.includes(file))
+  expect(tails()).toHaveLength(1)
+  p.stdin.end()
+  expect(await Promise.race([p.exited, Bun.sleep(3000).then(() => 'stuck')])).not.toBe('stuck')
+  expect(await out).toContain('exited')
+  expect(tails()).toHaveLength(0)
+})
+
+test.skipIf(!Bun.which('setsid'))('any command can be made to end with its stdin', async () => {
+  const file = join(dir, 'events.jsonl')
+  writeFileSync(file, '')
+  // the shape of the hook event follow: a setup step, then the tail
+  const cmd = `touch ${file} && { ${untilStdinCloses(`tail -n0 -F ${file} 2>/dev/null`)}; }; echo exited`
+  const p = Bun.spawn(['setsid', 'sh', '-c', cmd], { stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const out = new Response(p.stdout).text()
   await Bun.sleep(300)
   const tails = () => Bun.spawnSync(['ps', '-eo', 'args=']).stdout.toString().split('\n').filter((l) => l.startsWith('tail ') && l.includes(file))

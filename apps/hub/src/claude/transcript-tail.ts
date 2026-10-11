@@ -54,10 +54,17 @@ export function tailCommand(path: string, from: number, slim: boolean, follow = 
   if (!slim) return `exec ${tail}`
   // mawk holds back piped input until its buffer fills unless it's told the input is live
   const run = `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${tail} | LC_ALL=C $a ${shq(SLIM)}; else ${tail}; fi`
-  if (!follow) return run
+  return follow ? untilStdinCloses(run) : run
+}
+
+/**
+ * Runs `cmd` until stdin closes (run it with `keepStdin`), for a command that never ends on its
+ * own on a machine reached over SSH, where closing the connection doesn't stop it.
+ */
+export function untilStdinCloses(cmd: string) {
   // a background job's stdin is /dev/null, so it watches the real one through fd 3; once that
   // closes it stops this shell's other children (tail and awk), and when they end it goes too
-  return `exec 3<&0; { cat <&3; pkill -P $$; } >/dev/null 2>&1 & w=$!; ${run}; kill $w 2>/dev/null`
+  return `exec 3<&0; { cat <&3; pkill -P $$; } >/dev/null 2>&1 & w=$!; ${cmd}; kill $w 2>/dev/null`
 }
 
 /**

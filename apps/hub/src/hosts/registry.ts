@@ -19,6 +19,7 @@ import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
 import { sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
+import { untilStdinCloses } from '../claude/transcript-tail.ts'
 
 /** Fallback poll; tmux control mode delivers changes as they happen. */
 const POLL_MS = 4000
@@ -682,14 +683,18 @@ class Registry {
 
   /** Follows the hook event log on the machine for instant updates. */
   private watchEvents(rt: Runtime) {
-    const cmd = 'umask 077; mkdir -p "$HOME/.tether" && touch "$HOME/.tether/events.jsonl" && exec tail -n0 -F "$HOME/.tether/events.jsonl" 2>/dev/null'
+    const prepare = 'umask 077; mkdir -p "$HOME/.tether" && touch "$HOME/.tether/events.jsonl"'
+    const tail = 'tail -n0 -F "$HOME/.tether/events.jsonl" 2>/dev/null'
+    // on another machine it stops when the connection does (see untilStdinCloses)
+    const remote = rt.host.config.kind !== 'local'
+    const cmd = remote ? `${prepare} && { ${untilStdinCloses(tail)}; }` : `${prepare} && exec ${tail}`
     const s = rt.host.stream(cmd, (line) => {
       try {
         const e = JSON.parse(line)
         this.refresh(rt.host.id)
         if (e.pane) this.emit({ type: 'hook', host: rt.host.id, pane: e.pane, event: e.data })
       } catch {}
-    })
+    }, { keepStdin: remote })
     rt.events = s
     s.exited.then(() => {
       if (rt.events === s) rt.events = undefined
