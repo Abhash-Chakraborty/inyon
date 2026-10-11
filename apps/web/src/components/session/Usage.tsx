@@ -7,7 +7,7 @@ import { toast } from '../../lib/store.ts'
 import { duration, liveWindow, money, resetClock, resetsIn, since, tokens } from '../../lib/format.ts'
 import { Button, Meter } from '../ui/primitives.tsx'
 import { IntegrationNote } from './IntegrationNote.tsx'
-import { CopyButton } from '../chat/Markdown.tsx'
+import { CopyButton } from '../chat/copy.tsx'
 
 const showsCost = (agent?: AgentKind) => !agent || !['codex', 'gemini', 'antigravity', 'copilot'].includes(agent)
 

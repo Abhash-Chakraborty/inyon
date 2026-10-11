@@ -1,9 +1,7 @@
-import { StrictMode, useEffect } from 'react'
+import { lazy, StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
-import '@fontsource-variable/geist'
-import '@fontsource-variable/geist-mono'
-import '@fontsource-variable/source-serif-4'
+import './fonts.css'
 import './styles.css'
 import { api } from './lib/api.ts'
 import { socket } from './lib/socket.ts'
@@ -13,9 +11,11 @@ import { Toasts } from './components/Toasts.tsx'
 import { Spinner } from './components/ui/primitives.tsx'
 import { Home } from './pages/Home.tsx'
 import { Login } from './pages/Login.tsx'
-import { PanePage } from './pages/PanePage.tsx'
-import { Settings } from './pages/Settings.tsx'
-import { MachinePage, MachinesPage } from './pages/Machines.tsx'
+// the overview shows first; the other pages load when opened (and right after start, in the background)
+const PanePage = lazy(() => import('./pages/PanePage.tsx').then((m) => ({ default: m.PanePage })))
+const Settings = lazy(() => import('./pages/Settings.tsx').then((m) => ({ default: m.Settings })))
+const MachinesPage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ default: m.MachinesPage })))
+const MachinePage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ default: m.MachinePage })))
 import { installTapHaptics } from './lib/haptics.ts'
 import { installKeepAlive } from './lib/keepalive.ts'
 import { installNative, isNative, nativeTheme } from './lib/native.ts'
@@ -84,6 +84,8 @@ function App() {
 
 installTapHaptics()
 installNative()
+// fetch the other pages once the first screen is up, so opening one doesn't wait on the network
+setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx')]).catch(() => {}), 1500)
 installKeepAlive()
 
 createRoot(document.getElementById('root')!).render(

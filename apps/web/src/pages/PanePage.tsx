@@ -12,7 +12,12 @@ import { SignInSheet } from '../components/SignInSheet.tsx'
 import { useSession } from '../components/session/useSession.ts'
 import { SessionHeader } from '../components/session/SessionHeader.tsx'
 import { ComposerControls } from '../components/session/ComposerControls.tsx'
-import { SidePanel, SubagentSheet, TaskOutputSheet, type PanelTab } from '../components/session/Panels.tsx'
+import type { PanelTab } from '../components/session/Panels.tsx'
+
+// the side panel and its sheets bring the markdown renderer: load them with the chat, not the app
+const SidePanel = lazy(() => import('../components/session/Panels.tsx').then((m) => ({ default: m.SidePanel })))
+const SubagentSheet = lazy(() => import('../components/session/Panels.tsx').then((m) => ({ default: m.SubagentSheet })))
+const TaskOutputSheet = lazy(() => import('../components/session/Panels.tsx').then((m) => ({ default: m.TaskOutputSheet })))
 import { ActivitySheet, ControlsSheet } from '../components/session/MobileSheets.tsx'
 
 // split out: markdown/highlighting and xterm are the heaviest parts of the app
@@ -119,12 +124,18 @@ export function PanePage() {
               )}
             </Suspense>
           </div>
-          {showPanel && <SidePanel s={s} items={items} tab={tab} setTab={setTab} onTask={setTask} onSubagent={setSub} />}
+          {showPanel && (
+            <Suspense fallback={null}>
+              <SidePanel s={s} items={items} tab={tab} setTab={setTab} onTask={setTask} onSubagent={setSub} />
+            </Suspense>
+          )}
         </div>
         <ControlsSheet s={s} open={sheet === 'controls'} onClose={() => setSheet(null)} />
         <ActivitySheet s={s} items={items} open={sheet === 'activity'} onClose={() => setSheet(null)} onTask={setTask} onSubagent={setSub} />
-        <TaskOutputSheet host={host} task={task} onClose={() => setTask(null)} />
-        <SubagentSheet s={s} sub={sub} onClose={() => setSub(null)} />
+        <Suspense fallback={null}>
+          {task && <TaskOutputSheet host={host} task={task} onClose={() => setTask(null)} />}
+          {sub && <SubagentSheet s={s} sub={sub} onClose={() => setSub(null)} />}
+        </Suspense>
       </SkinScope>
     </ChatActionsContext.Provider>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { LayoutGrid, Monitor, Plus, Search, Settings, SquareTerminal, WifiOff } from 'lucide-react'
@@ -8,9 +8,10 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StateDot, shownState } from './ui/status.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { Spinner } from './ui/primitives.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
-const machinesLabel = isPhone() ? 'Servers' : 'Machines'
+const machinesLabel = isPhone() ? 'Computers' : 'Machines'
 
 /** Tether's mark: a terminal prompt with a cable running out to a node (same art as public/icon.svg). */
 export function Logo({ className }: { className?: string }) {
@@ -212,6 +213,12 @@ function TabBar({ onNew }: { onNew: () => void }) {
   )
 }
 
+/**
+ * Which page is showing, for the page-in animation. Sessions share one key: moving between them, or
+ * between a session's chat and terminal, keeps the page mounted (and its scroll and state).
+ */
+export const pageKey = (path: string) => (path.startsWith('/m/') ? 'session' : path.replace(/\/+$/, '') || '/')
+
 export function AppShell() {
   const [newOpen, setNewOpen] = useState(false)
   const [search, setSearch] = useState(false)
@@ -238,8 +245,11 @@ export function AppShell() {
     <div className="flex h-dvh overflow-hidden">
       <Sidebar onNew={() => setNewOpen(true)} onSearch={() => setSearch(true)} />
       <main className="flex min-w-0 flex-1 flex-col">
-        <div className="flex min-h-0 flex-1 flex-col">
-          <Outlet />
+        {/* each page settles in: a short fade and an 8px rise */}
+        <div key={pageKey(loc.pathname)} className="animate-page flex min-h-0 flex-1 flex-col">
+          <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="size-5" /></div>}>
+            <Outlet />
+          </Suspense>
         </div>
         {!inSession && <TabBar onNew={() => setNewOpen(true)} />}
       </main>

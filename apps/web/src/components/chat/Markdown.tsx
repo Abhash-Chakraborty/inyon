@@ -1,37 +1,28 @@
-import { createContext, memo, useContext, useState, type ReactNode } from 'react'
+import { memo, useContext, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import bash from 'highlight.js/lib/languages/bash'
+import css from 'highlight.js/lib/languages/css'
+import diff from 'highlight.js/lib/languages/diff'
+import go from 'highlight.js/lib/languages/go'
+import java from 'highlight.js/lib/languages/java'
+import javascript from 'highlight.js/lib/languages/javascript'
+import json from 'highlight.js/lib/languages/json'
+import kotlin from 'highlight.js/lib/languages/kotlin'
+import markdown from 'highlight.js/lib/languages/markdown'
+import python from 'highlight.js/lib/languages/python'
+import rust from 'highlight.js/lib/languages/rust'
+import shell from 'highlight.js/lib/languages/shell'
+import sql from 'highlight.js/lib/languages/sql'
+import swift from 'highlight.js/lib/languages/swift'
+import typescript from 'highlight.js/lib/languages/typescript'
+import xml from 'highlight.js/lib/languages/xml'
+import yaml from 'highlight.js/lib/languages/yaml'
 import clsx from 'clsx'
-import { Check, Copy } from 'lucide-react'
-import { copyText } from '../../lib/clipboard.ts'
-import { toast } from '../../lib/store.ts'
 
-/** Reply font for the agent whose session is on screen. */
-export const ReplyFont = createContext<'serif' | 'sans' | 'mono'>('sans')
-
-export function CopyButton({ text, className, label = 'Copy' }: { text: string; className?: string; label?: string }) {
-  const [done, setDone] = useState(false)
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      className={clsx('inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-fg-3 transition-colors hover:bg-hover hover:text-fg', className)}
-      onClick={async (e) => {
-        e.stopPropagation()
-        if (!await copyText(text)) {
-          toast({ title: 'Could not copy', body: 'Select the message text to copy it manually.', tone: 'error' })
-          return
-        }
-        setDone(true)
-        setTimeout(() => setDone(false), 1400)
-      }}
-    >
-      {done ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
-    </button>
-  )
-}
+export { CopyButton, ReplyFont } from './copy.tsx'
+import { CopyButton, ReplyFont } from './copy.tsx'
 
 function textOf(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node)
@@ -82,11 +73,15 @@ const components: Components = {
   },
 }
 
+/** The languages agents print most; the full set roughly doubles this chunk. Others show plain. */
+const LANGUAGES = { bash, css, diff, go, java, javascript, json, kotlin, markdown, python, rust, shell, sql, swift, typescript, xml, yaml }
+const HIGHLIGHT = [[rehypeHighlight, { detect: false, ignoreMissing: true, languages: LANGUAGES, aliases: { bash: ['sh', 'zsh'], javascript: ['js', 'jsx', 'mjs'], typescript: ['ts', 'tsx'], xml: ['html', 'svg'], yaml: ['yml'], python: ['py'], shell: ['console'] } }]] as any
+
 export const Markdown = memo(function Markdown({ text, className, sans }: { text: string; className?: string; sans?: boolean }) {
   const font = useContext(ReplyFont)
   return (
     <div className={clsx('prose-reply', !sans && font !== 'sans' && `reply-${font}`, className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[[rehypeHighlight, { detect: false, ignoreMissing: true }]]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={HIGHLIGHT} components={components}>
         {text}
       </ReactMarkdown>
     </div>
