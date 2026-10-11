@@ -49,3 +49,9 @@ test('a resumed session id must be a UUID before it is typed into a shell', () =
   for (const ok of [undefined, null, '', '7409eef9-d507-4808-a592-0bfabe896e3a']) expect(isSessionId(ok)).toBe(true)
   for (const bad of ['7409eef9-d507-4808-a592-0bfabe896e3a; rm -rf ~', '$(id)', 'latest', ['7409eef9-d507-4808-a592-0bfabe896e3a'], 42]) expect(isSessionId(bad)).toBe(false)
 })
+
+test("OpenCode's own session ids resume it; only OpenCode's, and nothing a shell reads as more", () => {
+  expect(isSessionId('ses_0123456789abcdef', 'opencode')).toBe(true)
+  expect(isSessionId('ses_0123456789abcdef', 'claude')).toBe(false)
+  for (const bad of ['ses_; id', 'ses_$(id)', 'ses_', 'ses_a b']) expect(isSessionId(bad, 'opencode')).toBe(false)
+})

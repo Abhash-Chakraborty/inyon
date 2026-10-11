@@ -239,3 +239,22 @@ describe('Antigravity status line', () => {
     expect(read().statusLine).toEqual({ type: 'command', command: 'echo mine', padding: 1 })
   })
 })
+
+test('a restart keeps a flag value with spaces in it whole, read from the real argument list', async () => {
+  const { argv, resumeCommand } = await import('./actions.ts')
+  const { Host } = await import('../hosts/host.ts')
+  const id = '7409eef9-d507-4808-a592-0bfabe896e3a'
+  // a stand-in agent started with a settings file in a folder with a space
+  const proc = Bun.spawn(['sh', '-c', 'sleep 30', 'claude', '--settings', '/work/my project/settings.json', '--model', 'sonnet'])
+  try {
+    const host = new Host({ id: 'local', name: 'local', kind: 'local' } as any)
+    // just after the spawn the process can still show the parent's arguments
+    let args = await argv(host, proc.pid)
+    for (let i = 0; i < 20 && args && !args.includes('--settings'); i++) await Bun.sleep(50).then(async () => (args = await argv(host, proc.pid)))
+    if (process.platform === 'linux') {
+      expect(resumeCommand('claude', id, args!)).toBe(`claude --resume ${id} '--settings' '/work/my project/settings.json' '--model' 'sonnet'`)
+    } else expect(args).toBeUndefined()
+  } finally {
+    proc.kill()
+  }
+})

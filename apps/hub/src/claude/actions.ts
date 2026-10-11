@@ -767,19 +767,27 @@ async function launchBin(host: ReturnType<typeof registry.host>, agent: AgentKin
 /** `cmd` with its first word (the agent's command) replaced by `bin`. */
 const withBin = (cmd: string, bin: string) => cmd.replace(/^\S+/, bin)
 
-/** No session (start fresh), or a conversation id: a UUID, nothing a shell would read as more. */
-export const isSessionId = (id: unknown): id is string | null | undefined =>
-  id === undefined || id === null || id === '' || (typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+/**
+ * No session (start fresh), or a conversation id, nothing a shell would read as more: a UUID, or
+ * for OpenCode its own "ses_…" form.
+ */
+export const isSessionId = (id: unknown, agent?: AgentKind): id is string | null | undefined =>
+  id === undefined || id === null || id === '' ||
+  (typeof id === 'string' && (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) || (agent === 'opencode' && /^ses_[A-Za-z0-9]{1,64}$/.test(id))))
 
 /** Starts (or resumes) an agent in a pane that is sitting at a shell prompt. */
 export async function startAgent(hostId: string, paneId: string, agent: AgentKind = 'claude', resume?: unknown) {
   // both end up typed into a shell
   if (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent)) throw new HttpError(400, 'Unknown agent')
-  if (!isSessionId(resume)) throw new HttpError(400, 'Bad session id')
+  if (!isSessionId(resume, agent)) throw new HttpError(400, 'Bad session id')
   const { host, found } = agentPane(hostId, paneId)
   if (found.pane.agent) throw new HttpError(409, 'An agent is already running here')
   const def = AGENTS[agent]
-  const cmd = !resume ? def.launch : agent === 'codex' ? `codex resume ${resume}` : agent === 'antigravity' ? `agy --conversation ${resume}` : `${def.launch} --resume ${resume}`
+  const cmd = !resume ? def.launch
+    : agent === 'codex' ? `codex resume ${resume}`
+    : agent === 'antigravity' ? `agy --conversation ${resume}`
+    : agent === 'opencode' ? `${def.launch} --session ${resume}`
+    : `${def.launch} --resume ${resume}`
   await typeText(host, paneId, withBin(cmd, await launchBin(host, agent)), true)
   registry.refresh(hostId, 1500)
 }
@@ -835,9 +843,13 @@ const DROP: Record<string, Set<string>> = {
   antigravity: new Set(['--conversation', '--continue', '-c', '-p', '--print', '--prompt', '-i', '--prompt-interactive', '--new-project', '--print-timeout', '--output-format', '--input-format', '--json-schema']),
 }
 
-/** The command that reopens this conversation with the flags the agent was started with. */
-export function resumeCommand(kind: AgentKind, sessionId: string | undefined, args: string): string {
-  const tokens = args.trim().split(/\s+/)
+/**
+ * The command that reopens this conversation with the flags the agent was started with. `args` is
+ * the real argument list where the machine can give it; `ps` text loses where a value with spaces
+ * in it ends, so that's split on spaces as a last resort.
+ */
+export function resumeCommand(kind: AgentKind, sessionId: string | undefined, args: string | string[]): string {
+  const tokens = Array.isArray(args) ? args : args.trim().split(/\s+/)
   // skip the interpreter and binary ("node /…/codex.js", "/…/claude")
   const name = kind === 'antigravity' ? 'agy' : kind
   const bin = tokens.findIndex((t) => new RegExp(`(^|/)${name}(\\.js)?$`).test(t))
@@ -867,6 +879,13 @@ export function resumeCommand(kind: AgentKind, sessionId: string | undefined, ar
   return [base, '--resume', sessionId, ...keep].join(' ')
 }
 
+/** A process's arguments as it was given them (Linux), or undefined where there's no /proc. */
+export async function argv(host: Host, pid: number) {
+  const r = await host.exec(`tr '\\0' '\\n' < /proc/${Math.trunc(pid)}/cmdline 2>/dev/null`).catch(() => undefined)
+  const args = r?.code === 0 ? r.stdout.replace(/\n$/, '').split('\n') : []
+  return args.length && args[0] ? args : undefined
+}
+
 /**
  * Exits the agent and reopens the same conversation in the same pane, e.g. so it picks up
  * settings that changed under it. Refuses while it's busy, since a restart would cut that off.
@@ -883,7 +902,7 @@ export async function restartAgent(hostId: string, paneId: string) {
   if (s.prompt) throw new HttpError(409, 'Answer the open question first')
   if (s.background) throw new HttpError(409, `Restarting would stop ${s.background} running in the background`)
   const saved = a.transcriptPath && (await host.exec(`test -s ${shq(a.transcriptPath)} && echo yes`)).stdout.includes('yes')
-  const cmd = resumeCommand(a.kind, saved ? a.sessionId : undefined, proc.args)
+  const cmd = resumeCommand(a.kind, saved ? a.sessionId : undefined, (await argv(host, proc.pid)) ?? proc.args)
   const p = shq(paneId)
   // started as the pane's own command: keep the pane open across the exit, then respawn it
   const direct = proc.pid === proc.panePid
