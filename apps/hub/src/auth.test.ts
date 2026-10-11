@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { clientAddress, tryLogin } from './auth.ts'
+import { clientAddress, closeSockets, holdSocket, issueCookie, revokeSession, tryLogin } from './auth.ts'
 import { setPassword } from './password.ts'
 
 setPassword('correct horse battery')
@@ -28,4 +28,22 @@ test('only the hop the local proxy added counts as the client', () => {
   expect(clientAddress('127.0.0.1', null)).toBe('127.0.0.1')
   // a client that isn't the proxy can't pick its own address
   expect(clientAddress('100.64.0.5', '127.0.0.1')).toBe('100.64.0.5')
+})
+
+test('signing out closes the connections that session already had open, and only those', () => {
+  const signedIn = () => new Request('http://hub/ws', { headers: { cookie: issueCookie(false).split(';')[0] } })
+  const [a, b] = [signedIn(), signedIn()]
+  const closed: string[] = []
+  const socket = (name: string) => ({ close: (code?: number) => void closed.push(`${name} ${code}`) })
+  holdSocket(a, socket('phone'))
+  holdSocket(a, socket('laptop'))
+  const release = holdSocket(b, socket('other'))
+  holdSocket(b, socket('another'))
+
+  revokeSession(a)
+  expect(closed).toEqual(['phone 4401', 'laptop 4401'])
+  // a connection that already closed isn't closed again; a new password ends all the rest
+  release()
+  closeSockets()
+  expect(closed).toEqual(['phone 4401', 'laptop 4401', 'another 4401'])
 })

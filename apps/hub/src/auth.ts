@@ -57,6 +57,28 @@ function session(req: Request): Session | undefined {
 
 export const isAuthed = (req: Request) => !!session(req)
 
+// open connections, by the session they signed in with: a cookie is only checked when a
+// connection opens, so ending a session has to close the ones it already has
+const sockets = new Map<{ close(code?: number, reason?: string): void }, string>()
+
+/** Keeps `socket` until it closes, so signing out (or a new password) can end it. */
+export function holdSocket(req: Request, socket: { close(code?: number, reason?: string): void }) {
+  const s = session(req)
+  if (s) sockets.set(socket, s.n)
+  return () => void sockets.delete(socket)
+}
+
+/** Closes the connections of one session, or of every session when `nonce` is left out. */
+export function closeSockets(nonce?: string) {
+  for (const [socket, n] of sockets) {
+    if (nonce !== undefined && n !== nonce) continue
+    sockets.delete(socket)
+    try {
+      socket.close(4401, 'Signed out')
+    } catch {}
+  }
+}
+
 /** A fresh expiry for a session in use, at most once a day (same nonce, so sign-out still ends it). */
 export function refreshCookie(req: Request, secure: boolean) {
   const s = session(req)
@@ -70,6 +92,7 @@ export function revokeSession(req: Request) {
   if (!s) return
   revoked.set(s.n, s.exp)
   saveRevoked()
+  closeSockets(s.n)
 }
 
 // Slow down password guessing: a few attempts per minute per address, and a cap on failures from

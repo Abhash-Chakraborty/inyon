@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
-import { clearCookie, clientAddress, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
@@ -82,7 +82,9 @@ const guarded = (routes: Routes) =>
     ]),
   )
 
-type SocketData = Client | (NodeSocketData & { kind: 'node' })
+/** an app's connection, with the request it opened with until it's tied to that sign-in */
+type AppSocket = Client & { req?: Request; release?: () => void }
+type SocketData = AppSocket | (NodeSocketData & { kind: 'node' })
 
 // ---------- static files (production build of apps/web) ----------
 
@@ -185,6 +187,8 @@ const server = Bun.serve<SocketData>({
         if (problem) throw new HttpError(400, problem)
         // a new password signs out every other browser; this one gets a fresh sign-in
         setPassword(String(b.next))
+        // connections opened with the old password end too (this browser reconnects signed in)
+        closeSockets()
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
       }),
     },
@@ -251,7 +255,8 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/ws') {
       if (!sameOrigin(req)) return new Response('Cross-site connection refused', { status: 403 })
       if (!isAuthed(req)) return new Response('Not signed in', { status: 401 })
-      if (srv.upgrade(req, { data: newClient() })) return
+      const data: AppSocket = Object.assign(newClient(), { req })
+      if (srv.upgrade(req, { data })) return
       return new Response('Upgrade failed', { status: 400 })
     }
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, { status: 404 })
@@ -271,6 +276,8 @@ const server = Bun.serve<SocketData>({
       c.send = (msg) => {
         ws.send(JSON.stringify(msg))
       }
+      c.release = holdSocket(c.req!, ws)
+      c.req = undefined
       clients.add(c)
     },
     message(ws, raw) {
@@ -279,6 +286,7 @@ const server = Bun.serve<SocketData>({
     },
     close(ws) {
       if (ws.data.kind === 'node') return nodeLinks.detach(ws.data.hostId, ws as any)
+      ws.data.release?.()
       closeClient(ws.data)
     },
   },
