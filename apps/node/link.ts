@@ -1,9 +1,9 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import {
-  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, publish, relayWs, sign, unframe,
+  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@tether/link'
 import { serveOps, WIN } from './ops.ts'
@@ -80,11 +80,20 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex')
 
 const sameText = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
-/** Starts a pairing: a one-time secret, good for a few minutes, shown in the code. */
+/** A short code is a 1-in-a-million guess, so it's dropped after this many wrong ones. */
+const SHORT_TRIES = 5
+
+type Pairing = { secret?: string; short?: string; failures?: number; expires?: number }
+
+/**
+ * Starts a pairing, good for a few minutes: a long secret for the QR code, and a short ID and
+ * code for typing in.
+ */
 export function newPairing() {
   const secret = crypto.randomBytes(24).toString('base64url')
-  writeJson('pairing.json', { secret, expires: Date.now() + PAIR_MINUTES * 60_000 })
-  return secret
+  const short = newShortCode()
+  writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing)
+  return { secret, short }
 }
 
 export const currentState = () => readJson<State | undefined>('state.json', undefined)
@@ -120,14 +129,23 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
     writeJson('phones.json', all)
     return welcome()
   }
-  const pairing = readJson<{ secret?: string; expires?: number }>('pairing.json', {})
-  if (hello.pair && pairing.secret && (pairing.expires ?? 0) > Date.now() && sameText(hello.pair, pairing.secret)) {
+  const pairing = readJson<Pairing>('pairing.json', {})
+  const live = (pairing.expires ?? 0) > Date.now()
+  const matches = (want?: string) => !!want && !!hello.pair && sameText(hello.pair, want)
+  if (hello.pair && live && (matches(pairing.secret) || matches(pairing.short))) {
     all[key] = { name: String(hello.name ?? 'Phone').slice(0, 64), pairedAt: Date.now(), lastSeen: Date.now() }
     writeJson('phones.json', all)
     // one code, one phone
     rmSync(file('pairing.json'), { force: true })
     console.log(`paired with ${all[key].name}`)
     return welcome()
+  }
+  if (hello.pair && live && pairing.short) {
+    // a wrong code: count it, and stop taking short codes before guessing could pay off
+    const failures = (pairing.failures ?? 0) + 1
+    writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
+    throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
   }
   if (hello.pair) throw new LinkError('NOT_PAIRED', `That pairing code has expired or was already used. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
   throw new LinkError('NOT_PAIRED', `This phone isn't paired with ${os.hostname()} any more. Run \`tether-node pair\` there and scan the code again.`)
@@ -199,29 +217,65 @@ function lanUrls(port: number) {
 
 // ---------- the Cloudflare quick tunnel ----------
 
-/** cloudflared from PATH, or downloaded once into ~/.tether-node/bin. */
+/**
+ * The cloudflared release that gets downloaded, with the sha256 of each file, checked against
+ * Cloudflare's release notes (for a .tgz, `inner` is the binary inside, the hash the notes list).
+ * To update: `gh release view <tag> -R cloudflare/cloudflared`, then download and hash each asset.
+ */
+export const CLOUDFLARED = {
+  version: '2026.9.3',
+  assets: {
+    'cloudflared-linux-amd64': { sha256: '77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2' },
+    'cloudflared-linux-arm64': { sha256: 'aaeb2d7d0da3614634c7e03ab13487a1522c2e79165ed2929cfe23d5e95b326d' },
+    'cloudflared-linux-arm': { sha256: '967dc371a3fedbf09e881c13ee7ba317155ebc336cbd4afb756b46fc6785e5af' },
+    'cloudflared-darwin-amd64.tgz': { sha256: 'd1155d0837487f261183b15c1eab6c4ebcad9dc49b94675f1524c3564cea3977', inner: 'ab588b3b4db9cdb4476c30a3db2a72635b1d8327d44741fee6799a0f37b0ec07' },
+    'cloudflared-darwin-arm64.tgz': { sha256: '587c2cfb1c230fe36c7fa7727da78be459dae028cabe8c001291999350f07095', inner: '5472c1a01c84bc31b3021056a73b4e5774ddddefc572124ea8fdf6c340639f32' },
+    // there is no Windows arm64 build; the x64 one runs under emulation
+    'cloudflared-windows-amd64.exe': { sha256: 'f096265ec2fcbe9bb6e2d64268db167ced3fcbb83d894bdb9e2fcdb26f2ea7e2' },
+  } as Record<string, { sha256: string; inner?: string }>,
+}
+
+export function cloudflaredAsset(platform: string = os.platform(), cpu: string = os.arch()) {
+  const arch = cpu === 'arm64' ? 'arm64' : cpu === 'arm' ? 'arm' : 'amd64'
+  if (platform === 'win32') return 'cloudflared-windows-amd64.exe'
+  if (platform === 'darwin') return `cloudflared-darwin-${arch === 'arm64' ? 'arm64' : 'amd64'}.tgz`
+  return `cloudflared-linux-${arch}`
+}
+
+const sha256 = (data: Uint8Array) => crypto.createHash('sha256').update(data).digest('hex')
+
+/** cloudflared from PATH, or the pinned release downloaded once into ~/.tether-node/bin. */
 async function cloudflared(): Promise<string> {
   const onPath = Bun.which('cloudflared')
   if (onPath) return onPath
   const bin = path.join(DIR, 'bin', WIN ? 'cloudflared.exe' : 'cloudflared')
   if (existsSync(bin)) return bin
-  const arch = os.arch() === 'arm64' ? 'arm64' : os.arch() === 'arm' ? 'arm' : 'amd64'
-  const base = 'https://github.com/cloudflare/cloudflared/releases/latest/download'
-  const asset = WIN ? `cloudflared-windows-${arch}.exe` : os.platform() === 'darwin' ? `cloudflared-darwin-${arch}.tgz` : `cloudflared-linux-${arch}`
-  console.log(`downloading cloudflared (${asset}) for the tunnel…`)
-  const res = await fetch(`${base}/${asset}`)
+  const asset = cloudflaredAsset()
+  const want = CLOUDFLARED.assets[asset]!
+  console.log(`downloading cloudflared ${CLOUDFLARED.version} (${asset}) for the tunnel…`)
+  const res = await fetch(`https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED.version}/${asset}`)
   if (!res.ok) throw new Error(`couldn't download cloudflared: ${res.status}`)
-  mkdirSync(path.dirname(bin), { recursive: true })
   const data = new Uint8Array(await res.arrayBuffer())
-  if (asset.endsWith('.tgz')) {
-    const tgz = `${bin}.tgz`
-    writeFileSync(tgz, data)
-    const p = Bun.spawn(['tar', '-xzf', tgz, '-C', path.dirname(bin)], { stderr: 'pipe' })
-    if ((await p.exited) !== 0) throw new Error('couldn\'t unpack cloudflared')
-    rmSync(tgz, { force: true })
-  } else writeFileSync(`${bin}.tmp`, data)
-  if (!asset.endsWith('.tgz')) renameSync(`${bin}.tmp`, bin)
-  if (!WIN) chmodSync(bin, 0o755)
+  if (sha256(data) !== want.sha256) throw new Error(`the cloudflared download didn't match its pinned checksum`)
+  mkdirSync(path.dirname(bin), { recursive: true })
+  // everything happens in a folder of its own; only a checked binary is moved into place
+  const tmp = mkdtempSync(path.join(path.dirname(bin), '.cloudflared-'))
+  try {
+    let file = path.join(tmp, 'cloudflared')
+    if (asset.endsWith('.tgz')) {
+      writeFileSync(path.join(tmp, 'download.tgz'), data)
+      const out = path.join(tmp, 'out')
+      mkdirSync(out)
+      const p = Bun.spawn(['tar', '-xzf', path.join(tmp, 'download.tgz'), '-C', out], { stderr: 'pipe' })
+      if ((await p.exited) !== 0) throw new Error("couldn't unpack cloudflared")
+      file = path.join(out, 'cloudflared')
+      if (!existsSync(file) || sha256(readFileSync(file)) !== want.inner) throw new Error(`the unpacked cloudflared didn't match its pinned checksum`)
+    } else writeFileSync(file, data)
+    if (!WIN) chmodSync(file, 0o755)
+    renameSync(file, bin)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
   return bin
 }
 

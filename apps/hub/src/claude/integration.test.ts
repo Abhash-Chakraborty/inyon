@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HOOK_SCRIPT, STATUS_SCRIPT } from './integration.ts'
@@ -140,6 +140,36 @@ describe('installIntegration', () => {
     settings('~/bin/new-bar.sh')
     await installIntegration(sandboxHost)
     expect(orig()).toBe('~/bin/new-bar.sh')
+  })
+})
+
+describe('privacy', () => {
+  const mode = (p: string) => statSync(join(home, p)).mode & 0o777
+
+  test('what the hook and status line save is readable by you only, whatever your umask', () => {
+    rmSync(join(home, '.tether'), { recursive: true, force: true })
+    run(`umask 022\n${HOOK_SCRIPT}`, JSON.stringify({ session_id: 's1', hook_event_name: 'UserPromptSubmit', prompt: 'secret plan' }))
+    expect(mode('.tether')).toBe(0o700)
+    expect(mode('.tether/panes')).toBe(0o700)
+    expect(mode('.tether/events.jsonl')).toBe(0o600)
+    expect(mode('.tether/panes/9.json')).toBe(0o600)
+    run(`umask 022\n${STATUS_SCRIPT}`, payload('s1'))
+    expect(mode('.tether/status')).toBe(0o700)
+    expect(mode('.tether/status/9.json')).toBe(0o600)
+    // your own status line still runs with your umask
+    writeFileSync(join(home, '.tether/statusline.orig'), `touch "$HOME/mine"\n`)
+    run(`umask 022\n${STATUS_SCRIPT}`, payload('s1'))
+    expect(mode('mine')).toBe(0o644)
+  })
+
+  test('turning the integration on (or healing it) closes up a ~/.tether left open', async () => {
+    const { installIntegration } = await import('./integration.ts')
+    Bun.spawnSync(['chmod', '755', join(home, '.tether')])
+    Bun.spawnSync(['chmod', '644', join(home, '.tether/events.jsonl')])
+    await installIntegration(sandboxHost)
+    expect(mode('.tether')).toBe(0o700)
+    expect(mode('.tether/events.jsonl')).toBe(0o600)
+    expect(mode('.tether/hook.sh')).toBe(0o700)
   })
 })
 

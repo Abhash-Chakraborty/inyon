@@ -1,7 +1,7 @@
 // Shell shared by the integration scripts and the probe (kept apart to avoid an import cycle).
 
 /** Bump when the scripts change; the probe reports older copies as outdated. */
-export const MARKER = 'tether-integration 2'
+export const MARKER = 'tether-integration 3'
 
 /**
  * Shell that prints the account a Claude config file is signed in to (oauthAccount.accountUuid),

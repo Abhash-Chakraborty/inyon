@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ClipboardPaste, Copy, ScanLine } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
@@ -8,7 +8,7 @@ import { copyText } from '../lib/clipboard.ts'
 import { plugin, readClipboard } from '../lib/native.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
-import { Button, Field, Sheet, inputClass } from './ui/primitives.tsx'
+import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 
 const PAIR_COMMAND = 'tether-node pair'
 const DOWNLOADS = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download'
@@ -18,6 +18,12 @@ export const SETUP_COMMANDS = {
   windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${DOWNLOADS}/get.ps1 | iex` },
 } as const
 const looksLikeLink = (s: string) => /^(tether:\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
+/** tether-node prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
+const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
+const cleanId = (s: string) => s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(ID_CHARS, '').slice(0, 8)
+const showId = (id: string) => (id.length > 4 ? `${id.slice(0, 4)}-${id.slice(4)}` : id)
+/** "K7Q4-MX2T 493 812" pasted whole into either box */
+const splitCode = (s: string) => /^\s*([0-9a-z]{4})[\s-]*([0-9a-z]{4})[\s:,-]+(\d{3})\s?(\d{3})\s*$/i.exec(s)
 
 /**
  * Pairing a computer (laptop, desktop or server) that runs `tether-node pair`: scan the code it
@@ -29,16 +35,32 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   const [link, setLink] = useState('')
   const [busy, setBusy] = useState(false)
   const [os, setOs] = useState<keyof typeof SETUP_COMMANDS>('unix')
+  const [how, setHow] = useState<'type' | 'paste'>('type')
+  const [shortId, setShortId] = useState('')
+  const [code, setCode] = useState('')
+  const codeBox = useRef<HTMLInputElement>(null)
+  const idBox = useRef<HTMLInputElement>(null)
+  const linkBox = useRef<HTMLInputElement>(null)
+  // a box to focus once the chosen way of entering the code has rendered
+  const [focusBox, setFocusBox] = useState<'id' | 'link'>()
+  useEffect(() => {
+    if (!focusBox) return
+    ;(focusBox === 'id' ? idBox : linkBox).current?.focus()
+    setFocusBox(undefined)
+  }, [focusBox, how])
+  const typed = shortId.length === 8 && code.length === 6 ? `${shortId} ${code}` : undefined
   const setupCmd = SETUP_COMMANDS[os]
   useOpened(open, edit?.id ?? given, () => {
     setName(edit?.name ?? '')
     setLink(given ?? '')
+    setHow(given ? 'paste' : 'type')
+    setShortId('')
+    setCode('')
   })
   const scanner = plugin('TetherDevice')?.scanQr
-  const linkInput = useRef<HTMLInputElement>(null)
 
   const pair = async (text: string) => {
-    if (!looksLikeLink(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
+    if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
     try {
       await api.pairLaptop(text.trim())
@@ -62,11 +84,17 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       if (r?.text) {
         setLink(r.text)
         await pair(r.text)
+      } else if (r?.type) {
+        setHow('type')
+        setFocusBox('id')
       } else if (r?.paste) {
-        await paste()
+        setHow('paste')
+        setFocusBox('link')
       } else if (r?.denied) {
-        linkInput.current?.focus()
-        toast({ title: 'No camera access', body: 'Paste the link tether-node printed instead, or allow the camera in Android settings.', tone: 'info' })
+        // without the camera, the ID and code are the shortest way in
+        setHow('type')
+        setFocusBox('id')
+        toast({ title: 'No camera access', body: 'Type the ID and code tether-node shows instead.', tone: 'info' })
       }
     } catch (err) {
       toast({ title: "Couldn't open the scanner", body: (err as Error).message, tone: 'error' })
@@ -75,9 +103,27 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const paste = async () => {
     const text = await readClipboard().catch(() => '')
-    if (text.trim()) return setLink(text.trim())
-    linkInput.current?.focus()
-    toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
+    if (text.trim()) setLink(text.trim())
+    else toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
+  }
+
+  /** A whole "ID code" pasted into either box fills both; a finished code pairs straight away. */
+  const typeId = (v: string) => {
+    const both = splitCode(v)
+    if (both) return fill(cleanId(both[1]! + both[2]!), both[3]! + both[4]!)
+    const id = cleanId(v)
+    setShortId(id)
+    if (id.length === 8 && shortId.length < 8) codeBox.current?.focus()
+  }
+  const typeCode = (v: string) => {
+    const both = splitCode(v)
+    if (both) return fill(cleanId(both[1]! + both[2]!), both[3]! + both[4]!)
+    fill(shortId, v.replace(/\D/g, '').slice(0, 6))
+  }
+  const fill = (id: string, c: string) => {
+    setShortId(id)
+    setCode(c)
+    if (id.length === 8 && c.length === 6 && !busy) pair(`${id} ${c}`)
   }
 
   const rename = async (e: React.FormEvent) => {
@@ -124,13 +170,13 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={!looksLikeLink(link)}>
+          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={how === 'type' ? !typed : !looksLikeLink(link)}>
             {busy ? 'Connecting…' : 'Pair'}
           </Button>
         </div>
       }
     >
-      <form id="laptop-form" onSubmit={(e) => (e.preventDefault(), pair(link))} className="space-y-4">
+      <form id="laptop-form" onSubmit={(e) => (e.preventDefault(), pair(how === 'type' ? typed ?? '' : link))} className="space-y-4">
         <p className="text-[13px] leading-relaxed text-fg-2">
           A laptop, desktop or server. The phone connects to it directly from any network, end to end encrypted. No VPN or open ports.
         </p>
@@ -164,23 +210,62 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             </Button>
           </div>
         )}
-        <Field label={scanner ? 'Or paste the link it printed' : 'Paste the link it printed'}>
-          <div className="flex gap-2">
-            <input
-              ref={linkInput}
-              className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
-              value={link}
-              onChange={(e) => setLink(e.target.value)}
-              placeholder="tether://pair?m=…"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
-            <Button type="button" variant="ghost" onClick={paste} aria-label="Paste">
-              <ClipboardPaste className="size-4" />
-            </Button>
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12.5px] font-medium text-fg">{scanner ? "Can't scan it?" : '2. Enter what it shows'}</p>
+            <Segmented size="sm" value={how} onChange={setHow} options={[{ v: 'type', label: 'Type a code' }, { v: 'paste', label: 'Paste the link' }]} />
           </div>
-        </Field>
+          {how === 'type' ? (
+            <div key="type" className="animate-fade-in grid grid-cols-[1.25fr_1fr] gap-2">
+              <Field label="ID">
+                <input
+                  ref={idBox}
+                  className={clsx(inputClass, 'font-mono text-[15px] tracking-[0.08em]')}
+                  value={showId(shortId)}
+                  onChange={(e) => typeId(e.target.value)}
+                  placeholder="K7Q4-MX2T"
+                  aria-label="ID"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  autoComplete="off"
+                  spellCheck={false}
+                  enterKeyHint="next"
+                />
+              </Field>
+              <Field label="Code">
+                <input
+                  ref={codeBox}
+                  className={clsx(inputClass, 'font-mono text-[15px] tracking-[0.2em]')}
+                  value={code}
+                  onChange={(e) => typeCode(e.target.value)}
+                  placeholder="000000"
+                  aria-label="Code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  enterKeyHint="go"
+                />
+              </Field>
+              <p className="col-span-2 text-[12px] leading-relaxed text-fg-3">The ID and code work once, for 10 minutes. Five wrong codes cancel them.</p>
+            </div>
+          ) : (
+            <div key="paste" className="animate-fade-in flex gap-2">
+              <input
+                ref={linkBox}
+                className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
+                value={link}
+                onChange={(e) => setLink(e.target.value)}
+                placeholder="tether://pair?m=…"
+                aria-label="Pairing link"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+              <Button type="button" variant="ghost" onClick={paste} aria-label="Paste">
+                <ClipboardPaste className="size-4" />
+              </Button>
+            </div>
+          )}
+        </div>
         {onServer && (
           <button type="button" onClick={onServer} className="py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
             Can't install anything? Connect over SSH instead

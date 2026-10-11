@@ -96,6 +96,26 @@ async function confirmDelivery(hostId: string, paneId: string, id: string, text:
   // typed and accepted on screen, but not in a record we can read yet: the ledger keeps looking
 }
 
+/** Claude's preview of a paste, and nothing else: text left in front of it would be sent too. */
+const onlyPastePreview = (squashed: string) => /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(squashed)
+
+/**
+ * Clears the input box and waits until it reads empty. Pasting next to leftovers of an older
+ * draft would send both, with the start of the message twice.
+ */
+async function emptyInput(hostId: string, paneId: string, draft: string) {
+  for (let round = 0; round < 3; round++) {
+    await clearInput(hostId, paneId, draft)
+    for (let i = 0; i < 6; i++) {
+      await sleep(i < 2 ? 60 : 120)
+      const left = (await currentScreen(hostId, paneId)).draft
+      if (!left?.trim()) return
+      draft = left
+    }
+  }
+  throw new HttpError(409, "Couldn't clear what was already in the agent's input box, so nothing was sent. Open the terminal to check.")
+}
+
 /**
  * Types a message into the agent's input box and submits it. For Claude we confirm on screen that
  * the text arrived before pressing Enter (a fast Enter can be swallowed while Claude is still
@@ -204,7 +224,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       // the whole message, Claude's paste preview, or the end of a long one whose start has
       // scrolled out of the box. Never "most of it": a draft mirrored from the app before the last
       // edits is a shorter prefix, and pressing Enter on it sends the old text.
-      return inputContains(d, text) || /\[Pastedtext#\d+/.test(now) || (now.length >= 200 && full.endsWith(now))
+      return inputContains(d, text) || onlyPastePreview(now) || (now.length >= 200 && full.endsWith(now))
     }
     // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
     if (squash(screen.draft ?? '') !== squash(text)) {
@@ -214,7 +234,7 @@ async function sendMessageToPane(hostId: string, paneId: string, text: string, f
       let draft = screen.draft
       let readable = screen.inputVisible || !checkedInput
       for (let round = 0; round < 2 && !arrived(draft) && (round === 0 || readable); round++) {
-        if (draft) await clearInput(hostId, paneId, draft.split('\n').length + 2)
+        if (draft) await emptyInput(hostId, paneId, draft)
         await typeText(host, paneId, text)
         for (let i = 0; i < 15; i++) {
           await sleep(i < 3 ? 80 : 150)
@@ -278,7 +298,7 @@ export async function inputAnswer(hostId: string, paneId: string, text: string) 
 export async function stopTask(hostId: string, outputFile: string | undefined, id?: string) {
   const host = registry.host(hostId)
   if (!outputFile && id) outputFile = await findTaskOutput(hostId, id)
-  if (!outputFile || !isTaskFile(outputFile)) throw new HttpError(404, 'Could not find that task on the machine')
+  if (!outputFile || !isTaskFile(outputFile, registry.get(hostId)?.probe?.home)) throw new HttpError(404, 'Could not find that task on the machine')
   const script = `
 F=${shq(outputFile)}
 pids=""
@@ -409,7 +429,7 @@ async function openCodeModel(hostId: string, paneId: string, id: string) {
   const release = await watchers.peek(hostId, paneId)?.holdDraft(draft)
   let picked = false
   try {
-    if (draft) await clearInput(hostId, paneId, draft.split('\n').length + 2)
+    if (draft) await clearInput(hostId, paneId, draft)
     await typeText(host, paneId, '/models')
     await waitScreen(hostId, paneId, (s) => s.draft === '/models', 1500)
     await sendKeys(host, paneId, ['Enter'])
@@ -543,7 +563,7 @@ async function codexCommand(hostId: string, paneId: string, cmd: string) {
   // no composer on screen means some menu is open; typing into it could pick something
   if (!s.model) throw new HttpError(409, 'Codex is showing a menu; close it in the terminal first')
   if (s.working) throw new HttpError(409, 'Codex is working; change this when it finishes')
-  if (s.draft) await clearInput(hostId, paneId, s.draft.split('\n').length + 2)
+  if (s.draft) await clearInput(hostId, paneId, s.draft)
   await typeText(host, paneId, cmd)
   // an Enter that lands while Codex is still taking in the typing gets lost
   for (let i = 0; i < 10 && (await currentScreen(hostId, paneId)).draft?.trim() !== cmd; i++) await sleep(100)
@@ -651,7 +671,7 @@ export async function codexRewind(hostId: string, paneId: string, text?: string)
   const s = await codexComposer(hostId, paneId)
   if (s.prompt || !s.model) throw new HttpError(409, 'Codex is showing a menu; close it in the terminal first')
   if (s.working) throw new HttpError(409, 'Codex is working; stop it or wait, then rewind')
-  if (s.draft) await clearInput(hostId, paneId, s.draft.split('\n').length + 2)
+  if (s.draft) await clearInput(hostId, paneId, s.draft)
   const browse = async () => codexBrowsing((await capturePanes(host, [paneId])).get(paneId) ?? [])
   await sendKeys(host, paneId, ['Escape'])
   await sleep(200)
@@ -738,11 +758,17 @@ async function launchBin(host: ReturnType<typeof registry.host>, agent: AgentKin
 /** `cmd` with its first word (the agent's command) replaced by `bin`. */
 const withBin = (cmd: string, bin: string) => cmd.replace(/^\S+/, bin)
 
+/** No session (start fresh), or a conversation id: a UUID, nothing a shell would read as more. */
+export const isSessionId = (id: unknown): id is string | null | undefined =>
+  id === undefined || id === null || id === '' || (typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+
 /** Starts (or resumes) an agent in a pane that is sitting at a shell prompt. */
-export async function startAgent(hostId: string, paneId: string, agent: AgentKind = 'claude', resume?: string) {
+export async function startAgent(hostId: string, paneId: string, agent: AgentKind = 'claude', resume?: unknown) {
+  // both end up typed into a shell
+  if (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent)) throw new HttpError(400, 'Unknown agent')
+  if (!isSessionId(resume)) throw new HttpError(400, 'Bad session id')
   const { host, found } = agentPane(hostId, paneId)
   if (found.pane.agent) throw new HttpError(409, 'An agent is already running here')
-  if (resume && !/^[0-9a-f-]{36}$/.test(resume)) throw new HttpError(400, 'Bad session id')
   const def = AGENTS[agent]
   const cmd = !resume ? def.launch : agent === 'codex' ? `codex resume ${resume}` : agent === 'antigravity' ? `agy --conversation ${resume}` : `${def.launch} --resume ${resume}`
   await typeText(host, paneId, withBin(cmd, await launchBin(host, agent)), true)

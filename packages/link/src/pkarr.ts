@@ -17,6 +17,9 @@ export interface Published {
   relays: string[]
   /** microseconds since the epoch; newer wins */
   seq: number
+  /** a short pairing ID's record names the machine it stands for */
+  machine?: string
+  name?: string
 }
 
 const enc = new TextEncoder()
@@ -42,7 +45,8 @@ function name(labels: string[]) {
 
 /** One TXT record "_tether.<id>" holding "u=<url>" and "r=<relay>" strings. */
 function dnsPacket(id: string, p: Omit<Published, 'seq'>): Uint8Array {
-  const strings = [...p.urls.map((u) => `u=${u}`), ...p.relays.map((r) => `r=${r}`)].map((s) => {
+  const named = [...(p.machine ? [`m=${p.machine}`] : []), ...(p.name ? [`n=${p.name.slice(0, 64)}`] : [])]
+  const strings = [...named, ...p.urls.map((u) => `u=${u}`), ...p.relays.map((r) => `r=${r}`)].map((s) => {
     const b = enc.encode(s)
     if (b.length > 255) throw new Error('Address too long to publish')
     return [b.length, ...b]
@@ -124,23 +128,26 @@ export function decodePublished(id: string, body: Uint8Array): Published | undef
       urls: strings.filter((s) => s.startsWith('u=')).map((s) => s.slice(2)),
       relays: strings.filter((s) => s.startsWith('r=')).map((s) => s.slice(2)),
       seq: Number(seq),
+      machine: strings.find((s) => s.startsWith('m='))?.slice(2),
+      name: strings.find((s) => s.startsWith('n='))?.slice(2),
     }
   } catch {
     return
   }
 }
 
-/** Publishes to every relay; resolves once one of them took it. */
+/** Publishes to every relay; resolves as soon as one of them took it (the rest carry on). */
 export async function publish(identity: Identity, p: Omit<Published, 'seq'>, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch) {
   const body = encodePublished(identity, p)
-  const results = await Promise.allSettled(
-    relays.map(async (r) => {
-      const res = await fetcher(`${r}/${identity.id}`, { method: 'PUT', body: body as Uint8Array<ArrayBuffer>, signal: AbortSignal.timeout(40000) })
-      if (!res.ok) throw new Error(`${r}: ${res.status}`)
-    }),
-  )
-  if (!results.some((r) => r.status === 'fulfilled')) {
-    throw new Error(`Couldn't publish the address: ${results.map((r) => (r as PromiseRejectedResult).reason?.message).join('; ')}`)
+  const puts = relays.map(async (r) => {
+    const res = await fetcher(`${r}/${identity.id}`, { method: 'PUT', body: body as Uint8Array<ArrayBuffer>, signal: AbortSignal.timeout(40000) })
+    if (!res.ok) throw new Error(`${r}: ${res.status}`)
+  })
+  try {
+    await Promise.any(puts)
+  } catch (err) {
+    const why = (err as AggregateError).errors?.map((e: Error) => e?.message) ?? [(err as Error).message]
+    throw new Error(`Couldn't publish the address: ${why.join('; ')}`)
   }
 }
 

@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from 'bun:test'
+import { afterEach, expect, spyOn, test } from 'bun:test'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LaptopSheet, SETUP_COMMANDS } from './LaptopSheet.tsx'
 import { renderSettled as render } from '../test/render.tsx'
+import { api } from '../lib/api.ts'
 import { useStore } from '../lib/store.ts'
 
 /** The Android app's scanner, answering with whatever the user did on it. */
@@ -32,22 +33,62 @@ test('says how to get the helper onto a laptop or server, for Mac/Linux and for 
   expect(SETUP_COMMANDS.windows.command).toMatch(/^irm https:\/\/github\.com\/.+\/releases\/latest\/download\/get\.ps1 \| iex$/)
 })
 
-test('"Paste link instead" on the scanner fills in the copied link', async () => {
+test('typing the ID and code pairs as soon as the last digit is in', async () => {
+  const user = userEvent.setup()
+  const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'box' } as any)
+  let closed = false
+  await render(<LaptopSheet open onClose={() => (closed = true)} />)
+  // copied off a terminal: lower case, an O for a zero
+  await user.type(screen.getByRole('textbox', { name: 'ID' }), 'k7q4mxot')
+  expect((screen.getByRole('textbox', { name: 'ID' }) as HTMLInputElement).value).toBe('K7Q4-MX0T')
+  // the code box takes over once the ID is complete
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Code' }))
+  await user.keyboard('493 81')
+  expect(pairLaptop).not.toHaveBeenCalled()
+  await user.keyboard('2')
+  expect(pairLaptop).toHaveBeenCalledWith('K7Q4MX0T 493812')
+  await new Promise((r) => setTimeout(r, 0))
+  expect(closed).toBe(true)
+  pairLaptop.mockRestore()
+})
+
+test('an ID and code pasted together fill both boxes', async () => {
+  const user = userEvent.setup()
+  const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'box' } as any)
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.click(screen.getByRole('textbox', { name: 'ID' }))
+  await user.paste('K7Q4-MX2T  493 812')
+  expect(pairLaptop).toHaveBeenCalledWith('K7Q4MX2T 493812')
+  pairLaptop.mockRestore()
+})
+
+test('"Type a code instead" on the scanner goes to the ID box', async () => {
+  const user = userEvent.setup()
+  phone(async () => ({ type: true }))
+  await render(<LaptopSheet open onClose={() => {}} link="tether://pair?m=x" />)
+  await user.click(screen.getByRole('button', { name: /Scan the code/ }))
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'ID' }))
+  expect(useStore.getState().toasts).toEqual([])
+})
+
+test('a paste request from the scanner goes to the link box, which reads the clipboard', async () => {
   const user = userEvent.setup()
   phone(async () => ({ paste: true }), ' tether://pair?m=abc \n')
   await render(<LaptopSheet open onClose={() => {}} />)
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
-  expect((screen.getByPlaceholderText('tether://pair?m=…') as HTMLInputElement).value).toBe('tether://pair?m=abc')
-  expect(useStore.getState().toasts).toEqual([])
+  const box = screen.getByRole('textbox', { name: 'Pairing link' }) as HTMLInputElement
+  expect(document.activeElement).toBe(box)
+  await user.click(screen.getByRole('button', { name: 'Paste' }))
+  expect(box.value).toBe('tether://pair?m=abc')
 })
 
-test('no camera access points to the paste field instead', async () => {
+test('no camera access points to typing the ID and code', async () => {
   const user = userEvent.setup()
   phone(async () => ({ denied: true }))
   await render(<LaptopSheet open onClose={() => {}} />)
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
   expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['No camera access'])
-  expect(document.activeElement).toBe(screen.getByPlaceholderText('tether://pair?m=…'))
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'ID' }))
 })
 
 test('closing the scanner does nothing', async () => {
@@ -56,4 +97,5 @@ test('closing the scanner does nothing', async () => {
   await render(<LaptopSheet open onClose={() => {}} />)
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
   expect(useStore.getState().toasts).toEqual([])
+  expect(screen.getByRole('textbox', { name: 'ID' })).toBeTruthy()
 })

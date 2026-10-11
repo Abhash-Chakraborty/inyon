@@ -22,6 +22,8 @@ export interface HostConfig {
   tokenHash?: string
   /** node only: when the machine first connected with its token (unset while the command hasn't run) */
   pairedAt?: number
+  /** node only: when its current token was made; one that's never used stops working after a day */
+  tokenIssuedAt?: number
   /** link only (a laptop the phone app paired with directly): its id, from `tether-node pair` */
   machineId?: string
   /** link only: where it was last reachable, and the relays it uses */

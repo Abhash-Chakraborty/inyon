@@ -38,11 +38,31 @@ const childEnv = WIN ? winEnv() : process.env
 /** PATH the commands run with, which also covers the usual per-user install folders. */
 export const childPath = () => childEnv[Object.keys(childEnv).find((k) => k.toLowerCase() === 'path') ?? 'PATH'] ?? ''
 
-/** Ends a command and everything it started (on Windows, killing sh alone leaves tmux clients behind). */
+/**
+ * Ends a command and everything it started. Commands run in their own process group (detached),
+ * so on Unix the whole group goes: killing sh alone leaves a pipeline's other commands running and
+ * holding its output open. On Windows, taskkill /T does the same for the process tree.
+ */
 function killTree(p: { pid: number; kill(): void }) {
-  if (WIN) Bun.spawn(['taskkill', '/PID', String(p.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore', windowsHide: true } as any)
-  else p.kill()
+  if (WIN) return void Bun.spawn(['taskkill', '/PID', String(p.pid), '/T', '/F'], { stdout: 'ignore', stderr: 'ignore', windowsHide: true } as any)
+  try {
+    process.kill(-p.pid, 'SIGTERM')
+  } catch {
+    p.kill()
+  }
 }
+
+/** Collects a stream's bytes, so what arrived so far can be read without waiting for its end. */
+function collect(s: ReadableStream<Uint8Array>) {
+  const chunks: Uint8Array[] = []
+  const done = (async () => {
+    for await (const c of s) chunks.push(c)
+  })().catch(() => {})
+  return { done, text: () => Buffer.concat(chunks).toString('utf8') }
+}
+
+/** How long output may stay open after the shell exited (a child that escaped its group can hold it). */
+const OUTPUT_GRACE_MS = 1000
 const lf = (s: string) => (WIN ? s.replace(/\r\n/g, '\n') : s)
 
 /**
@@ -99,8 +119,15 @@ function winLine(cmd: string): ((l: string) => string) | undefined {
   return (l) => l.replace(/^(%(?:extended-)?output) %(\d+) /, `$1 %${sid}.$2 `)
 }
 
+// commands have process groups of their own, so they would outlive tether-node: end them as it exits
+const everyConnection = new Set<Map<string, Proc>>()
+process.on('exit', () => {
+  for (const running of everyConnection) for (const p of running.values()) p.kill()
+})
+
 export function serveOps(send: (m: unknown) => void) {
   const running = new Map<string, Proc>()
+  everyConnection.add(running)
   return {
     async message(m: any) {
       const id = m.id
@@ -120,16 +147,21 @@ export function serveOps(send: (m: unknown) => void) {
             stderr: 'pipe',
             env,
             windowsHide: true,
+            detached: !WIN,
           } as any)
           running.set(id, { kill: () => killTree(p) })
-          const [stdout, stderr, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+          const out = collect(p.stdout as unknown as ReadableStream<Uint8Array>)
+          const err = collect(p.stderr as unknown as ReadableStream<Uint8Array>)
+          const code = await p.exited
+          // a timed-out or killed command answers even if something it started still holds the output
+          await Promise.race([Promise.all([out.done, err.done]), Bun.sleep(OUTPUT_GRACE_MS)])
           running.delete(id)
           if (snapshot) rmSync(snapshot, { force: true })
-          send({ id, type: 'exit', code, stdout: lf(stdout), stderr: lf(stderr) })
+          send({ id, type: 'exit', code, stdout: lf(out.text()), stderr: lf(err.text()) })
           break
         }
         case 'stream': {
-          const p = Bun.spawn(shellFor(m.cmd), { stdin: m.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore', env: childEnv, windowsHide: true } as any)
+          const p = Bun.spawn(shellFor(m.cmd), { stdin: m.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore', env: childEnv, windowsHide: true, detached: !WIN } as any)
           running.set(id, { kill: () => killTree(p) })
           const map = winLine(m.cmd)
           const emit = (l: string) => {
@@ -185,6 +217,7 @@ export function serveOps(send: (m: unknown) => void) {
     close() {
       for (const p of running.values()) p.kill()
       running.clear()
+      everyConnection.delete(running)
     },
   }
 }

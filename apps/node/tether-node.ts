@@ -11,7 +11,8 @@
  *       --port <n>                     local port (4780)
  *   tether-node phones                 list paired phones
  *   tether-node forget <name|key>      unpair a phone
- *   tether-node <hub-url> <token>      connect to a Tether hub instead (from its "Add a machine")
+ *   tether-node <hub-url>              connect to a Tether hub instead (from its "Add a machine"), with
+ *                                      the token in TETHER_TOKEN (`<hub-url> <token>` works too)
  *
  * The phone link is end-to-end encrypted; tunnels and relays only carry ciphertext. For a hub,
  * plain http:// is only accepted for private addresses (localhost, LAN, Tailscale/NetBird).
@@ -20,7 +21,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
-import { pairLink } from '@tether/link'
+import { formatShortId, pairLink, publishShortCode } from '@tether/link'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { ensureShell, installService, missingMux, uninstallService } from './service.ts'
@@ -76,6 +77,7 @@ function hubMode(hubArg?: string, tokenArg?: string) {
     console.error(USAGE)
     process.exit(2)
   }
+  if (tokenArg) console.error('Note: a token given as an argument shows in the process list. Prefer TETHER_TOKEN=<token> tether-node <hub-url>.')
 
   const url = new URL(hub)
   if (url.protocol === 'http:' && !isPrivate(url) && !process.env.TETHER_ALLOW_INSECURE) {
@@ -165,12 +167,15 @@ function fail(message: string): never {
   process.exit(2)
 }
 
-/** Shows the pairing code; starts the link here first if it isn't running yet. */
+/**
+ * Shows the pairing code; starts the link here first if it isn't running yet. True when the link
+ * runs elsewhere, so this process has nothing left to do.
+ */
 async function pair(args: string[]) {
   const config = linkOptions(args)
   const service = running()
   if (!service) startLink(config)
-  const secret = newPairing()
+  const { secret, short } = newPairing()
   // wait for an address the phone can use (the tunnel takes a few seconds to come up)
   const wanted = config.tunnel || config.lan || config.relays.length
   for (let i = 0; wanted && i < 60; i++) {
@@ -179,12 +184,16 @@ async function pair(args: string[]) {
     await Bun.sleep(500)
   }
   const s = currentState()
-  const link = pairLink({ id: identity().id, secret, name: os.hostname(), urls: s?.urls ?? [], relays: s?.relays ?? [] })
+  const where = { urls: s?.urls ?? [], relays: s?.relays ?? [] }
+  const link = pairLink({ id: identity().id, secret, name: os.hostname(), ...where })
+  // the typed-in code needs the relays to know this ID; without them there's still the QR code
+  const typed = await Promise.race([publishShortCode(short, { machine: identity().id, name: os.hostname(), ...where }).then(() => true, () => false), new Promise<false>((r) => setTimeout(r, 8000, false).unref())])
   console.log(`\nScan this with the Tether app (Add a computer → Scan the code), within 10 minutes:\n`)
   console.log(renderUnicodeCompact(link, { border: 2 }))
+  if (typed) console.log(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
   console.log(`\nOr paste this link into the app:\n${link}\n`)
   if (!s?.urls.length && !s?.relays.length) console.log('No address yet: the phone will look this machine up once its tunnel is up.\n')
-  if (service) return
+  if (service) return true
   console.log('Keep this running so the phone can connect, or run `tether-node install` to keep it running in the background.')
 }
 
@@ -208,6 +217,8 @@ async function setup() {
   if (svc.ok) {
     console.log('Paired phones connect by themselves from now on. To pair another phone later, run `tether-node pair`.')
     await pause()
+    // the service has it from here; don't wait on a slow relay before giving the terminal back
+    process.exit(0)
   }
 }
 
@@ -247,13 +258,13 @@ const USAGE = `tether-node ${VERSION}
   tether-node install / uninstall   start or stop running in the background (at login)
   tether-node phones                list paired phones
   tether-node forget <name|key>     unpair a phone
-  tether-node <hub-url> <token>     connect to a Tether hub instead`
+  tether-node <hub-url>             connect to a Tether hub instead, with the token in TETHER_TOKEN`
 
 const [cmd, ...rest] = process.argv.slice(2)
 const hubSaved = !!(process.env.TETHER_HUB || readEnvFile(path.join(os.homedir(), '.tether-node', 'env')).TETHER_HUB)
 if (cmd === 'pair') {
   await ensureShell()
-  await pair(rest)
+  if (await pair(rest)) process.exit(0)
 } else if (cmd === 'link') {
   if (running()) fail(`The link is already running (pid ${currentState()!.pid}).`)
   await ensureShell()

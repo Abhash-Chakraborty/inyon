@@ -682,8 +682,10 @@ class ChatWatcher {
     // If the file is empty or tail never catches up, still show what we have once it goes quiet.
     let quiet = reading() ? setTimeout(finishInitial, remaining > 0 ? FIRST_LINE_MS : 0) : undefined
     if (reading() && remaining > 0) this.reportProgress(0, total, true)
-    // a remote machine leaves out image data, which is most of a long session's file
-    this.tail = host.stream(tailCommand(path, reader.offset, this.onRemoteHost()), (line) => {
+    // a remote machine leaves out image data, which is most of a long session's file; its tail ends
+    // when stdin closes, since closing the connection alone doesn't stop it there
+    const remote = this.onRemoteHost()
+    this.tail = host.stream(tailCommand(path, reader.offset, remote), (line) => {
       if (gen !== this.generation) return
       const r = reader.line(line)
       if (!r) return
@@ -708,7 +710,7 @@ class ChatWatcher {
       } else {
         this.scheduleInfo()
       }
-    })
+    }, { keepStdin: remote })
     this.watchTail(gen)
   }
 

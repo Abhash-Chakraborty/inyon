@@ -87,11 +87,13 @@ pnpm build
 pnpm start
 ```
 
-The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password.
-Change it later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
+The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password,
+with the setup code the hub prints when it starts (also in `~/.tether/setup-code`). Change the
+password later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
 
 Open it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
-put it behind an HTTPS reverse proxy. To keep it running, see `deploy/tether-hub.service`.
+put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
+`TETHER_ALLOWED_HOSTS`. To keep it running, see `deploy/tether-hub.service`.
 
 ## Where everything runs
 
@@ -157,6 +159,12 @@ irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/downlo
 
 It downloads `tether-node`, checks it against the release's SHA256SUMS and prints a QR code. In
 the app, tap *Add a computer*, then *Scan the code*. The computer stays paired until you remove it.
+
+Can't scan it, say because the SSH session is on the same phone? The terminal also prints a
+one-time ID and a 6-digit code: tap *Type a code* and enter them. The ID stands for a throwaway key,
+and the computer publishes a record under it naming its real key and addresses, so the phone finds
+it without a VPN. The code travels inside the encrypted channel, works once for 10 minutes, and
+five wrong tries cancel it.
 
 Setup also installs `tether-node` as a background service, so it comes back after a restart: a
 systemd user unit on Linux, launchd on macOS and a logon task on Windows. A box without systemd
@@ -241,9 +249,11 @@ Paired machines connect out with per-machine tokens that you can revoke. See
 | Variable | Default | |
 |---|---|---|
 | `PORT` | `4777` | Hub port |
-| `BIND` | `127.0.0.1` | Address to listen on |
+| `BIND` | `127.0.0.1` | Address to listen on. Anything but localhost needs `TLS_CERT`/`TLS_KEY`, or `TETHER_ALLOW_HTTP=1` |
+| `TETHER_ALLOW_HTTP` | | Set to `1` to serve plain http on a network `BIND`, for a VPN address that encrypts on its own |
 | `TETHER_DATA_DIR` | `~/.tether` | Password hash, machine list, drafts, settings |
 | `TETHER_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
+| `TETHER_ALLOWED_HOSTS` | | Extra comma-separated host names the hub answers to. IP addresses, single-label names, localhost and Tailscale/NetBird names always work; add a public domain your proxy uses. `*` turns the check off |
 | `TLS_CERT`, `TLS_KEY` | | Paths to a PEM certificate and key to serve HTTPS. Needed for a real installed app on phones (and clipboard images, notifications) |
 
 ## Development

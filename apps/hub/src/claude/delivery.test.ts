@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { codexAccepted, inputContains, sameMessage, SendLedger } from './delivery.ts'
 import { parseScreen } from './screen.ts'
+import { draftRows } from './drafts.ts'
 import { readFileSync } from 'node:fs'
 
 test('missing composer and approval screens do not confirm delivery', () => {
@@ -15,6 +16,14 @@ test('unrelated or partial input is not enough to submit', () => {
   expect(inputContains('this message', 'send this message')).toBe(false)
   expect(inputContains('send\nthis message', 'send this message')).toBe(true)
   expect(inputContains('[Pasted text #1 +20 lines]', 'long message')).toBe(true)
+  // leftovers of an older draft in front of the paste would be sent along with it
+  expect(inputContains('Hey also for mobile I want [Pasted text #1 +20 lines]', 'long message')).toBe(false)
+})
+
+test('a long dictated line needs a clear for every row it wraps onto', () => {
+  expect(draftRows('short', 100)).toBe(3)
+  expect(draftRows('x'.repeat(640), 100)).toBe(Math.ceil(640 / 94) + 2)
+  expect(draftRows('one\ntwo\n' + 'y'.repeat(300), 80)).toBe(1 + 1 + Math.ceil(300 / 74) + 2)
 })
 
 test('real Codex queue confirms only the queued message, despite another draft', () => {

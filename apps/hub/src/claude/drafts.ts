@@ -34,11 +34,21 @@ export function setDraft(key: string, d: Draft | undefined) {
   save()
 }
 
-/** Clears Claude's input box: Ctrl+U clears a line, Backspace joins the line above. */
-export async function clearInput(hostId: string, paneId: string, lines: number) {
+/**
+ * Rows a draft fills in the input box. The screen reader joins wrapped rows back into one line, but
+ * Ctrl+U only clears the row the cursor is on, so a long dictated paragraph needs one per row.
+ */
+export function draftRows(draft: string, width?: number) {
+  const row = Math.max(20, (width || 80) - 6)
+  return draft.split('\n').reduce((n, line) => n + Math.max(1, Math.ceil(line.length / row)), 0) + 2
+}
+
+/** Clears Claude's input box: Ctrl+U clears a row, Backspace joins the row above. */
+export async function clearInput(hostId: string, paneId: string, draft: string) {
   const host = registry.host(hostId)
+  const rows = draftRows(draft, registry.findPane(hostId, paneId)?.pane.width)
   const keys: string[] = []
-  for (let i = 0; i < Math.min(lines + 1, 60); i++) keys.push('C-u', 'BSpace')
+  for (let i = 0; i < Math.min(rows + 1, 240); i++) keys.push('C-u', 'BSpace')
   keys.push('C-u')
   await sendKeys(host, paneId, keys)
 }
@@ -46,6 +56,6 @@ export async function clearInput(hostId: string, paneId: string, lines: number) 
 /** Puts `text` into Claude's input box without submitting it (replacing what's there). */
 export async function mirrorToTerminal(hostId: string, paneId: string, text: string, current?: string) {
   if (squash(current ?? '') === squash(text)) return
-  if (current) await clearInput(hostId, paneId, current.split('\n').length + 2)
+  if (current) await clearInput(hostId, paneId, current)
   if (text) await typeText(registry.host(hostId), paneId, text)
 }
