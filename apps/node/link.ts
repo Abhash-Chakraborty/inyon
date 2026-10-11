@@ -17,7 +17,7 @@ import { serveOps, WIN } from './ops.ts'
  * machine publishes its current addresses under its own key (pkarr) and the phone looks them up.
  */
 
-export const VERSION = '0.5.0'
+export const VERSION = '0.6.0'
 const DIR = path.join(os.homedir(), '.tether-node')
 const file = (name: string) => path.join(DIR, name)
 const PAIR_MINUTES = 10
