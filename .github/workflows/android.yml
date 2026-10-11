@@ -4,6 +4,7 @@ name: Android
 #   push to main  -> refreshes the "android-latest" pre-release, so the newest build is one tap away
 #   tag v1.2.3    -> a release named after the tag, with the APK attached
 #   run by hand   -> the APK as a workflow artifact
+# Every run also starts the APK on an emulator (the smoke job) to catch crashes and R8 mistakes.
 on:
   push:
     branches: [main]
@@ -21,6 +22,8 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.name }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -43,6 +46,11 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then v="${GITHUB_REF_NAME#v}"; else v="$(jq -r .version package.json)-build.${GITHUB_RUN_NUMBER}"; fi
           echo "name=$v" >> "$GITHUB_OUTPUT"
 
+      # JVM unit tests; the ones that need an sshd skip here and run in the ssh-plugin job
+      - name: Unit tests
+        working-directory: apps/mobile/android
+        run: ./gradlew :app:testReleaseUnitTest
+
       - name: Build
         working-directory: apps/mobile/android
         env:
@@ -60,13 +68,13 @@ jobs:
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             # forks and first runs: a debug build still installs, but can't update a signed one
-            ./gradlew --no-daemon assembleDebug
+            ./gradlew assembleDebug
             cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/tether.apk"
             exit 0
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
           export TETHER_KEYSTORE="$RUNNER_TEMP/release.p12"
-          ./gradlew --no-daemon assembleRelease
+          ./gradlew assembleRelease
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/tether.apk"
           rm -f "$RUNNER_TEMP/release.p12"
 
@@ -79,6 +87,13 @@ jobs:
         with:
           name: tether-${{ steps.version.outputs.name }}
           path: ${{ runner.temp }}/tether.apk
+
+      # turns R8's renamed stack traces back into readable ones (retrace)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mapping-${{ steps.version.outputs.name }}
+          path: apps/mobile/android/app/build/outputs/mapping/release/mapping.txt
+          if-no-files-found: ignore
 
       - name: Publish
         if: github.event_name == 'push'
@@ -97,6 +112,86 @@ jobs:
               --title "Latest Android build ($VERSION)" \
               --notes "Built from $GITHUB_SHA on main. Install over the previous build; tagged releases are the stable ones."
           fi
+
+  # Installs the APK on an emulator, starts it and checks logcat. Publishing happens in the apk job,
+  # so a flaky emulator never holds back a release; an emulator that never boots is a warning, a
+  # crash is a failure.
+  smoke:
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      OUT: ${{ github.workspace }}/smoke
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: tether-${{ needs.apk.outputs.version }}
+          path: ${{ runner.temp }}/apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # drives the WebView for the screenshots
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # a QR code that isn't Tether's, on the wall of the emulator camera's virtual room
+      - name: Make a camera poster
+        run: |
+          sudo apt-get install -y -qq qrencode > /dev/null
+          qrencode -s 24 -m 4 -o "${{ runner.temp }}/poster.png" 'https://example.com/menu'
+
+      - name: Start the app on an emulator
+        id: first
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
+          script: |
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-screens.sh || true
+
+      - name: Did the first try reach a verdict
+        id: tried
+        run: echo "verdict=$([ -f "$OUT/verdict" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - name: Start the app on a fresh emulator (the first one failed to come up)
+        if: steps.tried.outputs.verdict == 'no'
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
+          script: |
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-screens.sh || true
+
+      - name: Verdict
+        run: |
+          v=$(cat "$OUT/verdict" 2>/dev/null || echo none)
+          case "$v" in
+            pass) echo "The APK started cleanly: no crash, plugins loaded, web app loaded." ;;
+            none) echo "::warning::The emulator never came up, so the APK was not smoke tested." ;;
+            *) echo "::error::$v"; exit 1 ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ needs.apk.outputs.version }}
+          path: smoke/
+          if-no-files-found: ignore
 
   # JVM tests for the native SSH plugin (SshCore) against a throwaway sshd on the runner
   ssh-plugin:

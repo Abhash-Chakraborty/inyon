@@ -1,11 +1,11 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ClipboardPaste, Copy, ScanLine } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
 import { api } from '../lib/api.ts'
-import { toast } from '../lib/store.ts'
+import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
-import { plugin } from '../lib/native.ts'
+import { plugin, readClipboard } from '../lib/native.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
@@ -39,6 +39,15 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   const [shortId, setShortId] = useState('')
   const [code, setCode] = useState('')
   const codeBox = useRef<HTMLInputElement>(null)
+  const idBox = useRef<HTMLInputElement>(null)
+  const linkBox = useRef<HTMLInputElement>(null)
+  // a box to focus once the chosen way of entering the code has rendered
+  const [focusBox, setFocusBox] = useState<'id' | 'link'>()
+  useEffect(() => {
+    if (!focusBox) return
+    ;(focusBox === 'id' ? idBox : linkBox).current?.focus()
+    setFocusBox(undefined)
+  }, [focusBox, how])
   const typed = shortId.length === 8 && code.length === 6 ? `${shortId} ${code}` : undefined
   const setupCmd = SETUP_COMMANDS[os]
   useOpened(open, edit?.id ?? given, () => {
@@ -70,10 +79,22 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const scan = async () => {
     try {
-      const r = await scanner!()
+      // the scanner buzzes on a hit or a wrong code, unless haptics are off in Settings
+      const r = await scanner!({ haptics: !!useStore.getState().settings.haptics })
       if (r?.text) {
         setLink(r.text)
         await pair(r.text)
+      } else if (r?.type) {
+        setHow('type')
+        setFocusBox('id')
+      } else if (r?.paste) {
+        setHow('paste')
+        setFocusBox('link')
+      } else if (r?.denied) {
+        // without the camera, the ID and code are the shortest way in
+        setHow('type')
+        setFocusBox('id')
+        toast({ title: 'No camera access', body: 'Type the ID and code tether-node shows instead.', tone: 'info' })
       }
     } catch (err) {
       toast({ title: "Couldn't open the scanner", body: (err as Error).message, tone: 'error' })
@@ -81,8 +102,8 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   }
 
   const paste = async () => {
-    const text = await navigator.clipboard?.readText().catch(() => '')
-    if (text) setLink(text.trim())
+    const text = await readClipboard().catch(() => '')
+    if (text.trim()) setLink(text.trim())
     else toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
   }
 
@@ -198,6 +219,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             <div key="type" className="animate-fade-in grid grid-cols-[1.25fr_1fr] gap-2">
               <Field label="ID">
                 <input
+                  ref={idBox}
                   className={clsx(inputClass, 'font-mono text-[15px] tracking-[0.08em]')}
                   value={showId(shortId)}
                   onChange={(e) => typeId(e.target.value)}
@@ -228,6 +250,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
           ) : (
             <div key="paste" className="animate-fade-in flex gap-2">
               <input
+                ref={linkBox}
                 className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
