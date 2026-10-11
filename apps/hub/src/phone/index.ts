@@ -29,6 +29,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
 
   const core = await import('../core.ts')
   const { registry, HttpError } = await import('../hosts/registry.ts')
+  const { watchers } = await import('../claude/watcher.ts')
   const { saveDraftsAtOnce } = await import('../claude/drafts.ts')
   lookup = (id) => registry.get(id)?.host.config
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, saveEverything, startCore } = core
@@ -176,6 +177,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     },
     background(hidden) {
       registry.quiet(hidden)
+      watchers.quiet(hidden)
       registry.holdAlerts(hidden)
       // Android may close the app from the background: keep what each open chat has read, drafts
       // and how each machine looked
@@ -184,6 +186,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     },
     resume() {
       registry.quiet(false)
+      watchers.quiet(false)
       registry.holdAlerts(false)
       links.resume()
       // SSH connections that died in the background fail their next command; probe now, not at the next poll

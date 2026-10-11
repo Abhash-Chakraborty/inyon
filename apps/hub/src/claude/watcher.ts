@@ -27,6 +27,9 @@ const PAGE = 160
 const KEEP = 4000
 /** fallback screen poll; tmux control mode triggers re-reads as soon as the pane changes */
 const SCREEN_MS = 2000
+/** while the phone app is in the background nobody sees the screen: read it rarely */
+const QUIET_SCREEN_MS = 20_000
+let hidden = false
 const IDLE_SHUTDOWN_MS = 120_000
 /** agents whose input box Tether can read and retype, so a draft follows you between app and terminal */
 const MIRRORS = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'opencode', 'copilot'])
@@ -639,7 +642,8 @@ class ChatWatcher {
   private apiPermission?: { id: string; base: string; title: string; detail?: string }
 
   private publishSnapshot(items: ChatItem[]) {
-    this.items = items
+    // a very long conversation keeps only its latest messages, like the ones read line by line
+    this.items = items.length > KEEP ? items.slice(-KEEP) : items
     // the whole conversation, read again: its goal is current
     this.goalUnsure = false
     this.cacheLater()
@@ -998,7 +1002,7 @@ class ChatWatcher {
     this.changeTimer = setTimeout(() => {
       this.changeTimer = undefined
       this.pollScreen()
-    }, 120)
+    }, hidden ? QUIET_SCREEN_MS : 120)
   }
 
   async pollScreen() {
@@ -1055,7 +1059,13 @@ class ChatWatcher {
         this.broadcast({ t: 'chat.screen', key: this.key, screen: this.screen })
       }
     } catch {}
-    if (!this.stopped) this.screenTimer = setTimeout(() => this.pollScreen(), SCREEN_MS)
+    this.nextScreen()
+  }
+
+  /** Schedules the next screen read at the current pace. */
+  nextScreen() {
+    clearTimeout(this.screenTimer)
+    if (!this.stopped) this.screenTimer = setTimeout(() => this.pollScreen(), hidden ? QUIET_SCREEN_MS : SCREEN_MS)
   }
 
   stop() {
@@ -1091,6 +1101,13 @@ class Watchers {
       this.map.set(key, (w = new ChatWatcher(hostId, paneId, p && Date.now() - p.at < PARK_MS ? p : undefined)))
     }
     return w
+  }
+
+  /** Reads open chats' screens rarely while the app is in the background, and at once on return. */
+  quiet(on: boolean) {
+    if (hidden === on) return
+    hidden = on
+    for (const w of this.map.values()) on ? w.nextScreen() : w.pollScreen()
   }
 
   /** Saves every open chat now (the app is going to the background and may not come back). */
