@@ -17,7 +17,7 @@ export function inputContains(draft: string | undefined, text: string): boolean 
   let image = 0
   const rendered = text.replace(/(Attached files:\s*)([\s\S]*)$/, (_, heading, files: string) =>
     heading + files.split('\n').map((path) => /^\/[^\n]+\.(png|jpe?g|gif|webp)$/i.test(path.trim()) ? `[Image #${++image}]` : path).join('\n'))
-  return value === squash(text) || image > 0 && value === squash(rendered) || /\[Pastedtext#\d+/.test(value)
+  return value === squash(text) || image > 0 && value === squash(rendered) || /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(value)
 }
 
 /** A missing composer is unknown, rather than evidence that input was submitted. */
