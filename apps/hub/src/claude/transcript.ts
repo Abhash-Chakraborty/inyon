@@ -247,7 +247,9 @@ function trackToolUse(meta: TranscriptMeta, b: any, ts: string) {
 }
 
 function trackToolResult(meta: TranscriptMeta, toolUseId: string, isError: boolean, tur: any, ts: string) {
-  const use = meta.tools.get(toolUseId)
+  // a command that runs past its timeout moves to the background without asking to, so a long
+  // conversation's summary may not hold the call; a background task ID alone says it was Bash
+  const use = meta.tools.get(toolUseId) ?? (typeof tur?.backgroundTaskId === 'string' ? { name: 'Bash', input: {} } : undefined)
   if (!use) return
   const sub = meta.subagents.get(toolUseId)
   if (sub) {

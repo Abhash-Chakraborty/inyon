@@ -8,7 +8,7 @@ import type { SavedMeta } from './transcript.ts'
  * isn't read from the start after hours away or after the app was closed. A session on a machine
  * that dropped off (NetBird or Tailscale down, laptop asleep) can still be read meanwhile.
  */
-const KEEP = 300
+export const KEEP = 300
 const storeKey = (key: string) => `chats/${keyPart(key)}`
 
 export interface CachedChat {
@@ -18,7 +18,8 @@ export interface CachedChat {
   items: ChatItem[]
   savedAt: number
   /** where reading the transcript stopped, with the summary built up to there */
-  at?: { offset: number; seq: number; codex: boolean; agent?: AgentKind; meta: SavedMeta }
+  /** `older`: the file offset of the line the first saved message came from (0: nothing before it) */
+  at?: { offset: number; seq: number; codex: boolean; agent?: AgentKind; meta: SavedMeta; older?: number }
 }
 
 export function loadChat(key: string): CachedChat | undefined {

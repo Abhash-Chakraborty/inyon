@@ -53,8 +53,56 @@ export function tailCommand(path: string, from: number, slim: boolean, follow = 
   const tail = `tail -c +${from + 1}${follow ? ' -F' : ''} ${shq(path)} 2>/dev/null`
   if (!slim) return `exec ${tail}`
   // mawk holds back piped input until its buffer fills unless it's told the input is live
-  const run = `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${tail} | LC_ALL=C $a ${shq(SLIM)}; else ${tail}; fi`
+  const run = slimmed(tail, true)
   return follow ? untilStdinCloses(run) : run
+}
+
+/** The slimming step for a remote machine, or nothing for this one. */
+const slimmed = (source: string, slim: boolean) => {
+  if (!slim) return source
+  return `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${source} | LC_ALL=C $a ${shq(SLIM)}; else ${source}; fi`
+}
+
+/** Bytes `from` up to `to` of the file: an earlier part of a long conversation, read on demand. */
+export function rangeCommand(path: string, from: number, to: number, slim: boolean) {
+  return slimmed(`tail -c +${from + 1} ${shq(path)} 2>/dev/null | head -c ${Math.max(0, to - from)}`, slim)
+}
+
+/**
+ * Lines that change what's known about a conversation as a whole (its title, goal, turn and
+ * compaction counts, background tasks, subagents, artifacts, Remote Control), not what was said.
+ * Picked out of the part before a long conversation's last stretch, on the machine itself, so
+ * opening a 100 MB conversation sends well under a megabyte instead. Tool names only count inside
+ * a tool call, so a message that merely mentions one stays behind.
+ */
+const META_LINES = [
+  '"subtype":"(turn_duration|compact_boundary)"',
+  '"(startTime|aiTitle|customTitle|goal_status|task_status|bridge_status|backgroundTaskId|taskId|isAsync)"',
+  '<task-notification>', 'Remote Control disconnected', '"run_in_background":true', 'Successfully (stopped task|killed shell)',
+  '"type":"tool_use","id":"[^"]*","name":"(Agent|Task|Monitor|Workflow|TaskStop|KillShell|Artifact)"',
+  '"url":"https://claude\\.ai/',
+].join('|')
+
+/** Attachments that match but copy the whole prompt or tool list into every turn. */
+const META_SKIP = ['"type":"prompt_snapshot"', '"type":"deferred_tools_record"']
+
+/**
+ * Keeps only the last title (every turn records one) and drops the output inside a task
+ * notification, which can be pages long; only the tags around it are read.
+ */
+const META_TRIM = `index($0, "\\"type\\":\\"ai-title\\"") { title = $0; next }
+index($0, "<result>") {
+  s = $0; o = ""
+  while ((a = index(s, "<result>")) && (b = index(substr(s, a), "</result>"))) { o = o substr(s, 1, a + 7); s = substr(s, a + b - 1) }
+  $0 = o s
+}
+{ print }
+END { if (title != "") print title }`
+
+/** The META_LINES lines among the first `to` bytes of the file. */
+export function metaCommand(path: string, to: number, slim: boolean) {
+  const lines = `head -c ${to} ${shq(path)} 2>/dev/null | grep -E ${shq(META_LINES)} | grep -v -F ${META_SKIP.map((m) => `-e ${shq(m)}`).join(' ')}`
+  return slimmed(`if command -v awk >/dev/null 2>&1; then ${lines} | LC_ALL=C awk ${shq(META_TRIM)}; else ${lines}; fi`, slim)
 }
 
 /**

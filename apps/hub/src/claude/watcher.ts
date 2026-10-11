@@ -17,8 +17,8 @@ import { loadMeta, newMeta, normalize, saveMeta, type TranscriptMeta } from './t
 import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
-import { loadChat, saveChat } from './chat-cache.ts'
-import { parseSize, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
+import { KEEP as CACHE_KEEP, loadChat, saveChat } from './chat-cache.ts'
+import { metaCommand, parseSize, rangeCommand, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
 
 const DEBUG = typeof process !== 'undefined' && !!process.env?.TETHER_DEBUG
 
@@ -38,6 +38,14 @@ const PARKED_MAX = 6
 const CATCHUP_BYTES = 64 * 1024
 /** a read that hasn't reached the end by then is shown as far as it got, if nothing more arrives */
 const FIRST_LINE_MS = 8000
+/**
+ * A long Claude conversation opens on its last stretch of file, and earlier messages are read
+ * backwards, a piece at a time, as you scroll up. Messages read that way are numbered down from
+ * TAIL_SEQ, so they still sort before the ones after them.
+ */
+const TAIL_BYTES = 1_500_000
+const OLDER_BYTES = 1_000_000
+const TAIL_SEQ = 1_000_000_000
 const QUIET_MS = 5000
 
 /** What a stopped watcher leaves behind for the next one on the same pane. */
@@ -51,6 +59,7 @@ interface Parked {
   items: ChatItem[]
   meta: TranscriptMeta
   info: ChatInfo
+  older?: number
 }
 
 export interface Subscriber {
@@ -76,6 +85,12 @@ class ChatWatcher {
   /** how far into the transcript file it has read, so a dropped tail can carry on from there */
   private reader?: TranscriptReader
   private seq = 0
+  /** file offset of the line the first held message came from; 0 when nothing is before it */
+  private olderFrom?: number
+  /** each held message's line in the file, so trimming from the front knows where it cut */
+  private lineAt = new Map<number, number>()
+  /** opened on the last stretch and no line read yet: the first one read is where older ones end */
+  private tailStart = false
   private codex = false
   private ready = false
   /**
@@ -121,7 +136,7 @@ class ChatWatcher {
     if (at && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
       try {
         const meta = loadMeta(at.meta)
-        return this.unpark({ at: cached.savedAt, transcript: cached.transcript, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info })
+        return this.unpark({ at: cached.savedAt, transcript: cached.transcript, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info, older: at.older })
       } catch {}
     }
     const rt = registry.get(this.hostId)
@@ -136,14 +151,14 @@ class ChatWatcher {
 
   /** Picks up where the last watcher on this pane stopped; sync() then follows the file from there. */
   private unpark(p: Parked) {
-    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: p.info })
+    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: p.info, olderFrom: p.older })
     this.ready = true
     this.tailLost = true
   }
 
   park(): Parked | undefined {
     if (!this.ready || !this.reader || !this.transcript) return
-    return { at: Date.now(), transcript: this.transcript, reader: this.reader, seq: this.seq, codex: this.codex, agent: this.agent, items: this.items, meta: this.meta, info: this.info }
+    return { at: Date.now(), transcript: this.transcript, reader: this.reader, seq: this.seq, codex: this.codex, agent: this.agent, items: this.items, meta: this.meta, info: this.info, older: this.olderFrom }
   }
 
   private cacheTimer?: ReturnType<typeof setTimeout>
@@ -162,9 +177,17 @@ class ChatWatcher {
   private save() {
     if (!this.ready || !this.items.length) return
     // the read position is saved only with the summary and messages read up to it
-    const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta) } : undefined
+    // only the latest messages are saved: cut between lines and remember where the first one starts
+    let first = Math.max(0, this.items.length - CACHE_KEEP)
+    let older = this.olderFrom
+    if (first > 0 && older !== undefined) {
+      const line = (i: number) => this.lineAt.get(this.items[i]!.seq)
+      while (first < this.items.length && line(first) !== undefined && line(first) === line(first - 1)) first++
+      older = first < this.items.length ? line(first) : undefined
+    }
+    const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta), older } : undefined
     if (!at && !this.onRemoteHost()) return
-    saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items, at })
+    saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items.slice(first), at })
   }
 
   private emptyInfo(): ChatInfo {
@@ -346,14 +369,26 @@ class ChatWatcher {
 
   /** A very long session keeps only its latest messages in memory (in chunks, not on every push). */
   private trim() {
-    if (this.items.length > KEEP + 500) this.items.splice(0, this.items.length - KEEP)
+    if (this.items.length > KEEP + 500) {
+      let cut = this.items.length - KEEP
+      if (this.olderFrom !== undefined) {
+        // cut between lines, never inside one, and only where the line is known (or the read
+        // back from the file couldn't join up): otherwise keep everything a while longer
+        const line = (i: number) => this.lineAt.get(this.items[i]!.seq)
+        while (cut < this.items.length && line(cut) !== undefined && line(cut) === line(cut - 1)) cut++
+        const at = cut < this.items.length ? line(cut) : undefined
+        if (at === undefined) return this.cacheLater()
+        this.olderFrom = at
+      }
+      for (const it of this.items.splice(0, cut)) this.lineAt.delete(it.seq)
+    }
     this.cacheLater()
   }
 
   async more(s: Subscriber, before: number) {
     let idx = this.items.findIndex((i) => i.seq >= before)
     if (idx === 0 && this.olderInFile()) {
-      await this.loadHistory()
+      await (this.olderFrom !== undefined ? this.loadOlder() : this.loadHistory())
       idx = this.items.findIndex((i) => i.seq >= before)
     }
     const end = idx < 0 ? this.items.length : idx
@@ -363,7 +398,85 @@ class ChatWatcher {
 
   /** Messages before the first one held (a saved copy, or a long session trimmed) are still in the file. */
   private olderInFile() {
-    return !!this.reader && !!this.transcript && (this.items[0]?.seq ?? 0) > 0
+    if (!this.reader || !this.transcript) return false
+    if (this.olderFrom !== undefined) return this.olderFrom > 0
+    const first = this.items[0]?.seq ?? 0
+    return first > 0 && first < TAIL_SEQ
+  }
+
+  /** Reads lines between two offsets of the transcript, each with the offset its line starts at. */
+  private async readRange(path: string, from: number, to: number) {
+    const host = registry.host(this.hostId)
+    const reader = new TranscriptReader(from)
+    const out: { entry: any; at: number }[] = []
+    await new Promise<void>((done) => {
+      const t = host.stream(rangeCommand(path, from, to, this.onRemoteHost()), (line) => {
+        const r = reader.line(line)
+        if (r?.entry) out.push({ entry: r.entry, at: reader.offset - r.bytes })
+      })
+      t.exited ? t.exited.then(() => done(), () => done()) : done()
+      setTimeout(() => (t.kill(), done()), 60_000)
+    })
+    return out
+  }
+
+  /**
+   * What's known about a conversation as a whole (title, goal, counts, tasks, subagents) from the
+   * part before its last stretch: only the lines that carry it are sent, and what they say goes
+   * into the summary, not the chat.
+   */
+  private async readMeta(path: string, to: number) {
+    const host = registry.host(this.hostId)
+    const reader = new TranscriptReader()
+    await new Promise<void>((done) => {
+      const t = host.stream(metaCommand(path, to, this.onRemoteHost()), (line) => {
+        const r = reader.line(line)
+        if (r?.entry) normalize(r.entry, this.meta)
+      })
+      t.exited ? t.exited.then(() => done(), () => done()) : done()
+      setTimeout(() => (t.kill(), done()), 30_000)
+    })
+  }
+
+  /**
+   * Earlier messages of a conversation opened on its last stretch: reads the file backwards from
+   * the first held message, a piece at a time, until there's a page of them or the file begins.
+   */
+  private loadOlder() {
+    return (this.history ??= (async () => {
+      const path = this.transcript!
+      const first = this.items[0]?.seq ?? TAIL_SEQ
+      const older: { item: Omit<ChatItem, 'seq'>; at: number }[] = []
+      let end = this.olderFrom!
+      let span = OLDER_BYTES
+      while (end > 0 && older.length < PAGE) {
+        const from = Math.max(0, end - span)
+        const lines = await this.readRange(path, from, end)
+        if (this.stopped || path !== this.transcript) return
+        if (!lines.length) {
+          // one line longer than the piece (a screenshot): take a bigger piece
+          if (from === 0) end = 0
+          else span *= 4
+          continue
+        }
+        // tool calls and their results sit close together, so a piece's own summary links them
+        const meta = newMeta()
+        const got: typeof older = []
+        for (const { entry, at } of lines) for (const d of normalize(entry, meta)) got.push({ item: d as Omit<ChatItem, 'seq'>, at })
+        older.unshift(...got)
+        end = lines[0]!.at
+      }
+      if (this.stopped || path !== this.transcript || (this.items[0]?.seq ?? TAIL_SEQ) !== first) return
+      let seq = first - older.length
+      const items = older.map(({ item, at }) => {
+        const it = { ...item, seq: seq++ } as ChatItem
+        this.lineAt.set(it.seq, at)
+        return it
+      })
+      this.items.unshift(...items)
+      this.olderFrom = end
+      this.tailStart = false
+    })().finally(() => (this.history = undefined)))
   }
 
   /**
@@ -628,6 +741,9 @@ class ChatWatcher {
       this.ready = false
       this.behind = undefined
       this.reader = undefined
+      this.olderFrom = undefined
+      this.lineAt.clear()
+      this.tailStart = false
     }
     if (!again) restart()
     if (path.startsWith('opencode://')) return this.followOpenCode(path, gen)
@@ -649,6 +765,19 @@ class ChatWatcher {
       this.seq = 0
       this.reader = new TranscriptReader()
       this.codex = this.agent === 'codex' || /\/\.codex\/sessions\//.test(path)
+      if (!this.codex && this.agent !== 'copilot') {
+        this.olderFrom = 0
+        if (size > TAIL_BYTES) {
+          // a long conversation: what's known about it as a whole first, then only its last stretch
+          const from = size - TAIL_BYTES
+          await this.readMeta(path, from)
+          if (gen !== this.generation || this.stopped) return
+          this.seq = TAIL_SEQ
+          this.reader = new TranscriptReader(from)
+          this.olderFrom = size
+          this.tailStart = true
+        }
+      }
       // a Codex segment file starts after a rewind: show the history it continues first
       if (this.codex) {
         for (const line of await codexHistory(host, path).catch(() => [] as string[])) {
@@ -669,9 +798,16 @@ class ChatWatcher {
       this.behind = this.resetMsg()
     }
     const reading = () => !this.ready || !!this.behind
+    let filling = false
     const finishInitial = () => {
       clearTimeout(quiet)
       if (!reading() || gen !== this.generation) return
+      // the last stretch was mostly one screenshot: read back until there's a page to show
+      if (this.seq >= TAIL_SEQ && this.items.length < PAGE && this.olderInFile() && !filling) {
+        filling = true
+        void this.loadOlder().finally(finishInitial)
+        return
+      }
       if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
       this.ready = true
       this.behind = undefined
@@ -693,7 +829,13 @@ class ChatWatcher {
       remaining -= r.bytes
       if (r.entry) {
         const e = r.entry
+        const at = reader.offset - r.bytes
+        if (this.tailStart) {
+          this.olderFrom = at
+          this.tailStart = false
+        }
         const items = (this.codex ? normalizeCodex(e, this.meta) : this.agent === 'copilot' ? normalizeCopilot(e, this.meta) : normalize(e, this.meta)).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem)
+        if (this.olderFrom !== undefined) for (const it of items) this.lineAt.set(it.seq, at)
         if (items.length) {
           this.items.push(...items)
           this.trim()

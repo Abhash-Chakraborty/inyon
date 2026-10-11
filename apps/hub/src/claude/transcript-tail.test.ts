@@ -3,9 +3,10 @@ import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerMsg } from '@tether/protocol'
-import { parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
+import { metaCommand, parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
+import { newMeta, normalize } from './transcript.ts'
 import { watchers } from './watcher.ts'
 
 const dir = mkdtempSync(join(tmpdir(), 'tether-tail-'))
@@ -257,3 +258,89 @@ test('a long backlog is read out of sight and shown at once; the saved place sur
   expect(fresh.items[0].seq).toBe(0)
   watchers.stop(fresh.key)
 }, 60_000)
+
+test('a long conversation opens on its last stretch and reads earlier messages as you scroll up', async () => {
+  const file = join(dir, 'long.jsonl')
+  const at = () => new Date(1_800_000_000_000 + ++n * 1000).toISOString()
+  const goal = JSON.stringify({ type: 'attachment', uuid: `g${n}`, timestamp: at(), attachment: { type: 'goal_status', condition: 'early goal', met: false } }) + '\n'
+  const turn = () => JSON.stringify({ type: 'system', subtype: 'turn_duration', uuid: `t${++n}`, timestamp: at(), durationMs: 1000 }) + '\n'
+  // about 2.4 MB: well past the last stretch read at first, with a screenshot in the middle
+  const lines = [goal, turn()]
+  for (let i = 0; i < 2000; i++) lines.push(user(`msg ${i} ${'x'.repeat(1100)}`, i === 1000), ...(i % 100 === 0 ? [turn()] : []))
+  writeFileSync(file, lines.join(''))
+  expect(statSync(file).size).toBeGreaterThan(2_000_000)
+
+  const pane = { id: '%3', title: 'claude', agent: { kind: 'claude', transcriptPath: file, sessionId: 's3' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(new Host({ ...config, kind: 'local' } as any))
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const streams = spyOn(Host.prototype, 'stream')
+  streams.mockClear()
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const num = (i: any) => Number(/^msg (\d+)/.exec(i.text)?.[1])
+
+  const t0 = performance.now()
+  const w = watchers.get('tail-test', '%3')
+  w.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  const opened = performance.now() - t0
+  const reset = got.find((m) => m.t === 'chat.reset') as Extract<ServerMsg, { t: 'chat.reset' }>
+  const cmds = streams.mock.calls.map((c) => String(c[0]))
+  // nothing read the whole file: a summary of the early part, then the last stretch
+  expect(cmds.some((c) => c.includes('tail -c +1 '))).toBe(false)
+  expect(cmds.some((c) => c.includes('grep -E'))).toBe(true)
+  expect(reset.items.filter((i) => i.kind === 'user').map(num).at(-1)).toBe(1999)
+  expect(reset.hasMore).toBe(true)
+  // what's known about the whole conversation still came through
+  expect(reset.info.goal?.condition).toBe('early goal')
+  expect(reset.info.stats.turns).toBe(21)
+  expect(w.items.length).toBeLessThan(2000)
+
+  // scrolling up: every earlier message once, in order, until the start of the file
+  for (let more: any; (more = got.findLast((m) => m.t === 'chat.more')), !more || more.hasMore; ) await w.more(sub, w.items[0]!.seq)
+  const all = w.items.filter((i) => i.kind === 'user').map(num)
+  expect(all).toEqual(Array.from({ length: 2000 }, (_, i) => i))
+  expect(new Set(w.items.map((i) => i.seq)).size).toBe(w.items.length)
+  expect(w.items.every((it, i) => i === 0 || it.seq > w.items[i - 1]!.seq)).toBe(true)
+  expect(w.items.find((i) => i.kind === 'user' && num(i) === 1000)).toMatchObject({ images: 1 })
+  console.log(`opened a ${(statSync(file).size / 1e6).toFixed(1)} MB conversation in ${Math.round(opened)} ms`)
+  watchers.stop(w.key)
+}, 60_000)
+
+test('the summary of a long conversation leaves out what was said', () => {
+  const file = join(dir, 'meta.jsonl')
+  const line = (o: any) => JSON.stringify({ uuid: crypto.randomUUID(), timestamp: '2027-01-01T00:00:00Z', ...o }) + '\n'
+  const tool = (id: string, name: string, input: any) => line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } })
+  const result = (id: string, tur: any) => line({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] }, toolUseResult: tur })
+  const notice = `<task-notification><task-id>b2</task-id><status>completed</status><summary>build done</summary><result>${'log '.repeat(5000)}</result></task-notification>`
+  writeFileSync(file, [
+    line({ type: 'ai-title', aiTitle: 'first title' }),
+    line({ type: 'user', message: { role: 'user', content: 'what does "name":"Agent" do? ' + 'x'.repeat(5000) } }),
+    line({ type: 'attachment', attachment: { type: 'prompt_snapshot', prompt: '"name":"Agent" <task-notification> ' + 'y'.repeat(5000) } }),
+    tool('t1', 'Agent', { description: 'look around', prompt: 'go' }),
+    // a command that outlived its timeout: its call never asked for the background
+    tool('t2', 'Bash', { command: 'make', description: 'build' }),
+    result('t2', { stdout: '', backgroundTaskId: 'b1' }),
+    tool('t3', 'TaskStop', { task_id: 'b1' }),
+    result('t3', { message: 'Successfully stopped task: b1 (make)' }),
+    line({ type: 'queue-operation', operation: 'enqueue', content: notice }),
+    line({ type: 'ai-title', aiTitle: 'last title' }),
+  ].join(''))
+  const out = Bun.spawnSync(['sh', '-c', metaCommand(file, statSync(file).size, false)]).stdout.toString()
+  expect(out).not.toContain('xxxx')
+  expect(out).not.toContain('yyyy')
+  expect(out).not.toContain('log log')
+  expect(out).not.toContain('first title')
+  const meta = newMeta()
+  for (const l of out.split('\n').filter(Boolean)) normalize(JSON.parse(l), meta)
+  expect(meta.title).toBe('last title')
+  expect([...meta.subagents.values()].map((s) => s.description)).toEqual(['look around'])
+  expect(meta.tasks.get('b1')?.status).toBe('stopped')
+  expect(meta.tasks.get('b2')?.summary).toBe('build done')
+})
