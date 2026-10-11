@@ -44,12 +44,20 @@ const SLIM = `BEGIN { r = "[A-Za-z0-9+/=]"; for (i = 0; i < 10; i++) r = r r; r 
 /**
  * Follows `path` from byte `from`; `slim` drops image data on the far side (for remote machines).
  * With `follow` off it reads to the end and exits.
+ *
+ * A remote follow must run with stdin kept open (`keepStdin`): it ends itself when stdin closes.
+ * Over SSH nothing else stops it. Closing the connection doesn't signal `tail -F | awk`, and they
+ * only notice once they write to the closed connection, which for a quiet transcript is never.
  */
 export function tailCommand(path: string, from: number, slim: boolean, follow = true) {
   const tail = `tail -c +${from + 1}${follow ? ' -F' : ''} ${shq(path)} 2>/dev/null`
   if (!slim) return `exec ${tail}`
   // mawk holds back piped input until its buffer fills unless it's told the input is live
-  return `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${tail} | LC_ALL=C $a ${shq(SLIM)}; else exec ${tail}; fi`
+  const run = `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${tail} | LC_ALL=C $a ${shq(SLIM)}; else ${tail}; fi`
+  if (!follow) return run
+  // a background job's stdin is /dev/null, so it watches the real one through fd 3; once that
+  // closes it stops this shell's other children (tail and awk), and when they end it goes too
+  return `exec 3<&0; { cat <&3; pkill -P $$; } >/dev/null 2>&1 & w=$!; ${run}; kill $w 2>/dev/null`
 }
 
 /**
