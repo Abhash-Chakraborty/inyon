@@ -221,3 +221,37 @@ describe('ChatView', () => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
   })
 })
+
+describe('a long question card', () => {
+  // happy-dom has no layout, so this checks the shape that keeps the answers on screen (the
+  // browser check is a Playwright run on phone sizes): every box from the chat column down to
+  // the card may shrink, the question scrolls on its own, and the answers sit outside it
+  test('fits the chat column, with the question scrolling and the answers outside it', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    const body = ['Allow reading these files?', ...Array.from({ length: 22 }, (_, i) => `• file-${i}: read it to answer the question.`), '', 'Do you want to proceed?']
+    render(<ChatView host="box" pane="%1" agent="claude" onTerminal={() => {}} />)
+    act(() => {
+      emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [], hasMore: false })
+      emit({ t: 'chat.screen', key: 'box:%1', screen: { working: false, width: 80, prompt: { body, options: [{ n: 1, label: 'Yes', selected: true }, { n: 2, label: 'No', selected: false }], multi: false } } })
+    })
+    await flush()
+    const title = screen.getByText('Allow reading these files?')
+    const card = title.closest('.animate-slide-up') as HTMLElement
+    const scroller = title.closest('.overflow-y-auto') as HTMLElement
+    expect(card.contains(scroller)).toBe(true)
+    expect(scroller.textContent).toContain('file-21')
+
+    const yes = screen.getByText('Yes').closest('button')!
+    const cancel = screen.getByText('Cancel')
+    expect(scroller.contains(yes)).toBe(false)
+    expect(scroller.contains(cancel)).toBe(false)
+    // Cancel never scrolls away; the choices scroll only when they alone don't fit
+    expect(cancel.closest('.overflow-y-auto')).toBeNull()
+
+    const column = card.closest('.flex-1.flex-col') as HTMLElement
+    for (let el: HTMLElement | null = card; el && el !== column; el = el.parentElement) {
+      expect(el.className).toContain('min-h-0')
+      expect(el.className).toContain('flex-col')
+    }
+  })
+})

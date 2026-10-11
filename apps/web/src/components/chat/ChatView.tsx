@@ -343,7 +343,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
             </div>
           </div>
 
-          <div className="relative">
+          <div className="relative flex min-h-0 flex-col">
             {!atBottom && (
               <button
                 type="button"
@@ -359,7 +359,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
               </button>
             )}
             {running && chatCapable && (
-              <div className="pb-safe-2 mx-auto w-full max-w-[760px] px-3 pt-1 sm:px-6 sm:pb-4">
+              <div className="pb-safe-2 mx-auto flex min-h-0 w-full max-w-[760px] flex-col px-3 pt-1 sm:px-6 sm:pb-4">
                 {!hubUp ? (
                   <div className="mb-2 text-center text-[12px] text-fg-3">Reconnecting…</div>
                 ) : machineDown ? (

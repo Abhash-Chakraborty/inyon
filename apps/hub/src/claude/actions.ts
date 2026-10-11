@@ -1,6 +1,6 @@
 import { sleep } from '../platform/store.ts'
-import { AGENTS, agyModelId, type AgentKind } from '@tether/protocol'
-import { shq } from '../hosts/host.ts'
+import { AGENTS, agyModelId, promptKey, type AgentKind } from '@tether/protocol'
+import { shq, type Host } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
 import { codexBrowsing, parseScreen } from './screen.ts'
@@ -323,13 +323,17 @@ echo "stopped $all"`
   return { stopped: out.startsWith('stopped'), detail: out }
 }
 
-/** Picks an option in the prompt on screen, optionally typing free text after it. */
-export async function answer(hostId: string, paneId: string, option: number, text?: string) {
+/**
+ * Picks an option in the prompt on screen, optionally typing free text after it. `question` is the
+ * promptKey of the question the answer was given for; another question on screen now is refused.
+ */
+export async function answer(hostId: string, paneId: string, option: number, text?: string, question?: string) {
   const { host, found } = agentPane(hostId, paneId)
   if (await watchers.peek(hostId, paneId)?.answerApi(option)) return nudge(hostId, paneId)
   const screen = await currentScreen(hostId, paneId)
   const p = screen.prompt
   if (!p?.options.some((o) => o.n === option)) throw new HttpError(409, 'That question is no longer on screen')
+  if (question && promptKey(p) !== question) throw new HttpError(409, 'That question was answered and another one is waiting. Check it before answering.')
   if (p.navigate && found.pane.agent?.kind === 'opencode') {
     // "Allow once  Allow always  Reject" in a row, the highlight shown only by colour: go to the
     // first button, then right

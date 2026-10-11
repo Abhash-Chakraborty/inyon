@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, ArrowRight, ArrowUp, Check, Copy, CornerDownLeft, ExternalLink, Send } from 'lucide-react'
-import type { ScreenPrompt } from '@tether/protocol'
+import { promptKey, type ScreenPrompt } from '@tether/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
@@ -75,14 +75,17 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
       setFreeText('')
       return
     }
-    run(n, () => api.answer(host, pane, n))
+    run(n, () => api.answer(host, pane, n, undefined, promptKey(prompt)))
   }
   const keys = (k: string[]) => run(k.join(), () => api.keys(host, pane, k))
 
   return (
-    <div className="animate-slide-up overflow-hidden rounded-[18px] border border-line-strong bg-elev shadow-float">
+    // never taller than the space it has, so a long permission list can't push the answers off a
+    // phone's screen: the question shrinks and scrolls well before the choices do (shrink-[1000]),
+    // and Cancel stays put
+    <div className="animate-slide-up flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-line-strong bg-elev shadow-float">
       {prompt.tabs && prompt.tabs.length > 1 && (
-        <div className="flex gap-1.5 overflow-x-auto border-b border-line px-4 py-2.5">
+        <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-4 py-2.5">
           {prompt.tabs.map((t) => (
             <span
               key={t.label}
@@ -97,57 +100,59 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
           ))}
         </div>
       )}
-      <div className="px-4 pt-3.5 pb-2 sm:px-5">
-        <div className="flex items-start gap-2.5">
-          <span className="mt-0.5"><AgentMark /></span>
-          <div className="min-w-0 flex-1">
-            <div className={clsx('font-semibold leading-snug', isQuestion ? 'text-[16px]' : 'text-[15px]')}>{title}</div>
-            {blocks.map((b, i) =>
-              b.kind === 'code' ? (
-                <pre
-                  key={i}
-                  className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-code px-3 py-2 font-mono text-[12.5px] leading-relaxed"
-                >
-                  {b.lines.map((l) => l.replace(/^ /, '')).join('\n').trim()}
-                </pre>
-              ) : (
-                <div key={i} className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-fg-2">
-                  {joinWrapped(b.lines)}
-                </div>
-              ),
-            )}
+      <div className="min-h-12 shrink-[1000] overflow-y-auto overscroll-contain">
+        <div className="px-4 pt-3.5 pb-2 sm:px-5">
+          <div className="flex items-start gap-2.5">
+            <span className="mt-0.5"><AgentMark /></span>
+            <div className="min-w-0 flex-1">
+              <div className={clsx('font-semibold leading-snug', isQuestion ? 'text-[16px]' : 'text-[15px]')}>{title}</div>
+              {blocks.map((b, i) =>
+                b.kind === 'code' ? (
+                  <pre
+                    key={i}
+                    className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-code px-3 py-2 font-mono text-[12.5px] leading-relaxed"
+                  >
+                    {b.lines.map((l) => l.replace(/^ /, '')).join('\n').trim()}
+                  </pre>
+                ) : (
+                  <div key={i} className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-fg-2">
+                    {joinWrapped(b.lines)}
+                  </div>
+                ),
+              )}
+            </div>
           </div>
         </div>
-      </div>
 
-      {prompt.links && prompt.links.length > 0 && (
-        <div className="space-y-2 px-3 pb-2 sm:px-4">
-          {prompt.links.map((u) => (
-            <div key={u} className="rounded-[12px] border border-line bg-bg p-2.5">
-              <div className="line-clamp-2 break-all font-mono text-[11.5px] leading-relaxed text-fg-2">{u}</div>
-              <div className="mt-2 flex gap-1.5">
-                <a href={u} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-[9px] bg-fg px-3 text-[12.5px] font-medium text-bg">
-                  <ExternalLink className="size-3.5" /> Open
-                </a>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await copyText(u)
-                    toast({ title: 'Link copied', tone: 'success' })
-                  }}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-[9px] border border-line-strong px-3 text-[12.5px] font-medium hover:bg-hover"
-                >
-                  <Copy className="size-3.5" /> Copy link
-                </button>
+        {prompt.links && prompt.links.length > 0 && (
+          <div className="space-y-2 px-3 pb-2 sm:px-4">
+            {prompt.links.map((u) => (
+              <div key={u} className="rounded-[12px] border border-line bg-bg p-2.5">
+                <div className="line-clamp-2 break-all font-mono text-[11.5px] leading-relaxed text-fg-2">{u}</div>
+                <div className="mt-2 flex gap-1.5">
+                  <a href={u} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-[9px] bg-fg px-3 text-[12.5px] font-medium text-bg">
+                    <ExternalLink className="size-3.5" /> Open
+                  </a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await copyText(u)
+                      toast({ title: 'Link copied', tone: 'success' })
+                    }}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-[9px] border border-line-strong px-3 text-[12.5px] font-medium hover:bg-hover"
+                  >
+                    <Copy className="size-3.5" /> Copy link
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
 
       {prompt.input ? (
         <form
-          className="flex items-end gap-2 px-3 pb-3 sm:px-4"
+          className="flex shrink-0 items-end gap-2 px-3 pb-3 sm:px-4"
           onSubmit={(e) => {
             e.preventDefault()
             const v = (e.currentTarget.elements.namedItem('answer') as HTMLInputElement).value
@@ -164,10 +169,10 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         </form>
       ) : freeText !== null ? (
         <form
-          className="flex items-end gap-2 px-3 pb-3 sm:px-4"
+          className="flex shrink-0 items-end gap-2 px-3 pb-3 sm:px-4"
           onSubmit={(e) => {
             e.preventDefault()
-            if (freeText.trim()) run('free', () => api.answer(host, pane, prompt.freeTextOption!, freeText))
+            if (freeText.trim()) run('free', () => api.answer(host, pane, prompt.freeTextOption!, freeText, promptKey(prompt)))
           }}
         >
           <textarea
@@ -188,7 +193,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
           </button>
         </form>
       ) : (
-        <div className="space-y-1.5 px-3 pb-2 sm:px-4">
+        <div className="min-h-0 space-y-1.5 overflow-y-auto overscroll-contain px-3 pb-2 sm:px-4">
           {prompt.options.map((o) => (
             <button
               key={o.n}
@@ -229,7 +234,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         </div>
       )}
 
-      <div className="flex items-center gap-1 border-t border-line px-2 py-1.5">
+      <div className="flex shrink-0 items-center gap-1 border-t border-line px-2 py-1.5">
         <button
           type="button"
           onClick={() => (freeText !== null ? setFreeText(null) : keys(['Escape']))}

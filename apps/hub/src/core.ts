@@ -436,8 +436,8 @@ export const coreRoutes: Routes = {
   },
   '/api/hosts/:id/panes/:pane/answer': {
     POST: api(async (req) => {
-      const b = await body<{ option: number; text?: string }>(req)
-      await answer(req.params.id, paneParam(req.params.pane), Number(b.option), b.text)
+      const b = await body<{ option: number; text?: string; question?: string }>(req)
+      await answer(req.params.id, paneParam(req.params.pane), Number(b.option), b.text, typeof b.question === 'string' ? b.question : undefined)
       return ok()
     }),
   },

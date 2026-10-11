@@ -137,7 +137,9 @@ export const api = {
   send: (host: string, pane: string, text: string, requestId?: string) => request('POST', `${panePath(host, pane)}/send`, { text, requestId }, 310_000),
   /** a model, effort or goal change from the app's controls: sent like a message, never shown as one */
   setting: (host: string, pane: string, text: string) => request('POST', `${panePath(host, pane)}/send`, { text, setting: true }, 310_000),
-  answer: (host: string, pane: string, option: number, text?: string) => request('POST', `${panePath(host, pane)}/answer`, { option, text }),
+  /** `question` is the promptKey of the question shown, so an answer that arrives late isn't taken for the next one */
+  answer: (host: string, pane: string, option: number, text?: string, question?: string) =>
+    request('POST', `${panePath(host, pane)}/answer`, { option, text, question }),
   interrupt: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/interrupt`),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),

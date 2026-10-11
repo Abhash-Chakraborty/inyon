@@ -335,6 +335,14 @@ export interface ScreenPrompt {
   api?: boolean
 }
 
+/**
+ * Which question a prompt is: its text and its choices, whitespace aside (the screen rewraps). An
+ * answer carries the key of the question it was given for, so a tap that arrives after that
+ * question was answered elsewhere never lands on the next one, which often has the same numbers.
+ */
+export const promptKey = (p: Pick<ScreenPrompt, 'body' | 'options'>) =>
+  [...p.body, ...p.options.map((o) => `${o.n}.${o.label}`)].join('\n').replace(/\s+/g, '')
+
 export interface ScreenState {
   /** A recognizable input box is present, even with a custom footer. */
   inputVisible?: boolean
