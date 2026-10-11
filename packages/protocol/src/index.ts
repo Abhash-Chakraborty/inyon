@@ -145,7 +145,7 @@ export interface SessionInfo {
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
 /** Tether's version, the same for the app, the hub and tether-node (the root package.json's). */
-export const VERSION = '0.6.1'
+export const VERSION = '0.6.2'
 
 export interface HostState {
   config: HostConfig
