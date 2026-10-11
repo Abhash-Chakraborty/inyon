@@ -25,9 +25,14 @@ function self(): string[] {
   return compiled ? [process.execPath] : [process.execPath, path.resolve(script)]
 }
 
-const run = (cmd: string[]) => {
-  const p = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe' })
-  return { ok: p.exitCode === 0, out: `${p.stdout}${p.stderr}`.trim() }
+/** A missing program (no systemctl in a container, say) is a failure like any other, not a crash. */
+export const run = (cmd: string[]) => {
+  try {
+    const p = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe' })
+    return { ok: p.exitCode === 0, out: `${p.stdout}${p.stderr}`.trim() }
+  } catch (err) {
+    return { ok: false, out: `${cmd[0]} isn't available here (${(err as Error).message})` }
+  }
 }
 
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
