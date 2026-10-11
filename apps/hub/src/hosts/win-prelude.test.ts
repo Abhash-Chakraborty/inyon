@@ -69,3 +69,16 @@ test('a sign-in on Windows is a PowerShell line that prints the exit mark', asyn
   expect(signInWindows('gemini')).toBe(`$env:NO_BROWSER='true'; gemini; Write-Output ''; Write-Output "[tether-exit $([int]$LASTEXITCODE)]"`)
   expect(signInWindows('codex')).toStartWith('codex login --device-auth; ')
 })
+
+test("a paste loads its buffer into the pane's own psmux server, since each session has its own", async () => {
+  const { pasteCommand } = await import('../tmux/tmux.ts')
+  const cmd = pasteCommand('b1', '%14.1')
+  const go = (env: Record<string, string>) => {
+    writeFileSync(join(bin, 'argv'), '')
+    Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\n${cmd}`], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, stdin: Buffer.from('x\ny') })
+    return Bun.file(join(bin, 'argv')).text()
+  }
+  expect((await go({ OS: 'Windows_NT' })).replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[-t][$14:.%1][load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n')
+  // tmux has one server, and no -t before the command
+  expect((await go({})).replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n')
+})

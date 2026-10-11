@@ -18,7 +18,8 @@ test('typing becomes literal text, keys by name, and raw bytes only for the rest
 test('a bracketed paste goes in as one paste, with the text around it kept in order', () => {
   expect(toInput('a\x1b[200~line 1\rline 2\x1b[201~\r')).toEqual([{ text: 'a' }, { paste: 'line 1\rline 2' }, { keys: ['Enter'] }])
   const c = inputCommand('%14.1', { paste: 'x\r\ny' })
-  expect(c.cmd).toMatch(/^tmux load-buffer -b 'tether-term-\w+' - && tmux paste-buffer -d -p -b 'tether-term-\w+' -t '%14\.1'$/)
+  // through a file: psmux's load-buffer takes a path, not "-"
+  expect(c.cmd).toMatch(/load-buffer -b 'tether-term-\w+' "\$f" && tmux paste-buffer -d -p -b 'tether-term-\w+' -t '%14\.1'/)
   expect(c.input).toBe('x\ny')
 })
 

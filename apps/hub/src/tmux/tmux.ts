@@ -326,6 +326,18 @@ export async function capturePanes(host: Host, paneIds: string[]): Promise<Map<s
 }
 
 /**
+ * Pastes what comes in on stdin into a pane as one bracketed paste. The text goes through a file,
+ * since psmux's load-buffer only reads a path, not "-". psmux also runs a server per session and
+ * buffers live in one server, so on Windows the buffer is loaded into the pane's own session (the
+ * -t before the command, which psmux takes for any command); otherwise paste-buffer can't find it.
+ */
+export function pasteCommand(buffer: string, pane: string) {
+  const b = shq(buffer)
+  const t = `\${s:+-t "$s"}`
+  return `f=$(mktemp) && { s=; [ "$OS" = Windows_NT ] && s=${shq(pane)}; cat > "$f" && tmux ${t} load-buffer -b ${b} "$f" && tmux paste-buffer -d -p -b ${b} -t ${shq(pane)}; r=$?; rm -f "$f"; [ $r = 0 ] || tmux ${t} delete-buffer -b ${b} 2>/dev/null; [ $r = 0 ]; }`
+}
+
+/**
  * Types text into a pane exactly as a person would; newlines become Ctrl+J (newline without
  * submitting). With `submit`, Enter follows after a short pause, all in one round trip.
  */
@@ -334,9 +346,8 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
     // Deliver one bracketed paste instead of a burst of individual key events. The CLI can
     // preserve long/multiline text atomically and display its own collapsed paste preview.
     const buffer = `tether-${crypto.randomUUID()}`
-    const result = await host.exec(`tmux load-buffer -b ${shq(buffer)} - && tmux paste-buffer -d -p -b ${shq(buffer)} -t ${shq(pane)}`, { input: text.replace(/\r\n?/g, '\n') })
+    const result = await host.exec(pasteCommand(buffer, pane), { input: text.replace(/\r\n?/g, '\n') })
     if (result.code !== 0) {
-      await host.exec(`tmux delete-buffer -b ${shq(buffer)} 2>/dev/null`).catch(() => {})
       throw new Error(result.stderr.trim() || 'Could not paste text into the terminal')
     }
     if (submit) {
