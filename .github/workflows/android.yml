@@ -133,6 +133,15 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # drives the WebView for the screenshots
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      # a QR code that isn't Tether's, on the wall of the emulator camera's virtual room
+      - name: Make a camera poster
+        run: |
+          sudo apt-get install -y -qq qrencode > /dev/null
+          qrencode -s 24 -m 4 -o "${{ runner.temp }}/poster.png" 'https://example.com/menu'
 
       - name: Start the app on an emulator
         id: first
@@ -144,8 +153,10 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
-          script: .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
+          script: |
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-screens.sh || true
 
       - name: Did the first try reach a verdict
         id: tried
@@ -161,8 +172,10 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data
-          script: .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
+          script: |
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-screens.sh || true
 
       - name: Verdict
         run: |
