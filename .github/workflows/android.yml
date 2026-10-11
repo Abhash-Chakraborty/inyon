@@ -4,7 +4,8 @@ name: Android
 #   push to main  -> refreshes the "android-latest" pre-release, so the newest build is one tap away
 #   tag v1.2.3    -> a release named after the tag, with the APK attached
 #   run by hand   -> the APK as a workflow artifact
-# Every run also starts the APK on an emulator (the smoke job) to catch crashes and R8 mistakes.
+# Every run also starts the APK on an emulator (the smoke job) to catch crashes and R8 mistakes,
+# and runs the SSH plugin's tests. The publish job waits for both, so a crashing APK isn't released.
 on:
   push:
     branches: [main]
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-${{ github.ref }}
@@ -95,31 +96,15 @@ jobs:
           path: apps/mobile/android/app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: ignore
 
-      - name: Publish
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.name }}
-        run: |
-          apk="$RUNNER_TEMP/tether-$VERSION.apk"
-          cp "$RUNNER_TEMP/tether.apk" "$apk"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Tether $VERSION" --generate-notes
-            gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
-          else
-            gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true
-            gh release create android-latest "$apk" --prerelease --target "$GITHUB_SHA" \
-              --title "Latest Android build ($VERSION)" \
-              --notes "Built from $GITHUB_SHA on main. Install over the previous build; tagged releases are the stable ones."
-          fi
-
-  # Installs the APK on an emulator, starts it and checks logcat. Publishing happens in the apk job,
-  # so a flaky emulator never holds back a release; an emulator that never boots is a warning, a
-  # crash is a failure.
+  # Installs the APK on an emulator, starts it and checks logcat. An emulator that never boots is a
+  # warning, a crash is a failure. Only a crash holds back publishing (the `crashed` output), so a
+  # flaky emulator, even one that runs the job out of time, never does.
   smoke:
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      crashed: ${{ steps.verdict.outputs.crashed }}
     env:
       OUT: ${{ github.workspace }}/smoke
     steps:
@@ -178,12 +163,13 @@ jobs:
             .github/scripts/android-screens.sh || true
 
       - name: Verdict
+        id: verdict
         run: |
           v=$(cat "$OUT/verdict" 2>/dev/null || echo none)
           case "$v" in
             pass) echo "The APK started cleanly: no crash, plugins loaded, web app loaded." ;;
             none) echo "::warning::The emulator never came up, so the APK was not smoke tested." ;;
-            *) echo "::error::$v"; exit 1 ;;
+            *) echo "crashed=yes" >> "$GITHUB_OUTPUT"; echo "::error::$v"; exit 1 ;;
           esac
 
       - uses: actions/upload-artifact@v4
@@ -273,3 +259,38 @@ jobs:
         with:
           name: ssh-plugin-test-report
           path: apps/mobile/android/app/build/reports/tests/
+
+  # Releases the APK once the checks are in: push to main refreshes android-latest, a v* tag gets
+  # its own release. The SSH plugin's tests must pass and the smoke job must not have seen a crash.
+  publish:
+    needs: [apk, smoke, ssh-plugin]
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      needs.apk.result == 'success' && needs.ssh-plugin.result == 'success' &&
+      needs.smoke.outputs.crashed != 'yes'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: tether-${{ needs.apk.outputs.version }}
+          path: ${{ runner.temp }}/apk
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.apk.outputs.version }}
+        run: |
+          apk="$RUNNER_TEMP/tether-$VERSION.apk"
+          cp "$RUNNER_TEMP/apk/tether.apk" "$apk"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Tether $VERSION" --generate-notes
+            gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
+          else
+            gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true
+            gh release create android-latest "$apk" --prerelease --target "$GITHUB_SHA" \
+              --title "Latest Android build ($VERSION)" \
+              --notes "Built from $GITHUB_SHA on main. Install over the previous build; tagged releases are the stable ones."
+          fi
