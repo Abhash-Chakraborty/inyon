@@ -40,7 +40,7 @@ export function useSession(host: string, pane: string) {
     const model = def?.models.find((m) => m.id === id)
     const variants = model?.variants
     const variant = variants?.[status?.effort ?? ''] ?? Object.values(variants ?? {})[0]
-    return def?.set.model && send(def.set.model(variant ?? id, status?.effort), 'Could not switch model')
+    return def?.set.model && setting(def.set.model(variant ?? id, status?.effort), 'Could not switch model')
   }
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
@@ -51,16 +51,18 @@ export function useSession(host: string, pane: string) {
     }
   }
   const send = (text: string, label = 'Could not send') => run(label, () => api.send(host, pane, text))
+  // a setting goes to the agent as a slash command, but the chat doesn't show it as a message
+  const setting = (text: string, label: string) => run(label, () => api.setting(host, pane, text))
 
   const actions = {
     send,
     setModel: selectModel,
     setEffort: (level: string) => selectedModel?.variants?.[level]
-      ? send(`/model ${selectedModel.variants[level]}`, 'Could not change effort')
-      : def?.set.effort && send(def.set.effort(level), 'Could not change effort'),
+      ? setting(`/model ${selectedModel.variants[level]}`, 'Could not change effort')
+      : def?.set.effort && setting(def.set.effort(level), 'Could not change effort'),
     setMode: (mode: string) => run('Could not switch mode', () => api.mode(host, pane, mode)),
-    setGoal: (text: string) => def?.set.goal && send(def.set.goal(text), 'Could not set goal'),
-    clearGoal: () => def?.set.clearGoal && send(def.set.clearGoal, 'Could not clear goal'),
+    setGoal: (text: string) => def?.set.goal && setting(def.set.goal(text), 'Could not set goal'),
+    clearGoal: () => def?.set.clearGoal && setting(def.set.clearGoal, 'Could not clear goal'),
     compact: () => def?.set.compact && send(def.set.compact, 'Could not compact'),
     clear: () => def?.set.clear && send(def.set.clear, 'Could not clear'),
     rc: (on: boolean) =>

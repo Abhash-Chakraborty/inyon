@@ -166,6 +166,11 @@ describe('othersSends', () => {
     expect(othersSends(sends, [mine])).toEqual([])
   })
 
+  test("a setting changed with the app's controls is never shown as a message", () => {
+    setSystemTime(T)
+    expect(othersSends([{ ...send('s', 'sending'), text: '/model gpt-6.1-sol', setting: true }, send('a', 'sending')], []).map((p) => p.id)).toEqual(['a'])
+  })
+
   test('forgets sends older than five minutes', () => {
     setSystemTime(T)
     expect(othersSends([send('old', 'sent', 5 * 60_000), send('new', 'sent', 5 * 60_000 - 1)], []).map((p) => p.id)).toEqual(['new'])

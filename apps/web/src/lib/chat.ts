@@ -28,6 +28,11 @@ export type Row =
   | { type: 'goal'; key: string; item: ItemOf<'goal'> }
 
 const SPECIAL = new Set(['AskUserQuestion', 'ExitPlanMode', 'TodoWrite'])
+/**
+ * Slash commands that only change a setting (the app's own controls send these). The header shows
+ * the setting itself, so they aren't messages in the conversation. A goal shows as its own row.
+ */
+const SETTINGS = new Set(['model', 'models', 'effort', 'fast', 'permissions', 'approvals', 'mode', 'agent', 'agents', 'output-style', 'goal'])
 
 /** Groups a flat transcript into conversation rows: user bubbles and assistant turns. */
 export function buildRows(items: ChatItem[]): Row[] {
@@ -36,6 +41,8 @@ export function buildRows(items: ChatItem[]): Row[] {
   for (const i of items) if (i.kind === 'tool_result') results.set(i.toolUseId, i)
 
   let turn: Extract<Row, { type: 'assistant' }> | null = null
+  /** the last command was a setting, so the output after it is hidden too */
+  let hidden = false
   const closeTurn = () => {
     if (turn) turn.open = false
     turn = null
@@ -49,6 +56,7 @@ export function buildRows(items: ChatItem[]): Row[] {
   }
 
   for (const i of items) {
+    if (i.kind !== 'command') hidden = false
     switch (i.kind) {
       case 'user':
         closeTurn()
@@ -76,6 +84,10 @@ export function buildRows(items: ChatItem[]): Row[] {
         break
       case 'command': {
         const prev = rows[rows.length - 1]
+        // a setting's own output ("Set model to …") goes with it
+        if (!i.name && hidden) break
+        hidden = SETTINGS.has(i.name.replace(/^\/+/, '').toLowerCase())
+        if (hidden) break
         if (!i.name && prev?.type === 'command' && prev.output === undefined) {
           prev.output = i.output
           break

@@ -66,10 +66,10 @@ const SCAN = 400
 export class SendLedger {
   private sends: (SendState & { known: Set<string> })[] = []
 
-  track(id: string, text: string, items: ChatItem[]) {
+  track(id: string, text: string, items: ChatItem[], setting = false) {
     this.sends = this.sends.filter((s) => s.id !== id)
     const known = new Set(items.slice(-SCAN).filter((i) => typedAs(i) !== undefined).map((i) => i.uuid))
-    this.sends.push({ id, text, at: Date.now(), state: 'sending', known })
+    this.sends.push({ id, text, at: Date.now(), state: 'sending', known, ...(setting && { setting }) })
   }
 
   settle(id: string, patch: Partial<Pick<SendState, 'state' | 'error'>>) {

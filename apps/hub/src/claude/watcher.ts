@@ -334,8 +334,8 @@ class ChatWatcher {
 
   private ledger = new SendLedger()
 
-  trackSend(id: string, text: string) {
-    this.ledger.track(id, text, this.items)
+  trackSend(id: string, text: string, setting = false) {
+    this.ledger.track(id, text, this.items, setting)
     this.publishInfo()
   }
 

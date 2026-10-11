@@ -73,6 +73,6 @@ export function settle(pending: PendingMessage[], items: ChatItem[], sends: read
 export function othersSends(sends: readonly SendState[] = [], mine: readonly PendingMessage[]): PendingMessage[] {
   const ids = new Set(mine.map((p) => p.id))
   return sends
-    .filter((s) => !ids.has(s.id) && (s.state === 'sending' || s.state === 'sent') && Date.now() - s.at < 5 * 60_000)
+    .filter((s) => !ids.has(s.id) && !s.setting && (s.state === 'sending' || s.state === 'sent') && Date.now() - s.at < 5 * 60_000)
     .map((s) => ({ id: s.id, text: s.text, at: s.at, status: s.state === 'sending' ? 'sending' : 'sent', remote: true }))
 }

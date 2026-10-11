@@ -270,6 +270,8 @@ export interface SendState {
   state: 'sending' | 'sent' | 'queued' | 'delivered' | 'failed'
   uuid?: string
   error?: string
+  /** a change made with the app's controls (model, effort, goal…): followed, but not shown as a message */
+  setting?: boolean
 }
 
 export interface ChatInfo {

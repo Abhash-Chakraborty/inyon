@@ -130,3 +130,10 @@ test('a brand-new transcript (first message of a conversation) still matches', (
   ledger.match([user('new', 'hello there')], [])
   expect(ledger.get('s1')).toMatchObject({ state: 'delivered', uuid: 'new' })
 })
+
+test("a setting from the app's controls is followed like any send but marked, so no device shows it as a message", () => {
+  const ledger = new SendLedger()
+  ledger.track('m', '/model gpt-6.1-sol', [], true)
+  ledger.track('t', 'hello', [])
+  expect(ledger.list().map((s) => [s.id, s.setting ?? false])).toEqual([['m', true], ['t', false]])
+})

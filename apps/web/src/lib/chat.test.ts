@@ -72,9 +72,22 @@ describe('buildRows', () => {
     })
 
     test('a command ends the turn above it', () => {
-      const rows = buildRows([item.text('hi'), item.command('model', 'opus'), item.text('next')])
+      const rows = buildRows([item.text('hi'), item.command('cost', ''), item.text('next')])
       expect(types(rows)).toEqual(['assistant', 'command', 'assistant'])
-      expect(rows[1]).toMatchObject({ name: 'model', args: 'opus' })
+      expect(rows[1]).toMatchObject({ name: 'cost' })
+    })
+
+    test("a setting changed with the app's controls isn't shown as a message, nor its output", () => {
+      const rows = buildRows([
+        item.text('hi'),
+        item.command('model', 'opus'),
+        item.command('', '', 'Set model to Opus'),
+        item.command('/effort', 'high'),
+        item.command('compact'),
+        item.command('', '', 'Compacted'),
+      ])
+      expect(types(rows)).toEqual(['assistant', 'command'])
+      expect(rows[1]).toMatchObject({ name: 'compact', output: 'Compacted' })
     })
   })
 

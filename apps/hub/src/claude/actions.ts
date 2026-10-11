@@ -58,10 +58,11 @@ function inLane<T>(hostId: string, paneId: string, fn: () => Promise<T>): Promis
  * Sends a message and follows it until the agent has it. `id` names the send for every device
  * (the app passes its own, so a retry is the same send); its state is in the chat info's `sends`.
  * `fromComposer`: the text came out of the app's message box, so the saved draft goes with it.
+ * `setting`: a change made with the app's controls, which no device shows as a message.
  */
-export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`) {
+export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`, setting = false) {
   const w = watchers.get(hostId, paneId)
-  w.trackSend(id, text)
+  w.trackSend(id, text, setting)
   try {
     await inLane(hostId, paneId, () => sendMessageToPane(hostId, paneId, text, fromComposer))
     await confirmDelivery(hostId, paneId, id, text)
