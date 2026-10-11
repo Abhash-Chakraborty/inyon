@@ -17,6 +17,16 @@ const PANE_FORMAT = [
   '#{pane_current_path}', '#{pane_title}', '#{pane_width}', '#{pane_height}', '#{pane_dead}',
 ].join(SEP)
 
+/**
+ * One line of PANE_FORMAT output split into its fields. Older tmux (3.4, as on Ubuntu 24.04) writes
+ * the separator escaped, as the four characters \037, and a backslash as \\; those lines are
+ * unescaped first. 3.6 writes them as they are.
+ */
+export function tmuxFields(line: string) {
+  if (!line.includes(SEP) && line.includes('\\037')) line = line.replace(/\\(\\|[0-7]{3})/g, (_, e: string) => (e === '\\' ? '\\' : String.fromCharCode(parseInt(e, 8))))
+  return line.split(SEP)
+}
+
 interface Proc {
   pid: number
   ppid: number
@@ -261,7 +271,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
   const sessions = new Map<string, SessionInfo>()
   const windows = new Map<string, WindowInfo>()
   for (const line of sections.get('TMUX') ?? []) {
-    const f = line.split(SEP)
+    const f = tmuxFields(line)
     if (f.length < 18) continue
     const [sid, sname, sattached, wid, widx, wname, wactive, wact, pid, pidx, pactive, ppid, pcmd, pcwd, ptitle, pw, ph, pdead] = f
     if (sname.startsWith(VIEW_PREFIX) || sname.startsWith(LOGIN_PREFIX)) continue

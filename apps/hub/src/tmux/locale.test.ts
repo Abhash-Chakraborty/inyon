@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { Host } from '../hosts/host.ts'
-import { capturePanes, probe } from './tmux.ts'
+import { capturePanes, probe, tmuxFields } from './tmux.ts'
 
 // A machine reached over SSH often has no locale at all. tmux then wrote its field separator as
 // "_" and the machine listed no sessions, though two were running. A private server (short path:
@@ -35,4 +35,11 @@ test("a pane's screen keeps its non-ASCII text", async () => {
   const pane = r.sessions.find((s) => s.name === 'tëst')!.windows[0]!.panes[0]!.id
   const screen = (await capturePanes(noLocale, [pane])).get(pane)!.join('\n')
   expect(screen).toContain('räksmörgås ⏺')
+})
+
+test('tmux 3.4 escapes the field separator; its lines read the same as newer ones', () => {
+  // as tmux 3.4 printed a session "a\b" holding window "tëst"
+  expect(tmuxFields('a\\\\b\\037tëst\\037%0')).toEqual(['a\\b', 'tëst', '%0'])
+  // newer tmux: the separator as it is, and a backslash left alone
+  expect(tmuxFields('a\\b\u001ftëst\u001f%0')).toEqual(['a\\b', 'tëst', '%0'])
 })
