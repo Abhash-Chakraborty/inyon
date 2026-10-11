@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ChevronRight, ClipboardPaste, Copy, ScanLine, SquareTerminal } from 'lucide-react'
-import type { HostConfig } from '@tether/protocol'
+import { RELEASES_DOWNLOAD, type HostConfig } from '@tether/protocol'
 import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
@@ -11,7 +11,7 @@ import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 
 const PAIR_COMMAND = 'tether-node pair'
-const DOWNLOADS = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download'
+const DOWNLOADS = RELEASES_DOWNLOAD
 /** One line that downloads tether-node, starts it in the background and shows the code. */
 export const SETUP_COMMANDS = {
   unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${DOWNLOADS}/get.sh | sh` },

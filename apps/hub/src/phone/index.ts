@@ -168,6 +168,9 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   const router = makeRouter([phoneRoutes, coreRoutes])
   startCore()
   ensureLinks()
+  // laptops paired with the phone update from tether-releases; its API answers the WebView (CORS)
+  const { nodeUpdates } = await import('../hosts/node-update.ts')
+  nodeUpdates.watchReleases()
 
   return {
     async fetch(req) {

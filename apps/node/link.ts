@@ -45,6 +45,8 @@ interface State {
   relays: string[]
   updatedAt: number
   pid: number
+  /** missing from links before `tether-node update` existed */
+  version?: string
 }
 
 function readJson<T>(name: string, fallback: T): T {
@@ -438,7 +440,7 @@ export function startLink(config: LinkConfig) {
 
   const update = () => {
     const urls = [...(tunnelUrl ? [tunnelUrl] : []), ...(config.lan ? lanUrls(config.port) : [])]
-    const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid }
+    const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION }
     writeJson('state.json', state)
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return

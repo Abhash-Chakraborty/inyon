@@ -1,8 +1,8 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { childPath, WIN } from './ops.ts'
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { childPath, selfCommand, WIN } from './ops.ts'
 
 /**
  * Keeps the phone link running without a terminal window: a user service that starts at login and
@@ -17,16 +17,17 @@ const dir = () => path.join(os.homedir(), '.tether-node')
 const bin = () => path.join(dir(), 'bin')
 const unit = () => path.join(os.homedir(), '.config', 'systemd', 'user', `${NAME}.service`)
 const plist = () => path.join(os.homedir(), 'Library', 'LaunchAgents', 'dev.tether.node-link.plist')
+/** install.sh's launchd job, for a machine paired with a hub */
+const hubPlist = () => path.join(os.homedir(), 'Library', 'LaunchAgents', 'dev.tether.node.plist')
 /** The PID of the background process started where there are no user services. */
 const pidFile = () => path.join(dir(), 'link.pid')
 const TASK = 'Tether link'
+/** install.ps1's logon task, for a Windows machine paired with a hub */
+const HUB_TASK = 'Tether node'
+const UPDATE_TASK = 'Tether update'
 
 /** The command that runs this program: the compiled binary itself, or Bun with the script. */
-function self(): string[] {
-  const script = process.argv[1]
-  const compiled = !script || script.startsWith('/$bunfs/') || /^[A-Z]:\\~BUN\\/i.test(script) || path.basename(process.execPath).startsWith(NAME)
-  return compiled ? [process.execPath] : [process.execPath, path.resolve(script)]
-}
+export const self = selfCommand
 
 /** A missing program (no systemctl in a container, say) is a failure like any other, not a crash. */
 export const run = (cmd: string[]) => {
@@ -67,8 +68,8 @@ export interface Installed {
   how: string
 }
 
-/** Installs and starts the link as a user service. */
-export function installService(): Installed {
+/** Installs and starts the link as a user service; `restart` replaces a copy that's already running. */
+export function installService(restart = false): Installed {
   const cmd = settle(self())
   const args = [...cmd, 'link']
   if (process.platform === 'linux') {
@@ -89,6 +90,8 @@ WantedBy=default.target
     run(['systemctl', '--user', 'daemon-reload'])
     const r = run(['systemctl', '--user', 'enable', '--now', `${NAME}.service`])
     if (!r.ok) return { ok: false, how: r.out || 'systemctl refused' }
+    // enable --now leaves a running unit alone
+    if (restart) run(['systemctl', '--user', 'restart', `${NAME}.service`])
     // keeps it running while you're logged out (allowed for your own user on most systems)
     run(['loginctl', 'enable-linger', os.userInfo().username])
     return { ok: true, how: `a user service that starts again by itself after a restart (systemctl --user status ${NAME})` }
@@ -120,7 +123,9 @@ $t = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\\$env:USERNAME"
 $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 $p = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName '${TASK}' -Action $a -Trigger $t -Settings $s -Principal $p -Force | Out-Null
-Start-ScheduledTask -TaskName '${TASK}'`
+${restart ? `Stop-ScheduledTask -TaskName '${TASK}' -ErrorAction SilentlyContinue
+Get-Process -Name 'tether-node' -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${process.pid} } | Where-Object { $_.Path -like ${q(path.join(bin(), NAME))} + '*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+` : ''}Start-ScheduledTask -TaskName '${TASK}'`
     const r = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', ps])
     if (!r.ok) return { ok: false, how: r.out.split('\n')[0] || 'Task Scheduler refused' }
     return { ok: true, how: `a task that starts again by itself when you sign in ("${TASK}" in Task Scheduler)` }
@@ -274,4 +279,109 @@ export function missingMux(): string | undefined {
   const pm = ['apt-get', 'dnf', 'pacman', 'zypper', 'apk'].find((p) => Bun.which(p))
   const cmd = pm === 'apt-get' ? 'sudo apt-get install -y tmux' : pm === 'dnf' ? 'sudo dnf install -y tmux' : pm === 'pacman' ? 'sudo pacman -S tmux' : pm === 'zypper' ? 'sudo zypper install -y tmux' : pm === 'apk' ? 'sudo apk add tmux' : undefined
   return `tmux is missing. ${cmd ? `Install it with: ${cmd}` : 'Install it with your package manager.'}`
+}
+
+type Which = 'link' | 'hub'
+const ok = (how: string): Installed => ({ ok: true, how })
+const q = (v: string) => `'${v.replace(/'/g, "''")}'`
+
+/**
+ * Restarts the background copy so a new file runs: the phone link (`which` = link, set up by
+ * `tether-node setup`) or the hub connection (set up by install.sh or install.ps1). `cmd` is how
+ * the installed program runs (the binary, or Bun and the script).
+ */
+export function restartService(which: Which, cmd: string[], platform: NodeJS.Platform = process.platform): Installed {
+  if (platform === 'linux') {
+    // both installers name their user unit tether-node.service
+    if (existsSync(unit())) {
+      const r = run(['systemctl', '--user', 'restart', `${NAME}.service`])
+      return r.ok ? ok('systemctl --user restart tether-node') : { ok: false, how: r.out || 'systemctl refused' }
+    }
+  }
+  if (platform === 'darwin') {
+    const [label, file] = which === 'link' ? ['dev.tether.node-link', plist()] : ['dev.tether.node', hubPlist()]
+    if (existsSync(file)) {
+      if (run(['launchctl', 'kickstart', '-k', `gui/${os.userInfo().uid}/${label}`]).ok) return ok(`launchctl kickstart ${label}`)
+      run(['launchctl', 'unload', file])
+      const r = run(['launchctl', 'load', '-w', file])
+      return r.ok ? ok(`launchctl load ${label}`) : { ok: false, how: r.out || 'launchctl refused' }
+    }
+  }
+  if (platform === 'win32') {
+    // a running copy of the old program (renamed aside or not) is stopped, never this process
+    const exe = cmd[0]!
+    const task = which === 'link' ? TASK : HUB_TASK
+    const start = which === 'link'
+      ? `Start-Process -FilePath $exe -ArgumentList 'link' -WindowStyle Hidden`
+      : `Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden`
+    const ps = `$ErrorActionPreference='Stop'
+$exe = ${q(exe)}
+$t = Get-ScheduledTask -TaskName ${q(task)} -ErrorAction SilentlyContinue
+if ($t) { Stop-ScheduledTask -TaskName ${q(task)} -ErrorAction SilentlyContinue }
+Get-Process -Name 'tether-node' -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${process.pid} -and ($_.Path -eq $exe -or $_.Path -like "$exe.old-*") } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+if ($t) { Start-ScheduledTask -TaskName ${q(task)} } else { ${start} }`
+    const r = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', ps])
+    return r.ok ? ok(`restarted "${task}"`) : { ok: false, how: r.out.split('\n')[0] || 'Task Scheduler refused' }
+  }
+  // no service manager: a process started in the background (nohup), recorded by its pid
+  if (which === 'link') {
+    if (!existsSync(pidFile())) return { ok: false, how: 'no background service or process found' }
+    return background([...cmd, 'link'])
+  }
+  return restartHubProcess(cmd)
+}
+
+/** install.sh's fallback: tether-node started with nohup. Stops the recorded copy, starts the new one. */
+function restartHubProcess(cmd: string[]): Installed {
+  let pid: number | undefined
+  try {
+    pid = JSON.parse(readFileSync(path.join(dir(), 'node.json'), 'utf8')).pid
+  } catch {}
+  const args = typeof pid === 'number' && pid > 1 ? proc.cmdline(pid) : undefined
+  if (!pid || !args?.some((a) => path.basename(a).startsWith(NAME))) return { ok: false, how: 'no background service or process found' }
+  try {
+    proc.signal(pid, 'SIGTERM')
+  } catch {}
+  for (let waited = 0; waited < 3000 && proc.cmdline(pid); waited += 100) Bun.sleepSync(100)
+  const started = run(['sh', '-c', `nohup ${cmd.map(shq).join(' ')} >> ${shq(path.join(dir(), 'node.log'))} 2>&1 < /dev/null &`]).ok
+  return started ? ok('a background process') : { ok: false, how: "the new copy couldn't start in the background" }
+}
+
+/**
+ * Starts `tether-node update` on its own, for the app: restarting the service ends everything the
+ * service started, the command that asked for the update included. On Linux it becomes a
+ * transient systemd unit, on Windows a one-off task, elsewhere a process in a session of its own.
+ */
+export function detachUpdate(cmd: string[], platform: NodeJS.Platform = process.platform): Installed {
+  const args = [...cmd, 'update']
+  if (platform === 'linux' && existsSync(unit()) && Bun.which('systemd-run')) {
+    const env = process.env.TETHER_DOWNLOAD ? [`--setenv=TETHER_DOWNLOAD=${process.env.TETHER_DOWNLOAD}`] : []
+    if (run(['systemd-run', '--user', '--collect', '--quiet', ...env, ...args]).ok) return ok('a transient systemd unit')
+  }
+  if (platform === 'win32') {
+    const [exe, ...rest] = args
+    const ps = `$ErrorActionPreference='Stop'
+$a = New-ScheduledTaskAction -Execute ${q(exe!)} -Argument ${q(rest.map((a) => `"${a}"`).join(' '))}
+$p = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+Register-ScheduledTask -TaskName '${UPDATE_TASK}' -Action $a -Principal $p -Settings $s -Force | Out-Null
+Start-ScheduledTask -TaskName '${UPDATE_TASK}'`
+    if (run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', ps]).ok) return ok('a one-off task')
+  }
+  try {
+    mkdirSync(dir(), { recursive: true })
+    const log = openSync(path.join(dir(), 'update.log'), 'a')
+    Bun.spawn(args, { stdin: 'ignore', stdout: log, stderr: log, detached: true, windowsHide: true } as any).unref()
+    closeSync(log)
+    return ok('a background process')
+  } catch (err) {
+    return { ok: false, how: (err as Error).message }
+  }
+}
+
+/** The one-off update task removes itself when it's done (Windows only). */
+export function forgetUpdateTask() {
+  if (!WIN) return
+  run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', `Unregister-ScheduledTask -TaskName '${UPDATE_TASK}' -Confirm:$false -ErrorAction SilentlyContinue`])
 }

@@ -177,6 +177,17 @@ systemd user unit on Linux, launchd on macOS and a logon task on Windows. A box 
 user services gets a background process and an `@reboot` cron line instead. `tether-node
 uninstall` removes the service and leaves your pairings alone.
 
+To update, run `tether-node update`. It downloads the newest release, checks it against
+SHA256SUMS, swaps it in and restarts the background service. If the new version doesn't start,
+the old one comes back. When a computer's tether-node is behind, its page in the app shows
+*Update*, which runs the same command; nothing updates without that tap. A version from before
+`tether-node update` existed updates by running the setup command once more.
+
+A machine paired with a hub updates from that hub instead, with the same command or the *Update*
+button on its page under *Machines*. The button works for any version, even one without the
+command: the hub sends a short script that checks the download against the hub's checksum before
+it replaces anything.
+
 `tether-node` opens a free Cloudflare quick tunnel, so the phone reaches the computer from any
 network without an account or an open port. Phone and computer talk over Noise (the IK pattern,
 X25519 and ChaCha20-Poly1305), so the tunnel only ever carries ciphertext. The tunnel's address

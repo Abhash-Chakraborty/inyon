@@ -13,6 +13,7 @@ import { installIntegration, uninstallIntegration } from './claude/integration.t
 import { openTerminal } from './terminal/terminal.ts'
 import type { PtyHandle } from './hosts/host.ts'
 import { nodeLinks } from './hosts/node-link.ts'
+import { nodeUpdates } from './hosts/node-update.ts'
 import { listModels } from './features/models.ts'
 import { sendOnce } from './claude/send-receipts.ts'
 import { pruneChats } from './claude/chat-cache.ts'
@@ -277,6 +278,16 @@ export const coreRoutes: Routes = {
       else await uninstallIntegration(host)
       registry.setKeepIntegration(req.params.id, enable)
       registry.refresh(req.params.id)
+      return ok()
+    }),
+  },
+  // one tap in the app: brings the machine's tether-node up to date (see hosts/node-update.ts)
+  '/api/hosts/:id/node/update': {
+    POST: api((req) => {
+      const rt = registry.get(req.params.id)
+      if (!rt) throw new HttpError(404, 'Unknown machine')
+      const refused = nodeUpdates.start(rt.host, rt.state)
+      if (refused) throw new HttpError(409, refused)
       return ok()
     }),
   },

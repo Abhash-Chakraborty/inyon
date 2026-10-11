@@ -18,6 +18,7 @@ import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { AgentBadges } from '../components/Overview.tsx'
 import { confirmAction } from '../components/Confirm.tsx'
+import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
@@ -66,6 +67,7 @@ export function MachinesPage() {
               <div className="flex items-center gap-2">
                 <span className="truncate text-[15px] font-semibold">{h.config.name}</span>
                 <HostDot status={h.status} />
+                {nodeUpdateLabel(h) && <span className="shrink-0 rounded-[5px] bg-sunken px-1.5 py-px text-[11px] text-fg-2">{nodeUpdateLabel(h)}</span>}
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
                 {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
@@ -139,6 +141,7 @@ export function MachinePage() {
           {host.os && ` · ${host.os}`}
           {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}
         </p>
+        <NodeUpdate host={host} />
         {host.error && host.status !== 'online' && (
           <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-[12px] px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
             {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />}

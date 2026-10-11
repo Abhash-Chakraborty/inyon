@@ -3,8 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
+import { VERSION } from '@tether/protocol'
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
+import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
 import { unixPairCommand } from './pair-command.ts'
 
 /**
@@ -146,6 +148,8 @@ export const nodeRoutes = {
   '/node/install.sh': route(() => text(path.join(NODE_DIR, 'install.sh'))),
   '/node/install.ps1': route(() => text(path.join(NODE_DIR, 'install.ps1'))),
   '/node/tether-node.ts': route(async () => text(await nodeScript())),
+  // for `tether-node update` on a machine install.sh set up
+  '/node/tether-node.ts.sha256': route(async () => new Response(await sha256(await nodeScript()), { headers: { 'content-type': 'text/plain' } })),
   '/node/tether-node.exe': route(async (req) => binary(await nodeExe(archOf(new URL(req.url))), 'tether-node.exe')),
   '/node/tether-node.exe.gz': route(async (req) => binary(await gzipped(await nodeExe(archOf(new URL(req.url)))), 'tether-node.exe.gz')),
   '/node/tether-node.exe.sha256': route(async (req) => new Response(await sha256(await nodeExe(archOf(new URL(req.url)))), { headers: { 'content-type': 'text/plain' } })),
@@ -162,6 +166,19 @@ export async function pairCommands(hub: string, token: string) {
     windows: `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '${hub}/node/install.ps1'))) -Hub '${hub}' -Token '${token}'"`,
   }
 }
+
+/**
+ * The update script for a paired machine (see hosts/node-update.ts), with the checksum of the
+ * build this hub serves it filled in: the .exe for its architecture on Windows, the script elsewhere.
+ */
+export async function updateScript(platform: string, arch: string) {
+  const win = platform === 'win32'
+  const a = arch === 'arm64' ? 'arm64' : 'x64'
+  const sum = win ? await sha256(await nodeExe(a)) : await sha256(await nodeScript())
+  const script = fs.readFileSync(path.join(NODE_DIR, win ? 'hub-update.ps1' : 'hub-update.sh'), 'utf8')
+  return fillUpdateScript(script, { sha256: sum, version: VERSION, arch: a })
+}
+nodeUpdates.useScripts(updateScript)
 
 /** Builds the Windows binaries in the background so the first pairing doesn't wait for them. */
 export function prebuildNode() {

@@ -2,6 +2,7 @@
 import type { AgentKind } from './agents.ts'
 
 export * from './agents.ts'
+export * from './versions.ts'
 
 /** local: the hub itself · ssh: the hub connects out over SSH · node: the machine connects in to the hub (no open ports) */
 export type HostKind = 'local' | 'ssh' | 'node' | 'link'
@@ -147,6 +148,18 @@ export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' |
 /** Tether's version, the same for the app, the hub and tether-node (the root package.json's). */
 export const VERSION = '0.6.3'
 
+/**
+ * A tether-node that can be updated from the app, or an update the app started. `latest` is the
+ * hub's own version for a machine paired with the hub, the newest release for a phone-paired one.
+ */
+export interface NodeUpdate {
+  latest: string
+  /** false for a tether-node too old to update itself (its setup command has to be run again) */
+  supported: boolean
+  state?: 'updating' | 'updated' | 'failed'
+  error?: string
+}
+
 export interface HostState {
   config: HostConfig
   status: HostStatus
@@ -168,6 +181,8 @@ export interface HostState {
   os?: string
   /** the tether-node version a paired machine or laptop runs */
   nodeVersion?: string
+  /** set when that tether-node is behind, or while an update runs */
+  nodeUpdate?: NodeUpdate
   latencyMs?: number
   sessions: SessionInfo[]
   updatedAt: number

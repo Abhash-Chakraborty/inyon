@@ -132,6 +132,8 @@ export const api = {
   pair: (name: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', '/api/hosts/pair', { name, origin: hubOrigin() }),
   removeHost: (id: string) => request('DELETE', h(id)),
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
+  /** brings the machine's tether-node up to date (it restarts and reconnects by itself) */
+  nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
   launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; model?: string; mode?: string; prompt?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
   send: (host: string, pane: string, text: string, requestId?: string) => request('POST', `${panePath(host, pane)}/send`, { text, requestId }, 310_000),

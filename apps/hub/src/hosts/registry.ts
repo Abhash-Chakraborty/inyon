@@ -17,6 +17,7 @@ import { opencodeEndpoint } from '../agents/opencode.ts'
 import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.ts'
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
+import { nodeUpdates } from './node-update.ts'
 import { sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
 import { untilStdinCloses } from '../claude/transcript-tail.ts'
@@ -150,6 +151,8 @@ class Registry {
       }
       this.refresh(id, up ? 100 : 1000)
     })
+    // a tether-node update started, progressed or finished
+    nodeUpdates.onChange(() => this.emit({ type: 'overview' }))
   }
 
   on(fn: (e: RegistryEvent) => void) {
@@ -166,7 +169,7 @@ class Registry {
   }
 
   overview(): HostState[] {
-    return [...this.hosts.values()].map((r) => ({ ...r.state, config: publicConfig(r.state.config) }))
+    return [...this.hosts.values()].map((r) => ({ ...r.state, config: publicConfig(r.state.config), nodeUpdate: nodeUpdates.view(r.state) }))
   }
 
   get(id: string) {

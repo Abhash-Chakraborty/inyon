@@ -14,6 +14,13 @@ export const WIN = process.platform === 'win32'
 type Proc = { kill(): void; write?(d: string): void; resize?(c: number, r: number): void }
 
 
+/** The command that runs this program: the compiled binary itself, or Bun with the script. */
+export function selfCommand(): string[] {
+  const script = process.argv[1]
+  const compiled = !script || script.startsWith('/$bunfs/') || /^[A-Z]:\\~BUN\\/i.test(script) || path.basename(process.execPath).startsWith('tether-node')
+  return compiled ? [process.execPath] : [process.execPath, path.resolve(script)]
+}
+
 const shellFor = (cmd: string) => (WIN ? [process.env.TETHER_SH || 'busybox.exe', 'sh', '-c', `${WIN_PRELUDE}\n${cmd}`] : ['/bin/sh', '-c', cmd])
 
 /** Child environment on Windows: a Unix-style HOME, the usual install folders on PATH, no SHELL. */
@@ -34,7 +41,9 @@ function winEnv(): Record<string, string | undefined> {
   env[key] = [...extra, env[key]].join(';')
   return env
 }
-const childEnv = WIN ? winEnv() : process.env
+// how a command can run tether-node itself, as in "$TETHER_NODE_EXE" ${TETHER_NODE_SCRIPT:+"$TETHER_NODE_SCRIPT"} update
+const [selfExe, selfScript] = selfCommand()
+const childEnv = Object.assign(WIN ? winEnv() : process.env, { TETHER_NODE_EXE: selfExe, TETHER_NODE_SCRIPT: selfScript ?? '' })
 /** PATH the commands run with, which also covers the usual per-user install folders. */
 export const childPath = () => childEnv[Object.keys(childEnv).find((k) => k.toLowerCase() === 'path') ?? 'PATH'] ?? ''
 

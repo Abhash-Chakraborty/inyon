@@ -11,6 +11,7 @@
  *       --port <n>                     local port (4780)
  *   tether-node phones                 list paired phones
  *   tether-node forget <name|key>      unpair a phone
+ *   tether-node update                 get the newest version and restart the background service
  *   tether-node <hub-url>              connect to a Tether hub instead (from its "Add a machine"), with
  *                                      the token in TETHER_TOKEN (`<hub-url> <token>` works too)
  *
@@ -19,16 +20,17 @@
  */
 import os from 'node:os'
 import path from 'node:path'
-import { appendFileSync, readFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@tether/link'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
-import { ensureShell, installService, missingMux, uninstallService } from './service.ts'
+import { detachUpdate, ensureShell, forgetUpdateTask, installService, missingMux, restartService, self, uninstallService } from './service.ts'
+import { cleanupOld, findInstall, readEnvFile, setStatus, staleLink, update, UpdateError, waitStarted } from './update.ts'
 
 // run in the background (a service, a hidden task) there's no console to print to: log to a file.
 // Commands people run (setup, pair…) always print, even from a script, so the pairing code shows.
-const INTERACTIVE = new Set(['setup', 'pair', 'install', 'uninstall', 'phones', 'forget', 'version', '--version', 'help', '--help', '-h'])
+const INTERACTIVE = new Set(['setup', 'pair', 'install', 'uninstall', 'phones', 'forget', 'update', 'version', '--version', 'help', '--help', '-h'])
 const firstArg = process.argv[2]
 if (WIN && !process.stdout.isTTY && !(firstArg && INTERACTIVE.has(firstArg))) {
   const log = path.join(os.homedir(), '.tether-node', firstArg === 'link' ? 'link.log' : 'node.log')
@@ -39,19 +41,6 @@ if (WIN && !process.stdout.isTTY && !(firstArg && INTERACTIVE.has(firstArg))) {
   }
   console.log = write
   console.error = write
-}
-
-function readEnvFile(file: string): Record<string, string> {
-  try {
-    return Object.fromEntries(
-      readFileSync(file, 'utf8').split(/\r?\n/).flatMap((l) => {
-        const m = l.match(/^(\w+)=(.*)$/)
-        return m ? [[m[1], m[2]]] : []
-      }),
-    )
-  } catch {
-    return {}
-  }
 }
 
 function isPrivate(url: URL) {
@@ -85,6 +74,12 @@ function hubMode(hubArg?: string, tokenArg?: string) {
     process.exit(2)
   }
   const wsUrl = `${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}/node`
+  // who's running, for `tether-node update` and the hub's update script: they wait for this
+  // file to name the new version, and stop the copy it names when there's no service manager
+  try {
+    mkdirSync(path.join(os.homedir(), '.tether-node'), { recursive: true })
+    writeFileSync(path.join(os.homedir(), '.tether-node', 'node.json'), JSON.stringify({ pid: process.pid, version: VERSION }))
+  } catch {}
 
   function connect(attempt = 0) {
     const ws = new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` } } as any)
@@ -204,10 +199,12 @@ async function pair(args: string[]) {
 async function setup() {
   console.log(`tether-node ${VERSION}: setting up this ${process.platform === 'darwin' ? 'Mac' : 'machine'} for the Tether app\n`)
   const mux = missingMux()
-  const already = running()
-  const svc = already ? { ok: true, how: '' } : installService()
+  // an older version still running (get.sh or get.ps1 run again to update): start this one instead
+  const stale = running() && staleLink(currentState(), VERSION)
+  const already = running() && !stale
+  const svc = already ? { ok: true, how: '' } : installService(stale)
   if (svc.ok) {
-    console.log(already ? '✓ Already running in the background' : `✓ Runs in the background as ${svc.how}.`)
+    console.log(already ? '✓ Already running in the background' : stale ? `✓ Restarted with version ${VERSION}.` : `✓ Runs in the background as ${svc.how}.`)
     // wait for the service to come up before asking it for a code
     for (let i = 0; i < 20 && !running(); i++) await Bun.sleep(500)
   } else console.log(`! Couldn't set up a background service (${svc.how}). Keep this window open instead.`)
@@ -258,9 +255,41 @@ const USAGE = `tether-node ${VERSION}
   tether-node install / uninstall   start or stop running in the background (at login)
   tether-node phones                list paired phones
   tether-node forget <name|key>     unpair a phone
+  tether-node update                get the newest version and restart the background service
   tether-node <hub-url>             connect to a Tether hub instead, with the token in TETHER_TOKEN`
 
+/**
+ * Gets the newest version and restarts the service with it. With --background (how the app asks
+ * for it) the update runs on its own, since the restart ends the process that asked.
+ */
+async function updateCommand(args: string[]) {
+  const cmd = self()
+  setStatus('running')
+  if (args.includes('--background')) {
+    const r = detachUpdate(cmd)
+    if (!r.ok) {
+      setStatus(`failed: ${r.how}`)
+      fail(`Couldn't start the update: ${r.how}`)
+    }
+    return console.log(`Updating tether-node in the background (${r.how}). Progress goes to ~/.tether-node/update.log.`)
+  }
+  try {
+    const r = await update(findInstall(cmd), { version: VERSION, fetch, restart: restartService, started: waitStarted, log: (l) => console.log(l) })
+    setStatus(r.changed ? `done ${r.version ?? ''}`.trim() : `current ${VERSION}`)
+    console.log(r.message)
+  } catch (err) {
+    const message = err instanceof UpdateError ? err.message : `The update failed: ${(err as Error).message}`
+    setStatus(`failed: ${message}`)
+    console.error(message)
+    process.exitCode = 1
+  } finally {
+    forgetUpdateTask()
+  }
+}
+
 const [cmd, ...rest] = process.argv.slice(2)
+// copies an earlier update renamed aside (a running .exe can't be deleted until it has stopped)
+cleanupOld(self().at(-1)!)
 const hubSaved = !!(process.env.TETHER_HUB || readEnvFile(path.join(os.homedir(), '.tether-node', 'env')).TETHER_HUB)
 if (cmd === 'pair') {
   await ensureShell()
@@ -290,6 +319,7 @@ if (cmd === 'pair') {
   }
   console.log(`tether-node stopped; ${r.how}. Your pairings are kept.`)
 }
+else if (cmd === 'update') await updateCommand(rest)
 else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])
 else if (cmd === 'version' || cmd === '--version') console.log(VERSION)

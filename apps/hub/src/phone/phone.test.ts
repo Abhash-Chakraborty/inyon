@@ -36,9 +36,18 @@ function fakeSsh() {
 }
 
 const { ssh, secrets, calls } = fakeSsh()
+// the phone asks GitHub for the newest tether-node release; here it gets a fixed answer
+const realFetch = globalThis.fetch
+const releaseChecks: string[] = []
+globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+  if (!String(url).startsWith('https://api.github.com/')) return realFetch(url, init)
+  releaseChecks.push(String(url))
+  return Response.json({ tag_name: 'v9.9.9' })
+}) as typeof fetch
 const phone = await startPhone({ store: memoryStore(), ssh })
 
 afterAll(() => {
+  globalThis.fetch = realFetch
   // the rest of the suite runs commands locally
   setHostBackends(() => processBackend(path.join(os.tmpdir(), 'tether-test-cm')))
   useStore(memoryStore())
@@ -53,6 +62,12 @@ const until = async (check: () => boolean) => {
   for (let i = 0; i < 100 && !check(); i++) await new Promise((r) => setTimeout(r, 10))
   expect(check()).toBe(true)
 }
+
+test('the phone looks up the newest tether-node for laptops paired with it', async () => {
+  const { nodeUpdates } = await import('../hosts/node-update.ts')
+  await until(() => nodeUpdates.latestRelease === '9.9.9')
+  expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/tether-releases/releases/latest'])
+})
 
 test('the phone needs no sign-in', async () => {
   expect((await call('GET', '/api/session')).data).toMatchObject({ authed: true })
