@@ -84,6 +84,16 @@ const HEAL_EVERY_MS = 10 * 60_000
 
 /** a machine that stops answering for this long gets an "offline" notification */
 const OFFLINE_NOTIFY_MS = 60_000
+
+/**
+ * Whether to say a machine is offline. On the phone, the app's own connection drops whenever it's in
+ * the background or the phone has no signal, which says nothing about the machine: no alerts then,
+ * and the minute starts over when the app is back.
+ */
+export function offlineAlertDue(o: { since?: number; notified?: boolean; now: number; held: boolean; heldUntil: number; online: boolean }) {
+  if (!o.since || o.notified || o.held || !o.online) return false
+  return o.now - Math.max(o.since, o.heldUntil) >= OFFLINE_NOTIFY_MS
+}
 const snapshotKey = (id: string) => `snapshots/${keyPart(id)}`
 
 /** The last state seen from a machine, so it still shows its sessions while it's unreachable. */
@@ -115,6 +125,9 @@ const waitingFor = (c: HostConfig) =>
 class Registry {
   private hosts = new Map<string, Runtime>()
   private listeners = new Set<(e: RegistryEvent) => void>()
+  /** offline alerts are held while the phone app is hidden; this is when they were last released */
+  private alertsHeld = false
+  private alertsFrom = 0
 
   start() {
     for (const c of loadHosts()) this.add(c, false)
@@ -274,6 +287,12 @@ class Registry {
     pollMs = on ? QUIET_POLL_MS : POLL_MS
   }
 
+  /** The phone app went to the background (true) or came back with a network (false). */
+  holdAlerts(on: boolean) {
+    this.alertsHeld = on
+    if (!on) this.alertsFrom = Date.now()
+  }
+
   refresh(id: string, delay = 120) {
     const rt = this.hosts.get(id)
     if (!rt || rt.stopped) return
@@ -361,8 +380,8 @@ class Registry {
   }
 
   private maybeNotifyOffline(rt: Runtime) {
-    const since = rt.state.offlineSince
-    if (!since || rt.offlineNotified || Date.now() - since < OFFLINE_NOTIFY_MS) return
+    const online = (globalThis as { navigator?: { onLine?: boolean } }).navigator?.onLine !== false
+    if (!offlineAlertDue({ since: rt.state.offlineSince, notified: rt.offlineNotified, now: Date.now(), held: this.alertsHeld, heldUntil: this.alertsFrom, online })) return
     rt.offlineNotified = true
     this.emit({ type: 'notify', host: rt.host.id, pane: '', kind: 'offline', title: `${rt.host.config.name} is offline`, body: 'Its sessions show as they were last seen. Tether reconnects by itself.' })
   }
