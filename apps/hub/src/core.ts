@@ -17,6 +17,7 @@ import { listModels } from './features/models.ts'
 import { sendOnce } from './claude/send-receipts.ts'
 import { pruneChats } from './claude/chat-cache.ts'
 import { lastReply } from './claude/last-reply.ts'
+import { saveDrafts } from './claude/drafts.ts'
 
 /**
  * Tether's API and live updates, independent of how they are served: the hub puts them behind
@@ -130,6 +131,20 @@ registry.on((e) => {
     lastReply(e.host, e.pane).then((reply) => send(reply || e.body), () => send(e.body))
   }
 })
+
+/**
+ * Writes now what would otherwise be saved a few seconds from now: open chats, drafts, and what
+ * each machine looked like. For when the phone app goes to the background or the hub stops.
+ */
+export function saveEverything() {
+  for (const save of [() => watchers.saveAll(), saveDrafts, () => registry.saveAll()]) {
+    try {
+      save()
+    } catch (err) {
+      console.error('saving before closing:', err)
+    }
+  }
+}
 
 /** A connected app: it gets updates through `send` once added to `clients`. */
 export const newClient = (send: (msg: ServerMsg) => void = () => {}): Client => ({ kind: 'client', overview: false, chats: new Set(), terms: new Map(), send })

@@ -400,6 +400,13 @@ class Registry {
     rt.offlineNotified = false
   }
 
+  /** Saves every machine's latest look that the 15 s limit held back (before the app may close). */
+  saveAll() {
+    for (const rt of this.hosts.values()) {
+      if (rt.state.status === 'online' && JSON.stringify(rt.state.sessions) !== rt.savedSnapshot) this.snapshot(rt, true)
+    }
+  }
+
   /** Saves what the machine looks like now; skipped when nothing changed, at most every 15 s. */
   private snapshot(rt: Runtime, force = false) {
     const key = JSON.stringify(rt.state.sessions)

@@ -66,6 +66,25 @@ describe('Composer keeps what you type while live data flows', () => {
     expect(box().value).toBe('hello!')
   })
 
+  test('leaving the app mid-sentence sends the draft at once, not after the pause', async () => {
+    const user = userEvent.setup()
+    const pane = nextPane()
+    await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    const mine = () => socket.send.mock.calls.filter(([m]) => (m as { pane?: string }).pane === pane)
+    await user.type(box(), 'half')
+    expect(mine()).toEqual([])
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    try {
+      act(() => void document.dispatchEvent(new Event('visibilitychange')))
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+    expect(mine()).toEqual([[{ t: 'draft', host: 'box', pane, text: 'half' }]])
+    // and only once: the timer it replaced doesn't send it again
+    await act(() => Bun.sleep(500))
+    expect(mine()).toHaveLength(1)
+  })
+
   test('the text comes back after leaving the page and returning', async () => {
     const user = userEvent.setup()
     const pane = nextPane()

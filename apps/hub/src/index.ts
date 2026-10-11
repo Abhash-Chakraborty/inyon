@@ -9,7 +9,7 @@ import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
-import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, startCore, type Client, type Handler, type Routes } from './core.ts'
+import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
 
 /** The hub: Tether's API and live updates over HTTP and a WebSocket, behind a password. */
 
@@ -283,6 +283,14 @@ const server = Bun.serve<SocketData>({
     },
   },
 })
+
+// a restart (systemctl, Ctrl+C) keeps what was about to be saved: open chats, drafts, machines
+for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(signal, () => {
+    saveEverything()
+    process.exit(0)
+  })
+}
 
 console.log(`Tether hub listening on ${TLS ? 'https' : 'http'}://${server.hostname}:${server.port}`)
 prebuildNode()

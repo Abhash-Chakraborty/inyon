@@ -13,13 +13,26 @@ export interface Draft {
 const drafts = new Map<string, Draft>(Object.entries(kv.get<Record<string, Draft>>('drafts') ?? {}))
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 
+/** while the phone app is in the background it can be closed at any moment: no waiting then */
+let atOnce = false
+
+export function saveDraftsAtOnce(on: boolean) {
+  atOnce = on
+}
+
 function save() {
+  if (atOnce) return saveDrafts()
   clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    try {
-      kv.set('drafts', Object.fromEntries(drafts))
-    } catch {}
-  }, 500)
+  saveTimer = setTimeout(saveDrafts, 500)
+}
+
+/** Writes the drafts now instead of after the short wait (the app or hub is about to go). */
+export function saveDrafts() {
+  clearTimeout(saveTimer)
+  saveTimer = undefined
+  try {
+    kv.set('drafts', Object.fromEntries(drafts))
+  } catch {}
 }
 
 export const squash = (s: string) => s.replace(/\s+/g, '')

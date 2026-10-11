@@ -29,9 +29,9 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
 
   const core = await import('../core.ts')
   const { registry, HttpError } = await import('../hosts/registry.ts')
-  const { watchers } = await import('../claude/watcher.ts')
+  const { saveDraftsAtOnce } = await import('../claude/drafts.ts')
   lookup = (id) => registry.get(id)?.host.config
-  const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, startCore } = core
+  const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, saveEverything, startCore } = core
 
   const links = linkConnector(keys.noise, phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
   const ensureLinks = () => {
@@ -177,8 +177,10 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     background(hidden) {
       registry.quiet(hidden)
       registry.holdAlerts(hidden)
-      // Android may close the app from the background: keep what each open chat has read
-      if (hidden) watchers.saveAll()
+      // Android may close the app from the background: keep what each open chat has read, drafts
+      // and how each machine looked
+      saveDraftsAtOnce(hidden)
+      if (hidden) saveEverything()
     },
     resume() {
       registry.quiet(false)

@@ -107,21 +107,39 @@ export function Composer({
   /** the text both sides last agreed on, so we can tell who changed what */
   const synced = useRef(serverDraft?.text ?? text)
   const pushTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const pending = useRef<(() => void) | undefined>(undefined)
   /** user edits: save locally and push to the hub (which mirrors into the terminal) */
   const setText = (v: string | ((p: string) => string)) => {
     setTextState((prev) => {
       const next = typeof v === 'function' ? v(prev) : v
       clearTimeout(pushTimer.current)
-      pushTimer.current = setTimeout(() => {
+      const push = (pending.current = () => {
+        pending.current = undefined
         if (next !== synced.current) {
           synced.current = next
           socket.send({ t: 'draft', host, pane, text: next })
           setOrigin('app')
         }
-      }, 450)
+      })
+      pushTimer.current = setTimeout(push, 450)
       return next
     })
   }
+  // leaving the app (or reloading) mid-sentence: the draft goes now, not in half a second
+  useEffect(() => {
+    const now = () => {
+      if (!pending.current) return
+      clearTimeout(pushTimer.current)
+      pending.current()
+    }
+    const hidden = () => document.visibilityState === 'hidden' && now()
+    document.addEventListener('visibilitychange', hidden)
+    window.addEventListener('pagehide', now)
+    return () => {
+      document.removeEventListener('visibilitychange', hidden)
+      window.removeEventListener('pagehide', now)
+    }
+  }, [])
   // a draft from the terminal (or another device): adopt it unless you're mid-edit with other text
   useEffect(() => {
     if (!serverDraft) return
