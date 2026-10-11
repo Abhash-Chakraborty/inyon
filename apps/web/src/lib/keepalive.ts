@@ -40,13 +40,20 @@ export function installKeepAlive() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && keepAliveWanted()) device()?.startKeepAlive(NOTICE).catch(() => {})
   })
-  onNative<{ reason: string }>('TetherDevice', 'keepAliveStopped', (e) =>
+  onNative<{ reason: string }>('TetherDevice', 'keepAliveStopped', (e) => {
+    // Stop on its notification: the user turned it off, so it stays off
+    if (e.reason === 'stopped') {
+      try {
+        localStorage.setItem(KEY, '0')
+      } catch {}
+      return toast({ title: 'Background connection off', body: 'Turn it back on in Settings.', tone: 'info' })
+    }
     toast({
       title: 'Background connection paused',
       body: e.reason === 'timeout' ? 'Android limits how long it can run each day. It starts again when you open Tether.' : 'Android stopped it. It starts again when you open Tether.',
       tone: 'info',
-    }),
-  )
+    })
+  })
 }
 
 export async function batteryUnrestricted(): Promise<boolean | undefined> {

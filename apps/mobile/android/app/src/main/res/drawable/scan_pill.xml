@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the scanner's buttons: translucent paper on the dark scrim -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#40F4F4F1">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#26F4F4F1" />
+            <corners android:radius="999dp" />
+        </shape>
+    </item>
+</ripple>

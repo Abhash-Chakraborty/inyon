@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tether_ink">#14161B</color>
+    <color name="tether_paper">#F4F4F1</color>
+    <color name="tether_accent">#D97757</color>
+</resources>

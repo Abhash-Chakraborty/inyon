@@ -20,5 +20,6 @@ ext {
     // the versions firebase-messaging itself depends on, declared because we call their APIs
     playServicesBaseVersion = '18.9.0'
     playServicesTasksVersion = '18.4.0'
-    codeScannerVersion = '16.1.0'
+    cameraxVersion = '1.6.2'
+    mlkitBarcodeVersion = '18.3.1'
 }

@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ClipboardPaste, Copy, ScanLine } from 'lucide-react'
 import type { HostConfig } from '@tether/protocol'
 import { api } from '../lib/api.ts'
-import { toast } from '../lib/store.ts'
+import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
-import { plugin } from '../lib/native.ts'
+import { plugin, readClipboard } from '../lib/native.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Sheet, inputClass } from './ui/primitives.tsx'
@@ -35,6 +35,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     setLink(given ?? '')
   })
   const scanner = plugin('TetherDevice')?.scanQr
+  const linkInput = useRef<HTMLInputElement>(null)
 
   const pair = async (text: string) => {
     if (!looksLikeLink(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
@@ -56,10 +57,16 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const scan = async () => {
     try {
-      const r = await scanner!()
+      // the scanner buzzes on a hit or a wrong code, unless haptics are off in Settings
+      const r = await scanner!({ haptics: !!useStore.getState().settings.haptics })
       if (r?.text) {
         setLink(r.text)
         await pair(r.text)
+      } else if (r?.paste) {
+        await paste()
+      } else if (r?.denied) {
+        linkInput.current?.focus()
+        toast({ title: 'No camera access', body: 'Paste the link tether-node printed instead, or allow the camera in Android settings.', tone: 'info' })
       }
     } catch (err) {
       toast({ title: "Couldn't open the scanner", body: (err as Error).message, tone: 'error' })
@@ -67,9 +74,10 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   }
 
   const paste = async () => {
-    const text = await navigator.clipboard?.readText().catch(() => '')
-    if (text) setLink(text.trim())
-    else toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
+    const text = await readClipboard().catch(() => '')
+    if (text.trim()) return setLink(text.trim())
+    linkInput.current?.focus()
+    toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
   }
 
   const rename = async (e: React.FormEvent) => {
@@ -159,6 +167,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
         <Field label={scanner ? 'Or paste the link it printed' : 'Paste the link it printed'}>
           <div className="flex gap-2">
             <input
+              ref={linkInput}
               className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
               value={link}
               onChange={(e) => setLink(e.target.value)}

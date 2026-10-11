@@ -1,6 +1,7 @@
 package dev.tether.app.device
 
 import android.Manifest
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.ClipboardManager
 import android.content.Context
@@ -11,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.webkit.WebView
+import androidx.activity.result.ActivityResult
 import androidx.core.content.ContextCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.core.view.inputmethod.InputContentInfoCompat
@@ -19,17 +21,11 @@ import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import com.google.android.gms.common.moduleinstall.ModuleInstall
-import com.google.android.gms.common.moduleinstall.ModuleInstallRequest
 import com.google.firebase.messaging.FirebaseMessaging
-import com.google.mlkit.common.MlKitException
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanner
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
@@ -265,17 +261,23 @@ class TetherDevicePlugin : Plugin() {
         call.resolve(JSObject().put("granted", Notifications.canPost(context)))
     }
 
-    /** A notification from the web app while it runs in the background; tapping it opens `href`. */
+    /** An agent or machine event, with the app's logo and buttons; the same tag replaces the last one. */
     @PluginMethod
     fun postNotification(call: PluginCall) {
-        val title = call.getString("title") ?: return call.reject("title is required", "BAD_REQUEST")
-        val posted = Notifications.push(context, title, call.getString("body") ?: "", call.getString("href"), call.getString("tag"))
-        call.resolve(JSObject().put("posted", posted))
+        val posted = Notifications.post(
+            context,
+            call.getString("title") ?: "Tether",
+            call.getString("body") ?: "",
+            call.getString("href"),
+            call.getString("tag"),
+            call.getString("kind"),
+        )
+        call.resolve(ok().put("posted", posted))
     }
 
     @PluginMethod
     fun clearNotification(call: PluginCall) {
-        Notifications.clear(context, call.getString("tag"))
+        call.getString("tag")?.let { Notifications.clear(context, it) }
         call.resolve(ok())
     }
 
@@ -353,39 +355,24 @@ class TetherDevicePlugin : Plugin() {
 
     // ---- QR codes --------------------------------------------------------------------------
 
+    /** Opens the scanner; resolves { text }, { paste: true }, { denied: true } or { cancelled: true }. */
     @PluginMethod
     fun scanQr(call: PluginCall) {
-        bridge.executeOnMainThread {
-            val options = GmsBarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .enableAutoZoom()
-                .build()
-            val scanner = GmsBarcodeScanning.getClient(activity, options)
-            scanner
-                .startScan()
-                .addOnSuccessListener { barcode ->
-                    val text = barcode.rawValue ?: barcode.rawBytes?.let { String(it, Charsets.UTF_8) }
-                    call.resolve(JSObject().put("text", text ?: ""))
-                }
-                .addOnCanceledListener { call.resolve(cancelled()) }
-                .addOnFailureListener { e ->
-                    val code = (e as? MlKitException)?.errorCode ?: -1
-                    when (code) {
-                        MlKitException.CODE_SCANNER_CANCELLED, MlKitException.CANCELLED -> call.resolve(cancelled())
-                        MlKitException.CODE_SCANNER_UNAVAILABLE, MlKitException.UNAVAILABLE -> {
-                            installScanner(scanner)
-                            call.reject("The QR scanner is still being downloaded by Google Play services. Try again in a minute.", "SCANNER_UNAVAILABLE")
-                        }
-                        else -> call.reject(e.message ?: "QR scanning failed", "ERROR")
-                    }
-                }
-        }
+        val intent = ScannerActivity.intent(context, call.getBoolean("haptics", true) ?: true)
+        bridge.executeOnMainThread { startActivityForResult(call, intent, "scanResult") }
     }
 
-    private fun installScanner(scanner: GmsBarcodeScanner) {
-        ModuleInstall.getClient(context)
-            .installModules(ModuleInstallRequest.newBuilder().addApi(scanner).build())
-            .addOnFailureListener { e -> Log.w(TAG, "could not request the scanner module: $e") }
+    @ActivityCallback
+    private fun scanResult(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val data = result.data
+        when {
+            result.resultCode != Activity.RESULT_OK || data == null -> call.resolve(cancelled())
+            data.hasExtra(ScannerActivity.EXTRA_TEXT) -> call.resolve(JSObject().put("text", data.getStringExtra(ScannerActivity.EXTRA_TEXT) ?: ""))
+            data.getBooleanExtra(ScannerActivity.EXTRA_PASTE, false) -> call.resolve(JSObject().put("paste", true))
+            data.getBooleanExtra(ScannerActivity.EXTRA_DENIED, false) -> call.resolve(JSObject().put("denied", true))
+            else -> call.resolve(cancelled())
+        }
     }
 
     companion object {

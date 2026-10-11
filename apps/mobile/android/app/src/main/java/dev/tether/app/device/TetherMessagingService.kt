@@ -21,7 +21,7 @@ class TetherMessagingService : FirebaseMessagingService() {
                 return
             }
             val o = JSONObject(PushCrypto.decrypt(key, Push.base64(p)))
-            Notifications.push(this, o.str("title") ?: "Tether", o.str("body") ?: "", o.str("href"), o.str("tag"))
+            Notifications.post(this, o.str("title") ?: "Tether", o.str("body") ?: "", o.str("href"), o.str("tag"), o.str("kind"))
         } catch (e: Exception) {
             Log.w(TAG, "could not open a push: $e")
         }

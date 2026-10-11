@@ -22,6 +22,9 @@
 -keep class dev.tether.app.device.KeepAliveService { <init>(); }
 -keep class dev.tether.app.device.TetherMessagingService { <init>(); }
 -keep class dev.tether.app.device.TetherWebView { <init>(android.content.Context, android.util.AttributeSet); }
+-keep class dev.tether.app.device.ScannerActivity { <init>(); }
+-keep class dev.tether.app.device.ScannerOverlay { <init>(android.content.Context, android.util.AttributeSet); }
+-keep class dev.tether.app.device.NotificationActions { <init>(); }
 
 # sshlib registers a JCA provider that names its Ed25519 classes by package at runtime, and
 # its algorithm tables are looked up by string; keep the library as it is

@@ -4,9 +4,12 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.os.Build
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -15,18 +18,33 @@ import androidx.core.content.ContextCompat
 import dev.tether.app.MainActivity
 import dev.tether.app.R
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.roundToInt
 
-/** Notification channels and the kinds of notification the app posts itself. */
+/**
+ * Notification channels and everything the app posts. Every notification carries the Tether mark
+ * (the status-bar glyph, and the full logo inside) and buttons for what you'd do next; each session
+ * has one notification that the next event replaces, grouped under a summary once there are several.
+ */
 internal object Notifications {
 
     const val ACTION_OPEN_HREF = "dev.tether.app.action.OPEN_HREF"
     const val EXTRA_HREF = "dev.tether.app.extra.HREF"
     const val CHANNEL_CONNECTION = "connection"
+
+    /** an agent asking something: heads-up, it's waiting on you */
+    const val CHANNEL_ATTENTION = "attention"
+
+    /** an agent that finished */
     const val CHANNEL_AGENTS = "agents"
+    const val CHANNEL_MACHINES = "machines"
     const val KEEP_ALIVE_ID = 7001
 
+    private const val EVENT_ID = 7002
+    private const val SUMMARY_ID = 7003
+    private const val GROUP = "dev.tether.app.EVENTS"
     private const val ACCENT = 0xFFD97757.toInt()
-    private const val TAGGED_ID = 7002
+    private const val MACHINES_HREF = "/machines"
+    private var logo: Bitmap? = null
     private val nextId = AtomicInteger((System.currentTimeMillis() / 1000 % 1_000_000).toInt() + 10_000)
 
     fun ensureChannels(ctx: Context) {
@@ -39,11 +57,40 @@ internal object Notifications {
                 .build(),
         )
         nm.createNotificationChannel(
-            NotificationChannelCompat.Builder(CHANNEL_AGENTS, NotificationManagerCompat.IMPORTANCE_DEFAULT)
-                .setName("Agents")
-                .setDescription("Agents that finished or need your input")
+            NotificationChannelCompat.Builder(CHANNEL_ATTENTION, NotificationManagerCompat.IMPORTANCE_HIGH)
+                .setName("Needs you")
+                .setDescription("An agent is asking something or waiting for approval")
                 .build(),
         )
+        nm.createNotificationChannel(
+            NotificationChannelCompat.Builder(CHANNEL_AGENTS, NotificationManagerCompat.IMPORTANCE_DEFAULT)
+                .setName("Finished")
+                .setDescription("An agent finished its turn")
+                .build(),
+        )
+        nm.createNotificationChannel(
+            NotificationChannelCompat.Builder(CHANNEL_MACHINES, NotificationManagerCompat.IMPORTANCE_LOW)
+                .setName("Machines")
+                .setDescription("A server or laptop went offline or came back")
+                .build(),
+        )
+    }
+
+    /** The app's logo, drawn once at notification size. */
+    @Synchronized
+    private fun logo(ctx: Context): Bitmap? {
+        logo?.let { return it }
+        try {
+            val d = ContextCompat.getDrawable(ctx, R.mipmap.ic_launcher_round) ?: return null
+            val px = (64 * ctx.resources.displayMetrics.density).roundToInt()
+            val b = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888)
+            d.setBounds(0, 0, px, px)
+            d.draw(Canvas(b))
+            logo = b
+        } catch (_: RuntimeException) {
+            // no logo is better than no notification
+        }
+        return logo
     }
 
     fun canPost(ctx: Context): Boolean {
@@ -69,6 +116,15 @@ internal object Notifications {
         return PendingIntent.getActivity(ctx, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
+    /** A button handled by [NotificationActions] without opening the app. */
+    private fun broadcast(ctx: Context, action: String, requestCode: Int, tag: String? = null): PendingIntent {
+        val intent = Intent(ctx, NotificationActions::class.java).setAction(action).putExtra(NotificationActions.EXTRA_TAG, tag)
+        return PendingIntent.getBroadcast(ctx, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun NotificationCompat.Builder.button(label: String, intent: PendingIntent) =
+        addAction(NotificationCompat.Action.Builder(0, label, intent).build())
+
     fun keepAlive(ctx: Context, title: String, text: String): Notification {
         ensureChannels(ctx)
         return NotificationCompat.Builder(ctx, CHANNEL_CONNECTION)
@@ -77,6 +133,8 @@ internal object Notifications {
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(openApp(ctx, null, KEEP_ALIVE_ID))
+            .button("Stop", broadcast(ctx, NotificationActions.STOP_KEEP_ALIVE, KEEP_ALIVE_ID))
+            .button("Open", openApp(ctx, null, KEEP_ALIVE_ID + 1))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -97,27 +155,43 @@ internal object Notifications {
     }
 
     /**
-     * An agent notification, from a push or from the web app while it runs in the background.
-     * Notifications with the same tag replace each other. False when notifications are off.
+     * An agent or machine event. `tag` names the session (or machine): its next event replaces
+     * this one. `kind` is waiting, done, offline or online and picks the channel and the buttons.
+     * False when notifications are off.
      */
-    fun push(ctx: Context, title: String, body: String, href: String?, tag: String?): Boolean {
+    fun post(ctx: Context, title: String, body: String, href: String?, tag: String?, kind: String?): Boolean {
         if (!canPost(ctx)) return false
         ensureChannels(ctx)
-        val id = if (tag != null) TAGGED_ID else nextId.incrementAndGet()
-        val requestCode = tag?.hashCode() ?: id
-        val notification = NotificationCompat.Builder(ctx, CHANNEL_AGENTS)
+        val waiting = kind == "waiting" || kind == "permission"
+        val machine = kind == "offline" || kind == "online"
+        val channel = if (waiting) CHANNEL_ATTENTION else if (machine) CHANNEL_MACHINES else CHANNEL_AGENTS
+        val id = if (tag != null) EVENT_ID else nextId.incrementAndGet()
+        // each notification's buttons need their own PendingIntents, or the last one posted wins
+        val requestCode = (tag?.hashCode() ?: id) * 4
+        val b = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_stat_tether)
             .setColor(ACCENT)
+            .setLargeIcon(logo(ctx))
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(openApp(ctx, href, requestCode))
+            .setWhen(System.currentTimeMillis())
+            .setShowWhen(true)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .build()
+            .setGroup(GROUP)
+            .setPriority(if (waiting) NotificationCompat.PRIORITY_HIGH else if (machine) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(if (waiting) NotificationCompat.CATEGORY_REMINDER else NotificationCompat.CATEGORY_STATUS)
+        if (machine) {
+            b.button("Open computers", openApp(ctx, MACHINES_HREF, requestCode + 1))
+        } else {
+            b.button("Open", openApp(ctx, href, requestCode + 1))
+            // tagged ones only: an untagged notification has an id the button couldn't know
+            if (waiting && tag != null) b.button("Mark read", broadcast(ctx, NotificationActions.MARK_READ, requestCode + 2, tag))
+        }
         return try {
-            NotificationManagerCompat.from(ctx).notify(tag, id, notification)
+            NotificationManagerCompat.from(ctx).notify(tag, id, b.build())
+            summarize(ctx)
             true
         } catch (_: SecurityException) {
             // permission revoked between the check and the call
@@ -125,13 +199,63 @@ internal object Notifications {
         }
     }
 
-    /** Removes the agent notification with this tag, or every agent notification without one. */
-    fun clear(ctx: Context, tag: String?) {
-        val nm = NotificationManagerCompat.from(ctx)
-        if (tag != null) return nm.cancel(tag, TAGGED_ID)
-        val system = ctx.getSystemService(NotificationManager::class.java) ?: return
-        for (n in system.activeNotifications) {
-            if (n.id != KEEP_ALIVE_ID) nm.cancel(n.tag, n.id)
+    /** Takes a session's notification away (you opened it, or marked it read). */
+    fun clear(ctx: Context, tag: String) {
+        NotificationManagerCompat.from(ctx).cancel(tag, EVENT_ID)
+        summarize(ctx)
+    }
+
+    /** One summary over two or more events, listing them; none for a single one. */
+    private fun summarize(ctx: Context) {
+        val nm = ctx.getSystemService(NotificationManager::class.java) ?: return
+        val events = nm.activeNotifications.filter { it.notification.group == GROUP && it.id != SUMMARY_ID }
+        if (events.size < 2) {
+            nm.cancel(SUMMARY_ID)
+            return
         }
+        val inbox = NotificationCompat.InboxStyle()
+        for (n in events) {
+            val t = n.notification.extras.getCharSequence(Notification.EXTRA_TITLE)
+            val x = n.notification.extras.getCharSequence(Notification.EXTRA_TEXT)
+            inbox.addLine(if (x.isNullOrEmpty()) "$t" else "$t · $x")
+        }
+        val count = "${events.size} sessions"
+        inbox.setSummaryText(count)
+        val b = NotificationCompat.Builder(ctx, CHANNEL_AGENTS)
+            .setSmallIcon(R.drawable.ic_stat_tether)
+            .setColor(ACCENT)
+            .setLargeIcon(logo(ctx))
+            .setContentTitle("Tether")
+            .setContentText(count)
+            .setStyle(inbox)
+            .setContentIntent(openApp(ctx, "/", SUMMARY_ID))
+            .setGroup(GROUP)
+            .setGroupSummary(true)
+            .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+            .setAutoCancel(true)
+        try {
+            NotificationManagerCompat.from(ctx).notify(SUMMARY_ID, b.build())
+        } catch (_: SecurityException) {
+            // permission revoked between the check and the call
+        }
+    }
+}
+
+/** Notification buttons that act in place. Not exported: only our own PendingIntents reach it. */
+class NotificationActions : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        when (intent.action) {
+            MARK_READ -> intent.getStringExtra(EXTRA_TAG)?.let { Notifications.clear(context, it) }
+            STOP_KEEP_ALIVE -> {
+                context.stopService(Intent(context, KeepAliveService::class.java))
+                TetherDevicePlugin.keepAliveEnded("stopped")
+            }
+        }
+    }
+
+    companion object {
+        const val MARK_READ = "dev.tether.app.action.MARK_READ"
+        const val STOP_KEEP_ALIVE = "dev.tether.app.action.STOP_KEEP_ALIVE"
+        const val EXTRA_TAG = "tag"
     }
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
-import { askNativeNotifications, installNative, nativeNotificationsEnabled, nativeNotify, readClipboard } from './native.ts'
+import { askNativeNotifications, installNative, nativeNotificationsOn, nativeNotify, readClipboard } from './native.ts'
 
 const flush = () => new Promise((r) => setTimeout(r, 0))
 type Listener = (e: any) => void
@@ -26,11 +26,11 @@ afterEach(() => {
 })
 
 describe('notifications', () => {
-  test('posted through the Android app, one per link', async () => {
-    const postNotification = mock(async (_o: unknown) => ({ posted: true }))
+  test('posted through the Android app, with its kind for the buttons', async () => {
+    const postNotification = mock(async (_o: unknown) => ({ ok: true, posted: true }))
     app({ TetherDevice: { postNotification } })
-    expect(await nativeNotify('claude finished', 'tests pass', '/m/box/p/3')).toBe(true)
-    expect(postNotification).toHaveBeenCalledWith({ title: 'claude finished', body: 'tests pass', href: '/m/box/p/3', tag: '/m/box/p/3' })
+    expect(await nativeNotify('claude is waiting', 'approve?', '/m/box/p/3', 'box:%3', 'waiting')).toBe(true)
+    expect(postNotification).toHaveBeenCalledWith({ title: 'claude is waiting', body: 'approve?', href: '/m/box/p/3', tag: 'box:%3', kind: 'waiting' })
   })
 
   test('false when notifications are off or the app is too old to post them', async () => {
@@ -45,10 +45,10 @@ describe('notifications', () => {
   test('permission is asked and checked through the Android app', async () => {
     app({ TetherDevice: { requestNotificationPermission: async () => ({ granted: true }), notificationsEnabled: async () => ({ enabled: false }) } })
     expect(await askNativeNotifications()).toBe(true)
-    expect(await nativeNotificationsEnabled()).toBe(false)
+    expect(await nativeNotificationsOn()).toBe(false)
     delete (window as any).Capacitor
     expect(await askNativeNotifications()).toBeUndefined()
-    expect(await nativeNotificationsEnabled()).toBeUndefined()
+    expect(await nativeNotificationsOn()).toBeUndefined()
   })
 })
 
