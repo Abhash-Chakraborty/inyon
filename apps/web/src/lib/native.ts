@@ -3,6 +3,8 @@
  * `window.Capacitor`, whose `Plugins` proxy calls straight into native code, so the web app needs
  * no extra packages and does nothing different in a normal browser.
  */
+import { backHandled } from './back.ts'
+
 type Plugin = Record<string, (...args: any[]) => Promise<any>>
 
 const cap = () => (window as any).Capacitor as { isNativePlatform?: () => boolean; getPlatform?: () => string; Plugins?: Record<string, Plugin> } | undefined
@@ -12,29 +14,41 @@ export const platform = () => (isNative() ? cap()!.getPlatform!() : 'web') as 'i
 export const plugin = (name: string): Plugin | undefined => (isNative() ? cap()?.Plugins?.[name] : undefined)
 
 const go = (href: string) => {
+  if (location.pathname + location.search === href) return
   window.history.pushState({}, '', href)
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-/** Native behaviour for the phone apps: back button, notification taps, status bar. */
+// a tether://pair link (a laptop's code scanned with the camera) opens the pairing sheet
+const openUrl = (url: string | undefined) => {
+  if (url && /^tether:\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
+}
+
+/** Native behaviour for the phone apps: back button, notification taps, deep links, status bar. */
 export function installNative() {
   if (!isNative()) return
   document.documentElement.dataset.native = platform()
-  // Android's back button walks back through the app, and leaves it from the first screen
+  // Android's back button closes whatever is open on top first, then walks back through the app,
+  // and leaves it from the first screen
   plugin('App')?.addListener('backButton', ({ canGoBack }: { canGoBack: boolean }) => {
+    if (backHandled()) return
     if (canGoBack && window.history.length > 1) window.history.back()
     else plugin('App')?.exitApp()
   })
-  // tapping a notification opens the session it's about
-  plugin('LocalNotifications')?.addListener('localNotificationActionPerformed', (e: { notification?: { extra?: { href?: string } } }) => {
-    const href = e.notification?.extra?.href
-    if (href) go(href)
-  })
+  // tapping a notification opens the session it's about: an event while the app runs, a stored
+  // link when the tap started the app
+  const device = plugin('TetherDevice')
+  device?.addListener('pushOpened', ({ href }: { href?: string }) => href && go(href))
+  device
+    ?.takeLaunchHref?.()
+    .then((r: { href?: string | null } | undefined) => r?.href && go(r.href))
+    .catch(() => {})
   plugin('StatusBar')?.setOverlaysWebView({ overlay: true }).catch(() => {})
-  // a tether://pair link (a laptop's code scanned with the camera) opens the pairing sheet
-  plugin('App')?.addListener('appUrlOpen', ({ url }: { url: string }) => {
-    if (/^tether:\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
-  })
+  plugin('App')?.addListener('appUrlOpen', ({ url }: { url: string }) => openUrl(url))
+  plugin('App')
+    ?.getLaunchUrl?.()
+    .then((r: { url?: string } | undefined) => openUrl(r?.url))
+    .catch(() => {})
   // back from the background: sockets may have died while the phone slept, so check them now
   const resume = () => {
     if (document.visibilityState === 'visible') import('./phone.ts').then(({ phone }) => phone()).then((r) => r.resume(), () => {})
@@ -48,27 +62,17 @@ export function nativeTheme(theme: 'light' | 'dark') {
   plugin('StatusBar')?.setStyle({ style: theme === 'dark' ? 'DARK' : 'LIGHT' }).catch(() => {})
 }
 
-let notifyId = 1
-/** A system notification from the phone apps (the app is in the background, its link still open). */
 /**
- * A notification from the phone app, with Tether's logo. `tag` names the session or machine: its
- * next notification replaces this one, and opening it clears it.
+ * A notification from the Android app, with Tether's logo and buttons that fit `kind` (waiting,
+ * done, offline, online). `tag` names the session or machine: its next notification replaces this
+ * one, and opening it clears it. False where the app can't post notifications itself.
  */
 export async function nativeNotify(title: string, body: string, href: string, tag?: string, kind?: string) {
   const device = plugin('TetherDevice')
-  if (device?.postNotification) {
-    try {
-      await device.postNotification({ title, body, href, tag, kind })
-      return true
-    } catch {}
-  }
-  const ln = plugin('LocalNotifications')
-  if (!ln) return false
+  if (typeof device?.postNotification !== 'function') return false
   try {
-    const perm = await ln.checkPermissions()
-    if (perm.display !== 'granted') return false
-    await ln.schedule({ notifications: [{ id: notifyId++ % 2147483647, title, body, smallIcon: 'ic_stat_tether', extra: { href } }] })
-    return true
+    const r = await device.postNotification({ title, body, href, tag, kind })
+    return r?.posted !== false
   } catch {
     return false
   }
@@ -79,13 +83,12 @@ export function clearNativeNotification(tag: string) {
   void Promise.resolve(plugin('TetherDevice')?.clearNotification?.({ tag })).catch(() => {})
 }
 
+/** Asks for permission to notify; undefined where the app can't post notifications itself. */
 export async function askNativeNotifications() {
   const device = plugin('TetherDevice')
+  if (typeof device?.requestNotificationPermission !== 'function') return undefined
   try {
-    if (device?.requestNotificationPermission) return !!(await device.requestNotificationPermission()).granted
-    const ln = plugin('LocalNotifications')
-    if (!ln) return undefined
-    return (await ln.requestPermissions()).display === 'granted'
+    return !!(await device.requestNotificationPermission())?.granted
   } catch {
     return false
   }
@@ -94,13 +97,27 @@ export async function askNativeNotifications() {
 /** Whether the phone app may post notifications (permission given and not turned off for Tether). */
 export async function nativeNotificationsOn(): Promise<boolean | undefined> {
   const device = plugin('TetherDevice')
+  if (typeof device?.notificationsEnabled !== 'function') return undefined
   try {
-    if (device?.notificationsEnabled) return !!(await device.notificationsEnabled()).enabled
-    const p = await plugin('LocalNotifications')?.checkPermissions()
-    return p ? p.display === 'granted' : undefined
+    return !!(await device.notificationsEnabled())?.enabled
   } catch {
     return undefined
   }
+}
+
+/**
+ * Clipboard text. Android's WebView refuses navigator.clipboard.readText(), so the Android app
+ * reads it natively; elsewhere it's the browser's clipboard API, which may ask first or refuse.
+ */
+export async function readClipboard(): Promise<string> {
+  const device = plugin('TetherDevice')
+  if (typeof device?.readClipboardText === 'function') {
+    try {
+      return ((await device.readClipboardText()) as { text?: string } | undefined)?.text ?? ''
+    } catch {}
+  }
+  if (!navigator.clipboard?.readText) throw new Error('Reading the clipboard is not supported here')
+  return navigator.clipboard.readText()
 }
 
 /** A file the phone app handed over (keyboard image, clipboard), as base64. */

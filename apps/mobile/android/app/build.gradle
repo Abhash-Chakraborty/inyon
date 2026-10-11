@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.android'
 
 // push is only built in when CI provides a Firebase app (see .github/workflows/android.yml)
 def envString = { String name -> '"' + (System.getenv(name) ?: '').trim().replace('\\', '\\\\').replace('"', '\\"') + '"' }
@@ -17,6 +18,8 @@ android {
         buildConfigField "String", "FCM_API_KEY", envString("TETHER_FCM_API_KEY")
         buildConfigField "String", "FCM_PROJECT_ID", envString("TETHER_FCM_PROJECT_ID")
         buildConfigField "String", "FCM_SENDER_ID", envString("TETHER_FCM_SENDER_ID")
+        // the app has no translations, so the libraries' strings in other languages are dead weight
+        resourceConfigurations += ["en"]
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -40,8 +43,9 @@ android {
     buildTypes {
         release {
             if (System.getenv("TETHER_KEYSTORE")) signingConfig signingConfigs.release
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     packaging {
@@ -49,6 +53,12 @@ android {
             // gson, error_prone_annotations and jspecify (pulled in by the SSH and secrets libraries) all ship one
             excludes += ['META-INF/versions/9/module-info.class']
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
     }
 }
 
@@ -72,7 +82,7 @@ dependencies {
     implementation "com.google.crypto.tink:tink-android:$tinkVersion"
     implementation "androidx.security:security-crypto:$securityCryptoVersion"
     implementation "androidx.core:core:$androidxCoreVersion"
-    // no google-services plugin: Firebase is initialised from BuildConfig (see device/Push.java)
+    // no google-services plugin: Firebase is initialised from BuildConfig (see device/Push.kt)
     implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
     implementation "com.google.android.gms:play-services-base:$playServicesBaseVersion"
     implementation "com.google.android.gms:play-services-tasks:$playServicesTasksVersion"

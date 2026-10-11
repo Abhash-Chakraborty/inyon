@@ -1,21 +1,33 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# R8 rules for the release build. The libraries' own consumer rules (Capacitor, Firebase, Play
+# services, ML Kit, AndroidX, Tink) are applied on top of these.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# readable stack traces with the mapping file CI keeps next to the APK
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Capacitor finds plugins and their methods by reflection (annotations, getDeclaredMethods,
+# permission callbacks by name) and loads Cordova classes by name; both are small, keep them whole
+-keep class com.getcapacitor.** { *; }
+-keep class org.apache.cordova.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# our plugins: every @PluginMethod and @PermissionCallback is called by name from the bridge
+-keep class dev.tether.app.device.TetherDevicePlugin { *; }
+-keep class dev.tether.app.ssh.TetherSshPlugin { *; }
+
+# instantiated by Android from the manifest and the bridge layout
+-keep class dev.tether.app.MainActivity { <init>(); }
+-keep class dev.tether.app.device.TetherApplication { <init>(); }
+-keep class dev.tether.app.device.KeepAliveService { <init>(); }
+-keep class dev.tether.app.device.TetherMessagingService { <init>(); }
+-keep class dev.tether.app.device.TetherWebView { <init>(android.content.Context, android.util.AttributeSet); }
+
+# sshlib registers a JCA provider that names its Ed25519 classes by package at runtime, and
+# its algorithm tables are looked up by string; keep the library as it is
+-keep class com.trilead.ssh2.** { *; }
+-keep class org.connectbot.** { *; }
+
+# Firebase messaging finds its service and component registrars through the manifest
+-keep class * extends com.google.firebase.messaging.FirebaseMessagingService { <init>(); }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }

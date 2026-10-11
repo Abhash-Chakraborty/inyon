@@ -6,12 +6,6 @@
     "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false
   },
-  "plugins": {
-    "LocalNotifications": {
-      "smallIcon": "ic_stat_tether",
-      "iconColor": "#14161b"
-    }
-  },
   "android": {
     "allowMixedContent": true
   }
