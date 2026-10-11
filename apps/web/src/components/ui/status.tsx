@@ -1,19 +1,23 @@
-import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { AGENTS, type AgentKind, type AgentState, type HostStatus } from '@tether/protocol'
 
-/** The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). */
+/**
+ * The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). The frames sit in a
+ * column that CSS steps through, so a screen full of working sessions costs no re-renders.
+ */
 export function AgentSpinner({ kind = 'claude', active, className }: { kind?: AgentKind; active?: boolean; className?: string }) {
   const frames = AGENTS[kind].spinner
-  const [i, setI] = useState(Math.floor(frames.length / 2))
-  useEffect(() => {
-    if (!active) return
-    const t = setInterval(() => setI((n) => (n + 1) % frames.length), kind === 'claude' ? 120 : 90)
-    return () => clearInterval(t)
-  }, [active, frames.length, kind])
+  const ms = (kind === 'claude' ? 120 : 90) * frames.length
   return (
-    <span aria-hidden className={clsx('inline-flex select-none items-center justify-center font-mono leading-none text-accent', className)}>
-      {frames[i % frames.length]}
+    <span aria-hidden className={clsx('inline-flex h-[1em] select-none items-start justify-center overflow-hidden font-mono leading-none text-accent', className)}>
+      <span
+        className="flex flex-col"
+        style={active ? { animation: `spinner-frames ${ms}ms steps(${frames.length}) infinite`, ['--frames' as string]: frames.length } : { transform: `translateY(-${Math.floor(frames.length / 2)}em)` }}
+      >
+        {frames.map((f, i) => (
+          <span key={i} className="block h-[1em] leading-none">{f}</span>
+        ))}
+      </span>
     </span>
   )
 }

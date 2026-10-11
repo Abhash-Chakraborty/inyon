@@ -86,3 +86,13 @@ describe('ServerSheet keeps what you type while live data flows', () => {
     expect(api.editServer.mock.calls[0]).toEqual(['s1', { name: 'Prod', target: 'me@10.0.0.1', port: 2222, hostKey: 'SHA256:abc', auth: 'phone-key', password: undefined, privateKey: undefined, passphrase: undefined }])
   })
 })
+
+test("says why the phone-key command is missing instead of just hiding it", async () => {
+  const { spyOn } = await import('bun:test')
+  const { api: real } = await import('../lib/api.ts')
+  const key = spyOn(real, 'phoneKey').mockRejectedValue(new Error('keystore locked'))
+  await render(<ServerSheet open onClose={noop} />)
+  await flush()
+  expect(screen.getByText(/Couldn't read this phone's key \(keystore locked\)/)).toBeTruthy()
+  key.mockRestore()
+})

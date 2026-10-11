@@ -106,7 +106,7 @@ const NAV = [
   ['agents', 'Agents'],
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
-  ['machines', isNative() ? 'Servers' : 'Machines'],
+  ['machines', isNative() ? 'Computers' : 'Machines'],
   ...(isNative()
     ? ([['phone-key', "This phone's key"]] as const)
     : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
@@ -384,7 +384,7 @@ function ChangePassword() {
   )
 }
 
-/** The phone app signs in to servers with its own key: one line to add to authorized_keys. */
+/** The phone app signs in to SSH computers with its own key: one line to add to authorized_keys. */
 function PhoneKey() {
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
@@ -393,7 +393,7 @@ function PhoneKey() {
   }, [])
   const copy = (text: string, title: string) => copyText(text).then((ok) => ok && toast({ title, tone: 'success' }))
   return (
-    <Section id="phone-key" title="This phone's key" desc="The phone connects to your servers itself, over SSH. Servers set to use this key accept it once it's in their ~/.ssh/authorized_keys.">
+    <Section id="phone-key" title="This phone's key" desc="For computers added over SSH instead of with a code: the phone signs in with this key once it's in their ~/.ssh/authorized_keys.">
       <div className="px-4 py-3.5">
         {error ? (
           <p className="text-[13px] text-danger">{error}</p>
@@ -442,7 +442,7 @@ function OtherDevices() {
         label={<span className="flex items-center gap-2"><Smartphone className="size-4 text-fg-3" /> On your phone</span>}
         hint={
           <>
-            Open the address in the phone's browser while it's on the same Tailscale or NetBird network. The Android app doesn't need this hub: it connects to your servers over SSH by itself.
+            Open the address in the phone's browser while it's on the same Tailscale or NetBird network. The Android app doesn't need this hub: it pairs with your computers directly (one command and a code), or reaches servers over SSH.
             {!https && ' Adding it to the home screen as an app, with notifications, needs the hub on HTTPS.'}
           </>
         }

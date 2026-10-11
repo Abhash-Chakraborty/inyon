@@ -24,6 +24,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
   const [privateKey, setPrivateKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [phoneKey, setPhoneKey] = useState('')
+  const [keyError, setKeyError] = useState('')
   // the fingerprint the server showed, waiting for a yes; and the address it belongs to
   const [found, setFound] = useState<{ fingerprint: string; keyType: string; at: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -38,7 +39,8 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
     setPrivateKey('')
     setPassphrase('')
     setFound(null)
-    api.phoneKey().then((k) => setPhoneKey(k.publicKey), () => {})
+    setKeyError('')
+    api.phoneKey().then((k) => setPhoneKey(k.publicKey), (err) => setKeyError((err as Error).message || 'unknown error'))
   })
 
   // the fingerprint appears under the fold of a phone-sized sheet: bring it into view to be read
@@ -148,11 +150,13 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
         {auth === 'phone-key' && (
           <div className="rounded-[12px] border border-line bg-code p-3">
             <p className="text-[12.5px] leading-relaxed text-fg-2">Run this once on the server to let this phone in. The private half of the key never leaves the phone.</p>
-            {phoneKey && (
+            {phoneKey ? (
               <Button size="sm" className="mt-2.5" onClick={() => copyText(authorizeCommand(phoneKey)).then((ok) => ok && toast({ title: 'Command copied', tone: 'success' }))}>
                 <Copy className="size-3.5" /> Copy the command
               </Button>
-            )}
+            ) : keyError ? (
+              <p className="mt-2 text-[12.5px] text-danger">Couldn't read this phone's key ({keyError}). Sign in with a password or a private key instead.</p>
+            ) : null}
           </div>
         )}
         {auth === 'password' && (

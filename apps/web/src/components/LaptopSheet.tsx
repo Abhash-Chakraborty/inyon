@@ -7,6 +7,7 @@ import { toast } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { plugin } from '../lib/native.ts'
 import { useOpened } from '../lib/useOpened.ts'
+import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Sheet, inputClass } from './ui/primitives.tsx'
 
 const PAIR_COMMAND = 'tether-node pair'
@@ -41,6 +42,10 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     try {
       await api.pairLaptop(text.trim())
       toast({ title: 'Paired', body: 'It stays paired until you remove it here or run tether-node forget there.', tone: 'success' })
+      // alerts only arrive while the app runs; the first pairing is the moment to say so
+      if (keepAliveSupported() && !keepAliveWanted()) {
+        setTimeout(() => toast({ title: 'Want alerts while Tether is closed?', body: 'Turn on Stay connected in Settings. Tap to open it.', tone: 'info', href: '/settings#background' }), 1200)
+      }
       onClose()
     } catch (err) {
       toast({ title: "Couldn't pair", body: (err as Error).message, tone: 'error' })

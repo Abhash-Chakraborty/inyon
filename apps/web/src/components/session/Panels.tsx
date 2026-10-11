@@ -382,7 +382,8 @@ export function TaskOutputSheet({ host, task, onClose }: { host: string; task: B
         })
         .catch((e) => alive && setOut(`Could not read output: ${e.message}`))
     load()
-    const t = task.status === 'running' ? setInterval(load, 2000) : undefined
+    // only while it's on screen; a hidden app doesn't need the output every few seconds
+    const t = task.status === 'running' ? setInterval(() => document.hidden || load(), 3000) : undefined
     return () => {
       alive = false
       clearInterval(t)
@@ -420,7 +421,7 @@ export function SubagentSheet({ s, sub, onClose }: { s: SessionModel; sub: Subag
       }
     }
     load()
-    const t = sub.status === 'running' ? setInterval(load, 3000) : undefined
+    const t = sub.status === 'running' ? setInterval(() => document.hidden || load(), 5000) : undefined
     return () => {
       alive = false
       clearInterval(t)
