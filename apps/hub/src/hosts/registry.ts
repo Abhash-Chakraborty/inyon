@@ -35,6 +35,8 @@ export type RegistryEvent =
   | { type: 'pane-output'; host: string; pane: string }
 
 interface Runtime {
+  /** each agent's state when the machine went offline, kept to compare with once it's back */
+  beforeOutage?: Map<string, { kind: string; state: string }>
   /** the "offline" notification went out for the current outage */
   offlineNotified?: boolean
   /** last snapshot written to disk (JSON of the sessions) and when */
@@ -380,6 +382,12 @@ class Registry {
       this.maybeNotifyOffline(rt)
       return
     }
+    if (st.status === 'online') {
+      // shown as unknown while away, but a turn that finishes meanwhile still counts as done, and
+      // a question that was already waiting isn't announced again
+      rt.beforeOutage = new Map()
+      for (const s of st.sessions) for (const w of s.windows) for (const p of w.panes) if (p.agent) rt.beforeOutage.set(p.id, { kind: p.agent.kind, state: p.agent.state })
+    }
     rt.state = { ...st, status, error, latencyMs: undefined, offlineSince, sessions: st.status === 'online' ? offlineSessions(st.sessions) : st.sessions }
     if (st.status === 'online') this.snapshot(rt, true)
     this.maybeNotifyOffline(rt)
@@ -656,10 +664,14 @@ class Registry {
   private diffNotify(rt: Runtime, prev: HostState) {
     const before = new Map<string, PaneInfo>()
     for (const s of prev.sessions) for (const w of s.windows) for (const p of w.panes) before.set(p.id, p)
+    const seen = rt.state.status === 'online' ? rt.beforeOutage : undefined
+    if (seen) rt.beforeOutage = undefined
     for (const s of rt.state.sessions)
       for (const w of s.windows)
         for (const p of w.panes) {
-          const was = before.get(p.id)?.agent?.state
+          let was = before.get(p.id)?.agent?.state
+          const last = seen?.get(p.id)
+          if (was === 'unknown' && last && last.kind === p.agent?.kind) was = last.state as typeof was
           const now = p.agent?.state
           const agentName = p.agent ? AGENTS[p.agent.kind].name : 'Agent'
           if (!was || !now || was === now) continue
