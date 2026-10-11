@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, mock, test } from 'bun:test'
 import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { HostConfig } from '@tether/protocol'
@@ -7,6 +7,9 @@ import { api } from '../test/fakes.ts'
 import { fresh, host } from '../test/fixtures.ts'
 import { useStore } from '../lib/store.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const work: HostConfig = { id: 's1', name: 'Work', kind: 'ssh', target: 'me@10.0.0.1', port: 2222, auth: 'phone-key', hostKey: 'SHA256:abc' }
 const home: HostConfig = { id: 's2', name: 'Home', kind: 'ssh', target: 'pi@192.168.1.2', auth: 'password', hostKey: 'SHA256:def' }

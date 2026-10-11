@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, describe, expect, mock, spyOn, test } from 'bun:test'
 import { act, render, screen } from '@testing-library/react'
 import type { ChatItem, SendState } from '@tether/protocol'
 import { ChatView } from './ChatView.tsx'
@@ -10,6 +10,9 @@ import { socket } from '../../lib/socket.ts'
 import { emit } from '../../test/fakes.ts'
 import { chatInfo, host, item } from '../../test/fixtures.ts'
 import { flush } from '../../test/render.tsx'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const goalRow = (i: ChatItem) => {
   const [row] = buildRows([i])
