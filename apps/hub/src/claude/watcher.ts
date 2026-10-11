@@ -105,6 +105,11 @@ class ChatWatcher {
    * since met) don't flash by. Meanwhile new subscribers get the chat as it was before.
    */
   private behind?: ServerMsg
+  /**
+   * A saved (or parked) copy's goal may have been met or cleared since. Until what was written in
+   * the meantime is read, no goal shows, so an old one doesn't flash up and vanish.
+   */
+  private goalUnsure = false
   private history?: Promise<void>
   private pending: ChatItem[] = []
   private flushTimer?: ReturnType<typeof setTimeout>
@@ -160,7 +165,8 @@ class ChatWatcher {
 
   /** Picks up where the last watcher on this pane stopped; sync() then follows the file from there. */
   private unpark(p: Parked) {
-    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: p.info, olderFrom: p.older })
+    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: { ...p.info, goal: undefined }, olderFrom: p.older })
+    this.goalUnsure = true
     this.ready = true
     this.tailLost = true
   }
@@ -563,6 +569,13 @@ class ChatWatcher {
     this.publishInfo()
   }
 
+  /** What was written since the saved copy is read (and its summary is in): show the goal again. */
+  private settleGoal() {
+    if (!this.goalUnsure || this.replay) return
+    this.goalUnsure = false
+    this.publishInfo()
+  }
+
   /** Builds ChatInfo from the pane and the transcript summary; broadcasts it when it changed. */
   private publishInfo() {
     this.ledger.match(this.items, this.currentQueue())
@@ -584,7 +597,7 @@ class ChatWatcher {
       gitBranch: m.gitBranch,
       version: m.version,
       mode: this.screen.mode ?? agent?.mode ?? m.mode,
-      goal: m.goal,
+      goal: this.goalUnsure ? undefined : m.goal,
       rc: m.rc ?? this.remote,
       queue: [...this.currentQueue()],
       sends: this.ledger.list(),
@@ -606,6 +619,8 @@ class ChatWatcher {
 
   private publishSnapshot(items: ChatItem[]) {
     this.items = items
+    // the whole conversation, read again: its goal is current
+    this.goalUnsure = false
     this.cacheLater()
     const first = !this.ready
     this.ready = true
@@ -761,6 +776,7 @@ class ChatWatcher {
       this.lineAt.clear()
       this.tailStart = false
       this.replay = undefined
+      this.goalUnsure = false
     }
     if (!again) restart()
     if (path.startsWith('opencode://')) return this.followOpenCode(path, gen)
@@ -795,6 +811,7 @@ class ChatWatcher {
         for (const e of replay) normalize(e, prefix)
         this.meta = prefix
         this.replay = undefined
+        this.settleGoal()
         if (this.ready && !this.behind) {
           this.publishInfo()
           this.save()
@@ -826,6 +843,7 @@ class ChatWatcher {
             for (const e of replay) normalize(e, prefix)
             this.meta = prefix
             this.replay = undefined
+            this.settleGoal()
             if (this.ready && !this.behind) {
               this.publishInfo()
               this.save()
@@ -851,6 +869,8 @@ class ChatWatcher {
     const reader = this.reader!
     const total = size - reader.offset
     let remaining = total
+    // nothing written since the saved copy: its goal stands
+    if (remaining <= 0) this.settleGoal()
     // a lot was said meanwhile: read it out of sight, keeping the chat as it was until it's all in
     if (again && remaining > CATCHUP_BYTES && !jump) {
       this.publishInfo()
@@ -897,6 +917,8 @@ class ChatWatcher {
       if (!r) return
       this.retries = 0
       remaining -= r.bytes
+      // once this line's entry is in the summary, not before: it may be the goal being met
+      if (remaining <= 0) queueMicrotask(() => gen === this.generation && this.settleGoal())
       if (r.entry) {
         const e = r.entry
         const at = reader.offset - r.bytes

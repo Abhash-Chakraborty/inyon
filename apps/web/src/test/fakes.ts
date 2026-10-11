@@ -21,6 +21,7 @@ resetApi()
 export const api = fakeApi
 
 const listeners = new Set<(m: ServerMsg) => void>()
+const closedListeners = new Set<(key: string) => void>()
 export const socket = {
   up: false,
   start() {},
@@ -30,12 +31,18 @@ export const socket = {
     listeners.add(fn)
     return () => void listeners.delete(fn)
   },
-  onChatClosed: () => () => {},
+  onChatClosed(fn: (key: string) => void) {
+    closedListeners.add(fn)
+    return () => void closedListeners.delete(fn)
+  },
   onStatus: () => () => {},
   watching: () => false,
   subscribeOverview() {},
   subscribeChat: mock((_host: string, _pane: string) => () => {}),
 }
+
+/** The app stops watching a chat, as leaving its page does. */
+export const closeChat = (key: string) => closedListeners.forEach((l) => l(key))
 
 /** Delivers a message from the hub, as the socket would. */
 export const emit = (m: ServerMsg) => listeners.forEach((l) => l(m))

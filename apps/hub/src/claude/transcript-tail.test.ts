@@ -384,6 +384,49 @@ test('a reopened chat shows its saved copy at once and reads only what was said 
   watchers.stop(again.key)
 }, 60_000)
 
+test("a reopened chat never flashes a goal that was met while it was closed", async () => {
+  const file = join(dir, 'goal.jsonl')
+  const at = () => new Date(1_800_000_000_000 + ++n * 1000).toISOString()
+  const goal = (met: boolean) => JSON.stringify({ type: 'attachment', uuid: `g${++n}`, timestamp: at(), attachment: { type: 'goal_status', condition: 'ship it', met } }) + '\n'
+  writeFileSync(file, user('start') + goal(false) + user('working on it'))
+  const pane = { id: '%5', title: 'claude', agent: { kind: 'claude', transcriptPath: file, sessionId: 's5' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(new Host({ ...config, kind: 'local' } as any))
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const goals = () => got.flatMap((m) => (m.t === 'chat.info' || m.t === 'chat.reset' ? [(m as any).info.goal] : []))
+  const reopen = async () => {
+    watchers.stop('tail-test:%5')
+    ;(watchers as any).parked.clear()
+    got.length = 0
+    const w = watchers.get('tail-test', '%5')
+    w.subscribe(sub)
+    await Bun.sleep(400)
+    return w
+  }
+
+  const w = watchers.get('tail-test', '%5')
+  w.subscribe(sub)
+  await until(() => goals().some((g) => g?.condition === 'ship it' && !g.met) && loadChat(w.key)?.at?.offset === statSync(file).size)
+
+  // nothing new: the goal is still on, and shows
+  await reopen()
+  await until(() => goals().some((g) => g?.condition === 'ship it' && !g.met))
+
+  // met while the app was closed: the old goal never shows as active
+  appendFileSync(file, user('done') + goal(true))
+  await reopen()
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  expect(goals().some((g) => g && !g.met)).toBe(false)
+  watchers.stop('tail-test:%5')
+}, 30_000)
+
 test('the summary of a long conversation leaves out what was said', () => {
   const file = join(dir, 'meta.jsonl')
   const line = (o: any) => JSON.stringify({ uuid: crypto.randomUUID(), timestamp: '2027-01-01T00:00:00Z', ...o }) + '\n'

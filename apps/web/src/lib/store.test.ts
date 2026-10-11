@@ -1,8 +1,8 @@
-import { describe, expect, setSystemTime, test, afterEach } from 'bun:test'
+import { describe, expect, jest, setSystemTime, test, afterEach } from 'bun:test'
 import type { ChatItem } from '@tether/protocol'
 import { notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
-import { emit } from '../test/fakes.ts'
+import { closeChat, emit } from '../test/fakes.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
 
 const chat = (key: string) => useStore.getState().chats[key]
@@ -150,6 +150,20 @@ describe('toasts and settings', () => {
     expect(useStore.getState().settings).toMatchObject({ density: 'compact', theme: 'system' })
     expect(JSON.parse(localStorage.getItem('tether.settings.v2')!)).toMatchObject({ density: 'compact', haptics: true })
   })
+})
+
+test("a chat left a while ago doesn't show its old goal when opened again", () => {
+  jest.useFakeTimers()
+  try {
+    emit({ t: 'chat.reset', key: 'g', info: chatInfo({ title: 'T', goal: { condition: 'ship it', met: false } as any }), items: [item.user('hi')], hasMore: false })
+    closeChat('g')
+    jest.advanceTimersByTime(61_000)
+    // the title stays for the header while it reloads; the goal waits for the hub to say it's still on
+    expect(chat('g')).toMatchObject({ items: [], loaded: false, info: { title: 'T' } })
+    expect(chat('g').info?.goal).toBeUndefined()
+  } finally {
+    jest.useRealTimers()
+  }
 })
 
 describe('notify', () => {

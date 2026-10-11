@@ -266,7 +266,8 @@ socket.onChatClosed((key) => {
   forget.set(key, setTimeout(() => {
     forget.delete(key)
     const c = useStore.getState().chats[key]
-    if (c && !socket.watching(key)) patchChat(key, () => ({ items: [], hasMore: false, loaded: false, screen: undefined }))
+    // its title and model can show while it reloads; a goal or queue may be long gone by then
+    if (c && !socket.watching(key)) patchChat(key, () => ({ items: [], hasMore: false, loaded: false, screen: undefined, ...(c.info && { info: { ...c.info, goal: undefined, queue: [] } }) }))
   }, 60_000))
 })
 socket.onStatus((connected) => useStore.setState({ connected }))
