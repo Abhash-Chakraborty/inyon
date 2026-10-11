@@ -15,6 +15,7 @@ import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
+import { COMMIT, VERSION } from '../lib/version.ts'
 
 /** The phone app: stay connected while it's in the background, and Android's battery limits. */
 function Background() {
@@ -50,6 +51,34 @@ function Background() {
   )
 }
 
+/** Which Tether this is, to check for updates or put in a bug report. */
+function About() {
+  const [app, setApp] = useState<{ version: string; build: string } | undefined>()
+  useEffect(() => {
+    plugin('App')?.getInfo().then((i: { version?: unknown; build?: unknown }) => typeof i?.version === 'string' && setApp({ version: i.version, build: String(i.build ?? '') })).catch(() => {})
+  }, [])
+  const summary = `Tether ${VERSION}${COMMIT ? ` (${COMMIT})` : ''}${app ? ` · Android app ${app.version}, build ${app.build}` : ''}`
+  return (
+    <Section id="about" title="About">
+      <Row label="Version" hint={COMMIT ? `Built from commit ${COMMIT}` : undefined}>
+        <span className="font-mono text-[13px] text-fg-2">{VERSION}</span>
+      </Row>
+      {app && (
+        <Row label="Android app">
+          <span className="font-mono text-[13px] text-fg-2">{app.version}</span>
+        </Row>
+      )}
+      <button
+        type="button"
+        onClick={() => copyText(summary).then((ok) => ok && toast({ title: 'Version copied', tone: 'success' }))}
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50"
+      >
+        <Copy className="size-4 text-fg-3" /> Copy version details
+      </button>
+    </Section>
+  )
+}
+
 function Section({ id, title, desc, children }: { id?: string; title: string; desc?: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-20">
@@ -81,6 +110,7 @@ const NAV = [
   ...(isNative()
     ? ([['phone-key', "This phone's key"]] as const)
     : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
+  ['about', 'About'],
 ] as const
 
 export function Settings() {
@@ -279,7 +309,8 @@ export function Settings() {
           </Section>
             </>
           )}
-          <p className="text-center text-[12px] text-fg-3">Tether 0.2 · agent marks belong to their owners</p>
+          <About />
+          <p className="text-center text-[12px] text-fg-3">Agent marks belong to their owners</p>
         </div>
       </div>
     </div>

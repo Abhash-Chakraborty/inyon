@@ -121,7 +121,14 @@ export function MachinePage() {
       />
       <div className="mx-auto max-w-[1100px] px-4 py-5 lg:px-7">
         <p className="mb-4 text-[13px] text-fg-3">
-          {host.config.kind === 'local' ? 'This hub' : host.config.kind === 'node' ? (waitingToPair(host) ? 'Not paired yet' : `Paired machine${host.hostname ? ` · ${host.hostname}` : ''}`) : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}`}
+          {host.config.kind === 'local'
+            ? 'This hub'
+            : host.config.kind === 'node'
+              ? waitingToPair(host) ? 'Not paired yet' : `Paired machine${host.hostname ? ` · ${host.hostname}` : ''}`
+              : host.config.kind === 'link'
+                ? `Laptop${host.hostname ? ` · ${host.hostname}` : ''}`
+                : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}`}
+          {host.nodeVersion && ` · tether-node ${host.nodeVersion}`}
           {host.os && ` · ${host.os}`}
           {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}
         </p>

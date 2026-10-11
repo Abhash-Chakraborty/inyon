@@ -301,6 +301,7 @@ class Registry {
         agents: pr.installed,
         signedIn: pr.signedIn,
         os: pr.os,
+        nodeVersion: rt.host.config.kind === 'node' || rt.host.config.kind === 'link' ? nodeLinks.info.get(rt.host.id)?.version : undefined,
         latencyMs: pr.latencyMs,
         sessions: pr.sessions,
         updatedAt: Date.now(),

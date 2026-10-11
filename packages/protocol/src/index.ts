@@ -132,6 +132,9 @@ export interface SessionInfo {
 
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
+/** Tether's version, the same for the app, the hub and tether-node (the root package.json's). */
+export const VERSION = '0.5.0'
+
 export interface HostState {
   config: HostConfig
   status: HostStatus
@@ -151,6 +154,8 @@ export interface HostState {
   /** agents with a saved sign-in on the machine (unknown until the first probe) */
   signedIn?: AgentKind[]
   os?: string
+  /** the tether-node version a paired machine or laptop runs */
+  nodeVersion?: string
   latencyMs?: number
   sessions: SessionInfo[]
   updatedAt: number

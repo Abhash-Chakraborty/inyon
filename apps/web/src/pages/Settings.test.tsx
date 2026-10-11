@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { VERSION } from '@tether/protocol'
 import { Settings } from './Settings.tsx'
 import { useStore } from '../lib/store.ts'
 import { api, emit } from '../test/fakes.ts'
@@ -70,5 +71,22 @@ describe('Settings keeps what you type while live data flows', () => {
     await render(page())
     await user.click(screen.getByText('Compact'))
     expect(useStore.getState().settings.toolDetail).toBe('compact')
+  })
+})
+
+describe('About', () => {
+  test('shows the version and copies it for a bug report', async () => {
+    const user = userEvent.setup()
+    const copied: string[] = []
+    const clipboard = navigator.clipboard
+    Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => void copied.push(t) } })
+    await render(page())
+    expect(screen.getByText(VERSION)).toBeTruthy()
+    await user.click(screen.getByText('Copy version details'))
+    await flush()
+    expect(copied[0]).toStartWith(`Tether ${VERSION}`)
+    Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
+    delete (window as any).isSecureContext
   })
 })
