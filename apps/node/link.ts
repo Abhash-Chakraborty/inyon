@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
@@ -102,6 +102,30 @@ export function forgetPhone(key: string) {
   const all = phones()
   delete all[key]
   writeJson('phones.json', all)
+  endSessions(key)
+}
+
+/** Open phone sessions by the phone's key, so forgetting a phone also ends what it has open. */
+const active = new Map<string, Set<() => void>>()
+let phonesStamp: number | undefined
+let watching: ReturnType<typeof setInterval> | undefined
+
+function endSessions(key: string) {
+  const ends = active.get(key)
+  active.delete(key)
+  for (const end of ends ?? []) end()
+}
+
+/** `tether-node forget` runs as a process of its own: notice phones.json changing and drop who's gone. */
+function dropForgotten() {
+  let stamp = -1
+  try {
+    stamp = statSync(file('phones.json')).mtimeMs
+  } catch {}
+  if (stamp === phonesStamp) return
+  phonesStamp = stamp
+  const all = phones()
+  for (const key of [...active.keys()]) if (!all[key]) endSessions(key)
 }
 
 export const listPhones = () => phones()
@@ -153,19 +177,40 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
 
 /** One phone session: the encrypted handshake, then the same commands the hub sends. */
 async function session(id: Identity, wire: Wire, via: string) {
-  let channel
+  let channel, remoteStatic
   try {
-    ;({ channel } = await accept(wire, { noise: id.noise, check }))
+    ;({ channel, remoteStatic } = await accept(wire, { noise: id.noise, check }))
   } catch (err) {
     if (!(err instanceof LinkError)) console.log(`refused a connection via ${via}: ${(err as Error).message}`)
     return
   }
+  const key = hex(remoteStatic)
+  // forgotten while the handshake finished
+  if (!phones()[key]) return channel.close(4403, 'unpaired')
   const ops = serveOps((m) => channel.send(m))
+  let open = true
+  const end = () => channel.close(4403, 'unpaired')
+  if (!active.has(key)) active.set(key, new Set())
+  active.get(key)!.add(end)
+  // a stream can run with nothing coming in, so check now and then too, not only per message
+  watching ??= setInterval(dropForgotten, 2000)
   channel.onmessage = (m) => {
+    dropForgotten()
+    if (!open) return
     if (m?.op === 'ping') return channel.send({ type: 'pong', t: m.t })
     ops.message(m)
   }
-  channel.onclose = () => ops.close()
+  channel.onclose = () => {
+    open = false
+    ops.close()
+    const mine = active.get(key)
+    mine?.delete(end)
+    if (mine && !mine.size) active.delete(key)
+    if (!active.size && watching) {
+      clearInterval(watching)
+      watching = undefined
+    }
+  }
 }
 
 // ---------- the local listener (behind the tunnel, and on the LAN if asked) ----------

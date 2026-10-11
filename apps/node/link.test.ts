@@ -73,6 +73,39 @@ test('forget unpairs a phone', async () => {
   await expect(open(phone, info.id, { name: 'Forget me' })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
 }, 30_000)
 
+test('forgetting a phone ends the session it has open and what that session runs', async () => {
+  const info = await pairingLink()
+  const phone = generateKeyPair()
+  const { channel } = await open(phone, info.id, { name: 'Open phone', pair: info.secret })
+  const closed = new Promise<number>((resolve) => (channel.onclose = (code) => resolve(code)))
+  const pidFile = path.join(home, 'stream.pid')
+  channel.send({ op: 'stream', id: 's', cmd: `echo $$ > '${pidFile}'; exec sleep 60` })
+  let pid = 0
+  for (let i = 0; i < 50 && !pid; i++) {
+    await Bun.sleep(100)
+    try {
+      pid = Number(readFileSync(pidFile, 'utf8').trim())
+    } catch {}
+  }
+  expect(pid).toBeGreaterThan(0)
+
+  // `forget` runs as its own process, like it does for a user
+  const f = cli('forget', 'Open phone')
+  expect(await new Response(f.stdout).text()).toContain('Forgot Open phone')
+  const code = await Promise.race([closed, Bun.sleep(8000).then(() => -1)])
+  expect(code).not.toBe(-1)
+  let alive = true
+  for (let i = 0; i < 30 && alive; i++) {
+    try {
+      process.kill(pid, 0)
+      await Bun.sleep(100)
+    } catch {
+      alive = false
+    }
+  }
+  expect(alive).toBe(false)
+}, 30_000)
+
 test('the typed-in ID and code pair a phone, and five wrong codes cancel it', async () => {
   const info = await pairingLink()
   const short = () => JSON.parse(readFileSync(path.join(home, '.tether-node', 'pairing.json'), 'utf8')).short as string | undefined
