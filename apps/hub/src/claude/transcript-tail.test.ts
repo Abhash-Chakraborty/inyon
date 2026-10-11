@@ -1,4 +1,4 @@
-import { afterAll, expect, spyOn, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,9 @@ import { registry } from '../hosts/registry.ts'
 import { loadChat, saveChat } from './chat-cache.ts'
 import { newMeta, normalize } from './transcript.ts'
 import { watchers } from './watcher.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const dir = mkdtempSync(join(tmpdir(), 'tether-tail-'))
 afterAll(() => {

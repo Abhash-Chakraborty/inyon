@@ -1,10 +1,13 @@
-import { expect, spyOn, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { lastReply, plainLine } from './last-reply.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 test('markdown becomes one short plain line', () => {
   expect(plainLine('## Done\n\n**All 12 tests** pass. See `src/app.ts` and [the PR](https://x.y).\n\n```ts\ncode\n```\n- next: ship')).toBe('Done All 12 tests pass. See src/app.ts and the PR. next: ship')

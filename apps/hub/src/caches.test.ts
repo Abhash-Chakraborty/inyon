@@ -1,8 +1,11 @@
-import { expect, mock, spyOn, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { clientMessage, clients, closeClient, newClient } from './core.ts'
 import { lruCache } from './features/features.ts'
 import { registry } from './hosts/registry.ts'
 import { watchers } from './claude/watcher.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 test('the command and file caches drop old entries and keep to a size', async () => {
   const c = lruCache<number>(50, 3)

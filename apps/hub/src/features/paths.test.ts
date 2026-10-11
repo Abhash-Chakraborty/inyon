@@ -1,8 +1,11 @@
-import { afterAll, expect, spyOn, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { isTaskFile, listSubagents, readTranscript, taskOutput } from './features.ts'
 import { isSessionId } from '../claude/actions.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const home = '/home/me'
 const host = new Host({ id: 'paths', name: 'Paths', kind: 'local' } as any)

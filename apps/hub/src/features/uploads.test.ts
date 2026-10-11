@@ -1,10 +1,13 @@
-import { afterAll, expect, spyOn, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { uploadFiles, uploadPiece } from './features.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const home = mkdtempSync(join(tmpdir(), 'tether-up-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))

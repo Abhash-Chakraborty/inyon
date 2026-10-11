@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LaptopSheet, SETUP_COMMANDS } from './LaptopSheet.tsx'
@@ -14,6 +14,9 @@ function phone(scanQr: () => Promise<unknown>, clipboard = '') {
     Plugins: { TetherDevice: { scanQr, readClipboardText: async () => ({ text: clipboard }) } },
   }
 }
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 afterEach(() => {
   delete (window as any).Capacitor

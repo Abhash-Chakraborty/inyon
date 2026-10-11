@@ -1,6 +1,9 @@
-import { afterEach, expect, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
 import { registry } from '../hosts/registry.ts'
 import { sendMessageToPane } from './actions.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 const R = '─'.repeat(100)
 const unq = (s: string) => s.replace(/^'|'$/g, '').replace(/'\\''/g, "'")
