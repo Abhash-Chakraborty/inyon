@@ -17,12 +17,12 @@ export async function guessGeminiSession(
 ): Promise<string | undefined> {
   const ageMin = Math.max(5, Math.ceil((Date.now() / 1000 - proc.startedAt) / 60) + 2)
   const r = await host.exec(
-    `find ${shq(home + '/.gemini/tmp')} -path '*/chats/session-*.json*' -mmin -${ageMin} 2>/dev/null | while read -r f; do echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $f $(head -c 3000 "$f" | head -n 1)"; done`,
+    `find ${shq(home + '/.gemini/tmp')} -path '*/chats/session-*.json*' -mmin -${ageMin} 2>/dev/null | while read -r f; do printf '%s\\t%s\\t%s\\n' "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")" "$f" "$(head -c 3000 "$f" | head -n 1)"; done`,
   )
   const hash = proc.cwd ? sha256Hex(proc.cwd) : ''
   const rows = r.stdout
     .split('\n')
-    .map((l) => l.match(/^(\d+) (\S+) (.*)$/))
+    .map((l) => l.match(/^(\d+)\t([^\t]+)\t(.*)$/))
     .filter(Boolean)
     .map((m) => {
       let meta: any = {}

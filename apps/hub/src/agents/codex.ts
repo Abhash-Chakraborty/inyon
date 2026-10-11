@@ -51,12 +51,12 @@ export async function guessCodexRollout(host: Host, home: string, proc: CodexPro
   const oldest = Math.min(proc.startedAt, ...others.map((o) => o.startedAt))
   const ageMin = Math.max(5, Math.ceil((Date.now() / 1000 - oldest) / 60) + 2)
   const cmd =
-    `find ${shq(home + '/.codex/sessions')} -name 'rollout-*.jsonl' -mmin -${ageMin} 2>/dev/null | while read -r f; do echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $f $(head -c 4000 "$f" | head -n 1)"; done; ` +
+    `find ${shq(home + '/.codex/sessions')} -name 'rollout-*.jsonl' -mmin -${ageMin} 2>/dev/null | while read -r f; do printf '%s\\t%s\\t%s\\n' "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")" "$f" "$(head -c 4000 "$f" | head -n 1)"; done; ` +
     `echo '---'; tail -n 400 ${shq(home + '/.codex/session_index.jsonl')} 2>/dev/null`
   const r = await host.exec(cmd)
   const [list, index = ''] = r.stdout.split('\n---\n')
   const rows = list.split('\n').filter(Boolean).map((l) => {
-    const m = l.match(/^(\d+) (\S+) (.*)$/)
+    const m = l.match(/^(\d+)\t([^\t]+)\t(.*)$/)
     if (!m) return null
     // read the fields straight from the text: since 0.162 the first line is ~20 kB, so the head we
     // read is cut off and not valid JSON
