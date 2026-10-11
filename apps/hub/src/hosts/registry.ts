@@ -677,7 +677,7 @@ class Registry {
 
   /** Follows the hook event log on the machine for instant updates. */
   private watchEvents(rt: Runtime) {
-    const cmd = 'mkdir -p "$HOME/.tether" && touch "$HOME/.tether/events.jsonl" && exec tail -n0 -F "$HOME/.tether/events.jsonl" 2>/dev/null'
+    const cmd = 'umask 077; mkdir -p "$HOME/.tether" && touch "$HOME/.tether/events.jsonl" && exec tail -n0 -F "$HOME/.tether/events.jsonl" 2>/dev/null'
     const s = rt.host.stream(cmd, (line) => {
       try {
         const e = JSON.parse(line)

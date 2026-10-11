@@ -10,6 +10,8 @@ export const HOOK_SCRIPT = `#!/bin/sh
 # Tether: records Claude Code events so Tether knows which tmux pane runs which session.
 # Safe to delete; remove the matching entries from ~/.claude/settings.json too.
 # ${MARKER}
+# the events hold your prompts: readable by you only
+umask 077
 d="$HOME/.tether"
 mkdir -p "$d/panes" 2>/dev/null
 p=$(tr -d '\\n\\r')
@@ -35,13 +37,16 @@ export const STATUS_SCRIPT = `#!/bin/sh
 # Tether: saves Claude Code's status line data per tmux pane, then runs your own status line.
 # ${MARKER}
 in=$(cat)
-if [ -n "\${TMUX_PANE:-}" ]; then
+# (in a subshell, so your own status line below keeps your umask)
+if [ -n "\${TMUX_PANE:-}" ]; then (
+  umask 077
   d="$HOME/.tether/status"; f="$d/\${TMUX_PANE#%}"
   mkdir -p "$d" 2>/dev/null
   printf '%s' "$in" | tr -d '\\n\\r' > "$f.json.$$" && mv -f "$f.json.$$" "$f.json"
   # the signed-in account, so limits reported for a previous account are never shown as this one's
   cfg="\${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json"
   printf '%s %s\\n' "$(${ACCOUNT_SH} "$cfg")" "$cfg" > "$f.acct"
+)
 fi
 orig="$HOME/.tether/statusline.orig"
 [ -s "$orig" ] && printf '%s' "$in" | sh "$orig"
@@ -58,10 +63,12 @@ export const AGY_STATUS_SCRIPT = `#!/bin/sh
 # Safe to delete; remove "statusLine" from ~/.gemini/antigravity-cli/settings.json too.
 # ${MARKER}
 in=$(cat)
-if [ -n "\${TMUX_PANE:-}" ]; then
+if [ -n "\${TMUX_PANE:-}" ]; then (
+  umask 077
   d="$HOME/.tether/agy-status"; f="$d/\${TMUX_PANE#%}"
   mkdir -p "$d" 2>/dev/null
   printf '%s' "$in" | tr -d '\\n\\r' > "$f.json.$$" && mv -f "$f.json.$$" "$f.json"
+)
 fi
 orig="$HOME/.tether/agy-statusline.orig"
 [ -s "$orig" ] && printf '%s' "$in" | sh "$orig"
@@ -102,17 +109,18 @@ async function writeSettings(host: Host, settings: any) {
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not write settings')
 }
 
-async function writeFile(host: Host, path: string, content: string, mode = '644') {
-  const r = await host.exec(`mkdir -p "$HOME/.tether" && cat > "$HOME/${path}" && chmod ${mode} "$HOME/${path}"`, { input: content })
+async function writeFile(host: Host, path: string, content: string, mode = '600') {
+  const r = await host.exec(`umask 077; mkdir -p "$HOME/.tether" && cat > "$HOME/${path}" && chmod ${mode} "$HOME/${path}"`, { input: content })
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not write ~/${path}`)
 }
 
 const windowsPath = (cmd: string) => /(^|[\s"'])[A-Za-z]:[\\/]/.test(cmd)
 
 export async function installIntegration(host: Host) {
-  await writeFile(host, '.tether/hook.sh', HOOK_SCRIPT, '755')
-  await writeFile(host, '.tether/statusline.sh', STATUS_SCRIPT, '755')
-  await host.exec('mkdir -p "$HOME/.tether/panes" "$HOME/.tether/status"')
+  await writeFile(host, '.tether/hook.sh', HOOK_SCRIPT, '700')
+  await writeFile(host, '.tether/statusline.sh', STATUS_SCRIPT, '700')
+  // ~/.tether holds your prompts (events.jsonl, panes/): earlier versions left it readable by others
+  await host.exec('umask 077; mkdir -p "$HOME/.tether/panes" "$HOME/.tether/status" && chmod 700 "$HOME/.tether" && chmod 600 "$HOME/.tether/events.jsonl" "$HOME/.tether/events.old.jsonl" 2>/dev/null; true')
   const settings = await readSettings(host)
   const sl = settings.statusLine
   if (!isOurStatus(sl?.command)) {
@@ -164,7 +172,7 @@ async function writeAgySettings(host: Host, settings: any) {
 export async function installAgyIntegration(host: Host) {
   const settings = await readAgySettings(host)
   if (!settings) return false
-  await writeFile(host, '.tether/agy-statusline.sh', AGY_STATUS_SCRIPT, '755')
+  await writeFile(host, '.tether/agy-statusline.sh', AGY_STATUS_SCRIPT, '700')
   const sl = settings.statusLine
   if (!isOurAgyStatus(sl?.command)) {
     const cmd = sl?.type === 'command' && typeof sl.command === 'string' ? sl.command : ''

@@ -69,6 +69,8 @@ and it adds the file to `.git/info/exclude` so git never sees it. Tether keeps a
 files in `~/.tether/project-statuslines` and removes the line from each one when you turn the
 integration off.
 Uploads go to `~/.tether/uploads` and are deleted after a retention period you choose.
+The hook log holds your prompts, so `~/.tether` and what the scripts write there are readable only
+by you.
 
 ## What Tether reads
 
