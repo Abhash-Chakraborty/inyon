@@ -17,6 +17,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tether-tail-'))
 afterAll(() => {
   watchers.stop('tail-test:%1')
   watchers.stop('tail-test:%2')
+  watchers.stop('tail-test:%6')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -43,6 +44,19 @@ test('drops image data on the far side but counts every byte of the file', () =>
   const entries = out.map((l) => r.line(l)?.entry).filter(Boolean)
   expect(entries.map((e) => e.message.content[0].text)).toEqual(['héllo ✓ 🙂', 'a screenshot', 'after'])
   expect(entries[1].message.content[1].type).toBe('image')
+  expect(r.offset).toBe(statSync(file).size)
+})
+
+test('only image data is dropped; long text next to an image stays whole', () => {
+  const file = join(dir, 'mixed.jsonl')
+  const text = 'Q'.repeat(2048)
+  const codex = JSON.stringify({ type: 'response_item', payload: { content: [{ type: 'input_text', text: 'see' }, { type: 'input_image', image_url: `data:image/png;base64,${png}` }] } })
+  writeFileSync(file, user(text, true) + codex + '\n')
+  const r = new TranscriptReader()
+  const entries = lines(tailCommand(file, 0, true, false)).map((l) => r.line(l)?.entry).filter(Boolean)
+  expect(entries[0].message.content[0].text).toBe(text)
+  expect(entries[0].message.content[1].source.data).toBe('…')
+  expect(entries[1].payload.content[1].image_url).toBe('data:image/png;base64,…')
   expect(r.offset).toBe(statSync(file).size)
 })
 
@@ -331,6 +345,49 @@ test('a long conversation opens on its last stretch and reads earlier messages a
   expect(streams.mock.calls.some((c) => String(c[0]).includes('grep -E'))).toBe(true)
   expect((got.find((m) => m.t === 'chat.reset') as any).hasMore).toBe(true)
   watchers.stop(again.key)
+}, 60_000)
+
+test('a scroll-back read cut short keeps nothing, and the next scroll up reads that piece again', async () => {
+  const file = join(dir, 'drop.jsonl')
+  const lines: string[] = []
+  for (let i = 0; i < 600; i++) lines.push(user(`msg ${i} ${'y'.repeat(1100)}`))
+  writeFileSync(file, lines.join(''))
+  const pane = { id: '%6', title: 'claude', agent: { kind: 'claude', transcriptPath: file, sessionId: 's6' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  const local = new Host({ ...config, kind: 'local' } as any)
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(local)
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const num = (i: any) => Number(/^msg (\d+)/.exec(i.text)?.[1])
+  const w = watchers.get('tail-test', '%6')
+  w.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  const firstHeld = num(w.items.find((i) => i.kind === 'user'))
+  expect(firstHeld).toBeGreaterThan(0)
+
+  // the connection drops a few lines into the next piece back
+  const real = local.stream.bind(local)
+  ;(local as any).stream = (cmd: string, onLine: (l: string) => void, o?: any) => {
+    if (!cmd.includes('head -c') || cmd.includes('grep -E')) return real(cmd, onLine, o)
+    let n = 0
+    const h = real(cmd, (l) => void (n++ < 6 && onLine(l)), o)
+    return { kill: h.kill, exited: h.exited.then(() => 255) }
+  }
+  await w.more(sub, w.items[0]!.seq)
+  expect(num(w.items.find((i) => i.kind === 'user'))).toBe(firstHeld)
+  expect((got.findLast((m) => m.t === 'chat.more') as any).hasMore).toBe(true)
+
+  // back online: scrolling up reads every earlier message, none skipped
+  delete (local as any).stream
+  for (let more: any; (more = got.findLast((m) => m.t === 'chat.more')), !more || more.hasMore; ) await w.more(sub, w.items[0]!.seq)
+  expect(w.items.filter((i) => i.kind === 'user').map(num)).toEqual(Array.from({ length: 600 }, (_, i) => i))
+  watchers.stop(w.key)
 }, 60_000)
 
 test('a reopened chat shows its saved copy at once and reads only what was said since', async () => {

@@ -441,20 +441,24 @@ class ChatWatcher {
     return first > 0 && first < TAIL_SEQ
   }
 
-  /** Reads lines between two offsets of the transcript, each with the offset its line starts at. */
+  /**
+   * Reads lines between two offsets of the transcript, each with the offset its line starts at.
+   * `complete` says every line up to `to` arrived: a dropped connection or a timeout ends the
+   * stream early, and taking that for the whole piece would leave a gap nothing reads again.
+   */
   private async readRange(path: string, from: number, to: number) {
     const host = registry.host(this.hostId)
     const reader = new TranscriptReader(from)
     const out: { entry: any; at: number }[] = []
-    await new Promise<void>((done) => {
+    const code = await new Promise<number>((done) => {
       const t = host.stream(rangeCommand(path, from, to, this.onRemoteHost()), (line) => {
         const r = reader.line(line)
         if (r?.entry) out.push({ entry: r.entry, at: reader.offset - r.bytes })
       })
-      t.exited ? t.exited.then(() => done(), () => done()) : done()
-      setTimeout(() => (t.kill(), done()), 60_000)
+      t.exited ? t.exited.then((c) => done(c ?? 0), () => done(-1)) : done(0)
+      setTimeout(() => (t.kill(), done(-1)), 60_000)
     })
-    return out
+    return { lines: out, complete: code === 0 && reader.received === to }
   }
 
   /**
@@ -488,8 +492,10 @@ class ChatWatcher {
       let span = OLDER_BYTES
       while (end > 0 && older.length < PAGE) {
         const from = Math.max(0, end - span)
-        const lines = await this.readRange(path, from, end)
+        const { lines, complete } = await this.readRange(path, from, end)
         if (this.stopped || path !== this.transcript) return
+        // nothing is kept from a read cut short: the next scroll up asks for the same piece again
+        if (!complete) return
         if (!lines.length) {
           // one line longer than the piece (a screenshot): take a bigger piece
           if (from === 0) end = 0

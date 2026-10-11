@@ -24,16 +24,17 @@ export function utf8Length(s: string) {
 /**
  * Prints each line's size in the file (a line of \x1e and the bytes, newline included) before the
  * line, so the count doesn't depend on how the other end decodes text. In lines that carry base64
- * (images), each run of 1024+ base64 characters becomes an ellipsis; prose, paths and hashes always
- * break sooner. Written for any POSIX awk (gawk, mawk, busybox, macOS).
+ * (images), the image data (1024+ base64 characters right after `"data":"`, or after `;base64,`
+ * in a data URL) becomes an ellipsis. Only there: text next to an image can hold long runs of the
+ * same characters, and it is part of the message. Written for any POSIX awk (gawk, mawk, busybox,
+ * macOS).
  */
-const SLIM = `BEGIN { r = "[A-Za-z0-9+/=]"; for (i = 0; i < 10; i++) r = r r; r = r "[A-Za-z0-9+/=]*" }
+const SLIM = `BEGIN { r = "[A-Za-z0-9+/=]"; for (i = 0; i < 10; i++) r = r r; r = "(\\"data\\":\\"|;base64,)" r "[A-Za-z0-9+/=]*" }
 {
   n = length($0); s = $0; o = ""; cut = 0
   if (n > 1024 && index(s, "base64")) while (match(s, r)) {
-    a = RSTART; l = RLENGTH
-    if (a > 1 && substr(s, a - 1, 1) == "\\\\") { a++; l-- }
-    o = o substr(s, 1, a - 1) "…"; s = substr(s, a + l); cut = 1
+    # both prefixes are 8 characters; keep them, drop the data
+    o = o substr(s, 1, RSTART + 7) "…"; s = substr(s, RSTART + RLENGTH); cut = 1
   }
   printf "\\036%d\\n", n + 1
   if (cut) print o s
@@ -141,6 +142,11 @@ export class TranscriptReader {
 
   constructor(from = 0) {
     this.offset = from
+  }
+
+  /** bytes of the file that have come through, a line still held back included */
+  get received() {
+    return this.offset + this.held
   }
 
   /** The line's entry (if it is one) and the bytes it took in the file; undefined for a size mark. */
