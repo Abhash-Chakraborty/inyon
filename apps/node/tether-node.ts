@@ -11,7 +11,8 @@
  *       --port <n>                     local port (4780)
  *   tether-node phones                 list paired phones
  *   tether-node forget <name|key>      unpair a phone
- *   tether-node <hub-url> <token>      connect to a Tether hub instead (from its "Add a machine")
+ *   tether-node <hub-url>              connect to a Tether hub instead (from its "Add a machine"), with
+ *                                      the token in TETHER_TOKEN (`<hub-url> <token>` works too)
  *
  * The phone link is end-to-end encrypted; tunnels and relays only carry ciphertext. For a hub,
  * plain http:// is only accepted for private addresses (localhost, LAN, Tailscale/NetBird).
@@ -76,6 +77,7 @@ function hubMode(hubArg?: string, tokenArg?: string) {
     console.error(USAGE)
     process.exit(2)
   }
+  if (tokenArg) console.error('Note: a token given as an argument shows in the process list. Prefer TETHER_TOKEN=<token> tether-node <hub-url>.')
 
   const url = new URL(hub)
   if (url.protocol === 'http:' && !isPrivate(url) && !process.env.TETHER_ALLOW_INSECURE) {
@@ -256,7 +258,7 @@ const USAGE = `tether-node ${VERSION}
   tether-node install / uninstall   start or stop running in the background (at login)
   tether-node phones                list paired phones
   tether-node forget <name|key>     unpair a phone
-  tether-node <hub-url> <token>     connect to a Tether hub instead`
+  tether-node <hub-url>             connect to a Tether hub instead, with the token in TETHER_TOKEN`
 
 const [cmd, ...rest] = process.argv.slice(2)
 const hubSaved = !!(process.env.TETHER_HUB || readEnvFile(path.join(os.homedir(), '.tether-node', 'env')).TETHER_HUB)

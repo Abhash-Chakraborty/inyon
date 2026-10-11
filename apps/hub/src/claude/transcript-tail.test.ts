@@ -3,7 +3,7 @@ import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ServerMsg } from '@tether/protocol'
-import { parseSize, sizeCommand, tailCommand, TranscriptReader, utf8Length } from './transcript-tail.ts'
+import { parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { watchers } from './watcher.ts'
@@ -31,7 +31,7 @@ const lines = (cmd: string) => Bun.spawnSync(['sh', '-c', cmd]).stdout.toString(
 test('drops image data on the far side but counts every byte of the file', () => {
   const file = join(dir, 'slim.jsonl')
   writeFileSync(file, user('héllo ✓ 🙂') + user('a screenshot', true) + user('after'))
-  const cmd = tailCommand(file, 0, true).replace(' -F ', ' ')
+  const cmd = tailCommand(file, 0, true, false)
   const out = lines(cmd)
   expect(out.join('\n').length).toBeLessThan(2000)
   const r = new TranscriptReader()
@@ -45,12 +45,43 @@ test('reading on from an offset gives exactly the lines after it', () => {
   const file = join(dir, 'resume.jsonl')
   writeFileSync(file, user('one') + user('two', true))
   const first = new TranscriptReader()
-  for (const l of lines(tailCommand(file, 0, true).replace(' -F ', ' '))) first.line(l)
+  for (const l of lines(tailCommand(file, 0, true, false))) first.line(l)
   appendFileSync(file, user('three') + user('four'))
   const next = new TranscriptReader(first.offset)
-  const texts = lines(tailCommand(file, first.offset, true).replace(' -F ', ' ')).map((l) => next.line(l)?.entry?.message.content[0].text).filter(Boolean)
+  const texts = lines(tailCommand(file, first.offset, true, false)).map((l) => next.line(l)?.entry?.message.content[0].text).filter(Boolean)
   expect(texts).toEqual(['three', 'four'])
   expect(next.offset).toBe(statSync(file).size)
+})
+
+test.skipIf(!Bun.which('setsid'))('a remote follow ends once its stdin closes, tail and all', async () => {
+  const file = join(dir, 'closed.jsonl')
+  writeFileSync(file, user('quiet'))
+  // as over SSH: its own session, stdin a pipe from the hub, and nobody kills the group
+  const p = Bun.spawn(['setsid', 'sh', '-c', `${tailCommand(file, 0, true)}; echo exited`], { stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
+  const out = new Response(p.stdout).text()
+  await Bun.sleep(300)
+  const tails = () => Bun.spawnSync(['ps', '-eo', 'args=']).stdout.toString().split('\n').filter((l) => l.startsWith('tail ') && l.includes(file))
+  expect(tails()).toHaveLength(1)
+  p.stdin.end()
+  expect(await Promise.race([p.exited, Bun.sleep(3000).then(() => 'stuck')])).not.toBe('stuck')
+  expect(await out).toContain('exited')
+  expect(tails()).toHaveLength(0)
+})
+
+test.skipIf(!Bun.which('setsid'))('any command can be made to end with its stdin', async () => {
+  const file = join(dir, 'events.jsonl')
+  writeFileSync(file, '')
+  // the shape of the hook event follow: a setup step, then the tail
+  const cmd = `touch ${file} && { ${untilStdinCloses(`tail -n0 -F ${file} 2>/dev/null`)}; }; echo exited`
+  const p = Bun.spawn(['setsid', 'sh', '-c', cmd], { stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
+  const out = new Response(p.stdout).text()
+  await Bun.sleep(300)
+  const tails = () => Bun.spawnSync(['ps', '-eo', 'args=']).stdout.toString().split('\n').filter((l) => l.startsWith('tail ') && l.includes(file))
+  expect(tails()).toHaveLength(1)
+  p.stdin.end()
+  expect(await Promise.race([p.exited, Bun.sleep(3000).then(() => 'stuck')])).not.toBe('stuck')
+  expect(await out).toContain('exited')
+  expect(tails()).toHaveLength(0)
 })
 
 test('a line cut short by a dropped stream is read again, not skipped', () => {
@@ -67,7 +98,7 @@ test('counts by the sizes the far side reports, however the text was decoded', (
   const file = join(dir, 'marks.jsonl')
   writeFileSync(file, user('🙂 split across chunks') + '\n' + user('next'))
   const r = new TranscriptReader()
-  const out = lines(tailCommand(file, 0, true).replace(' -F ', ' ')).map((l) => (l.startsWith('{') ? l.replace('🙂', '\ufffd') : l))
+  const out = lines(tailCommand(file, 0, true, false)).map((l) => (l.startsWith('{') ? l.replace('🙂', '\ufffd') : l))
   const texts = out.filter((l) => l).map((l) => r.line(l)?.entry?.message.content[0].text).filter(Boolean)
   expect(texts).toHaveLength(2)
   expect(r.offset).toBe(statSync(file).size)

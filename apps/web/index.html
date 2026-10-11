@@ -2,6 +2,17 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Scripts only from the app itself, images only from the app (agent output must not make the
+      browser fetch outside URLs). Connections stay open on purpose: the phone app reaches laptops
+      through Cloudflare tunnels (wss://), LAN addresses (ws://, which is also why the Android
+      app allows mixed content) and pkarr relays (https://). The hub's own header adds
+      frame-ancestors, which a meta tag can't set.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="script-src 'self'; object-src 'none'; base-uri 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' * ws: wss: http: https: data: blob:"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>Tether</title>
     <meta name="description" content="Your coding agents and tmux sessions, on every device." />
@@ -14,14 +25,7 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <script>
-      // apply the theme before first paint to avoid a flash
-      try {
-        var t = JSON.parse(localStorage.getItem('tether.settings.v2') || '{}').theme || 'system'
-        if (t === 'system') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-        document.documentElement.dataset.theme = t
-      } catch (e) {}
-    </script>
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

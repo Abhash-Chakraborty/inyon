@@ -72,20 +72,38 @@ export function revokeSession(req: Request) {
   saveRevoked()
 }
 
-// Slow down password guessing: a few attempts per minute per address.
+// Slow down password guessing: a few attempts per minute per address, and a cap on failures from
+// all addresses together, so guesses spread over many addresses can't go faster either.
+const PER_CLIENT = 8
+const ALL_CLIENTS = 30
 const attempts = new Map<string, { n: number; reset: number }>()
+const failures = { n: 0, reset: 0 }
 
 export async function tryLogin(ip: string, password: string) {
   const now = Date.now()
   for (const [k, v] of attempts) if (v.reset < now) attempts.delete(k)
-  const a = attempts.get(ip)
-  if (a && a.n >= 8) return { ok: false, error: 'Too many attempts. Try again in a minute.' }
+  if (failures.reset < now) Object.assign(failures, { n: 0, reset: now + 60_000 })
+  let a = attempts.get(ip)
+  if (!a) attempts.set(ip, (a = { n: 0, reset: now + 60_000 }))
+  if (a.n >= PER_CLIENT || failures.n >= ALL_CLIENTS) return { ok: false, error: 'Too many attempts. Try again in a minute.' }
+  // counted before the slow hash, so guesses sent all at once are each counted
+  a.n++
+  failures.n++
   if (password.length <= 1024 && (await checkPassword(password))) {
     attempts.delete(ip)
+    failures.n = Math.max(0, failures.n - 1)
     return { ok: true }
   }
   await Bun.sleep(400)
-  if (!a) attempts.set(ip, { n: 1, reset: now + 60_000 })
-  else a.n++
   return { ok: false, error: 'Wrong password' }
+}
+
+/**
+ * The address to count sign-in attempts against. Behind a local proxy every request comes from
+ * loopback and X-Forwarded-For names the client. Only its last entry, the one the proxy added,
+ * can be trusted: a client can send any entries before it.
+ */
+export function clientAddress(peer: string, forwardedFor: string | null) {
+  if (!/^(127\.|::1$|::ffff:127\.)/.test(peer)) return peer
+  return forwardedFor?.split(',').at(-1)?.trim() || peer
 }

@@ -8,14 +8,16 @@ agents run as. Treat the hub like an SSH jump host.
 - **Keep the hub private.** It binds to `127.0.0.1` by default. Reach it over a private network
   (Tailscale, NetBird, WireGuard, your LAN) or put it behind HTTPS with a reverse proxy. Don't
   expose plain HTTP to the internet.
-- **One strong password.** The first visit creates it; when the hub listens beyond localhost, that
-  visit also needs the setup code the hub prints. The hub stores only a scrypt hash. Sign-in
-  attempts are rate limited. Sessions are signed, HttpOnly cookies, and the API only accepts
-  changes from the hub's own origin.
+- **One strong password.** The first visit creates it, with the setup code the hub prints. The hub
+  stores only a scrypt hash. Sign-in attempts are rate limited per address and in total. Sessions
+  are signed, HttpOnly cookies, and the API only accepts changes from the hub's own origin.
+- **Only its own names.** The hub doesn't answer browsers that reach it under a public domain it
+  wasn't told about (`TETHER_ALLOWED_HOSTS`), so a web page can't point its own domain at your
+  hub (DNS rebinding) and use it from your browser.
 - **Laptops connect out, not in.** Machines paired with `tether-node` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
-  revokes it. `tether-node` refuses to send its token over plain HTTP unless the hub is on a
+  revokes it. A token no machine has used stops working after a day. `tether-node` refuses to send its token over plain HTTP unless the hub is on a
   private address.
 - **Servers can use SSH.** The hub uses your existing `ssh` config, keys and known hosts. It never
   stores SSH keys.
@@ -67,6 +69,8 @@ and it adds the file to `.git/info/exclude` so git never sees it. Tether keeps a
 files in `~/.tether/project-statuslines` and removes the line from each one when you turn the
 integration off.
 Uploads go to `~/.tether/uploads` and are deleted after a retention period you choose.
+The hook log holds your prompts, so `~/.tether` and what the scripts write there are readable only
+by you.
 
 ## What Tether reads
 

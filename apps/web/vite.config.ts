@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
@@ -16,8 +16,15 @@ const commit = () => {
   }
 }
 
+/** The dev server's hot reload needs an inline script, which index.html's CSP refuses: drop it there. */
+const devWithoutCsp: Plugin = {
+  name: 'tether-dev-without-csp',
+  apply: 'serve',
+  transformIndexHtml: (html) => html.replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*>/, ''),
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), devWithoutCsp],
   define: { __TETHER_COMMIT__: JSON.stringify(commit()) },
   // the phone app runs the hub's core in-process (loaded only inside the app, see lib/phone.ts)
   resolve: { alias: { '@tether/phone': fileURLToPath(new URL('../hub/src/phone/index.ts', import.meta.url)) } },

@@ -173,8 +173,8 @@ export const api = {
     form.append('files', file, file.name)
     if (pane) form.append('pane', paneSlug(pane))
     // in the phone app the file goes over SSH from here, a piece at a time: a whole video at once
-    // runs the app out of memory
-    if (isPhone()) return uploadInPieces(host, pane, file, onProgress)
+    // runs the app out of memory. A big file goes to the hub in pieces too, so it never holds it whole.
+    if (isPhone() || file.size > UPLOAD_PIECE) return uploadInPieces(host, pane, file, onProgress)
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `${h(host)}/uploads`)

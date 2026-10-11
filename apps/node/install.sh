@@ -1,9 +1,12 @@
 #!/bin/sh
 # Installs tether-node as a background service for the current user.
-# Usage: curl -fsSL <hub>/node/install.sh | sh -s -- <hub-url> <token>
+# Usage: TETHER_TOKEN=<token> TETHER_NODE_SHA256=<sha256> sh install.sh <hub-url>
+# (the hub's "Add a machine" command does this; `sh -s -- <hub-url> <token>` still works)
+# The token comes from the environment so it doesn't show in the process list. With
+# TETHER_NODE_SHA256 set, the downloaded tether-node.ts must match it.
 set -e
-HUB="$1"; TOKEN="$2"
-[ -n "$HUB" ] && [ -n "$TOKEN" ] || { echo "usage: install.sh <hub-url> <token>" >&2; exit 2; }
+HUB="$1"; TOKEN="${2:-$TETHER_TOKEN}"
+[ -n "$HUB" ] && [ -n "$TOKEN" ] || { echo "usage: TETHER_TOKEN=<token> install.sh <hub-url>" >&2; exit 2; }
 DIR="$HOME/.tether-node"
 mkdir -p "$DIR"
 
@@ -13,7 +16,16 @@ if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
 fi
 BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
 
-curl -fsSL "$HUB/node/tether-node.ts" -o "$DIR/tether-node.ts"
+curl -fsSL "$HUB/node/tether-node.ts" -o "$DIR/tether-node.ts.download"
+if [ -n "$TETHER_NODE_SHA256" ]; then
+  have="$( (sha256sum "$DIR/tether-node.ts.download" 2>/dev/null || shasum -a 256 "$DIR/tether-node.ts.download") | cut -c1-64)"
+  if [ "$have" != "$TETHER_NODE_SHA256" ]; then
+    rm -f "$DIR/tether-node.ts.download"
+    echo "tether-node.ts did not match its checksum. Get a new command from the hub and run it again." >&2
+    exit 1
+  fi
+fi
+mv -f "$DIR/tether-node.ts.download" "$DIR/tether-node.ts"
 umask 077
 printf 'TETHER_HUB=%s\nTETHER_TOKEN=%s\n' "$HUB" "$TOKEN" > "$DIR/env"
 

@@ -64,7 +64,8 @@ const components: Components = {
   // agent output can't load outside images: a prompt-injected agent could put data in the URL
   img({ src, alt }) {
     const url = typeof src === 'string' ? src : ''
-    if (/^(data:image\/|blob:|\/)/.test(url)) return <img src={url} alt={alt ?? ''} className="max-w-full rounded-[8px]" />
+    // a path on this site, but not "//host/…", which is another site
+    if (/^(data:image\/|blob:|\/(?![/\\]))/.test(url)) return <img src={url} alt={alt ?? ''} className="max-w-full rounded-[8px]" />
     return /^https?:\/\//.test(url) ? (
       <a href={url} target="_blank" rel="noreferrer noopener">{alt || url}</a>
     ) : (

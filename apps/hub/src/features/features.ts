@@ -125,9 +125,35 @@ export function startUploadJanitor() {
   setInterval(run, 6 * 3600_000)
 }
 
+/** A small cache: entries go after `ttl` ms, and past `max` entries the least recently used go first. */
+export function lruCache<T>(ttl: number, max: number) {
+  const entries = new Map<string, { at: number; value: T }>()
+  return {
+    get(key: string): T | undefined {
+      const hit = entries.get(key)
+      if (!hit) return
+      entries.delete(key)
+      if (Date.now() - hit.at >= ttl) return
+      entries.set(key, hit)
+      return hit.value
+    },
+    set(key: string, value: T) {
+      entries.delete(key)
+      entries.set(key, { at: Date.now(), value })
+      for (const [k, e] of entries) {
+        if (entries.size <= max && Date.now() - e.at < ttl) break
+        entries.delete(k)
+      }
+    },
+    get size() {
+      return entries.size
+    },
+  }
+}
+
 // ---------- slash commands ----------
 
-const cmdCache = new Map<string, { at: number; list: SlashCommand[] }>()
+const cmdCache = lruCache<SlashCommand[]>(60_000, 50)
 
 /** Built-in commands plus skills and custom commands found on the machine. */
 export async function listCommands(hostId: string, paneId: string): Promise<SlashCommand[]> {
@@ -135,14 +161,14 @@ export async function listCommands(hostId: string, paneId: string): Promise<Slas
   const kind: AgentKind = pane.agent?.kind ?? 'claude'
   const key = `${hostId}:${kind}:${pane.cwd}`
   const hit = cmdCache.get(key)
-  if (hit && Date.now() - hit.at < 60_000) return hit.list
+  if (hit) return hit
   const { host } = hostAndHome(hostId)
   if (kind === 'opencode' && pane.agent?.transcriptPath?.startsWith('opencode://')) {
     const rows = await new OpenCodeClient(host, pane.agent.transcriptPath, pane.cwd).request('/command')
     const dynamic: SlashCommand[] = (Array.isArray(rows) ? rows : []).map((c: any) => ({ name: `/${c.name}`, description: c.description ?? '', source: c.source === 'mcp' ? 'plugin' : 'project' }))
     const names = new Set(dynamic.map((c) => c.name))
     const list = [...AGENTS.opencode.commands.filter((c) => !names.has(c.name)), ...dynamic].sort((a, b) => a.name.localeCompare(b.name))
-    cmdCache.set(key, { at: Date.now(), list })
+    cmdCache.set(key, list)
     return list
   }
   const cwd = shq(pane.cwd)
@@ -178,26 +204,26 @@ find "$HOME/.gemini/antigravity-cli/plugins" -maxdepth 4 -path '*/skills/*/SKILL
   }
   const builtins = AGENTS[kind].commands.filter((c) => !seen.has(c.name))
   const list = [...builtins, ...found].sort((a, b) => a.name.localeCompare(b.name))
-  cmdCache.set(key, { at: Date.now(), list })
+  cmdCache.set(key, list)
   return list
 }
 
 // ---------- @ file mentions ----------
 
-const fileCache = new Map<string, { at: number; files: string[] }>()
+const fileCache = lruCache<string[]>(30_000, 20)
 
 export async function listFiles(hostId: string, paneId: string): Promise<{ cwd: string; files: string[] }> {
   const pane = paneOf(hostId, paneId)
   const key = `${hostId}:${pane.cwd}`
   const hit = fileCache.get(key)
-  if (hit && Date.now() - hit.at < 30_000) return { cwd: pane.cwd, files: hit.files }
+  if (hit) return { cwd: pane.cwd, files: hit }
   const { host } = hostAndHome(hostId)
   const r = await host.exec(
     `cd ${shq(pane.cwd)} 2>/dev/null || exit 0; if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then git ls-files -co --exclude-standard 2>/dev/null | head -20000; else find . -maxdepth 6 \\( -name node_modules -o -name .git -o -name dist -o -name .venv -o -name __pycache__ \\) -prune -o -type f -print 2>/dev/null | sed 's|^\\./||' | head -20000; fi`,
     { timeoutMs: 15000 },
   )
   const files = r.stdout.split('\n').filter(Boolean)
-  fileCache.set(key, { at: Date.now(), files })
+  fileCache.set(key, files)
   return { cwd: pane.cwd, files }
 }
 
@@ -285,9 +311,31 @@ export async function writeConfig(hostId: string, path: string, content: string)
 
 // ---------- subagents and background task output ----------
 
+/** An absolute path already in its plain form: no "..", "." or doubled slashes to resolve. */
+const isPlainPath = (p: string) =>
+  (p.startsWith('/') || /^[A-Za-z]:\//.test(p)) &&
+  !/[\0\n]/.test(p) &&
+  !p.split('/').slice(1).some((s, i, all) => s === '.' || s === '..' || (s === '' && i < all.length - 1))
+
+/**
+ * Transcripts are read from Claude's projects folder only: ~/.claude/projects, or the one a
+ * session on that machine uses (CLAUDE_CONFIG_DIR moves it).
+ */
+function assertTranscriptPath(hostId: string, home: string, p: string) {
+  const roots = [`${home}/.claude/projects/`]
+  for (const s of registry.get(hostId)?.state.sessions ?? [])
+    for (const w of s.windows)
+      for (const pane of w.panes) {
+        const t = pane.agent?.transcriptPath
+        const at = t?.indexOf('/projects/') ?? -1
+        if (t && at > 0 && isPlainPath(t)) roots.push(t.slice(0, at + '/projects/'.length))
+      }
+  if (!/\.jsonl$/.test(p) || !isPlainPath(p) || !roots.some((r) => p.startsWith(r))) throw new HttpError(400, 'Bad transcript path')
+}
+
 export async function listSubagents(hostId: string, transcriptPath: string) {
-  if (!/\.jsonl$/.test(transcriptPath)) throw new HttpError(400, 'Bad transcript path')
-  const { host } = hostAndHome(hostId)
+  const { host, home } = hostAndHome(hostId)
+  assertTranscriptPath(hostId, home, transcriptPath)
   const dir = `${transcriptPath.replace(/\.jsonl$/, '')}/subagents`
   const r = await host.exec(`for m in ${shq(dir)}/*.meta.json; do [ -f "$m" ] && echo "$(basename "$m" .meta.json)\t$(tr -d '\\n' < "$m")"; done`)
   return r.stdout.split('\n').filter(Boolean).map((l) => {
@@ -302,8 +350,8 @@ export async function listSubagents(hostId: string, transcriptPath: string) {
 
 /** A whole (sub)agent transcript as chat items, read once. */
 export async function readTranscript(hostId: string, path: string): Promise<ChatItem[]> {
-  if (!/\.jsonl$/.test(path) || !path.includes('/.claude/projects/')) throw new HttpError(400, 'Bad transcript path')
-  const { host } = hostAndHome(hostId)
+  const { host, home } = hostAndHome(hostId)
+  assertTranscriptPath(hostId, home, path)
   const r = await host.exec(`tail -c 3000000 ${shq(path)} 2>/dev/null`, { timeoutMs: 20000 })
   const meta = newMeta()
   const items: ChatItem[] = []
@@ -317,13 +365,18 @@ export async function readTranscript(hostId: string, path: string): Promise<Chat
   return items.slice(-600)
 }
 
-/** Claude's /tmp/…/tasks/<id>.output, or agy's ~/.gemini/antigravity-cli/brain/<id>/.system_generated/tasks/<task>.log */
-export const isTaskFile = (p: string) =>
-  !p.includes('..') && (/\/tasks\/[\w-]+\.output$/.test(p) || /\/\.gemini\/antigravity-cli\/brain\/[\w-]+\/\.system_generated\/tasks\/[\w-]+\.log$/.test(p))
+/**
+ * Claude's /tmp/…/tasks/<id>.output (macOS: under /var/folders, or /private/tmp), or agy's
+ * ~/.gemini/antigravity-cli/brain/<id>/.system_generated/tasks/<task>.log; nowhere else.
+ */
+export const isTaskFile = (p: string, home?: string) =>
+  isPlainPath(p) &&
+  ['/tmp/', '/private/tmp/', '/var/folders/', '/private/var/folders/', ...(home ? [`${home}/`] : [])].some((root) => p.startsWith(root)) &&
+  (/\/tasks\/[\w-]+\.output$/.test(p) || /\/\.gemini\/antigravity-cli\/brain\/[\w-]+\/\.system_generated\/tasks\/[\w-]+\.log$/.test(p))
 
 export async function taskOutput(hostId: string, path: string) {
-  if (!isTaskFile(path)) throw new HttpError(400, 'Not a task output file')
-  const { host } = hostAndHome(hostId)
+  const { host, home } = hostAndHome(hostId)
+  if (!isTaskFile(path, home)) throw new HttpError(400, 'Not a task output file')
   const r = await host.exec(`tail -c 80000 ${shq(path)} 2>/dev/null; true`)
   return { path, output: r.stdout.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '') }
 }
