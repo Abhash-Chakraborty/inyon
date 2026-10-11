@@ -243,7 +243,8 @@ Paired machines connect out with per-machine tokens that you can revoke. See
 | Variable | Default | |
 |---|---|---|
 | `PORT` | `4777` | Hub port |
-| `BIND` | `127.0.0.1` | Address to listen on |
+| `BIND` | `127.0.0.1` | Address to listen on. Anything but localhost needs `TLS_CERT`/`TLS_KEY`, or `TETHER_ALLOW_HTTP=1` |
+| `TETHER_ALLOW_HTTP` | | Set to `1` to serve plain http on a network `BIND`, for a VPN address that encrypts on its own |
 | `TETHER_DATA_DIR` | `~/.tether` | Password hash, machine list, drafts, settings |
 | `TETHER_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
 | `TETHER_ALLOWED_HOSTS` | | Extra comma-separated host names the hub answers to. IP addresses, single-label names, localhost and Tailscale/NetBird names always work; add a public domain your proxy uses. `*` turns the check off |

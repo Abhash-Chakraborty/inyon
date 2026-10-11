@@ -118,6 +118,12 @@ async function serveStatic(pathname: string) {
 // The code is asked for even on localhost, since a page in your browser can reach localhost too.
 const SETUP_CODE_FILE = path.join(DATA_DIR, 'setup-code')
 const exposed = !/^(127\.|::1$|localhost$)/.test(BIND)
+// on a network address, plain http sends the password and session in the clear: only on purpose
+// (say on a VPN address, which encrypts on its own), with TETHER_ALLOW_HTTP=1
+if (exposed && !TLS && !/^(1|true|yes)$/i.test(process.env.TETHER_ALLOW_HTTP ?? '')) {
+  console.error(`Refusing to serve plain http on ${BIND}: set TLS_CERT and TLS_KEY, keep BIND on 127.0.0.1 behind an HTTPS proxy, or set TETHER_ALLOW_HTTP=1 if the network encrypts it already (Tailscale, NetBird, WireGuard).`)
+  process.exit(1)
+}
 const setupCode = !hasPassword() ? crypto.randomBytes(4).toString('hex') : undefined
 if (setupCode) fs.writeFileSync(SETUP_CODE_FILE, setupCode + '\n', { mode: 0o600 })
 const setupAttempts = { n: 0, reset: 0 }
