@@ -199,6 +199,13 @@ function onMessage(m: ServerMsg) {
 
 /** Sessions with a "needs you" notification up, by tag. */
 const asking = new Map<string, { host: string; pane: string }>()
+/** The browser's notifications (outside the phone app), by the same tags, so they can be taken back. */
+const shown = new Map<string, Notification>()
+
+function closeShown(tag: string) {
+  shown.get(tag)?.close()
+  shown.delete(tag)
+}
 
 /**
  * A question answered somewhere else (on the computer, say) takes its notification with it, so
@@ -213,6 +220,7 @@ function clearAnswered(hosts: HostState[]) {
     if (p?.agent?.state === 'waiting') continue
     asking.delete(tag)
     clearNativeNotification(tag)
+    closeShown(tag)
   }
 }
 
@@ -246,8 +254,14 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
     try {
+      closeShown(tag)
       const n = new Notification(m.title, { body: m.body, tag, icon: '/icon-192.png', badge: '/badge-96.png' })
+      shown.set(tag, n)
+      if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
+      else asking.delete(tag)
+      n.onclose = () => shown.get(tag) === n && shown.delete(tag)
       n.onclick = () => {
+        closeShown(tag)
         window.focus()
         window.history.pushState({}, '', href)
         window.dispatchEvent(new PopStateEvent('popstate'))

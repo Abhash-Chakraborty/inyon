@@ -260,4 +260,39 @@ describe('notify', () => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
     }
   })
+  test("in a browser tab: an answered question's notification is closed too, and a newer one replaces the old", () => {
+    const made: { title: string; tag?: string; closed: boolean }[] = []
+    class FakeNotification {
+      static permission = 'granted'
+      onclick: (() => void) | null = null
+      onclose: (() => void) | null = null
+      entry: (typeof made)[number]
+      constructor(title: string, o?: NotificationOptions) {
+        this.entry = { title, tag: o?.tag, closed: false }
+        made.push(this.entry)
+      }
+      close() {
+        this.entry.closed = true
+      }
+    }
+    const was = (window as any).Notification
+    ;(window as any).Notification = FakeNotification
+    ;(globalThis as any).Notification = FakeNotification
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    const box = (state: 'waiting' | 'working') => host('box', { panes: [agentPane('%3', 'claude', { agent: { kind: 'claude', pid: 1, state } })] })
+    try {
+      note('waiting', 'first question')
+      note('waiting', 'second question')
+      expect(made.map((n) => [n.title, n.tag, n.closed])).toEqual([['first question', 'box:%3', true], ['second question', 'box:%3', false]])
+      emit({ t: 'overview', hosts: [box('waiting')] })
+      expect(made[1].closed).toBe(false)
+      // answered on the computer
+      emit({ t: 'overview', hosts: [box('working')] })
+      expect(made[1].closed).toBe(true)
+    } finally {
+      ;(window as any).Notification = was
+      ;(globalThis as any).Notification = was
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+  })
 })
