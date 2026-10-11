@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { ArrowUp, Camera, FileText, Folder, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, X } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@tether/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
@@ -24,6 +24,8 @@ interface Attachment {
   path?: string
   error?: string
   pastedLines?: number
+  /** kept until it has uploaded, so a failed one can be tried again */
+  file?: File
 }
 
 const DRAFTS = new Map<string, string>()
@@ -251,21 +253,34 @@ export function Composer({
 
   // ---------- attachments ----------
 
+  const upload = useCallback(
+    (id: string, file: File) => {
+      const set = (fn: (a: Attachment) => Attachment) => updateFiles(key, (f) => f.map((a) => (a.id === id ? fn(a) : a)))
+      api
+        .upload(host, pane, file, (progress) => set((a) => ({ ...a, progress })))
+        .then((u: Uploaded) => set((a) => ({ ...a, status: 'done', progress: 1, path: u.path, file: undefined })))
+        .catch((e) => set((a) => ({ ...a, status: 'error', error: e.message })))
+    },
+    [host, pane, key],
+  )
+
   const addFiles = useCallback(
     (list: File[], pastedLines?: number) => {
       for (const file of list) {
         const id = Math.random().toString(36).slice(2)
-        const set = (fn: (f: Attachment[]) => Attachment[]) => updateFiles(key, fn)
         const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined
-        set((f) => [...f, { id, name: file.name || 'pasted', size: file.size, type: file.type, preview, progress: 0, status: 'uploading', pastedLines }])
-        api
-          .upload(host, pane, file, (progress) => set((f) => f.map((a) => (a.id === id ? { ...a, progress } : a))))
-          .then((u: Uploaded) => set((f) => f.map((a) => (a.id === id ? { ...a, status: 'done', progress: 1, path: u.path } : a))))
-          .catch((e) => set((f) => f.map((a) => (a.id === id ? { ...a, status: 'error', error: e.message } : a))))
+        updateFiles(key, (f) => [...f, { id, name: file.name || 'pasted', size: file.size, type: file.type, preview, progress: 0, status: 'uploading', pastedLines, file }])
+        upload(id, file)
       }
     },
-    [host, pane, key],
+    [key, upload],
   )
+
+  const retryFile = (a: Attachment) => {
+    if (!a.file) return
+    setFiles((f) => f.map((x) => (x.id === a.id ? { ...x, status: 'uploading', progress: 0, error: undefined } : x)))
+    upload(a.id, a.file)
+  }
 
   const removeFile = (id: string) =>
     setFiles((f) => {
@@ -355,6 +370,9 @@ export function Composer({
   // ---------- sending ----------
 
   const uploading = files.some((f) => f.status === 'uploading')
+  // a file that didn't upload holds the message until it's retried or removed: the text often
+  // refers to it ("use the attached spec"), so sending without it would lose what was meant
+  const failed = files.some((f) => f.status === 'error')
   const ready = files.filter((f) => f.status === 'done' && f.path)
 
   const send = async (value = text) => {
@@ -367,6 +385,7 @@ export function Composer({
       setPop(null)
       return
     }
+    if (failed) return
     if (ready.length) msg = `${msg}${msg ? '\n\n' : ''}Attached files:\n${ready.map((f) => f.path).join('\n')}`
     if (!msg) return
     const id = Math.random().toString(36).slice(2)
@@ -380,10 +399,14 @@ export function Composer({
       setOrigin(null)
     }
     // the image previews aren't shown any more: free them (phones run out of memory otherwise)
-    setFiles((cur) => {
-      for (const f of cur) if (f.preview) URL.revokeObjectURL(f.preview)
-      return []
-    })
+    const gone = new Set(ready.map((f) => f.id))
+    setFiles((cur) =>
+      cur.filter((f) => {
+        if (!gone.has(f.id)) return true
+        if (f.preview) URL.revokeObjectURL(f.preview)
+        return false
+      }),
+    )
     setPop(null)
     try {
       // the same id on every try: the hub submits it once however many times it arrives
@@ -409,9 +432,9 @@ export function Composer({
     }
   }
 
-  const canSend = (!!text.trim() || ready.length > 0) && !uploading && !disabled
+  const canSend = (!!text.trim() || ready.length > 0) && !uploading && !failed && !disabled
   // while it works, an empty box offers Stop; once you type, the same button queues a follow-up
-  const showStop = working && !canSend && !uploading
+  const showStop = working && !canSend && !uploading && !failed
 
   return (
     <div
@@ -468,12 +491,17 @@ export function Composer({
         )}
       >
         {files.length > 0 && (
-          <div className="no-scrollbar flex gap-2 overflow-x-auto px-2.5 pt-2.5">
+          <div className="no-scrollbar flex gap-2 overflow-x-auto px-2.5 pt-2.5 pb-0.5">
             {files.map((f) => (
               <div key={f.id} className="group/att relative shrink-0">
                 {f.preview ? (
                   <div className="relative size-14 overflow-hidden rounded-[10px] border border-line bg-sunken">
                     <img src={f.preview} alt={f.name} className="size-full object-cover" />
+                    {f.status === 'error' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-white">
+                        <RotateCw className="size-4" />
+                      </div>
+                    )}
                     {f.status === 'uploading' && (
                       <>
                         <div className="absolute inset-0 bg-black/35" />
@@ -485,7 +513,7 @@ export function Composer({
                   </div>
                 ) : (
                   <div className="flex h-14 max-w-[220px] items-center gap-2.5 rounded-[10px] border border-line bg-sunken px-3">
-                    <FileText className="size-4 shrink-0 text-fg-2" />
+                    {f.status === 'error' ? <RotateCw className="size-4 shrink-0 text-danger" /> : <FileText className="size-4 shrink-0 text-fg-2" />}
                     <div className="min-w-0">
                       <div className="truncate text-[12.5px] font-medium">{f.pastedLines ? 'Pasted text' : f.name}</div>
                       <div className="truncate text-[11px] text-fg-3">
@@ -494,7 +522,16 @@ export function Composer({
                     </div>
                   </div>
                 )}
-                {f.status === 'error' && <div className="absolute inset-0 rounded-[10px] ring-2 ring-danger" />}
+                {f.status === 'error' && (
+                  <button
+                    type="button"
+                    aria-label={`Retry ${f.name}`}
+                    title={`${f.error ?? "Couldn't upload"} · tap to try again`}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => retryFile(f)}
+                    className="absolute inset-0 rounded-[10px] ring-2 ring-danger"
+                  />
+                )}
                 <button
                   type="button"
                   aria-label={`Remove ${f.name}`}
@@ -572,7 +609,7 @@ export function Composer({
           )}
           {controls && <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">{controls}</div>}
           <span className={clsx('truncate pr-1 text-[11.5px] text-fg-3', !controls && 'ml-auto')}>
-            {uploading ? 'Uploading…' : text && origin === 'terminal' ? 'From the terminal' : ''}
+            {uploading ? 'Uploading…' : failed ? 'Upload failed' : text && origin === 'terminal' ? 'From the terminal' : ''}
           </span>
           {showStop ? (
             <button

@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AGENTS } from '@tether/protocol'
 import { Composer } from './Composer.tsx'
+import { ComposerControls } from '../session/ComposerControls.tsx'
+import type { SessionModel } from '../session/useSession.ts'
 import { useStore } from '../../lib/store.ts'
 import { api, emit, socket } from '../../test/fakes.ts'
 import { chatInfo, fresh, host } from '../../test/fixtures.ts'
@@ -182,6 +185,83 @@ describe('Composer send button', () => {
     await user.type(box(), 'hi')
     expect(box().value).toBe('')
     expect(sendButton().disabled).toBe(true)
+  })
+})
+
+describe('a file that failed to upload', () => {
+  const attach = (container: HTMLElement, ...names: string[]) =>
+    act(() => void fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: names.map((n) => new File([n], n, { type: 'text/plain' })) } }))
+  const sent = () => api.send.mock.calls.map((c) => c[2])
+
+  test('holds the message until it is tried again, then goes with it', async () => {
+    const user = userEvent.setup()
+    let down = true
+    api.upload.mockImplementation(async (_h: string, _p: string | undefined, f: File) => {
+      if (f.name === 'spec.txt' && down) throw new Error('disk full')
+      return { name: f.name, path: `/up/${f.name}`, size: f.size, type: f.type }
+    })
+    const { container } = await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    attach(container, 'spec.txt', 'notes.txt')
+    await flush()
+    expect(screen.getByText('disk full')).toBeTruthy()
+    await user.type(box(), 'use the attached spec')
+    expect(sendButton().disabled).toBe(true)
+    await user.type(box(), '{Enter}')
+    await flush()
+    expect(sent()).toEqual([])
+    expect(box().value).toBe('use the attached spec')
+    expect(screen.getByLabelText('Remove spec.txt')).toBeTruthy()
+
+    down = false
+    await user.click(screen.getByLabelText('Retry spec.txt'))
+    await flush()
+    expect(sendButton().disabled).toBe(false)
+    await user.click(sendButton())
+    await flush()
+    expect(sent()).toEqual(['use the attached spec\n\nAttached files:\n/up/spec.txt\n/up/notes.txt'])
+    expect(screen.queryByLabelText('Remove spec.txt')).toBeNull()
+    expect(screen.queryByLabelText('Remove notes.txt')).toBeNull()
+  })
+
+  test('removing it lets the rest go', async () => {
+    const user = userEvent.setup()
+    api.upload.mockImplementation(async (_h: string, _p: string | undefined, f: File) => {
+      if (f.name === 'spec.txt') throw new Error('disk full')
+      return { name: f.name, path: `/up/${f.name}`, size: f.size, type: f.type }
+    })
+    const { container } = await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    attach(container, 'spec.txt', 'notes.txt')
+    await flush()
+    await user.type(box(), 'read these')
+    expect(sendButton().disabled).toBe(true)
+    await user.click(screen.getByLabelText('Remove spec.txt'))
+    await user.click(sendButton())
+    await flush()
+    expect(sent()).toEqual(['read these\n\nAttached files:\n/up/notes.txt'])
+  })
+})
+
+describe('the model menu', () => {
+  test('Enter picks a model and leaves the unfinished message in the box', async () => {
+    const user = userEvent.setup()
+    const chosen: string[] = []
+    const s = { agent: 'claude', def: AGENTS.claude, efforts: [], actions: { setModel: (v: string) => chosen.push(v) } } as unknown as SessionModel
+    await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} controls={<ComposerControls s={s} />} />)
+    await user.type(box(), 'unfinished draft')
+    await user.click(screen.getByTitle('Model'))
+    // the chip doesn't take focus, so the keys still land in the text box
+    expect(document.activeElement).toBe(box())
+    await user.keyboard('{ArrowDown}{Enter}')
+    await flush()
+    expect(chosen).toHaveLength(1)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(api.send.mock.calls).toEqual([])
+    expect(box().value).toBe('unfinished draft')
+    // Escape closes the menu only
+    await user.click(screen.getByTitle('Model'))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(box().value).toBe('unfinished draft')
   })
 })
 
