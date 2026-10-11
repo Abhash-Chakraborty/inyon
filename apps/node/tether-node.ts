@@ -277,14 +277,18 @@ if (cmd === 'pair') {
   console.log(r.ok ? `tether-node runs in the background as ${r.how}.` : `Couldn't install the service: ${r.how}`)
   if (!r.ok) process.exit(1)
 } else if (cmd === 'uninstall') {
-  const how = uninstallService().how
+  const r = uninstallService()
   // started without a service manager (or by hand): stop the copy that's still running
   if (running()) {
     try {
       process.kill(currentState()!.pid!)
     } catch {}
   }
-  console.log(`tether-node stopped; ${how}. Your pairings are kept.`)
+  if (!r.ok) {
+    console.error(`Couldn't remove everything: ${r.how}. Your pairings are kept.`)
+    process.exit(1)
+  }
+  console.log(`tether-node stopped; ${r.how}. Your pairings are kept.`)
 }
 else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])

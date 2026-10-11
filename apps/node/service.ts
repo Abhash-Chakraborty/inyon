@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { childPath, WIN } from './ops.ts'
 
 /**
@@ -11,11 +11,14 @@ import { childPath, WIN } from './ops.ts'
  * first, so the download can be deleted.
  */
 
-const DIR = path.join(os.homedir(), '.tether-node')
-const BIN = path.join(DIR, 'bin')
+// worked out on use, so tests can point them at a throwaway home
 const NAME = 'tether-node'
-const UNIT = path.join(os.homedir(), '.config', 'systemd', 'user', `${NAME}.service`)
-const PLIST = path.join(os.homedir(), 'Library', 'LaunchAgents', 'dev.tether.node-link.plist')
+const dir = () => path.join(os.homedir(), '.tether-node')
+const bin = () => path.join(dir(), 'bin')
+const unit = () => path.join(os.homedir(), '.config', 'systemd', 'user', `${NAME}.service`)
+const plist = () => path.join(os.homedir(), 'Library', 'LaunchAgents', 'dev.tether.node-link.plist')
+/** The PID of the background process started where there are no user services. */
+const pidFile = () => path.join(dir(), 'link.pid')
 const TASK = 'Tether link'
 
 /** The command that runs this program: the compiled binary itself, or Bun with the script. */
@@ -42,9 +45,9 @@ const sdq = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 /** Copies a compiled binary into ~/.tether-node/bin (a script run with Bun stays where it is). */
 function settle(cmd: string[]): string[] {
   if (cmd.length > 1) return cmd
-  const target = path.join(BIN, WIN ? `${NAME}.exe` : NAME)
+  const target = path.join(bin(), WIN ? `${NAME}.exe` : NAME)
   if (path.resolve(cmd[0]!) === path.resolve(target)) return cmd
-  mkdirSync(BIN, { recursive: true })
+  mkdirSync(bin(), { recursive: true })
   // a running copy can't be overwritten on Windows, but it can be renamed out of the way
   if (existsSync(target)) {
     try {
@@ -70,8 +73,8 @@ export function installService(): Installed {
   const args = [...cmd, 'link']
   if (process.platform === 'linux') {
     if (!run(['systemctl', '--user', 'show-environment']).ok) return background(args)
-    mkdirSync(path.dirname(UNIT), { recursive: true })
-    writeFileSync(UNIT, `[Unit]
+    mkdirSync(path.dirname(unit()), { recursive: true })
+    writeFileSync(unit(), `[Unit]
 Description=Tether phone link
 After=network-online.target
 
@@ -91,19 +94,19 @@ WantedBy=default.target
     return { ok: true, how: `a user service that starts again by itself after a restart (systemctl --user status ${NAME})` }
   }
   if (process.platform === 'darwin') {
-    mkdirSync(path.dirname(PLIST), { recursive: true })
-    writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>
+    mkdirSync(path.dirname(plist()), { recursive: true })
+    writeFileSync(plist(), `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>dev.tether.node-link</string>
   <key>ProgramArguments</key><array>${args.map((a) => `<string>${xml(a)}</string>`).join('')}</array>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>${xml(path.join(DIR, 'link.log'))}</string>
-  <key>StandardErrorPath</key><string>${xml(path.join(DIR, 'link.log'))}</string>
+  <key>StandardOutPath</key><string>${xml(path.join(dir(), 'link.log'))}</string>
+  <key>StandardErrorPath</key><string>${xml(path.join(dir(), 'link.log'))}</string>
 </dict></plist>
 `)
-    run(['launchctl', 'unload', PLIST])
-    const r = run(['launchctl', 'load', '-w', PLIST])
+    run(['launchctl', 'unload', plist()])
+    const r = run(['launchctl', 'load', '-w', plist()])
     if (!r.ok) return { ok: false, how: r.out || 'launchctl refused' }
     return { ok: true, how: 'a login item that starts again by itself when you sign in' }
   }
@@ -127,13 +130,17 @@ Start-ScheduledTask -TaskName '${TASK}'`
 
 /**
  * No user services (a container, a minimal server): start it detached now, and from cron at boot
- * when cron is there. Our crontab line is marked so it can be found and removed again.
+ * when cron is there. Our crontab line is marked so it can be found and removed again. Each start
+ * writes its PID to ~/.tether-node/link.pid, so uninstall can stop that process and no other.
  */
 const CRON_MARK = '# tether-node link'
 function background(args: string[]): Installed {
-  const log = path.join(DIR, 'link.log')
-  mkdirSync(DIR, { recursive: true })
-  const line = `nohup ${args.map(shq).join(' ')} >> ${shq(log)} 2>&1 &`
+  const log = path.join(dir(), 'link.log')
+  mkdirSync(dir(), { recursive: true })
+  // installing again replaces the copy started last time instead of adding another
+  const before = stopBackground()
+  if (!before.ok) return { ok: false, how: before.note! }
+  const line = `nohup ${args.map(shq).join(' ')} >> ${shq(log)} 2>&1 & echo $! > ${shq(pidFile())}`
   const started = run(['sh', '-c', line]).ok
   if (!started) return { ok: false, how: "this system has no user services and the link couldn't start in the background" }
   if (!Bun.which('crontab')) return { ok: true, how: `a background process (no user services or cron here, so run \`tether-node pair\` again after a restart)` }
@@ -147,24 +154,71 @@ function background(args: string[]): Installed {
 
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
 
+/** How uninstall looks at and stops a process (tests swap these out). */
+export const proc = {
+  cmdline(pid: number): string[] | undefined {
+    try {
+      return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean)
+    } catch {
+      return undefined
+    }
+  },
+  signal(pid: number, sig: NodeJS.Signals) {
+    process.kill(pid, sig)
+  },
+}
+
+/** True while `pid` is a running `tether-node link` (a PID can be reused once it has exited). */
+export function isLinkProcess(pid: number) {
+  if (!Number.isInteger(pid) || pid <= 1) return false
+  const args = proc.cmdline(pid)
+  return !!args && args.at(-1) === 'link' && args.some((a) => path.basename(a).startsWith(NAME))
+}
+
+/** Stops the background process recorded in link.pid, after checking it's still the link. */
+function stopBackground(): { ok: boolean; note?: string } {
+  let pid: number
+  try {
+    pid = Number(readFileSync(pidFile(), 'utf8').trim())
+  } catch {
+    return { ok: true }
+  }
+  const stopWith = (sig: NodeJS.Signals, ms: number) => {
+    try {
+      proc.signal(pid, sig)
+    } catch {}
+    for (let waited = 0; waited < ms && isLinkProcess(pid); waited += 100) Bun.sleepSync(100)
+  }
+  if (isLinkProcess(pid)) stopWith('SIGTERM', 3000)
+  if (isLinkProcess(pid)) stopWith('SIGKILL', 1000)
+  if (isLinkProcess(pid)) return { ok: false, note: `the background link (PID ${pid}) didn't stop` }
+  rmSync(pidFile(), { force: true })
+  return { ok: true }
+}
+
 /** Stops and removes the service (pairings and keys stay; `forget` unpairs phones). */
 export function uninstallService(): Installed {
   if (process.platform === 'linux') {
     run(['systemctl', '--user', 'disable', '--now', `${NAME}.service`])
-    rmSync(UNIT, { force: true })
+    rmSync(unit(), { force: true })
     run(['systemctl', '--user', 'daemon-reload'])
+    const problems: string[] = []
+    const stopped = stopBackground()
+    if (!stopped.ok) problems.push(stopped.note!)
     if (Bun.which('crontab')) {
       const current = run(['crontab', '-l']).out
       if (current.includes(CRON_MARK)) {
         const kept = current.split('\n').filter((l) => l && !l.includes(CRON_MARK))
-        Bun.spawnSync(['crontab', '-'], { stdin: new TextEncoder().encode(kept.length ? `${kept.join('\n')}\n` : '') })
+        const p = Bun.spawnSync(['crontab', '-'], { stdin: new TextEncoder().encode(kept.length ? `${kept.join('\n')}\n` : ''), stdout: 'pipe', stderr: 'pipe' })
+        if (p.exitCode !== 0) problems.push("its restart entry couldn't be removed from your crontab (crontab -e)")
       }
     }
+    if (problems.length) return { ok: false, how: problems.join('; ') }
     return { ok: true, how: 'the background service is removed' }
   }
   if (process.platform === 'darwin') {
-    run(['launchctl', 'unload', '-w', PLIST])
-    rmSync(PLIST, { force: true })
+    run(['launchctl', 'unload', '-w', plist()])
+    rmSync(plist(), { force: true })
     return { ok: true, how: 'the login item is removed' }
   }
   if (WIN) {
@@ -183,7 +237,7 @@ const BUSYBOX: Record<string, { file: string; sha256: string }> = {
 /** On Windows, finds busybox (or fetches it once) and points TETHER_SH at it. */
 export async function ensureShell() {
   if (!WIN || process.env.TETHER_SH) return
-  const local = path.join(BIN, 'busybox.exe')
+  const local = path.join(bin(), 'busybox.exe')
   const found = Bun.which('busybox') ?? (existsSync(local) ? local : undefined)
   if (found) return void (process.env.TETHER_SH = found)
   const pick = BUSYBOX[os.arch() === 'arm64' ? 'arm64' : 'x64']!
@@ -192,7 +246,7 @@ export async function ensureShell() {
   if (!res.ok) throw new Error(`couldn't download busybox-w32: ${res.status}`)
   const data = new Uint8Array(await res.arrayBuffer())
   if (crypto.createHash('sha256').update(data).digest('hex') !== pick.sha256) throw new Error("busybox-w32 didn't match its pinned checksum")
-  mkdirSync(BIN, { recursive: true })
+  mkdirSync(bin(), { recursive: true })
   writeFileSync(`${local}.tmp`, data)
   renameSync(`${local}.tmp`, local)
   process.env.TETHER_SH = local
