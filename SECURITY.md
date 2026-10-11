@@ -17,7 +17,7 @@ agents run as. Treat the hub like an SSH jump host.
 - **Laptops connect out, not in.** Machines paired with `tether-node` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
-  revokes it. `tether-node` refuses to send its token over plain HTTP unless the hub is on a
+  revokes it. A token no machine has used stops working after a day. `tether-node` refuses to send its token over plain HTTP unless the hub is on a
   private address.
 - **Servers can use SSH.** The hub uses your existing `ssh` config, keys and known hosts. It never
   stores SSH keys.

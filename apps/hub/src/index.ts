@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
 import { clearCookie, clientAddress, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
-import { HttpError, registry } from './hosts/registry.ts'
+import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
@@ -208,7 +208,7 @@ const server = Bun.serve<SocketData>({
         const commands = await pairCommands(hub, token)
         let unique = id
         for (let i = 2; registry.get(unique); i++) unique = `${id}-${i}`
-        registry.add({ id: unique, name, kind: 'node', tokenHash: sha256(token) })
+        registry.add({ id: unique, name, kind: 'node', tokenHash: sha256(token), tokenIssuedAt: Date.now() })
         return json({ id: unique, token, command: commands.unix, commands })
       }),
     },
@@ -235,9 +235,9 @@ const server = Bun.serve<SocketData>({
       const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
       const hash = token ? sha256(token) : ''
       const cfg = hash && registry.configs().find((c) => c.kind === 'node' && c.tokenHash && crypto.timingSafeEqual(Buffer.from(c.tokenHash), Buffer.from(hash)))
-      if (!cfg) {
+      if (!cfg || tokenExpired(cfg)) {
         await Bun.sleep(500)
-        return new Response('Unknown token', { status: 403 })
+        return new Response(cfg ? 'This pairing command expired; get a new one from the hub' : 'Unknown token', { status: 403 })
       }
       if (srv.upgrade(req, { data: { kind: 'node', hostId: cfg.id } })) return registry.markPaired(cfg.id)
       return new Response('Upgrade failed', { status: 400 })
