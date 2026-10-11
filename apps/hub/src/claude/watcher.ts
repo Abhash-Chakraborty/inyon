@@ -241,8 +241,19 @@ class ChatWatcher {
     for (const s of this.subs) if (s !== except) s.send(msg)
   }
 
+  /** the last message sent from here, and when, to tell a stale draft of it from a new one */
+  private lastSent?: { text: string; at: number }
+
   /** Text typed in the app: save it, share it with other devices, and mirror it into the terminal. */
   draftFromApp(text: string, from?: Subscriber) {
+    // A phone's keyboard can put a message back in the box just after it was sent, and the app
+    // passes that on as a draft. It isn't one: keep the box empty, and tell that app so.
+    const ls = this.lastSent
+    if (ls && Date.now() - ls.at < 5000 && squash(text) && squash(ls.text).endsWith(squash(text))) {
+      const d = getDraft(this.key)
+      from?.send({ t: 'chat.draft', key: this.key, text: d?.text ?? '', source: d?.source ?? 'app', at: Date.now() })
+      return
+    }
     const prev = getDraft(this.key)
     setDraft(this.key, { text, source: 'app', at: Date.now(), mirrored: prev?.mirrored })
     this.broadcastDraft(from)
@@ -323,6 +334,7 @@ class ChatWatcher {
    * Picker commands leave `startedAt` at 0 and keep a half-typed draft.
    */
   draftSent(text?: string, startedAt = 0) {
+    if (text) this.lastSent = { text, at: Date.now() }
     clearTimeout(this.mirrorTimer)
     this.sendingUntil = Date.now() + 1500
     const current = getDraft(this.key)

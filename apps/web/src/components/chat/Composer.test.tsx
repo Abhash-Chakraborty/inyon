@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { act, screen } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Composer } from './Composer.tsx'
 import { useStore } from '../../lib/store.ts'
@@ -132,6 +132,36 @@ describe('Composer send button', () => {
     const [p] = useStore.getState().chats[`box:${pane}`].pending
     expect(p).toMatchObject({ text: 'ship it', status: 'sent' })
     expect(api.send.mock.calls).toEqual([['box', pane, 'ship it', p.id]])
+  })
+
+  test("an Android keyboard putting the sent message back doesn't bring it back as a draft", async () => {
+    const user = userEvent.setup()
+    const pane = nextPane()
+    const { unmount } = await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    const mine = () => socket.send.mock.calls.filter(([m]) => (m as { pane?: string }).pane === pane)
+    await user.type(box(), 'change session then come back')
+    await user.click(sendButton())
+    await flush()
+    // the keyboard was still composing: it commits its text (the whole message, or its last word) into the emptied box
+    act(() => void fireEvent.change(box(), { target: { value: 'change session then come back' } }))
+    act(() => void fireEvent.change(box(), { target: { value: 'back' } }))
+    expect(box().value).toBe('')
+    // leaving the app right after doesn't send the old text either
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    try {
+      act(() => void document.dispatchEvent(new Event('visibilitychange')))
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+    await act(() => Bun.sleep(500))
+    expect(mine().filter(([m]) => (m as { text: string }).text)).toEqual([])
+    // switching to another session and coming back: the box is still empty
+    unmount()
+    await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    expect(box().value).toBe('')
+    // typing a new message works as usual
+    await user.type(box(), 'next')
+    expect(box().value).toBe('next')
   })
 
   test('a failed send keeps the bubble with the reason', async () => {

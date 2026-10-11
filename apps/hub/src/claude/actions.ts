@@ -885,6 +885,9 @@ export async function restartAgent(hostId: string, paneId: string) {
   const direct = proc.pid === proc.panePid
   const win = onPsmux(hostId)
   if (direct) await host.exec(remainOnExit(win, p, true))
+  // the "/exit" typed below is Tether's, not a draft to keep
+  const w = watchers.peek(hostId, paneId)
+  await w?.beginSend()
   try {
     await sendKeys(host, paneId, ['C-u'])
     await typeText(host, paneId, EXIT_COMMAND[a.kind] ?? '/exit', true)
@@ -903,6 +906,7 @@ export async function restartAgent(hostId: string, paneId: string) {
       await typeText(host, paneId, withBin(cmd, await launchBin(host, a.kind)), true)
     }
   } finally {
+    w?.draftSent()
     if (direct) await host.exec(remainOnExit(win, p, false))
   }
   registry.refresh(hostId, 1500)
@@ -962,7 +966,11 @@ export async function exitAgent(hostId: string, paneId: string) {
   const p = shq(paneId)
   const win = onPsmux(hostId)
   if (direct) await host.exec(remainOnExit(win, p, true))
+  // the "/exit" and Ctrl+C below are Tether's, not a draft to keep
+  const w = watchers.peek(hostId, paneId)
+  await w?.beginSend()
   const done = async () => {
+    w?.draftSent()
     if (direct) {
       await paneDead(host, p)
       // with no command tmux would rerun the agent; ask for the login shell instead
@@ -982,6 +990,7 @@ export async function exitAgent(hostId: string, paneId: string) {
     await sendKeys(host, paneId, ['C-c'])
     if (await waitGone(2500)) return done()
   }
+  w?.draftSent()
   if (direct) await host.exec(remainOnExit(win, p, false))
   registry.refresh(hostId, 300)
   throw new HttpError(504, `${AGENTS[a.kind].name} did not exit; close it from the terminal`)

@@ -108,6 +108,8 @@ export function Composer({
   const synced = useRef(serverDraft?.text ?? text)
   const pushTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => void) | undefined>(undefined)
+  /** the message just sent, and when, so a keyboard putting it back isn't taken for typing */
+  const sent = useRef<{ text: string; at: number }>(undefined)
   /** user edits: save locally and push to the hub (which mirrors into the terminal) */
   const setText = (v: string | ((p: string) => string)) => {
     setTextState((prev) => {
@@ -371,6 +373,8 @@ export function Composer({
     patchChat(key, (c) => ({ pending: [...c.pending, { id, text: msg, status: 'sending', at: Date.now() }] }))
     if (value === text) {
       clearTimeout(pushTimer.current)
+      pending.current = undefined
+      sent.current = { text: value, at: Date.now() }
       synced.current = ''
       setTextState('')
       setOrigin(null)
@@ -510,7 +514,16 @@ export function Composer({
           value={text}
           disabled={disabled}
           onChange={(e) => {
-            setText(e.target.value)
+            // The Send button keeps the keyboard open, and an Android keyboard that was still
+            // composing puts its text back once the box is emptied under it: that isn't typing,
+            // and taking it for a draft brought the sent message back into the box
+            const v = e.target.value
+            const s = sent.current
+            if (s && !text && v.trim().length > 1 && Date.now() - s.at < 2000 && s.text.trim().endsWith(v.trim())) {
+              e.target.value = ''
+              return
+            }
+            setText(v)
             requestAnimationFrame(updatePop)
           }}
           onSelect={updatePop}
