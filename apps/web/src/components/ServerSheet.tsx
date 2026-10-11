@@ -194,7 +194,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
         )}
         {onLaptop && (
           <button type="button" onClick={onLaptop} className="py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
-            Pair a laptop instead
+            Scan a code instead (easiest)
           </button>
         )}
         {edit && known && !asking && (

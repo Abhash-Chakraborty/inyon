@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
+import { Laptop, Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes } from '../lib/overview.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, NeedsYouCard, SessionCard } from '../components/Overview.tsx'
@@ -47,7 +47,7 @@ export function Home() {
           </span>
           <h1 className="text-[15px] font-semibold tracking-tight">Overview</h1>
           <span className="hidden text-[12.5px] text-fg-3 sm:inline">
-            {hosts.length} {isPhone() ? 'server' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}
+            {hosts.length} {isPhone() ? 'computer' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}
           </span>
           {!connected && (
             <span className="ml-auto flex items-center gap-1.5 text-[12px] text-warn">
@@ -76,16 +76,16 @@ export function Home() {
           ) : !hosts.length ? (
             <div className="rounded-[16px] border border-dashed border-line-strong">
               <Empty
-                icon={<Server className="size-5" />}
-                title={isPhone() ? 'Add your first server' : 'No machines yet'}
+                icon={isPhone() ? <Laptop className="size-5" /> : <Server className="size-5" />}
+                title={isPhone() ? 'Connect your computer' : 'No machines yet'}
                 action={
                   <Button variant="primary" onClick={() => setAdding(true)}>
-                    <Plus className="size-3.5" /> {isPhone() ? 'Add a server' : 'Add a machine'}
+                    <Plus className="size-3.5" /> {isPhone() ? 'Add a computer' : 'Add a machine'}
                   </Button>
                 }
               >
                 {isPhone()
-                  ? 'This phone connects straight to your servers over SSH, then shows the coding agents running in tmux on them. Nothing else to set up.'
+                  ? 'See the coding agents on your laptop or server and talk to them from here. Run one command on it, then scan the code it shows.'
                   : 'Pair a machine or add one over SSH to see the coding agents running in tmux on it.'}
               </Empty>
             </div>
@@ -157,14 +157,14 @@ export function Home() {
                 ) : (
                   <div className="rounded-[16px] border border-dashed border-line-strong">
                     <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
-                      {panes.length ? 'Try another filter.' : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'server' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
+                      {panes.length ? 'Try another filter.' : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
                     </Empty>
                   </div>
                 )}
               </section>
 
               <section>
-                <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Servers' : 'Machines'}</SectionLabel>
+                <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Computers' : 'Machines'}</SectionLabel>
                 <MachinesTable hosts={hosts} />
               </section>
             </>

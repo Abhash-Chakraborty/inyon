@@ -2,6 +2,7 @@
 /**
  * tether-node: lets Tether reach this machine without opening any ports.
  *
+ *   tether-node                        set up: install the link as a background service, show a code
  *   tether-node pair                   show a code to pair the phone app with this machine
  *   tether-node link [options]         run the phone link (pair starts it too):
  *       --lan / --no-lan               also answer on this machine's LAN addresses
@@ -22,10 +23,14 @@ import { renderUnicodeCompact } from 'uqr'
 import { pairLink } from '@tether/link'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
+import { ensureShell, installService, missingMux, uninstallService } from './service.ts'
 
-// a compiled Windows build has no console, so it logs to node.log next to its .env
-if (WIN) {
-  const log = path.join(os.homedir(), '.tether-node', 'node.log')
+// run in the background (a service, a hidden task) there's no console to print to: log to a file.
+// Commands people run (setup, pair…) always print, even from a script, so the pairing code shows.
+const INTERACTIVE = new Set(['setup', 'pair', 'install', 'uninstall', 'phones', 'forget', 'version', '--version', 'help', '--help', '-h'])
+const firstArg = process.argv[2]
+if (WIN && !process.stdout.isTTY && !(firstArg && INTERACTIVE.has(firstArg))) {
+  const log = path.join(os.homedir(), '.tether-node', firstArg === 'link' ? 'link.log' : 'node.log')
   const write = (...a: unknown[]) => {
     try {
       appendFileSync(log, `${new Date().toISOString()} ${a.map(String).join(' ')}\n`)
@@ -175,12 +180,42 @@ async function pair(args: string[]) {
   }
   const s = currentState()
   const link = pairLink({ id: identity().id, secret, name: os.hostname(), urls: s?.urls ?? [], relays: s?.relays ?? [] })
-  console.log(`\nScan this with the Tether app (Machines → Add → Scan code), within 10 minutes:\n`)
+  console.log(`\nScan this with the Tether app (Add a computer → Scan the code), within 10 minutes:\n`)
   console.log(renderUnicodeCompact(link, { border: 2 }))
   console.log(`\nOr paste this link into the app:\n${link}\n`)
   if (!s?.urls.length && !s?.relays.length) console.log('No address yet: the phone will look this machine up once its tunnel is up.\n')
-  if (service) process.exit(0)
-  console.log('Keep this running (or install it as a service) so the phone can connect.')
+  if (service) return
+  console.log('Keep this running so the phone can connect, or run `tether-node install` to keep it running in the background.')
+}
+
+/**
+ * The one step a new laptop needs (also what a double-click does): keep the link running in the
+ * background, check for tmux, and show the pairing code.
+ */
+async function setup() {
+  console.log(`tether-node ${VERSION}: setting up this ${process.platform === 'darwin' ? 'Mac' : 'machine'} for the Tether app\n`)
+  const mux = missingMux()
+  const already = running()
+  const svc = already ? { ok: true, how: '' } : installService()
+  if (svc.ok) {
+    console.log(already ? '✓ Already running in the background' : `✓ Runs in the background as ${svc.how}.`)
+    // wait for the service to come up before asking it for a code
+    for (let i = 0; i < 20 && !running(); i++) await Bun.sleep(500)
+  } else console.log(`! Couldn't set up a background service (${svc.how}). Keep this window open instead.`)
+  if (mux) console.log(`! ${mux}`)
+  else console.log(WIN ? '✓ psmux (tmux for Windows) is installed' : '✓ tmux is installed')
+  await pair([])
+  if (svc.ok) {
+    console.log('Paired phones connect by themselves from now on. To pair another phone later, run `tether-node pair`.')
+    await pause()
+  }
+}
+
+/** A window opened by double-clicking closes as soon as the program ends: keep it until Enter. */
+async function pause() {
+  if (!WIN || !process.stdin.isTTY || process.env.TETHER_NO_PAUSE) return
+  console.log('\nPress Enter to close this window. Tether keeps running in the background.')
+  for await (const _ of console) break
 }
 
 function phones() {
@@ -202,22 +237,45 @@ function forget(which?: string) {
 
 const USAGE = `tether-node ${VERSION}
 
+  tether-node                       set up this machine: run in the background and show a code
   tether-node pair                  show a code to pair the phone app with this machine
   tether-node link [options]        run the phone link (pair starts it too)
       --lan / --no-lan              also answer on this machine's LAN addresses
       --tunnel / --no-tunnel        open a free Cloudflare tunnel so any network works (on)
       --relay <url> / --no-relay    keep a connection to a Tether relay (repeatable)
       --port <n>                    local port (4780)
+  tether-node install / uninstall   start or stop running in the background (at login)
   tether-node phones                list paired phones
   tether-node forget <name|key>     unpair a phone
   tether-node <hub-url> <token>     connect to a Tether hub instead`
 
 const [cmd, ...rest] = process.argv.slice(2)
-if (cmd === 'pair') await pair(rest)
-else if (cmd === 'link') {
+const hubSaved = !!(process.env.TETHER_HUB || readEnvFile(path.join(os.homedir(), '.tether-node', 'env')).TETHER_HUB)
+if (cmd === 'pair') {
+  await ensureShell()
+  await pair(rest)
+} else if (cmd === 'link') {
   if (running()) fail(`The link is already running (pid ${currentState()!.pid}).`)
+  await ensureShell()
   startLink(linkOptions(rest))
-} else if (cmd === 'phones') phones()
+} else if (cmd === 'setup' || (!cmd && !hubSaved)) {
+  await ensureShell().catch((err) => console.log(`! ${(err as Error).message}`))
+  await setup()
+} else if (cmd === 'install') {
+  const r = installService()
+  console.log(r.ok ? `tether-node runs in the background as ${r.how}.` : `Couldn't install the service: ${r.how}`)
+  if (!r.ok) process.exit(1)
+} else if (cmd === 'uninstall') {
+  const how = uninstallService().how
+  // started without a service manager (or by hand): stop the copy that's still running
+  if (running()) {
+    try {
+      process.kill(currentState()!.pid!)
+    } catch {}
+  }
+  console.log(`tether-node stopped; ${how}. Your pairings are kept.`)
+}
+else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])
 else if (cmd === 'version' || cmd === '--version') console.log(VERSION)
 else if (cmd === 'help' || cmd === '--help' || cmd === '-h') console.log(USAGE)

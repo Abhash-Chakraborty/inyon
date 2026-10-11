@@ -41,6 +41,8 @@ jobs:
           done
           (cd "$out" && sha256sum tether-node-* > SHA256SUMS)
           "$out/tether-node-linux-x64" --version
+          # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
+          cp get.sh get.ps1 "$out/"
 
       - uses: actions/upload-artifact@v4
         with:

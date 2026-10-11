@@ -35,6 +35,8 @@ function winEnv(): Record<string, string | undefined> {
   return env
 }
 const childEnv = WIN ? winEnv() : process.env
+/** PATH the commands run with, which also covers the usual per-user install folders. */
+export const childPath = () => childEnv[Object.keys(childEnv).find((k) => k.toLowerCase() === 'path') ?? 'PATH'] ?? ''
 
 /** Ends a command and everything it started (on Windows, killing sh alone leaves tmux clients behind). */
 function killTree(p: { pid: number; kill(): void }) {
