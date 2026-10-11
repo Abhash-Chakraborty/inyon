@@ -167,6 +167,21 @@ done 2>/dev/null
 echo "@@END"
 `
 
+/**
+ * "<pid> <folder>" lines → folder per process. Linux adds " (deleted)" once the folder is removed
+ * (a worktree cleaned up while the agent runs); the agent's transcripts still name the folder as it
+ * was, so drop the mark or the agent can't be matched to its chat.
+ */
+export function procCwds(lines: string[]) {
+  const cwds = new Map<number, string>()
+  for (const line of lines) {
+    const i = line.indexOf(' ')
+    const dir = line.slice(i + 1).replace(/ \(deleted\)$/, '')
+    if (i > 0 && dir) cwds.set(+line.slice(0, i), dir)
+  }
+  return cwds
+}
+
 export async function probe(host: Host): Promise<ProbeResult> {
   const t0 = performance.now()
   const r = await host.exec(PROBE, { timeoutMs: 15000 })
@@ -210,11 +225,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
     if (!children.has(p.ppid)) children.set(p.ppid, [])
     children.get(p.ppid)!.push(p.pid)
   }
-  const cwds = new Map<number, string>()
-  for (const line of sections.get('CWD') ?? []) {
-    const i = line.indexOf(' ')
-    if (i > 0 && line.slice(i + 1)) cwds.set(+line.slice(0, i), line.slice(i + 1))
-  }
+  const cwds = procCwds(sections.get('CWD') ?? [])
   const findAgent = (root: number): { p: Proc; kind: AgentKind } | undefined => {
     const queue: [number, number][] = [[root, 0]]
     while (queue.length) {
