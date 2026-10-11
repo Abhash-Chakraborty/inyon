@@ -17,6 +17,13 @@ const round = Buffer.from(svg.replace('rx="116"', 'rx="256"'))
 // the browser's notification badge: the mark alone, white on transparent (it's shown as a mask)
 await sharp(Buffer.from(mark(0.9).toString().replaceAll('#F4F4F1', '#FFFFFF'))).resize(96, 96).png().toFile(path.join(root, '../web/public/badge-96.png'))
 
+// the web app's own icons (home screen, install prompt, Apple touch icon)
+const web = path.join(root, '../web/public')
+await sharp(Buffer.from(svg)).resize(192, 192).png().toFile(`${web}/icon-192.png`)
+await sharp(Buffer.from(svg)).resize(512, 512).png().toFile(`${web}/icon-512.png`)
+await sharp({ create: { width: 512, height: 512, channels: 3, background: BG } }).composite([{ input: await sharp(mark(0.72)).resize(512, 512).png().toBuffer() }]).png().toFile(`${web}/icon-maskable-512.png`)
+await sharp(square).resize(180, 180).flatten({ background: BG }).png().toFile(`${web}/apple-touch-icon.png`)
+
 const res = path.join(root, 'android/app/src/main/res')
 for (const [dir, size] of [['mdpi', 48], ['hdpi', 72], ['xhdpi', 96], ['xxhdpi', 144], ['xxxhdpi', 192]] as const) {
   await sharp(Buffer.from(svg)).resize(size, size).png().toFile(`${res}/mipmap-${dir}/ic_launcher.png`)

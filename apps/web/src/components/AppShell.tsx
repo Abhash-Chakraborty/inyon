@@ -19,10 +19,10 @@ export function Logo({ className }: { className?: string }) {
     <svg viewBox="0 0 512 512" className={clsx('shrink-0', className ?? 'size-[26px]')} aria-hidden>
       <rect width="512" height="512" rx="116" fill="var(--fg)" />
       <g fill="none" stroke="var(--bg)" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M138 150 L224 236 L138 322" strokeWidth="46" />
-        <path d="M266 236 C302 236 300 318 342 326" strokeWidth="26" />
+        <path d="M140 108 L236 204 L140 300" strokeWidth="50" />
+        <path d="M140 362 C200 396 270 396 330 372" strokeWidth="32" />
       </g>
-      <circle cx="374" cy="326" r="34" fill="var(--bg)" />
+      <circle cx="374" cy="364" r="42" fill="var(--bg)" />
     </svg>
   )
 }
