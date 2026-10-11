@@ -278,7 +278,7 @@ export async function inputAnswer(hostId: string, paneId: string, text: string) 
 export async function stopTask(hostId: string, outputFile: string | undefined, id?: string) {
   const host = registry.host(hostId)
   if (!outputFile && id) outputFile = await findTaskOutput(hostId, id)
-  if (!outputFile || !isTaskFile(outputFile)) throw new HttpError(404, 'Could not find that task on the machine')
+  if (!outputFile || !isTaskFile(outputFile, registry.get(hostId)?.probe?.home)) throw new HttpError(404, 'Could not find that task on the machine')
   const script = `
 F=${shq(outputFile)}
 pids=""
@@ -738,11 +738,17 @@ async function launchBin(host: ReturnType<typeof registry.host>, agent: AgentKin
 /** `cmd` with its first word (the agent's command) replaced by `bin`. */
 const withBin = (cmd: string, bin: string) => cmd.replace(/^\S+/, bin)
 
+/** No session (start fresh), or a conversation id: a UUID, nothing a shell would read as more. */
+export const isSessionId = (id: unknown): id is string | null | undefined =>
+  id === undefined || id === null || id === '' || (typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+
 /** Starts (or resumes) an agent in a pane that is sitting at a shell prompt. */
-export async function startAgent(hostId: string, paneId: string, agent: AgentKind = 'claude', resume?: string) {
+export async function startAgent(hostId: string, paneId: string, agent: AgentKind = 'claude', resume?: unknown) {
+  // both end up typed into a shell
+  if (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent)) throw new HttpError(400, 'Unknown agent')
+  if (!isSessionId(resume)) throw new HttpError(400, 'Bad session id')
   const { host, found } = agentPane(hostId, paneId)
   if (found.pane.agent) throw new HttpError(409, 'An agent is already running here')
-  if (resume && !/^[0-9a-f-]{36}$/.test(resume)) throw new HttpError(400, 'Bad session id')
   const def = AGENTS[agent]
   const cmd = !resume ? def.launch : agent === 'codex' ? `codex resume ${resume}` : agent === 'antigravity' ? `agy --conversation ${resume}` : `${def.launch} --resume ${resume}`
   await typeText(host, paneId, withBin(cmd, await launchBin(host, agent)), true)
