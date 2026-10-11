@@ -58,9 +58,11 @@ test('Codex collapsed content preserves the real draft and checks its size', asy
   const { hasPastePreview } = await import('./delivery.ts')
   const text = 'x'.repeat(1824)
   expect(hasPastePreview('[Pasted Content 1824 chars]')).toBe(true)
-  expect(inputContains('[Pasted Content 1824 chars]', text)).toBe(true)
-  expect(inputContains('[Pasted Content 1823 chars]', text)).toBe(false)
-  expect(inputContains('[Pasted Content 1824 chars] extra', text)).toBe(false)
+  expect(inputContains('[Pasted Content 1824 chars]', text, true)).toBe(true)
+  expect(inputContains('[Pasted Content 1823 chars]', text, true)).toBe(false)
+  expect(inputContains('[Pasted Content 1824 chars] extra', text, true)).toBe(false)
+  // an older paste of the same length isn't this message unless it was just put there
+  expect(inputContains('[Pasted Content 1824 chars]', text)).toBe(false)
   expect(hasPastePreview('[Pasted text #1 +20 lines]')).toBe(true)
 })
 
@@ -136,4 +138,11 @@ test("a setting from the app's controls is followed like any send but marked, so
   ledger.track('m', '/model gpt-6.1-sol', [], true)
   ledger.track('t', 'hello', [])
   expect(ledger.list().map((s) => [s.id, s.setting ?? false])).toEqual([['m', true], ['t', false]])
+})
+
+test('before typing, a draft that differs only in spaces or line breaks is not the message', () => {
+  expect(inputContains('print("A B")', 'print("AB")')).toBe(false)
+  expect(inputContains('def f():\n    pass', 'def f(): pass')).toBe(true)
+  // once typed, the terminal's wrapping may split a long word; that still counts
+  expect(inputContains('https://example.com/a\n  very/long/path', 'https://example.com/avery/long/path', true)).toBe(true)
 })

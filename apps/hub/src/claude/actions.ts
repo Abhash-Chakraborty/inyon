@@ -228,10 +228,10 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
       // the whole message, Claude's paste preview of it, or the end of a long one whose start has
       // scrolled out of the box. Never "most of it": a draft mirrored from the app before the last
       // edits is a shorter prefix, and pressing Enter on it sends the old text.
-      return inputContains(d, text) || (typed && onlyPastePreview(now)) || (now.length >= 200 && full.endsWith(now))
+      return inputContains(d, text, typed) || (typed && onlyPastePreview(now)) || (typed && now.length >= 200 && full.endsWith(now))
     }
     // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
-    if (squash(screen.draft ?? '') !== squash(text)) {
+    if (!inputContains(screen.draft, text)) {
       // a second go when the first doesn't show up: a mirrored draft still being typed (or a slow
       // first frame after a hub restart) can leave the box with something else in it
       // (only when the box can be read: typing blind again would double the text)
@@ -1044,6 +1044,8 @@ export async function shellReady(host: ReturnType<typeof registry.host>, paneId:
 export async function launch(hostId: string, opts: LaunchOpts) {
   const host = registry.host(hostId)
   const agent = opts.agent && opts.agent !== 'shell' ? opts.agent : undefined
+  // before anything is created: an unknown agent would fail after the window exists
+  if (agent && (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent))) throw new HttpError(400, 'Unknown agent')
   const cwd = opts.cwd?.trim() || '~'
   const dir = cwd === '~' || cwd.startsWith('~/') ? `"$HOME"${shq(cwd.slice(1))}` : shq(cwd)
   const fmt = shq('#{pane_id}')

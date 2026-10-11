@@ -1,29 +1,33 @@
 import type { ChatItem, ScreenState, SendState } from '@tether/protocol'
 
 const squash = (text: string) => text.replace(/\s+/g, '')
+const collapse = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 /** A terminal paste preview is not the underlying editable text. */
 export const hasPastePreview = (text: string) => /\[Pasted (?:text #\d+|Content \d+ chars\]|~\d+ lines?\])/i.test(text)
 
 /**
- * Whether the input box holds `text`. Claude collapses a long paste to "[Pasted text #1]", which
- * hides what's behind it, so that counts only with `pasted`: when it's known to be this text (just
- * typed into an emptied box, or what the draft mirror last put there). An older, shorter draft
- * shows the same preview.
+ * Whether the input box holds `text`. `known` says the box was just given this text (typed into
+ * an emptied box, or what the draft mirror last put there). Only then do previews count: Claude
+ * collapses a long paste to "[Pasted text #1]", Codex to a character count and OpenCode to a line
+ * count, and an older draft can show the same preview. And only then is whitespace ignored, which
+ * the terminal's wrapping changes: otherwise a draft differing only in spaces or line breaks
+ * (inside a string, say) would be taken for the message, and Enter would send the old one.
  */
-export function inputContains(draft: string | undefined, text: string, pasted = false): boolean {
-  const value = squash(draft ?? '')
+export function inputContains(draft: string | undefined, text: string, known = false): boolean {
   const preview = /^\[Pasted Content (\d+) chars\]$/i.exec(draft?.trim() ?? '')
-  if (preview) return Number(preview[1]) === [...text].length || Number(preview[1]) === text.length
+  if (preview) return known && (Number(preview[1]) === [...text].length || Number(preview[1]) === text.length)
   // OpenCode collapses a multi-line paste to its line count
   const lines = /^\[Pasted ~(\d+) lines?\]$/i.exec(draft?.trim() ?? '')
-  if (lines) return Number(lines[1]) === text.replace(/\r\n?/g, '\n').split('\n').length
+  if (lines) return known && Number(lines[1]) === text.replace(/\r\n?/g, '\n').split('\n').length
   // Codex loads image paths while typing and renders numbered attachment tokens instead.
   // Compare the entire body and ordered attachment list, not a substring or similar length.
   let image = 0
   const rendered = text.replace(/(Attached files:\s*)([\s\S]*)$/, (_, heading, files: string) =>
     heading + files.split('\n').map((path) => /^\/[^\n]+\.(png|jpe?g|gif|webp)$/i.test(path.trim()) ? `[Image #${++image}]` : path).join('\n'))
-  return value === squash(text) || image > 0 && value === squash(rendered) || pasted && /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(value)
+  const same = known ? squash : collapse
+  const value = same(draft ?? '')
+  return value === same(text) || image > 0 && value === same(rendered) || known && /^(\[Pastedtext#\d+(\+\d+lines?)?\])+$/.test(value)
 }
 
 /** A missing composer is unknown, rather than evidence that input was submitted. */

@@ -46,8 +46,10 @@ describe('OpenCode models', () => {
     expect(modelFromFooter(models, 'Something Else')).toBeUndefined()
   })
 
-  test('a multi-line paste shows as its line count', () => {
-    expect(inputContains('[Pasted ~3 lines]', 'one\ntwo\nthree')).toBe(true)
-    expect(inputContains('[Pasted ~3 lines]', 'one\ntwo')).toBe(false)
+  test('a multi-line paste shows as its line count, which counts only for text just put there', () => {
+    expect(inputContains('[Pasted ~3 lines]', 'one\ntwo\nthree', true)).toBe(true)
+    expect(inputContains('[Pasted ~3 lines]', 'one\ntwo', true)).toBe(false)
+    // an older paste with as many lines is a different message
+    expect(inputContains('[Pasted ~3 lines]', 'one\ntwo\nthree')).toBe(false)
   })
 })

@@ -39,3 +39,11 @@ test('accepted and interrupted sends remain protected after a hub restart', asyn
     await pending
   } finally { kv.del(file) }
 })
+
+test('a thousand finished sends do not block the next one; only sends still going count', async () => {
+  const r = new SendReceipts()
+  for (let i = 0; i < 1000; i++) await r.sendOnce(`done-${i}`, `message ${i}`, async () => {})
+  await expect(r.sendOnce('next', 'one more', async () => 'sent')).resolves.toBe('sent')
+  // a retry of a finished one is still answered from its receipt
+  await expect(r.sendOnce('done-999', 'message 999', async () => { throw new Error('sent twice') })).resolves.toBeUndefined()
+})

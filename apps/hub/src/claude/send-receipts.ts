@@ -2,6 +2,7 @@ import { kv, sha256Hex } from '../platform/store.ts'
 
 type Receipt = { digest: string; expires: number; state: 'pending' | 'accepted'; result?: Promise<unknown> }
 const RETENTION_MS = 24 * 60 * 60_000
+const KEEP_ACCEPTED = 5000
 
 export class SendReceipts {
   private receipts = new Map<string, Receipt>()
@@ -32,7 +33,15 @@ export class SendReceipts {
       if (existing.state === 'accepted') return Promise.resolve()
       return Promise.reject(new Error('The hub restarted during this send. Check the terminal before sending again. Your message is available to copy.'))
     }
-    if (this.receipts.size >= 1000) return Promise.reject(new Error('Too many outstanding sends. Try again later.'))
+    // the cap is on sends still going; finished ones are kept a day only to answer retries, and the
+    // oldest of those make way once there are many
+    let pending = 0
+    for (const r of this.receipts.values()) if (r.state === 'pending') pending++
+    if (pending >= 1000) return Promise.reject(new Error('Too many outstanding sends. Try again later.'))
+    for (const [id, r] of this.receipts) {
+      if (this.receipts.size < KEEP_ACCEPTED) break
+      if (r.state === 'accepted') this.receipts.delete(id)
+    }
     const receipt: Receipt = { digest, expires: now + RETENTION_MS, state: 'pending' }
     this.receipts.set(key, receipt)
     try { this.save() } catch (error) { this.receipts.delete(key); return Promise.reject(error) }

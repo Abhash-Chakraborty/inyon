@@ -1,6 +1,6 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
 import { registry } from '../hosts/registry.ts'
-import { sendMessageToPane } from './actions.ts'
+import { launch, sendMessageToPane } from './actions.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
@@ -60,3 +60,16 @@ test('a short message typed into an empty box goes in as typed', async () => {
   await sendMessageToPane('local', '%9', 'hello there', true)
   expect(sent).toEqual(['hello there'])
 }, 20_000)
+
+test('an old draft that differs only in whitespace is replaced, not sent', async () => {
+  const sent = fakeClaude([{ text: 'print("A B")' }])
+  await sendMessageToPane('local', '%9', 'print("AB")', true)
+  expect(sent).toEqual(['print("AB")'])
+}, 20_000)
+
+test('a new session with an unknown agent is refused before anything is created', async () => {
+  const cmds: string[] = []
+  spyOn(registry, 'host').mockReturnValue({ exec: async (cmd: string) => (cmds.push(cmd), { code: 0, stdout: '%5\n', stderr: '' }) } as any)
+  await expect(launch('local', { agent: 'nonsense' as any })).rejects.toThrow('Unknown agent')
+  expect(cmds).toEqual([])
+})
