@@ -36,11 +36,17 @@ export function pickCodexRollout(rows: CodexRollout[], proc: CodexProc, others: 
     const hit = rows.filter((r) => r.id === proc.resume || r.path.includes(proc.resume!)).sort((a, b) => b.mtime - a.mtime)[0]
     if (hit) return hit.path
   }
-  const mine = rows.filter((r) => (!proc.cwd || r.cwd === proc.cwd) && r.created >= proc.startedAt - 5)
+  const here = rows.filter((r) => !proc.cwd || r.cwd === proc.cwd)
+  const mine = here.filter((r) => r.created >= proc.startedAt - 5)
+  // a thread picked with /resume was made before the process started, but is written since; only
+  // its name (Codex names every thread) tells it from one a Codex outside tmux is writing
+  const touched = here.filter((r) => r.created >= proc.startedAt - 5 || r.mtime >= proc.startedAt - 5)
   const name = proc.title ? codexTitle(proc.title, proc.cwd) : ''
   if (name) {
-    const named = mine.filter((r) => r.id && names.get(r.id) === name)
+    const named = touched.filter((r) => r.id && names.get(r.id) === name)
     if (named.length === 1) return named[0].path
+    const fresh = named.filter((r) => r.created >= proc.startedAt - 5)
+    if (fresh.length === 1) return fresh[0].path
   }
   const rivals = others.filter((o) => o.pid !== proc.pid && o.cwd === proc.cwd && o.startedAt > proc.startedAt)
   const owned = mine.filter((r) => !rivals.some((o) => o.startedAt - 5 <= r.created))

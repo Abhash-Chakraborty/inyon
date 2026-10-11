@@ -104,6 +104,18 @@ describe('codex rollout matching', () => {
     expect(pickCodexRollout(rows, b, [a, b], none)).toBe('/s/rollout-tb.jsonl')
   })
 
+  test('a thread picked with /resume is found by the name Codex shows', () => {
+    const a = { pid: 1, cwd: '/w', startedAt: 1000 }
+    const b = { pid: 2, cwd: '/w', startedAt: 1100 }
+    const names = new Map([['greet', 'Respond to greeting']])
+    // made two days earlier, written again since this Codex started
+    const rows = [row('greet', 100, 1200), row('other', 150, 1150)]
+    expect(pickCodexRollout(rows, { ...a, title: 'Respond to greeting' }, [a], names)).toBe('/s/rollout-greet.jsonl')
+    expect(pickCodexRollout(rows, { ...a, title: 'Respond to greeting' }, [a, b], names)).toBe('/s/rollout-greet.jsonl')
+    // without the name it can't be told from a thread another Codex is writing
+    expect(pickCodexRollout(rows, a, [a], none)).toBeUndefined()
+  })
+
   test('/new in a lone session moves to the new thread', () => {
     const a = { pid: 1, cwd: '/w', startedAt: 100 }
     expect(pickCodexRollout([row('old', 101, 300), row('new', 400, 450)], a, [a], none)).toBe('/s/rollout-new.jsonl')
