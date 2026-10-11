@@ -1,5 +1,6 @@
 import { AGENTS, AGENT_KINDS, type AgentKind } from '@tether/protocol'
 import { shq } from '../hosts/host.ts'
+import { LOGIN_PREFIX, VIEW_PREFIX } from '../tmux/tmux.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { loadSettings, saveSettings } from '../config.ts'
 import { signedInTest } from '../agents/auth-sh.ts'
@@ -46,7 +47,8 @@ echo "OS $(uname -s) $(uname -m)"
 for p in apt dnf yum pacman apk zypper brew; do command -v $p >/dev/null 2>&1 && { [ $p = apt ] && command -v apt-get >/dev/null || [ $p != apt ]; } && { echo "PKG $p"; break; }; done
 sudo -n true >/dev/null 2>&1 && echo "SUDO 1" || echo "SUDO 0"
 echo "TMUX $(tmux -V 2>/dev/null)"
-echo "SESSIONS $(tmux list-sessions 2>/dev/null | wc -l)"
+# the same sessions the list shows: not Tether's own terminal views and sign-ins
+echo "SESSIONS $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c -v -e '^${VIEW_PREFIX}' -e '^${LOGIN_PREFIX}')"
 echo "NODE $(node --version 2>/dev/null)"
 echo "NPM $(npm --version 2>/dev/null)"
 echo "CURL $(command -v curl >/dev/null && echo 1)"
