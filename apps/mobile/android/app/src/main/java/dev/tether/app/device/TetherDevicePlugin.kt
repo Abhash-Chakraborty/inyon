@@ -355,7 +355,7 @@ class TetherDevicePlugin : Plugin() {
 
     // ---- QR codes --------------------------------------------------------------------------
 
-    /** Opens the scanner; resolves { text }, { paste: true }, { denied: true } or { cancelled: true }. */
+    /** Opens the scanner; resolves { text }, { type: true }, { denied: true } or { cancelled: true }. */
     @PluginMethod
     fun scanQr(call: PluginCall) {
         val intent = ScannerActivity.intent(context, call.getBoolean("haptics", true) ?: true)
@@ -369,7 +369,7 @@ class TetherDevicePlugin : Plugin() {
         when {
             result.resultCode != Activity.RESULT_OK || data == null -> call.resolve(cancelled())
             data.hasExtra(ScannerActivity.EXTRA_TEXT) -> call.resolve(JSObject().put("text", data.getStringExtra(ScannerActivity.EXTRA_TEXT) ?: ""))
-            data.getBooleanExtra(ScannerActivity.EXTRA_PASTE, false) -> call.resolve(JSObject().put("paste", true))
+            data.getBooleanExtra(ScannerActivity.EXTRA_TYPE, false) -> call.resolve(JSObject().put("type", true))
             data.getBooleanExtra(ScannerActivity.EXTRA_DENIED, false) -> call.resolve(JSObject().put("denied", true))
             else -> call.resolve(cancelled())
         }

@@ -108,7 +108,7 @@ class ScannerActivity : ComponentActivity() {
         }
 
         findViewById<View>(R.id.scanner_close).setOnClickListener { finishWith(null) }
-        findViewById<View>(R.id.scanner_paste).setOnClickListener { finishWith(Intent().putExtra(EXTRA_PASTE, true)) }
+        findViewById<View>(R.id.scanner_type).setOnClickListener { finishWith(Intent().putExtra(EXTRA_TYPE, true)) }
         torch.setOnClickListener {
             val c = camera ?: return@setOnClickListener
             c.cameraControl.enableTorch(c.cameraInfo.torchState.value != TorchState.ON)
@@ -286,13 +286,13 @@ class ScannerActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_TEXT = "text"
-        const val EXTRA_PASTE = "paste"
+        const val EXTRA_TYPE = "type"
         const val EXTRA_DENIED = "denied"
         const val EXTRA_HAPTICS = "haptics"
         private const val TAG = "TetherScanner"
 
         private const val POINT = "Point at the code tether-node shows"
-        private const val IDLE = "Hold steady, about 20 cm away. Or paste the link."
+        private const val IDLE = "Hold steady, about 20 cm away. Or type the code."
         private const val NOT_TETHER = "That's not a Tether code"
         private const val INSTALLING = "Getting the scanner ready…"
         private const val IDLE_AFTER_MS = 12_000L

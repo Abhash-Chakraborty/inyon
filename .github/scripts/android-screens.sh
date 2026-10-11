@@ -46,6 +46,8 @@ ws=$(curl -s http://127.0.0.1:9333/json | grep -o '"webSocketDebuggerUrl": *"[^"
 [ -n "$ws" ] || { echo "no page to drive"; exit 1; }
 echo "driving $ws"
 js 'location.href'
+# the page's CSP is in force and the theme script it allows still ran
+js '[document.querySelector("meta[http-equiv=Content-Security-Policy]") ? "csp on" : "no csp", "theme " + (document.documentElement.dataset.theme || "unset"), typeof Capacitor.Plugins.TetherDevice].join(", ")'
 
 # 1. a photo input with capture: the camera prompt, refused, opens the gallery picker instead
 js '(() => { const i = document.createElement("input"); i.type = "file"; i.accept = "image/*"; i.setAttribute("capture", "environment"); i.onchange = () => (window.__picked = i.files.length); document.body.appendChild(i); i.click(); return "clicked" })()'
@@ -83,24 +85,39 @@ sleep 2
 adb shell cmd statusbar expand-notifications
 shot notifications 3
 adb shell dumpsys notification --noredact | grep -E 'NotificationRecord\(.*pkg=dev\.tether|  \[[0-9]\] "' | cut -c1-160
+adb shell cmd statusbar collapse
 
-# 5. the keep-alive sits collapsed under Silent: open it up, then Stop turns it off in the web app
-js 'new Promise((done) => { Capacitor.Plugins.TetherDevice.addListener("keepAliveStopped", (e) => done(e.reason)); setTimeout(() => done("no event"), 25000) })' > "$out/keepalive-event.txt" &
+# 5. Stop on the keep-alive turns it off in the web app. It is a silent notification, shown
+# minimised, so clear the agent ones and open it up first
+js 'Promise.all([Capacitor.Plugins.TetherDevice.clearNotification({ tag: "box:%1" }), Capacitor.Plugins.TetherDevice.clearNotification({ tag: "box:%2" })]).then(() => "cleared")'
+js 'new Promise((done) => { Capacitor.Plugins.TetherDevice.addListener("keepAliveStopped", (e) => done(e.reason)); setTimeout(() => done("no event"), 28000) })' > "$out/keepalive-event.txt" &
 waiter=$!
 sleep 1
-for _ in 1 2 3; do
+adb shell cmd statusbar expand-notifications
+sleep 2
+stop_visible() {
   adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
-  if adb shell cat /sdcard/ui.xml | grep -qE 'text="(Stop|STOP)"'; then
-    shot keep-alive-buttons 0
-    tap_where 'text="(Stop|STOP)"' && echo "tapped Stop"
-    break
-  fi
-  tap_where 'resource-id="android:id/expand_button"' last
-  sleep 2
+  adb shell cat /sdcard/ui.xml > "$out/shade.xml"
+  grep -qE 'text="(Stop|STOP)"' "$out/shade.xml"
+}
+for target in 'text="Tether is connected"' 'text="Tether"' 'resource-id="android:id/expand_button"'; do
+  stop_visible && break
+  tap_where "$target" last > /dev/null && sleep 2
 done
+if stop_visible; then
+  shot keep-alive-buttons 0
+  tap_where 'text="(Stop|STOP)"' && echo "tapped Stop"
+else
+  # still not on screen: send the button's broadcast directly (the receiver isn't exported, so as root)
+  echo "Stop not reachable on screen; sending its broadcast instead"
+  adb root > /dev/null && adb wait-for-device
+  adb shell am broadcast -n $pkg/.device.NotificationActions -a dev.tether.app.action.STOP_KEEP_ALIVE
+fi
 wait $waiter
 echo "keepAliveStopped: $(cat "$out/keepalive-event.txt")"
 adb shell cmd statusbar collapse
 shot after-stop 1
+adb forward tcp:9333 localabstract:webview_devtools_remote_$pid > /dev/null
 echo "localStorage tether.keepAlive: $(js 'localStorage.getItem("tether.keepAlive")')"
 echo "keep-alive notifications left: $(adb shell dumpsys notification | grep -c 'id=7001 ')"
+
