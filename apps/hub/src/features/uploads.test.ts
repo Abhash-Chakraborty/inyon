@@ -78,3 +78,10 @@ test('a piece sent twice (its answer was lost, so the phone retried) is written 
   await uploadPiece('up', undefined, piece(4_000_000, video.length - 4_000_000), { ...second, offset: 4_000_000 })
   expect(new Uint8Array(readFileSync(first.path))).toEqual(video)
 })
+
+test('two files of the same name sent in the same second both keep their bytes', async () => {
+  const [a, b] = await uploadFiles('up', '%3', [new File(['FIRST'], 'screenshot.png'), new File(['SECOND'], 'screenshot.png')])
+  expect(a.path).not.toBe(b.path)
+  expect(readFileSync(a.path, 'utf8')).toBe('FIRST')
+  expect(readFileSync(b.path, 'utf8')).toBe('SECOND')
+})

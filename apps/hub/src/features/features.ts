@@ -33,13 +33,16 @@ export interface Uploaded {
   type: string
 }
 
-/** Where a new upload goes: ~/.tether/uploads/<date>/<session>/<time>-<name> on the pane's machine. */
+/**
+ * Where a new upload goes: ~/.tether/uploads/<date>/<session>/<time>-<id>-<name> on the pane's
+ * machine. The short random id keeps two files of the same name sent in the same second apart.
+ */
 function uploadPath(home: string, hostId: string, paneId: string | undefined, name: string) {
   const pane = paneId ? registry.findPane(hostId, paneId)?.pane : undefined
   const bucket = (pane?.agent?.sessionId ?? paneId?.replace('%', 'pane-') ?? 'misc').slice(0, 12)
   const day = new Date().toISOString().slice(0, 10)
   const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
-  return `${home}/.tether/uploads/${day}/${bucket}/${stamp}-${safeName(name)}`
+  return `${home}/.tether/uploads/${day}/${bucket}/${stamp}-${crypto.randomUUID().slice(0, 6)}-${safeName(name)}`
 }
 
 /**
@@ -302,7 +305,7 @@ export async function writeConfig(hostId: string, path: string, content: string)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const p = shq(path)
   const r = await host.exec(
-    `mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.tether-bak-${stamp}`)}; } && cat > ${shq(`${path}.tether-tmp`)} && mv ${shq(`${path}.tether-tmp`)} ${p}; ls -t ${p}.tether-bak-* 2>/dev/null | tail -n +6 | xargs rm -f 2>/dev/null; true`,
+    `mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.tether-bak-${stamp}`)}; } && cat > ${shq(`${path}.tether-tmp`)} && mv ${shq(`${path}.tether-tmp`)} ${p} || exit $?; ls -t ${p}.tether-bak-* 2>/dev/null | tail -n +6 | while IFS= read -r f; do rm -f -- "$f"; done; true`,
     { input: content },
   )
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not save')
