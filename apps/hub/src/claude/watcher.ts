@@ -183,9 +183,11 @@ class ChatWatcher {
     }, 10_000)
   }
 
-  private save() {
-    // a summary still missing the part before the last stretch would be saved as if it were whole
-    if (!this.ready || !this.items.length || this.replay) return
+  save() {
+    // a summary still missing the part before the last stretch would be saved as if it were whole:
+    // wait for it
+    if (this.replay) return this.cacheLater()
+    if (!this.ready || !this.items.length) return
     // the read position is saved only with the summary and messages read up to it
     // only the latest messages are saved: cut between lines and remember where the first one starts
     let first = Math.max(0, this.items.length - CACHE_KEEP)
@@ -439,11 +441,11 @@ class ChatWatcher {
    * part before its last stretch: only the lines that carry it are sent, and what they say goes
    * into the summary, not the chat.
    */
-  private async readMeta(path: string, to: number, meta: TranscriptMeta) {
+  private async readMeta(path: string, to: number, meta: TranscriptMeta, from = 0) {
     const host = registry.host(this.hostId)
-    const reader = new TranscriptReader()
+    const reader = new TranscriptReader(from)
     await new Promise<void>((done) => {
-      const t = host.stream(metaCommand(path, to, this.onRemoteHost()), (line) => {
+      const t = host.stream(metaCommand(path, to, this.onRemoteHost(), from), (line) => {
         const r = reader.line(line)
         if (r?.entry) normalize(r.entry, meta)
       })
@@ -776,6 +778,37 @@ class ChatWatcher {
       again = false
       restart()
     }
+    // away a long while (a saved copy from hours ago): rather than read everything said since, keep
+    // the saved chat on screen and read only the last stretch, while the summary catches up from
+    // the lines in between
+    const claude = !this.codex && this.agent !== 'copilot' && this.olderFrom !== undefined
+    const jump = again && claude && size - this.reader!.offset > TAIL_BYTES
+    if (jump) {
+      const saved = this.reader!.offset
+      const from = size - TAIL_BYTES
+      this.behind = this.resetMsg()
+      this.publishInfo()
+      const replay: any[] = (this.replay = [])
+      const prefix = loadMeta(saveMeta(this.meta))
+      void this.readMeta(path, from, prefix, saved).then(() => {
+        if (gen !== this.generation || this.stopped || this.replay !== replay) return
+        for (const e of replay) normalize(e, prefix)
+        this.meta = prefix
+        this.replay = undefined
+        if (this.ready && !this.behind) {
+          this.publishInfo()
+          this.save()
+        } else this.cacheLater()
+      })
+      this.items = []
+      this.pending = []
+      this.lineAt.clear()
+      // above anything shown before, so nothing the app still holds is mistaken for these
+      this.seq = Math.max(this.seq, TAIL_SEQ) + TAIL_SEQ
+      this.reader = new TranscriptReader(from)
+      this.olderFrom = size
+      this.tailStart = true
+    }
     if (!again) {
       this.seq = 0
       this.reader = new TranscriptReader()
@@ -793,8 +826,10 @@ class ChatWatcher {
             for (const e of replay) normalize(e, prefix)
             this.meta = prefix
             this.replay = undefined
-            if (this.ready && !this.behind) this.publishInfo()
-            this.cacheLater()
+            if (this.ready && !this.behind) {
+              this.publishInfo()
+              this.save()
+            } else this.cacheLater()
           })
           this.seq = TAIL_SEQ
           this.reader = new TranscriptReader(from)
@@ -817,7 +852,7 @@ class ChatWatcher {
     const total = size - reader.offset
     let remaining = total
     // a lot was said meanwhile: read it out of sight, keeping the chat as it was until it's all in
-    if (again && remaining > CATCHUP_BYTES) {
+    if (again && remaining > CATCHUP_BYTES && !jump) {
       this.publishInfo()
       this.behind = this.resetMsg()
     }
@@ -838,6 +873,7 @@ class ChatWatcher {
         filling = true
         void this.loadOlder().then(() => {
           if (gen === this.generation && this.ready && !this.behind) this.broadcast(this.resetMsg())
+          this.save()
         })
       }
       if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
@@ -846,6 +882,8 @@ class ChatWatcher {
       this.progress = undefined
       this.publishInfo()
       this.broadcast(this.resetMsg())
+      // saved at once, not 10 s later: an app closed before then would read it all again next time
+      this.save()
     }
     // If the file is empty or tail never catches up, still show what we have once it goes quiet.
     let quiet = reading() ? setTimeout(finishInitial, remaining > 0 ? FIRST_LINE_MS : 0) : undefined
@@ -1010,6 +1048,11 @@ class Watchers {
       this.map.set(key, (w = new ChatWatcher(hostId, paneId, p && Date.now() - p.at < PARK_MS ? p : undefined)))
     }
     return w
+  }
+
+  /** Saves every open chat now (the app is going to the background and may not come back). */
+  saveAll() {
+    for (const w of this.map.values()) w.save()
   }
 
   peek(hostId: string, paneId: string) {

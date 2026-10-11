@@ -29,6 +29,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
 
   const core = await import('../core.ts')
   const { registry, HttpError } = await import('../hosts/registry.ts')
+  const { watchers } = await import('../claude/watcher.ts')
   lookup = (id) => registry.get(id)?.host.config
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, startCore } = core
 
@@ -176,6 +177,8 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     background(hidden) {
       registry.quiet(hidden)
       registry.holdAlerts(hidden)
+      // Android may close the app from the background: keep what each open chat has read
+      if (hidden) watchers.saveAll()
     },
     resume() {
       registry.quiet(false)

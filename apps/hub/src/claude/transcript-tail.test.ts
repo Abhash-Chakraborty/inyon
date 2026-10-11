@@ -330,6 +330,57 @@ test('a long conversation opens on its last stretch and reads earlier messages a
   watchers.stop(again.key)
 }, 60_000)
 
+test('a reopened chat shows its saved copy at once and reads only what was said since', async () => {
+  const file = join(dir, 'reopen.jsonl')
+  const at = () => new Date(1_800_000_000_000 + ++n * 1000).toISOString()
+  const goal = JSON.stringify({ type: 'attachment', uuid: `g${n}`, timestamp: at(), attachment: { type: 'goal_status', condition: 'kept goal', met: false } }) + '\n'
+  const say = (from: number, count: number) => Array.from({ length: count }, (_, i) => user(`msg ${from + i} ${'word '.repeat(220)}`)).join('')
+  writeFileSync(file, goal + say(0, 600))
+  const pane = { id: '%4', title: 'claude', agent: { kind: 'claude', transcriptPath: file, sessionId: 's4' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(new Host({ ...config, kind: 'local' } as any))
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const streams = spyOn(Host.prototype, 'stream')
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const num = (i: any) => Number(/^msg (\d+)/.exec(i.text)?.[1])
+  const lastUser = (m: any) => m?.items.filter((i: any) => i.kind === 'user').map(num).at(-1)
+
+  const w = watchers.get('tail-test', '%4')
+  w.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  // saved as soon as it's in, summary included, not 10 s later: an app closed by then keeps it
+  await until(() => loadChat(w.key)?.at?.offset === statSync(file).size && !!loadChat(w.key)?.at?.meta?.goal)
+  watchers.stop(w.key)
+  ;(watchers as any).parked.clear()
+
+  // hours later: far more was said than the last stretch holds
+  const before = statSync(file).size
+  appendFileSync(file, say(600, 400))
+  streams.mockClear()
+  got.length = 0
+  const again = watchers.get('tail-test', '%4')
+  again.subscribe(sub)
+  // the saved chat shows at once, then the latest
+  expect(lastUser(got.find((m) => m.t === 'chat.reset'))).toBe(599)
+  await until(() => got.some((m) => m.t === 'chat.reset' && lastUser(m) === 999))
+  const cmds = streams.mock.calls.map((c) => String(c[0]))
+  // only the last stretch and a summary of what's between it and the saved copy, never from the start
+  expect(cmds.some((c) => c.includes('grep -E') && c.includes(`tail -c +${before + 1} `))).toBe(true)
+  expect(cmds.some((c) => c.includes('head -c') && !c.includes('tail -c'))).toBe(false)
+  const latest = () => (got.findLast((m) => m.t === 'chat.info' || m.t === 'chat.reset') as any)?.info
+  await until(() => latest()?.goal?.condition === 'kept goal')
+  // scrolling up still reaches every message, through the part that was skipped
+  for (let more: any; (more = got.findLast((m) => m.t === 'chat.more')), !more || more.hasMore; ) await again.more(sub, again.items[0]!.seq)
+  expect(again.items.filter((i) => i.kind === 'user').map(num)).toEqual(Array.from({ length: 1000 }, (_, i) => i))
+  watchers.stop(again.key)
+}, 60_000)
+
 test('the summary of a long conversation leaves out what was said', () => {
   const file = join(dir, 'meta.jsonl')
   const line = (o: any) => JSON.stringify({ uuid: crypto.randomUUID(), timestamp: '2027-01-01T00:00:00Z', ...o }) + '\n'

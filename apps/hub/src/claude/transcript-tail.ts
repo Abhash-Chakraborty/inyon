@@ -99,9 +99,10 @@ index($0, "<result>") {
 { print }
 END { if (title != "") print title }`
 
-/** The META_LINES lines among the first `to` bytes of the file. */
-export function metaCommand(path: string, to: number, slim: boolean) {
-  const lines = `head -c ${to} ${shq(path)} 2>/dev/null | grep -E ${shq(META_LINES)} | grep -v -F ${META_SKIP.map((m) => `-e ${shq(m)}`).join(' ')}`
+/** The META_LINES lines among bytes `from` up to `to` of the file. */
+export function metaCommand(path: string, to: number, slim: boolean, from = 0) {
+  const part = from > 0 ? `tail -c +${from + 1} ${shq(path)} 2>/dev/null | head -c ${Math.max(0, to - from)}` : `head -c ${to} ${shq(path)} 2>/dev/null`
+  const lines = `${part} | grep -E ${shq(META_LINES)} | grep -v -F ${META_SKIP.map((m) => `-e ${shq(m)}`).join(' ')}`
   return slimmed(`if command -v awk >/dev/null 2>&1; then ${lines} | LC_ALL=C awk ${shq(META_TRIM)}; else ${lines}; fi`, slim)
 }
 
