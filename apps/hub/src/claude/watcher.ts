@@ -53,9 +53,16 @@ const TAIL_SEQ = 1_000_000_000
 const QUIET_MS = 5000
 
 /** What a stopped watcher leaves behind for the next one on the same pane. */
+/**
+ * Which agent process a pane runs: its pid and when it started. A conversation belongs to one, so
+ * a new agent in the same pane (Claude exited and started again) never shows the last one's chat.
+ */
+const procOf = (a?: { pid?: number; startedAt?: number }) => (a?.pid ? `${a.pid}:${a.startedAt ?? ''}` : undefined)
+
 interface Parked {
   at: number
   transcript: string
+  proc?: string
   reader: TranscriptReader
   seq: number
   codex: boolean
@@ -86,6 +93,8 @@ class ChatWatcher {
   /** the transcript tail ended by itself (the machine dropped off): follow again once it's back */
   private tailLost = false
   private transcript?: string
+  /** the agent process whose conversation is shown (procOf) */
+  private proc?: string
   /** how far into the transcript file it has read, so a dropped tail can carry on from there */
   private reader?: TranscriptReader
   private seq = 0
@@ -153,12 +162,13 @@ class ChatWatcher {
     if (at && !outdated && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
       try {
         const meta = loadMeta(at.meta)
-        return this.unpark({ at: cached.savedAt, transcript: cached.transcript, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info, older: at.older })
+        return this.unpark({ at: cached.savedAt, transcript: cached.transcript, proc: cached.proc, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info, older: at.older })
       } catch {}
     }
     const rt = registry.get(this.hostId)
     if (!rt || rt.state.status === 'online' || !this.onRemoteHost()) return
     this.items = cached.items
+    this.proc = cached.proc
     // without the session id the copy may be an older conversation in this pane: show what was
     // said, but not a goal or queue that may be long gone
     const sure = !!agent?.sessionId
@@ -168,7 +178,7 @@ class ChatWatcher {
 
   /** Picks up where the last watcher on this pane stopped; sync() then follows the file from there. */
   private unpark(p: Parked) {
-    Object.assign(this, { transcript: p.transcript, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: { ...p.info, goal: undefined }, olderFrom: p.older })
+    Object.assign(this, { transcript: p.transcript, proc: p.proc, reader: p.reader, seq: p.seq, codex: p.codex, agent: p.agent, items: p.items, meta: p.meta, info: { ...p.info, goal: undefined }, olderFrom: p.older })
     this.goalUnsure = true
     this.ready = true
     this.tailLost = true
@@ -176,7 +186,7 @@ class ChatWatcher {
 
   park(): Parked | undefined {
     if (!this.ready || !this.reader || !this.transcript) return
-    return { at: Date.now(), transcript: this.transcript, reader: this.reader, seq: this.seq, codex: this.codex, agent: this.agent, items: this.items, meta: this.meta, info: this.info, older: this.olderFrom }
+    return { at: Date.now(), transcript: this.transcript, proc: this.proc, reader: this.reader, seq: this.seq, codex: this.codex, agent: this.agent, items: this.items, meta: this.meta, info: this.info, older: this.olderFrom }
   }
 
   private cacheTimer?: ReturnType<typeof setTimeout>
@@ -211,7 +221,7 @@ class ChatWatcher {
     }
     const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta), older } : undefined
     if (!at && !this.onRemoteHost()) return
-    saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items.slice(first), at })
+    saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, proc: this.proc, info: this.info, items: this.items.slice(first), at })
   }
 
   private emptyInfo(): ChatInfo {
@@ -588,9 +598,24 @@ class ChatWatcher {
     if (agent?.kind) this.agent = agent.kind
     // a machine that isn't answering can't be read: keep what's shown (live or saved) until it's back
     const online = registry.get(this.hostId)?.state.status === 'online'
+    // a different agent in the pane with nothing written yet (a new Claude, say): its chat is empty,
+    // not the conversation of the one before it
+    const proc = procOf(agent)
+    if (online && agent && !agent.transcriptPath && proc && proc !== this.proc && (this.transcript || this.items.length)) this.forget()
     if (online && agent?.transcriptPath && (agent.transcriptPath !== this.transcript || this.tailLost)) this.follow(agent.transcriptPath)
     if (!this.transcript && found && !agent?.transcriptPath) this.ready = true // nothing to read; show the empty state
     this.publishInfo()
+  }
+
+  /** Lets go of the conversation shown: the agent in the pane now hasn't said anything yet. */
+  private forget() {
+    this.tail?.kill()
+    this.tail = undefined
+    this.generation++
+    Object.assign(this, { transcript: undefined, reader: undefined, items: [], meta: newMeta(), pending: [], behind: undefined, olderFrom: undefined, replay: undefined, goalUnsure: false, ready: true })
+    this.lineAt.clear()
+    this.info = this.emptyInfo()
+    this.broadcast(this.resetMsg())
   }
 
   /** What was written since the saved copy is read (and its summary is in): show the goal again. */
@@ -789,6 +814,7 @@ class ChatWatcher {
     this.tail?.kill()
     this.tailLost = false
     this.transcript = path
+    this.proc = procOf(registry.findPane(this.hostId, this.paneId)?.pane.agent)
     const gen = ++this.generation
     const restart = () => {
       this.items = []

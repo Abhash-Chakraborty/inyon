@@ -14,6 +14,8 @@ const storeKey = (key: string) => `chats/${keyPart(key)}`
 export interface CachedChat {
   sessionId?: string
   transcript?: string
+  /** the agent process the conversation belongs to (see procOf in watcher.ts) */
+  proc?: string
   info: ChatInfo
   items: ChatItem[]
   savedAt: number
