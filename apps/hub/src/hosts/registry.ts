@@ -317,6 +317,14 @@ class Registry {
     rt.timer = setTimeout(() => this.poll(rt), delay)
   }
 
+  /** Reads every machine again now (pull to refresh); settles once they've answered, or after `ms`. */
+  async refreshAll(ms = 6000) {
+    for (const id of this.hosts.keys()) this.refresh(id, 0)
+    const until = Date.now() + ms
+    await new Promise((r) => setTimeout(r, 50))
+    while (Date.now() < until && [...this.hosts.values()].some((rt) => !rt.stopped && (rt.polling || rt.pollAgain))) await new Promise((r) => setTimeout(r, 100))
+  }
+
   private async poll(rt: Runtime) {
     if (rt.stopped) return
     if ((rt.host.config.kind === 'node' || rt.host.config.kind === 'link') && !nodeLinks.isUp(rt.host.id)) {

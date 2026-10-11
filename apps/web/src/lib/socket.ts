@@ -46,6 +46,14 @@ class Socket {
     this.connect()
   }
 
+  /** Connects again now instead of waiting for the backoff. */
+  reconnect() {
+    if (!this.started || this.ws?.readyState === WebSocket.CONNECTING) return
+    clearTimeout(this.timer)
+    this.retry = 0
+    this.connect()
+  }
+
   stop() {
     this.started = false
     clearTimeout(this.timer)

@@ -244,6 +244,12 @@ export function closeClient(c: Client) {
 // ---------- API ----------
 
 export const coreRoutes: Routes = {
+  '/api/refresh': {
+    POST: api(async () => {
+      await registry.refreshAll()
+      return ok()
+    }),
+  },
   '/api/hosts': {
     GET: api(() => json(registry.configs().map(publicConfig))),
     POST: api(async (req) => {

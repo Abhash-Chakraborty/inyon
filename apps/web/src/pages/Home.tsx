@@ -12,6 +12,8 @@ import { toast } from '../lib/store.ts'
 import type { AgentPaneInfo } from '@tether/protocol'
 import { MachineSheet } from '../components/Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { PullRefresh } from '../components/ui/PullRefresh.tsx'
+import { refreshAll } from '../lib/refresh.ts'
 
 /** working, or idle with shells or tasks still running */
 const busy = (a: AgentPaneInfo) => a.state === 'working' || (a.state === 'idle' && !!a.background)
@@ -39,7 +41,7 @@ export function Home() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur-md">
         <div className="flex h-[52px] items-center gap-3 px-4 lg:px-7">
           <span className="md:hidden">
@@ -176,6 +178,6 @@ export function Home() {
           <ActivityFeed />
         </aside>
       </div>
-    </div>
+    </PullRefresh>
   )
 }

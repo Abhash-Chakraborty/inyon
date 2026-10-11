@@ -16,6 +16,8 @@ import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { PullRefresh } from '../components/ui/PullRefresh.tsx'
+import { refreshAll } from '../lib/refresh.ts'
 import { AgentBadges } from '../components/Overview.tsx'
 import { confirmAction } from '../components/Confirm.tsx'
 import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
@@ -55,7 +57,7 @@ export function MachinesPage() {
     if (pairLink) setParams({}, { replace: true })
   }
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
+    <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
       <PageHeader title={isPhone() ? 'Computers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
       <div className="stagger mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
         {hosts.map((h, i) => (
@@ -82,7 +84,7 @@ export function MachinesPage() {
         ))}
       </div>
       <MachineSheet open={sheet} onClose={close} link={pairLink} />
-    </div>
+    </PullRefresh>
   )
 }
 

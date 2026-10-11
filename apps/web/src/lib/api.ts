@@ -169,6 +169,7 @@ export const api = {
   input: (host: string, pane: string, text: string) => request('POST', `${panePath(host, pane)}/input`, { text }),
   stopTask: (host: string, task: { id: string; path?: string }) => request<{ stopped: boolean; detail: string }>('POST', `${h(host)}/tasks/stop`, { id: task.id, path: task.path }),
   start: (host: string, pane: string, agent: AgentKind, resume?: string) => request('POST', `${panePath(host, pane)}/start`, { agent, resume }),
+  refresh: () => request<{ ok: true }>('POST', '/api/refresh', undefined, 15_000),
   commands: (host: string, pane: string) => request<SlashCommand[]>('GET', `${panePath(host, pane)}/commands`),
   models: (host: string, pane: string) => request<AgentCatalog>('GET', `${panePath(host, pane)}/models`, undefined, 25_000),
   files: (host: string, pane: string) => request<{ cwd: string; files: string[] }>('GET', `${panePath(host, pane)}/files`),
