@@ -99,6 +99,30 @@ ${R}
   expect(s.mode).toBe('manual')
 })
 
+test("a numbered list in the last reply isn't a question once the session has a name", () => {
+  const screen = [
+    '  Four things didn\'t survive the move:',
+    '  1. Commit signing. On Windows, 1Password signed your commits; here, nothing is set up.',
+    '  2. Convex login. The command-line tool isn\'t signed in here.',
+    '  3. Packages. I can run pnpm install.',
+    '  4. Bun is installed but not on your PATH.',
+    '  Shall I go ahead with 1, 3 and 4?',
+    '✻ Baked for 2m 3s · done 4:29 AM',
+    '❯ /rename Abhash Website',
+    '  ⎿  Session renamed to: Abhash Website',
+    '──────────────────────────────────────────────────────────────────────── Abhash Website ─',
+    '❯ ',
+    '────────────────────────────────────────────────────────────────────────────────────────',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ]
+  const s = parseScreen(screen, 88)
+  expect(s.prompt).toBeUndefined()
+  expect(s.inputVisible).toBe(true)
+  expect(s.mode).toBe('auto')
+  // and what you type there is still read as a draft
+  expect(parseScreen(screen.map((l) => (l === '❯ ' ? '❯ 44' : l)), 88).draft).toBe('44')
+})
+
 test('working', () => {
   const s = parseScreen(screen(`     Do nothing else.
 ✽ Undulating… (2s · thinking with high effort)

@@ -2,7 +2,8 @@ import type { AgentKind, PromptOption, ScreenPrompt, ScreenState } from '@tether
 import { parseOpenCodeScreen } from '../agents/opencode-screen.ts'
 import { parseCopilotScreen } from '../agents/copilot-screen.ts'
 
-const RULE = /^\s*─{12,}\s*$/
+// a session named with /rename shows its name in the rule above the input box: "──── Name ─"
+const RULE = /^\s*─{12,}(?: [^─]{1,100} ─{1,12})?\s*$/
 /** Dialog tops are drawn with ▔ (sometimes with a hint embedded in the line). */
 const DIALOG_TOP = /^\s*▔{12,}/
 const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s(.*)$/
