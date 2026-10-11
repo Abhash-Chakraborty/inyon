@@ -41,9 +41,12 @@ const SLIM = `BEGIN { r = "[A-Za-z0-9+/=]"; for (i = 0; i < 10; i++) r = r r; r 
   fflush()
 }`
 
-/** Follows `path` from byte `from`; `slim` drops image data on the far side (for remote machines). */
-export function tailCommand(path: string, from: number, slim: boolean) {
-  const tail = `tail -c +${from + 1} -F ${shq(path)} 2>/dev/null`
+/**
+ * Follows `path` from byte `from`; `slim` drops image data on the far side (for remote machines).
+ * With `follow` off it reads to the end and exits.
+ */
+export function tailCommand(path: string, from: number, slim: boolean, follow = true) {
+  const tail = `tail -c +${from + 1}${follow ? ' -F' : ''} ${shq(path)} 2>/dev/null`
   if (!slim) return `exec ${tail}`
   // mawk holds back piped input until its buffer fills unless it's told the input is live
   return `if command -v awk >/dev/null 2>&1; then a=awk; case "$(awk -W version </dev/null 2>&1 | head -n 1)" in *mawk*) a="awk -W interactive";; esac; ${tail} | LC_ALL=C $a ${shq(SLIM)}; else exec ${tail}; fi`

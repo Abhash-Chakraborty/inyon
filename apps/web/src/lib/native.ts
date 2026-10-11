@@ -50,26 +50,56 @@ export function nativeTheme(theme: 'light' | 'dark') {
 
 let notifyId = 1
 /** A system notification from the phone apps (the app is in the background, its link still open). */
-export async function nativeNotify(title: string, body: string, href: string) {
+/**
+ * A notification from the phone app, with Tether's logo. `tag` names the session or machine: its
+ * next notification replaces this one, and opening it clears it.
+ */
+export async function nativeNotify(title: string, body: string, href: string, tag?: string, kind?: string) {
+  const device = plugin('TetherDevice')
+  if (device?.postNotification) {
+    try {
+      await device.postNotification({ title, body, href, tag, kind })
+      return true
+    } catch {}
+  }
   const ln = plugin('LocalNotifications')
   if (!ln) return false
   try {
     const perm = await ln.checkPermissions()
     if (perm.display !== 'granted') return false
-    await ln.schedule({ notifications: [{ id: notifyId++ % 2147483647, title, body, extra: { href } }] })
+    await ln.schedule({ notifications: [{ id: notifyId++ % 2147483647, title, body, smallIcon: 'ic_stat_tether', extra: { href } }] })
     return true
   } catch {
     return false
   }
 }
 
+/** You're looking at it now: take its notification away. */
+export function clearNativeNotification(tag: string) {
+  void Promise.resolve(plugin('TetherDevice')?.clearNotification?.({ tag })).catch(() => {})
+}
+
 export async function askNativeNotifications() {
-  const ln = plugin('LocalNotifications')
-  if (!ln) return undefined
+  const device = plugin('TetherDevice')
   try {
+    if (device?.requestNotificationPermission) return !!(await device.requestNotificationPermission()).granted
+    const ln = plugin('LocalNotifications')
+    if (!ln) return undefined
     return (await ln.requestPermissions()).display === 'granted'
   } catch {
     return false
+  }
+}
+
+/** Whether the phone app may post notifications (permission given and not turned off for Tether). */
+export async function nativeNotificationsOn(): Promise<boolean | undefined> {
+  const device = plugin('TetherDevice')
+  try {
+    if (device?.notificationsEnabled) return !!(await device.notificationsEnabled()).enabled
+    const p = await plugin('LocalNotifications')?.checkPermissions()
+    return p ? p.display === 'granted' : undefined
+  } catch {
+    return undefined
   }
 }
 

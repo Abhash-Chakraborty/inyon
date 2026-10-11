@@ -5,7 +5,7 @@ import { watchers, type Subscriber } from './claude/watcher.ts'
 import { answer, codexRewind, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
-  startUploadJanitor, taskOutput, uploadFiles, uploadUsage, writeConfig,
+  startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
 } from './features/features.ts'
 import { ensureSessions, runSetup, setKeepSession, setupReport } from './features/setup.ts'
 import { answerSignIn, readSignIn, startSignIn, stopSignIn } from './features/signin.ts'
@@ -16,6 +16,7 @@ import { nodeLinks } from './hosts/node-link.ts'
 import { listModels } from './features/models.ts'
 import { sendOnce } from './claude/send-receipts.ts'
 import { pruneChats } from './claude/chat-cache.ts'
+import { lastReply } from './claude/last-reply.ts'
 
 /**
  * Tether's API and live updates, independent of how they are served: the hub puts them behind
@@ -97,7 +98,16 @@ registry.on((e) => {
     const msg: ServerMsg = { t: 'overview', hosts: registry.overview() }
     for (const c of clients) if (c.overview) c.send(msg)
   } else if (e.type === 'notify') {
-    for (const c of clients) c.send({ t: 'notify', host: e.host, pane: e.pane, kind: e.kind, title: e.title, body: e.body, agent: e.agent as any })
+    let sent = false
+    const send = (body: string) => {
+      if (sent) return
+      sent = true
+      for (const c of clients) c.send({ t: 'notify', host: e.host, pane: e.pane, kind: e.kind, title: e.title, body, agent: e.agent as any })
+    }
+    if (e.kind !== 'done') return send(e.body)
+    // "Claude finished" says little: show the start of its reply instead, if it's quick to find
+    setTimeout(() => send(e.body), 2500)
+    lastReply(e.host, e.pane).then((reply) => send(reply || e.body), () => send(e.body))
   }
 })
 
@@ -130,7 +140,7 @@ export function clientMessage(c: Client, raw: string) {
       return watchers.peek(m.host, m.pane)?.unsubscribe(c)
     }
     case 'chat.more':
-      return watchers.peek(m.host, m.pane)?.more(c, m.before)
+      return void watchers.peek(m.host, m.pane)?.more(c, m.before)
     case 'draft':
       if (typeof m.text !== 'string' || m.text.length > 100_000 || !registry.get(m.host)) return
       // only for a chat this client watches: a bare draft must not start a watcher nobody stops
@@ -259,7 +269,13 @@ export const coreRoutes: Routes = {
       const files = form.getAll('files').filter((f) => typeof f !== 'string') as unknown as File[]
       if (!files.length) throw new HttpError(400, 'No files')
       const pane = form.get('pane')
-      return json({ files: await uploadFiles(req.params.id, typeof pane === 'string' && pane ? paneParam(pane) : undefined, files) })
+      const paneId = typeof pane === 'string' && pane ? paneParam(pane) : undefined
+      const total = form.get('total')
+      if (typeof total === 'string') {
+        const path = form.get('path')
+        return json({ files: [await uploadPiece(req.params.id, paneId, files[0], { total: Number(total), offset: Number(form.get('offset') ?? 0), path: typeof path === 'string' ? path : undefined })] })
+      }
+      return json({ files: await uploadFiles(req.params.id, paneId, files) })
     }),
   },
   '/api/hosts/:id/uploads/clean': {

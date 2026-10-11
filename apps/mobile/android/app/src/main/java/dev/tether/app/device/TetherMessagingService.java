@@ -27,7 +27,7 @@ public class TetherMessagingService extends FirebaseMessagingService {
             JSONObject o = new JSONObject(PushCrypto.decrypt(key, Push.base64(p)));
             String title = str(o, "title");
             String body = str(o, "body");
-            Notifications.push(this, title != null ? title : "Tether", body != null ? body : "", str(o, "href"), str(o, "tag"));
+            Notifications.post(this, title != null ? title : "Tether", body != null ? body : "", str(o, "href"), str(o, "tag"), str(o, "kind"));
         } catch (Exception e) {
             Log.w(TAG, "could not open a push: " + e);
         }

@@ -256,6 +256,20 @@ public class TetherDevicePlugin extends Plugin {
 
     // ---- notifications and push ------------------------------------------------------------
 
+    /** An agent or machine event, with the app's logo; the same tag replaces the last one. */
+    @PluginMethod
+    public void postNotification(final PluginCall call) {
+        Notifications.post(getContext(), call.getString("title", "Tether"), call.getString("body", ""), call.getString("href"), call.getString("tag"), call.getString("kind"));
+        call.resolve(ok());
+    }
+
+    @PluginMethod
+    public void clearNotification(final PluginCall call) {
+        String tag = call.getString("tag");
+        if (tag != null) Notifications.clear(getContext(), tag);
+        call.resolve(ok());
+    }
+
     @PluginMethod
     public void notificationsEnabled(final PluginCall call) {
         JSObject ret = new JSObject();

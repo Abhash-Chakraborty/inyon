@@ -13,7 +13,7 @@ import { OcdbCache, isOcdb, ocdbRows, ocdbSession, ocdbShape, ocdbStamp } from '
 import { shq } from '../hosts/host.ts'
 import { paneTitle, registry } from '../hosts/registry.ts'
 import { capturePanes } from '../tmux/tmux.ts'
-import { newMeta, normalize, type TranscriptMeta } from './transcript.ts'
+import { loadMeta, newMeta, normalize, saveMeta, type TranscriptMeta } from './transcript.ts'
 import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
@@ -34,6 +34,11 @@ const MIRRORS = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'opencode'
 /** a closed chat's state is kept this long, so opening it again carries on instead of re-reading */
 const PARK_MS = 30 * 60_000
 const PARKED_MAX = 6
+/** more than this to read on: catch up out of sight and show the result at once */
+const CATCHUP_BYTES = 64 * 1024
+/** a read that hasn't reached the end by then is shown as far as it got, if nothing more arrives */
+const FIRST_LINE_MS = 8000
+const QUIET_MS = 5000
 
 /** What a stopped watcher leaves behind for the next one on the same pane. */
 interface Parked {
@@ -73,6 +78,13 @@ class ChatWatcher {
   private seq = 0
   private codex = false
   private ready = false
+  /**
+   * Reading a backlog (what was said while nobody watched): updates are held back and one reset
+   * brings the result, so the chat doesn't replay hours of messages and passing states (a goal
+   * since met) don't flash by. Meanwhile new subscribers get the chat as it was before.
+   */
+  private behind?: ServerMsg
+  private history?: Promise<void>
   private pending: ChatItem[] = []
   private flushTimer?: ReturnType<typeof setTimeout>
   private screenTimer?: ReturnType<typeof setTimeout>
@@ -96,13 +108,24 @@ class ChatWatcher {
     return registry.get(this.hostId)?.host.config.kind !== 'local'
   }
 
-  /** The machine isn't answering: show the conversation as it was last saved, if it's this session. */
+  /**
+   * The saved copy of this conversation: when it says where reading stopped (and the pane still
+   * has that transcript) carry on from there. Otherwise it's only shown while the machine isn't
+   * answering, if it's this session.
+   */
   private fromCache() {
-    const rt = registry.get(this.hostId)
-    if (!rt || rt.state.status === 'online' || !this.onRemoteHost()) return
     const cached = loadChat(this.key)
     const agent = registry.findPane(this.hostId, this.paneId)?.pane.agent
     if (!cached || (agent?.sessionId && agent.sessionId !== cached.sessionId)) return
+    const at = cached.at
+    if (at && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
+      try {
+        const meta = loadMeta(at.meta)
+        return this.unpark({ at: cached.savedAt, transcript: cached.transcript, reader: new TranscriptReader(at.offset), seq: at.seq, codex: at.codex, agent: at.agent, items: cached.items, meta, info: cached.info })
+      } catch {}
+    }
+    const rt = registry.get(this.hostId)
+    if (!rt || rt.state.status === 'online' || !this.onRemoteHost()) return
     this.items = cached.items
     // without the session id the copy may be an older conversation in this pane: show what was
     // said, but not a goal or queue that may be long gone
@@ -124,16 +147,24 @@ class ChatWatcher {
   }
 
   private cacheTimer?: ReturnType<typeof setTimeout>
-  /** Keeps the saved copy of a remote conversation current (at most every 10 s). */
+  /** Keeps the saved copy of the conversation current (at most every 10 s). */
   private cacheLater() {
-    if (this.cacheTimer || !this.onRemoteHost()) return
+    if (this.cacheTimer) return
     this.cacheTimer = setTimeout(() => {
       this.cacheTimer = undefined
       if (this.stopped || !this.items.length) return
       // still loading: try again once the whole conversation is in
       if (!this.ready) return this.cacheLater()
-      saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items })
+      this.save()
     }, 10_000)
+  }
+
+  private save() {
+    if (!this.ready || !this.items.length) return
+    // the read position is saved only with the summary and messages read up to it
+    const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta) } : undefined
+    if (!at && !this.onRemoteHost()) return
+    saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items, at })
   }
 
   private emptyInfo(): ChatInfo {
@@ -143,8 +174,10 @@ class ChatWatcher {
   subscribe(s: Subscriber) {
     clearTimeout(this.idleTimer)
     this.subs.add(s)
-    if (this.ready) s.send(this.resetMsg())
+    if (this.behind) s.send(this.behind)
+    else if (this.ready) s.send(this.resetMsg())
     else s.send({ t: 'chat.info', key: this.key, info: this.info })
+    if (this.progress) s.send(this.progress)
     s.send({ t: 'chat.screen', key: this.key, screen: this.screen })
     const d = getDraft(this.key)
     if (d) s.send({ t: 'chat.draft', key: this.key, text: d.text, source: d.source, at: d.at })
@@ -317,16 +350,72 @@ class ChatWatcher {
     this.cacheLater()
   }
 
-  more(s: Subscriber, before: number) {
-    const idx = this.items.findIndex((i) => i.seq >= before)
+  async more(s: Subscriber, before: number) {
+    let idx = this.items.findIndex((i) => i.seq >= before)
+    if (idx === 0 && this.olderInFile()) {
+      await this.loadHistory()
+      idx = this.items.findIndex((i) => i.seq >= before)
+    }
     const end = idx < 0 ? this.items.length : idx
     const start = Math.max(0, end - PAGE)
-    s.send({ t: 'chat.more', key: this.key, items: this.items.slice(start, end), hasMore: start > 0 })
+    s.send({ t: 'chat.more', key: this.key, items: this.items.slice(start, end), hasMore: start > 0 || this.olderInFile() })
+  }
+
+  /** Messages before the first one held (a saved copy, or a long session trimmed) are still in the file. */
+  private olderInFile() {
+    return !!this.reader && !!this.transcript && (this.items[0]?.seq ?? 0) > 0
+  }
+
+  /**
+   * Reads the transcript from the start for the messages before the first one held. They're
+   * numbered the same way as on the first read, so they join up with the rest.
+   */
+  private loadHistory() {
+    return (this.history ??= (async () => {
+      const path = this.transcript!
+      const first = this.items[0]?.seq ?? 0
+      const host = registry.host(this.hostId)
+      const meta = newMeta()
+      const older: ChatItem[] = []
+      let seq = 0
+      const add = (e: any) => {
+        for (const d of this.codex ? normalizeCodex(e, meta) : this.agent === 'copilot' ? normalizeCopilot(e, meta) : normalize(e, meta)) {
+          if (seq >= first) return false
+          older.push({ ...d, seq: seq++ } as ChatItem)
+        }
+        return true
+      }
+      if (this.codex) for (const line of await codexHistory(host, path).catch(() => [] as string[])) try { add(JSON.parse(line)) } catch {}
+      const reader = new TranscriptReader()
+      await new Promise<void>((done) => {
+        const t = host.stream(tailCommand(path, 0, this.onRemoteHost(), false), (line) => {
+          const r = reader.line(line)
+          if (r?.entry && !add(r.entry)) {
+            t.kill()
+            done()
+          }
+        })
+        t.exited?.then(() => done())
+        setTimeout(() => (t.kill(), done()), 120_000)
+      })
+      if (this.stopped || path !== this.transcript || this.items[0]?.seq !== first) return
+      this.items.unshift(...older.slice(-Math.max(PAGE, KEEP - this.items.length)))
+    })().finally(() => (this.history = undefined)))
   }
 
   private resetMsg(): ServerMsg {
     const start = Math.max(0, this.items.length - PAGE)
-    return { t: 'chat.reset', key: this.key, info: this.info, items: this.items.slice(start), hasMore: start > 0 }
+    return { t: 'chat.reset', key: this.key, info: this.info, items: this.items.slice(start), hasMore: start > 0 || this.olderInFile() }
+  }
+
+  private progress?: Extract<ServerMsg, { t: 'chat.progress' }>
+  private progressAt = 0
+  /** How far a read that's out of sight has got (at most a few times a second). */
+  private reportProgress(done: number, total: number, force = false) {
+    if (!force && Date.now() - this.progressAt < 400) return
+    this.progressAt = Date.now()
+    this.progress = total > 0 && done < total ? { t: 'chat.progress', key: this.key, done, total } : undefined
+    this.broadcast(this.progress ?? { t: 'chat.progress', key: this.key, done: 0, total: 0 })
   }
 
   private broadcast(msg: ServerMsg) {
@@ -378,7 +467,7 @@ class ChatWatcher {
     }
     if (JSON.stringify(info) !== JSON.stringify(this.info)) {
       this.info = info
-      if (this.ready) this.broadcast({ t: 'chat.info', key: this.key, info })
+      if (this.ready && !this.behind) this.broadcast({ t: 'chat.info', key: this.key, info })
     }
   }
 
@@ -537,6 +626,7 @@ class ChatWatcher {
       this.meta = newMeta()
       this.pending = []
       this.ready = false
+      this.behind = undefined
       this.reader = undefined
     }
     if (!again) restart()
@@ -571,16 +661,27 @@ class ChatWatcher {
       }
     }
     const reader = this.reader!
-    let remaining = size - reader.offset
+    const total = size - reader.offset
+    let remaining = total
+    // a lot was said meanwhile: read it out of sight, keeping the chat as it was until it's all in
+    if (again && remaining > CATCHUP_BYTES) {
+      this.publishInfo()
+      this.behind = this.resetMsg()
+    }
+    const reading = () => !this.ready || !!this.behind
     const finishInitial = () => {
-      if (this.ready || gen !== this.generation) return
+      clearTimeout(quiet)
+      if (!reading() || gen !== this.generation) return
       if (DEBUG) console.log('[follow] ready', this.key, Math.round(performance.now() - t0), 'ms', this.items.length, 'items')
       this.ready = true
+      this.behind = undefined
+      this.progress = undefined
       this.publishInfo()
       this.broadcast(this.resetMsg())
     }
-    // If the file is empty or tail never catches up, still show what we have.
-    const fallback = this.ready ? undefined : setTimeout(finishInitial, remaining > 0 ? 8000 : 0)
+    // If the file is empty or tail never catches up, still show what we have once it goes quiet.
+    let quiet = reading() ? setTimeout(finishInitial, remaining > 0 ? FIRST_LINE_MS : 0) : undefined
+    if (reading() && remaining > 0) this.reportProgress(0, total, true)
     // a remote machine leaves out image data, which is most of a long session's file
     this.tail = host.stream(tailCommand(path, reader.offset, this.onRemoteHost()), (line) => {
       if (gen !== this.generation) return
@@ -594,13 +695,17 @@ class ChatWatcher {
         if (items.length) {
           this.items.push(...items)
           this.trim()
-          if (this.ready) this.queue(items)
+          if (!reading()) this.queue(items)
         }
       }
-      if (!this.ready && remaining <= 0) {
-        clearTimeout(fallback)
-        finishInitial()
-      } else if (this.ready) {
+      if (reading()) {
+        clearTimeout(quiet)
+        if (remaining <= 0) finishInitial()
+        else {
+          quiet = setTimeout(finishInitial, QUIET_MS)
+          this.reportProgress(total - remaining, total)
+        }
+      } else {
         this.scheduleInfo()
       }
     })
@@ -699,9 +804,7 @@ class ChatWatcher {
     this.stopped = true
     clearTimeout(this.cacheTimer)
     clearTimeout(this.retryTimer)
-    if (this.ready && this.items.length && this.onRemoteHost() && registry.get(this.hostId)?.state.status === 'online') {
-      saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, info: this.info, items: this.items })
-    }
+    if (registry.get(this.hostId)?.state.status === 'online') this.save()
     this.tail?.kill()
     clearTimeout(this.screenTimer)
     clearTimeout(this.flushTimer)

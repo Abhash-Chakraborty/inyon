@@ -42,6 +42,31 @@ export const newMeta = (): TranscriptMeta => ({
   tools: new Map(),
 })
 
+/** A summary as JSON, to save with a conversation's cached copy (the recent tool calls only). */
+export type SavedMeta = Omit<TranscriptMeta, 'tasks' | 'subagents' | 'artifacts' | 'tools'> & {
+  tasks: [string, BackgroundTask][]
+  subagents: [string, SubagentInfo][]
+  artifacts: [string, ArtifactInfo][]
+  tools: [string, { name: string; input: any }][]
+}
+
+export const saveMeta = (m: TranscriptMeta): SavedMeta => ({
+  ...m,
+  tasks: [...m.tasks],
+  subagents: [...m.subagents],
+  artifacts: [...m.artifacts],
+  // a tool's result follows its call closely, so only the latest calls can still be answered
+  tools: [...m.tools].slice(-200),
+})
+
+export const loadMeta = (s: SavedMeta): TranscriptMeta => ({
+  ...s,
+  tasks: new Map(s.tasks),
+  subagents: new Map(s.subagents),
+  artifacts: new Map(s.artifacts),
+  tools: new Map(s.tools),
+})
+
 /** Strips huge strings from tool inputs (e.g. Write content) while keeping structure. */
 function trimInput(v: any, depth = 0): any {
   if (typeof v === 'string') return v.length > MAX_TOOL_INPUT_STRING ? v.slice(0, MAX_TOOL_INPUT_STRING) + '\n…' : v

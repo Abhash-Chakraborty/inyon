@@ -11,6 +11,7 @@ import { watchers } from './watcher.ts'
 const dir = mkdtempSync(join(tmpdir(), 'tether-tail-'))
 afterAll(() => {
   watchers.stop('tail-test:%1')
+  watchers.stop('tail-test:%2')
   rmSync(dir, { recursive: true, force: true })
 })
 
@@ -150,3 +151,78 @@ test('a dropped connection carries on from where it stopped instead of reading i
   expect(again.items.filter((i) => i.kind === 'user').map(first)).toEqual(['fresh'])
   watchers.stop(again.key)
 }, 30_000)
+
+test('a long backlog is read out of sight and shown at once; the saved place survives a restart', async () => {
+  const file = join(dir, 'away.jsonl')
+  const goal = (condition: string, met: boolean) =>
+    JSON.stringify({ type: 'attachment', uuid: `g${++n}`, timestamp: new Date(1_800_000_000_000 + n * 1000).toISOString(), attachment: { type: 'goal_status', condition, met } }) + '\n'
+  writeFileSync(file, Array.from({ length: 30 }, (_, i) => user(`m${i}`)).join(''))
+  const pane = { id: '%2', title: 'claude', agent: { kind: 'claude', transcriptPath: file, sessionId: 's2' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(new Host({ ...config, kind: 'local' } as any))
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const streams = spyOn(Host.prototype, 'stream')
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const users = (m: any) => m.items.filter((i: any) => i.kind === 'user').map((i: any) => i.text)
+
+  const w = watchers.get('tail-test', '%2')
+  w.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+
+  // hours of work while away, with a goal set and met on the way
+  ;(w as any).tail.kill()
+  await until(() => (w as any).tailLost)
+  const backlog = [goal('ship it', false), ...Array.from({ length: 300 }, (_, i) => user(`away ${i} ${'x'.repeat(300)}`)), goal('ship it', true)]
+  appendFileSync(file, backlog.join(''))
+  got.length = 0
+  w.sync()
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  await Bun.sleep(300)
+  // nothing replayed message by message, and no passing state (the active goal) was ever shown
+  expect(got.filter((m) => m.t === 'chat.append')).toHaveLength(0)
+  expect(got.some((m) => m.t === 'chat.info' && m.info.goal && !m.info.goal.met)).toBe(false)
+  expect(got.some((m) => m.t === 'chat.progress')).toBe(true)
+  const reset = got.find((m) => m.t === 'chat.reset') as Extract<ServerMsg, { t: 'chat.reset' }>
+  expect(reset.info.goal?.met).toBe(true)
+  expect(users(reset).at(-1)).toStartWith('away 299')
+
+  // a small catch-up still streams in as it's read
+  ;(w as any).tail.kill()
+  await until(() => (w as any).tailLost)
+  appendFileSync(file, user('just one'))
+  got.length = 0
+  w.sync()
+  await until(() => got.some((m) => m.t === 'chat.append' && users(m).includes('just one')))
+  expect(got.filter((m) => m.t === 'chat.reset')).toHaveLength(0)
+
+  // the app restarts (or comes back hours later): its saved copy says where reading stopped
+  const all = w.items.map((i) => [i.seq, i.uuid])
+  watchers.stop(w.key)
+  ;(watchers as any).parked.clear()
+  appendFileSync(file, user('after the restart'))
+  got.length = 0
+  const fresh = watchers.get('tail-test', '%2')
+  fresh.subscribe(sub)
+  const first = got.find((m) => m.t === 'chat.reset') as Extract<ServerMsg, { t: 'chat.reset' }>
+  expect(users(first).at(-1)).toBe('just one')
+  expect(first.hasMore).toBe(true)
+  await until(() => got.some((m) => m.t === 'chat.append' && users(m).includes('after the restart')))
+  expect(String(streams.mock.calls.at(-1)![0])).not.toContain('tail -c +1 ')
+  expect(fresh.items.length).toBeLessThan(all.length)
+
+  // earlier messages than the saved copy holds come from the file, numbered as before
+  for (let more: any; (more = got.findLast((m) => m.t === 'chat.more')), !more || more.hasMore; ) {
+    const n0 = got.length
+    await fresh.more(sub, fresh.items[0].seq)
+    expect(got.length).toBe(n0 + 1)
+  }
+  expect(fresh.items.map((i) => [i.seq, i.uuid])).toEqual([...all, ...fresh.items.slice(all.length).map((i) => [i.seq, i.uuid])])
+  expect(fresh.items[0].seq).toBe(0)
+  watchers.stop(fresh.key)
+}, 60_000)

@@ -9,7 +9,7 @@ import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine } from '../components/ui/status.tsx'
-import { askNativeNotifications, isNative, plugin } from '../lib/native.ts'
+import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { batteryUnrestricted, keepAliveSupported, keepAliveWanted, openBatterySettings, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { authorizeCommand } from '../lib/phone.ts'
@@ -122,10 +122,24 @@ export function Settings() {
   const native = isNative()
   const [perm, setPerm] = useState<string>(native ? 'default' : typeof Notification !== 'undefined' ? Notification.permission : 'unsupported')
   useEffect(() => {
-    if (native) plugin('LocalNotifications')?.checkPermissions().then((p: { display: string }) => setPerm(p.display === 'granted' ? 'granted' : p.display === 'denied' ? 'denied' : 'default')).catch(() => {})
+    if (native) void nativeNotificationsOn().then((on) => on !== undefined && setPerm(on ? 'granted' : 'default'))
   }, [native])
   const secure = native || window.isSecureContext
   const allow = () => (native ? askNativeNotifications().then((ok) => setPerm(ok ? 'granted' : 'denied')) : Notification.requestPermission().then(setPerm))
+  /** Shows what a notification looks like here, so you know they get through. */
+  const testNotification = async () => {
+    const title = 'Tether'
+    const body = 'Notifications work. You\u2019ll get one when an agent finishes or needs you.'
+    if (native ? await nativeNotify(title, body, '/settings#notifications', 'test', 'done') : (() => {
+      try {
+        new Notification(title, { body, tag: 'test', icon: '/icon-192.png', badge: '/badge-96.png' })
+        return true
+      } catch {
+        return false
+      }
+    })()) toast({ title: 'Test notification sent', tone: 'success' })
+    else toast({ title: "Couldn't show a notification", body: 'Check that notifications are allowed for Tether in your settings.', tone: 'error' })
+  }
 
   useEffect(() => {
     api.settings().then(setHub).catch(() => {})
@@ -268,6 +282,11 @@ export function Settings() {
               {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
                 <button type="button" onClick={allow} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
                   Allow
+                </button>
+              )}
+              {perm === 'granted' && (
+                <button type="button" onClick={testNotification} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+                  Send a test
                 </button>
               )}
             </Row>

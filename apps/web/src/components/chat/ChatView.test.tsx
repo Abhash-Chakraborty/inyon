@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, spyOn, test } from 'bun:test'
 import { act, render, screen } from '@testing-library/react'
 import type { ChatItem, SendState } from '@tether/protocol'
 import { ChatView } from './ChatView.tsx'
@@ -116,5 +116,52 @@ describe('ChatView', () => {
     expect(screen.getByText('New conversation')).toBeTruthy()
     load([], chatInfo({ running: false }))
     expect(screen.getByText('No agent is running in this pane')).toBeTruthy()
+  })
+
+  test('catching up shows a quiet progress line, and the result lands in one go', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    render(view())
+    load([item.user('before you left')])
+    act(() => {
+      emit({ t: 'chat.progress', key: 'box:%1', done: 40, total: 100 })
+      emit({ t: 'chat.screen', key: 'box:%1', screen: { working: true, width: 80, activity: 'Pondering…' } })
+    })
+    expect(screen.getByRole('status').textContent).toContain('Catching up on what you missed')
+    expect(screen.getByRole('status').textContent).toContain('40%')
+    expect(screen.queryByText('Pondering…')).toBeNull()
+    load([item.user('before you left'), item.text('done while you were away')])
+    await flush()
+    expect(screen.queryByText(/Catching up/)).toBeNull()
+    expect(screen.getByText('done while you were away')).toBeTruthy()
+  })
+
+  test('coming back after a while jumps to the latest message', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    const { container } = render(view())
+    load(longConversation(5))
+    await flush()
+    const scroller = container.querySelector('.overflow-y-auto') as HTMLElement
+    const to = spyOn(scroller, 'scrollTo')
+    // reading back stops following
+    scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }))
+    const hidden = (v: boolean) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => v })
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    const now = spyOn(Date, 'now')
+    const t = Date.now()
+    now.mockReturnValue(t)
+    hidden(true)
+    now.mockReturnValue(t + 60_000)
+    hidden(false)
+    await new Promise((r) => requestAnimationFrame(r))
+    expect(to).not.toHaveBeenCalled()
+    hidden(true)
+    now.mockReturnValue(t + 60_000 + 3 * 3600_000)
+    hidden(false)
+    await new Promise((r) => requestAnimationFrame(r))
+    expect(to).toHaveBeenCalled()
+    now.mockRestore()
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
   })
 })

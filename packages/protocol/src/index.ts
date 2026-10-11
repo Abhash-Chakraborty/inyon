@@ -365,6 +365,11 @@ export type ServerMsg =
   | { t: 'chat.more'; key: string; items: ChatItem[]; hasMore: boolean }
   | { t: 'chat.info'; key: string; info: ChatInfo }
   | { t: 'chat.screen'; key: string; screen: ScreenState }
+  /**
+   * Reading what was said while nobody was watching (bytes of the transcript read so far, of how
+   * many). The chat shows what it had until a chat.reset brings everything at once.
+   */
+  | { t: 'chat.progress'; key: string; done: number; total: number }
   /** the unsent message for a pane, shared by the app (every device) and the terminal's input box */
   | { t: 'chat.draft'; key: string; text: string; source: 'app' | 'terminal'; at: number }
   | { t: 'term.data'; id: string; d: string }

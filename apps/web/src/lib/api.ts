@@ -172,15 +172,9 @@ export const api = {
     const form = new FormData()
     form.append('files', file, file.name)
     if (pane) form.append('pane', paneSlug(pane))
-    // in the phone app the file goes over SSH from here; the core reports when it's all there
-    if (isPhone()) {
-      return send(new Request(new URL(`${h(host)}/uploads`, location.href), { method: 'POST', body: form })).then(async (res) => {
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok || !data.files?.[0]) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`)
-        onProgress?.(1)
-        return data.files[0] as Uploaded
-      })
-    }
+    // in the phone app the file goes over SSH from here, a piece at a time: a whole video at once
+    // runs the app out of memory
+    if (isPhone()) return uploadInPieces(host, pane, file, onProgress)
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `${h(host)}/uploads`)
@@ -197,4 +191,24 @@ export const api = {
       xhr.send(form)
     })
   },
+}
+
+export const UPLOAD_PIECE = 2 * 1024 * 1024
+
+async function uploadInPieces(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {
+  let saved: Uploaded | undefined
+  for (let at = 0; at < file.size || at === 0; at += UPLOAD_PIECE) {
+    const form = new FormData()
+    form.append('files', new File([file.slice(at, at + UPLOAD_PIECE)], file.name, { type: file.type }), file.name)
+    if (pane) form.append('pane', paneSlug(pane))
+    form.append('total', String(file.size))
+    form.append('offset', String(at))
+    if (saved) form.append('path', saved.path)
+    const res = await send(new Request(new URL(`${h(host)}/uploads`, location.href), { method: 'POST', body: form }))
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.files?.[0]) throw new ApiError(res.status, data.error ?? `Upload failed (${res.status})`)
+    saved = data.files[0] as Uploaded
+    onProgress?.(file.size ? Math.min(1, (at + UPLOAD_PIECE) / file.size) : 1)
+  }
+  return saved!
 }

@@ -13,6 +13,8 @@ export interface ChatState {
   hasMore: boolean
   loaded: boolean
   screen?: ScreenState
+  /** catching up on what was said while away, as a fraction read; cleared by the next reset */
+  catchingUp?: number
   /** sent from this device, not yet seen in the transcript */
   pending: PendingMessage[]
   /** the unsent message, shared with other devices and the terminal's input box */
@@ -104,7 +106,8 @@ export const useStore = create<Store>((set, get) => ({
   setAuthed: (authed) => set({ authed }),
   toast: (t) => {
     const id = ++toastId
-    set({ toasts: [...get().toasts.slice(-3), { ...t, id }] })
+    // one per session: a newer notice about the same conversation replaces the older one
+    set({ toasts: [...get().toasts.filter((x) => !t.href || x.href !== t.href).slice(-2), { ...t, id }] })
     setTimeout(() => get().dismiss(id), t.tone === 'error' ? 6000 : 4500)
   },
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
@@ -157,8 +160,11 @@ function onMessage(m: ServerMsg) {
         const head = m.items[0]
         const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
         const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
-        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, pending: settle(c.pending, m.items, m.info.sends) }
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends) }
       })
+      break
+    case 'chat.progress':
+      patchChat(m.key, () => ({ catchingUp: m.total > 0 ? Math.min(1, m.done / m.total) : undefined }))
       break
     case 'chat.append':
       patchChat(m.key, (c) => {
@@ -188,6 +194,9 @@ function onMessage(m: ServerMsg) {
   }
 }
 
+/** One notification per session (or machine): the next one replaces it, opening it clears it. */
+export const notifyTag = (host: string, pane?: string) => (pane ? `${host}:${pane}` : `machine:${host}`)
+
 function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   const { settings } = useStore.getState()
   const machine = m.kind === 'offline' || m.kind === 'online'
@@ -203,13 +212,14 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
     toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
     if (m.kind === 'waiting' || m.kind === 'offline') haptic('warning')
   }
+  const tag = notifyTag(m.host, machine ? undefined : m.pane)
   if (document.visibilityState === 'hidden' && isNative()) {
-    void nativeNotify(m.title, m.body, href)
+    void nativeNotify(m.title, m.body, href, tag, m.kind)
     return
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
     try {
-      const n = new Notification(m.title, { body: m.body, tag: `${m.host}:${m.pane}`, icon: m.agent ? `/agents/${m.agent}.svg` : '/icon-192.png' })
+      const n = new Notification(m.title, { body: m.body, tag, icon: '/icon-192.png', badge: '/badge-96.png' })
       n.onclick = () => {
         window.focus()
         window.history.pushState({}, '', href)

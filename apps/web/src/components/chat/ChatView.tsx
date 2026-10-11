@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind } from '@tether/protocol'
 import { socket } from '../../lib/socket.ts'
-import { msgKey, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
+import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
+import { clearNativeNotification } from '../../lib/native.ts'
 import { othersSends, settle as settleSends } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
@@ -16,6 +17,8 @@ import { Composer } from './Composer.tsx'
 import { backgroundText } from '../ui/status.tsx'
 
 const NO_AGENTS: AgentKind[] = []
+/** away longer than this, coming back jumps to the latest message */
+const AWAY_MS = 5 * 60_000
 const NO_QUEUE: string[] = []
 const NO_PENDING: PendingMessage[] = []
 
@@ -133,6 +136,24 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
     requestAnimationFrame(() => toBottom())
   }, [key, chat?.loaded])
 
+  // back after a while (the phone in a pocket, another tab): show the latest, not where you left off.
+  // This session's notification is read now, too.
+  useEffect(() => {
+    if (!document.hidden) clearNativeNotification(notifyTag(host, pane))
+    let hiddenAt = document.hidden ? Date.now() : 0
+    const onVisible = () => {
+      if (document.hidden) return void (hiddenAt = Date.now())
+      clearNativeNotification(notifyTag(host, pane))
+      if (hiddenAt && Date.now() - hiddenAt > AWAY_MS) {
+        stick.current = true
+        requestAnimationFrame(() => toBottom())
+      }
+      hiddenAt = 0
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [host, pane])
+
   // images, highlighted code and opened tool rows change heights after render
   useEffect(() => {
     const el = scroller.current
@@ -229,6 +250,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                   {[60, 90, 75].map((w, i) => (
                     <div key={i} className="skeleton h-4 rounded" style={{ width: `${w}%` }} />
                   ))}
+                  {chat?.catchingUp !== undefined && <Reading label="Loading the conversation" done={chat.catchingUp} />}
                 </div>
               ) : !running && !rows.length ? (
                 <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
@@ -271,7 +293,8 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                     {queue.map((q, i) => (
                       <QueuedBubble key={`${i}:${q}`} text={q} agent={agent} />
                     ))}
-                    {working && !prompt && (
+                    {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}
+                    {working && !prompt && chat.catchingUp === undefined && (
                       <div className={lastOpen ? '-mt-3' : ''}>
                         <WorkingIndicator activity={screen?.activity} />
                       </div>
@@ -378,6 +401,17 @@ function NotRunning({
         </Button>
       </div>
       {!kinds.length && <Play className="hidden" />}
+    </div>
+  )
+}
+
+/** A read the hub is doing out of sight; the chat updates all at once when it's done. */
+function Reading({ label, done }: { label: string; done: number }) {
+  return (
+    <div className="flex items-center gap-3 py-1 text-[13px] text-fg-3" role="status">
+      <Spinner className="size-3.5" />
+      <span>{label}…</span>
+      <span className="tabular-nums">{Math.round(done * 100)}%</span>
     </div>
   )
 }

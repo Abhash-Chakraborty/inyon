@@ -1,6 +1,7 @@
 import { describe, expect, setSystemTime, test, afterEach } from 'bun:test'
 import type { ChatItem } from '@tether/protocol'
-import { patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
+import { notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
+import { clearNativeNotification } from './native.ts'
 import { emit } from '../test/fakes.ts'
 import { chatInfo, host, item } from '../test/fixtures.ts'
 
@@ -133,12 +134,15 @@ describe('pending messages', () => {
 })
 
 describe('toasts and settings', () => {
-  test('at most four toasts at a time, newest last', () => {
+  test('at most three toasts at a time, newest last; one per conversation', () => {
     const { toast } = useStore.getState()
-    for (const n of [1, 2, 3, 4, 5]) toast({ title: `t${n}`, tone: 'info' })
-    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['t2', 't3', 't4', 't5'])
+    for (const n of [1, 2, 3, 4]) toast({ title: `t${n}`, tone: 'info' })
+    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['t2', 't3', 't4'])
     useStore.getState().dismiss(useStore.getState().toasts[0].id)
-    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['t3', 't4', 't5'])
+    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['t3', 't4'])
+    toast({ title: 'working', tone: 'info', href: '/m/box/p/1' })
+    toast({ title: 'finished', tone: 'success', href: '/m/box/p/1' })
+    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['t3', 't4', 'finished'])
   })
 
   test('settings merge and persist', () => {
@@ -185,5 +189,30 @@ describe('notify', () => {
     const titles = useStore.getState().activity.map((a) => a.title)
     expect(titles).toHaveLength(30)
     expect(titles[0]).toBe('n34')
+  })
+
+  test("in the phone app's background: one native notification per session, with the logo, cleared on opening", async () => {
+    const posted: any[] = []
+    const cleared: string[] = []
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: { TetherDevice: { postNotification: async (o: any) => void posted.push(o), clearNotification: async (o: any) => void cleared.push(o.tag) } },
+    }
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    try {
+      note('waiting')
+      emit({ t: 'notify', host: 'box', pane: '', kind: 'offline', title: 'box is offline', body: 'b' })
+      await Promise.resolve()
+      expect(posted).toEqual([
+        { title: 'Claude needs you', body: 'b', href: '/m/box/p/3', tag: 'box:%3', kind: 'waiting' },
+        { title: 'box is offline', body: 'b', href: '/machines/box', tag: 'machine:box', kind: 'offline' },
+      ])
+      clearNativeNotification(notifyTag('box', '%3'))
+      expect(cleared).toEqual(['box:%3'])
+    } finally {
+      delete (window as any).Capacitor
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
   })
 })

@@ -1,12 +1,14 @@
-import type { ChatInfo, ChatItem } from '@tether/protocol'
+import type { AgentKind, ChatInfo, ChatItem } from '@tether/protocol'
 import { keyPart, kv } from '../platform/store.ts'
+import type { SavedMeta } from './transcript.ts'
 
 /**
- * The latest part of each conversation on a remote machine, kept on the hub's disk, so a
- * session on a machine that dropped off (NetBird or Tailscale down, laptop asleep) can still be
- * read. It's replaced by the live transcript as soon as the machine answers again.
+ * The latest part of each conversation, kept on the hub's disk (in the phone app, its storage).
+ * Opening the chat again shows it at once and reads on from where it stopped, so a long session
+ * isn't read from the start after hours away or after the app was closed. A session on a machine
+ * that dropped off (NetBird or Tailscale down, laptop asleep) can still be read meanwhile.
  */
-const KEEP = 200
+const KEEP = 300
 const storeKey = (key: string) => `chats/${keyPart(key)}`
 
 export interface CachedChat {
@@ -15,6 +17,8 @@ export interface CachedChat {
   info: ChatInfo
   items: ChatItem[]
   savedAt: number
+  /** where reading the transcript stopped, with the summary built up to there */
+  at?: { offset: number; seq: number; codex: boolean; agent?: AgentKind; meta: SavedMeta }
 }
 
 export function loadChat(key: string): CachedChat | undefined {

@@ -33,25 +33,64 @@ export interface Uploaded {
   type: string
 }
 
+/** Where a new upload goes: ~/.tether/uploads/<date>/<session>/<time>-<name> on the pane's machine. */
+function uploadPath(home: string, hostId: string, paneId: string | undefined, name: string) {
+  const pane = paneId ? registry.findPane(hostId, paneId)?.pane : undefined
+  const bucket = (pane?.agent?.sessionId ?? paneId?.replace('%', 'pane-') ?? 'misc').slice(0, 12)
+  const day = new Date().toISOString().slice(0, 10)
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
+  return `${home}/.tether/uploads/${day}/${bucket}/${stamp}-${safeName(name)}`
+}
+
+/**
+ * Sends a file a few megabytes at a time, so a video never sits in memory whole or crosses the
+ * phone's SSH plugin (or a paired link) as one enormous message. `from` is where in the file
+ * `data` starts; each later piece is added only if the file has exactly the bytes before it.
+ */
+const PIECE = 2 * 1024 * 1024
+// (Bun's File has slice(); the File type the hub is checked against doesn't say so)
+type Piece = { size: number; slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> } }
+async function writeUpload(host: ReturnType<typeof hostAndHome>['host'], path: string, file: File, from = 0) {
+  const data = file as unknown as Piece
+  const dir = path.slice(0, path.lastIndexOf('/'))
+  for (let at = 0; at < data.size || at === 0; at += PIECE) {
+    const input = new Uint8Array(await data.slice(at, at + PIECE).arrayBuffer())
+    // private to your user on shared machines
+    const cmd = from + at === 0
+      ? `umask 077; mkdir -p ${shq(dir)} && cat > ${shq(path)}`
+      : `[ "$(wc -c < ${shq(path)} | tr -d ' ')" = ${from + at} ] && cat >> ${shq(path)}`
+    const r = await host.exec(cmd, { input, timeoutMs: 120000 })
+    if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not save ${path.slice(path.lastIndexOf('/') + 1)}`)
+  }
+}
+
 /** Copies files into ~/.tether/uploads/<date>/<session>/ on the pane's machine. */
 export async function uploadFiles(hostId: string, paneId: string | undefined, files: File[]): Promise<Uploaded[]> {
   const { host, home } = hostAndHome(hostId)
   const { maxMB } = loadSettings().uploads
-  const pane = paneId ? registry.findPane(hostId, paneId)?.pane : undefined
-  const bucket = (pane?.agent?.sessionId ?? paneId?.replace('%', 'pane-') ?? 'misc').slice(0, 12)
-  const day = new Date().toISOString().slice(0, 10)
-  const dir = `${home}/.tether/uploads/${day}/${bucket}`
   const out: Uploaded[] = []
   for (const f of files) {
     if (f.size > maxMB * 1024 * 1024) throw new HttpError(413, `${f.name} is larger than ${maxMB} MB`)
-    const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
-    const path = `${dir}/${stamp}-${safeName(f.name)}`
-    // private to your user on shared machines
-    const r = await host.exec(`umask 077; mkdir -p ${shq(dir)} && cat > ${shq(path)}`, { input: new Uint8Array(await f.arrayBuffer()), timeoutMs: 120000 })
-    if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not save ${f.name}`)
+    const path = uploadPath(home, hostId, paneId, f.name)
+    await writeUpload(host, path, f)
     out.push({ name: f.name, path, size: f.size, type: f.type })
   }
   return out
+}
+
+/**
+ * One piece of a file the app sends in pieces (the phone app does, so it can show progress and
+ * never holds a whole video). The first piece picks the path; the app sends it back with the rest.
+ */
+export async function uploadPiece(hostId: string, paneId: string | undefined, piece: File, o: { total: number; offset: number; path?: string }): Promise<Uploaded> {
+  const { host, home } = hostAndHome(hostId)
+  const { maxMB } = loadSettings().uploads
+  if (!(o.total >= 0) || !(o.offset >= 0) || o.offset + piece.size > o.total) throw new HttpError(400, 'Bad upload piece')
+  if (o.total > maxMB * 1024 * 1024) throw new HttpError(413, `${piece.name} is larger than ${maxMB} MB`)
+  const path = o.offset ? o.path : uploadPath(home, hostId, paneId, piece.name)
+  if (!path || !path.startsWith(`${home}/.tether/uploads/`) || /\/\.\.?(\/|$)|[\n\0]/.test(path)) throw new HttpError(400, 'Bad upload path')
+  await writeUpload(host, path, piece, o.offset)
+  return { name: piece.name, path, size: o.total, type: piece.type }
 }
 
 export async function uploadUsage(hostId: string) {
