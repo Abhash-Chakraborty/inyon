@@ -717,6 +717,11 @@ function parseCodexMenu(lines: string[]): ScreenPrompt | undefined {
       if (/^• (Running|Ran) /.test(l)) body.unshift(l.replace(/^• /, '').trim())
       break
     }
+    // a dialog on a fresh screen sits under Codex's banner (">_ OpenAI Codex (v…)" and the folder)
+    if (/^\s*>_ OpenAI Codex\b/.test(l)) {
+      body.splice(0, body.length && /^[~/]/.test(body[0]) ? 1 : 0)
+      break
+    }
     if (l.trim()) body.unshift(l.trim())
   }
   return { body, options, footer: tail[navAt].trim(), multi: false, navigate: true }

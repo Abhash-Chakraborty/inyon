@@ -81,6 +81,7 @@ export interface ProbeResult {
   agyTitles: Map<string, string>
   /** whether Tether's status line is in Antigravity CLI's settings (undefined when agy isn't installed) */
   agyIntegration?: 'installed' | 'missing'
+  codexIntegration?: 'installed' | 'missing'
 }
 
 const BINS = [...new Set(AGENT_KINDS.flatMap((k) => AGENTS[k].comm))]
@@ -143,6 +144,7 @@ done
 for f in "$HOME"/.tether/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
   if grep -q 'tether/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && grep -q '${MARKER}' "$HOME/.tether/agy-statusline.sh" 2>/dev/null; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+if grep -q 'tether/hook.sh' "$HOME/.codex/hooks.json" 2>/dev/null; then echo "@@CODEXINT installed"; else echo "@@CODEXINT missing"; fi
 fi
 echo "@@HOOK"
 t="$HOME/.tether"
@@ -205,6 +207,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
     else if (line.startsWith('@@AUTH')) res.signedIn = AGENT_KINDS.filter((k) => line.slice(6).trim().split(/\s+/).includes(k))
     else if (line.startsWith('@@ACCOUNT ')) res.account = line.slice(10).trim() === '-' ? undefined : line.slice(10).trim()
     else if (line.startsWith('@@AGYINT ')) res.agyIntegration = line.slice(9).trim() === 'installed' ? 'installed' : 'missing'
+    else if (line.startsWith('@@CODEXINT ')) res.codexIntegration = line.slice(11).trim() === 'installed' ? 'installed' : 'missing'
     else if (line === '@@NOSERVER') res.tmux = 'no-server'
     else if (line === '@@NOTMUX') res.tmux = 'missing'
     else if (/^@@[A-Z]+$/.test(line)) {

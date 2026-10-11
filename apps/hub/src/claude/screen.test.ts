@@ -522,3 +522,14 @@ test('Codex shell composer keeps the exclamation command prefix', () => {
   expect(s.inputVisible).toBe(true)
   expect(s.draft).toBe('! printf hello')
 })
+
+test("Codex's question to trust new hooks is buttons, without its banner", () => {
+  const s = parseScreen([
+    '  >_ OpenAI Codex (v0.162.1)', '     ~/development/custom-tmux', '',
+    '  Hooks need review', '  2 hooks are new or changed.', '  Hooks can run outside the sandbox after you trust them.', '',
+    '› 1. Review hooks', '  2. Trust all and continue', "  3. Continue without trusting (hooks won't run)", '',
+    '  enter confirm · esc skip',
+  ], 120, 'codex')
+  expect(s.prompt?.body).toEqual(['Hooks need review', '2 hooks are new or changed.', 'Hooks can run outside the sandbox after you trust them.'])
+  expect(s.prompt?.options.map((o) => o.label)).toEqual(['Review hooks', 'Trust all and continue', "Continue without trusting (hooks won't run)"])
+})
