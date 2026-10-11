@@ -34,7 +34,9 @@ export function processBackend(controlDir: string): HostBackend {
     async exec(config, cmd, opts) {
       // its own process group, so a timeout kills the whole pipeline: killing only /bin/sh leaves
       // children holding the output open, the call never returns and the host stops being polled
+      // env passed explicitly: Bun.spawn otherwise ignores changes made to process.env after startup
       const proc = Bun.spawn(argv(config, cmd), {
+        env: process.env,
         stdin: opts.input === undefined ? 'ignore' : typeof opts.input === 'string' ? new TextEncoder().encode(opts.input) : opts.input,
         stdout: 'pipe',
         stderr: 'pipe',
@@ -60,7 +62,7 @@ export function processBackend(controlDir: string): HostBackend {
     stream(config, cmd, onLine, opts) {
       // control-mode tmux exits when stdin closes, so it gets a pipe we never write to
       // its own process group, so stopping it also stops the rest of a pipeline (tail | awk)
-      const proc = Bun.spawn(argv(config, cmd), { stdin: opts.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore', detached: true })
+      const proc = Bun.spawn(argv(config, cmd), { env: process.env, stdin: opts.keepStdin ? 'pipe' : 'ignore', stdout: 'pipe', stderr: 'ignore', detached: true })
       ;(async () => {
         // split on newlines without re-copying the buffer per line (transcripts can hold MB-sized lines)
         const decoder = new TextDecoder()

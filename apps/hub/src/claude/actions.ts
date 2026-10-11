@@ -953,6 +953,40 @@ export interface LaunchOpts {
 }
 
 /** New tmux window (in an existing or new session) at `cwd`, optionally starting an agent. */
+/** zsh's first-run questions in a home with no ~/.zshrc; "q" leaves it for next time and changes nothing */
+export const ZSH_NEWUSER = /zsh-newuser-install|Type one of the keys in parentheses/
+
+/**
+ * Waits for a new pane's shell to show its prompt before typing a command into it: a slow
+ * startup (oh-my-zsh, nvm) or a question the shell asks first would otherwise take the keys.
+ */
+export async function shellReady(host: ReturnType<typeof registry.host>, paneId: string, ms = 8000) {
+  const end = Date.now() + ms
+  let last = ''
+  let stableSince = Date.now()
+  let skipped = false
+  await sleep(150)
+  while (Date.now() < end) {
+    const lines = (await capturePanes(host, [paneId]).catch(() => new Map<string, string[]>())).get(paneId) ?? []
+    const text = lines.join('\n').replace(/\x1b\[[0-9;]*m/g, '')
+    // the question stays on screen after it's answered, so press q once and wait for the prompt below it
+    if (!skipped && ZSH_NEWUSER.test(text)) {
+      skipped = true
+      await sendKeys(host, paneId, ['q'])
+      await sleep(300)
+      continue
+    }
+    const tail = text.trimEnd().split('\n').at(-1) ?? ''
+    // a prompt ends in one of these, usually with a space after it
+    if (/[$%#>❯➜»]\s*$/.test(tail)) return
+    if (text !== last) {
+      last = text
+      stableSince = Date.now()
+    } else if (text.trim() && Date.now() - stableSince > 800) return
+    await sleep(150)
+  }
+}
+
 export async function launch(hostId: string, opts: LaunchOpts) {
   const host = registry.host(hostId)
   const agent = opts.agent && opts.agent !== 'shell' ? opts.agent : undefined
@@ -988,7 +1022,7 @@ export async function launch(hostId: string, opts: LaunchOpts) {
       parts.push(agent === 'antigravity' || agent === 'copilot' || agent === 'gemini' ? `-i ${text}` : agent === 'opencode' ? `--prompt ${text}` : text)
     }
     parts[0] = withBin(parts[0], await launchBin(host, agent))
-    await sleep(300)
+    await shellReady(host, paneId)
     await typeText(host, paneId, parts.join(' '), true)
   }
   registry.refresh(hostId, agent ? 1500 : 100)
