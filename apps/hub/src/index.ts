@@ -203,12 +203,12 @@ const server = Bun.serve<SocketData>({
         const b = await body<{ name?: string; origin?: string }>(req)
         const name = String(b.name ?? '').trim() || 'Laptop'
         const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'node'
-        let unique = id
-        for (let i = 2; registry.get(unique); i++) unique = `${id}-${i}`
         const hub = pairOrigin(req, b.origin)
         const token = crypto.randomBytes(32).toString('base64url')
+        const commands = await pairCommands(hub, token)
+        let unique = id
+        for (let i = 2; registry.get(unique); i++) unique = `${id}-${i}`
         registry.add({ id: unique, name, kind: 'node', tokenHash: sha256(token) })
-        const commands = pairCommands(hub, token)
         return json({ id: unique, token, command: commands.unix, commands })
       }),
     },
@@ -220,8 +220,8 @@ const server = Bun.serve<SocketData>({
         if (rt.state.status === 'online') throw new HttpError(409, 'This machine is connected; remove it first to pair it again')
         const hub = pairOrigin(req, (await body<{ origin?: string }>(req)).origin)
         const token = crypto.randomBytes(32).toString('base64url')
+        const commands = await pairCommands(hub, token)
         registry.setNodeToken(req.params.id, sha256(token))
-        const commands = pairCommands(hub, token)
         return json({ id: req.params.id, token, command: commands.unix, commands })
       }),
     },

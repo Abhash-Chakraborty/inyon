@@ -5,6 +5,7 @@ import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
+import { unixPairCommand } from './pair-command.ts'
 
 /**
  * What a machine downloads to become a tether-node: the script (one file, Windows prelude inlined)
@@ -151,10 +152,11 @@ export const nodeRoutes = {
   '/node/busybox.exe': route(async (req) => binary(await busybox(archOf(new URL(req.url))), 'busybox.exe')),
 }
 
-/** The one-liners the "Add machine" sheet shows. */
-export function pairCommands(hub: string, token: string) {
+/** The one-liners the "Add machine" sheet shows (the Unix one checks what it downloads, see pair-command.ts). */
+export async function pairCommands(hub: string, token: string) {
+  const installSh = crypto.createHash('sha256').update(fs.readFileSync(path.join(NODE_DIR, 'install.sh'))).digest('hex')
   return {
-    unix: `curl -fsSL ${hub}/node/install.sh | sh -s -- ${hub} ${token}`,
+    unix: unixPairCommand(hub, token, installSh, await sha256(await nodeScript())),
     // works pasted into Windows PowerShell 5.1, PowerShell 7 and cmd.exe: no $ for the outer shell
     // to expand, and the token is base64url so single quotes are safe
     windows: `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '${hub}/node/install.ps1'))) -Hub '${hub}' -Token '${token}'"`,
