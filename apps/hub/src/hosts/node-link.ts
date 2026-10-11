@@ -16,11 +16,13 @@ export interface NodeSocket {
 }
 
 type Handler = (msg: any) => void
+/** An operation stays with the socket it started on; a newer connection doesn't inherit it. */
+type Op = { ws: NodeSocket; onMsg: Handler }
 
 class NodeLinks {
   private sockets = new Map<string, NodeSocket>()
   private errors = new Map<string, string>()
-  private handlers = new Map<string, Handler>()
+  private handlers = new Map<string, Op>()
   private seq = 0
   private listeners = new Set<(hostId: string, up: boolean) => void>()
   info = new Map<string, { version?: string; os?: string; connectedAt: number }>()
@@ -31,7 +33,12 @@ class NodeLinks {
 
   attach(hostId: string, ws: NodeSocket) {
     this.errors.delete(hostId)
-    this.sockets.get(hostId)?.close(4000, 'replaced by a newer connection')
+    const old = this.sockets.get(hostId)
+    if (old && old !== ws) {
+      // its close callback comes later and finds the new socket in place, so end its work now
+      this.failOps(hostId, old)
+      old.close(4000, 'replaced by a newer connection')
+    }
     this.sockets.set(hostId, ws)
     this.info.set(hostId, { connectedAt: Date.now() })
     for (const l of this.listeners) l(hostId, true)
@@ -40,9 +47,17 @@ class NodeLinks {
   detach(hostId: string, ws: NodeSocket) {
     if (this.sockets.get(hostId) !== ws) return
     this.sockets.delete(hostId)
-    // fail everything still waiting on this machine
-    for (const [id, h] of this.handlers) if (id.startsWith(`${hostId}:`)) h({ type: 'error', error: 'The machine disconnected' })
+    this.failOps(hostId, ws)
     for (const l of this.listeners) l(hostId, false)
+  }
+
+  /** Fails everything still waiting on this socket. */
+  private failOps(hostId: string, ws: NodeSocket) {
+    for (const [key, op] of [...this.handlers]) {
+      if (op.ws !== ws || !key.startsWith(`${hostId}:`)) continue
+      this.handlers.delete(key)
+      op.onMsg({ type: 'error', error: 'The machine disconnected' })
+    }
   }
 
   /** Couldn't connect (the phone's side): say why until it does. */
@@ -80,7 +95,7 @@ class NodeLinks {
       this.info.set(hostId, { version: msg.version, os: msg.os, connectedAt: Date.now() })
       return
     }
-    this.handlers.get(`${hostId}:${msg.id}`)?.(msg)
+    this.handlers.get(`${hostId}:${msg.id}`)?.onMsg(msg)
   }
 
   /** Starts an operation; `onMsg` receives its frames until you call the returned `done`. */
@@ -89,11 +104,12 @@ class NodeLinks {
     if (!ws) throw new Error('This machine is not connected. Is tether-node running on it?')
     const id = String(++this.seq)
     const key = `${hostId}:${id}`
-    this.handlers.set(key, onMsg)
+    this.handlers.set(key, { ws, onMsg })
     ws.send(JSON.stringify({ ...op, id }))
     return {
       id,
-      send: (extra: Record<string, unknown>) => this.sockets.get(hostId)?.send(JSON.stringify({ ...extra, id })),
+      // only to the socket it started on, and only while that one is still the machine's
+      send: (extra: Record<string, unknown>) => (this.sockets.get(hostId) === ws ? ws.send(JSON.stringify({ ...extra, id })) : undefined),
       done: () => this.handlers.delete(key),
     }
   }

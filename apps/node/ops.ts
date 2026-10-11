@@ -168,7 +168,7 @@ export function serveOps(send: (m: unknown) => void) {
             if (WIN) l = l.replace(/\r$/, '')
             if (l) send({ id, type: 'line', data: map ? map(l) : l })
           }
-          ;(async () => {
+          const pumped = (async () => {
             const dec = new TextDecoder()
             let carry = ''
             for await (const chunk of p.stdout) {
@@ -179,8 +179,10 @@ export function serveOps(send: (m: unknown) => void) {
             }
             if (carry) emit(carry)
           })().catch(() => {})
-          p.exited.then((code) => {
+          p.exited.then(async (code) => {
             running.delete(id)
+            // the hub stops listening at exit, so the last lines go first
+            await Promise.race([pumped, Bun.sleep(OUTPUT_GRACE_MS)])
             send({ id, type: 'exit', code })
           })
           break

@@ -86,17 +86,20 @@ export function sshBackend(ssh: SshPlugin, credentials: (config: HostConfig) => 
       let done!: (code: number) => void
       const exited = new Promise<number>((resolve) => (done = resolve)).finally(() => streams.delete(streamId))
       streams.set(streamId, { onLine, done })
+      const stop = () => void ssh.streamKill({ streamId }).catch(() => done(143))
       connect(config)
-        .then(() => {
+        .then(async () => {
           if (killed) return done(143)
+          await ssh.stream({ id: config.id, streamId, command: `sh -c ${shq(cmd)}`, keepStdin: !!opts.keepStdin })
+          // the plugin only knows the stream once that call returns, so a kill sent earlier missed it
           started = true
-          return ssh.stream({ id: config.id, streamId, command: `sh -c ${shq(cmd)}`, keepStdin: !!opts.keepStdin })
+          if (killed) stop()
         })
         .catch(() => done(255))
       return {
         kill: () => {
           killed = true
-          if (started) ssh.streamKill({ streamId }).catch(() => done(143))
+          if (started) stop()
         },
         exited,
       }
@@ -105,26 +108,30 @@ export function sshBackend(ssh: SshPlugin, credentials: (config: HostConfig) => 
     pty(config, cmd, cols, rows, onData) {
       const ptyId = `p${++seq}`
       let killed = false
+      let opening = false
       let started = false
       let done!: (code: number) => void
       const exited = new Promise<number>((resolve) => (done = resolve)).finally(() => ptys.delete(ptyId))
       ptys.set(ptyId, { onData, done })
+      const stop = () => void ssh.ptyKill({ ptyId }).catch(() => done(143))
       connect(config)
-        .then(() => {
+        .then(async () => {
           if (killed) return done(143)
+          opening = true
+          await ssh.pty({ id: config.id, ptyId, command: `sh -c ${shq(cmd)}`, cols, rows })
           started = true
-          return ssh.pty({ id: config.id, ptyId, command: `sh -c ${shq(cmd)}`, cols, rows })
+          if (killed) stop()
         })
         .catch((err) => {
           onData(new TextEncoder().encode(`\r\n${describe(err)}\r\n`))
           done(255)
         })
       return {
-        write: (data) => void (started && ssh.ptyWrite({ ptyId, data }).catch(() => {})),
-        resize: (c, r) => void (started && ssh.ptyResize({ ptyId, cols: c, rows: r }).catch(() => {})),
+        write: (data) => void (opening && ssh.ptyWrite({ ptyId, data }).catch(() => {})),
+        resize: (c, r) => void (opening && ssh.ptyResize({ ptyId, cols: c, rows: r }).catch(() => {})),
         kill: () => {
           killed = true
-          if (started) ssh.ptyKill({ ptyId }).catch(() => done(143))
+          if (started) stop()
         },
         exited,
       }
