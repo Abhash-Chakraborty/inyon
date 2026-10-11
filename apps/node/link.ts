@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import {
-  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, publish, relayWs, sign, unframe,
+  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@tether/link'
 import { serveOps, WIN } from './ops.ts'
@@ -80,11 +80,20 @@ const hex = (b: Uint8Array) => Buffer.from(b).toString('hex')
 
 const sameText = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
 
-/** Starts a pairing: a one-time secret, good for a few minutes, shown in the code. */
+/** A short code is a 1-in-a-million guess, so it's dropped after this many wrong ones. */
+const SHORT_TRIES = 5
+
+type Pairing = { secret?: string; short?: string; failures?: number; expires?: number }
+
+/**
+ * Starts a pairing, good for a few minutes: a long secret for the QR code, and a short ID and
+ * code for typing in.
+ */
 export function newPairing() {
   const secret = crypto.randomBytes(24).toString('base64url')
-  writeJson('pairing.json', { secret, expires: Date.now() + PAIR_MINUTES * 60_000 })
-  return secret
+  const short = newShortCode()
+  writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing)
+  return { secret, short }
 }
 
 export const currentState = () => readJson<State | undefined>('state.json', undefined)
@@ -120,14 +129,23 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
     writeJson('phones.json', all)
     return welcome()
   }
-  const pairing = readJson<{ secret?: string; expires?: number }>('pairing.json', {})
-  if (hello.pair && pairing.secret && (pairing.expires ?? 0) > Date.now() && sameText(hello.pair, pairing.secret)) {
+  const pairing = readJson<Pairing>('pairing.json', {})
+  const live = (pairing.expires ?? 0) > Date.now()
+  const matches = (want?: string) => !!want && !!hello.pair && sameText(hello.pair, want)
+  if (hello.pair && live && (matches(pairing.secret) || matches(pairing.short))) {
     all[key] = { name: String(hello.name ?? 'Phone').slice(0, 64), pairedAt: Date.now(), lastSeen: Date.now() }
     writeJson('phones.json', all)
     // one code, one phone
     rmSync(file('pairing.json'), { force: true })
     console.log(`paired with ${all[key].name}`)
     return welcome()
+  }
+  if (hello.pair && live && pairing.short) {
+    // a wrong code: count it, and stop taking short codes before guessing could pay off
+    const failures = (pairing.failures ?? 0) + 1
+    writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
+    throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
   }
   if (hello.pair) throw new LinkError('NOT_PAIRED', `That pairing code has expired or was already used. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
   throw new LinkError('NOT_PAIRED', `This phone isn't paired with ${os.hostname()} any more. Run \`tether-node pair\` there and scan the code again.`)

@@ -158,6 +158,12 @@ irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/downlo
 It downloads `tether-node`, checks it against the release's SHA256SUMS and prints a QR code. In
 the app, tap *Add a computer*, then *Scan the code*. The computer stays paired until you remove it.
 
+Can't scan it, say because the SSH session is on the same phone? The terminal also prints a
+one-time ID and a 6-digit code: tap *Type a code* and enter them. The ID stands for a throwaway key,
+and the computer publishes a record under it naming its real key and addresses, so the phone finds
+it without a VPN. The code travels inside the encrypted channel, works once for 10 minutes, and
+five wrong tries cancel it.
+
 Setup also installs `tether-node` as a background service, so it comes back after a restart: a
 systemd user unit on Linux, launchd on macOS and a logon task on Windows. A box without systemd
 user services gets a background process and an `@reboot` cron line instead. `tether-node

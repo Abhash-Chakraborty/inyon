@@ -6,7 +6,7 @@ import { setLocalHost } from '../config.ts'
 import { splitTarget, sshBackend, toBase64, fromBase64, type Credentials } from './ssh-backend.ts'
 import type { Handler, Method, Routes } from '../core.ts'
 import type { PhoneRuntime, StartPhone, SshPlugin } from './types.ts'
-import { identityFromSeed, parsePairLink } from '@tether/link'
+import { identityFromSeed, parsePairLink, parseShortCode, resolveShortCode } from '@tether/link'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { linkConnector } from './link.ts'
 
@@ -89,7 +89,11 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     '/api/phone/pair': {
       POST: api(async (req) => {
         const b = await body(req)
-        const info = parsePairLink(String(b.link ?? ''))
+        const text = String(b.link ?? '')
+        const short = parseShortCode(text)
+        // a typed ID and code: the relays say which machine the ID stands for
+        const info = short ? await resolveShortCode(short).catch(() => undefined) : parsePairLink(text)
+        if (short && !info) throw new HttpError(404, 'No computer has that ID right now. Check it, or run `tether-node pair` again for a new one (each lasts 10 minutes).')
         if (!info) throw new HttpError(400, "That isn't a Tether pairing code. Run `tether-node pair` on the computer and scan the code it shows.")
         let welcome
         try {

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Channel } from '@tether/link'
 
 // the real CLI in a throwaway home, reached the way a phone on the same network would
@@ -72,3 +72,24 @@ test('forget unpairs a phone', async () => {
   expect(await new Response(f.stdout).text()).toContain('Forgot Forget me')
   await expect(open(phone, info.id, { name: 'Forget me' })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
 }, 30_000)
+
+test('the typed-in ID and code pair a phone, and five wrong codes cancel it', async () => {
+  const info = await pairingLink()
+  const short = () => JSON.parse(readFileSync(path.join(home, '.tether-node', 'pairing.json'), 'utf8')).short as string | undefined
+  const right = short()!
+  expect(right).toMatch(/^[0-9A-Z]{8}:\d{6}$/)
+  const phone = generateKeyPair()
+  const paired = await open(phone, info.id, { name: 'Typed phone', pair: right })
+  expect((await exec(paired.channel, 'echo typed')).stdout).toBe('typed\n')
+  paired.channel.close()
+
+  await pairingLink()
+  const next = short()!
+  const wrong = next.replace(/\d{6}$/, (d) => String((Number(d) + 1) % 1_000_000).padStart(6, '0'))
+  for (let i = 1; i <= 5; i++) {
+    await expect(open(generateKeyPair(), info.id, { name: 'Guesser', pair: wrong })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
+  }
+  // the right code arrives too late: guessing ended it
+  expect(short()).toBeUndefined()
+  await expect(open(generateKeyPair(), info.id, { name: 'Late', pair: next })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
+}, 40_000)
