@@ -18,7 +18,7 @@ import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.t
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
 import { nodeUpdates } from './node-update.ts'
-import { sessionName } from './names.ts'
+import { bareTitle, nameTaken, ownsTitle, pendingName, sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
 import { untilStdinCloses } from '../claude/transcript-tail.ts'
 
@@ -34,6 +34,8 @@ export type RegistryEvent =
   | { type: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: string }
   | { type: 'hook'; host: string; pane: string; event: any }
   | { type: 'pane-output'; host: string; pane: string }
+  /** a rename waits for this agent, which is idle now */
+  | { type: 'rename-due'; host: string; pane: string }
 
 interface Runtime {
   /** each agent's state when the machine went offline, kept to compare with once it's back */
@@ -515,7 +517,6 @@ class Registry {
         else if (generic) p.title = ''
       }
       p.agent = info
-      p.label = sessionName(rt.host.id, info.sessionId)
       const lines = screens.get(p.id)
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
@@ -523,6 +524,13 @@ class Registry {
         applyScreen(p, sc, rt.host)
         await applyOpenCodeLive(rt.host, p)
       }
+      // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
+      const want = pendingName(rt.host.id, info.sessionId)
+      if (want && ownsTitle(proc.kind)) {
+        if (bareTitle(p.title) === want.name) nameTaken(rt.host.id, info.sessionId!)
+        else if (info.state === 'idle') this.emit({ type: 'rename-due', host: rt.host.id, pane: p.id })
+      }
+      p.label = sessionName(rt.host.id, info.sessionId, proc.kind)
       // agy's own word on its mode, for when a custom status line hides the footer
       if (proc.kind === 'antigravity' && !info.mode) {
         const m = agyStatus(pr, p.id, proc.startedAt, info.sessionId)?.mode

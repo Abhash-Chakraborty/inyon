@@ -7,7 +7,7 @@ import { codexBrowsing, parseScreen } from './screen.ts'
 import { watchers } from './watcher.ts'
 import { clearInput } from './drafts.ts'
 import { startDriving } from './driving.ts'
-import { originalTitle, setSessionName } from '../hosts/names.ts'
+import { bareTitle, originalTitle, ownsTitle, pendingName, setSessionName } from '../hosts/names.ts'
 import { isTaskFile } from '../features/features.ts'
 import { PATHS } from '../features/setup.ts'
 import { codexModels } from '../agents/codex-models.ts'
@@ -1136,9 +1136,11 @@ export async function findTaskOutput(hostId: string, id: string): Promise<string
 }
 
 /**
- * Names a session. Agent sessions keep the name in Tether against their conversation (and Claude
- * also gets /rename when it's idle, so `claude --resume` shows the same name); plain terminals
- * get their tmux window renamed. An empty name goes back to the automatic one.
+ * Names a session. Claude, Codex and agy keep the name themselves (/rename), so it shows the same
+ * everywhere: in this hub, the phone app and their own resume pickers. While the agent is busy the
+ * name waits and goes in as soon as it's idle. Other agents keep the name in Tether against their
+ * conversation; plain terminals get their tmux window renamed. An empty name goes back to the
+ * automatic one.
  */
 export async function renamePane(hostId: string, paneId: string, raw: string) {
   const name = raw.replace(/\s+/g, ' ').trim().slice(0, 80)
@@ -1150,18 +1152,36 @@ export async function renamePane(hostId: string, paneId: string, raw: string) {
     return registry.refresh(hostId, 0)
   }
   if (!a.sessionId) throw new HttpError(409, 'Send a first message, then name the session')
-  // Claude, Codex and agy keep their own title too, so the name also shows in their resume pickers.
-  // That overwrites the title they made up, so remember it: the automatic name puts it back.
-  const own = a.kind === 'claude' || a.kind === 'codex' || a.kind === 'antigravity'
-  const was = originalTitle(hostId, a.sessionId)
-  setSessionName(hostId, a.sessionId, name, own ? (watchers.peek(hostId, paneId)?.info.title ?? found.pane.title) || undefined : undefined)
-  const title = name || was
-  if (own && title && a.state === 'idle') {
-    const s = await currentScreen(hostId, paneId)
-    if (s.prompt || (s.draft && a.kind !== 'codex')) {
-      // leave a half-typed message alone (Codex's is set aside and put back); Tether's name still applies
-    } else if (a.kind === 'codex') await keepingDraft(hostId, paneId, () => codexCommand(hostId, paneId, `/rename ${title}`))
-    else await typeText(host, paneId, `/rename ${title}`, true)
-  }
+  // the title the agent made up, so the automatic name can put it back
+  const made = ownsTitle(a.kind) ? bareTitle(watchers.peek(hostId, paneId)?.info.title ?? found.pane.title) || undefined : undefined
+  setSessionName(hostId, a.sessionId, name, originalTitle(hostId, a.sessionId) ?? made, a.kind)
+  renameTried.delete(`${hostId}:${paneId}`)
+  await applyPendingName(hostId, paneId)
   registry.refresh(hostId, 0)
 }
+
+const renameTried = new Map<string, number>()
+
+/**
+ * Types /rename for a name the agent hasn't taken yet, once it's idle with nothing open on screen.
+ * Called after a rename and again by the registry while one waits; tried at most every 20 s.
+ */
+export async function applyPendingName(hostId: string, paneId: string) {
+  const found = registry.findPane(hostId, paneId)
+  const a = found?.pane.agent
+  const want = pendingName(hostId, a?.sessionId)
+  if (!found || !a || !want || !ownsTitle(a.kind) || a.state !== 'idle') return
+  const key = `${hostId}:${paneId}`
+  if (Date.now() - (renameTried.get(key) ?? 0) < 20_000) return
+  renameTried.set(key, Date.now())
+  const s = await currentScreen(hostId, paneId)
+  // leave a half-typed message alone (Codex's is set aside and put back); try again later
+  if (s.prompt || s.working || (s.draft && a.kind !== 'codex')) return
+  const host = registry.host(hostId)
+  if (a.kind === 'codex') await keepingDraft(hostId, paneId, () => codexCommand(hostId, paneId, `/rename ${want.name}`))
+  else await typeText(host, paneId, `/rename ${want.name}`, true)
+}
+
+registry.on((e) => {
+  if (e.type === 'rename-due') applyPendingName(e.host, e.pane).catch(() => {})
+})
