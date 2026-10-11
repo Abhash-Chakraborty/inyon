@@ -22,6 +22,7 @@ export const api = fakeApi
 
 const listeners = new Set<(m: ServerMsg) => void>()
 const closedListeners = new Set<(key: string) => void>()
+const statusListeners = new Set<(up: boolean) => void>()
 export const socket = {
   up: false,
   start() {},
@@ -35,7 +36,10 @@ export const socket = {
     closedListeners.add(fn)
     return () => void closedListeners.delete(fn)
   },
-  onStatus: () => () => {},
+  onStatus(fn: (up: boolean) => void) {
+    statusListeners.add(fn)
+    return () => void statusListeners.delete(fn)
+  },
   watching: () => false,
   subscribeOverview() {},
   subscribeChat: mock((_host: string, _pane: string) => () => {}),
@@ -43,6 +47,12 @@ export const socket = {
 
 /** The app stops watching a chat, as leaving its page does. */
 export const closeChat = (key: string) => closedListeners.forEach((l) => l(key))
+
+/** The socket connects (true) or drops (false), as when the hub restarts. */
+export const setSocketUp = (up: boolean) => {
+  socket.up = up
+  statusListeners.forEach((l) => l(up))
+}
 
 /** Delivers a message from the hub, as the socket would. */
 export const emit = (m: ServerMsg) => listeners.forEach((l) => l(m))

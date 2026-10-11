@@ -9,6 +9,7 @@
     "dev:web": "pnpm --filter @tether/web dev",
     "build": "pnpm --filter @tether/web build",
     "start": "pnpm --filter @tether/hub start",
+    "hub:update": "bun apps/hub/src/cli/update.ts",
     "typecheck": "pnpm -r typecheck"
   },
   "license": "MIT",

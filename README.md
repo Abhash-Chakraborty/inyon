@@ -95,6 +95,24 @@ Open it from your phone over a private network (Tailscale, NetBird, WireGuard or
 put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
 `TETHER_ALLOWED_HOSTS`. To keep it running, see `deploy/tether-hub.service`.
 
+## Updating
+
+Nothing updates by itself. When a new release is out, Settings shows *Update available* under
+Updates. Tap *Update*, or run this in the folder you cloned:
+
+```sh
+pnpm hub:update
+```
+
+It refuses a checkout with local changes or one that can't fast-forward. Otherwise it pulls,
+runs `pnpm install`, builds the web app and restarts the `tether-hub` systemd user unit. Without
+that unit it tells you to restart the hub yourself. Browsers that still have the old app open
+offer a reload once the hub is back.
+
+The Android app checks [tether-releases](https://github.com/Abhash-Chakraborty/tether-releases)
+once a day and when you open Settings. *Download* opens the new APK in your browser; open the
+file when it's done and Android installs it over the old one.
+
 ## Where everything runs
 
 For the browser there's one thing to host: the hub. It's a single Bun process on a machine that
@@ -224,7 +242,9 @@ as with the hub.
 GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main` replaces the
 "Latest Android build" pre-release with a fresh APK, and a `v*` tag makes a release with the APK
 attached. On the phone, open the release, download the APK and install it. Later builds install
-over it and keep your servers.
+over it and keep your servers. Each release's APK also goes to
+[tether-releases](https://github.com/Abhash-Chakraborty/tether-releases) as `tether-X.Y.Z.apk`
+(uploaded by hand, like `tether-node`), which is where the app looks for updates.
 
 Builds are signed with your own key: the secrets `ANDROID_KEYSTORE_BASE64` (the keystore, base64)
 and `ANDROID_KEYSTORE_PASSWORD`, plus `ANDROID_KEY_PASSWORD` for a JKS with a separate key

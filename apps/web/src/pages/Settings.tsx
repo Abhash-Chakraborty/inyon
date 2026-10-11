@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, ChevronRight, Copy, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
+import { Bell, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
 import { AGENTS } from '@tether/protocol'
-import { api, type HubSettings } from '../lib/api.ts'
+import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -16,6 +16,9 @@ import { authorizeCommand } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { COMMIT, VERSION } from '../lib/version.ts'
+import { checkHub, hubBuild, sameBuild, useHubBuild, watchHub, type Build } from '../lib/updates.ts'
+import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
+import { openLink } from '../lib/format.ts'
 
 /** The phone app: stay connected while it's in the background, and Android's battery limits. */
 function Background() {
@@ -79,6 +82,153 @@ function About() {
   )
 }
 
+/**
+ * Updates, always by hand: the hub pulls and restarts when you tap Update (or run
+ * `pnpm hub:update`), and the Android app downloads a new APK that Android then installs.
+ */
+function Updates() {
+  const native = isNative()
+  return (
+    <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run pnpm hub:update in the folder Tether is installed in.'}>
+      {native ? <AppUpdateRow /> : <HubUpdateRow />}
+    </Section>
+  )
+}
+
+const pill = (text: string) => <span className="font-mono text-[13px] text-fg-2">{text}</span>
+
+/** The hub: what it runs, what's newer, and the button that updates it. */
+function HubUpdateRow() {
+  const [info, setInfo] = useState<HubUpdate | undefined>()
+  const [failed, setFailed] = useState('')
+  const [checking, setChecking] = useState(false)
+  // the hub's build when Update was tapped; a different one after a reconnect means it's done
+  const [from, setFrom] = useState<Build | undefined>()
+  const hub = useHubBuild()
+  const load = (refresh = false) => {
+    setChecking(refresh)
+    return api.hubUpdate(refresh).then(
+      (u) => (setInfo(u), setFailed('')),
+      (e) => setFailed((e as Error).message),
+    ).finally(() => setChecking(false))
+  }
+  useEffect(() => {
+    void load()
+    return watchHub()
+  }, [])
+
+  const updating = !!from || !!info?.running
+  // while it runs: notice a failure from the log, or the end without a restart
+  useEffect(() => {
+    if (!updating) return
+    const t = setInterval(() => {
+      api.hubUpdate().then((u) => {
+        setInfo(u)
+        if (u.error || u.restartNeeded) setFrom(undefined)
+      }, () => {})
+    }, 4000)
+    return () => clearInterval(t)
+  }, [updating])
+  useEffect(() => {
+    if (!from || !hub || sameBuild(hub, from)) return
+    // the row turns to "Up to date", and the reload prompt says the rest
+    setFrom(undefined)
+    haptic('success')
+    void load()
+  }, [hub, from])
+
+  const start = async () => {
+    try {
+      // what the hub runs now, commit included, so a restart on new code can be told apart
+      if (!hubBuild()) await checkHub()
+      const was = hubBuild() ?? { version: info?.current ?? VERSION }
+      await api.startHubUpdate()
+      setFrom(was)
+      setInfo((i) => i && { ...i, error: undefined, running: true })
+    } catch (e) {
+      toast({ title: "Couldn't start the update", body: (e as Error).message, tone: 'error' })
+    }
+  }
+
+  if (!info) {
+    return (
+      <Row label="This hub" hint={failed ? `Couldn't check for updates: ${failed}` : undefined}>
+        {failed ? <Button size="sm" onClick={() => load(true)}>Try again</Button> : <Spinner />}
+      </Row>
+    )
+  }
+  const available = !!info.latest || !!info.behind
+  if (updating) {
+    return (
+      <Row label="Updating the hub…" hint="It restarts when it's done, and Tether reconnects by itself. This takes a minute or two.">
+        <Spinner />
+      </Row>
+    )
+  }
+  if (info.restartNeeded) return <Row label="Updated" hint="Restart the hub to run the new version. It has no systemd unit Tether could restart." />
+  const running = `This hub runs ${info.current}.`
+  const commits = info.behind ? `${info.behind} new ${info.behind === 1 ? 'commit' : 'commits'}` : ''
+  return (
+    <>
+      {info.error && (
+        <div className="px-4 py-3 text-[12.5px] leading-snug text-danger">
+          The last update didn't finish: {info.error}
+          {info.log && <span className="text-fg-3"> The log is in {info.log}.</span>}
+        </div>
+      )}
+      {available ? (
+        <Row
+          label={info.latest ? `Update available: ${info.latest}` : 'Update available'}
+          hint={info.canUpdate ? `${running}${commits ? ` ${commits} to pull.` : ''} It restarts when the update is done.` : `${running} ${info.reason}`}
+        >
+          {info.canUpdate && (
+            <Button size="sm" variant="primary" onClick={start}>
+              {info.error ? 'Try again' : 'Update'}
+            </Button>
+          )}
+        </Row>
+      ) : (
+        <Row label="Up to date" hint={info.reason ? `${running} ${info.reason}` : running}>
+          <Button size="sm" variant="ghost" loading={checking} onClick={() => load(true)}>
+            Check now
+          </Button>
+        </Row>
+      )}
+    </>
+  )
+}
+
+/** The Android app: its version, the newest APK on tether-releases, and Download. */
+function AppUpdateRow() {
+  const [u, setU] = useState<AppUpdate | undefined>()
+  const [failed, setFailed] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const check = () => {
+    setChecking(true)
+    setFailed(false)
+    checkAppUpdate(true).then(setU, () => setFailed(true)).finally(() => setChecking(false))
+  }
+  useEffect(check, [])
+  if (u?.latest && u.url) {
+    return (
+      <Row label={`Update available: ${u.latest}`} hint={`You have ${u.current}. It downloads in your browser; open the file when it's done and Android installs it.`}>
+        <Button size="sm" variant="primary" onClick={() => openLink(u.url)}>
+          <Download className="size-3.5" /> Download
+        </Button>
+      </Row>
+    )
+  }
+  return (
+    <Row label={failed ? "Couldn't check for updates" : checking && !u ? 'Checking for updates…' : 'Up to date'} hint={u ? `This app is version ${u.current}.` : failed ? 'Check your connection and try again.' : undefined}>
+      {checking ? <Spinner /> : (
+        <Button size="sm" variant="ghost" onClick={check}>
+          {failed ? 'Try again' : 'Check now'}
+        </Button>
+      )}
+    </Row>
+  )
+}
+
 function Section({ id, title, desc, children }: { id?: string; title: string; desc?: string; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-20">
@@ -110,6 +260,7 @@ const NAV = [
   ...(isNative()
     ? ([['phone-key', "This phone's key"]] as const)
     : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
+  ['updates', 'Updates'],
   ['about', 'About'],
 ] as const
 
@@ -328,6 +479,7 @@ export function Settings() {
           </Section>
             </>
           )}
+          <Updates />
           <About />
           <p className="text-center text-[12px] text-fg-3">Agent marks belong to their owners</p>
         </div>

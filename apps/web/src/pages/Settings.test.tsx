@@ -5,7 +5,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { VERSION } from '@tether/protocol'
 import { Settings } from './Settings.tsx'
 import { useStore } from '../lib/store.ts'
-import { api, emit } from '../test/fakes.ts'
+import { api, emit, setSocketUp } from '../test/fakes.ts'
+import { forgetHub } from '../lib/updates.ts'
 import { fresh, host } from '../test/fixtures.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
 
@@ -88,5 +89,105 @@ describe('About', () => {
     expect(copied[0]).toStartWith(`Tether ${VERSION}`)
     Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
     delete (window as any).isSecureContext
+  })
+})
+
+describe('Updates', () => {
+  const status = (o: Partial<import('../lib/api.ts').HubUpdate> = {}) => ({ current: '0.6.3', canUpdate: true, checkedAt: Date.now(), behind: 0, ...o })
+  beforeEach(() => forgetHub())
+
+  test('an up-to-date hub says so and can check again', async () => {
+    const user = userEvent.setup()
+    api.hubUpdate.mockResolvedValue(status())
+    await render(page())
+    expect(screen.getByText('Up to date')).toBeTruthy()
+    expect(screen.getByText('This hub runs 0.6.3.')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Check now' }))
+    await flush()
+    expect(api.hubUpdate.mock.calls.at(-1)).toEqual([true])
+  })
+
+  test('a new release: Update starts it, and the hub coming back on a new version ends it', async () => {
+    const user = userEvent.setup()
+    api.session.mockResolvedValue({ authed: true, version: '0.6.3', commit: 'aaa1111' })
+    act(() => setSocketUp(true))
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.10', behind: 4 }))
+    await render(page())
+    expect(screen.getByText('Update available: 0.6.10')).toBeTruthy()
+    expect(screen.getByText(/4 new commits to pull/)).toBeTruthy()
+    api.startHubUpdate.mockResolvedValue({ started: true })
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    await flush()
+    expect(api.startHubUpdate).toHaveBeenCalledTimes(1)
+    expect(screen.getByText('Updating the hub…')).toBeTruthy()
+    // the hub restarts on the new code
+    api.session.mockResolvedValue({ authed: true, version: '0.6.10', commit: 'bbb2222' })
+    api.hubUpdate.mockResolvedValue(status({ current: '0.6.10' }))
+    act(() => setSocketUp(false))
+    act(() => setSocketUp(true))
+    await flush()
+    await flush()
+    expect(screen.queryByText('Updating the hub…')).toBeNull()
+    expect(screen.getByText('This hub runs 0.6.10.')).toBeTruthy()
+  })
+
+  test("tapping Update before the hub's build is known doesn't end the update at the first reconnect", async () => {
+    const user = userEvent.setup()
+    api.session.mockResolvedValue({ authed: true, version: '0.6.3', commit: 'aaa1111' })
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4' }))
+    api.startHubUpdate.mockResolvedValue({ started: true })
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Update' }))
+    await flush()
+    // the old hub, still running while the update installs
+    act(() => setSocketUp(true))
+    await flush()
+    expect(screen.getByText('Updating the hub…')).toBeTruthy()
+    expect(api.hubUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  test("a checkout that can't update says why, with no button", async () => {
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4', canUpdate: false, reason: 'The checkout has local changes. Commit or stash them first.' }))
+    await render(page())
+    expect(screen.getByText('Update available: 0.6.4')).toBeTruthy()
+    expect(screen.getByText(/The checkout has local changes/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Update' })).toBeNull()
+  })
+
+  test('a failed update shows why and where its log is', async () => {
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4', error: 'Building the web app failed.', log: '/home/me/.tether/hub-update.log' }))
+    await render(page())
+    expect(screen.getByText(/Building the web app failed\./)).toBeTruthy()
+    expect(screen.getByText(/hub-update\.log/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy()
+  })
+
+  test('an update still running from before shows as running', async () => {
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4', running: true }))
+    await render(page())
+    expect(screen.getByText('Updating the hub…')).toBeTruthy()
+  })
+
+  test('in the Android app: the newer APK, with Download opening it in the browser', async () => {
+    const user = userEvent.setup()
+    const realFetch = globalThis.fetch
+    const open = window.open
+    const opened: string[] = []
+    window.open = ((url: string) => (opened.push(url), null)) as typeof window.open
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { App: { getInfo: async () => ({ version: '0.6.3', build: '7' }) } } }
+    const url = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/download/v0.6.4/tether-0.6.4.apk'
+    globalThis.fetch = (async () => Response.json({ tag_name: 'v0.6.4', assets: [{ name: 'tether-0.6.4.apk', browser_download_url: url }] })) as unknown as typeof fetch
+    try {
+      await render(page())
+      await flush()
+      expect(screen.getByText('Update available: 0.6.4')).toBeTruthy()
+      expect(api.hubUpdate).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: 'Download' }))
+      expect(opened).toEqual([url])
+    } finally {
+      delete (window as any).Capacitor
+      globalThis.fetch = realFetch
+      window.open = open
+    }
   })
 })

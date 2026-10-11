@@ -19,6 +19,7 @@ afterEach(() => {
   fakes.resetApi()
   fakes.socket.send.mockClear()
   fakes.socket.subscribeChat.mockClear()
+  fakes.socket.up = false
   useStore.setState(initial, true)
   localStorage.clear()
   sessionStorage.clear()

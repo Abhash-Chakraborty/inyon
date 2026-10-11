@@ -9,6 +9,7 @@ import { useStore } from './lib/store.ts'
 import { AppShell } from './components/AppShell.tsx'
 import { Toasts } from './components/Toasts.tsx'
 import { ConfirmHost } from './components/Confirm.tsx'
+import { UpdatePrompt } from './components/UpdatePrompt.tsx'
 import { Spinner } from './components/ui/primitives.tsx'
 import { Home } from './pages/Home.tsx'
 import { Login } from './pages/Login.tsx'
@@ -80,6 +81,8 @@ function App() {
       </Routes>
       <Toasts />
       <ConfirmHost />
+      {/* the phone app's code ships inside the APK, so only a browser can be behind its hub */}
+      {!isNative() && <UpdatePrompt />}
     </>
   )
 }
@@ -89,6 +92,8 @@ installNative()
 // fetch the other pages once the first screen is up, so opening one doesn't wait on the network
 setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx')]).catch(() => {}), 1500)
 installKeepAlive()
+// the Android app looks for a newer APK once a day; it never installs one by itself
+if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m.startAppUpdateCheck()), 4000)
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

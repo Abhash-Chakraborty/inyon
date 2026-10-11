@@ -113,8 +113,23 @@ export interface HubSettings {
   autoResume?: boolean
 }
 
+/** The hub's own update (hub mode only; see apps/hub/src/features/hub-update.ts). */
+export interface HubUpdate {
+  current: string
+  latest?: string
+  behind?: number
+  canUpdate: boolean
+  reason?: string
+  checkedAt: number
+  running?: boolean
+  error?: string
+  log?: string
+  restartNeeded?: boolean
+}
+
 export const api = {
-  session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean }>('GET', '/api/session'),
+  /** `version` and `commit` say what the hub runs, once signed in */
+  session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
   // a new hub: the first visit picks the password
   createPassword: (password: string, code?: string) => request<{ ok: boolean }>('POST', '/api/setup', { password, code }),
   changePassword: (current: string, next: string) => request<{ ok: boolean }>('POST', '/api/password', { current, next }),
@@ -164,6 +179,8 @@ export const api = {
   setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup`),
   runSetup: (id: string, action: string) => request<{ ok: boolean; output?: string; pane?: string }>('POST', `${h(id)}/setup`, { action }),
   keepSession: (id: string, keepSession: boolean) => request('POST', `${h(id)}/setup`, { keepSession }),
+  hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
+  startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
   settings: () => request<HubSettings>('GET', '/api/settings'),
   saveSettings: (s: Partial<HubSettings>) => request<HubSettings>('PUT', '/api/settings', s),
   uploadUsage: (id: string) => request<UploadUsage>('GET', `${h(id)}/uploads`),

@@ -9,6 +9,8 @@ import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
+import { headCommit, hubUpdater } from './features/hub-update.ts'
+import { VERSION } from '@tether/protocol'
 import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
 
 /** The hub: Tether's API and live updates over HTTP and a WebSocket, behind a password. */
@@ -22,6 +24,9 @@ function pairOrigin(req: Request, origin?: string) {
 }
 
 const WEB_DIST = path.resolve(import.meta.dir, '../../web/dist')
+// what this hub runs, so an open app can tell it was updated; and its update from Settings
+const HUB_COMMIT = headCommit()
+const hubUpdate = hubUpdater({ dataDir: DATA_DIR, commit: HUB_COMMIT })
 
 /**
  * A browser request made by this app's own pages. Other sites can share the hub's cookie when they
@@ -150,7 +155,7 @@ const server = Bun.serve<SocketData>({
       const authed = isAuthed(req)
       // sliding sign-in: a session in use keeps going, one left alone for 30 days ends
       const cookie = authed ? refreshCookie(req, secureRequest(req)) : undefined
-      return json({ authed, setup: !hasPassword(), setupCode: !!setupCode && !hasPassword() }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
+      return json({ authed, setup: !hasPassword(), setupCode: !!setupCode && !hasPassword(), ...(authed ? { version: VERSION, commit: HUB_COMMIT } : {}) }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
     }, true),
     '/api/setup': {
       POST: api(async (req) => {
@@ -237,6 +242,7 @@ const server = Bun.serve<SocketData>({
     },
     ...nodeRoutes,
     ...guarded(coreRoutes),
+    ...guarded(hubUpdate.routes),
   },
   async fetch(req, srv) {
     const url = new URL(req.url)
