@@ -105,14 +105,16 @@ export function Segmented<T extends string>({
   size?: 'sm' | 'md'
   full?: boolean
 }) {
-  // one pill slides under the chosen option instead of each option lighting up on its own
+  // one pill slides under the chosen option instead of each option lighting up on its own. It moves
+  // by transform only: the round ends slide, and a strip between them slides and stretches, so the
+  // ends never squash the way a scaled pill would.
   const box = useRef<HTMLDivElement>(null)
-  const [pill, setPill] = useState<{ left: number; width: number } | null>(null)
+  const [pill, setPill] = useState<{ left: number; width: number; height: number } | null>(null)
   const index = options.findIndex((o) => o.v === value)
   useLayoutEffect(() => {
     const measure = () => {
       const el = box.current?.children[index + 1] as HTMLElement | undefined
-      setPill(el ? { left: el.offsetLeft, width: el.offsetWidth } : null)
+      setPill(el ? { left: el.offsetLeft, width: el.offsetWidth, height: el.offsetHeight } : null)
     }
     measure()
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
@@ -123,13 +125,20 @@ export function Segmented<T extends string>({
   useEffect(() => {
     if (pill) moved.current = true
   }, [pill?.left])
+  const r = pill ? pill.height / 2 : 0
+  const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-[transform] duration-500 ease-out-soft')
   return (
     <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
-      <span
-        aria-hidden
-        className={clsx('absolute top-0.5 bottom-0.5 rounded-full bg-elev shadow-card ring-1 ring-line', moved.current && 'transition-[left,width] duration-500 ease-out-soft', !pill && 'hidden')}
-        style={pill ?? undefined}
-      />
+      <span aria-hidden className={clsx('pointer-events-none absolute inset-x-0 top-0.5 bottom-0.5', !pill && 'hidden')}>
+        {pill && (
+          <>
+            {/* the strip runs 1px under each end so no seam shows; it is 100px wide and scaled to fit */}
+            <span data-part="strip" className={clsx(part, 'w-[100px] origin-left')} style={{ transform: `translateX(${pill.left + r - 1}px) scaleX(${Math.max(0, pill.width - 2 * r + 2) / 100})` }} />
+            <span data-part="start" className={clsx(part, 'rounded-l-full border-l')} style={{ width: r, transform: `translateX(${pill.left}px)` }} />
+            <span data-part="end" className={clsx(part, 'rounded-r-full border-r')} style={{ width: r, transform: `translateX(${pill.left + pill.width - r}px)` }} />
+          </>
+        )}
+      </span>
       {options.map((o) => (
         <button
           key={o.v}

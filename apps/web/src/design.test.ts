@@ -21,12 +21,21 @@ test('nothing uses a gradient', () => {
   expect(css).not.toMatch(/gradient\(/)
 })
 
-// status chips are neutral and the dot carries the state; blue was a colour nothing else used
 test('nothing blurs what is behind it', () => {
   expect(offenders(/backdrop-blur/)).toEqual([])
 })
 
+// status chips are neutral and the dot carries the state; blue was a colour nothing else used
 test('there is no blue info colour', () => {
   expect(css).not.toMatch(/--info\b/)
   expect(offenders(/-info\b/)).toEqual([])
+})
+
+// motion moves things with transform and opacity; animating size or position makes the page lay out
+// again on every frame. The .expand grid-rows helper is the one allowed exception.
+const LAYOUT = /\b(left|right|top|bottom|inset|width|height|margin|padding)\b/
+test('no transition animates a layout property', () => {
+  expect(offenders(/transition-\[[^\]]*\b(left|right|top|bottom|inset|width|height|margin|padding)\b/)).toEqual([])
+  const declared = [...css.matchAll(/transition(?:-property)?:\s*([^;}]+)/g)].map((m) => m[1]!)
+  expect(declared.filter((d) => LAYOUT.test(d))).toEqual([])
 })
