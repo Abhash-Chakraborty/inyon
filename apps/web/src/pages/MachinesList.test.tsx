@@ -3,7 +3,7 @@ import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { HostState, MachineKind } from '@inyon/protocol'
-import { MachinesPage } from './Machines.tsx'
+import { MachinesPage, metaLine } from './Machines.tsx'
 import { useStore } from '../lib/store.ts'
 import { host } from '../test/fixtures.ts'
 import { renderSettled as render } from '../test/render.tsx'
@@ -37,5 +37,13 @@ describe('the machines list', () => {
     useStore.setState({ hosts: [m('one'), m('two')] })
     await page()
     expect(screen.queryByRole('searchbox')).toBeNull()
+  })
+
+  test('the meta line wraps only between items, never before a dot or inside a count', () => {
+    const line = metaLine('build box', 2, 1, 38)
+    expect(line.replace(/\u00a0/g, ' ')).toBe('build box · 2 sessions · 1 agent · 38 ms')
+    // the only ordinary spaces left are the ones after each dot, and inside the address
+    expect(line.split(' ')).toEqual(['build', 'box\u00a0·', '2\u00a0sessions\u00a0·', '1\u00a0agent\u00a0·', '38\u00a0ms'])
+    expect(metaLine('studio', 1, 0)).toBe('studio\u00a0· 1\u00a0session')
   })
 })

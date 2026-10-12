@@ -8,7 +8,7 @@ import { liveWindow, money, resetsIn, shortPath, timeAgo, tokens } from '../lib/
 import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
 import { toast, useStore } from '../lib/store.ts'
-import { AgentLogo, useAgentAccent } from '../lib/skin.tsx'
+import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
 import { Menu, Meter, openMenu } from './ui/primitives.tsx'
 import { useLongPress } from '../lib/longPress.ts'
@@ -36,9 +36,8 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
     }
   }
   const opts = a.options ?? []
-  const accent = useAgentAccent(a.kind)
   return (
-    <div style={accent} className="animate-fade-in rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
+    <div className="animate-fade-in rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
       <div className="flex items-center gap-3">
         <AgentLogo kind={a.kind} size={30} />
         <div className="min-w-0 flex-1">
@@ -64,14 +63,14 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
               onClick={() => answer(o.n)}
               className={clsx(
                 'press h-9 max-w-full truncate rounded-full px-4 text-[13px] font-medium disabled:opacity-50',
-                i === 0 ? 'bg-accent text-accent-fg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
+                i === 0 ? 'bg-fg text-bg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
               )}
             >
               {o.label}
             </button>
           ))
         ) : (
-          <button type="button" onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="press h-9 rounded-full bg-accent px-4 text-[13px] font-medium text-accent-fg">
+          <button type="button" onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="press h-9 rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:opacity-90">
             Answer
           </button>
         )}

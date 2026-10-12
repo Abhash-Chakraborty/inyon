@@ -49,6 +49,18 @@ function PageHeader({ title, back, right }: { title: React.ReactNode; back?: str
 /** Past this many machines the list gets a search box. */
 const SEARCH_FROM = 8
 
+/**
+ * "studio · 2 sessions · 2 agents · 38 ms", wrapping only between items: each dot stays with the
+ * item before it and each count with its word (no-break spaces), so no line starts with a dot.
+ */
+export function metaLine(where: string, sessions: number, agents: number, ms?: number) {
+  const nb = (t: string) => t.replace(/ /g, '\u00a0')
+  const parts = [where, nb(`${sessions} session${sessions === 1 ? '' : 's'}`)]
+  if (agents) parts.push(nb(`${agents} agent${agents === 1 ? '' : 's'}`))
+  if (ms !== undefined) parts.push(nb(`${ms} ms`))
+  return parts.join('\u00a0· ')
+}
+
 /** One machine in the list: what it is, whether it answers, and what runs there. */
 function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: number }) {
   const where = h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)
@@ -66,8 +78,9 @@ function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: numb
           <span className={clsx('truncate text-[14px] font-medium', h.status !== 'online' && 'text-fg-2')}>{h.config.name}</span>
           {nodeUpdateLabel(h) && <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
         </div>
-        <div className="truncate font-mono text-[12px] text-fg-3">
-          {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${where} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'}${panes ? ` · ${panes} agent${panes === 1 ? '' : 's'}` : ''}${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
+        {/* two lines at most, so the counts stay readable on a phone */}
+        <div className="line-clamp-2 font-mono text-[12px] break-words text-fg-3">
+          {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, metaLine(where, h.sessions.length, panes, h.latencyMs))}
         </div>
       </div>
       {/* on a phone the address needs the room more; the machine page lists the agents */}
