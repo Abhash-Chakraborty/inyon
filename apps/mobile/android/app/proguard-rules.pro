@@ -1,5 +1,5 @@
-# R8 rules for the release build. The libraries' own consumer rules (Capacitor, Firebase, Play
-# services, ML Kit, AndroidX, Tink) are applied on top of these.
+# R8 rules for the release build. The libraries' own consumer rules (Capacitor, Play services'
+# ML Kit, AndroidX, Tink) are applied on top of these.
 
 # readable stack traces with the mapping file CI keeps next to the APK
 -keepattributes SourceFile,LineNumberTable
@@ -18,9 +18,7 @@
 
 # instantiated by Android from the manifest and the bridge layout
 -keep class tech.abhashchakraborty.inyon.MainActivity { <init>(); }
--keep class tech.abhashchakraborty.inyon.device.InyonApplication { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.KeepAliveService { <init>(); }
--keep class tech.abhashchakraborty.inyon.device.InyonMessagingService { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.InyonWebView { <init>(android.content.Context, android.util.AttributeSet); }
 -keep class tech.abhashchakraborty.inyon.device.ScannerActivity { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.ScannerOverlay { <init>(android.content.Context, android.util.AttributeSet); }
@@ -30,7 +28,3 @@
 # its algorithm tables are looked up by string; keep the library as it is
 -keep class com.trilead.ssh2.** { *; }
 -keep class org.connectbot.** { *; }
-
-# Firebase messaging finds its service and component registrars through the manifest
--keep class * extends com.google.firebase.messaging.FirebaseMessagingService { <init>(); }
--keep class * implements com.google.firebase.components.ComponentRegistrar { <init>(); }

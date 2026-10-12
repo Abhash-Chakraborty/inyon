@@ -1,9 +1,6 @@
 apply plugin: 'com.android.application'
 apply plugin: 'org.jetbrains.kotlin.android'
 
-// push is only built in when CI provides a Firebase app (see .github/workflows/android.yml)
-def envString = { String name -> '"' + (System.getenv(name) ?: '').trim().replace('\\', '\\\\').replace('"', '\\"') + '"' }
-
 android {
     namespace = "tech.abhashchakraborty.inyon"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -14,10 +11,6 @@ android {
         versionCode Integer.parseInt(System.getenv("INYON_VERSION_CODE") ?: "1")
         versionName System.getenv("INYON_VERSION") ?: "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField "String", "FCM_APP_ID", envString("INYON_FCM_APP_ID")
-        buildConfigField "String", "FCM_API_KEY", envString("INYON_FCM_API_KEY")
-        buildConfigField "String", "FCM_PROJECT_ID", envString("INYON_FCM_PROJECT_ID")
-        buildConfigField "String", "FCM_SENDER_ID", envString("INYON_FCM_SENDER_ID")
         // the app has no translations, so the libraries' strings in other languages are dead weight
         resourceConfigurations += ["en"]
         // CameraX's one native library; 32-bit x86 is only ever an old emulator
@@ -29,9 +22,6 @@ android {
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
-    }
-    buildFeatures {
-        buildConfig = true
     }
     // release builds are signed when CI provides a keystore (see .github/workflows/mobile.yml)
     signingConfigs {
@@ -87,10 +77,6 @@ dependencies {
     implementation "com.google.crypto.tink:tink-android:$tinkVersion"
     implementation "androidx.security:security-crypto:$securityCryptoVersion"
     implementation "androidx.core:core:$androidxCoreVersion"
-    // no google-services plugin: Firebase is initialised from BuildConfig (see device/Push.kt)
-    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
-    implementation "com.google.android.gms:play-services-base:$playServicesBaseVersion"
-    implementation "com.google.android.gms:play-services-tasks:$playServicesTasksVersion"
     // the pairing-code scanner: CameraX preview and frames, decoded by Play services' ML Kit
     // barcode model (downloaded by Play services, so it isn't bundled in the APK)
     implementation "androidx.camera:camera-camera2:$cameraxVersion"
@@ -104,12 +90,3 @@ dependencies {
 }
 
 apply from: 'capacitor.build.gradle'
-
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
-}

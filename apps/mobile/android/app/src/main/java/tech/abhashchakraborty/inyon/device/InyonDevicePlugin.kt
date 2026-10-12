@@ -25,11 +25,10 @@ import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
-import com.google.firebase.messaging.FirebaseMessaging
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
-/** Phone-only features: keyboard/clipboard files, background keep-alive, notifications, push, haptics and QR scanning. */
+/** Phone-only features: keyboard/clipboard files, background keep-alive, notifications, haptics and QR scanning. */
 @CapacitorPlugin(
     name = "InyonDevice",
     permissions = [Permission(alias = InyonDevicePlugin.NOTIFICATIONS, strings = [Manifest.permission.POST_NOTIFICATIONS])],
@@ -305,60 +304,6 @@ class InyonDevicePlugin : Plugin() {
         call.resolve(ok())
     }
 
-    // registration tokens are what the hub sends to; the installation-ID registration that
-    // firebase-messaging 25.1 deprecates them for is opt-in and needs a different send path
-    @PluginMethod
-    @Suppress("DEPRECATION")
-    fun pushToken(call: PluginCall) {
-        val messaging = try {
-            if (!Push.init(context)) return call.resolve(failure("Push isn't set up in this build"))
-            FirebaseMessaging.getInstance().also {
-                // auto-init is off in the manifest so unconfigured builds stay quiet; once the web app
-                // asks for a token, let the SDK keep it fresh
-                it.isAutoInitEnabled = true
-            }
-        } catch (e: RuntimeException) {
-            return call.resolve(failure("Push isn't available: ${e.message}"))
-        }
-        messaging.token.addOnCompleteListener { task ->
-            val token = if (task.isSuccessful) task.result else null
-            if (token != null) {
-                call.resolve(JSObject().put("token", token))
-            } else {
-                call.resolve(failure(task.exception?.message ?: "Couldn't get a push token"))
-            }
-        }
-    }
-
-    private fun onToken(token: String) {
-        notifyListeners("pushToken", JSObject().put("token", token))
-    }
-
-    /** The AES-256-GCM key the hub encrypts pushes with; null or empty clears it. */
-    @PluginMethod
-    fun setPushKey(call: PluginCall) {
-        val key = call.getString("key")
-        val bytes = if (key.isNullOrEmpty()) {
-            null
-        } else {
-            val decoded = try {
-                Push.base64(key)
-            } catch (_: IllegalArgumentException) {
-                return call.reject("key must be base64", "BAD_REQUEST")
-            }
-            if (decoded.size != PushCrypto.KEY_BYTES) return call.reject("key must be 32 bytes", "BAD_REQUEST")
-            decoded
-        }
-        pool.execute {
-            try {
-                Push.saveKey(context, bytes)
-                call.resolve(ok())
-            } catch (e: Exception) {
-                call.reject("Couldn't save the push key: ${e.message}", "ERROR")
-            }
-        }
-    }
-
     @PluginMethod
     fun takeLaunchHref(call: PluginCall) {
         // the web app asks once as it starts; the release smoke test looks for this line
@@ -408,10 +353,6 @@ class InyonDevicePlugin : Plugin() {
 
         fun keepAliveEnded(reason: String) {
             live?.onKeepAliveEnded(reason)
-        }
-
-        fun emitToken(token: String) {
-            live?.onToken(token)
         }
 
         private fun ok(): JSObject = JSObject().put("ok", true)

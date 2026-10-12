@@ -60,11 +60,6 @@ jobs:
           INYON_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
           INYON_VERSION: ${{ steps.version.outputs.name }}
           INYON_VERSION_CODE: ${{ github.run_number }}
-          # Firebase app for push; when unset the APK builds without push
-          INYON_FCM_APP_ID: ${{ secrets.TETHER_FCM_APP_ID }}
-          INYON_FCM_API_KEY: ${{ secrets.TETHER_FCM_API_KEY }}
-          INYON_FCM_PROJECT_ID: ${{ secrets.TETHER_FCM_PROJECT_ID }}
-          INYON_FCM_SENDER_ID: ${{ secrets.TETHER_FCM_SENDER_ID }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             # forks and first runs: a debug build still installs, but can't update a signed one
