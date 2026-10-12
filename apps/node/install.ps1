@@ -127,7 +127,7 @@ try {
 }
 
 if (-not $started) {
-  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Inyon node.lnk'
+  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tether node.lnk'
   $ws = New-Object -ComObject WScript.Shell
   $s = $ws.CreateShortcut($lnk)
   $s.TargetPath = $exe

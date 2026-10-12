@@ -262,7 +262,7 @@ test.skipIf(!PWSH)('Windows script, under PowerShell: a mismatched download chan
   expect(r.exe).toBe('old exe')
   expect(r.status).toBe("failed: The download didn't match the hub's checksum, so nothing was changed")
   expect(r.files).toEqual(['.env', 'tether-node.exe', 'update-status', 'update.log', 'update.ps1'])
-  expect(r.calls).not.toContain('stop Inyon node')
+  expect(r.calls).not.toContain('stop Tether node')
 }, 30_000)
 
 test.skipIf(!PWSH)('Windows script, under PowerShell: replaced, restarted, and done once the new version runs', async () => {
@@ -270,7 +270,7 @@ test.skipIf(!PWSH)('Windows script, under PowerShell: replaced, restarted, and d
   expect(r.exe).toBe('new exe')
   expect(r.status).toBe('done 0.6.3')
   expect(r.files.filter((f) => f.includes('.old-') || f.endsWith('.new') || f.endsWith('.gz'))).toEqual([])
-  expect(r.calls).toEqual(['stop Inyon node', 'start Inyon node', 'unregister Inyon update'])
+  expect(r.calls).toEqual(['stop Tether node', 'start Tether node', 'unregister Tether update'])
 }, 30_000)
 
 test.skipIf(!PWSH)("Windows script, under PowerShell: a new version that doesn't start, or a restart that throws, puts the old one back", async () => {
@@ -279,7 +279,7 @@ test.skipIf(!PWSH)("Windows script, under PowerShell: a new version that doesn't
     expect(r.exe).toBe('old exe')
     expect(r.status).toMatch(/^failed: (The new version didn't start, so the previous one is running again|task start blocked)$/)
     expect(r.files.filter((f) => f.includes('.old-'))).toEqual([])
-    expect(r.calls.at(-2)).toBe('start Inyon node')
+    expect(r.calls.at(-2)).toBe('start Tether node')
     rmSync(path.join(root, 'calls'), { force: true })
   }
 }, 60_000)
@@ -289,6 +289,6 @@ test.skipIf(!PWSH)('Windows script, under PowerShell: -Launch only starts itself
   expect(r.exe).toBe('old exe')
   expect(r.status).toBe('running')
   expect(r.calls).toHaveLength(2)
-  expect(r.calls[0]).toMatch(/^register Inyon update -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ".*update\.ps1"$/)
-  expect(r.calls[1]).toBe('start Inyon update')
+  expect(r.calls[0]).toMatch(/^register Tether update -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File ".*update\.ps1"$/)
+  expect(r.calls[1]).toBe('start Tether update')
 }, 30_000)
