@@ -83,7 +83,7 @@ export function HostDot({ status }: { status: HostStatus }) {
     <span
       className={clsx(
         'inline-block size-[7px] shrink-0 rounded-full',
-        status === 'online' && 'bg-ok',
+        status === 'online' && 'bg-fg',
         status === 'connecting' && 'bg-fg-3 pulse-soft',
         status === 'error' && 'bg-danger',
       )}

@@ -59,7 +59,7 @@ export function Home() {
             type="button"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
             aria-label="Search"
-            className="ml-auto flex size-8 items-center justify-center rounded-lg text-fg-2 hover:bg-hover md:hidden"
+            className="ml-auto flex size-8 items-center justify-center rounded-full text-fg-2 hover:bg-hover relative after:absolute after:-inset-1 md:hidden"
           >
             <Search className="size-[18px]" />
           </button>

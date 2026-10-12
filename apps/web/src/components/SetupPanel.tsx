@@ -75,7 +75,7 @@ export function SetupPanel({ host }: { host: HostState }) {
         {report.checks.map((c) => (
           <div key={c.id} className="px-4 py-3.5">
             <div className="flex items-center gap-3">
-              <span className={clsx('flex size-5 shrink-0 items-center justify-center rounded-full', c.ok ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn')}>
+              <span className={clsx('flex size-5 shrink-0 items-center justify-center rounded-full', c.ok ? 'bg-sunken text-fg' : 'bg-warn-soft text-warn')}>
                 {c.ok ? <Check className="size-3" strokeWidth={3} /> : <TriangleAlert className="size-3" />}
               </span>
               <div className="min-w-0 flex-1">

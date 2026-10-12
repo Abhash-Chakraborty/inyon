@@ -103,7 +103,7 @@ export function ChangesTab({ items }: { items: ChatItem[] }) {
             .reverse()
             .map((e, n) => (
               <div key={n} className="border-b border-line">
-                <div className="sticky top-0 z-[1] flex items-center gap-2 bg-bg/95 px-3 py-1.5 text-[12px] text-fg-3 backdrop-blur">
+                <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-line bg-bg px-3 py-1.5 text-[12px] text-fg-3">
                   <span className="font-medium text-fg-2">{e.name === 'Write' ? (e.meta?.created ? 'Created' : 'Rewrote') : 'Edited'}</span>
                   <span>{since(e.ts)} ago</span>
                 </div>
@@ -275,14 +275,14 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
     <div className="flex min-h-0 flex-1 flex-col">
       <form className="flex items-center gap-1.5 p-2.5" onSubmit={(e) => (e.preventDefault(), go(draft))}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="http://my-server:3000" className={clsx(inputClass, 'h-8 font-mono text-[12px]')} aria-label="Preview address" />
-        <button type="button" title="Reload" onClick={() => setN((x) => x + 1)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
+        <button type="button" title="Reload" aria-label="Reload" onClick={() => setN((x) => x + 1)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
           <RefreshCw className="size-3.5" />
         </button>
-        <button type="button" title={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
+        <button type="button" title={phone ? 'Desktop width' : 'Phone width'} aria-label={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
           {phone ? <MonitorIcon className="size-3.5" /> : <Smartphone className="size-3.5" />}
         </button>
         {url && (
-          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
+          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
             <ExternalLink className="size-3.5" />
           </a>
         )}

@@ -13,11 +13,11 @@ import { Spinner } from './ui/primitives.tsx'
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
 
-/** Inyon's mark: a Korean shield kite on its line (same art as public/icon.svg). Graphite in both themes. */
+/** Inyon's mark: a Korean shield kite on its line (same art as public/icon.svg). The tile lifts a step on graphite. */
 export function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 64 64" className={clsx('shrink-0', className ?? 'size-[26px]')} aria-hidden>
-      <path d={SQUIRCLE} fill="#1D1C1A" />
+      <path d={SQUIRCLE} fill="var(--logo-tile)" />
       <path d={SQUIRCLE} transform="translate(.5 .5) scale(.984)" fill="none" stroke="#fff" strokeOpacity=".08" />
       <g fill="#F1F0EC">
         <path transform="rotate(-12 41 23)" fillRule="evenodd" d="M33.5 9H48.5A3.5 3.5 0 0 1 52 12.5V33.5A3.5 3.5 0 0 1 48.5 37H33.5A3.5 3.5 0 0 1 30 33.5V12.5A3.5 3.5 0 0 1 33.5 9ZM41 18.4A4.6 4.6 0 1 0 41 27.6A4.6 4.6 0 1 0 41 18.4Z" />

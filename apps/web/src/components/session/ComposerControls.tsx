@@ -15,10 +15,11 @@ function Chip({ children, onClick, title, tone, open, innerRef }: { children: Re
       ref={innerRef}
       type="button"
       title={title}
+      aria-label={title}
       onClick={onClick}
       onMouseDown={(e) => e.preventDefault()}
       className={clsx(
-        'inline-flex h-8 max-w-[220px] shrink-0 items-center gap-1.5 rounded-full px-2.5 font-mono text-[12px] transition-colors',
+        'relative inline-flex h-8 max-w-[220px] shrink-0 items-center gap-1.5 rounded-full px-2.5 font-mono text-[12px] transition-colors after:absolute after:-inset-1',
         tone === 'goal' ? 'text-accent-text hover:bg-accent-soft' : 'text-fg-2 hover:bg-hover hover:text-fg',
         open && 'bg-hover text-fg',
       )}
@@ -137,7 +138,7 @@ export function GoalSheet({ s, open, onClose }: { s: SessionModel; open: boolean
     >
       <p className="mb-4 text-[13.5px] leading-relaxed text-fg-2">The agent checks this condition before it stops, and keeps going until it's met.</p>
       {goal && (
-        <div className={clsx('mb-4 rounded-2xl border px-4 py-3 text-[13px]', goal.met ? 'border-ok/30 bg-ok-soft/60' : 'border-line bg-sunken')}>
+        <div className={clsx('mb-4 rounded-2xl border px-4 py-3 text-[13px]', goal.met ? 'border-line-strong bg-sunken' : 'border-line bg-sunken')}>
           <div className="font-medium">{goal.met ? 'Last goal was met' : 'Active goal'}</div>
           <div className="mt-0.5 line-clamp-3 text-fg-2">{goal.condition}</div>
           {goal.met && goal.reason && <div className="mt-1 line-clamp-2 text-[12px] text-fg-3">{goal.reason}</div>}

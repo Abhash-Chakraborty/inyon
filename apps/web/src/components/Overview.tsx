@@ -51,7 +51,7 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
       {a.waitingFor && <div className="mt-4 rounded-2xl border border-line bg-sunken px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed break-words text-fg">{a.waitingFor}</div>}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {done ? (
-          <span className="flex h-8 items-center gap-1.5 text-[13px] text-ok"><Check className="size-4" /> Answered</span>
+          <span className="flex h-8 items-center gap-1.5 text-[13px] text-fg-2"><Check className="size-4" /> Answered</span>
         ) : opts.length ? (
           opts.map((o, i) => (
             <button

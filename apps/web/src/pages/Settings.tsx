@@ -313,7 +313,7 @@ export function Settings() {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur-md">
+      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
         <div className="flex h-[52px] items-center gap-3 px-4 lg:px-7">
           <span className="md:hidden">
             <Logo />

@@ -6,7 +6,7 @@ import { useStore, type Toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 
 const icons = { info: Info, success: CheckCircle2, warn: MessageCircleQuestion, error: AlertCircle }
-const tones = { info: 'text-fg-2', success: 'text-ok', warn: 'text-warn', error: 'text-danger' }
+const tones = { info: 'text-fg-2', success: 'text-fg', warn: 'text-warn', error: 'text-danger' }
 /** how far a toast has to be flicked sideways or up before it goes */
 const FLING = 70
 

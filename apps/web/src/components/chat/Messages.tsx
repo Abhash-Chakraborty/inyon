@@ -43,7 +43,7 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
         )}
       >
         {item.images > 0 && (
-          <span className="mb-1.5 mr-1.5 inline-flex items-center gap-1 rounded-md bg-elev/70 px-1.5 py-0.5 text-xs text-fg-2">
+          <span className="mb-1.5 mr-1.5 inline-flex items-center gap-1 rounded-full border border-line bg-elev/70 px-2 py-0.5 text-xs text-fg-2">
             <ImageIcon className="size-3.5" />
             {item.images} image{item.images > 1 ? 's' : ''}
           </span>
@@ -59,7 +59,7 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
           </button>
         )}
       </div>
-      <div className="mt-1 flex h-6 items-center gap-1 px-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 max-sm:opacity-100">
+      <div className="mt-1 flex h-6 items-center gap-1 px-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
         {item.queued && <span className="mr-1">Sent while the agent was working ·</span>}
         <span>{clock(item.ts)}</span>
         <CopyButton text={item.text} />
@@ -180,7 +180,7 @@ function JobFinished({ item }: { item: Extract<Row, { type: 'notice' }>['item'] 
   const Icon = failed ? CircleX : CircleCheck
   return (
     <div className="my-1 flex items-center gap-2.5 px-0 py-1 text-[12.5px] text-fg-3">
-      <Icon className={clsx('size-4 shrink-0', failed ? 'text-danger' : 'text-ok')} />
+      <Icon className={clsx('size-4 shrink-0', failed ? 'text-danger' : 'text-fg-3')} />
       <span className="min-w-0 truncate">{item.text}</span>
       <span className="ml-auto shrink-0 tabular text-[12px]">{clock(item.ts)}</span>
     </div>
@@ -208,7 +208,7 @@ export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: E
           <PartView key={p.key} part={p} live={live && row.open} />
         ))}
         {!row.open && (
-          <div className="mt-1 flex h-7 items-center gap-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 max-sm:opacity-100">
+          <div className="mt-1 flex h-7 items-center gap-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
             {text && <CopyButton text={text} className="-ml-1.5" />}
             <span>{clock(row.ts)}</span>
             {row.durationMs ? <span>· worked {duration(row.durationMs)}</span> : null}
@@ -248,8 +248,8 @@ export function CommandRow({ row }: { row: Extract<Row, { type: 'command' }> }) 
 export function GoalRow({ row }: { row: Extract<Row, { type: 'goal' }> }) {
   const { item } = row
   return (
-    <div className={clsx('flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-[13.5px]', item.met ? 'border-ok/30 bg-ok-soft/60' : 'border-dashed border-line-strong')}>
-      <Target className={clsx('mt-0.5 size-4 shrink-0', item.met ? 'text-ok' : 'text-fg-3')} />
+    <div className={clsx('flex items-start gap-2.5 rounded-2xl border px-4 py-3 text-[13.5px]', item.met ? 'border-line bg-sunken' : 'border-dashed border-line-strong')}>
+      <Target className={clsx('mt-0.5 size-4 shrink-0', item.met ? 'text-fg' : 'text-fg-3')} />
       <div className="min-w-0">
         <div className="font-medium">{item.met ? 'Goal met' : item.cleared ? 'Goal cleared' : 'Goal set'}</div>
         <div className="mt-0.5 line-clamp-3 text-fg-2">{item.condition}</div>

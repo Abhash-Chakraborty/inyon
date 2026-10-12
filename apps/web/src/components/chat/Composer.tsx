@@ -516,7 +516,7 @@ export function Composer({
                       <>
                         <div className="absolute inset-0 bg-black/35" />
                         <div className="absolute inset-x-0 bottom-0 h-[3px] bg-white/25">
-                          <div className="h-full bg-white transition-[width]" style={{ width: `${Math.round(f.progress * 100)}%` }} />
+                          <div className="h-full origin-left bg-white transition-transform" style={{ transform: `scaleX(${f.progress})` }} />
                         </div>
                       </>
                     )}
@@ -606,6 +606,7 @@ export function Composer({
             }
           }}
           placeholder={working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
+          aria-label={`Message ${agentName}`}
           className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3"
         />
         <div className="flex items-center gap-0.5 px-1.5 pb-1.5">

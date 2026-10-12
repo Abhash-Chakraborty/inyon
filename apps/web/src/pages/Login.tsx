@@ -77,6 +77,7 @@ function SignIn() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder={setup ? 'New password (8+ characters)' : 'Password'}
+          aria-label={setup ? 'New password' : 'Password'}
           className={`${inputClass} mt-7 h-12`}
         />
         {setup && (
@@ -86,6 +87,7 @@ function SignIn() {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             placeholder="Type it again"
+            aria-label="Type the password again"
             className={`${inputClass} mt-3 h-12`}
           />
         )}

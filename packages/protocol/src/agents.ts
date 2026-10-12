@@ -296,12 +296,12 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     skin: {
       light: {
         bg: '#FAF9F5', panel: '#FFFFFF', raised: '#F4F2EC', hover: '#F0EEE7', line: '#E8E5DC', lineStrong: '#D9D5C9',
-        fg: '#1F1E1D', fg2: '#5C5B56', fg3: '#77756E', accent: '#C96442', accentFg: '#FFFFFF', accentSoft: '#F5E6DE',
+        fg: '#1F1E1D', fg2: '#5C5B56', fg3: '#6A6862', accent: '#B85A38', accentFg: '#FFFFFF', accentSoft: '#F5E6DE',
         accentText: '#A8502F', bubble: shared.bubbleLight, code: '#F4F2EC',
       },
       dark: {
         bg: '#262624', panel: '#30302E', raised: '#2A2927', hover: '#33322F', line: '#3B3A37', lineStrong: '#4A4844',
-        fg: '#F4F3EE', fg2: '#C3C1B8', fg3: '#A6A39A', accent: '#D97757', accentFg: '#FFFFFF', accentSoft: '#3E2C25',
+        fg: '#F4F3EE', fg2: '#C3C1B8', fg3: '#A6A39A', accent: '#D97757', accentFg: '#1F1E1D', accentSoft: '#3E2C25',
         accentText: '#E8957A', bubble: '#1A1918', code: '#1F1E1D',
       },
     },
@@ -417,7 +417,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     skin: {
       light: {
         bg: '#FBFAF8', panel: '#FFFFFF', raised: '#F4F2EF', hover: '#EFEDE9', line: '#E4E1DB', lineStrong: '#D3CFC6',
-        fg: '#14171C', fg2: '#4A5260', fg3: '#68707D', accent: '#C2621B', accentFg: '#FFFFFF', accentSoft: '#FBE9DA',
+        fg: '#14171C', fg2: '#4A5260', fg3: '#5F6774', accent: '#B45A18', accentFg: '#FFFFFF', accentSoft: '#FBE9DA',
         accentText: '#A4500F', bubble: '#F1EEE9', code: '#F4F2EF',
       },
       dark: {
@@ -463,7 +463,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       },
       dark: {
         bg: '#0E0D14', panel: '#18171F', raised: '#14131B', hover: '#1E1D27', line: '#2A2836', lineStrong: '#383547',
-        fg: '#ECEBF5', fg2: '#BEBBD0', fg3: '#918EA6', accent: '#8B7CF6', accentFg: '#FFFFFF', accentSoft: '#231F3D',
+        fg: '#ECEBF5', fg2: '#BEBBD0', fg3: '#918EA6', accent: '#8B7CF6', accentFg: '#14121F', accentSoft: '#231F3D',
         accentText: '#A99EFA', bubble: '#201F2B', code: '#111018',
       },
     },
@@ -532,7 +532,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     skin: {
       light: {
         bg: '#F8FAFD', panel: '#FFFFFF', raised: '#F0F4F9', hover: '#E9EEF6', line: '#DDE3EA', lineStrong: '#C7D0DB',
-        fg: '#1F1F1F', fg2: '#444746', fg3: '#5F6368', accent: '#4285F4', accentFg: '#FFFFFF', accentSoft: '#E8F0FE',
+        fg: '#1F1F1F', fg2: '#444746', fg3: '#5F6368', accent: '#1A73E8', accentFg: '#FFFFFF', accentSoft: '#E8F0FE',
         accentText: '#1A5FD1', bubble: '#E9EEF6', code: '#F0F4F9',
       },
       dark: {

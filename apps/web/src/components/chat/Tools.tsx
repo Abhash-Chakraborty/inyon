@@ -15,7 +15,7 @@ export const ChatJobs = createContext<{ tasks: Map<string, BackgroundTask>; suba
 
 function Status({ call, live, detail }: { call: ToolCall; live: boolean; detail?: boolean }) {
   if (call.result?.isError) return <AlertCircle className="size-3.5 text-danger" />
-  if (call.result) return detail ? <Check className="size-3.5 text-ok" /> : null
+  if (call.result) return detail ? <Check className="size-3.5 text-fg-3" /> : null
   if (live) return <Loader2 className="size-3.5 animate-spin text-fg-3" />
   return <CircleDashed className="size-3.5 text-fg-3" />
 }
@@ -324,7 +324,7 @@ export function SpecialTool({ call, live }: { call: ToolCall; live: boolean }) {
               <span
                 className={clsx(
                   'mt-[3px] flex size-4 shrink-0 items-center justify-center rounded-full border',
-                  t.status === 'completed' ? 'border-ok bg-ok text-white' : t.status === 'in_progress' ? 'border-accent' : 'border-line-strong',
+                  t.status === 'completed' ? 'border-fg bg-fg text-bg' : t.status === 'in_progress' ? 'border-accent' : 'border-line-strong',
                 )}
               >
                 {t.status === 'completed' && <Check className="size-3" strokeWidth={3} />}

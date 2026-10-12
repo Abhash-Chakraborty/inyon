@@ -24,10 +24,10 @@ import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
-    <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur-md">
+    <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
       <div className="flex h-[52px] items-center gap-2 px-3 lg:px-7">
         {back ? (
-          <Link to={back} aria-label="Back" className="inline-flex size-8 items-center justify-center rounded-lg text-fg-2 hover:bg-hover">
+          <Link to={back} aria-label="Back" className="inline-flex size-8 items-center justify-center rounded-full text-fg-2 hover:bg-hover relative after:absolute after:-inset-1">
             <ChevronLeft className="size-5" />
           </Link>
         ) : (
@@ -69,7 +69,7 @@ export function MachinesPage() {
               <div className="flex items-center gap-2">
                 <span className="truncate text-[15px] font-semibold">{h.config.name}</span>
                 <HostDot status={h.status} />
-                {nodeUpdateLabel(h) && <span className="shrink-0 rounded-full bg-sunken px-1.5 py-px text-[12px] text-fg-2">{nodeUpdateLabel(h)}</span>}
+                {nodeUpdateLabel(h) && <span className="inline-flex h-6 shrink-0 items-center rounded-full border border-line bg-white/45 px-2.5 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
                 {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
@@ -380,7 +380,7 @@ function IntegrationCard({ host }: { host: HostState }) {
     <div className="max-w-2xl space-y-4">
       <div className="rounded-3xl border border-line bg-elev shadow-card p-5">
         <div className="flex items-center gap-3">
-          <Plug className={clsx('size-5', on ? 'text-ok' : 'text-fg-3')} />
+          <Plug className={clsx('size-5', on ? 'text-fg' : 'text-fg-3')} />
           <div className="flex-1">
             <div className="text-[15px] font-semibold">Claude Code integration</div>
             <div className="text-[12.5px] text-fg-3">{on ? 'On' : host.integration === 'missing' ? 'Off' : host.integration === 'unknown' ? 'Unknown' : INTEGRATION_TEXT[host.integration]}</div>
@@ -400,7 +400,7 @@ function IntegrationCard({ host }: { host: HostState }) {
         {host.agents.length ? host.agents.map((k) => {
           const signedIn = host.signedIn?.includes(k)
           return (
-            <span key={k} className="flex items-center gap-2 rounded-xl border border-line bg-elev py-1.5 pr-1.5 pl-3 text-[13px]">
+            <span key={k} className="flex items-center gap-2 rounded-full border border-line bg-elev py-1 pr-1 pl-3 font-mono text-[12px]">
               <AgentLogo kind={k} size={18} /> {AGENTS[k].name}
               {host.signedIn && (signedIn ? (
                 <span className="pr-1.5 text-[12px] text-fg-3">· signed in</span>

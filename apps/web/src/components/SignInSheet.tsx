@@ -340,7 +340,7 @@ function MenuStep({ menu, onPick }: { menu: NonNullable<SignInScreen['menu']>; o
 
 function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
   return (
-    <div className={clsx('flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13.5px]', tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-danger-soft text-danger')}>
+    <div className={clsx('flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13.5px]', tone === 'ok' ? 'bg-sunken text-fg' : 'bg-danger-soft text-danger')}>
       {tone === 'ok' ? <Check className="mt-0.5 size-4 shrink-0" /> : <TriangleAlert className="mt-0.5 size-4 shrink-0" />}
       <span className="min-w-0 break-words">{children}</span>
     </div>

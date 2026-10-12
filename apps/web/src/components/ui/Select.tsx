@@ -109,7 +109,7 @@ export function Select<T extends string>({
           }
         }}
         className={clsx(
-          'press flex h-10 w-full items-center gap-2 rounded-xl border border-line bg-elev px-3 text-left text-[14px] text-fg transition-colors focus:border-line-strong',
+          'press flex h-10 w-full items-center gap-2 rounded-xl border border-field bg-elev px-3 text-left text-[14px] text-fg transition-colors focus:border-fg',
           open && 'border-line-strong',
           className,
         )}

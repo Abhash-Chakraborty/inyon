@@ -22,6 +22,10 @@ test('nothing uses a gradient', () => {
 })
 
 // status chips are neutral and the dot carries the state; blue was a colour nothing else used
+test('nothing blurs what is behind it', () => {
+  expect(offenders(/backdrop-blur/)).toEqual([])
+})
+
 test('there is no blue info colour', () => {
   expect(css).not.toMatch(/--info\b/)
   expect(offenders(/-info\b/)).toEqual([])

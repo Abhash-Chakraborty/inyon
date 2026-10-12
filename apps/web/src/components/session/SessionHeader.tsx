@@ -88,10 +88,11 @@ export function SessionHeader({
   return (
     <header className="pt-safe z-10 shrink-0 border-b border-line bg-bg">
       <div className="flex h-[60px] items-center gap-1.5 px-2 sm:px-5">
-        <Link to="/" aria-label="Back" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-2 hover:bg-hover md:hidden">
+        <Link to="/" aria-label="Back" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover relative after:absolute after:-inset-1 md:hidden">
           <ChevronLeft className="size-5" />
         </Link>
-        <AgentLogo kind={agent} size={26} active={s.screen?.working ?? ref?.pane.agent?.state === 'working'} />
+        {/* phones name the agent in the subtitle; the title gets the room */}
+        <AgentLogo kind={agent} size={26} active={s.screen?.working ?? ref?.pane.agent?.state === 'working'} className="max-sm:hidden" />
         <div className="min-w-0 flex-1 pl-1">
           <h1 className="flex items-center gap-1.5 text-[16px] font-semibold leading-tight tracking-[-0.03em]">
             {ref?.pane.agent && <StateDot state={shownState(ref.pane.agent, ref.host)} className="sm:hidden" />}
@@ -118,7 +119,7 @@ export function SessionHeader({
               { key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.rc(false) },
             ]}
             trigger={({ toggle, ref: r, open }) => (
-              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-ok hover:bg-ok-soft', open && 'bg-ok-soft')}>
+              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg', open && 'bg-hover text-fg')}>
                 <RadioTower className="size-4" />
               </button>
             )}

@@ -25,7 +25,7 @@ export function CopyButton({ text, className, label = 'Copy' }: { text: string; 
         setTimeout(() => setDone(false), 1400)
       }}
     >
-      {done ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
+      {done ? <Check className="size-3.5 text-fg" /> : <Copy className="size-3.5" />}
     </button>
   )
 }

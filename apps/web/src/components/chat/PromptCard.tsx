@@ -161,9 +161,9 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         >
           <label className="min-w-0 flex-1">
             <span className="mb-1 block text-[12px] text-fg-3">{prompt.input.label}</span>
-            <input name="answer" autoComplete="off" autoCapitalize="off" spellCheck={false} className="h-11 w-full rounded-xl border border-line bg-bg px-3 font-mono text-[14px]" placeholder="Paste here" />
+            <input name="answer" autoComplete="off" autoCapitalize="off" spellCheck={false} className="h-11 w-full rounded-xl border border-field bg-bg px-3 font-mono text-[14px] transition-colors focus:border-fg" placeholder="Paste here" />
           </label>
-          <button type="submit" disabled={busy !== null} className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
+          <button type="submit" disabled={busy !== null} className="press flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
             <Send className="size-4" />
           </button>
         </form>
@@ -181,12 +181,13 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             rows={2}
             onChange={(e) => setFreeText(e.target.value)}
             placeholder="Type your answer…"
-            className="min-h-[52px] flex-1 resize-none rounded-xl border border-line bg-bg px-3 py-2.5 text-[15px] outline-none focus:border-accent/60"
+            aria-label="Your answer"
+            className="min-h-[52px] flex-1 resize-none rounded-2xl border border-field bg-bg px-3.5 py-2.5 text-[15px] outline-none transition-colors focus:border-fg"
           />
           <button
             type="submit"
             disabled={!freeText.trim() || busy !== null}
-            className="flex size-11 items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-40"
+            className="press flex size-11 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-40"
             aria-label="Send answer"
           >
             <Send className="size-4.5" />
@@ -218,7 +219,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
               ) : (
                 <span
                   className={clsx(
-                    'mt-px flex size-[22px] shrink-0 items-center justify-center rounded-lg text-xs font-semibold',
+                    'mt-px flex size-[22px] shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold',
                     o.selected ? 'bg-accent text-accent-fg' : 'bg-sunken text-fg-2',
                   )}
                 >
@@ -238,7 +239,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         <button
           type="button"
           onClick={() => (freeText !== null ? setFreeText(null) : keys(['Escape']))}
-          className="h-9 rounded-lg px-3 text-sm font-medium text-fg-2 hover:bg-hover"
+          className="press h-9 rounded-full px-4 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg"
         >
           {freeText !== null ? 'Back' : 'Cancel'}
         </button>
@@ -249,7 +250,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             { k: 'Down', icon: ArrowDown, label: 'Down' },
             { k: 'Enter', icon: CornerDownLeft, label: 'Enter' },
           ].map(({ k, icon: Icon, label }) => (
-            <button key={k} type="button" aria-label={label} title={label} onClick={() => keys([k])} className="flex size-9 items-center justify-center rounded-lg text-fg-3 hover:bg-hover hover:text-fg">
+            <button key={k} type="button" aria-label={label} title={label} onClick={() => keys([k])} className="press relative flex size-9 items-center justify-center rounded-full text-fg-3 after:absolute after:-inset-0.5 hover:bg-hover hover:text-fg">
               <Icon className="size-4" />
             </button>
           ))}
@@ -257,7 +258,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             <button
               type="button"
               onClick={() => keys(['Right'])}
-              className="ml-1 inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-sm font-medium text-accent-fg hover:bg-accent-hover"
+              className="press ml-1 inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90"
             >
               Next <ArrowRight className="size-4" />
             </button>

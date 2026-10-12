@@ -47,8 +47,8 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
   if (!pair) {
     return (
       <div className="space-y-4">
-        <div className="flex gap-3 rounded-2xl bg-ok-soft/60 px-3.5 py-3 text-[13px] leading-relaxed text-fg-2">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-ok" />
+        <div className="flex gap-3 rounded-2xl bg-sunken px-3.5 py-3 text-[13px] leading-relaxed text-fg-2">
+          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-fg-2" />
           <span>
             You run one command on the machine you're adding. From then on it connects out to this hub by itself, so it works behind a router or firewall and you don't open SSH or any port on it. Best for laptops and anything the hub can't reach. Remove the machine to revoke it.
           </span>
@@ -80,7 +80,7 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
         </Button>
       </div>
       <div className="flex items-center gap-2.5 text-[13px]">
-        {online ? <Check className="size-4 text-ok" /> : <Loader2 className="size-4 animate-spin text-fg-3" />}
+        {online ? <Check className="size-4 text-fg" /> : <Loader2 className="size-4 animate-spin text-fg-3" />}
         {online ? `${host!.config.name} is connected.` : 'Waiting for the machine to connect…'}
       </div>
       <p className="text-[12px] leading-relaxed text-fg-3">

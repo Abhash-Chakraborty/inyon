@@ -209,7 +209,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
       <div className="relative min-h-0 flex-1">
         <div ref={el} className="absolute inset-0" onClick={() => termRef.current?.focus()} />
         {exited && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg/85 backdrop-blur-sm">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg">
             <p className="text-sm text-fg-2">{exited === 'Detached' ? 'Terminal closed' : exited}</p>
             <Button onClick={() => setGeneration((g) => g + 1)}>
               <RotateCw className="size-4" /> Reconnect

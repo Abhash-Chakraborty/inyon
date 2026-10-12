@@ -40,7 +40,7 @@ export function NodeUpdate({ host }: { host: HostState }) {
   const failed = u.state === 'failed' || !!refused
   const icon =
     u.state === 'updating' ? <Loader2 className="size-4 animate-spin text-fg-2" />
-    : u.state === 'updated' ? <CheckCircle2 className="size-4 text-ok" />
+    : u.state === 'updated' ? <CheckCircle2 className="size-4 text-fg" />
     : failed ? <AlertCircle className="size-4 text-danger" />
     : <ArrowUpCircle className="size-4 text-fg-2" />
   const title =

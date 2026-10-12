@@ -20,7 +20,7 @@ export const Button = forwardRef<
       type={type}
       disabled={disabled || loading}
       className={clsx(
-        'press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium disabled:opacity-45',
+        'press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium disabled:opacity-55',
         size === 'xs' && 'h-7 px-3 text-[12px]',
         size === 'sm' && 'h-8 px-3.5 text-[13px]',
         size === 'md' && 'h-9 px-4 text-[13.5px]',
@@ -53,7 +53,7 @@ export function IconButton({
       aria-label={label}
       title={label}
       className={clsx(
-        'press inline-flex size-8 shrink-0 items-center justify-center rounded-lg disabled:opacity-40',
+        'press relative inline-flex size-8 shrink-0 items-center justify-center rounded-full after:absolute after:-inset-1 disabled:opacity-40',
         active ? 'bg-hover text-fg' : 'text-fg-2 hover:bg-hover hover:text-fg',
         className,
       )}
@@ -75,7 +75,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 }
 
 export const inputClass =
-  'h-10 w-full rounded-xl border border-line bg-elev px-3 text-[14px] text-fg placeholder:text-fg-3 transition-colors focus:border-line-strong focus:bg-elev'
+  'h-10 w-full rounded-xl border border-field bg-elev px-3 text-[14px] text-fg placeholder:text-fg-3 transition-colors focus:border-fg focus:bg-elev'
 
 export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
@@ -85,7 +85,7 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       aria-checked={on}
       aria-label={label}
       onClick={() => onChange(!on)}
-      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-line-strong')}
+      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-field')}
     >
       <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-500 ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
     </button>
@@ -139,7 +139,7 @@ export function Segmented<T extends string>({
           title={o.title}
           onClick={() => onChange(o.v)}
           className={clsx(
-            'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium',
+            'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium after:absolute after:-inset-y-1.5 after:inset-x-0',
             size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
             full && 'flex-1',
             value === o.v ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
@@ -451,7 +451,7 @@ export function Meter({ value, tone = 'fg', className }: { value: number; tone?:
   const color = tone === 'accent' ? 'var(--accent)' : tone === 'auto' ? (v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--fg)') : 'var(--fg)'
   return (
     <div className={clsx('h-1.5 overflow-hidden rounded-full bg-line', className)}>
-      <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${v}%`, background: color }} />
+      <div className="h-full origin-left rounded-full transition-transform duration-500" style={{ transform: `scaleX(${v / 100})`, background: color }} />
     </div>
   )
 }
