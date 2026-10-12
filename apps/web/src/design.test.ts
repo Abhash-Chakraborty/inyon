@@ -39,3 +39,10 @@ test('no transition animates a layout property', () => {
   const declared = [...css.matchAll(/transition(?:-property)?:\s*([^;}]+)/g)].map((m) => m[1]!)
   expect(declared.filter((d) => LAYOUT.test(d))).toEqual([])
 })
+
+test('with reduced motion, sheets fade for about 120ms instead of sliding', () => {
+  const block = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'))
+  for (const cls of ['animate-sheet-in', 'animate-sheet-out']) expect(block).toContain('.' + cls)
+  expect(block).toMatch(/\.animate-sheet-in[^{]*\{[^}]*animation-name: fade-in !important;[^}]*animation-duration: 120ms !important/)
+  expect(block).toMatch(/\.animate-sheet-out[^{]*\{[^}]*animation-name: fade-out !important;[^}]*animation-duration: 120ms !important/)
+})

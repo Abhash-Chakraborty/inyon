@@ -391,4 +391,7 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .press:active { transform: none; }
+  /* sheets, menus and dialogs still show that they opened or closed: a short fade, no movement */
+  .animate-sheet-in, .animate-pop, .animate-fade-in { animation-name: fade-in !important; animation-duration: 120ms !important; animation-timing-function: ease-out !important; }
+  .animate-sheet-out, .animate-fade-out { animation-name: fade-out !important; animation-duration: 120ms !important; animation-timing-function: ease-in !important; }
 }
