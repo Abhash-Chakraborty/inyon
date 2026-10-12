@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
+import { Bell, BookOpen, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
 import { AGENTS } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -55,6 +55,9 @@ function Background() {
 }
 
 /** Which Inyon this is, to check for updates or put in a bug report. */
+/** The public guide: setup, pairing and commands, kept with the releases. */
+const GUIDE = 'https://github.com/Abhash-Chakraborty/inyon-releases#readme'
+
 function About() {
   const [app, setApp] = useState<{ version: string; build: string } | undefined>()
   useEffect(() => {
@@ -77,6 +80,13 @@ function About() {
         className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50"
       >
         <Copy className="size-4 text-fg-3" /> Copy version details
+      </button>
+      <button
+        type="button"
+        onClick={() => openLink(GUIDE)}
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50"
+      >
+        <BookOpen className="size-4 text-fg-3" /> How Inyon works <span className="text-fg-3">↗</span>
       </button>
     </Section>
   )

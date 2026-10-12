@@ -225,7 +225,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
         )}
 
         {asking && found && (
-          <div ref={fingerprint} className={clsx('flex scroll-mb-4 gap-3 rounded-2xl px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-ok-soft/60 text-fg-2')}>
+          <div ref={fingerprint} className={clsx('flex scroll-mb-4 gap-3 rounded-2xl px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
             {changed ? <ShieldAlert className="mt-0.5 size-4 shrink-0" /> : <ShieldCheck className="mt-0.5 size-4 shrink-0 text-fg-2" />}
             <span className="min-w-0">
               {changed ? "The server's key is different from the one you trusted before. Only continue if you reinstalled it or changed its keys." : 'The server says its key is:'}
