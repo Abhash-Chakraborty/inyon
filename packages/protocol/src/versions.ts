@@ -7,8 +7,11 @@ export const SLUG = 'inyon'
 /** The name it had before, which migration code still reads (folders, env vars, storage keys) */
 export const OLD_SLUG = 'tether'
 export const SOURCE_REPO = 'Abhash-Chakraborty/inyon'
-/** The hosted app (a static PWA) */
-export const WEB_URL = 'https://inyon.abhashchakraborty.tech'
+/**
+ * The web app (a static PWA on the releases repo's GitHub Pages). A computer's QR code opens it
+ * when scanned with a phone's camera.
+ */
+export const WEB_URL = 'https://abhash-chakraborty.github.io/inyon-releases/'
 /** The Android application id */
 export const APP_ID = 'tech.abhashchakraborty.inyon'
 

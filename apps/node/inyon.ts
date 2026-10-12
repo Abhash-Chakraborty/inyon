@@ -25,6 +25,7 @@ import path from 'node:path'
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
+import { WEB_URL } from '@inyon/protocol'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { nodeDir, savedEnv } from './paths.ts'
@@ -256,11 +257,15 @@ async function pair(args: string[]) {
   }
   const s = currentState()
   const where = { urls: s?.urls ?? [], relays: s?.relays ?? [] }
-  const link = pairLink({ id: identity().id, secret, name: os.hostname(), ...where })
+  const info = { id: identity().id, secret, name: os.hostname(), ...where }
+  const link = pairLink(info)
+  // the QR code opens the web app when scanned with a phone's camera; the Inyon app reads it too.
+  // INYON_WEB_URL points it at a copy of the web app you host yourself
+  const qr = pairLink(info, process.env.INYON_WEB_URL || WEB_URL)
   // the typed-in code needs the relays to know this ID; without them there's still the QR code
   const typed = await Promise.race([publishShortCode(short, { machine: identity().id, name: os.hostname(), ...where }).then(() => true, () => false), new Promise<false>((r) => setTimeout(r, 8000, false).unref())])
-  console.log(`\nScan this with the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
-  console.log(renderUnicodeCompact(link, { border: 2 }))
+  console.log(`\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
+  console.log(renderUnicodeCompact(qr, { border: 2 }))
   if (typed) console.log(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
   console.log(`\nOr paste this link into the app:\n${link}\n`)
   if (!s?.urls.length && !s?.relays.length) console.log('No address yet: the phone will look this machine up once its tunnel is up.\n')

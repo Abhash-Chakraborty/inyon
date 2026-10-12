@@ -94,6 +94,18 @@ test('pairing links round trip and reject junk', () => {
   expect(parsePairLink(pairLink({ ...info, urls: ['javascript:alert(1)'] }))!.urls).toEqual([])
 })
 
+test('the web app link keeps the code after # and still pairs', () => {
+  const machine = newIdentity()
+  const info = { id: machine.id, secret: 'b'.repeat(32), name: 'Laptop', urls: ['wss://x.trycloudflare.com/link'], relays: [] }
+  const web = pairLink(info, 'https://example.github.io/inyon-releases/')
+  const url = new URL(web)
+  // nothing about the code reaches the server: no query, everything in the fragment
+  expect(url.search).toBe('')
+  expect(url.pathname).toBe('/inyon-releases/')
+  expect(url.hash).toStartWith('#pair?m=')
+  expect(parsePairLink(web)).toEqual(info)
+})
+
 test('relay frames carry the session number', () => {
   const f = frame(70000, Uint8Array.of(1, 2, 3))
   expect(unframe(f)).toEqual({ sid: 70000, data: Uint8Array.of(1, 2, 3) })

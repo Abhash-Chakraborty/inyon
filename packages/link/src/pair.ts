@@ -15,11 +15,16 @@ export interface PairInfo {
   relays: string[]
 }
 
-export function pairLink(p: PairInfo) {
+/**
+ * The link for the app. With `web` (the web app's address) it opens the web app instead, which is
+ * what a phone's camera does with it; the code then rides after `#`, which browsers never send to
+ * the server, so the host of the web app never sees it.
+ */
+export function pairLink(p: PairInfo, web?: string) {
   const q = new URLSearchParams({ m: p.id, s: p.secret, n: p.name })
   for (const u of p.urls) q.append('u', u)
   for (const r of p.relays) q.append('r', r)
-  return `inyon://pair?${q}`
+  return web ? `${web}#pair?${q}` : `inyon://pair?${q}`
 }
 
 /** Reads a pairing link; undefined if it isn't one. */
@@ -28,7 +33,7 @@ export function parsePairLink(text: string): PairInfo | undefined {
     const url = new URL(text.trim())
     // tether:// is how codes looked before the rename to Inyon
     if (url.protocol !== 'inyon:' && url.protocol !== 'tether:' && url.protocol !== 'https:') return
-    const q = url.searchParams
+    const q = url.hash.startsWith('#pair?') ? new URLSearchParams(url.hash.slice('#pair?'.length)) : url.searchParams
     const id = q.get('m') ?? ''
     const secret = q.get('s') ?? ''
     if (!isMachineId(id) || secret.length < 16) return
