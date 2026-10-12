@@ -974,7 +974,10 @@ export async function exitAgent(hostId: string, paneId: string, o: { end?: boole
     registry.refresh(hostId, 300)
   }
   const proc = registry.agentProc(hostId, paneId)
-  const alive = async () => !proc || (await host.exec(`kill -0 ${proc.pid} 2>/dev/null && echo alive`)).stdout.includes('alive')
+  // an agent that was its pane's own command takes the pane with it, and kill -0 can still answer
+  // for its pid a while after (a process not yet reaped), so a pane that's gone counts as gone too
+  const alive = async () =>
+    (await host.exec(`tmux display -p -t ${p} '#{pane_id}' >/dev/null 2>&1${proc ? ` && kill -0 ${proc.pid} 2>/dev/null` : ''} && echo alive`)).stdout.includes('alive')
   const waitGone = async (ms: number) => {
     for (let t = 0; t < ms; t += 250) {
       await sleep(250)
