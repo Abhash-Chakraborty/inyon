@@ -40,22 +40,23 @@
   section { padding: 22px 0; }
   h2.title { font-size: 24px; font-weight: 500; letter-spacing: -.03em; margin: 0 0 18px; }
   .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .grid > *, .card { min-width: 0; }
   @media (min-width: 720px) { .grid.two { grid-template-columns: 1fr 1fr; } }
   .step h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
   .step p { margin: 0 0 16px; color: var(--fg-2); font-size: 15px; }
   .btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: 999px; background: var(--fg); color: var(--bg);
-    font: 500 15px Geist, sans-serif; text-decoration: none; border: 0; cursor: pointer; transition: opacity .15s, transform .15s cubic-bezier(.2,.7,.2,1); }
+    font: 500 15px Geist, sans-serif; text-decoration: none; border: 0; cursor: pointer; white-space: nowrap; transition: opacity .15s, transform .15s cubic-bezier(.2,.7,.2,1); }
   .btn:hover { opacity: .9; }
   .btn:active { transform: scale(.97); }
   .btn.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line-strong); }
   .meta { font: 400 12.5px 'Geist Mono', monospace; color: var(--fg-3); margin-top: 10px; }
-  .cmd { display: flex; align-items: center; gap: 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; padding: 6px 6px 6px 14px; margin: 8px 0 0; }
+  .cmd { min-width: 0; display: flex; align-items: center; gap: 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; padding: 6px 6px 6px 14px; margin: 8px 0 0; }
   .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 400 13px/1.9 'Geist Mono', monospace; scrollbar-width: none; }
   .cmd code::-webkit-scrollbar { display: none; }
   .cmd button { flex: none; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--fg);
     font: 500 12.5px Geist, sans-serif; cursor: pointer; }
   .os { font: 500 12px 'Geist Mono', monospace; color: var(--fg-3); margin-top: 14px; }
-  .docs a { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); text-decoration: none; }
+  .docs a { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; padding: 14px 0; border-top: 1px solid var(--line); text-decoration: none; }
   .docs a:first-child { border-top: 0; padding-top: 0; }
   .docs a span { color: var(--fg-3); font-size: 14.5px; }
   .docs a b { font-weight: 500; }
