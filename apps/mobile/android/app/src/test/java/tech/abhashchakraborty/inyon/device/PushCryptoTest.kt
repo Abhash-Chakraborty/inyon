@@ -59,7 +59,7 @@ class PushCryptoTest {
         const val PLAIN =
             "{\"title\":\"claude finished\",\"body\":\"tests pass on inyon-api — ready for review\",\"href\":\"/s/abc123\",\"tag\":\"abc123\"}"
         const val P =
-            "oKGio6SlpqeoqaqrnToIRDGnZ51YR+S/Zg+ku1DKMH77xCoJ+CwKpB3EEXjwTGWLylEnTn/sZbt6WuyXZ28jPAq1aFMgLmJ+RvARkMbZ5AtJhYKPhsKNffmnqc3vJ4nMt6T/WNRXEeme+y/3vrYYiS+M+/r5+Txy5OqOGRZjQ9MaduDPZlrSIbLhlURYfX+I"
+            "oKGio6SlpqeoqaqrnToIRDGnZ51YR+S/Zg+ku1DKMH77xCoJ+CwKpB3EEXjwTGWLylEnTn/sZbt6WuyXZ3IoMQ2+Nx8xNyu8JOSlwtHd4RYQw4uS1JCabuaru5jhKcPWoKe7QMxaTbXQ+C6lvbcJhyHa7vy84SQx5+vcGhdyHPxGStE0ttNjQqIixSvufk4="
 
         fun b64(s: String): ByteArray = Base64.getDecoder().decode(s)
 
