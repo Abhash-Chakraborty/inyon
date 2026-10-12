@@ -132,6 +132,8 @@ deploy anywhere else.
 - Installed on a phone from the browser, with system notifications, it needs HTTPS. Use Caddy or
   `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`.
 - The Android app needs nothing hosted. It talks to your computers itself.
+- The web app at [abhash-chakraborty.github.io/inyon-releases](https://abhash-chakraborty.github.io/inyon-releases/)
+  needs no hub either. It runs the same core as the Android app, in the page.
 - Other machines host nothing. They run tmux and your agents.
 
 Don't open port 4777 to the internet without HTTPS. The hub can run commands on every machine you
@@ -194,7 +196,8 @@ irm https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/downloa
 ```
 
 It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In the app,
-tap *Add a computer*, then *Scan the code*. If the SSH session is on the same phone, use the
+tap *Add a computer*, then *Scan the code*. Scanned with the phone's camera instead, the code opens
+the web app (below). If the SSH session is on the same phone, use the
 one-time ID and 6-digit code it also prints. The code works once, for 10 minutes, and five wrong
 tries cancel it.
 
@@ -212,6 +215,19 @@ and `inyon forget <name>` unpairs one.
 On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for
 Windows, and setup installs it with winget. Everything works as on Linux, except that the terminal
 is drawn from the pane's screen, so it shows what's on screen now without the scrollback.
+
+### In a browser, without the app
+
+The same phone core also runs in a web page, published to GitHub Pages from every release (the
+`inyon-web.tar.gz` in its SHA256SUMS). A computer's QR code opens it: the code rides after the `#`
+in the link, which the browser never sends to GitHub, and the app takes it out of the address bar
+before anything loads. On a laptop, open the page and type the ID and code. Pairing keys stay in
+the browser's IndexedDB, sealed with a key the browser won't hand out.
+
+It can't open SSH connections, so a server without `inyon` goes through a paired computer. On
+iPhone, add it to the Home Screen first and pair from there: Safari forgets a site after 7 days
+unused, and the Home Screen app keeps its own data. `bun --filter @inyon/web build:hosted` builds
+the same files, and `INYON_WEB_URL` on a computer points its QR codes at your own copy.
 
 ### A server over SSH
 

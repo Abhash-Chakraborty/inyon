@@ -2,7 +2,8 @@ name: inyon
 
 # Builds the inyon program as single binaries (Bun, the hub and the web app inside), so a machine
 # needs nothing else installed. Each is also published as tether-node-<system>, the name the
-# updater from before the rename to Inyon asks for.
+# updater from before the rename to Inyon asks for. inyon-web.tar.gz is the web app built for
+# GitHub Pages; the releases repo deploys it from each release (its pages.yml).
 #   push to main  -> refreshes the "node-latest" pre-release
 #   tag v1.2.3    -> attached to that release, and copied to the public downloads repo
 #                    (Abhash-Chakraborty/inyon-releases) that the one-line installers fetch from
@@ -41,6 +42,10 @@ jobs:
           "$out/inyon-linux-x64" --version
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
           cp apps/node/get.sh apps/node/get.ps1 "$out/"
+          # the web app for GitHub Pages, listed in SHA256SUMS like the rest
+          bun run --filter @inyon/web build:hosted
+          tar -czf "$out/inyon-web.tar.gz" -C apps/web/dist-hosted .
+          (cd "$out" && sha256sum inyon-web.tar.gz >> SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
