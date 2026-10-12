@@ -11,7 +11,7 @@ import { fileName, TARGETS, type Target } from './targets.ts'
  *   bun apps/node/build.ts <out-dir> [target…]
  *
  * builds the release files (all targets unless some are named) with the hub and the web app in
- * them, plus SHA256SUMS. Build the web app first (pnpm --filter @inyon/web build). A hub run from
+ * them, plus SHA256SUMS. Build the web app first (bun run build). A hub run from
  * a git checkout calls buildInyon itself for the machines it adds, leaving the hub out.
  */
 
@@ -33,7 +33,7 @@ export async function buildInyon(o: BuildOptions) {
   // the web app goes in under a name of its own; the hub finds it next to its code (see index.ts)
   let stage: string | undefined
   if (o.hub) {
-    if (!existsSync(path.join(WEB_DIST, 'index.html'))) throw new Error(`${WEB_DIST} has no web app in it. Run pnpm --filter @inyon/web build first.`)
+    if (!existsSync(path.join(WEB_DIST, 'index.html'))) throw new Error(`${WEB_DIST} has no web app in it. Run bun run build first.`)
     stage = mkdtempSync(path.join(os.tmpdir(), 'inyon-build-'))
     cpSync(WEB_DIST, path.join(stage, 'inyon-web'), { recursive: true })
   }

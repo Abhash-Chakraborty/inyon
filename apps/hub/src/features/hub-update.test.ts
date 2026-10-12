@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { CHECK_EVERY, exec, hubUpdater, REPO, updateHub, type Exec } from './hub-update.ts'
 
-// Every update here runs against throwaway repositories in the temp dir, with fake pnpm and
+// Every update here runs against throwaway repositories in the temp dir, with fake bun and
 // systemctl, never against this checkout.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-hub-update-'))
 const bin = path.join(root, 'bin')
@@ -48,13 +48,13 @@ const called = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim
 beforeAll(() => {
   fs.mkdirSync(bin)
   // the fakes write down how they were called; systemctl knows only the unit named in FAKE_UNIT
-  fs.writeFileSync(path.join(bin, 'pnpm'), `#!/bin/sh\necho "pnpm $*" >> "${calls}"\n`, { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, 'bun'), `#!/bin/sh\necho "bun $*" >> "${calls}"\n`, { mode: 0o755 })
   fs.writeFileSync(path.join(bin, 'systemctl'), `#!/bin/sh\necho "systemctl $*" >> "${calls}"\n[ "$2" = cat ] && [ "$3" != "$FAKE_UNIT.service" ] && exit 1\nexit 0\n`, { mode: 0o755 })
 })
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
 /** `exec` with the fake tools in place of the real ones */
-const run: Exec = (cmd, cwd) => exec(['pnpm', 'systemctl'].includes(cmd[0]) ? [path.join(bin, cmd[0]), ...cmd.slice(1)] : cmd, cwd)
+const run: Exec = (cmd, cwd) => exec(['bun', 'systemctl'].includes(cmd[0]) ? [path.join(bin, cmd[0]), ...cmd.slice(1)] : cmd, cwd)
 const quiet = () => {
   const lines: string[] = []
   return { lines, log: (l: string) => void lines.push(l) }
@@ -110,7 +110,7 @@ describe('an update that can go ahead', () => {
     const r = await updateHub({ repo: dir, run, log })
     expect(r).toEqual({ ok: true, restarted: false })
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version).toBe('0.6.4')
-    expect(called()).toEqual(['pnpm install --frozen-lockfile', 'pnpm --filter @inyon/web build', 'systemctl --user cat inyon-hub.service', 'systemctl --user cat tether-hub.service'])
+    expect(called()).toEqual(['bun install --frozen-lockfile', 'bun --filter @inyon/web build', 'systemctl --user cat inyon-hub.service', 'systemctl --user cat tether-hub.service'])
     expect(lines.at(-1)).toBe('Updated to Inyon 0.6.4. Restart the hub to run it.')
   })
 

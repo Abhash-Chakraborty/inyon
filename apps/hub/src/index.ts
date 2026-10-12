@@ -117,7 +117,7 @@ async function serveStatic(pathname: string) {
   }
   const index = Bun.file(path.join(WEB_DIST, 'index.html'))
   if (await index.exists()) return new Response(index, { headers: { 'Cache-Control': 'no-cache', ...PAGE_HEADERS } })
-  return new Response('Web app not built. Run `pnpm build`.', { status: 503 })
+  return new Response('Web app not built. Run `bun run build`.', { status: 503 })
 }
 
 // ---------- server ----------

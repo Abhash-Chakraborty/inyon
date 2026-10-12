@@ -5,17 +5,18 @@ Thanks for helping. A few notes before you open a pull request.
 ## Setup
 
 ```sh
-pnpm install
-pnpm dev:hub     # hub on :4777 with reload
-pnpm dev:web     # Vite on :5173, proxies to the hub
+bun install
+bun dev:hub      # hub on :4777 with reload
+bun dev:web      # Vite on :5173, proxies to the hub
 ```
 
-Requires [Bun](https://bun.sh) 1.3 or later, pnpm, and tmux.
+Requires [Bun](https://bun.sh) 1.3 or later and tmux. Bun is the package manager too: there's
+no npm or pnpm step.
 
 ## Checks
 
 ```sh
-pnpm typecheck
+bun run typecheck
 cd apps/hub && bun test
 ```
 

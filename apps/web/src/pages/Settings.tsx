@@ -84,12 +84,12 @@ function About() {
 
 /**
  * Updates, always by hand: the hub pulls and restarts when you tap Update (or run
- * `pnpm hub:update`), and the Android app downloads a new APK that Android then installs.
+ * `bun hub:update`), and the Android app downloads a new APK that Android then installs.
  */
 function Updates() {
   const native = isNative()
   return (
-    <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run pnpm hub:update in the folder Inyon is installed in.'}>
+    <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run inyon update on the hub (bun hub:update in a git checkout).'}>
       {native ? <AppUpdateRow /> : <HubUpdateRow />}
     </Section>
   )

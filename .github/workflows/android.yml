@@ -27,7 +27,6 @@ jobs:
       version: ${{ steps.version.outputs.name }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -36,9 +35,9 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: gradle
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: bun node_modules/@capacitor/cli/bin/capacitor sync android
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun x cap sync android
         working-directory: apps/mobile
 
       - name: Version
@@ -184,7 +183,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
@@ -194,9 +192,9 @@ jobs:
           java-version: 21
           cache: gradle
       # settings.gradle pulls the Capacitor modules from node_modules and the files `cap sync` writes
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: bun node_modules/@capacitor/cli/bin/capacitor sync android
+      - run: bun install --frozen-lockfile
+      - run: bun run build
+      - run: bun x cap sync android
         working-directory: apps/mobile
 
       - name: Start sshd

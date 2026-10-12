@@ -6,7 +6,7 @@ import { RELEASES_API, VERSION, newerRelease, newestRelease } from '@inyon/proto
 import { nodeDir } from '../../../node/paths.ts'
 
 /**
- * Updating the hub. Installed with git clone: pull, install, build the web app, restart; `pnpm
+ * Updating the hub. Installed with git clone: pull, install, build the web app, restart; `bun
  * hub:update` runs it in a terminal, and Settings starts the same script from the hub. Run as the
  * inyon program (get.sh --hub): `inyon update`, which swaps in the newest release and restarts it.
  * Nothing here runs by itself: the hub only looks for a new release, at most every half hour.
@@ -21,12 +21,12 @@ const UNITS = ['inyon-hub', 'tether-hub']
 export type Exec = (cmd: string[], cwd: string) => Promise<{ code: number; out: string }>
 
 /**
- * PATH with the places Bun and pnpm install themselves. A systemd user unit starts with a short
- * PATH that often has neither.
+ * PATH with the places Bun installs itself. A systemd user unit starts with a short PATH that
+ * often doesn't have it.
  */
 export function toolPath(env: NodeJS.ProcessEnv = process.env) {
   const home = env.HOME || os.homedir()
-  const extra = [path.dirname(process.execPath), path.join(home, '.bun/bin'), path.join(home, '.local/share/pnpm'), path.join(home, '.local/bin'), '/usr/local/bin']
+  const extra = [path.dirname(process.execPath), path.join(home, '.bun/bin'), path.join(home, '.local/bin'), '/usr/local/bin']
   return [...new Set([...(env.PATH ?? '').split(':').filter(Boolean), ...extra])].join(':')
 }
 
@@ -95,11 +95,11 @@ export async function updateHub({ repo, run = exec, log = console.log, step = ()
   if (pulled.out) log(pulled.out)
   step('install')
   log('Installing dependencies')
-  const installed = await run(['pnpm', 'install', '--frozen-lockfile'], repo)
-  if (installed.code !== 0) return fail(installed.code === 127 ? "pnpm isn't installed, or isn't on the PATH." : 'pnpm install failed.', installed.out)
+  const installed = await run(['bun', 'install', '--frozen-lockfile'], repo)
+  if (installed.code !== 0) return fail(installed.code === 127 ? "Bun isn't on the PATH." : 'bun install failed.', installed.out)
   step('build')
   log('Building the web app')
-  const built = await run(['pnpm', '--filter', '@inyon/web', 'build'], repo)
+  const built = await run(['bun', '--filter', '@inyon/web', 'build'], repo)
   if (built.code !== 0) return fail('Building the web app failed.', built.out)
   let version = ''
   try {

@@ -3,7 +3,7 @@
   "private": true,
   "description": "The Inyon phone apps: the web app in a native shell for Android and iOS.",
   "scripts": {
-    "sync": "pnpm --filter @inyon/web build && cap sync",
+    "sync": "bun --filter @inyon/web build && cap sync",
     "open:android": "cap open android",
     "open:ios": "cap open ios",
     "icons": "bun scripts/icons.ts"

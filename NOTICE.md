@@ -26,4 +26,4 @@ Both are bundled through the `@fontsource-variable` packages.
 
 Runtime and build dependencies (React, xterm.js, react-markdown, highlight.js, lucide-react,
 Tailwind CSS, Vite and others) keep their own licenses, listed in each package under
-`node_modules` after `pnpm install`.
+`node_modules` after `bun install`.

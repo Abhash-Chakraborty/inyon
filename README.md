@@ -86,19 +86,19 @@ curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/
 It prints the address to open and the setup code. Settings like `PORT`, `BIND` or `TLS_CERT` go
 in `~/.inyon/hub.env`, one `NAME=value` per line.
 
-To run it from source instead, you need [Bun](https://bun.sh) 1.3+, pnpm and tmux:
+To run it from source instead, you need [Bun](https://bun.sh) 1.3+ and tmux:
 
 ```sh
 git clone https://github.com/Abhash-Chakraborty/inyon.git
 cd inyon
-pnpm install
-pnpm build
-pnpm start
+bun install
+bun run build
+bun start
 ```
 
 The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password,
 with the setup code the hub prints when it starts (also in `~/.inyon/setup-code`). Change the
-password later in Settings, or reset a forgotten one with `pnpm --filter @inyon/hub set-password`.
+password later in Settings, or reset a forgotten one with `bun apps/hub/src/cli/set-password.ts`.
 
 Open it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
 put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
@@ -113,11 +113,11 @@ the old one if the new one doesn't start. A hub installed from source updates wi
 run this in the folder you cloned:
 
 ```sh
-pnpm hub:update
+bun hub:update
 ```
 
 It refuses a checkout with local changes or one that can't fast-forward. Otherwise it pulls,
-runs `pnpm install`, builds the web app and restarts the `inyon-hub` systemd user unit. Without
+runs `bun install`, builds the web app and restarts the `inyon-hub` systemd user unit. Without
 that unit it tells you to restart the hub yourself. Browsers that still have the old app open
 offer a reload once the hub is back.
 
@@ -271,10 +271,10 @@ update signed with the same key. Without the secrets, a fork gets a debug build.
 To build it yourself you need Android Studio:
 
 ```sh
-pnpm build
+bun run build
 cd apps/mobile
-bun node_modules/@capacitor/cli/bin/capacitor sync android
-pnpm open:android
+bun x cap sync android
+bun x cap open android
 ```
 
 The iOS project is in `apps/mobile/ios` but isn't built or tested yet, and it has no SSH plugin.
@@ -313,9 +313,9 @@ Paired machines connect out with per-machine tokens that you can revoke. See
 ## Development
 
 ```sh
-pnpm dev:hub       # hub with reload
-pnpm dev:web       # Vite dev server on :5173
-pnpm typecheck
+bun dev:hub        # hub with reload
+bun dev:web        # Vite dev server on :5173
+bun run typecheck
 cd apps/hub && bun test
 ```
 

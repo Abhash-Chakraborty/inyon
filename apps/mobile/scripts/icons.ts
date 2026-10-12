@@ -1,4 +1,4 @@
-// Renders the app icons and splash screens from the web app's icon (run: pnpm --filter @inyon/mobile icons)
+// Renders the app icons and splash screens from the web app's icon (run: bun --filter @inyon/mobile icons)
 import sharp from 'sharp'
 import path from 'node:path'
 
