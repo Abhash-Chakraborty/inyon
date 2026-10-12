@@ -38,3 +38,16 @@ test("a message from another session leaves the queue once Claude takes it, thou
   op('remove', '<cross-session-message from="uds:/run/user/1001/cc-socks/49259.sock" from-name="custom-tmux-de" from-mode="bypass" hop-chain="d6c7">\nAnswer: yes\n</cross-session-message>', { reason: 'absorbed_mid_turn' })
   expect(meta.queue).toEqual([])
 })
+
+test('a background subagent leaves the running tasks when it finishes', () => {
+  const meta = newMeta()
+  let n = 0
+  const line = (e: object) => normalize({ uuid: `u${n++}`, timestamp: '2026-10-10T10:00:00Z', ...e } as any, meta)
+  line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Agent', input: { description: 'Research Windows support', prompt: 'look', run_in_background: true } }] } })
+  // what Claude Code writes while the agent works, then when it's done
+  line({ type: 'attachment', attachment: { type: 'task_status', taskId: 'a624', taskType: 'local_agent', description: 'Research Windows support', status: 'running' } })
+  expect(meta.tasks.get('a624')?.status).toBe('running')
+  line({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<task-notification>\n<task-id>a624</task-id>\n<tool-use-id>toolu_1</tool-use-id>\n<status>completed</status>\n<summary>Agent "Research Windows support" completed</summary>\n</task-notification>' } })
+  expect(meta.tasks.get('a624')?.status).toBe('completed')
+  expect(meta.subagents.get('toolu_1')?.status).toBe('done')
+})

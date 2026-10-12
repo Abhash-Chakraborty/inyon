@@ -130,6 +130,12 @@ function taskNotification(meta: TranscriptMeta, text: string, base: { uuid: stri
   if (sub) {
     const was = sub.status
     sub.status = failed ? 'error' : 'done'
+    // a background subagent is also listed as a task from its start; it ends here too
+    const task = meta.tasks.get(id)
+    if (task?.status === 'running') {
+      task.status = failed ? 'failed' : /stop/.test(status) ? 'stopped' : 'completed'
+      task.endedAt = ts
+    }
     return was === 'running' ? notice(tag(text, 'summary') ?? `Subagent "${sub.description}" ${failed ? 'failed' : 'finished'}`) : []
   }
   const cur = meta.tasks.get(id)
