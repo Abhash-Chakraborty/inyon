@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as spawnChild } from 'node:child_process'
-import { VERSION, newestRelease } from '@tether/protocol'
+import { VERSION, newestRelease } from '@inyon/protocol'
 
 /**
  * Updating a hub that was installed with git clone: pull, install, build the web app, restart.
@@ -13,7 +13,8 @@ import { VERSION, newestRelease } from '@tether/protocol'
 /** the checkout the hub runs from */
 export const REPO = path.resolve(import.meta.dir, '../../../..')
 const SCRIPT = path.resolve(import.meta.dir, '../cli/update.ts')
-const UNIT = 'tether-hub'
+/** the systemd user unit, under its name from before the rename to Inyon too */
+const UNITS = ['inyon-hub', 'tether-hub']
 
 export type Exec = (cmd: string[], cwd: string) => Promise<{ code: number; out: string }>
 
@@ -49,7 +50,7 @@ const real = (p: string) => {
 /** Whether `repo` can be updated with a fast-forward pull, and the branch it's on. */
 export async function checkCheckout(repo: string, run: Exec = exec): Promise<{ branch?: string; reason?: string; git: boolean }> {
   const top = await run(['git', 'rev-parse', '--show-toplevel'], repo)
-  if (top.code !== 0 || real(top.out) !== real(repo)) return { git: false, reason: `${repo} isn't a git checkout, so it can't update itself. Install Tether with git clone to get updates.` }
+  if (top.code !== 0 || real(top.out) !== real(repo)) return { git: false, reason: `${repo} isn't a git checkout, so it can't update itself. Install Inyon with git clone to get updates.` }
   const branch = (await run(['git', 'symbolic-ref', '--short', '-q', 'HEAD'], repo)).out
   if (!branch) return { git: true, reason: 'The checkout is on a tag or commit, not a branch. Run git checkout main in it first.' }
   const status = await run(['git', 'status', '--porcelain', '--untracked-files=no'], repo)
@@ -96,14 +97,16 @@ export async function updateHub({ repo, run = exec, log = console.log, step = ()
   if (installed.code !== 0) return fail(installed.code === 127 ? "pnpm isn't installed, or isn't on the PATH." : 'pnpm install failed.', installed.out)
   step('build')
   log('Building the web app')
-  const built = await run(['pnpm', '--filter', '@tether/web', 'build'], repo)
+  const built = await run(['pnpm', '--filter', '@inyon/web', 'build'], repo)
   if (built.code !== 0) return fail('Building the web app failed.', built.out)
   let version = ''
   try {
     version = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8')).version ?? ''
   } catch {}
-  const updated = `Updated to Tether ${version || 'the newest version'}.`
-  if ((await run(['systemctl', '--user', 'cat', `${UNIT}.service`], repo)).code !== 0) {
+  const updated = `Updated to Inyon ${version || 'the newest version'}.`
+  let UNIT: string | undefined
+  for (const u of UNITS) if (!UNIT && (await run(['systemctl', '--user', 'cat', `${u}.service`], repo)).code === 0) UNIT = u
+  if (!UNIT) {
     log(`${updated} Restart the hub to run it.`)
     return { ok: true, restarted: false }
   }

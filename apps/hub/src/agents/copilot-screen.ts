@@ -1,4 +1,4 @@
-import type { ScreenState, PromptOption } from '@tether/protocol'
+import type { ScreenState, PromptOption } from '@inyon/protocol'
 
 // box edges, including the corners of frames nested inside a dialog (the trust question's folder box)
 const rule = (line: string) => /^\s*[╭╰└┌]?[─━]{8,}[╮╯┘┐]?\s*$/.test(line)

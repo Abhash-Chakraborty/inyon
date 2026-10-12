@@ -7,7 +7,7 @@ import { listCommands } from './features.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
-const home = mkdtempSync('/tmp/tether-skills-')
+const home = mkdtempSync('/tmp/inyon-skills-')
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 
 const skill = (dir: string, name: string, description: string) => {

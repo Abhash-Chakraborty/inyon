@@ -28,22 +28,22 @@ afterEach(() => {
 describe('notifications', () => {
   test('posted through the Android app, with its kind for the buttons', async () => {
     const postNotification = mock(async (_o: unknown) => ({ ok: true, posted: true }))
-    app({ TetherDevice: { postNotification } })
+    app({ InyonDevice: { postNotification } })
     expect(await nativeNotify('claude is waiting', 'approve?', '/m/box/p/3', 'box:%3', 'waiting')).toBe(true)
     expect(postNotification).toHaveBeenCalledWith({ title: 'claude is waiting', body: 'approve?', href: '/m/box/p/3', tag: 'box:%3', kind: 'waiting' })
   })
 
   test('false when notifications are off or the app is too old to post them', async () => {
-    app({ TetherDevice: { postNotification: async () => ({ posted: false }) } })
+    app({ InyonDevice: { postNotification: async () => ({ posted: false }) } })
     expect(await nativeNotify('t', 'b', '/')).toBe(false)
-    app({ TetherDevice: {} })
+    app({ InyonDevice: {} })
     expect(await nativeNotify('t', 'b', '/')).toBe(false)
     delete (window as any).Capacitor
     expect(await nativeNotify('t', 'b', '/')).toBe(false)
   })
 
   test('permission is asked and checked through the Android app', async () => {
-    app({ TetherDevice: { requestNotificationPermission: async () => ({ granted: true }), notificationsEnabled: async () => ({ enabled: false }) } })
+    app({ InyonDevice: { requestNotificationPermission: async () => ({ granted: true }), notificationsEnabled: async () => ({ enabled: false }) } })
     expect(await askNativeNotifications()).toBe(true)
     expect(await nativeNotificationsOn()).toBe(false)
     delete (window as any).Capacitor
@@ -54,19 +54,19 @@ describe('notifications', () => {
 
 describe('installNative', () => {
   test('a tapped notification opens its link, while running and from a cold start', async () => {
-    const emit = app({ TetherDevice: { takeLaunchHref: async () => ({ href: '/m/box/p/1' }) }, App: { getLaunchUrl: async () => undefined } })
+    const emit = app({ InyonDevice: { takeLaunchHref: async () => ({ href: '/m/box/p/1' }) }, App: { getLaunchUrl: async () => undefined } })
     installNative()
     await flush()
     expect(location.pathname).toBe('/m/box/p/1')
-    emit('TetherDevice.pushOpened', { href: '/m/box/p/2' })
+    emit('InyonDevice.pushOpened', { href: '/m/box/p/2' })
     expect(location.pathname).toBe('/m/box/p/2')
   })
 
   test('a pairing link that started the app opens the pairing sheet', async () => {
-    app({ TetherDevice: { takeLaunchHref: async () => ({ href: null }) }, App: { getLaunchUrl: async () => ({ url: 'tether://pair?c=abc' }) } })
+    app({ InyonDevice: { takeLaunchHref: async () => ({ href: null }) }, App: { getLaunchUrl: async () => ({ url: 'inyon://pair?c=abc' }) } })
     installNative()
     await flush()
-    expect(location.pathname + location.search).toBe(`/machines?pair=${encodeURIComponent('tether://pair?c=abc')}`)
+    expect(location.pathname + location.search).toBe(`/machines?pair=${encodeURIComponent('inyon://pair?c=abc')}`)
   })
 
   test('back closes an open sheet before leaving the screen', async () => {
@@ -77,10 +77,10 @@ describe('installNative', () => {
     const emit = app({ App: { exitApp, getLaunchUrl: async () => undefined } })
     installNative()
     const close = (e: Event) => e.preventDefault()
-    window.addEventListener('tether:back', close)
+    window.addEventListener('inyon:back', close)
     emit('App.backButton', { canGoBack: true })
     expect(back).not.toHaveBeenCalled()
-    window.removeEventListener('tether:back', close)
+    window.removeEventListener('inyon:back', close)
     emit('App.backButton', { canGoBack: false })
     expect(exitApp).toHaveBeenCalledTimes(1)
     window.history.back = realBack
@@ -91,7 +91,7 @@ describe('readClipboard', () => {
   test('reads natively in the Android app', async () => {
     const readText = mock(async () => 'browser')
     Object.defineProperty(navigator, 'clipboard', { value: { readText }, configurable: true })
-    app({ TetherDevice: { readClipboardText: async () => ({ text: 'from android' }) } })
+    app({ InyonDevice: { readClipboardText: async () => ({ text: 'from android' }) } })
     expect(await readClipboard()).toBe('from android')
     expect(readText).not.toHaveBeenCalled()
   })
@@ -99,7 +99,7 @@ describe('readClipboard', () => {
   test('uses the browser clipboard elsewhere, or when the native read fails', async () => {
     Object.defineProperty(navigator, 'clipboard', { value: { readText: async () => 'browser' }, configurable: true })
     expect(await readClipboard()).toBe('browser')
-    app({ TetherDevice: { readClipboardText: async () => Promise.reject(new Error('focus')) } })
+    app({ InyonDevice: { readClipboardText: async () => Promise.reject(new Error('focus')) } })
     expect(await readClipboard()).toBe('browser')
   })
 })

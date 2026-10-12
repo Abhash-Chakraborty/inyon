@@ -24,7 +24,7 @@ agents' terminal apps. If you change it, add a capture to `screen.test.ts` that 
 
 ## Adding an agent
 
-Most of what Tether knows about an agent lives in one place: `packages/protocol/src/agents.ts`
+Most of what Inyon knows about an agent lives in one place: `packages/protocol/src/agents.ts`
 (how to detect it, its colours, commands, models and config files). A chat view also needs a
 reader that turns the agent's session files or API into chat items; see `apps/hub/src/agents/`
 for Codex, Gemini CLI and OpenCode.

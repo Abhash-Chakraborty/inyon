@@ -1,4 +1,4 @@
-import { AGENTS, type AgentCatalog, type AgentModel } from '@tether/protocol'
+import { AGENTS, type AgentCatalog, type AgentModel } from '@inyon/protocol'
 import type { Host } from '../hosts/host.ts'
 
 /** `agy models` queries the signed-in CLI's catalog and prints id<TAB>display name. */

@@ -7,13 +7,13 @@ import { pipeline } from 'node:stream/promises'
 
 /**
  * `tether-node update`: replaces this install with the newest build and restarts its service.
- * A phone-link install (get.sh / get.ps1) updates from tether-releases, checked against the
+ * A phone-link install (get.sh / get.ps1) updates from inyon-releases, checked against the
  * release's SHA256SUMS like get.sh does; a hub install (install.sh / install.ps1) takes the build
  * its hub serves, checked against the sha256 the hub publishes. Nothing is replaced until the
  * download matches, and the old copy comes back if the new one doesn't start.
  */
 
-export const RELEASES = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download'
+export const RELEASES = 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download'
 const dir = () => path.join(os.homedir(), '.tether-node')
 /** What the app reads to follow an update it started: running, done <version>, current, failed: … */
 export const statusFile = () => path.join(dir(), 'update-status')
@@ -182,7 +182,7 @@ export function savedHub(env: Record<string, string | undefined> = process.env) 
 }
 
 export type Install =
-  /** a compiled binary from tether-releases (get.sh, get.ps1) */
+  /** a compiled binary from inyon-releases (get.sh, get.ps1) */
   | { kind: 'binary'; file: string; cmd: string[] }
   /** from a hub: tether-node.ts run by Bun (install.sh), or tether-node.exe (install.ps1) */
   | { kind: 'hub'; file: string; cmd: string[]; hub: string; exe: boolean }

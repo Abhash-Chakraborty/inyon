@@ -1,4 +1,4 @@
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { kv } from './platform/store.ts'
 
 // ---------- hosts ----------
@@ -21,7 +21,7 @@ export function saveHosts(hosts: HostConfig[]) {
 
 export interface HubSettings {
   uploads: { retentionDays: number; maxMB: number; longPasteLines: number }
-  /** machines where Tether keeps a tmux session running */
+  /** machines where Inyon keeps a tmux session running */
   keepSession?: Record<string, boolean>
   /** resume idle Claude sessions that stopped reporting live numbers (off unless turned on) */
   autoResume?: boolean

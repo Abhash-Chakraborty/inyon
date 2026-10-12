@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the prompt-and-inyon mark from icon.svg, single colour for the status bar -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="340"
+    android:viewportHeight="340">
+    <group
+        android:translateX="-95.5"
+        android:translateY="-77.5">
+        <path
+            android:pathData="M140,108 L236,204 L140,300"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="50"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M140,362 C200,396 270,396 330,372"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="32"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M332,364 a42,42 0 1,0 84,0 a42,42 0 1,0 -84,0" />
+    </group>
+</vector>

@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { newerRelease, newestRelease, parseRelease } from '@tether/protocol'
+import { newerRelease, newestRelease, parseRelease } from '@inyon/protocol'
 
 test('release numbers compare as numbers, not as text', () => {
   expect(newerRelease('0.6.10', '0.6.9')).toBe(true)

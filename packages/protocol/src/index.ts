@@ -119,7 +119,7 @@ export interface PaneInfo {
   command: string
   cwd: string
   title: string
-  /** the name you gave this session in Tether */
+  /** the name you gave this session in Inyon */
   label?: string
   width: number
   height: number
@@ -145,7 +145,7 @@ export interface SessionInfo {
 
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
-/** Tether's version, the same for the app, the hub and tether-node (the root package.json's). */
+/** Inyon's version, the same for the app, the hub and tether-node (the root package.json's). */
 export const VERSION = '0.6.5'
 
 /**
@@ -273,7 +273,7 @@ export interface SessionStats {
 }
 
 /**
- * One message sent through Tether. The hub knows the exact text it typed, so it is the one that
+ * One message sent through Inyon. The hub knows the exact text it typed, so it is the one that
  * matches it to the agent's record; every device reads the outcome from here.
  * sending: being typed · sent: submitted, not yet in the agent's record · queued: in the agent's
  * queue while it works · delivered: in the conversation (`uuid` is that item) · failed: `error`

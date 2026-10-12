@@ -42,7 +42,7 @@ export function RenameSheet({ host, pane, current, agent, open, onClose }: { hos
       }
     >
       <form id="rename-form" onSubmit={(e) => (e.preventDefault(), name.trim() && save(name))}>
-        <Field label="Name" hint={agent ? 'Shown in Tether and kept with the conversation, so it survives a resume.' : 'Renames the tmux window, so tmux shows it too.'}>
+        <Field label="Name" hint={agent ? 'Shown in Inyon and kept with the conversation, so it survives a resume.' : 'Renames the tmux window, so tmux shows it too.'}>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} autoFocus onFocus={(e) => e.currentTarget.select()} />
         </Field>
       </form>

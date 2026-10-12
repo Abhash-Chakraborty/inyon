@@ -1,5 +1,5 @@
 import { mock } from 'bun:test'
-import type { ServerMsg } from '@tether/protocol'
+import type { ServerMsg } from '@inyon/protocol'
 import * as realModule from '../lib/api.ts'
 
 /**

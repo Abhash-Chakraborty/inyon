@@ -6,7 +6,7 @@ import { HOOK_SCRIPT, STATUS_SCRIPT } from './integration.ts'
 import { ACCOUNT_SH } from './integration-sh.ts'
 import { claudeStatus } from '../agents/status.ts'
 
-const home = mkdtempSync(join(tmpdir(), 'tether-int-'))
+const home = mkdtempSync(join(tmpdir(), 'inyon-int-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 
 /** A ~/.claude.json shaped like the real one: other accountUuid keys come before oauthAccount. */
@@ -42,15 +42,15 @@ describe('integration scripts', () => {
   test('status line wrapper saves the payload and the account it was written under', () => {
     writeConfig('acct-A')
     run(STATUS_SCRIPT, payload('s1'))
-    expect(JSON.parse(readFileSync(join(home, '.tether/status/9.json'), 'utf8')).session_id).toBe('s1')
-    expect(readFileSync(join(home, '.tether/status/9.acct'), 'utf8')).toBe(`acct-A ${home}/.claude.json\n`)
+    expect(JSON.parse(readFileSync(join(home, '.inyon/status/9.json'), 'utf8')).session_id).toBe('s1')
+    expect(readFileSync(join(home, '.inyon/status/9.acct'), 'utf8')).toBe(`acct-A ${home}/.claude.json\n`)
   })
 
   test('hook stamps a compaction, and only a compaction', () => {
     run(HOOK_SCRIPT, JSON.stringify({ session_id: 's1', hook_event_name: 'SessionStart', source: 'startup' }))
-    expect(existsSync(join(home, '.tether/panes/9.compact'))).toBe(false)
+    expect(existsSync(join(home, '.inyon/panes/9.compact'))).toBe(false)
     run(HOOK_SCRIPT, JSON.stringify({ session_id: 's1', hook_event_name: 'SessionStart', source: 'compact' }))
-    expect(Number(readFileSync(join(home, '.tether/panes/9.compact'), 'utf8'))).toBeGreaterThan(0)
+    expect(Number(readFileSync(join(home, '.inyon/panes/9.compact'), 'utf8'))).toBeGreaterThan(0)
   })
 })
 
@@ -129,14 +129,14 @@ describe('installIntegration', () => {
       Bun.spawnSync(['mkdir', '-p', join(home, '.claude')])
       writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ statusLine: { type: 'command', command: cmd } }))
     }
-    const orig = () => readFileSync(join(home, '.tether/statusline.orig'), 'utf8').trim()
+    const orig = () => readFileSync(join(home, '.inyon/statusline.orig'), 'utf8').trim()
     settings('~/.claude/statusline.sh')
     await installIntegration(sandboxHost)
     expect(orig()).toBe('~/.claude/statusline.sh')
     settings('node C:/Users/me/.claude/statusline.js')
     await installIntegration(sandboxHost)
     expect(orig()).toBe('~/.claude/statusline.sh')
-    expect(JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8')).statusLine.command).toBe('~/.tether/statusline.sh')
+    expect(JSON.parse(readFileSync(join(home, '.claude/settings.json'), 'utf8')).statusLine.command).toBe('~/.inyon/statusline.sh')
     settings('~/bin/new-bar.sh')
     await installIntegration(sandboxHost)
     expect(orig()).toBe('~/bin/new-bar.sh')
@@ -147,29 +147,29 @@ describe('privacy', () => {
   const mode = (p: string) => statSync(join(home, p)).mode & 0o777
 
   test('what the hook and status line save is readable by you only, whatever your umask', () => {
-    rmSync(join(home, '.tether'), { recursive: true, force: true })
+    rmSync(join(home, '.inyon'), { recursive: true, force: true })
     run(`umask 022\n${HOOK_SCRIPT}`, JSON.stringify({ session_id: 's1', hook_event_name: 'UserPromptSubmit', prompt: 'secret plan' }))
-    expect(mode('.tether')).toBe(0o700)
-    expect(mode('.tether/panes')).toBe(0o700)
-    expect(mode('.tether/events.jsonl')).toBe(0o600)
-    expect(mode('.tether/panes/9.json')).toBe(0o600)
+    expect(mode('.inyon')).toBe(0o700)
+    expect(mode('.inyon/panes')).toBe(0o700)
+    expect(mode('.inyon/events.jsonl')).toBe(0o600)
+    expect(mode('.inyon/panes/9.json')).toBe(0o600)
     run(`umask 022\n${STATUS_SCRIPT}`, payload('s1'))
-    expect(mode('.tether/status')).toBe(0o700)
-    expect(mode('.tether/status/9.json')).toBe(0o600)
+    expect(mode('.inyon/status')).toBe(0o700)
+    expect(mode('.inyon/status/9.json')).toBe(0o600)
     // your own status line still runs with your umask
-    writeFileSync(join(home, '.tether/statusline.orig'), `touch "$HOME/mine"\n`)
+    writeFileSync(join(home, '.inyon/statusline.orig'), `touch "$HOME/mine"\n`)
     run(`umask 022\n${STATUS_SCRIPT}`, payload('s1'))
     expect(mode('mine')).toBe(0o644)
   })
 
-  test('turning the integration on (or healing it) closes up a ~/.tether left open', async () => {
+  test('turning the integration on (or healing it) closes up a ~/.inyon left open', async () => {
     const { installIntegration } = await import('./integration.ts')
-    Bun.spawnSync(['chmod', '755', join(home, '.tether')])
-    Bun.spawnSync(['chmod', '644', join(home, '.tether/events.jsonl')])
+    Bun.spawnSync(['chmod', '755', join(home, '.inyon')])
+    Bun.spawnSync(['chmod', '644', join(home, '.inyon/events.jsonl')])
     await installIntegration(sandboxHost)
-    expect(mode('.tether')).toBe(0o700)
-    expect(mode('.tether/events.jsonl')).toBe(0o600)
-    expect(mode('.tether/hook.sh')).toBe(0o700)
+    expect(mode('.inyon')).toBe(0o700)
+    expect(mode('.inyon/events.jsonl')).toBe(0o600)
+    expect(mode('.inyon/hook.sh')).toBe(0o700)
   })
 })
 
@@ -186,7 +186,7 @@ describe('reconnectStatusLine', () => {
       await reconnectStatusLine(host, proj)
       await reconnectStatusLine(host, proj) // idempotent
       const s = JSON.parse(readFileSync(join(proj, '.claude/settings.local.json'), 'utf8'))
-      expect(s.statusLine.command).toBe('~/.tether/statusline.sh')
+      expect(s.statusLine.command).toBe('~/.inyon/statusline.sh')
       expect(s.permissions.allow).toEqual(['Bash(ls)'])
       expect(readFileSync(join(proj, '.git/info/exclude'), 'utf8').match(/settings\.local\.json/g)?.length).toBe(1)
       expect(Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: proj, env: { HOME: home, PATH: process.env.PATH! } }).stdout.toString()).toBe('')
@@ -214,27 +214,27 @@ describe('Antigravity status line', () => {
 
     // no status line of its own: keep agy's default one under ours
     await installIntegration(sandboxHost)
-    expect(read().statusLine).toEqual({ type: 'command', command: '~/.tether/agy-statusline.sh', stack_with_default: true })
+    expect(read().statusLine).toEqual({ type: 'command', command: '~/.inyon/agy-statusline.sh', stack_with_default: true })
     expect(read().trustedWorkspaces).toEqual(['/w'])
-    expect(existsSync(`${file}.tether-backup`)).toBe(true)
-    expect(readFileSync(join(home, '.tether/agy-statusline.sh'), 'utf8')).toBe(AGY_STATUS_SCRIPT)
+    expect(existsSync(`${file}.inyon-backup`)).toBe(true)
+    expect(readFileSync(join(home, '.inyon/agy-statusline.sh'), 'utf8')).toBe(AGY_STATUS_SCRIPT)
     await installIntegration(sandboxHost) // idempotent
-    expect(read().statusLine.command).toBe('~/.tether/agy-statusline.sh')
+    expect(read().statusLine.command).toBe('~/.inyon/agy-statusline.sh')
     await uninstallIntegration(sandboxHost)
     expect(read().statusLine).toBeUndefined()
     expect(read().model).toBe('Gemini 3.8 Flash (High)')
-    expect(existsSync(join(home, '.tether/agy-statusline.sh'))).toBe(false)
+    expect(existsSync(join(home, '.inyon/agy-statusline.sh'))).toBe(false)
 
     // your own status line keeps running behind the wrapper, and comes back on uninstall
     writeFileSync(file, JSON.stringify({ statusLine: { type: 'command', command: 'echo mine', padding: 1 } }))
     await installIntegration(sandboxHost)
-    expect(read().statusLine).toEqual({ type: 'command', command: '~/.tether/agy-statusline.sh', padding: 1 })
-    const run = Bun.spawnSync(['sh', join(home, '.tether/agy-statusline.sh')], {
+    expect(read().statusLine).toEqual({ type: 'command', command: '~/.inyon/agy-statusline.sh', padding: 1 })
+    const run = Bun.spawnSync(['sh', join(home, '.inyon/agy-statusline.sh')], {
       stdin: Buffer.from('{"conversation_id":"c1",\n"agent_state":"idle"}'),
       env: { HOME: home, PATH: process.env.PATH!, TMUX_PANE: '%42' },
     })
     expect(run.stdout.toString().trim()).toBe('mine')
-    expect(readFileSync(join(home, '.tether/agy-status/42.json'), 'utf8')).toBe('{"conversation_id":"c1","agent_state":"idle"}')
+    expect(readFileSync(join(home, '.inyon/agy-status/42.json'), 'utf8')).toBe('{"conversation_id":"c1","agent_state":"idle"}')
     await uninstallIntegration(sandboxHost)
     expect(read().statusLine).toEqual({ type: 'command', command: 'echo mine', padding: 1 })
   })
@@ -257,4 +257,56 @@ test('a restart keeps a flag value with spaces in it whole, read from the real a
   } finally {
     proc.kill()
   }
+})
+
+describe('moving an install from before the rename to Inyon', () => {
+  test('the folder moves, the old settings count as outdated, and installing again rewrites them once', async () => {
+    const { installIntegration } = await import('./integration.ts')
+    const { MOVE_OLD_FOLDER_SH } = await import('./integration-sh.ts')
+    const { HOOK_STATE_SH } = await import('../tmux/tmux.ts')
+    const old = mkdtempSync(join(tmpdir(), 'inyon-move-'))
+    const sh = (cmd: string) => Bun.spawnSync(['sh', '-c', cmd], { env: { HOME: old, PATH: process.env.PATH! } }).stdout.toString().trim()
+    const host = {
+      exec: async (cmd: string, opts: { input?: string } = {}) => {
+        const r = Bun.spawnSync(['sh', '-c', cmd], { stdin: opts.input === undefined ? undefined : Buffer.from(opts.input), env: { HOME: old, PATH: process.env.PATH! } })
+        return { code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
+      },
+    } as any
+    try {
+      // what Tether 0.6 left: its folder, and settings that name it next to your own hook and status line
+      sh('mkdir -p "$HOME/.tether/panes" "$HOME/.claude" && printf "#!/bin/sh\\n" > "$HOME/.tether/hook.sh" && cp "$HOME/.tether/hook.sh" "$HOME/.tether/statusline.sh" && chmod 700 "$HOME/.tether/hook.sh" "$HOME/.tether/statusline.sh" && echo "~/bin/mybar.sh" > "$HOME/.tether/statusline.orig" && echo "{}" > "$HOME/.tether/events.jsonl"')
+      const mine = { type: 'command', command: '~/bin/notify.sh' }
+      writeFileSync(join(old, '.claude/settings.json'), JSON.stringify({
+        statusLine: { type: 'command', command: '~/.tether/statusline.sh' },
+        hooks: { Stop: [{ hooks: [{ type: 'command', command: '~/.tether/hook.sh' }] }, { hooks: [mine] }] },
+      }))
+
+      sh('mkdir -p "$HOME/.gemini/antigravity-cli" && echo "~/bin/agybar.sh" > "$HOME/.tether/agy-statusline.orig"')
+      writeFileSync(join(old, '.gemini/antigravity-cli/settings.json'), JSON.stringify({ statusLine: { type: 'command', command: '~/.tether/agy-statusline.sh' } }))
+
+      sh(MOVE_OLD_FOLDER_SH)
+      expect(readFileSync(join(old, '.inyon/events.jsonl'), 'utf8')).toBe('{}\n')
+      // the old path still works for whatever points at it
+      expect(sh('[ -L "$HOME/.tether" ] && cat "$HOME/.tether/statusline.orig"')).toBe('~/bin/mybar.sh')
+      expect(sh(HOOK_STATE_SH)).toBe('outdated')
+      // running it again changes nothing
+      sh(MOVE_OLD_FOLDER_SH)
+      expect(sh('readlink "$HOME/.tether"')).toBe(join(old, '.inyon'))
+
+      await installIntegration(host)
+      const settings = JSON.parse(readFileSync(join(old, '.claude/settings.json'), 'utf8'))
+      expect(settings.statusLine.command).toBe('~/.inyon/statusline.sh')
+      // your status line is still the one it runs, not the old wrapper
+      expect(readFileSync(join(old, '.inyon/statusline.orig'), 'utf8').trim()).toBe('~/bin/mybar.sh')
+      const stop = settings.hooks.Stop.flatMap((g: any) => g.hooks.map((h: any) => h.command))
+      expect(stop.filter((c: string) => c.includes('hook.sh'))).toEqual(['~/.inyon/hook.sh'])
+      expect(stop).toContain('~/bin/notify.sh')
+      expect(JSON.stringify(settings)).not.toContain('.tether/')
+      expect(JSON.parse(readFileSync(join(old, '.gemini/antigravity-cli/settings.json'), 'utf8')).statusLine.command).toBe('~/.inyon/agy-statusline.sh')
+      expect(readFileSync(join(old, '.inyon/agy-statusline.orig'), 'utf8').trim()).toBe('~/bin/agybar.sh')
+      expect(sh(HOOK_STATE_SH)).toBe('installed')
+    } finally {
+      rmSync(old, { recursive: true, force: true })
+    }
+  })
 })

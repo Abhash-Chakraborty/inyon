@@ -10,11 +10,11 @@ test('answers to addresses and private names, not to public domains', () => {
 })
 
 test('names you configure are allowed, and * turns the check off', () => {
-  const ok = allowedHosts({ TETHER_ALLOWED_HOSTS: 'Tether.Example.com, other.example', TETHER_ALLOWED_ORIGINS: 'https://proxy.example:8443' }, '0.0.0.0')
-  expect(ok('tether.example.com')).toBe(true)
-  expect(ok('TETHER.example.com:443')).toBe(true)
+  const ok = allowedHosts({ INYON_ALLOWED_HOSTS: 'Inyon.Example.com, other.example', INYON_ALLOWED_ORIGINS: 'https://proxy.example:8443' }, '0.0.0.0')
+  expect(ok('inyon.example.com')).toBe(true)
+  expect(ok('INYON.example.com:443')).toBe(true)
   expect(ok('proxy.example:8443')).toBe(true)
   expect(ok('evil.example')).toBe(false)
-  expect(allowedHosts({ TETHER_ALLOWED_HOSTS: '*' })('evil.example')).toBe(true)
+  expect(allowedHosts({ INYON_ALLOWED_HOSTS: '*' })('evil.example')).toBe(true)
   expect(allowedHosts({}, 'hub.example.org')('hub.example.org:4777')).toBe(true)
 })

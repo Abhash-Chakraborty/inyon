@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Loader2, Monitor, Pencil, Plug, Plus, RotateCcw, Save, Server, SquareTerminal, Trash2 } from 'lucide-react'
-import { AGENTS, type AgentKind, type HostState } from '@tether/protocol'
+import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { paneHref, paneTitle } from '../lib/overview.ts'
@@ -317,7 +317,7 @@ function ConfigTab({ host }: { host: HostState }) {
             <Button size="sm" variant="primary" disabled={!dirty || !!jsonError} loading={saving} onClick={save}><Save className="size-3.5" /> Save</Button>
           </div>
         </div>
-        <p className="mt-2 text-[11.5px] text-fg-3">Every save keeps the previous version as a .tether-bak file next to it (the last five).</p>
+        <p className="mt-2 text-[11.5px] text-fg-3">Every save keeps the previous version as a .inyon-bak file next to it (the last five).</p>
       </div>
     </div>
   )
@@ -391,7 +391,7 @@ function IntegrationCard({ host }: { host: HostState }) {
         </div>
         <ul className="mt-4 space-y-2 text-[13px] leading-relaxed text-fg-2">
           <li>• Adds a tiny hook that records which tmux pane runs which session, for exact matching and instant updates.</li>
-          <li>• Wraps your status line so Tether sees model, effort, context window, cost and 5-hour/weekly limits. Your status line still shows exactly as before.</li>
+          <li>• Wraps your status line so Inyon sees model, effort, context window, cost and 5-hour/weekly limits. Your status line still shows exactly as before.</li>
           <li>• Backs up <span className="font-mono text-[12px]">~/.claude/settings.json</span> first. Turning it off restores your original status line.</li>
         </ul>
       </div>

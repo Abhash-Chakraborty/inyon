@@ -74,7 +74,7 @@ describe('AntigravityDoc', () => {
     expect(items.at(-1)).toMatchObject({ kind: 'notice', subtype: 'task' })
   })
 
-  test('tool names map to the rows Tether knows', () => {
+  test('tool names map to the rows Inyon knows', () => {
     expect(mapAgyTool('view_file', { AbsolutePath: '"/a.ts"' })).toEqual({ name: 'Read', input: { file_path: '/a.ts' } })
     expect(mapAgyTool('write_to_file', { TargetFile: '"/b"', CodeContent: '"hi\\n"', Overwrite: 'true' }).input).toEqual({ file_path: '/b', content: 'hi\n' })
     expect(mapAgyTool('replace_file_content', { TargetFile: '"/c"', TargetContent: '"a"', ReplacementContent: '"b"' })).toMatchObject({ name: 'Edit', input: { old_string: 'a', new_string: 'b' } })

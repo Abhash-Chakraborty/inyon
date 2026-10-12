@@ -1,4 +1,4 @@
-import { AGENT_KINDS, type AgentKind, type PromptOption, type ScreenState } from '@tether/protocol'
+import { AGENT_KINDS, type AgentKind, type PromptOption, type ScreenState } from '@inyon/protocol'
 import { parseScreen } from '../claude/screen.ts'
 import { shq } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
@@ -31,7 +31,7 @@ const SIGN_IN_WINDOWS: Record<AgentKind, string> = {
   antigravity: 'agy',
 }
 
-const EXIT_MARK = /^\[tether-exit (\d+)\]$/
+const EXIT_MARK = /^\[inyon-exit (\d+)\]$/
 
 export interface SignInScreen {
   lines: string[]
@@ -66,7 +66,7 @@ export async function startSignIn(hostId: string, kind: AgentKind) {
   const host = registry.host(hostId)
   const name = `${LOGIN_PREFIX}${kind}-${Math.random().toString(36).slice(2, 7)}`
   const windows = registry.get(hostId)?.state?.os === 'Windows'
-  const script = `${PATHS}; ${SIGN_IN[kind]}; s=$?; echo; echo "[tether-exit $s]"; exec sleep 3600`
+  const script = `${PATHS}; ${SIGN_IN[kind]}; s=$?; echo; echo "[inyon-exit $s]"; exec sleep 3600`
   // wide, so links wrap as little as possible; capture -J re-joins what still wraps
   const r = await host.exec(`tmux new-session -d -s ${shq(name)} -x 220 -y 50 -P -F '#{pane_id}'${windows ? '' : ` ${shq(`sh -c ${shq(script)}`)}`}`)
   const pane = r.stdout.trim()
@@ -80,7 +80,7 @@ export async function startSignIn(hostId: string, kind: AgentKind) {
 }
 
 /** The PowerShell line for a sign-in on Windows; it prints the same exit mark as the sh script. */
-export const signInWindows = (kind: AgentKind) => `${SIGN_IN_WINDOWS[kind]}; Write-Output ''; Write-Output "[tether-exit $([int]$LASTEXITCODE)]"`
+export const signInWindows = (kind: AgentKind) => `${SIGN_IN_WINDOWS[kind]}; Write-Output ''; Write-Output "[inyon-exit $([int]$LASTEXITCODE)]"`
 
 async function ownPane(hostId: string, pane: string) {
   if (!/^%\d+(\.\d+)?$/.test(pane)) throw new HttpError(400, 'Bad pane')
@@ -88,7 +88,7 @@ async function ownPane(hostId: string, pane: string) {
   const r = await host.exec(`tmux display-message -p -t ${shq(pane)} '#{session_name}' 2>/dev/null`)
   const session = r.stdout.trim()
   if (!session.startsWith(LOGIN_PREFIX)) throw new HttpError(404, 'That sign-in has ended')
-  // the session is named tether-login-<agent>-<random>
+  // the session is named inyon-login-<agent>-<random>
   const kind = AGENT_KINDS.find((k) => session.startsWith(`${LOGIN_PREFIX}${k}-`))
   return { host, signInKind: kind }
 }

@@ -59,7 +59,7 @@ test('session metrics count user turns rather than every intermediate tool respo
   expect(meta.status).toMatchObject({ model: 'one/m', effort: 'high' })
 })
 test('dashboard selection survives restart, is isolated by session, and newer native input wins', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tether-opencode-selection-'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-opencode-selection-'))
   try {
     const file = path.join(dir, 'selections.json')
     const old = [{ info: { id: 'one', role: 'user', model: { providerID: 'p', modelID: 'old' } } }]

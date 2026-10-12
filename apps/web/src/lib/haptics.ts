@@ -17,14 +17,14 @@ let iosSwitch: HTMLLabelElement | null = null
 const isIOS = () => typeof navigator !== 'undefined' && /iP(hone|ad|od)/.test(navigator.userAgent)
 
 /**
- * Haptic feedback. The Android app plays it natively (TetherDevice); app builds from before that
+ * Haptic feedback. The Android app plays it natively (InyonDevice); app builds from before that
  * use Capacitor's Haptics plugin, as does the iPhone app (Taptic Engine). In a browser, Android
  * implements the Vibration API; iOS Safari doesn't, but toggling a native
  * `<input type="checkbox" switch>` produces the system haptic (iOS 17.4+) inside a user gesture.
  */
 export function haptic(kind: HapticKind = 'tap') {
   if (!useStore.getState().settings.haptics) return
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   if (typeof device?.haptic === 'function') {
     let run: Promise<unknown>
     try {

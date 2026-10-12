@@ -1,13 +1,16 @@
 import { sleep } from '../platform/store.ts'
 import { Host, shq } from '../hosts/host.ts'
-import { ACCOUNT_SH, MARKER } from '../claude/integration-sh.ts'
+import { ACCOUNT_SH, MARKER, MOVE_OLD_FOLDER_SH } from '../claude/integration-sh.ts'
 import { SIGNED_IN_SH } from '../agents/auth-sh.ts'
-import { AGENTS, AGENT_KINDS, detectAgent, type AgentKind, type IntegrationState, type PaneInfo, type SessionInfo, type WindowInfo } from '@tether/protocol'
+import { AGENTS, AGENT_KINDS, detectAgent, type AgentKind, type IntegrationState, type PaneInfo, type SessionInfo, type WindowInfo } from '@inyon/protocol'
 
-/** Sessions Tether creates for terminal views; hidden from listings. */
-export const VIEW_PREFIX = 'tether-view-'
+/** Sessions Inyon creates for terminal views; hidden from listings. */
+export const VIEW_PREFIX = 'inyon-view-'
 /** Sessions running an agent's sign-in; hidden too. */
-export const LOGIN_PREFIX = 'tether-login-'
+export const LOGIN_PREFIX = 'inyon-login-'
+/** Every prefix of a session that isn't yours, those from before the rename to Inyon included */
+export const HIDDEN_PREFIXES = [VIEW_PREFIX, LOGIN_PREFIX, 'tether-view-', 'tether-login-']
+export const hiddenSession = (name: string) => HIDDEN_PREFIXES.some((p) => name.startsWith(p))
 
 const SEP = '\u001f'
 const PANE_FORMAT = [
@@ -79,9 +82,19 @@ export interface ProbeResult {
   agyStatus: Map<string, { ts: number; data: any }>
   /** Antigravity conversation id → its title */
   agyTitles: Map<string, string>
-  /** whether Tether's status line is in Antigravity CLI's settings (undefined when agy isn't installed) */
+  /** whether Inyon's status line is in Antigravity CLI's settings (undefined when agy isn't installed) */
   agyIntegration?: 'installed' | 'missing'
 }
+
+/** Prints whether Claude's integration is installed, missing, removed from settings or outdated. */
+export const HOOK_STATE_SH = `t="$HOME/.inyon"
+s="$HOME/.claude/settings.json"
+if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
+# settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
+elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
+elif ! grep -q 'inyon/statusline.sh' "$s" 2>/dev/null || ! grep -q 'inyon/hook.sh' "$s" 2>/dev/null; then echo removed
+elif grep -q '${MARKER}' "$t/hook.sh" && grep -q '${MARKER}' "$t/statusline.sh"; then echo installed
+else echo outdated; fi`
 
 const BINS = [...new Set(AGENT_KINDS.flatMap((k) => AGENTS[k].comm))]
 
@@ -92,6 +105,7 @@ echo "@@HOST $(hostname)"
 echo "@@HOME $HOME"
 echo "@@OS $(uname -s)"
 echo "@@NOW $(date +%s)"
+${MOVE_OLD_FOLDER_SH}
 echo "@@BINS"
 for b in ${BINS.join(' ')}; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
 if command -v tmux >/dev/null 2>&1; then
@@ -135,21 +149,18 @@ fi
 echo "@@AGYSTATUS"
 # status files of panes that closed over an hour ago only pile up
 live=" $(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | tr -d '%' | tr '\n' ' ') "
-for f in $(find "$HOME/.tether/status" "$HOME/.tether/panes" "$HOME/.tether/agy-status" -maxdepth 1 -type f -mmin +60 2>/dev/null); do
+for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-status" -maxdepth 1 -type f -mmin +60 2>/dev/null); do
   n=$(basename "$f"); n=\${n%.*}
   case "$n" in ''|*[!0-9.]*) continue;; esac
   case "$live" in *" $n "*) ;; *) rm -f "$f";; esac
 done
-for f in "$HOME"/.tether/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
+for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
-  if grep -q 'tether/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && grep -q '${MARKER}' "$HOME/.tether/agy-statusline.sh" 2>/dev/null; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && grep -q '${MARKER}' "$HOME/.inyon/agy-statusline.sh" 2>/dev/null; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
 echo "@@HOOK"
-t="$HOME/.tether"
-if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
-elif ! grep -q 'tether/statusline.sh' "$HOME/.claude/settings.json" 2>/dev/null || ! grep -q 'tether/hook.sh' "$HOME/.claude/settings.json" 2>/dev/null; then echo removed
-elif grep -q '${MARKER}' "$t/hook.sh" && grep -q '${MARKER}' "$t/statusline.sh"; then echo installed
-else echo outdated; fi
+${HOOK_STATE_SH}
+t="$HOME/.inyon"
 echo "@@AUTH $(${SIGNED_IN_SH})"
 echo "@@ACCOUNT $(${ACCOUNT_SH} "\${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")"
 echo "@@PANES"
@@ -285,7 +296,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
     const f = tmuxFields(line)
     if (f.length < 18) continue
     const [sid, sname, sattached, wid, widx, wname, wactive, wact, pid, pidx, pactive, ppid, pcmd, pcwd, ptitle, pw, ph, pdead] = f
-    if (sname.startsWith(VIEW_PREFIX) || sname.startsWith(LOGIN_PREFIX)) continue
+    if (hiddenSession(sname)) continue
     let s = sessions.get(sid)
     if (!s) sessions.set(sid, (s = { id: sid, name: sname, attached: +sattached, windows: [] }))
     const wkey = `${sid}/${wid}`
@@ -307,7 +318,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
       res.agentProcs.set(pid, { kind, pid: cp.pid, startedAt: res.now - cp.etimes, cwd: cwds.get(cp.pid) ?? pcwd, resume, args: cp.args, panePid: +ppid })
     }
   }
-  // the "attached" count shouldn't include Tether's own control-mode clients
+  // the "attached" count shouldn't include Inyon's own control-mode clients
   const people = new Map<string, number>()
   for (const line of sections.get('CLIENTS') ?? []) {
     const [sid, control] = line.trim().split(' ')
@@ -356,7 +367,7 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
   if (text.length > 800 || /[\r\n]/.test(text)) {
     // Deliver one bracketed paste instead of a burst of individual key events. The CLI can
     // preserve long/multiline text atomically and display its own collapsed paste preview.
-    const buffer = `tether-${crypto.randomUUID()}`
+    const buffer = `inyon-${crypto.randomUUID()}`
     const result = await host.exec(pasteCommand(buffer, pane), { input: text.replace(/\r\n?/g, '\n') })
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || 'Could not paste text into the terminal')

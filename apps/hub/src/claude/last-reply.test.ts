@@ -17,7 +17,7 @@ test('markdown becomes one short plain line', () => {
 })
 
 test("a finished notification quotes the start of the agent's reply from its transcript", async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tether-reply-'))
+  const dir = mkdtempSync(join(tmpdir(), 'inyon-reply-'))
   const file = join(dir, 's.jsonl')
   const line = (o: object) => JSON.stringify({ timestamp: '2026-10-11T10:00:00Z', uuid: crypto.randomUUID(), ...o }) + '\n'
   writeFileSync(file, 'x'.repeat(300_000) + '\n' +

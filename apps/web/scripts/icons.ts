@@ -1,4 +1,4 @@
-// Renders the PNG app icons from public/icon.svg (run: pnpm --filter @tether/web icons)
+// Renders the PNG app icons from public/icon.svg (run: pnpm --filter @inyon/web icons)
 import sharp from 'sharp'
 import path from 'node:path'
 

@@ -7,7 +7,7 @@ let appVersion = '0.6.3'
 let release: Record<string, unknown> = {}
 const fetched = mock((_url: string) => {})
 
-const apk = (version: string, name = `tether-${version}.apk`) => ({
+const apk = (version: string, name = `inyon-${version}.apk`) => ({
   tag_name: `v${version}`,
   prerelease: false,
   assets: [
@@ -32,8 +32,8 @@ afterEach(() => {
 })
 
 describe('the Android app looks for a newer APK', () => {
-  test('finds the newer release and its APK on tether-releases', async () => {
-    expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3', latest: '0.6.4', url: 'https://github.com/x/releases/download/v0.6.4/tether-0.6.4.apk' })
+  test('finds the newer release and its APK on inyon-releases', async () => {
+    expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3', latest: '0.6.4', url: 'https://github.com/x/releases/download/v0.6.4/inyon-0.6.4.apk' })
     expect(fetched.mock.calls[0][0]).toBe(RELEASES_API)
   })
 
@@ -83,11 +83,11 @@ describe('the Android app looks for a newer APK', () => {
     const wait = () => new Promise((r) => setTimeout(r, 20))
     startAppUpdateCheck()
     await wait()
-    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Tether 0.6.4 is available'])
+    expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Inyon 0.6.4 is available'])
     expect(useStore.getState().toasts[0].href).toBe('/settings#updates')
     useStore.setState({ toasts: [] })
     // back to the app the next day, the same version: no second notice
-    localStorage.removeItem('tether.app-update')
+    localStorage.removeItem('inyon.app-update')
     document.dispatchEvent(new Event('visibilitychange'))
     await wait()
     expect(fetched).toHaveBeenCalledTimes(2)

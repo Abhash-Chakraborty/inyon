@@ -1,4 +1,4 @@
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { shq, type ExecResult, type HostBackend } from '../hosts/host.ts'
 import type { SshPlugin } from './types.ts'
 import { fromBase64, toBase64 } from '../platform/base64.ts'
@@ -18,7 +18,7 @@ export function splitTarget(target = '') {
 const RETRY_MS = 8000
 
 /**
- * Machines reached straight from the phone over SSH, through the native TetherSsh plugin. A
+ * Machines reached straight from the phone over SSH, through the native InyonSsh plugin. A
  * connection opens on first use and again after it drops; the plugin pools connections per server.
  */
 export function sshBackend(ssh: SshPlugin, credentials: (config: HostConfig) => Promise<Credentials>) {

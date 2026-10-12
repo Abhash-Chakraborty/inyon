@@ -33,7 +33,7 @@ test('typing an ID loosely still reads it, and junk is refused', () => {
   expect(parseShortCode('K7Q4MX2T493812')).toEqual({ id: 'K7Q4MX2T', code: '493812' })
   expect(parseShortCode('K7Q4-MX2T')).toBeUndefined()
   expect(parseShortCode('K7Q4-MX2T 49381')).toBeUndefined()
-  expect(parseShortCode('tether://pair?m=x')).toBeUndefined()
+  expect(parseShortCode('inyon://pair?m=x')).toBeUndefined()
 })
 
 test('the phone finds the machine from the ID alone, and the code travels as the secret', async () => {

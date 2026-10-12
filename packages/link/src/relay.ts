@@ -13,7 +13,7 @@ export type RelayToMachine =
 
 export type MachineToRelay = { t: 'auth'; id: string; sig: string } | { t: 'close'; sid: number }
 
-/** What the machine signs to prove to the relay it owns its id. */
+/** What the machine signs to prove to the relay it owns its id (a wire id from before the rename to Inyon). */
 export const authMessage = (nonce: string) => new TextEncoder().encode(`tether-relay-auth:${nonce}`)
 
 export function frame(sid: number, data: Uint8Array) {

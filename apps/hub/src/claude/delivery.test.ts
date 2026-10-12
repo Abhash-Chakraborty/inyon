@@ -67,7 +67,7 @@ test('Codex collapsed content preserves the real draft and checks its size', asy
 })
 
 test("an agent's record matches the sent message despite rewrapping, not a shorter draft", () => {
-  const sent = "why can't I paste images? it says \"not supported\" really\n\nAttached files:\n/home/u/.tether/uploads/a.png"
+  const sent = "why can't I paste images? it says \"not supported\" really\n\nAttached files:\n/home/u/.inyon/uploads/a.png"
   expect(sameMessage(`<pasted_content id="x">${sent.replace(/\n/g, ' ')}</pasted_content>`, sent)).toBe(true)
   expect(sameMessage(sent.replace(/"/g, '“'), sent)).toBe(true)
   // a draft mirrored before the last edits is a prefix, and must not count as the message

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentModel } from '@tether/protocol'
+import type { AgentCatalog, AgentModel } from '@inyon/protocol'
 import { shq, type Host } from '../hosts/host.ts'
 import { copilotCatalogScript } from './copilot-rpc-sh.ts'
 import { PATHS } from '../features/setup.ts'

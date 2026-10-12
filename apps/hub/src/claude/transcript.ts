@@ -1,4 +1,4 @@
-import type { AgentStatus, ArtifactInfo, BackgroundTask, ChatItem, SessionStats, SubagentInfo, ToolResultMeta } from '@tether/protocol'
+import type { AgentStatus, ArtifactInfo, BackgroundTask, ChatItem, SessionStats, SubagentInfo, ToolResultMeta } from '@inyon/protocol'
 
 /** Distributive Omit so each ChatItem variant keeps its own fields. */
 type Draft = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'seq'> : never) : never

@@ -91,7 +91,7 @@ describe('errors', () => {
 
   test('a 401 signs the app out, except for a wrong password at login', async () => {
     const out = mock(() => {})
-    window.addEventListener('tether:signed-out', out)
+    window.addEventListener('inyon:signed-out', out)
     try {
       reply = () => new Response('{}', { status: 401 })
       await api.configs('box').catch(() => {})
@@ -99,7 +99,7 @@ describe('errors', () => {
       await api.login('wrong').catch(() => {})
       expect(out).toHaveBeenCalledTimes(1)
     } finally {
-      window.removeEventListener('tether:signed-out', out)
+      window.removeEventListener('inyon:signed-out', out)
     }
   })
 

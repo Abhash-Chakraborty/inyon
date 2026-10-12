@@ -1,5 +1,5 @@
 import { OpenCodeClient } from '../agents/opencode-api.ts'
-import { AGENTS, type AgentKind, type ChatItem, type SlashCommand } from '@tether/protocol'
+import { AGENTS, type AgentKind, type ChatItem, type SlashCommand } from '@inyon/protocol'
 import { shq } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { loadSettings } from '../config.ts'
@@ -34,7 +34,7 @@ export interface Uploaded {
 }
 
 /**
- * Where a new upload goes: ~/.tether/uploads/<date>/<session>/<time>-<id>-<name> on the pane's
+ * Where a new upload goes: ~/.inyon/uploads/<date>/<session>/<time>-<id>-<name> on the pane's
  * machine. The short random id keeps two files of the same name sent in the same second apart.
  */
 function uploadPath(home: string, hostId: string, paneId: string | undefined, name: string) {
@@ -42,7 +42,7 @@ function uploadPath(home: string, hostId: string, paneId: string | undefined, na
   const bucket = (pane?.agent?.sessionId ?? paneId?.replace('%', 'pane-') ?? 'misc').slice(0, 12)
   const day = new Date().toISOString().slice(0, 10)
   const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '')
-  return `${home}/.tether/uploads/${day}/${bucket}/${stamp}-${crypto.randomUUID().slice(0, 6)}-${safeName(name)}`
+  return `${home}/.inyon/uploads/${day}/${bucket}/${stamp}-${crypto.randomUUID().slice(0, 6)}-${safeName(name)}`
 }
 
 /**
@@ -69,7 +69,7 @@ async function writeUpload(host: ReturnType<typeof hostAndHome>['host'], path: s
   }
 }
 
-/** Copies files into ~/.tether/uploads/<date>/<session>/ on the pane's machine. */
+/** Copies files into ~/.inyon/uploads/<date>/<session>/ on the pane's machine. */
 export async function uploadFiles(hostId: string, paneId: string | undefined, files: File[]): Promise<Uploaded[]> {
   const { host, home } = hostAndHome(hostId)
   const { maxMB } = loadSettings().uploads
@@ -93,14 +93,14 @@ export async function uploadPiece(hostId: string, paneId: string | undefined, pi
   if (!(o.total >= 0) || !(o.offset >= 0) || o.offset + piece.size > o.total) throw new HttpError(400, 'Bad upload piece')
   if (o.total > maxMB * 1024 * 1024) throw new HttpError(413, `${piece.name} is larger than ${maxMB} MB`)
   const path = o.offset ? o.path : uploadPath(home, hostId, paneId, piece.name)
-  if (!path || !path.startsWith(`${home}/.tether/uploads/`) || /\/\.\.?(\/|$)|[\n\0]/.test(path)) throw new HttpError(400, 'Bad upload path')
+  if (!path || !path.startsWith(`${home}/.inyon/uploads/`) || /\/\.\.?(\/|$)|[\n\0]/.test(path)) throw new HttpError(400, 'Bad upload path')
   await writeUpload(host, path, piece, o.offset)
   return { name: piece.name, path, size: o.total, type: piece.type }
 }
 
 export async function uploadUsage(hostId: string) {
   const { host, home } = hostAndHome(hostId)
-  const dir = `${home}/.tether/uploads`
+  const dir = `${home}/.inyon/uploads`
   const r = await host.exec(`[ -d ${shq(dir)} ] || { echo "0 0 0"; exit 0; }; echo "$(du -sk ${shq(dir)} | cut -f1) $(find ${shq(dir)} -type f | wc -l) $(find ${shq(dir)} -type f -mtime +${loadSettings().uploads.retentionDays} | wc -l)"`)
   const [kb, files, old] = r.stdout.trim().split(/\s+/).map(Number)
   return { bytes: (kb || 0) * 1024, files: files || 0, expired: old || 0, dir }
@@ -109,7 +109,7 @@ export async function uploadUsage(hostId: string) {
 /** Deletes uploads older than `days` (all of them when days is 0). */
 export async function cleanUploads(hostId: string, days: number) {
   const { host, home } = hostAndHome(hostId)
-  const dir = `${home}/.tether/uploads`
+  const dir = `${home}/.inyon/uploads`
   const age = days > 0 ? `-mtime +${Math.floor(days)}` : ''
   await host.exec(`[ -d ${shq(dir)} ] && find ${shq(dir)} -type f ${age} -delete; [ -d ${shq(dir)} ] && find ${shq(dir)} -mindepth 1 -type d -empty -delete; true`)
   return uploadUsage(hostId)
@@ -291,7 +291,7 @@ export async function listConfigs(hostId: string): Promise<ConfigFile[]> {
 function assertConfigPath(hostId: string, path: string) {
   const { home } = hostAndHome(hostId)
   const c = configCandidates(hostId, home).find((x) => x.path === path)
-  if (!c) throw new HttpError(403, 'That file is not an agent config file Tether manages')
+  if (!c) throw new HttpError(403, 'That file is not an agent config file Inyon manages')
   return c
 }
 
@@ -316,7 +316,7 @@ export async function writeConfig(hostId: string, path: string, content: string)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const p = shq(path)
   const r = await host.exec(
-    `mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.tether-bak-${stamp}`)}; } && cat > ${shq(`${path}.tether-tmp`)} && mv ${shq(`${path}.tether-tmp`)} ${p} || exit $?; ls -t ${p}.tether-bak-* 2>/dev/null | tail -n +6 | while IFS= read -r f; do rm -f -- "$f"; done; true`,
+    `mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.inyon-bak-${stamp}`)}; } && cat > ${shq(`${path}.inyon-tmp`)} && mv ${shq(`${path}.inyon-tmp`)} ${p} || exit $?; ls -t ${p}.inyon-bak-* 2>/dev/null | tail -n +6 | while IFS= read -r f; do rm -f -- "$f"; done; true`,
     { input: content },
   )
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not save')

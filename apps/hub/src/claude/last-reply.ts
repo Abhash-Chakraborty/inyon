@@ -1,4 +1,4 @@
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 import { shq } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { normalizeCodex } from '../agents/codex.ts'

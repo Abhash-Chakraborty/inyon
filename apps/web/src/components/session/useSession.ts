@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { AGENTS, chatKey, type AgentKind, type AgentStatus } from '@tether/protocol'
+import { AGENTS, chatKey, type AgentKind, type AgentStatus } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
 import { allPanes } from '../../lib/overview.ts'

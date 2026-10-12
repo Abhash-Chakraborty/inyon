@@ -14,7 +14,7 @@ describe('shortPath', () => {
   })
 
   test('long paths keep their last segments, within the limit', () => {
-    const p = '/home/me/projects/tether/apps/web/src/components/chat/ChatView.tsx'
+    const p = '/home/me/projects/inyon/apps/web/src/components/chat/ChatView.tsx'
     const s = shortPath(p)
     expect(s).toBe('~/…/web/src/components/chat/ChatView.tsx')
     expect(s.length).toBeLessThanOrEqual(42)

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 
 /**
  * The Android back button closes whatever is open on top (a picker over a sheet, a sheet over a
- * page) before it goes back a page. native.ts fires a cancelable `tether:back`; the newest open
+ * page) before it goes back a page. native.ts fires a cancelable `inyon:back`; the newest open
  * layer handles it.
  */
 const layers: { close: () => void }[] = []
@@ -11,7 +11,7 @@ let installed = false
 function install() {
   if (installed || typeof window === 'undefined') return
   installed = true
-  window.addEventListener('tether:back', (e) => {
+  window.addEventListener('inyon:back', (e) => {
     const top = layers.at(-1)
     if (!top) return
     e.preventDefault()
@@ -36,4 +36,4 @@ export function useBackCloses(open: boolean, close: () => void) {
 }
 
 /** Asks the open layers to close; true when one did, so back shouldn't navigate. */
-export const backHandled = () => !window.dispatchEvent(new CustomEvent('tether:back', { cancelable: true }))
+export const backHandled = () => !window.dispatchEvent(new CustomEvent('inyon:back', { cancelable: true }))

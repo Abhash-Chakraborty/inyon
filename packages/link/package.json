@@ -1,5 +1,5 @@
 {
-  "name": "@tether/link",
+  "name": "@inyon/link",
   "private": true,
   "type": "module",
   "exports": {

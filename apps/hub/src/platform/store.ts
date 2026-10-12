@@ -3,7 +3,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js'
 
 /**
  * Where the core keeps its small JSON records (machine list, settings, drafts, last-seen
- * snapshots, chat caches). The hub keeps them as files under ~/.tether; the phone app keeps them
+ * snapshots, chat caches). The hub keeps them as files under ~/.inyon; the phone app keeps them
  * in its own storage. Keys look like file paths without the extension: "hosts", "chats/abc".
  */
 export interface Store {

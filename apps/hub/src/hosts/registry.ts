@@ -1,6 +1,6 @@
 import { opencodeLive } from '../agents/opencode-controls.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
-import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@tether/protocol'
+import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@inyon/protocol'
 import { loadHosts, loadSettings, saveHosts } from '../config.ts'
 import { keyPart, kv } from '../platform/store.ts'
 import { Host, shq } from './host.ts'
@@ -410,7 +410,7 @@ class Registry {
     const online = (globalThis as { navigator?: { onLine?: boolean } }).navigator?.onLine !== false
     if (!offlineAlertDue({ since: rt.state.offlineSince, notified: rt.offlineNotified, now: Date.now(), held: this.alertsHeld, heldUntil: this.alertsFrom, online })) return
     rt.offlineNotified = true
-    this.emit({ type: 'notify', host: rt.host.id, pane: '', kind: 'offline', title: `${rt.host.config.name} is offline`, body: 'Its sessions show as they were last seen. Tether reconnects by itself.' })
+    this.emit({ type: 'notify', host: rt.host.id, pane: '', kind: 'offline', title: `${rt.host.config.name} is offline`, body: 'Its sessions show as they were last seen. Inyon reconnects by itself.' })
   }
 
   private cameBack(rt: Runtime, since: number) {
@@ -740,8 +740,8 @@ class Registry {
 
   /** Follows the hook event log on the machine for instant updates. */
   private watchEvents(rt: Runtime) {
-    const prepare = 'umask 077; mkdir -p "$HOME/.tether" && touch "$HOME/.tether/events.jsonl"'
-    const tail = 'tail -n0 -F "$HOME/.tether/events.jsonl" 2>/dev/null'
+    const prepare = 'umask 077; mkdir -p "$HOME/.inyon" && touch "$HOME/.inyon/events.jsonl"'
+    const tail = 'tail -n0 -F "$HOME/.inyon/events.jsonl" 2>/dev/null'
     // on another machine it stops when the connection does (see untilStdinCloses)
     const remote = rt.host.config.kind !== 'local'
     const cmd = remote ? `${prepare} && { ${untilStdinCloses(tail)}; }` : `${prepare} && exec ${tail}`

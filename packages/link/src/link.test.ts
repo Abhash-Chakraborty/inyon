@@ -85,8 +85,11 @@ test('published addresses verify against the machine id only', () => {
 test('pairing links round trip and reject junk', () => {
   const machine = newIdentity()
   const info = { id: machine.id, secret: 'a'.repeat(32), name: 'Laptop', urls: ['wss://x.trycloudflare.com/link'], relays: ['https://relay.example.com'] }
+  expect(pairLink(info)).toStartWith('inyon://pair?')
   expect(parsePairLink(pairLink(info))).toEqual(info)
-  expect(parsePairLink('tether://pair?m=nope&s=short')).toBeUndefined()
+  // a code printed before the rename to Inyon still pairs
+  expect(parsePairLink(pairLink(info).replace('inyon://', 'tether://'))).toEqual(info)
+  expect(parsePairLink('inyon://pair?m=nope&s=short')).toBeUndefined()
   expect(parsePairLink('hello')).toBeUndefined()
   expect(parsePairLink(pairLink({ ...info, urls: ['javascript:alert(1)'] }))!.urls).toEqual([])
 })

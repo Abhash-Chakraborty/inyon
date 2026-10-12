@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-        <string>Tether</string>
+        <string>Inyon</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -67,6 +67,6 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Tether connects to servers on your own network over SSH.</string>
+	<string>Inyon connects to servers on your own network over SSH.</string>
 </dict>
 </plist>

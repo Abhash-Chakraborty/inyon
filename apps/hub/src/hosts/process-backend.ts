@@ -1,5 +1,5 @@
 import path from 'node:path'
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { shq, type HostBackend } from './host.ts'
 
 /**

@@ -1,4 +1,4 @@
-// Everything Tether knows about each coding agent: how to spot it, how it looks, what it can do.
+// Everything Inyon knows about each coding agent: how to spot it, how it looks, what it can do.
 
 export type AgentKind = 'claude' | 'codex' | 'opencode' | 'copilot' | 'gemini' | 'antigravity'
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
-import type { ServerMsg } from '@tether/protocol'
+import type { ServerMsg } from '@inyon/protocol'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
 import { TranscriptReader } from './transcript-tail.ts'

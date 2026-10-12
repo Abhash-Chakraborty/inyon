@@ -1,4 +1,4 @@
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 import { Host } from '../hosts/host.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'
 import { opencodeRequest } from './opencode-api.ts'
@@ -7,7 +7,7 @@ type Draft = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'seq'> : n
 
 /**
  * OpenCode's terminal app talks to its own local HTTP server (the same API `opencode serve`
- * exposes): /session, /session/{id}/message, /permission, /event. Tether finds that server's port
+ * exposes): /session, /session/{id}/message, /permission, /event. Inyon finds that server's port
  * from the process's listening sockets and reads the same session you see in tmux. (beta)
  */
 export function selectOpenCodeSession(sessions: any[], cwd?: string, explicitSession?: string): string | undefined {

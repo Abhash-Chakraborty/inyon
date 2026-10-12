@@ -56,38 +56,38 @@ jobs:
         working-directory: apps/mobile/android
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          TETHER_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          TETHER_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
-          TETHER_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
-          TETHER_VERSION: ${{ steps.version.outputs.name }}
-          TETHER_VERSION_CODE: ${{ github.run_number }}
+          INYON_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          INYON_KEY_ALIAS: ${{ vars.ANDROID_KEY_ALIAS || secrets.ANDROID_KEY_ALIAS }}
+          INYON_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          INYON_VERSION: ${{ steps.version.outputs.name }}
+          INYON_VERSION_CODE: ${{ github.run_number }}
           # Firebase app for push; when unset the APK builds without push
-          TETHER_FCM_APP_ID: ${{ secrets.TETHER_FCM_APP_ID }}
-          TETHER_FCM_API_KEY: ${{ secrets.TETHER_FCM_API_KEY }}
-          TETHER_FCM_PROJECT_ID: ${{ secrets.TETHER_FCM_PROJECT_ID }}
-          TETHER_FCM_SENDER_ID: ${{ secrets.TETHER_FCM_SENDER_ID }}
+          INYON_FCM_APP_ID: ${{ secrets.TETHER_FCM_APP_ID }}
+          INYON_FCM_API_KEY: ${{ secrets.TETHER_FCM_API_KEY }}
+          INYON_FCM_PROJECT_ID: ${{ secrets.TETHER_FCM_PROJECT_ID }}
+          INYON_FCM_SENDER_ID: ${{ secrets.TETHER_FCM_SENDER_ID }}
         run: |
           if [ -z "$KEYSTORE_BASE64" ]; then
             # forks and first runs: a debug build still installs, but can't update a signed one
             ./gradlew assembleDebug
-            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/tether.apk"
+            cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/inyon.apk"
             exit 0
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
-          export TETHER_KEYSTORE="$RUNNER_TEMP/release.p12"
+          export INYON_KEYSTORE="$RUNNER_TEMP/release.p12"
           ./gradlew assembleRelease
-          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/tether.apk"
+          cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/inyon.apk"
           rm -f "$RUNNER_TEMP/release.p12"
 
       - name: Check the signature
         run: |
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$apksigner" verify --verbose --print-certs "$RUNNER_TEMP/tether.apk" | grep -iE "verified|signer|certificate" | grep -viE "warning"
+          "$apksigner" verify --verbose --print-certs "$RUNNER_TEMP/inyon.apk" | grep -iE "verified|signer|certificate" | grep -viE "warning"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tether-${{ steps.version.outputs.name }}
-          path: ${{ runner.temp }}/tether.apk
+          name: inyon-${{ steps.version.outputs.name }}
+          path: ${{ runner.temp }}/inyon.apk
 
       # turns R8's renamed stack traces back into readable ones (retrace)
       - uses: actions/upload-artifact@v4
@@ -111,7 +111,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: tether-${{ needs.apk.outputs.version }}
+          name: inyon-${{ needs.apk.outputs.version }}
           path: ${{ runner.temp }}/apk
       - name: Enable KVM
         run: |
@@ -122,7 +122,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      # a QR code that isn't Tether's, on the wall of the emulator camera's virtual room
+      # a QR code that isn't Inyon's, on the wall of the emulator camera's virtual room
       - name: Make a camera poster
         run: |
           sudo apt-get install -y -qq qrencode > /dev/null
@@ -140,7 +140,7 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
           script: |
-            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/inyon.apk"
             .github/scripts/android-screens.sh || true
 
       - name: Did the first try reach a verdict
@@ -159,7 +159,7 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -wipe-data -camera-back virtualscene -virtualscene-poster wall=${{ runner.temp }}/poster.png
           script: |
-            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/tether.apk"
+            .github/scripts/android-smoke.sh "${{ runner.temp }}/apk/inyon.apk"
             .github/scripts/android-screens.sh || true
 
       - name: Verdict
@@ -209,7 +209,7 @@ jobs:
             sudo apt-get install -y -q openssh-server
           fi
           ssh-keygen -q -t ed25519 -N '' -f "$d/host_ed25519"
-          ssh-keygen -q -t ed25519 -N '' -C tether-test -f "$d/client_ed25519"
+          ssh-keygen -q -t ed25519 -N '' -C inyon-test -f "$d/client_ed25519"
           cp "$d/client_ed25519.pub" "$d/authorized_keys"
           chmod 600 "$d/authorized_keys"
           # runs as the runner user, which can only log in as itself; MaxSessions 10 is the
@@ -240,10 +240,10 @@ jobs:
           ssh -F /dev/null -i "$d/client_ed25519" -p 2222 -o BatchMode=yes -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=/dev/null "$(id -un)@127.0.0.1" 'echo sshd is up'
           {
-            echo "TETHER_SSH_TEST_HOST=127.0.0.1"
-            echo "TETHER_SSH_TEST_PORT=2222"
-            echo "TETHER_SSH_TEST_USER=$(id -un)"
-            echo "TETHER_SSH_TEST_KEY=$d/client_ed25519"
+            echo "INYON_SSH_TEST_HOST=127.0.0.1"
+            echo "INYON_SSH_TEST_PORT=2222"
+            echo "INYON_SSH_TEST_USER=$(id -un)"
+            echo "INYON_SSH_TEST_KEY=$d/client_ed25519"
           } >> "$GITHUB_ENV"
 
       - name: Unit tests
@@ -274,7 +274,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: tether-${{ needs.apk.outputs.version }}
+          name: inyon-${{ needs.apk.outputs.version }}
           path: ${{ runner.temp }}/apk
 
       - name: Publish
@@ -283,10 +283,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.apk.outputs.version }}
         run: |
-          apk="$RUNNER_TEMP/tether-$VERSION.apk"
-          cp "$RUNNER_TEMP/apk/tether.apk" "$apk"
+          apk="$RUNNER_TEMP/inyon-$VERSION.apk"
+          cp "$RUNNER_TEMP/apk/inyon.apk" "$apk"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Tether $VERSION" --generate-notes
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Inyon $VERSION" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
           else
             gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true

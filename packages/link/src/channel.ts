@@ -14,6 +14,8 @@ export interface Wire {
   onclose?: (code: number, reason: string) => void
 }
 
+// A wire id from when Inyon was called Tether. Both ends must agree on it, so it stays: changing it
+// would cut every paired phone off from every machine until both had updated.
 const PROLOGUE = new TextEncoder().encode('tether-link 1')
 const HANDSHAKE_MS = 15000
 // Noise caps a message at 65535 bytes; larger JSON goes in pieces

@@ -1,4 +1,4 @@
-import type { ChatItem, SendState } from '@tether/protocol'
+import type { ChatItem, SendState } from '@inyon/protocol'
 
 export interface PendingMessage {
   id: string

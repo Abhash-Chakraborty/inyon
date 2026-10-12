@@ -13,18 +13,18 @@
 -keep @com.getcapacitor.annotation.CapacitorPlugin class * { *; }
 
 # our plugins: every @PluginMethod and @PermissionCallback is called by name from the bridge
--keep class dev.tether.app.device.TetherDevicePlugin { *; }
--keep class dev.tether.app.ssh.TetherSshPlugin { *; }
+-keep class tech.abhashchakraborty.inyon.device.InyonDevicePlugin { *; }
+-keep class tech.abhashchakraborty.inyon.ssh.InyonSshPlugin { *; }
 
 # instantiated by Android from the manifest and the bridge layout
--keep class dev.tether.app.MainActivity { <init>(); }
--keep class dev.tether.app.device.TetherApplication { <init>(); }
--keep class dev.tether.app.device.KeepAliveService { <init>(); }
--keep class dev.tether.app.device.TetherMessagingService { <init>(); }
--keep class dev.tether.app.device.TetherWebView { <init>(android.content.Context, android.util.AttributeSet); }
--keep class dev.tether.app.device.ScannerActivity { <init>(); }
--keep class dev.tether.app.device.ScannerOverlay { <init>(android.content.Context, android.util.AttributeSet); }
--keep class dev.tether.app.device.NotificationActions { <init>(); }
+-keep class tech.abhashchakraborty.inyon.MainActivity { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.InyonApplication { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.KeepAliveService { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.InyonMessagingService { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.InyonWebView { <init>(android.content.Context, android.util.AttributeSet); }
+-keep class tech.abhashchakraborty.inyon.device.ScannerActivity { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.ScannerOverlay { <init>(android.content.Context, android.util.AttributeSet); }
+-keep class tech.abhashchakraborty.inyon.device.NotificationActions { <init>(); }
 
 # sshlib registers a JCA provider that names its Ed25519 classes by package at runtime, and
 # its algorithm tables are looked up by string; keep the library as it is

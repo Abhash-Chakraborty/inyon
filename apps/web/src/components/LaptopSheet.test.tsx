@@ -11,7 +11,7 @@ function phone(scanQr: () => Promise<unknown>, clipboard = '') {
   ;(window as any).Capacitor = {
     isNativePlatform: () => true,
     getPlatform: () => 'android',
-    Plugins: { TetherDevice: { scanQr, readClipboardText: async () => ({ text: clipboard }) } },
+    Plugins: { InyonDevice: { scanQr, readClipboardText: async () => ({ text: clipboard }) } },
   }
 }
 
@@ -68,7 +68,7 @@ test('an ID and code pasted together fill both boxes', async () => {
 test('"Type a code instead" on the scanner goes to the ID box', async () => {
   const user = userEvent.setup()
   phone(async () => ({ type: true }))
-  await render(<LaptopSheet open onClose={() => {}} link="tether://pair?m=x" />)
+  await render(<LaptopSheet open onClose={() => {}} link="inyon://pair?m=x" />)
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
   expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'ID' }))
   expect(useStore.getState().toasts).toEqual([])
@@ -76,13 +76,13 @@ test('"Type a code instead" on the scanner goes to the ID box', async () => {
 
 test('a paste request from the scanner goes to the link box, which reads the clipboard', async () => {
   const user = userEvent.setup()
-  phone(async () => ({ paste: true }), ' tether://pair?m=abc \n')
+  phone(async () => ({ paste: true }), ' inyon://pair?m=abc \n')
   await render(<LaptopSheet open onClose={() => {}} />)
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
   const box = screen.getByRole('textbox', { name: 'Pairing link' }) as HTMLInputElement
   expect(document.activeElement).toBe(box)
   await user.click(screen.getByRole('button', { name: 'Paste' }))
-  expect(box.value).toBe('tether://pair?m=abc')
+  expect(box.value).toBe('inyon://pair?m=abc')
 })
 
 test('no camera access points to typing the ID and code', async () => {

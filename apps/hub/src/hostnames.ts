@@ -10,8 +10,8 @@ import os from 'node:os'
  *  - single-label names such as `my-server`, which only your own network resolves
  *  - private DNS suffixes: Tailscale (.ts.net), NetBird (.netbird.cloud, .netbird.selfhosted),
  *    mDNS and home networks (.local, .lan, .internal, .home.arpa, .localhost)
- *  - this machine's hostname, the BIND address, and the hosts in TETHER_ALLOWED_ORIGINS
- *  - anything listed in TETHER_ALLOWED_HOSTS (comma-separated, like `tether.example.com`).
+ *  - this machine's hostname, the BIND address, and the hosts in INYON_ALLOWED_ORIGINS
+ *  - anything listed in INYON_ALLOWED_HOSTS (comma-separated, like `inyon.example.com`).
  *    Behind a reverse proxy on a public domain, add that domain here. `*` turns the check off.
  */
 
@@ -30,8 +30,8 @@ export function hostnameOf(host: string): string | undefined {
 }
 
 export function allowedHosts(env: Record<string, string | undefined> = process.env, bind = env.BIND ?? '') {
-  const names = new Set([...list(env.TETHER_ALLOWED_HOSTS), os.hostname().toLowerCase(), bind.toLowerCase()].filter(Boolean))
-  for (const origin of list(env.TETHER_ALLOWED_ORIGINS)) {
+  const names = new Set([...list(env.INYON_ALLOWED_HOSTS), os.hostname().toLowerCase(), bind.toLowerCase()].filter(Boolean))
+  for (const origin of list(env.INYON_ALLOWED_ORIGINS)) {
     try {
       names.add(new URL(origin).hostname)
     } catch {}

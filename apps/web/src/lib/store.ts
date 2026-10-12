@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@tether/protocol'
+import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@inyon/protocol'
 import { socket } from './socket.ts'
 import { haptic } from './haptics.ts'
 import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
@@ -45,7 +45,7 @@ export interface Settings {
   toolDetail: 'all' | 'compact'
 }
 
-const SETTINGS_KEY = 'tether.settings.v2'
+const SETTINGS_KEY = 'inyon.settings.v2'
 const defaults: Settings = {
   theme: 'system',
   agentSkins: true,
@@ -124,7 +124,7 @@ export const useStore = create<Store>((set, get) => ({
 
 export const toast = (t: Omit<Toast, 'id'>) => useStore.getState().toast(t)
 
-const pendingStorageKey = (key: string) => `tether.pending.${key}`
+const pendingStorageKey = (key: string) => `inyon.pending.${key}`
 function recoveredPending(key: string): PendingMessage[] {
   try {
     const saved: unknown = JSON.parse(sessionStorage.getItem(pendingStorageKey(key)) ?? '[]')

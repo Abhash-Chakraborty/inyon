@@ -1,4 +1,4 @@
-import type { AgentKind, ChatInfo, ChatItem, HostConfig, HostState, PaneInfo } from '@tether/protocol'
+import type { AgentKind, ChatInfo, ChatItem, HostConfig, HostState, PaneInfo } from '@inyon/protocol'
 
 // Small builders for transcript items, machines and panes. Each test only spells out what it checks.
 

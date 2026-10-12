@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@tether/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 
@@ -29,7 +29,7 @@ async function request<T>(method: string, url: string, body?: unknown, timeoutMs
   }))
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    if (res.status === 401 && !url.endsWith('/login')) window.dispatchEvent(new Event('tether:signed-out'))
+    if (res.status === 401 && !url.endsWith('/login')) window.dispatchEvent(new Event('inyon:signed-out'))
     throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`)
   }
   return data as T

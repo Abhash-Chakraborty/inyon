@@ -1,6 +1,6 @@
 {
-  "appId": "dev.tether.app",
-  "appName": "Tether",
+  "appId": "tech.abhashchakraborty.inyon",
+  "appName": "Inyon",
   "webDir": "../web/dist",
   "ios": {
     "contentInset": "never",

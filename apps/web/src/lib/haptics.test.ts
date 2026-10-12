@@ -34,7 +34,7 @@ describe('haptic', () => {
   test('the Android app plays it natively', async () => {
     const device = { haptic: mock(async (_o: unknown) => ({ played: true })) }
     const haptics = capacitorHaptics()
-    app({ TetherDevice: device, Haptics: haptics })
+    app({ InyonDevice: device, Haptics: haptics })
     haptic('event')
     await flush()
     expect(device.haptic).toHaveBeenCalledWith({ kind: 'event' })
@@ -49,7 +49,7 @@ describe('haptic', () => {
       }),
     }
     const haptics = capacitorHaptics()
-    app({ TetherDevice: device, Haptics: haptics })
+    app({ InyonDevice: device, Haptics: haptics })
     haptic('long')
     await flush()
     expect(haptics.impact).toHaveBeenCalledWith({ style: 'HEAVY' })
@@ -58,7 +58,7 @@ describe('haptic', () => {
 
   test('older app builds without the native method use Capacitor Haptics right away', () => {
     const haptics = capacitorHaptics()
-    app({ TetherDevice: { scanQr: async () => ({}) }, Haptics: haptics })
+    app({ InyonDevice: { scanQr: async () => ({}) }, Haptics: haptics })
     haptic('select')
     expect(haptics.selectionChanged).toHaveBeenCalledTimes(1)
     haptic()
@@ -66,7 +66,7 @@ describe('haptic', () => {
   })
 
   test('falls back to the Vibration API when the app has neither', async () => {
-    app({ TetherDevice: { haptic: async () => Promise.reject(new Error('nope')) } })
+    app({ InyonDevice: { haptic: async () => Promise.reject(new Error('nope')) } })
     haptic('error')
     await flush()
     expect(vibrate).toHaveBeenCalledWith([28, 50, 28, 50, 28])
@@ -92,7 +92,7 @@ describe('haptic', () => {
   test('nothing when haptics are off in settings', async () => {
     useStore.setState({ settings: { ...useStore.getState().settings, haptics: false } })
     const device = { haptic: mock(async () => ({})) }
-    app({ TetherDevice: device })
+    app({ InyonDevice: device })
     haptic('success')
     await flush()
     expect(device.haptic).not.toHaveBeenCalled()

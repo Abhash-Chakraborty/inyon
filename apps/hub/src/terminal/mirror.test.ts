@@ -19,7 +19,7 @@ test('a bracketed paste goes in as one paste, with the text around it kept in or
   expect(toInput('a\x1b[200~line 1\rline 2\x1b[201~\r')).toEqual([{ text: 'a' }, { paste: 'line 1\rline 2' }, { keys: ['Enter'] }])
   const c = inputCommand('%14.1', { paste: 'x\r\ny' })
   // through a file: psmux's load-buffer takes a path, not "-"
-  expect(c.cmd).toMatch(/load-buffer -b 'tether-term-\w+' "\$f" && tmux paste-buffer -d -p -b 'tether-term-\w+' -t '%14\.1'/)
+  expect(c.cmd).toMatch(/load-buffer -b 'inyon-term-\w+' "\$f" && tmux paste-buffer -d -p -b 'inyon-term-\w+' -t '%14\.1'/)
   expect(c.input).toBe('x\ny')
 })
 
@@ -49,7 +49,7 @@ test('only the rows that changed are drawn again', () => {
 
 // The mirror only uses what psmux has (capture-pane -e, display, send-keys -l/-H/names, paste-buffer,
 // resize-window), so it is checked end to end against a real tmux server of the test's own.
-const dir = mkdtempSync('/tmp/tether-mirror-')
+const dir = mkdtempSync('/tmp/inyon-mirror-')
 const own = `unset TMUX TMUX_PANE; export TMUX_TMPDIR='${dir}';`
 const local = new Host({ id: 'mirror', name: 'mirror', kind: 'local' } as any)
 const host = { ...local, config: local.config, exec: (cmd: string, o?: any) => local.exec(`${own} ${cmd}`, o) } as unknown as Host

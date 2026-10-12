@@ -9,7 +9,7 @@ import { Button, Empty, Segmented, SectionLabel } from '../components/ui/primiti
 import { api } from '../lib/api.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { toast } from '../lib/store.ts'
-import type { AgentPaneInfo } from '@tether/protocol'
+import type { AgentPaneInfo } from '@inyon/protocol'
 import { MachineSheet } from '../components/Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'

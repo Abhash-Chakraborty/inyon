@@ -1,4 +1,4 @@
-import type { AgentKind, ChatInfo, ChatItem } from '@tether/protocol'
+import type { AgentKind, ChatInfo, ChatItem } from '@inyon/protocol'
 import { keyPart, kv } from '../platform/store.ts'
 import type { SavedMeta } from './transcript.ts'
 

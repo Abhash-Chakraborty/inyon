@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { structuredPatch } from 'diff'
-import type { ToolResultMeta } from '@tether/protocol'
+import type { ToolResultMeta } from '@inyon/protocol'
 
 type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 

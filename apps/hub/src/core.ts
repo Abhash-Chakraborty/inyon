@@ -1,4 +1,4 @@
-import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@tether/protocol'
+import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protocol'
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
@@ -21,7 +21,7 @@ import { lastReply } from './claude/last-reply.ts'
 import { saveDrafts } from './claude/drafts.ts'
 
 /**
- * Tether's API and live updates, independent of how they are served: the hub puts them behind
+ * Inyon's API and live updates, independent of how they are served: the hub puts them behind
  * HTTP and a WebSocket with sign-in; the phone app calls them in-process.
  */
 

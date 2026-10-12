@@ -1,4 +1,4 @@
-import type { PromptOption, ScreenState } from '@tether/protocol'
+import type { PromptOption, ScreenState } from '@inyon/protocol'
 
 /** a row of OpenCode's input box (or the permission/question panel that replaces it): the bar sits at column 2 */
 const BOX = /^\s{0,3}┃/

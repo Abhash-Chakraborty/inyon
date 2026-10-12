@@ -1,10 +1,10 @@
 #!/bin/sh
-# Gets tether-node for this computer and sets it up for the Tether phone app:
-#   curl -fsSL https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.sh | sh
+# Gets tether-node for this computer and sets it up for the Inyon phone app:
+#   curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh
 # It downloads the right build into ~/.tether-node/bin, checks it against the release's
 # checksums, starts it in the background at login, and shows a code to scan with the app.
 set -e
-BASE="${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download}"
+BASE="${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download}"
 
 case "$(uname -s)" in
   Linux) os=linux ;;

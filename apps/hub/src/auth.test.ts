@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { clientAddress, closeSockets, holdSocket, issueCookie, revokeSession, tryLogin } from './auth.ts'
+import { clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { setPassword } from './password.ts'
 
 setPassword('correct horse battery')
@@ -46,4 +46,13 @@ test('signing out closes the connections that session already had open, and only
   release()
   closeSockets()
   expect(closed).toEqual(['phone 4401', 'laptop 4401', 'another 4401'])
+})
+
+test('a cookie from before the rename to Inyon still signs you in, and comes back under the new name', () => {
+  const value = issueCookie(false).split(';')[0]!.split('=')[1]!
+  const old = new Request('http://hub/api/session', { headers: { cookie: `tether_session=${value}` } })
+  expect(isAuthed(old)).toBe(true)
+  expect(refreshCookie(old, false)).toStartWith('inyon_session=')
+  // the new one, fresh, isn't sent again
+  expect(refreshCookie(new Request('http://hub/api/session', { headers: { cookie: `inyon_session=${value}` } }), false)).toBeUndefined()
 })

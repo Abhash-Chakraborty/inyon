@@ -8,7 +8,7 @@ test("commands run by tests can't reach the tmux server the tests were started f
   const [tmux, pane, dir] = r.stdout.trim().slice(1, -1).split('][')
   expect(tmux).toBe('')
   expect(pane).toBe('')
-  expect(dir).toContain('tether-test-tmux-')
+  expect(dir).toContain('inyon-test-tmux-')
 })
 
 // Bun keeps a spyOn() mock in place for every test file that runs after it, in whatever order it

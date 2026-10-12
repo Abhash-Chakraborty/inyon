@@ -1,3 +1,5 @@
+// first: from before the rename to Inyon, TETHER_* variables still count (see legacy.ts)
+import { moveOldFolder } from './legacy.ts'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,9 +10,10 @@ import { setHostBackends } from './hosts/host.ts'
 import { processBackend } from './hosts/process-backend.ts'
 import { nodeBackend } from './hosts/node-backend.ts'
 
-// The hub process: records as files under ~/.tether, and this machine as the "local" host.
+// The hub process: records as files under ~/.inyon, and this machine as the "local" host.
 // Imported first by the hub's entry points, before anything reads a record.
-export const DATA_DIR = process.env.TETHER_DATA_DIR || path.join(os.homedir(), '.tether')
+if (!process.env.INYON_DATA_DIR) moveOldFolder(os.homedir())
+export const DATA_DIR = process.env.INYON_DATA_DIR || path.join(os.homedir(), '.inyon')
 export const PORT = Number(process.env.PORT || 4777)
 export const BIND = process.env.BIND || '127.0.0.1'
 /**

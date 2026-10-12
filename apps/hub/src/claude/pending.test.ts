@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { reconcile, type PendingMessage } from '../../../web/src/lib/pending.ts'
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 
 const at = Date.parse('2026-10-10T12:00:00Z')
 const pending = (text: string, id = 'a'): PendingMessage => ({ id, text, status: 'failed', at })

@@ -2,7 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Channel } from '@tether/link'
+import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Channel } from '@inyon/link'
 
 // the real CLI in a throwaway home, reached the way a phone on the same network would
 const home = mkdtempSync(path.join(os.tmpdir(), 'tether-node-test-'))
@@ -19,7 +19,7 @@ async function pairingLink() {
   const p = cli('pair')
   const out = await new Response(p.stdout).text()
   await p.exited
-  const link = out.match(/tether:\/\/pair\?\S+/)?.[0]
+  const link = out.match(/inyon:\/\/pair\?\S+/)?.[0]
   if (!link) throw new Error(`no pairing link in:\n${out}`)
   return parsePairLink(link)!
 }

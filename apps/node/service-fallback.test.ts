@@ -8,7 +8,7 @@ import { installService, proc, uninstallService } from './service.ts'
 // here. Every spawn, the crontab and the process table are fakes, and home is a throwaway folder.
 afterAll(() => mock.restore())
 
-const LINK = [process.execPath, '/opt/tether/tether-node.ts', 'link']
+const LINK = [process.execPath, '/opt/inyon/tether-node.ts', 'link']
 let home: string
 let crontab: string
 let processes: Map<number, string[]>

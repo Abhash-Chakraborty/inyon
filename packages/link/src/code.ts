@@ -53,7 +53,10 @@ export function parseShortCode(text: string): ShortCode | undefined {
   return { id, code: m[3]! + m[4]! }
 }
 
-/** The throwaway key an ID stands for; anyone holding the ID can work it out. */
+/**
+ * The throwaway key an ID stands for; anyone holding the ID can work it out. The salt is a wire id
+ * from before the rename to Inyon: a new one would derive other identities.
+ */
 export const shortIdIdentity = (id: string) => identityFromSeed(sha256(new TextEncoder().encode(`tether-pair-id:v1:${id}`)))
 
 /** Machine side: tells the relays which machine this ID stands for, and where it is. */

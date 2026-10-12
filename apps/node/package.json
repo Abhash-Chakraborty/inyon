@@ -1,5 +1,5 @@
 {
-  "name": "@tether/node",
+  "name": "@inyon/node",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,7 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@tether/link": "workspace:*",
+    "@inyon/link": "workspace:*",
     "uqr": "^0.1.3"
   }
 }

@@ -58,7 +58,7 @@ export const useHubBuild = () => useSyncExternalStore(subscribe, () => hub)
 /** For tests: forget what the hub said. */
 export const forgetHub = () => void (hub = undefined)
 
-const SEEN = 'tether.reload-seen'
+const SEEN = 'inyon.reload-seen'
 const key = (b: Build) => `${b.version}+${b.commit ?? ''}`
 
 /** Whether to offer a reload: the hub runs other code, and this build wasn't offered before. */

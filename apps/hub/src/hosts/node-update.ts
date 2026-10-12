@@ -1,4 +1,4 @@
-import { newerRelease, RELEASES_API, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@tether/protocol'
+import { newerRelease, RELEASES_API, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@inyon/protocol'
 import type { Host } from './host.ts'
 import { nodeLinks } from './node-link.ts'
 
@@ -71,7 +71,7 @@ export class NodeUpdates {
   private listeners = new Set<() => void>()
   /** the hub's script for a machine (platform and arch as tether-node reports them), checksum filled in */
   private script?: (platform: string, arch: string) => Promise<string>
-  /** the newest tether-node on tether-releases, for phone-paired laptops */
+  /** the newest tether-node on inyon-releases, for phone-paired laptops */
   latestRelease?: string
 
   constructor(private o = { pollMs: 3000, timeoutMs: 15 * 60_000, keepMs: 60_000, failedMs: 30 * 60_000 }) {}

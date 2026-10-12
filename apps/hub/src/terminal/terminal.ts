@@ -9,9 +9,9 @@ import { openMirror } from './mirror.ts'
  * the program in the pane.
  */
 const VIEW_KEYS = [
-  `bind-key -T tether-view WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'`,
-  `bind-key -T tether-view MouseDown1Pane 'select-pane -t = ; send-keys -M'`,
-  `bind-key -T tether-view MouseDrag1Pane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'`,
+  `bind-key -T inyon-view WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'`,
+  `bind-key -T inyon-view MouseDown1Pane 'select-pane -t = ; send-keys -M'`,
+  `bind-key -T inyon-view MouseDrag1Pane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'`,
 ].map((c) => `tmux ${c}`).join('; ')
 
 /**
@@ -39,11 +39,11 @@ export function openTerminal(
   const view = `${VIEW_PREFIX}${Math.random().toString(36).slice(2, 8)}`
   const v = shq(view)
   const cmd = [
-    `${VIEW_KEYS}; exec tmux -u new-session -s ${v} -n tether-tmp`,
+    `${VIEW_KEYS}; exec tmux -u new-session -s ${v} -n inyon-tmp`,
     `\\; link-window -s ${shq(found.window.id)} -t ${shq(`${view}:`)}`,
-    `\\; kill-window -t ${shq(`${view}:tether-tmp`)}`,
+    `\\; kill-window -t ${shq(`${view}:inyon-tmp`)}`,
     `\\; set-option -t ${v} status off`,
-    `\\; set-option -t ${v} key-table tether-view`,
+    `\\; set-option -t ${v} key-table inyon-view`,
     `\\; set-option -t ${v} destroy-unattached on`,
     `\\; select-pane -t ${shq(paneId)}`,
   ].join(' ')

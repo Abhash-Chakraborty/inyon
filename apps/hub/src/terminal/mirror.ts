@@ -94,7 +94,7 @@ export function inputCommand(pane: string, x: Input): { cmd: string; input?: str
   if ('keys' in x) return { cmd: `${t} ${x.keys.map(shq).join(' ')}` }
   if ('text' in x) return { cmd: `${t} -l -- ${shq(x.text)}` }
   if ('hex' in x) return { cmd: `${t} -H ${x.hex.join(' ')}` }
-  return { cmd: pasteCommand(`tether-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: x.paste.replace(/\r\n?/g, '\n') }
+  return { cmd: pasteCommand(`inyon-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: x.paste.replace(/\r\n?/g, '\n') }
 }
 
 export interface Screen {

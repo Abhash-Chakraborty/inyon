@@ -3,7 +3,7 @@ import { bareTitle, nameTaken, pendingName, sessionName, setSessionName } from '
 
 test("a rename waits for the agent, then the agent's own title is the name everywhere", () => {
   setSessionName('h', 's1', 'Abhash Website', 'Portfolio setup', 'claude')
-  // until Claude has it, Tether shows the new name
+  // until Claude has it, Inyon shows the new name
   expect(sessionName('h', 's1', 'claude')).toBe('Abhash Website')
   expect(pendingName('h', 's1')?.name).toBe('Abhash Website')
   // Claude took it: its title shows from here on, so a rename from the phone or the keyboard wins too
@@ -22,7 +22,7 @@ test('the automatic name puts back the title the agent made up, then forgets it'
   expect(sessionName('h', 's2', 'codex')).toBeUndefined()
 })
 
-test('agents without a title of their own keep the name in Tether', () => {
+test('agents without a title of their own keep the name in Inyon', () => {
   setSessionName('h', 's3', 'Notes', undefined, 'gemini')
   expect(sessionName('h', 's3', 'gemini')).toBe('Notes')
   expect(pendingName('h', 's3')).toBeUndefined()

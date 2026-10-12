@@ -2,14 +2,14 @@ import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { generateKeyPair, parsePairLink } from '@tether/link'
-import type { HostConfig } from '@tether/protocol'
+import { generateKeyPair, parsePairLink } from '@inyon/link'
+import type { HostConfig } from '@inyon/protocol'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { nodeLinks } from '../hosts/node-link.ts'
 import { linkConnector } from './link.ts'
 
 // the phone's connector against the real tether-node, in a throwaway home on a LAN address
-const home = mkdtempSync(path.join(os.tmpdir(), 'tether-phone-link-'))
+const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-phone-link-'))
 const port = 4890 + Math.floor(Math.random() * 100)
 const env = { ...process.env, HOME: home, USERPROFILE: home }
 const NODE = path.resolve(import.meta.dir, '../../../node/tether-node.ts')
@@ -28,7 +28,7 @@ const until = async (ok: () => boolean | Promise<boolean>, ms = 10_000) => {
 test('pairs from the code, runs commands, and reconnects after the laptop restarts', async () => {
   await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))
   const p = cli('pair')
-  const info = parsePairLink((await new Response(p.stdout).text()).match(/tether:\/\/pair\?\S+/)![0])!
+  const info = parsePairLink((await new Response(p.stdout).text()).match(/inyon:\/\/pair\?\S+/)![0])!
   const phone = generateKeyPair()
   const saved: string[][] = []
   const links = linkConnector(async () => phone, 'Test phone', (_id, urls) => saved.push(urls))

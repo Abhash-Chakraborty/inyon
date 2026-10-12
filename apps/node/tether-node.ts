@@ -1,18 +1,18 @@
 #!/usr/bin/env bun
 /**
- * tether-node: lets Tether reach this machine without opening any ports.
+ * tether-node: lets Inyon reach this machine without opening any ports.
  *
  *   tether-node                        set up: install the link as a background service, show a code
  *   tether-node pair                   show a code to pair the phone app with this machine
  *   tether-node link [options]         run the phone link (pair starts it too):
  *       --lan / --no-lan               also answer on this machine's LAN addresses
  *       --tunnel / --no-tunnel         open a free Cloudflare tunnel so any network works (on)
- *       --relay <url>                  keep a connection to a Tether relay (repeatable)
+ *       --relay <url>                  keep a connection to an Inyon relay (repeatable)
  *       --port <n>                     local port (4780)
  *   tether-node phones                 list paired phones
  *   tether-node forget <name|key>      unpair a phone
  *   tether-node update                 get the newest version and restart the background service
- *   tether-node <hub-url>              connect to a Tether hub instead (from its "Add a machine"), with
+ *   tether-node <hub-url>              connect to an Inyon hub instead (from its "Add a machine"), with
  *                                      the token in TETHER_TOKEN (`<hub-url> <token>` works too)
  *
  * The phone link is end-to-end encrypted; tunnels and relays only carry ciphertext. For a hub,
@@ -22,7 +22,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
-import { formatShortId, pairLink, publishShortCode } from '@tether/link'
+import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { detachUpdate, ensureShell, forgetUpdateTask, installService, missingMux, restartService, self, uninstallService } from './service.ts'
@@ -105,7 +105,7 @@ function hubMode(hubArg?: string, tokenArg?: string) {
     ws.onclose = (e) => {
       ops.close()
       if (e.code === 4001) {
-        console.log('This machine was removed from Tether. Exiting.')
+        console.log('This machine was removed from Inyon. Exiting.')
         process.exit(0)
       }
       if (e.code === 4003) {
@@ -183,7 +183,7 @@ async function pair(args: string[]) {
   const link = pairLink({ id: identity().id, secret, name: os.hostname(), ...where })
   // the typed-in code needs the relays to know this ID; without them there's still the QR code
   const typed = await Promise.race([publishShortCode(short, { machine: identity().id, name: os.hostname(), ...where }).then(() => true, () => false), new Promise<false>((r) => setTimeout(r, 8000, false).unref())])
-  console.log(`\nScan this with the Tether app (Add a computer → Scan the code), within 10 minutes:\n`)
+  console.log(`\nScan this with the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
   console.log(renderUnicodeCompact(link, { border: 2 }))
   if (typed) console.log(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
   console.log(`\nOr paste this link into the app:\n${link}\n`)
@@ -197,7 +197,7 @@ async function pair(args: string[]) {
  * background, check for tmux, and show the pairing code.
  */
 async function setup() {
-  console.log(`tether-node ${VERSION}: setting up this ${process.platform === 'darwin' ? 'Mac' : 'machine'} for the Tether app\n`)
+  console.log(`tether-node ${VERSION}: setting up this ${process.platform === 'darwin' ? 'Mac' : 'machine'} for the Inyon app\n`)
   const mux = missingMux()
   // an older version still running (get.sh or get.ps1 run again to update): start this one instead
   const stale = running() && staleLink(currentState(), VERSION)
@@ -222,7 +222,7 @@ async function setup() {
 /** A window opened by double-clicking closes as soon as the program ends: keep it until Enter. */
 async function pause() {
   if (!WIN || !process.stdin.isTTY || process.env.TETHER_NO_PAUSE) return
-  console.log('\nPress Enter to close this window. Tether keeps running in the background.')
+  console.log('\nPress Enter to close this window. Inyon keeps running in the background.')
   for await (const _ of console) break
 }
 
@@ -250,13 +250,13 @@ const USAGE = `tether-node ${VERSION}
   tether-node link [options]        run the phone link (pair starts it too)
       --lan / --no-lan              also answer on this machine's LAN addresses
       --tunnel / --no-tunnel        open a free Cloudflare tunnel so any network works (on)
-      --relay <url> / --no-relay    keep a connection to a Tether relay (repeatable)
+      --relay <url> / --no-relay    keep a connection to an Inyon relay (repeatable)
       --port <n>                    local port (4780)
   tether-node install / uninstall   start or stop running in the background (at login)
   tether-node phones                list paired phones
   tether-node forget <name|key>     unpair a phone
   tether-node update                get the newest version and restart the background service
-  tether-node <hub-url>             connect to a Tether hub instead, with the token in TETHER_TOKEN`
+  tether-node <hub-url>             connect to an Inyon hub instead, with the token in TETHER_TOKEN`
 
 /**
  * Gets the newest version and restarts the service with it. With --background (how the app asks

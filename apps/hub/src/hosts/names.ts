@@ -1,7 +1,7 @@
 import { kv } from '../platform/store.ts'
 
 /**
- * Names you gave agent sessions in Tether, keyed by machine and conversation id, so a name
+ * Names you gave agent sessions in Inyon, keyed by machine and conversation id, so a name
  * follows the conversation through resumes and pane changes. `was` keeps the agent's own title
  * from before the first rename, since renaming also renames the conversation inside the agent.
  *
@@ -26,7 +26,7 @@ export function sessionName(host: string, session?: string, kind?: string) {
   return !ownsTitle(kind) || e.pending ? e.name : undefined
 }
 
-/** The agent's own title from before Tether renamed it, if Tether did. */
+/** The agent's own title from before Inyon renamed it, if Inyon did. */
 export function originalTitle(host: string, session: string) {
   return names.get(k(host, session))?.was
 }

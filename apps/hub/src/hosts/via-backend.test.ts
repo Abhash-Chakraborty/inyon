@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { viaCommand } from './via-backend.ts'
 
-const dir = mkdtempSync(join(tmpdir(), 'tether-via-'))
+const dir = mkdtempSync(join(tmpdir(), 'inyon-via-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 // an ssh that records how it was called and runs the remote command the way a login shell would
@@ -22,7 +22,7 @@ test('a command reaches the server through the computer exactly as written', () 
     const argv = a.trim().split('\n')
     // no prompts, one shared connection under the computer's home, and the alias left to its config
     expect(argv).toContain('BatchMode=yes')
-    expect(argv).toContain(`ControlPath=${dir}/.cache/tether-ssh/%C`)
+    expect(argv).toContain(`ControlPath=${dir}/.cache/inyon-ssh/%C`)
     expect(argv.slice(argv.indexOf('-p'), argv.indexOf('-p') + 2)).toEqual(['-p', '2222'])
     expect(argv.slice(argv.indexOf('--') + 1, argv.indexOf('--') + 2)).toEqual(['work-db'])
   })

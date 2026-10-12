@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
-import { VERSION } from '@tether/protocol'
+import { VERSION } from '@inyon/protocol'
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
@@ -13,7 +13,7 @@ import { unixPairCommand } from './pair-command.ts'
  * What a machine downloads to become a tether-node: the script (one file, Windows prelude inlined)
  * for Unix machines with Bun, or for Windows a compiled .exe (Bun included, no console window) plus
  * busybox-w32, the small sh that runs the hub's commands there. Built and fetched on first use,
- * then cached under ~/.tether/node-dist.
+ * then cached under ~/.inyon/node-dist.
  */
 export const NODE_DIR = path.resolve(import.meta.dir, '../../../node')
 const OUT = path.join(DATA_DIR, 'node-dist')

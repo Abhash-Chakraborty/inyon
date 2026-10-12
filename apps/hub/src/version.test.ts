@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { VERSION } from '@tether/protocol'
+import { VERSION } from '@inyon/protocol'
 
 const root = new URL('../../../', import.meta.url)
 

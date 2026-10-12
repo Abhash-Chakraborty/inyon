@@ -1,6 +1,6 @@
 # Security
 
-Tether gives whoever signs in to the hub a shell on every connected machine, as the user the
+Inyon gives whoever signs in to the hub a shell on every connected machine, as the user the
 agents run as. Treat the hub like an SSH jump host.
 
 ## How it is meant to be deployed
@@ -12,7 +12,7 @@ agents run as. Treat the hub like an SSH jump host.
   stores only a scrypt hash. Sign-in attempts are rate limited per address and in total. Sessions
   are signed, HttpOnly cookies, and the API only accepts changes from the hub's own origin.
 - **Only its own names.** The hub doesn't answer browsers that reach it under a public domain it
-  wasn't told about (`TETHER_ALLOWED_HOSTS`), so a web page can't point its own domain at your
+  wasn't told about (`INYON_ALLOWED_HOSTS`), so a web page can't point its own domain at your
   hub (DNS rebinding) and use it from your browser.
 - **Laptops connect out, not in.** Machines paired with `tether-node` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
@@ -52,27 +52,27 @@ A paired phone gets a shell on the laptop as the user running `tether-node`, the
 - **Keys on the laptop** live in `~/.tether-node/` (`identity.json`, `phones.json`), readable only
   by you. The phone derives its link key from its own ed25519 key in the Android Keystore.
 
-## What Tether changes on a machine
+## What Inyon changes on a machine
 
-Only if you turn on the Claude integration: it writes `~/.tether/hook.sh` and
-`~/.tether/statusline.sh`, registers them in `~/.claude/settings.json` (backed up first), and
-keeps your original status line in `~/.tether/statusline.orig`. Turning it off restores both.
-If Antigravity CLI is installed, it does the same for agy: `~/.tether/agy-statusline.sh` goes into
+Only if you turn on the Claude integration: it writes `~/.inyon/hook.sh` and
+`~/.inyon/statusline.sh`, registers them in `~/.claude/settings.json` (backed up first), and
+keeps your original status line in `~/.inyon/statusline.orig`. Turning it off restores both.
+If Antigravity CLI is installed, it does the same for agy: `~/.inyon/agy-statusline.sh` goes into
 `~/.gemini/antigravity-cli/settings.json` (backed up first), your own agy status line is kept in
-`~/.tether/agy-statusline.orig`, and turning the integration off restores it.
-If the integration disappears from `settings.json` (say, a sync script replaced the file), Tether
+`~/.inyon/agy-statusline.orig`, and turning the integration off restores it.
+If the integration disappears from `settings.json` (say, a sync script replaced the file), Inyon
 puts it back, at most once every ten minutes. Turning the integration off stops that.
 A session that was already running when its settings were replaced keeps ignoring
-`settings.json`, so Tether also adds its status line to that project's
+`settings.json`, so Inyon also adds its status line to that project's
 `.claude/settings.local.json`. It does this only when the project has no status line of its own,
-and it adds the file to `.git/info/exclude` so git never sees it. Tether keeps a list of these
-files in `~/.tether/project-statuslines` and removes the line from each one when you turn the
+and it adds the file to `.git/info/exclude` so git never sees it. Inyon keeps a list of these
+files in `~/.inyon/project-statuslines` and removes the line from each one when you turn the
 integration off.
-Uploads go to `~/.tether/uploads` and are deleted after a retention period you choose.
-The hook log holds your prompts, so `~/.tether` and what the scripts write there are readable only
+Uploads go to `~/.inyon/uploads` and are deleted after a retention period you choose.
+The hook log holds your prompts, so `~/.inyon` and what the scripts write there are readable only
 by you.
 
-## What Tether reads
+## What Inyon reads
 
 For Claude plan limits, the hub runs a short script on the machine that reads Claude Code's
 access token from `~/.claude/.credentials.json` (or the macOS Keychain) and asks

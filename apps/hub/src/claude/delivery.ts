@@ -1,4 +1,4 @@
-import type { ChatItem, ScreenState, SendState } from '@tether/protocol'
+import type { ChatItem, ScreenState, SendState } from '@inyon/protocol'
 
 const squash = (text: string) => text.replace(/\s+/g, '')
 const collapse = (text: string) => text.replace(/\s+/g, ' ').trim()

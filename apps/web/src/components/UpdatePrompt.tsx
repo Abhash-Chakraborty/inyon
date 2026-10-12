@@ -4,7 +4,7 @@ import { markReloadSeen, reloadDue, useHubBuild, watchHub, type Build } from '..
 import { Button } from './ui/primitives.tsx'
 
 /**
- * "Tether was updated": the hub runs newer code than this page. Offered once per hub build, and
+ * "Inyon was updated": the hub runs newer code than this page. Offered once per hub build, and
  * it stays out of the way: nothing is blocked, and closing it is the end of it.
  */
 export function UpdatePrompt() {
@@ -22,7 +22,7 @@ export function UpdatePrompt() {
       <div role="status" className="animate-toast-in pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-[14px] border border-line bg-elev py-2.5 pr-2.5 pl-3.5 shadow-float">
         <RotateCw className="size-4 shrink-0 text-fg-3" />
         <div className="min-w-0 flex-1">
-          <p className="text-[13.5px] font-medium">Tether was updated</p>
+          <p className="text-[13.5px] font-medium">Inyon was updated</p>
           <p className="text-[12.5px] text-fg-3">Reload to get the new version.</p>
         </div>
         <Button size="sm" variant="primary" onClick={() => location.reload()}>

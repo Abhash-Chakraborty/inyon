@@ -1,14 +1,14 @@
 {
-  "name": "tether",
+  "name": "inyon",
   "private": true,
   "version": "0.6.5",
   "description": "Drive Claude Code, Codex, Gemini CLI and OpenCode in tmux on all your machines from your phone or browser.",
   "packageManager": "pnpm@12.4.2",
   "scripts": {
-    "dev:hub": "pnpm --filter @tether/hub dev",
-    "dev:web": "pnpm --filter @tether/web dev",
-    "build": "pnpm --filter @tether/web build",
-    "start": "pnpm --filter @tether/hub start",
+    "dev:hub": "pnpm --filter @inyon/hub dev",
+    "dev:web": "pnpm --filter @inyon/web dev",
+    "build": "pnpm --filter @inyon/web build",
+    "start": "pnpm --filter @inyon/hub start",
     "hub:update": "bun apps/hub/src/cli/update.ts",
     "typecheck": "pnpm -r typecheck"
   },

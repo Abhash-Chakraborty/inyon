@@ -1,4 +1,4 @@
-// first, so records are read from ~/.tether and machines can be reached
+// first, so records are read from ~/.inyon and machines can be reached
 import { BIND, DATA_DIR, PORT, TLS } from './env.ts'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -10,10 +10,10 @@ import { allowedHosts } from './hostnames.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
-import { VERSION } from '@tether/protocol'
+import { VERSION } from '@inyon/protocol'
 import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
 
-/** The hub: Tether's API and live updates over HTTP and a WebSocket, behind a password. */
+/** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
 /** The hub address that goes into the pairing one-liners (shell and PowerShell). */
@@ -34,7 +34,7 @@ const hubUpdate = hubUpdater({ dataDir: DATA_DIR, commit: HUB_COMMIT })
  * changes state, and the WebSocket, must come from the hub's own origin. Requests without an
  * Origin header don't come from a web page (curl, the node agent) and carry no ambient cookie risk.
  */
-const ALLOWED_ORIGINS = new Set((process.env.TETHER_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
+const ALLOWED_ORIGINS = new Set((process.env.INYON_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean))
 function sameOrigin(req: Request) {
   const origin = req.headers.get('origin')
   if (!origin) return true
@@ -60,11 +60,11 @@ function rightHost(req: Request) {
   if (wrong === undefined) return true
   if (!refusedHosts.has(wrong) && refusedHosts.size < 50) {
     refusedHosts.add(wrong)
-    console.log(`Refused a request for host ${JSON.stringify(wrong.slice(0, 200))}. If that is this hub's address, add it to TETHER_ALLOWED_HOSTS.`)
+    console.log(`Refused a request for host ${JSON.stringify(wrong.slice(0, 200))}. If that is this hub's address, add it to INYON_ALLOWED_HOSTS.`)
   }
   return false
 }
-const WRONG_HOST = "This hub doesn't answer to that address. If it's yours, add it to TETHER_ALLOWED_HOSTS on the hub."
+const WRONG_HOST = "This hub doesn't answer to that address. If it's yours, add it to INYON_ALLOWED_HOSTS on the hub."
 
 /** An API handler behind sign-in and the same-origin check. */
 const api =
@@ -126,9 +126,9 @@ async function serveStatic(pathname: string) {
 const SETUP_CODE_FILE = path.join(DATA_DIR, 'setup-code')
 const exposed = !/^(127\.|::1$|localhost$)/.test(BIND)
 // on a network address, plain http sends the password and session in the clear: only on purpose
-// (say on a VPN address, which encrypts on its own), with TETHER_ALLOW_HTTP=1
-if (exposed && !TLS && !/^(1|true|yes)$/i.test(process.env.TETHER_ALLOW_HTTP ?? '')) {
-  console.error(`Refusing to serve plain http on ${BIND}: set TLS_CERT and TLS_KEY, keep BIND on 127.0.0.1 behind an HTTPS proxy, or set TETHER_ALLOW_HTTP=1 if the network encrypts it already (Tailscale, NetBird, WireGuard).`)
+// (say on a VPN address, which encrypts on its own), with INYON_ALLOW_HTTP=1
+if (exposed && !TLS && !/^(1|true|yes)$/i.test(process.env.INYON_ALLOW_HTTP ?? '')) {
+  console.error(`Refusing to serve plain http on ${BIND}: set TLS_CERT and TLS_KEY, keep BIND on 127.0.0.1 behind an HTTPS proxy, or set INYON_ALLOW_HTTP=1 if the network encrypts it already (Tailscale, NetBird, WireGuard).`)
   process.exit(1)
 }
 const setupCode = !hasPassword() ? crypto.randomBytes(4).toString('hex') : undefined
@@ -169,7 +169,7 @@ const server = Bun.serve<SocketData>({
         if (code.length !== setupCode.length || !crypto.timingSafeEqual(Buffer.from(code), Buffer.from(setupCode))) {
           setupAttempts.n++
           await Bun.sleep(400)
-          throw new HttpError(401, 'That setup code is not right. It is in the hub log, and in ~/.tether/setup-code.')
+          throw new HttpError(401, 'That setup code is not right. It is in the hub log, and in ~/.inyon/setup-code.')
         }
         const password = String(b.password ?? '')
         const problem = passwordProblem(password)
@@ -306,7 +306,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   })
 }
 
-console.log(`Tether hub listening on ${TLS ? 'https' : 'http'}://${server.hostname}:${server.port}`)
+console.log(`Inyon hub listening on ${TLS ? 'https' : 'http'}://${server.hostname}:${server.port}`)
 prebuildNode()
 if (!hasPassword()) {
   const where = `${TLS ? 'https' : 'http'}://${exposed ? server.hostname : 'localhost'}:${server.port}`

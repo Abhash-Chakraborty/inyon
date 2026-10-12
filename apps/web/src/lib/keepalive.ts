@@ -6,12 +6,12 @@ import { toast, useStore } from './store.ts'
  * foreground service) stops the system from freezing the app, so sockets stay open and alerts
  * arrive at once. On unless turned off; a per-device choice, so it lives in this device's storage.
  */
-const KEY = 'tether.keepAlive'
-/** set once Android's "let Tether run in the background?" prompt has been shown, so it's asked only once */
-const ASKED = 'tether.batteryAsked'
-const NOTICE = { title: 'Tether is connected', text: 'Keeping your sessions live so alerts arrive right away' }
+const KEY = 'inyon.keepAlive'
+/** set once Android's "let Inyon run in the background?" prompt has been shown, so it's asked only once */
+const ASKED = 'inyon.batteryAsked'
+const NOTICE = { title: 'Inyon is connected', text: 'Keeping your sessions live so alerts arrive right away' }
 
-const device = () => plugin('TetherDevice')
+const device = () => plugin('InyonDevice')
 export const keepAliveSupported = () => !!device()?.startKeepAlive
 
 export function keepAliveWanted() {
@@ -45,7 +45,7 @@ export function installKeepAlive() {
       .then(() => d.startKeepAlive(NOTICE))
       .catch(() => {})
   }
-  // once there's a machine to stay connected to, ask Android not to put Tether to sleep
+  // once there's a machine to stay connected to, ask Android not to put Inyon to sleep
   const off = useStore.subscribe((s) => {
     if (!s.hosts.length) return
     off()
@@ -55,7 +55,7 @@ export function installKeepAlive() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && keepAliveWanted()) device()?.startKeepAlive(NOTICE).catch(() => {})
   })
-  onNative<{ reason: string }>('TetherDevice', 'keepAliveStopped', (e) => {
+  onNative<{ reason: string }>('InyonDevice', 'keepAliveStopped', (e) => {
     // Stop on its notification: the user turned it off, so it stays off
     if (e.reason === 'stopped') {
       try {
@@ -65,7 +65,7 @@ export function installKeepAlive() {
     }
     toast({
       title: 'Background connection paused',
-      body: e.reason === 'timeout' ? 'Android limits how long it can run each day. It starts again when you open Tether.' : 'Android stopped it. It starts again when you open Tether.',
+      body: e.reason === 'timeout' ? 'Android limits how long it can run each day. It starts again when you open Inyon.' : 'Android stopped it. It starts again when you open Inyon.',
       tone: 'info',
     })
   })
@@ -78,9 +78,9 @@ export async function batteryUnrestricted(): Promise<boolean | undefined> {
 export const openBatterySettings = () => device()?.openBatterySettings?.().catch(() => {})
 
 /**
- * Android's one-tap prompt to stop restricting Tether in the background (without it the screen
+ * Android's one-tap prompt to stop restricting Inyon in the background (without it the screen
  * going off cuts the connection after a while), or its settings list on an older app. True once
- * Tether is unrestricted.
+ * Inyon is unrestricted.
  */
 export async function allowBackground(): Promise<boolean | undefined> {
   const d = device()
@@ -93,7 +93,7 @@ export async function allowBackground(): Promise<boolean | undefined> {
 
 let asking = false
 
-/** The prompt, asked once ever while Stay connected is on, and only while Tether is restricted. */
+/** The prompt, asked once ever while Stay connected is on, and only while Inyon is restricted. */
 export async function askBatteryOnce() {
   if (asking || !keepAliveWanted() || typeof device()?.requestBatteryExemption !== 'function') return
   try {

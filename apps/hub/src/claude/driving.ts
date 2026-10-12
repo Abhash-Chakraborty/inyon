@@ -1,5 +1,5 @@
 /**
- * Panes whose agent menu Tether itself is working through (a model or mode change goes through
+ * Panes whose agent menu Inyon itself is working through (a model or mode change goes through
  * the agent's own picker). Those menus aren't questions for you: they're kept off the app and
  * out of "needs your input" notifications while it lasts.
  */

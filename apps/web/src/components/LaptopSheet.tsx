@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ChevronRight, ClipboardPaste, Copy, ScanLine, SquareTerminal } from 'lucide-react'
-import { RELEASES_DOWNLOAD, type HostConfig } from '@tether/protocol'
+import { RELEASES_DOWNLOAD, type HostConfig } from '@inyon/protocol'
 import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
@@ -17,7 +17,8 @@ export const SETUP_COMMANDS = {
   unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${DOWNLOADS}/get.sh | sh` },
   windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${DOWNLOADS}/get.ps1 | iex` },
 } as const
-const looksLikeLink = (s: string) => /^(tether:\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
+// tether:// is how a laptop from before the rename to Inyon prints its code
+const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
 /** tether-node prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
 const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
 const cleanId = (s: string) => s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(ID_CHARS, '').slice(0, 8)
@@ -57,7 +58,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     setShortId('')
     setCode('')
   })
-  const scanner = plugin('TetherDevice')?.scanQr
+  const scanner = plugin('InyonDevice')?.scanQr
 
   const pair = async (text: string) => {
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
@@ -67,7 +68,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       toast({ title: 'Paired', body: 'It stays paired until you remove it here or run tether-node forget there.', tone: 'success' })
       // alerts only arrive while the app runs; the first pairing is the moment to say so
       if (keepAliveSupported() && !keepAliveWanted()) {
-        setTimeout(() => toast({ title: 'Want alerts while Tether is closed?', body: 'Turn on Stay connected in Settings. Tap to open it.', tone: 'info', href: '/settings#background' }), 1200)
+        setTimeout(() => toast({ title: 'Want alerts while Inyon is closed?', body: 'Turn on Stay connected in Settings. Tap to open it.', tone: 'info', href: '/settings#background' }), 1200)
       }
       onClose()
     } catch (err) {
@@ -199,7 +200,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             </Button>
           </div>
           <p className="mt-1.5 text-[12px] leading-relaxed text-fg-3">
-            It installs Tether's small helper for your user (no admin rights), keeps it running and shows a code. Already set up? Run <code className="font-mono">{PAIR_COMMAND}</code>.
+            It installs Inyon's small helper for your user (no admin rights), keeps it running and shows a code. Already set up? Run <code className="font-mono">{PAIR_COMMAND}</code>.
           </p>
         </div>
         {scanner && (
@@ -254,7 +255,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
                 className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
-                placeholder="tether://pair?m=…"
+                placeholder="inyon://pair?m=…"
                 aria-label="Pairing link"
                 autoCapitalize="none"
                 autoCorrect="off"
@@ -277,7 +278,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-[13.5px] font-medium text-fg">Connect over SSH</span>
-              <span className="block text-[12px] leading-snug text-fg-3">Advanced. For servers you can't install Tether on: a key, a password, or none.</span>
+              <span className="block text-[12px] leading-snug text-fg-3">Advanced. For servers you can't install Inyon on: a key, a password, or none.</span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
           </button>

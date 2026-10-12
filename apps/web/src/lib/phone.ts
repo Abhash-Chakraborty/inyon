@@ -1,9 +1,9 @@
-import type { PhoneRuntime, PhoneStore, SshPlugin } from '@tether/phone'
+import type { PhoneRuntime, PhoneStore, SshPlugin } from '@inyon/phone'
 import { isNative, plugin } from './native.ts'
 
 /**
- * The phone app has no hub: it runs Tether's core here, in the app, and SSHes into your servers
- * through the native TetherSsh plugin. The core is only loaded inside the app (it's a separate
+ * The phone app has no hub: it runs Inyon's core here, in the app, and SSHes into your servers
+ * through the native InyonSsh plugin. The core is only loaded inside the app (it's a separate
  * chunk a browser never fetches), and `api.ts` and `socket.ts` call it instead of the network.
  */
 export const isPhone = isNative
@@ -16,9 +16,9 @@ let runtime: Promise<PhoneRuntime> | undefined
 
 export function phone(): Promise<PhoneRuntime> {
   return (runtime ??= (async () => {
-    const ssh = plugin('TetherSsh') as unknown as SshPlugin | undefined
+    const ssh = plugin('InyonSsh') as unknown as SshPlugin | undefined
     if (!ssh) throw new Error('This build of the app is missing its SSH support')
-    const [store, { startPhone }] = await Promise.all([idbStore(), import('@tether/phone')])
+    const [store, { startPhone }] = await Promise.all([idbStore(), import('@inyon/phone')])
     const rt = await startPhone({ store, ssh })
     // a new network (Wi-Fi to mobile data, a VPN switching) breaks the links: reconnect right away
     let soon: ReturnType<typeof setTimeout> | undefined
@@ -37,7 +37,7 @@ export function phone(): Promise<PhoneRuntime> {
  */
 async function idbStore(): Promise<PhoneStore> {
   const db = await new Promise<IDBDatabase>((resolve, reject) => {
-    const req = indexedDB.open('tether', 1)
+    const req = indexedDB.open('inyon', 1)
     req.onupgradeneeded = () => req.result.createObjectStore('kv')
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentModel } from '@tether/protocol'
+import type { AgentCatalog, AgentModel } from '@inyon/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import { parseEndpoint } from './opencode.ts'
 

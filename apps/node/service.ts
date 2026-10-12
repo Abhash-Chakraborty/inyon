@@ -76,7 +76,7 @@ export function installService(restart = false): Installed {
     if (!run(['systemctl', '--user', 'show-environment']).ok) return background(args)
     mkdirSync(path.dirname(unit()), { recursive: true })
     writeFileSync(unit(), `[Unit]
-Description=Tether phone link
+Description=Inyon phone link
 After=network-online.target
 
 [Service]
@@ -233,7 +233,7 @@ export function uninstallService(): Installed {
   return { ok: false, how: 'nothing to remove' }
 }
 
-/** busybox-w32, the small sh Windows runs Tether's commands with (pinned, as the hub's installer). */
+/** busybox-w32, the small sh Windows runs Inyon's commands with (pinned, as the hub's installer). */
 const BUSYBOX: Record<string, { file: string; sha256: string }> = {
   x64: { file: 'busybox-w64u-FRP-6075-g169694ebd.exe', sha256: '6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c' },
   arm64: { file: 'busybox-w64a-FRP-6075-g169694ebd.exe', sha256: 'e67f873d19d58c535cc9f0c4965ffd622e19b7bab87e3da89cb2185fb54464d7' },
@@ -246,7 +246,7 @@ export async function ensureShell() {
   const found = Bun.which('busybox') ?? (existsSync(local) ? local : undefined)
   if (found) return void (process.env.TETHER_SH = found)
   const pick = BUSYBOX[os.arch() === 'arm64' ? 'arm64' : 'x64']!
-  console.log('downloading busybox-w32 (the shell Tether runs commands with)…')
+  console.log('downloading busybox-w32 (the shell Inyon runs commands with)…')
   const res = await fetch(`https://frippery.org/files/busybox/${pick.file}`)
   if (!res.ok) throw new Error(`couldn't download busybox-w32: ${res.status}`)
   const data = new Uint8Array(await res.arrayBuffer())

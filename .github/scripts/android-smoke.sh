@@ -25,28 +25,28 @@ if ! result=$(adb install -r "$apk" 2>&1); then
 fi
 
 adb logcat -c
-adb shell am start -W -n dev.tether.app/.MainActivity || exit 1
+adb shell am start -W -n tech.abhashchakraborty.inyon/.MainActivity || exit 1
 sleep 25
-pid=$(adb shell pidof dev.tether.app | tr -d '\r')
+pid=$(adb shell pidof tech.abhashchakraborty.inyon | tr -d '\r')
 adb logcat -d -v threadtime > "$log"
 adb exec-out screencap -p > "$out/screen.png" || true
 
 # threadtime lines: date time pid tid level tag: message
 mine=$(awk -v p="${pid:-none}" '$3 == p' "$log")
 problems=()
-if grep -qE 'FATAL EXCEPTION|ANR in dev\.tether\.app' "$log" && grep -qE 'Process: dev\.tether\.app|ANR in dev\.tether\.app' "$log"; then
+if grep -qE 'FATAL EXCEPTION|ANR in tech\.abhashchakraborty\.inyon' "$log" && grep -qE 'Process: tech\.abhashchakraborty\.inyon|ANR in tech\.abhashchakraborty\.inyon' "$log"; then
   problems+=("the app crashed")
 fi
 [ -n "$pid" ] || problems+=("the app is not running")
 if grep -qE 'ClassNotFoundException|NoClassDefFoundError|NoSuchMethodError|NoSuchMethodException|NoSuchFieldError|AbstractMethodError' <<< "$mine"; then
   problems+=("missing classes or methods (R8)")
 fi
-grep -qE 'TetherDevice *: ready' <<< "$mine" || problems+=("TetherDevice did not load")
-grep -qE 'TetherSsh *: ready' <<< "$mine" || problems+=("TetherSsh did not load")
-grep -qE 'TetherDevice *: web app started' <<< "$mine" || problems+=("the web app did not start")
+grep -qE 'InyonDevice *: ready' <<< "$mine" || problems+=("InyonDevice did not load")
+grep -qE 'InyonSsh *: ready' <<< "$mine" || problems+=("InyonSsh did not load")
+grep -qE 'InyonDevice *: web app started' <<< "$mine" || problems+=("the web app did not start")
 
 echo "---- app log (pid ${pid:-none}) ----"
-grep -E 'AndroidRuntime|Tether|Capacitor|chromium|System.err|Exception|Error' <<< "$mine" | tail -80 || true
+grep -E 'AndroidRuntime|Inyon|Capacitor|chromium|System.err|Exception|Error' <<< "$mine" | tail -80 || true
 grep -A30 'FATAL EXCEPTION' "$log" | head -60 || true
 
 if [ ${#problems[@]} -eq 0 ]; then

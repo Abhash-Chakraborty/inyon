@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, ArrowRight, ArrowUp, Check, Copy, CornerDownLeft, ExternalLink, Send } from 'lucide-react'
-import { promptKey, type ScreenPrompt } from '@tether/protocol'
+import { promptKey, type ScreenPrompt } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'

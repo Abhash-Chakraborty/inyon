@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus } from '@tether/protocol'
+import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus } from '@inyon/protocol'
 
 /**
  * The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). The frames sit in a

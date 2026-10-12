@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <application
-        android:name=".device.TetherApplication"
+        android:name=".device.InyonApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
@@ -24,11 +24,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- a laptop's pairing code (tether://pair?...) scanned with the camera opens the app -->
+            <!-- a laptop's pairing code (inyon://pair?...) scanned with the camera opens the app -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="inyon" android:host="pair" />
+                <!-- the scheme a laptop from before the rename to Inyon prints -->
                 <data android:scheme="tether" android:host="pair" />
             </intent-filter>
 
@@ -57,9 +59,9 @@
                 android:value="Keeps SSH connections to the user's own computers open so agent alerts arrive while the app is in the background" />
         </service>
 
-        <!-- push: Firebase is initialised by hand only when the build has TETHER_FCM_* values -->
+        <!-- push: Firebase is initialised by hand only when the build has INYON_FCM_* values -->
         <service
-            android:name=".device.TetherMessagingService"
+            android:name=".device.InyonMessagingService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
@@ -73,10 +75,10 @@
             android:value="agents" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
-            android:resource="@drawable/ic_stat_tether" />
+            android:resource="@drawable/ic_stat_inyon" />
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_color"
-            android:resource="@color/tether_accent" />
+            android:resource="@color/inyon_accent" />
 
         <!-- asks Play services to fetch the QR decoder when the app is installed -->
         <meta-data
@@ -103,7 +105,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- a few seconds awake when a machine sends something, so the alert is posted before the phone sleeps -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <!-- the one-tap "don't restrict Tether" prompt; without it, Doze cuts the connection when the screen is off -->
+    <!-- the one-tap "don't restrict Inyon" prompt; without it, Doze cuts the connection when the screen is off -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- asked for only when the QR scanner or a photo input opens -->

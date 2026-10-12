@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import { Copy, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
-import type { BackgroundTask, ChatItem, SubagentInfo } from '@tether/protocol'
+import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'

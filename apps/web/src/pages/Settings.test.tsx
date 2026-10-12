@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import { VERSION } from '@tether/protocol'
+import { VERSION } from '@inyon/protocol'
 import { Settings } from './Settings.tsx'
 import { useStore } from '../lib/store.ts'
 import { api, emit, setSocketUp } from '../test/fakes.ts'
@@ -21,7 +21,7 @@ const page = () => (
 
 beforeEach(() => {
   api.settings.mockResolvedValue({ uploads: { retentionDays: 7, maxMB: 100, longPasteLines: 40 }, autoResume: false })
-  api.uploadUsage.mockResolvedValue({ bytes: 2048, files: 1, expired: 0, dir: '/home/me/.tether/uploads' })
+  api.uploadUsage.mockResolvedValue({ bytes: 2048, files: 1, expired: 0, dir: '/home/me/.inyon/uploads' })
   useStore.setState({ hosts })
 })
 
@@ -86,7 +86,7 @@ describe('About', () => {
     expect(screen.getByText(VERSION)).toBeTruthy()
     await user.click(screen.getByText('Copy version details'))
     await flush()
-    expect(copied[0]).toStartWith(`Tether ${VERSION}`)
+    expect(copied[0]).toStartWith(`Inyon ${VERSION}`)
     Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
     delete (window as any).isSecureContext
   })
@@ -155,7 +155,7 @@ describe('Updates', () => {
   })
 
   test('a failed update shows why and where its log is', async () => {
-    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4', error: 'Building the web app failed.', log: '/home/me/.tether/hub-update.log' }))
+    api.hubUpdate.mockResolvedValue(status({ latest: '0.6.4', error: 'Building the web app failed.', log: '/home/me/.inyon/hub-update.log' }))
     await render(page())
     expect(screen.getByText(/Building the web app failed\./)).toBeTruthy()
     expect(screen.getByText(/hub-update\.log/)).toBeTruthy()
@@ -175,8 +175,8 @@ describe('Updates', () => {
     const opened: string[] = []
     window.open = ((url: string) => (opened.push(url), null)) as typeof window.open
     ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { App: { getInfo: async () => ({ version: '0.6.3', build: '7' }) } } }
-    const url = 'https://github.com/Abhash-Chakraborty/tether-releases/releases/download/v0.6.4/tether-0.6.4.apk'
-    globalThis.fetch = (async () => Response.json({ tag_name: 'v0.6.4', assets: [{ name: 'tether-0.6.4.apk', browser_download_url: url }] })) as unknown as typeof fetch
+    const url = 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/download/v0.6.4/inyon-0.6.4.apk'
+    globalThis.fetch = (async () => Response.json({ tag_name: 'v0.6.4', assets: [{ name: 'inyon-0.6.4.apk', browser_download_url: url }] })) as unknown as typeof fetch
     try {
       await render(page())
       await flush()

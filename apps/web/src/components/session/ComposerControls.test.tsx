@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AGENTS, type ChatInfo } from '@tether/protocol'
+import { AGENTS, type ChatInfo } from '@inyon/protocol'
 import { ComposerControls } from './ComposerControls.tsx'
 import type { SessionModel } from './useSession.ts'
 import { chatInfo } from '../../test/fixtures.ts'

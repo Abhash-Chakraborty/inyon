@@ -7,7 +7,7 @@ import { capturePanes, probe, tmuxFields } from './tmux.ts'
 // A machine reached over SSH often has no locale at all. tmux then wrote its field separator as
 // "_" and the machine listed no sessions, though two were running. A private server (short path:
 // tmux sockets have a length limit), with the locale taken away as SSH would.
-const dir = mkdtempSync('/tmp/tether-locale-')
+const dir = mkdtempSync('/tmp/inyon-locale-')
 const own = `unset TMUX TMUX_PANE LANG LC_CTYPE LC_MESSAGES; export LC_ALL=C TMUX_TMPDIR='${dir}';`
 const host = new Host({ id: 'locale', name: 'locale', kind: 'local' } as any)
 const noLocale = { ...host, config: host.config, exec: (cmd: string, o?: any) => host.exec(`${own} ${cmd}`, o) } as unknown as Host

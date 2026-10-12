@@ -4,7 +4,7 @@ import {
   Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, RefreshCw, Smartphone,
   SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2,
 } from 'lucide-react'
-import type { BackgroundTask, ChatItem, SubagentInfo } from '@tether/protocol'
+import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { buildRows } from '../../lib/chat.ts'
 import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
@@ -255,7 +255,7 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
 export function PreviewTab({ storageKey, suggestions }: { storageKey: string; suggestions: string[] }) {
   const [url, setUrl] = useState(() => {
     try {
-      return localStorage.getItem(`tether.preview.${storageKey}`) ?? ''
+      return localStorage.getItem(`inyon.preview.${storageKey}`) ?? ''
     } catch {
       return ''
     }
@@ -268,7 +268,7 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
     setUrl(v)
     setDraft(v)
     try {
-      localStorage.setItem(`tether.preview.${storageKey}`, v)
+      localStorage.setItem(`inyon.preview.${storageKey}`, v)
     } catch {}
   }
   return (

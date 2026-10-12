@@ -1,5 +1,5 @@
 import { sha256Hex } from '../platform/store.ts'
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'
 
@@ -43,7 +43,7 @@ const textOf = (c: any): string => {
   return ''
 }
 
-/** Gemini tool names → the names Tether's tool rows know. */
+/** Gemini tool names → the names Inyon's tool rows know. */
 function mapTool(name: string, args: any): { name: string; input: any } {
   const a = args ?? {}
   switch (name) {

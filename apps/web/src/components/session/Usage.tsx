@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { Clock, Coins, Gauge, Layers, RadioTower, RotateCw } from 'lucide-react'
-import type { AgentKind, AgentPaneInfo, AgentStatus, ChatInfo, HostState } from '@tether/protocol'
+import type { AgentKind, AgentPaneInfo, AgentStatus, ChatInfo, HostState } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { duration, liveWindow, money, resetClock, resetsIn, since, tokens } from '../../lib/format.ts'
@@ -92,7 +92,7 @@ export function StoppedNote({ host, pane, compact }: { host: string; pane: strin
     <div className={clsx('flex items-start gap-3 rounded-[12px] border border-line bg-elev', compact ? 'p-2.5' : 'p-3.5')}>
       <RotateCw className="mt-0.5 size-4 shrink-0 text-warn" />
       <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-fg-2">
-        This session stopped sending cost and effort after its settings changed. Reconnect fixes it without stopping anything; Tether tries that by itself. Restart is the fallback.
+        This session stopped sending cost and effort after its settings changed. Reconnect fixes it without stopping anything; Inyon tries that by itself. Restart is the fallback.
       </p>
       <div className="flex shrink-0 flex-col gap-1.5">
         <Button size="sm" variant="primary" onClick={() => run('reconnect')} loading={busy === 'reconnect'}>

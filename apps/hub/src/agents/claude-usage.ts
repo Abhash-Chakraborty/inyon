@@ -1,4 +1,4 @@
-import type { RateWindow } from '@tether/protocol'
+import type { RateWindow } from '@inyon/protocol'
 import { Host } from '../hosts/host.ts'
 
 /**

@@ -1,0 +1,18 @@
+# systemd user unit for the Inyon hub.
+# Adjust WorkingDirectory to where you cloned Inyon, then:
+# cp deploy/inyon-hub.service ~/.config/systemd/user/ && systemctl --user enable --now inyon-hub
+[Unit]
+Description=Inyon hub
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/inyon/apps/hub
+ExecStart=%h/.bun/bin/bun src/index.ts
+Environment=NODE_ENV=production
+Environment=PORT=4777
+Environment=BIND=127.0.0.1
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

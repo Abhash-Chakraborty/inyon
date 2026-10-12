@@ -8,15 +8,15 @@ const D = '╌'.repeat(100)
 const screen = (s: string) => s.split('\n')
 
 test('permission prompt', () => {
-  const s = parseScreen(screen(`❯ Run the bash command: echo hello-tether > out.txt
-  Writing hello-tether to out.txt
-  ⎿  $ echo hello-tether > out.txt
+  const s = parseScreen(screen(`❯ Run the bash command: echo hello-inyon > out.txt
+  Writing hello-inyon to out.txt
+  ⎿  $ echo hello-inyon > out.txt
 ${R}
  Bash command
  Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
- Write hello-tether to out.txt
+ Write hello-inyon to out.txt
 ${D}
- echo hello-tether > out.txt
+ echo hello-inyon > out.txt
 ${D}
  Do you want to proceed?
  ❯ 1. Yes
@@ -31,7 +31,7 @@ ${D}
   expect(p.options[0]).toMatchObject({ label: 'Yes', selected: true })
   expect(p.options[1].label).toContain('-d507-4808')
   expect(p.body[0]).toBe('Bash command')
-  expect(p.body).toContain('echo hello-tether > out.txt')
+  expect(p.body).toContain('echo hello-inyon > out.txt')
   expect(p.footer).toBe('Esc to cancel · Tab to amend')
   expect(p.multi).toBe(false)
 })
@@ -420,7 +420,7 @@ describe('Antigravity CLI (real captures, agy 1.3.3 at 150 columns)', () => {
   test('resume picker: table rows, not the heading or the search line', () => {
     const p = agy(cap('agy-resume')).prompt!
     expect(p.body).toEqual(['Conversations'])
-    expect(p.options[0]).toEqual({ n: 1, label: '[CURRENT] Tether QA run', detail: '27 steps · 8m ago', selected: true })
+    expect(p.options[0]).toEqual({ n: 1, label: '[CURRENT] Inyon QA run', detail: '27 steps · 8m ago', selected: true })
     expect(p.options[1]).toMatchObject({ label: 'Simple Greeting', detail: 'custom-tmux · 47 steps · 23m ago' })
     expect(p.options).toHaveLength(5)
   })
@@ -538,15 +538,15 @@ test('a message from another session waiting to be let through is a question wit
   const dash = '╌'.repeat(100)
   const s = parseScreen([
     ' ▐▛███▛█   Claude Code v2.1.296',
-    '● Held peer message — from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Tether development); preview: «Test',
+    '● Held peer message — from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Inyon development); preview: «Test',
     '  message …» — not delivered to Claude (1 held).',
     '─'.repeat(100),
     ' Held message from another session',
-    ' Another Claude session sent a message: from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Tether development)',
+    ' Another Claude session sent a message: from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Inyon development)',
     " The sending session's permission mode class doesn't match this session's, so it wasn't delivered automatically.",
     ' Message body (this is what will be delivered):',
     dash,
-    ' │ Test message from the Tether development session: please reply with only',
+    ' │ Test message from the Inyon development session: please reply with only',
     ' │ …[1 line, 163 chars total — full body will be delivered on approve]',
     dash,
     ' ❯ Deny — drop it and tell the sender it was declined',
@@ -560,6 +560,6 @@ test('a message from another session waiting to be let through is a question wit
     ['Deliver this message to Claude', undefined, false],
   ])
   expect(s.prompt?.body[0]).toBe('Held message from another session')
-  expect(s.prompt?.body).toContain('Test message from the Tether development session: please reply with only')
+  expect(s.prompt?.body).toContain('Test message from the Inyon development session: please reply with only')
   expect(s.prompt?.body.filter((l) => l === '╌').length).toBe(2)
 })

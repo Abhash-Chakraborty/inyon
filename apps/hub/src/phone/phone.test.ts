@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
-import type { ServerMsg } from '@tether/protocol'
+import type { ServerMsg } from '@inyon/protocol'
 import { memoryStore, useStore } from '../platform/store.ts'
 import { setHostBackends } from '../hosts/host.ts'
 import { processBackend } from '../hosts/process-backend.ts'
@@ -49,7 +49,7 @@ const phone = await startPhone({ store: memoryStore(), ssh })
 afterAll(() => {
   globalThis.fetch = realFetch
   // the rest of the suite runs commands locally
-  setHostBackends(() => processBackend(path.join(os.tmpdir(), 'tether-test-cm')))
+  setHostBackends(() => processBackend(path.join(os.tmpdir(), 'inyon-test-cm')))
   useStore(memoryStore())
 })
 
@@ -66,7 +66,7 @@ const until = async (check: () => boolean) => {
 test('the phone looks up the newest tether-node for laptops paired with it', async () => {
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   await until(() => nodeUpdates.latestRelease === '9.9.9')
-  expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/tether-releases/releases/latest'])
+  expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon-releases/releases/latest'])
 })
 
 test('the phone needs no sign-in', async () => {
@@ -75,7 +75,7 @@ test('the phone needs no sign-in', async () => {
 
 test("the phone's key is one OpenSSH ed25519 line, made once", async () => {
   const a = (await call('GET', '/api/phone/key')).data.publicKey as string
-  expect(a).toMatch(/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[\w+/]+=* tether-phone$/)
+  expect(a).toMatch(/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[\w+/]+=* inyon-phone$/)
   expect((await call('GET', '/api/phone/key')).data.publicKey).toBe(a)
   expect(secrets.has('phone-key')).toBe(true)
 })

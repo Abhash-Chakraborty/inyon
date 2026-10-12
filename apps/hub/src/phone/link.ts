@@ -1,5 +1,5 @@
-import { connect, LinkError, noiseKeyOf, phonePath, relayWs, resolve, wsWire, type Channel, type KeyPair, type PairInfo } from '@tether/link'
-import type { HostConfig } from '@tether/protocol'
+import { connect, LinkError, noiseKeyOf, phonePath, relayWs, resolve, wsWire, type Channel, type KeyPair, type PairInfo } from '@inyon/link'
+import type { HostConfig } from '@inyon/protocol'
 import { nodeLinks } from '../hosts/node-link.ts'
 
 /**

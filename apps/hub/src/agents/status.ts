@@ -1,4 +1,4 @@
-import type { AgentStatus } from '@tether/protocol'
+import type { AgentStatus } from '@inyon/protocol'
 import type { ProbeResult } from '../tmux/tmux.ts'
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)

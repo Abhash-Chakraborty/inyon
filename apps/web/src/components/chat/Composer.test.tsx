@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { AGENTS } from '@tether/protocol'
+import { AGENTS } from '@inyon/protocol'
 import { Composer } from './Composer.tsx'
 import { ComposerControls } from '../session/ComposerControls.tsx'
 import type { SessionModel } from '../session/useSession.ts'
@@ -272,7 +272,7 @@ describe('the phone app hands over keyboard images', () => {
       isNativePlatform: () => true,
       getPlatform: () => 'android',
       Plugins: {
-        TetherDevice: {
+        InyonDevice: {
           addListener: (e: string, f: (e: unknown) => void) => {
             ;(listeners[e] ||= []).push(f)
             return Promise.resolve({ remove: () => (listeners[e] = listeners[e]!.filter((x) => x !== f)) })

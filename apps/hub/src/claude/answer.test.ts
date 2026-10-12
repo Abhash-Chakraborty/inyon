@@ -1,5 +1,5 @@
 import { afterAll, expect, mock, spyOn, test } from 'bun:test'
-import { promptKey } from '@tether/protocol'
+import { promptKey } from '@inyon/protocol'
 import { registry } from '../hosts/registry.ts'
 import { answer } from './actions.ts'
 import { parseScreen } from './screen.ts'

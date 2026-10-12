@@ -10,5 +10,5 @@ export function unixPairCommand(hub: string, token: string, installShSha256: str
     'f=$(mktemp) && curl -fsSL "$1/node/install.sh" -o "$f" && ' +
     'if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; ' +
     'else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s'
-  return `TETHER_TOKEN=${token} TETHER_NODE_SHA256=${scriptSha256} sh -c '${run}' tether ${hub} ${installShSha256}`
+  return `TETHER_TOKEN=${token} TETHER_NODE_SHA256=${scriptSha256} sh -c '${run}' inyon ${hub} ${installShSha256}`
 }

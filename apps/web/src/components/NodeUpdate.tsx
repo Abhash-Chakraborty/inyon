@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { AlertCircle, ArrowUpCircle, CheckCircle2, Loader2 } from 'lucide-react'
-import type { HostState } from '@tether/protocol'
+import type { HostState } from '@inyon/protocol'
 import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
 import { Button } from './ui/primitives.tsx'

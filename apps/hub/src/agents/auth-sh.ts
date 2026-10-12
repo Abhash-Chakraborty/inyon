@@ -1,6 +1,6 @@
 import { copilotAuthScript } from './copilot-rpc-sh.ts'
 
-import { AGENTS, AGENT_KINDS, type AgentKind } from '@tether/protocol'
+import { AGENTS, AGENT_KINDS, type AgentKind } from '@inyon/protocol'
 
 const file = (f: string) => f.replace(/^~/, '"$HOME"')
 
@@ -36,6 +36,6 @@ export const SIGNED_IN_SH = `printf '%s' "${AGENT_KINDS.map((k) => `$(${k === 'c
  * five minutes, and asked again as soon as Copilot's config changes (a sign-in or sign-out).
  */
 function cached(test: string): string {
-  const c = '"$HOME/.tether/.copilot-signed-in"'
-  return `{ if [ -f ${c} ] && [ -z "$(find ${c} -mmin +5 2>/dev/null)" ] && [ ! "$HOME/.copilot/config.json" -nt ${c} ]; then [ "$(cat ${c})" = 1 ]; elif ${test}; then mkdir -p "$HOME/.tether" && echo 1 > ${c}; else mkdir -p "$HOME/.tether" && echo 0 > ${c}; false; fi; }`
+  const c = '"$HOME/.inyon/.copilot-signed-in"'
+  return `{ if [ -f ${c} ] && [ -z "$(find ${c} -mmin +5 2>/dev/null)" ] && [ ! "$HOME/.copilot/config.json" -nt ${c} ]; then [ "$(cat ${c})" = 1 ]; elif ${test}; then mkdir -p "$HOME/.inyon" && echo 1 > ${c}; else mkdir -p "$HOME/.inyon" && echo 0 > ${c}; false; fi; }`
 }

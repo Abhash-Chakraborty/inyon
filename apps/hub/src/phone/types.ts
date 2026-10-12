@@ -1,4 +1,4 @@
-import type { ServerMsg } from '@tether/protocol'
+import type { ServerMsg } from '@inyon/protocol'
 
 /**
  * What the phone app gives the core, and what it gets back. Kept free of hub-only types so the
@@ -16,7 +16,7 @@ interface Listener {
   remove(): Promise<void> | void
 }
 
-/** The native TetherSsh plugin (apps/mobile/android/.../ssh/TetherSshPlugin.java). */
+/** The native InyonSsh plugin (apps/mobile/android/.../ssh/InyonSshPlugin.java). */
 export interface SshPlugin {
   probe(o: { host: string; port: number }): Promise<{ fingerprint: string; keyType: string }>
   connect(o: {
@@ -68,5 +68,5 @@ export interface PhoneRuntime {
 
 export type StartPhone = (o: { store: PhoneStore; ssh: SshPlugin }) => Promise<PhoneRuntime>
 
-/** The web app imports the runtime as `@tether/phone` (a Vite alias to ./index.ts) and types it from here. */
+/** The web app imports the runtime as `@inyon/phone` (a Vite alias to ./index.ts) and types it from here. */
 export declare const startPhone: StartPhone

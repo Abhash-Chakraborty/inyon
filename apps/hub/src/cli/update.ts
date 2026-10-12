@@ -1,6 +1,6 @@
 import { REPO, updateHub, writeJob } from '../features/hub-update.ts'
 
-// pnpm hub:update: pulls the newest Tether, installs, builds the web app and restarts the hub.
+// pnpm hub:update: pulls the newest Inyon, installs, builds the web app and restarts the hub.
 // Settings starts it too, with --job naming the file where the hub reads its progress.
 const arg = (name: string) => {
   const i = process.argv.indexOf(name)

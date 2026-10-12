@@ -11,7 +11,7 @@ function phone(device: Record<string, any> = {}) {
     isNativePlatform: () => true,
     getPlatform: () => 'android',
     Plugins: {
-      TetherDevice: {
+      InyonDevice: {
         startKeepAlive: async () => ({ ok: true }),
         addListener: (event: string, fn: Listener) => ((listeners[event] = fn), Promise.resolve({ remove() {} })),
         ...device,
@@ -23,8 +23,8 @@ function phone(device: Record<string, any> = {}) {
 
 afterEach(() => {
   delete (window as any).Capacitor
-  localStorage.removeItem('tether.keepAlive')
-  localStorage.removeItem('tether.batteryAsked')
+  localStorage.removeItem('inyon.keepAlive')
+  localStorage.removeItem('inyon.batteryAsked')
   useStore.setState({ toasts: [], hosts: [] })
 })
 
@@ -39,7 +39,7 @@ test('stays connected unless turned off, asking for the notification permission 
   await settle()
   expect(calls).toEqual(['permission', 'start'])
 
-  localStorage.setItem('tether.keepAlive', '0')
+  localStorage.setItem('inyon.keepAlive', '0')
   calls.length = 0
   phone(device)
   installKeepAlive()
@@ -47,7 +47,7 @@ test('stays connected unless turned off, asking for the notification permission 
   expect(calls).toEqual([])
 })
 
-test("asks Android once, when there's a machine, not to put Tether to sleep", async () => {
+test("asks Android once, when there's a machine, not to put Inyon to sleep", async () => {
   let asked = 0
   let ignoring = false
   phone({ isIgnoringBatteryOptimizations: async () => ({ ignoring }), requestBatteryExemption: async () => (asked++, { ignoring: (ignoring = true) }) })
@@ -71,7 +71,7 @@ test("doesn't ask when it's already allowed or Stay connected is off", async () 
   installKeepAlive()
   useStore.setState({ hosts: [host('box')] })
   await settle()
-  localStorage.setItem('tether.keepAlive', '0')
+  localStorage.setItem('inyon.keepAlive', '0')
   phone({ isIgnoringBatteryOptimizations: async () => ({ ignoring: false }), requestBatteryExemption: async () => (asked++, { ignoring: true }) })
   useStore.setState({ hosts: [] })
   installKeepAlive()
@@ -81,7 +81,7 @@ test("doesn't ask when it's already allowed or Stay connected is off", async () 
 })
 
 test('Stop on the notification turns the setting off', () => {
-  localStorage.setItem('tether.keepAlive', '1')
+  localStorage.setItem('inyon.keepAlive', '1')
   const listeners = phone()
   installKeepAlive()
   listeners.keepAliveStopped({ reason: 'stopped' })
@@ -90,7 +90,7 @@ test('Stop on the notification turns the setting off', () => {
 })
 
 test('Android stopping it leaves the setting on, to start again later', () => {
-  localStorage.setItem('tether.keepAlive', '1')
+  localStorage.setItem('inyon.keepAlive', '1')
   const listeners = phone()
   installKeepAlive()
   listeners.keepAliveStopped({ reason: 'timeout' })

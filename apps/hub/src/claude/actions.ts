@@ -1,5 +1,5 @@
 import { sleep } from '../platform/store.ts'
-import { AGENTS, agyModelId, promptKey, type AgentKind } from '@tether/protocol'
+import { AGENTS, agyModelId, promptKey, type AgentKind } from '@inyon/protocol'
 import { shq, type Host } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
@@ -40,7 +40,7 @@ const nudge = (hostId: string, paneId: string) => {
 
 const squash = (s: string) => s.replace(/\s+/g, '')
 
-/** agents whose input box Tether can read back off the screen */
+/** agents whose input box Inyon can read back off the screen */
 const CHECKED = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'copilot', 'opencode'])
 const lanes = new Map<string, Promise<unknown>>()
 
@@ -182,7 +182,7 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
       return nudge(hostId, paneId)
     }
   }
-  // Codex takes no arguments to /model; Tether's "/model id [effort]" and "/effort level" drive its picker
+  // Codex takes no arguments to /model; Inyon's "/model id [effort]" and "/effort level" drive its picker
   if (found.pane.agent.kind === 'codex') {
     const m = text.trim().match(/^\/model\s+(\S+)(?:\s+(\S+))?$/) ?? text.trim().match(/^\/effort\s+()(\S+)$/)
     if (m) return codexModel(hostId, paneId, m[1] || undefined, m[2])
@@ -908,7 +908,7 @@ export async function restartAgent(hostId: string, paneId: string) {
   const direct = proc.pid === proc.panePid
   const win = onPsmux(hostId)
   if (direct) await host.exec(remainOnExit(win, p, true))
-  // the "/exit" typed below is Tether's, not a draft to keep
+  // the "/exit" typed below is Inyon's, not a draft to keep
   const w = watchers.peek(hostId, paneId)
   await w?.beginSend()
   try {
@@ -989,7 +989,7 @@ export async function exitAgent(hostId: string, paneId: string) {
   const p = shq(paneId)
   const win = onPsmux(hostId)
   if (direct) await host.exec(remainOnExit(win, p, true))
-  // the "/exit" and Ctrl+C below are Tether's, not a draft to keep
+  // the "/exit" and Ctrl+C below are Inyon's, not a draft to keep
   const w = watchers.peek(hostId, paneId)
   await w?.beginSend()
   const done = async () => {
@@ -1089,10 +1089,10 @@ export async function launch(hostId: string, opts: LaunchOpts) {
     if (opts.model && (agent === 'opencode' ? /^[\w.:-]+\/[\w.:/-]+$/ : /^[\w.:-]+$/).test(opts.model)) parts.push(agent === 'codex' ? `-m ${opts.model}` : agent === 'antigravity' ? `--model ${agyModelId(opts.model)}` : `--model ${opts.model}`)
     if (agent === 'claude' && opts.mode && /^\w+$/.test(opts.mode)) parts.push(`--permission-mode ${opts.mode}`)
     if (agent === 'antigravity' && (opts.mode === 'acceptEdits' || opts.mode === 'plan')) parts.push(`--mode ${opts.mode === 'plan' ? 'plan' : 'accept-edits'}`)
-    // files you attach land in ~/.tether/uploads; without this agy asks before reading each one
+    // files you attach land in ~/.inyon/uploads; without this agy asks before reading each one
     if (agent === 'antigravity') {
-      await host.exec('mkdir -p "$HOME/.tether/uploads"')
-      parts.push('--add-dir "$HOME/.tether/uploads"')
+      await host.exec('mkdir -p "$HOME/.inyon/uploads"')
+      parts.push('--add-dir "$HOME/.inyon/uploads"')
     }
     // the first message: Claude and Codex take it as an argument; OpenCode's argument is a folder
     // (--prompt instead), and agy and Copilot use -i (runs it and stays interactive)
@@ -1138,7 +1138,7 @@ export async function findTaskOutput(hostId: string, id: string): Promise<string
 /**
  * Names a session. Claude, Codex and agy keep the name themselves (/rename), so it shows the same
  * everywhere: in this hub, the phone app and their own resume pickers. While the agent is busy the
- * name waits and goes in as soon as it's idle. Other agents keep the name in Tether against their
+ * name waits and goes in as soon as it's idle. Other agents keep the name in Inyon against their
  * conversation; plain terminals get their tmux window renamed. An empty name goes back to the
  * automatic one.
  */

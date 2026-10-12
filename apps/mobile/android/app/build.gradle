@@ -5,19 +5,19 @@ apply plugin: 'org.jetbrains.kotlin.android'
 def envString = { String name -> '"' + (System.getenv(name) ?: '').trim().replace('\\', '\\\\').replace('"', '\\"') + '"' }
 
 android {
-    namespace = "dev.tether.app"
+    namespace = "tech.abhashchakraborty.inyon"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "dev.tether.app"
+        applicationId "tech.abhashchakraborty.inyon"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode Integer.parseInt(System.getenv("TETHER_VERSION_CODE") ?: "1")
-        versionName System.getenv("TETHER_VERSION") ?: "0.1.0"
+        versionCode Integer.parseInt(System.getenv("INYON_VERSION_CODE") ?: "1")
+        versionName System.getenv("INYON_VERSION") ?: "0.1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField "String", "FCM_APP_ID", envString("TETHER_FCM_APP_ID")
-        buildConfigField "String", "FCM_API_KEY", envString("TETHER_FCM_API_KEY")
-        buildConfigField "String", "FCM_PROJECT_ID", envString("TETHER_FCM_PROJECT_ID")
-        buildConfigField "String", "FCM_SENDER_ID", envString("TETHER_FCM_SENDER_ID")
+        buildConfigField "String", "FCM_APP_ID", envString("INYON_FCM_APP_ID")
+        buildConfigField "String", "FCM_API_KEY", envString("INYON_FCM_API_KEY")
+        buildConfigField "String", "FCM_PROJECT_ID", envString("INYON_FCM_PROJECT_ID")
+        buildConfigField "String", "FCM_SENDER_ID", envString("INYON_FCM_SENDER_ID")
         // the app has no translations, so the libraries' strings in other languages are dead weight
         resourceConfigurations += ["en"]
         // CameraX's one native library; 32-bit x86 is only ever an old emulator
@@ -36,17 +36,17 @@ android {
     // release builds are signed when CI provides a keystore (see .github/workflows/mobile.yml)
     signingConfigs {
         release {
-            if (System.getenv("TETHER_KEYSTORE")) {
-                storeFile file(System.getenv("TETHER_KEYSTORE"))
-                storePassword System.getenv("TETHER_KEYSTORE_PASSWORD")
-                keyAlias System.getenv("TETHER_KEY_ALIAS")
-                keyPassword System.getenv("TETHER_KEY_PASSWORD")
+            if (System.getenv("INYON_KEYSTORE")) {
+                storeFile file(System.getenv("INYON_KEYSTORE"))
+                storePassword System.getenv("INYON_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("INYON_KEY_ALIAS")
+                keyPassword System.getenv("INYON_KEY_PASSWORD")
             }
         }
     }
     buildTypes {
         release {
-            if (System.getenv("TETHER_KEYSTORE")) signingConfig signingConfigs.release
+            if (System.getenv("INYON_KEYSTORE")) signingConfig signingConfigs.release
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

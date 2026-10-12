@@ -3,7 +3,7 @@ import { Host, shq } from '../hosts/host.ts'
 /**
  * OpenCode started without --port has no HTTP server: its TUI talks to its engine in-process.
  * What it does still lands in its SQLite database (session, message, part, todo), as the same
- * JSON its server API returns, so Tether reads that. Read-only, and only those tables: the same
+ * JSON its server API returns, so Inyon reads that. Read-only, and only those tables: the same
  * file holds account tokens, which are never queried.
  *
  * sqlite3 answers in a few ms; Python's sqlite3 module is the fallback, `opencode db` (2-3 s per

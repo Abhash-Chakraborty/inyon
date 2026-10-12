@@ -1,4 +1,4 @@
-import type { AgentStatus, ChatItem } from '@tether/protocol'
+import type { AgentStatus, ChatItem } from '@inyon/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import { statusFromCodex } from './status.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'

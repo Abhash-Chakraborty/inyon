@@ -1,10 +1,22 @@
-// Release numbers, for "Update available" checks in the hub and the apps.
+// The product's name and addresses, and release numbers for "Update available" checks.
+
+/** What the product is called, everywhere a person reads it. One place, so a rename changes it once. */
+export const PRODUCT = 'Inyon'
+/** The lowercase form, for folders, packages, services and storage keys */
+export const SLUG = 'inyon'
+/** The name it had before, which migration code still reads (folders, env vars, storage keys) */
+export const OLD_SLUG = 'tether'
+export const SOURCE_REPO = 'Abhash-Chakraborty/inyon'
+/** The hosted app (a static PWA) */
+export const WEB_URL = 'https://inyon.abhashchakraborty.tech'
+/** The Android application id */
+export const APP_ID = 'tech.abhashchakraborty.inyon'
 
 /**
- * The public repository the app and tether-node are downloaded from (the source is private). One
- * place, so a rename changes it once; tether-node keeps its own copy as it bundles no shared code.
+ * The public repository the app and tether-node are downloaded from (the source is private).
+ * tether-node keeps its own copy as it bundles no shared code.
  */
-export const RELEASES_REPO = 'Abhash-Chakraborty/tether-releases'
+export const RELEASES_REPO = 'Abhash-Chakraborty/inyon-releases'
 export const RELEASES_DOWNLOAD = `https://github.com/${RELEASES_REPO}/releases/latest/download`
 export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`
 

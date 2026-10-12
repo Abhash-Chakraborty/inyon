@@ -1,6 +1,6 @@
-# Tether
+# Inyon
 
-Your coding agents keep running in tmux on your machines. Tether lets you watch them, answer
+Your coding agents keep running in tmux on your machines. Inyon lets you watch them, answer
 them and steer them from your phone or any browser.
 
 It works with Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot, on as many machines as
@@ -14,7 +14,7 @@ I run agents on a laptop, a personal server and a company server. Each is signed
 different account, and on the company machine I only have the CLI. Built-in remote features
 follow one account at a time, so switching between machines meant switching accounts.
 
-Tether never signs in anywhere. It drives the agent CLI that is already running in tmux on each
+Inyon never signs in anywhere. It drives the agent CLI that is already running in tmux on each
 machine, so every machine can use its own account, subscription or API key.
 
 ## What you get
@@ -63,7 +63,7 @@ On each machine the hub reads tmux and the agents' own records:
 | Context, cost | Claude's status line data (optional integration) and transcripts, Codex token events |
 | Typing and answering | `tmux send-keys`, exactly as if you typed it |
 
-Agents never know Tether is there. If you close Tether, nothing breaks.
+Agents never know Inyon is there. If you close Inyon, nothing breaks.
 
 ## Agent support
 
@@ -80,20 +80,20 @@ Agents never know Tether is there. If you close Tether, nothing breaks.
 You need [Bun](https://bun.sh) 1.3+, pnpm and tmux on the hub machine.
 
 ```sh
-git clone https://github.com/Abhash-Chakraborty/tether.git
-cd tether
+git clone https://github.com/Abhash-Chakraborty/inyon.git
+cd inyon
 pnpm install
 pnpm build
 pnpm start
 ```
 
 The hub listens on `127.0.0.1:4777`. Open it and the first visit asks you to create a password,
-with the setup code the hub prints when it starts (also in `~/.tether/setup-code`). Change the
-password later in Settings, or reset a forgotten one with `pnpm --filter @tether/hub set-password`.
+with the setup code the hub prints when it starts (also in `~/.inyon/setup-code`). Change the
+password later in Settings, or reset a forgotten one with `pnpm --filter @inyon/hub set-password`.
 
 Open it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
 put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
-`TETHER_ALLOWED_HOSTS`. To keep it running, see `deploy/tether-hub.service`.
+`INYON_ALLOWED_HOSTS`. To keep it running, see `deploy/inyon-hub.service`.
 
 ## Updating
 
@@ -105,11 +105,11 @@ pnpm hub:update
 ```
 
 It refuses a checkout with local changes or one that can't fast-forward. Otherwise it pulls,
-runs `pnpm install`, builds the web app and restarts the `tether-hub` systemd user unit. Without
+runs `pnpm install`, builds the web app and restarts the `inyon-hub` systemd user unit. Without
 that unit it tells you to restart the hub yourself. Browsers that still have the old app open
 offer a reload once the hub is back.
 
-The Android app checks [tether-releases](https://github.com/Abhash-Chakraborty/tether-releases)
+The Android app checks [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases)
 once a day and when you open Settings. *Download* opens the new APK in your browser; open the
 file when it's done and Android installs it over the old one.
 
@@ -120,7 +120,7 @@ stays on, like a home server, a VPS or a desktop that doesn't sleep. The hub ser
 itself, so there's nothing to deploy to Vercel or a CDN. The Android app needs nothing hosted.
 
 - **In a browser**, the hub's address is the app: `http://my-server:4777` over Tailscale or
-  NetBird, or `https://tether.example.com` behind a reverse proxy. The same page works on a phone.
+  NetBird, or `https://inyon.example.com` behind a reverse proxy. The same page works on a phone.
 - **Installed on a phone** from the browser ("Add to Home Screen"), with system notifications, it
   needs HTTPS. Put the hub behind Caddy or `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`.
 - **The Android app** comes from the GitHub release and talks to your servers directly over SSH.
@@ -134,7 +134,7 @@ on your other devices.
 
 ## Adding machines
 
-**Laptops and desktops:** *Add a machine → This device connects to Tether.* Copy the one-line
+**Laptops and desktops:** *Add a machine → This device connects to Inyon.* Copy the one-line
 command onto that machine. It installs a small user service (and Bun, if missing). No sudo and no
 open ports.
 
@@ -157,7 +157,7 @@ The hub then picks up each conversation where it left off.
 ## Android app
 
 `apps/mobile` wraps the same web app with Capacitor, but the phone is its own hub. The app runs
-Tether's core in the app (`apps/hub/src/phone`) and reaches your machines itself, in one of two
+Inyon's core in the app (`apps/hub/src/phone`) and reaches your machines itself, in one of two
 ways. There's no server in between and no password.
 
 ### Any computer, from anywhere
@@ -166,16 +166,16 @@ Most people have a laptop and an internet connection, not a VPN. On a Mac or Lin
 this in a terminal (on a server, in your SSH session):
 
 ```sh
-curl -fsSL https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.sh | sh
+curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.ps1 | iex
+irm https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.ps1 | iex
 ```
 
-On Windows, Tether drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for
+On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for
 Windows, and setup installs it with winget if it's missing. Sessions, chats, sending, approvals,
 sign-in and the terminal work as they do on Linux. psmux runs each session in its own server, so
 the terminal there is drawn from the pane's screen instead of a second tmux client. It shows what
@@ -214,14 +214,14 @@ changes when it restarts, so the computer publishes its current addresses under 
 the signature check. `--lan` also answers on the local network, which is faster at home.
 
 The binaries for Linux, macOS and Windows are built by `.github/workflows/node.yml` and published
-to [tether-releases](https://github.com/Abhash-Chakraborty/tether-releases). From a checkout,
+to [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases). From a checkout,
 `bun apps/node/tether-node.ts pair` does the same. `tether-node phones` lists paired phones and
 `tether-node forget <name>` unpairs one.
 
 ### A server over SSH
 
 If you can't install anything on a server, the phone can reach it over SSH instead. The app opens
-SSH connections with a native plugin (`TetherSshPlugin`, built on ConnectBot's sshlib).
+SSH connections with a native plugin (`InyonSshPlugin`, built on ConnectBot's sshlib).
 
 1. Tap *Add a computer*, then *Can't install anything? Connect over SSH instead*. Give it
    `user@host` and a port.
@@ -243,7 +243,7 @@ GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main`
 "Latest Android build" pre-release with a fresh APK, and a `v*` tag makes a release with the APK
 attached. On the phone, open the release, download the APK and install it. Later builds install
 over it and keep your servers. Each release's APK also goes to
-[tether-releases](https://github.com/Abhash-Chakraborty/tether-releases) as `tether-X.Y.Z.apk`
+[inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases) as `inyon-X.Y.Z.apk`
 (uploaded by hand, like `tether-node`), which is where the app looks for updates.
 
 Builds are signed with your own key: the secrets `ANDROID_KEYSTORE_BASE64` (the keystore, base64)
@@ -279,18 +279,18 @@ To use a hub from your phone instead, open its address in the phone's browser.
 The hub can run commands on every connected machine, so it should be reachable only by you. It
 binds to localhost by default, stores only a hash of its password, and rate-limits sign-ins.
 Paired machines connect out with per-machine tokens that you can revoke. See
-[SECURITY.md](SECURITY.md) for the full model and what Tether changes on a machine.
+[SECURITY.md](SECURITY.md) for the full model and what Inyon changes on a machine.
 
 ## Configuration
 
 | Variable | Default | |
 |---|---|---|
 | `PORT` | `4777` | Hub port |
-| `BIND` | `127.0.0.1` | Address to listen on. Anything but localhost needs `TLS_CERT`/`TLS_KEY`, or `TETHER_ALLOW_HTTP=1` |
-| `TETHER_ALLOW_HTTP` | | Set to `1` to serve plain http on a network `BIND`, for a VPN address that encrypts on its own |
-| `TETHER_DATA_DIR` | `~/.tether` | Password hash, machine list, drafts, settings |
-| `TETHER_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
-| `TETHER_ALLOWED_HOSTS` | | Extra comma-separated host names the hub answers to. IP addresses, single-label names, localhost and Tailscale/NetBird names always work; add a public domain your proxy uses. `*` turns the check off |
+| `BIND` | `127.0.0.1` | Address to listen on. Anything but localhost needs `TLS_CERT`/`TLS_KEY`, or `INYON_ALLOW_HTTP=1` |
+| `INYON_ALLOW_HTTP` | | Set to `1` to serve plain http on a network `BIND`, for a VPN address that encrypts on its own |
+| `INYON_DATA_DIR` | `~/.inyon` | Password hash, machine list, drafts, settings |
+| `INYON_ALLOWED_ORIGINS` | | Extra comma-separated origins allowed to call the hub, for a reverse proxy on another hostname |
+| `INYON_ALLOWED_HOSTS` | | Extra comma-separated host names the hub answers to. IP addresses, single-label names, localhost and Tailscale/NetBird names always work; add a public domain your proxy uses. `*` turns the check off |
 | `TLS_CERT`, `TLS_KEY` | | Paths to a PEM certificate and key to serve HTTPS. Needed for a real installed app on phones (and clipboard images, notifications) |
 
 ## Development
@@ -315,7 +315,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) to add an agent or fix a parser.
 
 ## Status
 
-Tether is young. Linux, macOS and Windows (through psmux) work today. Expect rough edges with
+Inyon is young. Linux, macOS and Windows (through psmux) work today. Expect rough edges with
 the beta readers.
 
 ## License
@@ -325,7 +325,7 @@ MIT. See [LICENSE](LICENSE). Agent names and logos belong to their owners; see
 
 ### OpenCode and GitHub Copilot
 
-Tether wraps the installed CLIs and their sessions. New OpenCode sessions expose a loopback API
+Inyon wraps the installed CLIs and their sessions. New OpenCode sessions expose a loopback API
 with `--hostname 127.0.0.1 --port 0`. Connected providers supply the model list and reasoning
 variants; Build/Plan selects the OpenCode agent. Dashboard settings apply to the next prompt.
 Use Sign in to choose a provider and complete its native login flow. Existing ambiguous sessions

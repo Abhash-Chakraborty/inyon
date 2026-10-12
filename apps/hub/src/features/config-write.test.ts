@@ -10,7 +10,7 @@ import { writeConfig } from './features.ts'
 afterAll(() => mock.restore())
 
 // a home with a space in its name, next to an unrelated file named after its first word
-const root = mkdtempSync(join(tmpdir(), 'tether-cfg-'))
+const root = mkdtempSync(join(tmpdir(), 'inyon-cfg-'))
 const home = join(root, 'space home')
 afterAll(() => {
   chmodSync(join(home, '.claude'), 0o755)
@@ -24,10 +24,10 @@ const file = join(home, '.claude', 'settings.json')
 test("clearing old backups removes only backups, whatever spaces the path has", async () => {
   writeFileSync(join(root, 'space'), 'not a backup')
   writeFileSync(file, '{}')
-  for (let i = 0; i < 7; i++) writeFileSync(`${file}.tether-bak-2026-01-0${i + 1}T00-00-00`, '{}')
+  for (let i = 0; i < 7; i++) writeFileSync(`${file}.inyon-bak-2026-01-0${i + 1}T00-00-00`, '{}')
   expect(await writeConfig('cfg', file, '{"new":true}')).toEqual({ ok: true })
   expect(readFileSync(join(root, 'space'), 'utf8')).toBe('not a backup')
-  expect(readdirSync(join(home, '.claude')).filter((f) => f.includes('tether-bak'))).toHaveLength(5)
+  expect(readdirSync(join(home, '.claude')).filter((f) => f.includes('inyon-bak'))).toHaveLength(5)
   expect(readFileSync(file, 'utf8')).toBe('{"new":true}')
 })
 
@@ -40,5 +40,5 @@ test.skipIf(process.getuid?.() === 0)('a write that fails is reported, not passe
     chmodSync(join(home, '.claude'), 0o755)
   }
   expect(readFileSync(file, 'utf8')).toBe('{"old":true}')
-  expect(existsSync(`${file}.tether-tmp`)).toBe(false)
+  expect(existsSync(`${file}.inyon-tmp`)).toBe(false)
 })

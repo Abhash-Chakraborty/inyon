@@ -6,7 +6,7 @@ import { CHECK_EVERY, exec, hubUpdater, REPO, updateHub, type Exec } from './hub
 
 // Every update here runs against throwaway repositories in the temp dir, with fake pnpm and
 // systemctl, never against this checkout.
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tether-hub-update-'))
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-hub-update-'))
 const bin = path.join(root, 'bin')
 const calls = path.join(root, 'calls')
 const gitEnv = {
@@ -47,9 +47,9 @@ const called = () => (fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim
 
 beforeAll(() => {
   fs.mkdirSync(bin)
-  // the fakes write down how they were called; systemctl knows the unit when FAKE_UNIT is set
+  // the fakes write down how they were called; systemctl knows only the unit named in FAKE_UNIT
   fs.writeFileSync(path.join(bin, 'pnpm'), `#!/bin/sh\necho "pnpm $*" >> "${calls}"\n`, { mode: 0o755 })
-  fs.writeFileSync(path.join(bin, 'systemctl'), `#!/bin/sh\necho "systemctl $*" >> "${calls}"\n[ "$2" = cat ] && [ -z "$FAKE_UNIT" ] && exit 1\nexit 0\n`, { mode: 0o755 })
+  fs.writeFileSync(path.join(bin, 'systemctl'), `#!/bin/sh\necho "systemctl $*" >> "${calls}"\n[ "$2" = cat ] && [ "$3" != "$FAKE_UNIT.service" ] && exit 1\nexit 0\n`, { mode: 0o755 })
 })
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
 
@@ -77,7 +77,7 @@ describe('the update refuses what it would break', () => {
     expect(r.error).toContain("isn't a git checkout")
   })
 
-  test('a folder inside some other repository is not a checkout of Tether', async () => {
+  test('a folder inside some other repository is not a checkout of Inyon', async () => {
     const { dir } = checkout()
     fs.mkdirSync(path.join(dir, 'apps'))
     const r = await updateHub({ repo: path.join(dir, 'apps'), run, ...quiet() })
@@ -110,23 +110,24 @@ describe('an update that can go ahead', () => {
     const r = await updateHub({ repo: dir, run, log })
     expect(r).toEqual({ ok: true, restarted: false })
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version).toBe('0.6.4')
-    expect(called()).toEqual(['pnpm install --frozen-lockfile', 'pnpm --filter @tether/web build', 'systemctl --user cat tether-hub.service'])
-    expect(lines.at(-1)).toBe('Updated to Tether 0.6.4. Restart the hub to run it.')
+    expect(called()).toEqual(['pnpm install --frozen-lockfile', 'pnpm --filter @inyon/web build', 'systemctl --user cat inyon-hub.service', 'systemctl --user cat tether-hub.service'])
+    expect(lines.at(-1)).toBe('Updated to Inyon 0.6.4. Restart the hub to run it.')
   })
 
-  test('the command restarts the systemd unit when there is one', async () => {
+  // a hub set up before the rename to Inyon still has its tether-hub unit
+  test.each(['inyon-hub', 'tether-hub'])('the command restarts the systemd unit when there is one (%s)', async (unit) => {
     fs.rmSync(calls, { force: true })
     const { dir, origin } = checkout()
     commit(origin, 'more.txt')
     const p = Bun.spawn([process.execPath, path.join(import.meta.dir, '../cli/update.ts'), '--repo', dir], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_UNIT: '1' },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_UNIT: unit },
       stdout: 'pipe',
       stderr: 'pipe',
     })
     const out = await new Response(p.stdout).text()
     expect(await p.exited).toBe(0)
-    expect(called().at(-1)).toBe('systemctl --user restart tether-hub')
-    expect(out).toContain('Restarting tether-hub')
+    expect(called().at(-1)).toBe(`systemctl --user restart ${unit}`)
+    expect(out).toContain(`Restarting ${unit}`)
     expect(fs.existsSync(path.join(dir, 'more.txt'))).toBe(true)
   })
 

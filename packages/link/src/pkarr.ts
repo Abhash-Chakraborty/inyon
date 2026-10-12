@@ -43,7 +43,10 @@ function name(labels: string[]) {
   return [...parts, 0]
 }
 
-/** One TXT record "_tether.<id>" holding "u=<url>" and "r=<relay>" strings. */
+/**
+ * One TXT record "_tether.<id>" holding "u=<url>" and "r=<relay>" strings. The label is a wire id
+ * from before the rename to Inyon: machines already publish under it and phones look it up.
+ */
 function dnsPacket(id: string, p: Omit<Published, 'seq'>): Uint8Array {
   const named = [...(p.machine ? [`m=${p.machine}`] : []), ...(p.name ? [`n=${p.name.slice(0, 64)}`] : [])]
   const strings = [...named, ...p.urls.map((u) => `u=${u}`), ...p.relays.map((r) => `r=${r}`)].map((s) => {

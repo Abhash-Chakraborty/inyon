@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Copy, ShieldAlert, ShieldCheck } from 'lucide-react'
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { api, type ServerForm } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
@@ -13,7 +13,7 @@ import { Select } from './ui/Select.tsx'
 type Auth = NonNullable<ServerForm['auth']>
 
 /**
- * Adding or editing a server in the phone app, for machines Tether can't run on. Either the phone
+ * Adding or editing a server in the phone app, for machines Inyon can't run on. Either the phone
  * connects to it itself over SSH (you give the address and how to sign in, then confirm the
  * server's fingerprint the first time), or a paired computer that can already reach it does, with
  * its own keys and ~/.ssh/config.
@@ -135,7 +135,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
       <form id="server-form" onSubmit={submit} className="space-y-4">
         {!edit && (
           <p className="text-[13px] leading-relaxed text-fg-2">
-            For servers you can't install Tether on. Nothing is installed there: {computers.length ? 'this phone, or a computer you paired that can already reach it, signs in over SSH.' : 'this phone signs in over SSH, so it has to be able to reach it (same Wi-Fi, or a VPN like Tailscale or NetBird).'}
+            For servers you can't install Inyon on. Nothing is installed there: {computers.length ? 'this phone, or a computer you paired that can already reach it, signs in over SSH.' : 'this phone signs in over SSH, so it has to be able to reach it (same Wi-Fi, or a VPN like Tailscale or NetBird).'}
           </p>
         )}
         {computers.length > 0 && (

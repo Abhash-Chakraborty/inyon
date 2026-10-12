@@ -8,7 +8,7 @@ import { guessCodexRollout } from './codex.ts'
 import { guessGeminiSession } from './gemini.ts'
 
 // a home folder with a space in its name, as on many Macs and Windows machines
-const root = mkdtempSync(join(tmpdir(), 'tether-find-'))
+const root = mkdtempSync(join(tmpdir(), 'inyon-find-'))
 const home = join(root, 'my home')
 afterAll(() => rmSync(root, { recursive: true, force: true }))
 const host = new Host({ id: 'find', name: 'Find', kind: 'local' } as any)

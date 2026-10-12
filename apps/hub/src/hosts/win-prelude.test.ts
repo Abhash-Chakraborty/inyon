@@ -66,7 +66,7 @@ test('an agent that exits on Windows leaves PowerShell behind, and remain-on-exi
 
 test('a sign-in on Windows is a PowerShell line that prints the exit mark', async () => {
   const { signInWindows } = await import('../features/signin.ts')
-  expect(signInWindows('gemini')).toBe(`$env:NO_BROWSER='true'; gemini; Write-Output ''; Write-Output "[tether-exit $([int]$LASTEXITCODE)]"`)
+  expect(signInWindows('gemini')).toBe(`$env:NO_BROWSER='true'; gemini; Write-Output ''; Write-Output "[inyon-exit $([int]$LASTEXITCODE)]"`)
   expect(signInWindows('codex')).toStartWith('codex login --device-auth; ')
 })
 

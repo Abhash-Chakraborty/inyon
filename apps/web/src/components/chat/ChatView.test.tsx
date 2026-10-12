@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, spyOn, test } from 'bun:test'
 import { act, render, screen } from '@testing-library/react'
-import type { ChatItem, SendState } from '@tether/protocol'
+import type { ChatItem, SendState } from '@inyon/protocol'
 import { ChatView } from './ChatView.tsx'
 import { GoalRow } from './Messages.tsx'
 import { buildRows } from '../../lib/chat.ts'

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentModel } from '@tether/protocol'
+import type { AgentCatalog, AgentModel } from '@inyon/protocol'
 import type { Host } from '../hosts/host.ts'
 import { OC_PATH } from './opencode-db.ts'
 

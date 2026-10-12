@@ -1,5 +1,5 @@
 import { afterAll, expect, mock, spyOn, test } from 'bun:test'
-import { newerRelease, VERSION, type HostState } from '@tether/protocol'
+import { newerRelease, VERSION, type HostState } from '@inyon/protocol'
 import type { Host, ExecResult } from './host.ts'
 import { nodeLinks } from './node-link.ts'
 import { LINK_UPDATE, NodeUpdates, nodeUpdates, updateLauncher } from './node-update.ts'
@@ -151,7 +151,7 @@ test('the phone learns the newest release from the GitHub API', async () => {
   const get = (async (url: string) => (urls.push(url), Response.json({ tag_name: 'v0.7.2' }))) as unknown as typeof fetch
   clearInterval(u.watchReleases(get))
   await until(() => u.latestRelease === '0.7.2')
-  expect(urls).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/tether-releases/releases/latest'])
+  expect(urls).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon-releases/releases/latest'])
 })
 
 test('the API refuses machines it cannot update, with a clear 409', async () => {

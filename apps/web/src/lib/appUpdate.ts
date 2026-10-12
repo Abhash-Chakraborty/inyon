@@ -1,16 +1,16 @@
-import { newerRelease, parseRelease, RELEASES_API } from '@tether/protocol'
+import { newerRelease, parseRelease, RELEASES_API } from '@inyon/protocol'
 import { isNative, plugin } from './native.ts'
 import { toast } from './store.ts'
 
 /**
- * The Android app checks tether-releases for a newer APK: at most once a day on its own, and
+ * The Android app checks inyon-releases for a newer APK: at most once a day on its own, and
  * whenever Settings opens. It never installs anything. Download opens the APK in the browser and
  * Android asks before installing it.
  */
 export { RELEASES_API }
 
-const CHECKED = 'tether.app-update'
-const TOLD = 'tether.app-update-told'
+const CHECKED = 'inyon.app-update'
+const TOLD = 'inyon.app-update-told'
 const DAY = 24 * 60 * 60_000
 const HOUR = 60 * 60_000
 
@@ -46,7 +46,7 @@ async function appVersion(): Promise<string | undefined> {
 }
 
 /**
- * The newest release that has an APK. tether-releases carries tether-node too, so a release
+ * The newest release that has an APK. inyon-releases carries tether-node too, so a release
  * without an APK doesn't count.
  */
 export async function latestApk(): Promise<{ version: string; url: string } | undefined> {
@@ -56,7 +56,7 @@ export async function latestApk(): Promise<{ version: string; url: string } | un
   const version = String(r.tag_name ?? '').replace(/^v/, '')
   if (r.prerelease || r.draft || !parseRelease(version)) return undefined
   const apks = (r.assets ?? []).filter((a) => /\.apk$/i.test(a.name ?? '') && /^https:\/\//.test(a.browser_download_url ?? ''))
-  const apk = apks.find((a) => a.name === `tether-${version}.apk`) ?? apks[0]
+  const apk = apks.find((a) => a.name === `inyon-${version}.apk`) ?? apks[0]
   return apk ? { version, url: apk.browser_download_url! } : undefined
 }
 
@@ -97,7 +97,7 @@ export function startAppUpdateCheck() {
     checkAppUpdate().then((u) => {
       if (!u?.latest || read<string>(TOLD) === u.latest) return
       write(TOLD, u.latest)
-      toast({ title: `Tether ${u.latest} is available`, body: 'Download it from Settings.', tone: 'info', href: '/settings#updates' })
+      toast({ title: `Inyon ${u.latest} is available`, body: 'Download it from Settings.', tone: 'info', href: '/settings#updates' })
     }, () => {})
   void run()
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && void run())

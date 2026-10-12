@@ -3,7 +3,7 @@ name: tether-node
 # Builds tether-node as single binaries (Bun included), so a laptop needs nothing else installed.
 #   push to main  -> refreshes the "node-latest" pre-release
 #   tag v1.2.3    -> attached to that release, and copied to the public downloads repo
-#                    (Abhash-Chakraborty/tether-releases) that the one-line installers fetch from
+#                    (Abhash-Chakraborty/inyon-releases) that the one-line installers fetch from
 on:
   push:
     branches: [main]
@@ -57,22 +57,22 @@ jobs:
         run: |
           files=("$RUNNER_TEMP"/dist/*)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Tether ${GITHUB_REF_NAME#v}" --generate-notes
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Inyon ${GITHUB_REF_NAME#v}" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
             gh release delete node-latest --yes --cleanup-tag 2>/dev/null || true
             gh release create node-latest "${files[@]}" --prerelease --target "$GITHUB_SHA" \
               --title "Latest tether-node build" \
-              --notes "Built from $GITHUB_SHA on main. Run \`tether-node pair\` on a laptop and scan the code with the Tether app."
+              --notes "Built from $GITHUB_SHA on main. Run \`tether-node pair\` on a laptop and scan the code with the Inyon app."
           fi
 
       # this repo is private, so the installers download from a public one; needs a fine-grained
-      # token with contents: write on tether-releases, saved as the RELEASES_TOKEN secret
+      # token with contents: write on inyon-releases, saved as the RELEASES_TOKEN secret
       - name: Publish downloads
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
         run: |
           if [ -z "$GH_TOKEN" ]; then echo "No RELEASES_TOKEN secret: skipping the public downloads"; exit 0; fi
-          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* -R Abhash-Chakraborty/tether-releases \
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* -R Abhash-Chakraborty/inyon-releases \
             --title "tether-node ${GITHUB_REF_NAME#v}" --notes "tether-node ${GITHUB_REF_NAME#v}. See the README for the one-line setup." --latest

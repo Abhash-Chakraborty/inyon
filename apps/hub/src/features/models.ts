@@ -1,6 +1,6 @@
 import { copilotModels } from '../agents/copilot-models.ts'
 import { opencodeCatalog } from '../agents/opencode-api.ts'
-import { AGENTS, type AgentCatalog } from '@tether/protocol'
+import { AGENTS, type AgentCatalog } from '@inyon/protocol'
 import { registry, HttpError } from '../hosts/registry.ts'
 import { agyModels } from '../agents/antigravity-models.ts'
 import { codexModels } from '../agents/codex-models.ts'

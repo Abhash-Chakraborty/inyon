@@ -1,5 +1,5 @@
 {
-  "name": "@tether/protocol",
+  "name": "@inyon/protocol",
   "private": true,
   "type": "module",
   "exports": {

@@ -146,7 +146,7 @@ export function serveOps(send: (m: unknown) => void) {
           let snapshot: string | undefined
           // the hub's process listing: answer it from Windows' own process table
           if (WIN && /\bps -e -o /.test(m.cmd)) {
-            snapshot = path.join(os.tmpdir(), `tether-ps-${process.pid}-${id}.txt`)
+            snapshot = path.join(os.tmpdir(), `inyon-ps-${process.pid}-${id}.txt`)
             writeFileSync(snapshot, await winProcs())
             env = { ...childEnv, TETHER_PS: snapshot }
           }

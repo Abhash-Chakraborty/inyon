@@ -277,7 +277,7 @@ export interface MenuItem {
 
 /** Anchored dropdown menu; keyboard navigable; closes on outside click. */
 /** Opens the menu registered under `name`; false when none is on screen. */
-export const openMenu = (name: string) => !window.dispatchEvent(new CustomEvent('tether:open-menu', { detail: name, cancelable: true }))
+export const openMenu = (name: string) => !window.dispatchEvent(new CustomEvent('inyon:open-menu', { detail: name, cancelable: true }))
 
 export function Menu({
   trigger,
@@ -305,8 +305,8 @@ export function Menu({
       // after the key that asked for it, or that same Enter would pick an item and close it again
       setTimeout(() => setOpen(true))
     }
-    window.addEventListener('tether:open-menu', onOpen)
-    return () => window.removeEventListener('tether:open-menu', onOpen)
+    window.addEventListener('inyon:open-menu', onOpen)
+    return () => window.removeEventListener('inyon:open-menu', onOpen)
   }, [name])
   const ref = useRef<HTMLButtonElement | null>(null)
   const menu = useRef<HTMLDivElement | null>(null)

@@ -9,7 +9,7 @@ import {
   update, UpdateError, waitStarted, type Deps,
 } from './update.ts'
 
-// Nothing real is touched: home is a throwaway folder, a local server stands in for tether-releases
+// Nothing real is touched: home is a throwaway folder, a local server stands in for inyon-releases
 // and the hub, and restarting the service is a fake that records what it was asked.
 afterAll(() => mock.restore())
 
@@ -172,7 +172,7 @@ test('which install is running', () => {
   expect(findInstall([installed()], 'http://hub').kind).toBe('binary')
   expect(findInstall([path.join(home, '.tether-node', 'tether-node.exe')], 'http://hub')).toMatchObject({ kind: 'hub', exe: true })
   expect(findInstall(['/tmp/Downloads/tether-node-linux-x64'], undefined).kind).toBe('binary')
-  expect(() => findInstall([process.execPath, '/src/tether/apps/node/tether-node.ts'], undefined)).toThrow('source checkout')
+  expect(() => findInstall([process.execPath, '/src/inyon/apps/node/tether-node.ts'], undefined)).toThrow('source checkout')
 })
 
 /** Acts like Windows: a running program can be renamed, but not deleted or overwritten. */

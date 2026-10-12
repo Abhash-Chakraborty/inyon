@@ -1,4 +1,4 @@
-import type { AgentKind, PromptOption, ScreenPrompt, ScreenState } from '@tether/protocol'
+import type { AgentKind, PromptOption, ScreenPrompt, ScreenState } from '@inyon/protocol'
 import { parseOpenCodeScreen } from '../agents/opencode-screen.ts'
 import { parseCopilotScreen } from '../agents/copilot-screen.ts'
 

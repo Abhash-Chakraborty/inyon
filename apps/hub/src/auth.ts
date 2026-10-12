@@ -2,7 +2,9 @@ import crypto from 'node:crypto'
 import { checkPassword, sessionSecret } from './password.ts'
 import { kv } from './platform/store.ts'
 
-export const COOKIE = 'tether_session'
+export const COOKIE = 'inyon_session'
+/** the cookie's name before the rename to Inyon: still signs you in, and is swapped for the new one */
+const OLD_COOKIE = 'tether_session'
 /** a session ends after 30 days without use; using it pushes the end back (see refreshCookie) */
 const MAX_AGE = 60 * 60 * 24 * 30
 const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000
@@ -35,10 +37,9 @@ export function issueCookie(secure: boolean) {
 
 export const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
 
-function credential(req: Request) {
-  const raw = req.headers.get('cookie') ?? ''
-  return raw.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`))?.[1]
-}
+const cookieValue = (raw: string, name: string) => raw.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`))?.[1]
+const credential = (req: Request) => cookieValue(req.headers.get('cookie') ?? '', COOKIE) ?? cookieValue(req.headers.get('cookie') ?? '', OLD_COOKIE)
+const oldCookieOnly = (req: Request) => !cookieValue(req.headers.get('cookie') ?? '', COOKIE)
 
 function session(req: Request): Session | undefined {
   const value = credential(req)
@@ -82,7 +83,7 @@ export function closeSockets(nonce?: string) {
 /** A fresh expiry for a session in use, at most once a day (same nonce, so sign-out still ends it). */
 export function refreshCookie(req: Request, secure: boolean) {
   const s = session(req)
-  if (!s || Date.now() - (s.iat ?? 0) < REFRESH_AFTER_MS) return
+  if (!s || (Date.now() - (s.iat ?? 0) < REFRESH_AFTER_MS && !oldCookieOnly(req))) return
   return cookieFor({ ...s, exp: Date.now() + MAX_AGE * 1000, iat: Date.now() }, secure)
 }
 

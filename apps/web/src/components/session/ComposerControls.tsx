@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
 import { ChevronDown, Shield, Target } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@tether/protocol'
+import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
 import { modelName } from '../../lib/format.ts'

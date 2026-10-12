@@ -1,9 +1,9 @@
 import { OpenCodeClient } from '../agents/opencode-api.ts'
 import { opencodeSelection, opencodeLive } from '../agents/opencode-controls.ts'
-import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg } from '@tether/protocol'
+import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg } from '@inyon/protocol'
 import { isDriving, startDriving } from './driving.ts'
 import { SendLedger } from './delivery.ts'
-import { chatKey } from '@tether/protocol'
+import { chatKey } from '@inyon/protocol'
 import { codexHistory, normalizeCodex } from '../agents/codex.ts'
 import { normalizeCopilot } from '../agents/copilot.ts'
 import { AntigravityDoc } from '../agents/antigravity.ts'
@@ -20,7 +20,7 @@ import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
 import { KEEP as CACHE_KEEP, READER, loadChat, saveChat } from './chat-cache.ts'
 import { metaCommand, parseSize, rangeCommand, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
 
-const DEBUG = typeof process !== 'undefined' && !!process.env?.TETHER_DEBUG
+const DEBUG = typeof process !== 'undefined' && !!process.env?.INYON_DEBUG
 
 const PAGE = 160
 /** messages kept per open chat; older ones stay in the transcript file (and the terminal) */
@@ -31,7 +31,7 @@ const SCREEN_MS = 2000
 const QUIET_SCREEN_MS = 20_000
 let hidden = false
 const IDLE_SHUTDOWN_MS = 120_000
-/** agents whose input box Tether can read and retype, so a draft follows you between app and terminal */
+/** agents whose input box Inyon can read and retype, so a draft follows you between app and terminal */
 const MIRRORS = new Set<AgentKind>(['claude', 'codex', 'antigravity', 'opencode', 'copilot'])
 
 /** a closed chat's state is kept this long, so opening it again carries on instead of re-reading */
@@ -1041,7 +1041,7 @@ class ChatWatcher {
       const pane = registry.findPane(this.hostId, this.paneId)?.pane
       if (lines && pane?.agent) {
         const screen = parseScreen(lines, pane.width, pane.agent!.kind)
-        // a menu Tether is working through itself stays out of the app
+        // a menu Inyon is working through itself stays out of the app
         if (isDriving(this.hostId, this.paneId) && screen.prompt) {
           screen.prompt = undefined
           screen.inputVisible = this.screen.inputVisible

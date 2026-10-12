@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { AgentCatalog, AgentKind } from '@tether/protocol'
+import type { AgentCatalog, AgentKind } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 
 /** agents whose model list the hub reads from the CLI (agy models, Codex's models cache) */

@@ -4,7 +4,7 @@
     android:id="@+id/scanner_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/tether_ink">
+    android:background="@color/inyon_ink">
 
     <androidx.camera.view.PreviewView
         android:id="@+id/scanner_preview"
@@ -12,7 +12,7 @@
         android:layout_height="match_parent"
         app:scaleType="fillCenter" />
 
-    <dev.tether.app.device.ScannerOverlay
+    <tech.abhashchakraborty.inyon.device.ScannerOverlay
         android:id="@+id/scanner_overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
@@ -27,7 +27,7 @@
         android:paddingStart="32dp"
         android:paddingEnd="32dp"
         android:text="Point at the code tether-node shows"
-        android:textColor="@color/tether_paper"
+        android:textColor="@color/inyon_paper"
         android:textSize="15sp" />
 
     <LinearLayout
@@ -47,7 +47,7 @@
             android:alpha="0.6"
             android:gravity="center"
             android:text="The camera is on only while this screen is open. Nothing is recorded or sent."
-            android:textColor="@color/tether_paper"
+            android:textColor="@color/inyon_paper"
             android:textSize="12sp" />
 
         <LinearLayout
@@ -64,7 +64,7 @@
                 android:contentDescription="Torch"
                 android:src="@drawable/ic_scan_torch"
                 android:visibility="invisible"
-                android:tint="@color/tether_paper" />
+                android:tint="@color/inyon_paper" />
 
             <TextView
                 android:id="@+id/scanner_type"
@@ -76,7 +76,7 @@
                 android:background="@drawable/scan_pill"
                 android:gravity="center"
                 android:text="Type a code instead"
-                android:textColor="@color/tether_paper"
+                android:textColor="@color/inyon_paper"
                 android:textSize="15sp" />
 
             <ImageButton
@@ -86,7 +86,7 @@
                 android:background="@drawable/scan_pill"
                 android:contentDescription="Close"
                 android:src="@drawable/ic_scan_close"
-                android:tint="@color/tether_paper" />
+                android:tint="@color/inyon_paper" />
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>

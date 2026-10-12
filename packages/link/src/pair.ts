@@ -19,14 +19,15 @@ export function pairLink(p: PairInfo) {
   const q = new URLSearchParams({ m: p.id, s: p.secret, n: p.name })
   for (const u of p.urls) q.append('u', u)
   for (const r of p.relays) q.append('r', r)
-  return `tether://pair?${q}`
+  return `inyon://pair?${q}`
 }
 
 /** Reads a pairing link; undefined if it isn't one. */
 export function parsePairLink(text: string): PairInfo | undefined {
   try {
     const url = new URL(text.trim())
-    if (url.protocol !== 'tether:' && url.protocol !== 'https:') return
+    // tether:// is how codes looked before the rename to Inyon
+    if (url.protocol !== 'inyon:' && url.protocol !== 'tether:' && url.protocol !== 'https:') return
     const q = url.searchParams
     const id = q.get('m') ?? ''
     const secret = q.get('s') ?? ''

@@ -1,6 +1,6 @@
-import { AGENTS, AGENT_KINDS, type AgentKind } from '@tether/protocol'
+import { AGENTS, AGENT_KINDS, type AgentKind } from '@inyon/protocol'
 import { shq } from '../hosts/host.ts'
-import { LOGIN_PREFIX, VIEW_PREFIX } from '../tmux/tmux.ts'
+import { HIDDEN_PREFIXES } from '../tmux/tmux.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { loadSettings, saveSettings } from '../config.ts'
 import { signedInTest } from '../agents/auth-sh.ts'
@@ -12,7 +12,7 @@ export interface SetupCheck {
   label: string
   ok: boolean
   detail?: string
-  /** a one-tap fix Tether can run */
+  /** a one-tap fix Inyon can run */
   fix?: { label: string; action: string }
   /** a command for the user to run themselves (e.g. needs sudo or a browser) */
   manual?: string
@@ -38,7 +38,7 @@ const PKG_INSTALL: Record<string, (p: string) => string> = {
   brew: (p) => `brew install ${p}`,
 }
 
-/** Everything Tether needs on a machine, checked in one round trip. */
+/** Everything Inyon needs on a machine, checked in one round trip. */
 export async function setupReport(hostId: string): Promise<SetupReport> {
   const host = registry.host(hostId)
   const authTests = AGENT_KINDS.map((k) => `echo "AUTH ${k} $(${signedInTest(k)} && echo 1 || echo 0)"`).join('\n')
@@ -47,8 +47,8 @@ echo "OS $(uname -s) $(uname -m)"
 for p in apt dnf yum pacman apk zypper brew; do command -v $p >/dev/null 2>&1 && { [ $p = apt ] && command -v apt-get >/dev/null || [ $p != apt ]; } && { echo "PKG $p"; break; }; done
 sudo -n true >/dev/null 2>&1 && echo "SUDO 1" || echo "SUDO 0"
 echo "TMUX $(tmux -V 2>/dev/null)"
-# the same sessions the list shows: not Tether's own terminal views and sign-ins
-echo "SESSIONS $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c -v -e '^${VIEW_PREFIX}' -e '^${LOGIN_PREFIX}')"
+# the same sessions the list shows: not Inyon's own terminal views and sign-ins
+echo "SESSIONS $(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep -c -v ${HIDDEN_PREFIXES.map((p) => `-e '^${p}'`).join(' ')})"
 echo "NODE $(node --version 2>/dev/null)"
 echo "NPM $(npm --version 2>/dev/null)"
 echo "CURL $(command -v curl >/dev/null && echo 1)"
@@ -73,7 +73,7 @@ ${authTests}
       id: 'tmux',
       label: 'tmux',
       ok: !!tmux,
-      detail: tmux || 'Not installed. Tether lists and controls agents through tmux.',
+      detail: tmux || 'Not installed. Inyon lists and controls agents through tmux.',
       fix: !tmux && pkg && (sudo || pkg === 'brew') ? { label: 'Install tmux', action: 'install:tmux' } : undefined,
       manual: !tmux ? asRoot(install('tmux')) ?? 'Install tmux with your package manager' : undefined,
     },

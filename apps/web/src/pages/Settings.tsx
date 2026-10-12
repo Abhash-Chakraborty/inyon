@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Bell, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
-import { AGENTS } from '@tether/protocol'
+import { AGENTS } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
@@ -40,11 +40,11 @@ function Background() {
   }
   return (
     <Section id="background" title="In the background">
-      <Row label="Stay connected" hint="Keeps your machines connected while Tether is closed, so alerts arrive right away. Shows a small ongoing notification and uses a little more battery.">
+      <Row label="Stay connected" hint="Keeps your machines connected while Inyon is closed, so alerts arrive right away. Shows a small ongoing notification and uses a little more battery.">
         <Toggle on={on} onChange={toggle} label="Stay connected" />
       </Row>
       {unrestricted === false && (
-        <Row label="Battery limits" hint="Android is limiting Tether in the background, so it loses its connection once the screen has been off a while. Allow it to run in the background to keep alerts coming.">
+        <Row label="Battery limits" hint="Android is limiting Inyon in the background, so it loses its connection once the screen has been off a while. Allow it to run in the background to keep alerts coming.">
           <button type="button" onClick={() => allowBackground().then((ok) => ok !== undefined && setUnrestricted(ok))} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
             Allow
           </button>
@@ -54,13 +54,13 @@ function Background() {
   )
 }
 
-/** Which Tether this is, to check for updates or put in a bug report. */
+/** Which Inyon this is, to check for updates or put in a bug report. */
 function About() {
   const [app, setApp] = useState<{ version: string; build: string } | undefined>()
   useEffect(() => {
     plugin('App')?.getInfo().then((i: { version?: unknown; build?: unknown }) => typeof i?.version === 'string' && setApp({ version: i.version, build: String(i.build ?? '') })).catch(() => {})
   }, [])
-  const summary = `Tether ${VERSION}${COMMIT ? ` (${COMMIT})` : ''}${app ? ` · Android app ${app.version}, build ${app.build}` : ''}`
+  const summary = `Inyon ${VERSION}${COMMIT ? ` (${COMMIT})` : ''}${app ? ` · Android app ${app.version}, build ${app.build}` : ''}`
   return (
     <Section id="about" title="About">
       <Row label="Version" hint={COMMIT ? `Built from commit ${COMMIT}` : undefined}>
@@ -89,7 +89,7 @@ function About() {
 function Updates() {
   const native = isNative()
   return (
-    <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run pnpm hub:update in the folder Tether is installed in.'}>
+    <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run pnpm hub:update in the folder Inyon is installed in.'}>
       {native ? <AppUpdateRow /> : <HubUpdateRow />}
     </Section>
   )
@@ -160,12 +160,12 @@ function HubUpdateRow() {
   const available = !!info.latest || !!info.behind
   if (updating) {
     return (
-      <Row label="Updating the hub…" hint="It restarts when it's done, and Tether reconnects by itself. This takes a minute or two.">
+      <Row label="Updating the hub…" hint="It restarts when it's done, and Inyon reconnects by itself. This takes a minute or two.">
         <Spinner />
       </Row>
     )
   }
-  if (info.restartNeeded) return <Row label="Updated" hint="Restart the hub to run the new version. It has no systemd unit Tether could restart." />
+  if (info.restartNeeded) return <Row label="Updated" hint="Restart the hub to run the new version. It has no systemd unit Inyon could restart." />
   const running = `This hub runs ${info.current}.`
   const commits = info.behind ? `${info.behind} new ${info.behind === 1 ? 'commit' : 'commits'}` : ''
   return (
@@ -198,7 +198,7 @@ function HubUpdateRow() {
   )
 }
 
-/** The Android app: its version, the newest APK on tether-releases, and Download. */
+/** The Android app: its version, the newest APK on inyon-releases, and Download. */
 function AppUpdateRow() {
   const [u, setU] = useState<AppUpdate | undefined>()
   const [failed, setFailed] = useState(false)
@@ -279,7 +279,7 @@ export function Settings() {
   const allow = () => (native ? askNativeNotifications().then((ok) => setPerm(ok ? 'granted' : 'denied')) : Notification.requestPermission().then(setPerm))
   /** Shows what a notification looks like here, so you know they get through. */
   const testNotification = async () => {
-    const title = 'Tether'
+    const title = 'Inyon'
     const body = 'Notifications work. You\u2019ll get one when an agent finishes or needs you.'
     if (native ? await nativeNotify(title, body, '/settings#notifications', 'test', 'done') : (() => {
       try {
@@ -289,7 +289,7 @@ export function Settings() {
         return false
       }
     })()) toast({ title: 'Test notification sent', tone: 'success' })
-    else toast({ title: "Couldn't show a notification", body: 'Check that notifications are allowed for Tether in your settings.', tone: 'error' })
+    else toast({ title: "Couldn't show a notification", body: 'Check that notifications are allowed for Inyon in your settings.', tone: 'error' })
   }
 
   useEffect(() => {
@@ -363,7 +363,7 @@ export function Settings() {
             </Row>
           </Section>
 
-          <Section id="agents" title="Agents" desc="Found on your machines. Tether picks the right one for each pane automatically.">
+          <Section id="agents" title="Agents" desc="Found on your machines. Inyon picks the right one for each pane automatically.">
             {agentsByKind.map(({ a, on }) => (
               <Row
                 key={a.kind}
@@ -394,7 +394,7 @@ export function Settings() {
               {!hub ? (
                 <div className="flex justify-center py-6"><Spinner /></div>
               ) : (
-                <Row label="Restart sessions that stop reporting" hint="When a session's settings are swapped under it, its cost and effort stop updating. If on, Tether resumes it once it's idle, with nothing typed and no background shells.">
+                <Row label="Restart sessions that stop reporting" hint="When a session's settings are swapped under it, its cost and effort stop updating. If on, Inyon resumes it once it's idle, with nothing typed and no background shells.">
                   <Toggle on={!!hub.autoResume} onChange={(v) => saveHub({}, { autoResume: v })} label="Restart sessions that stop reporting" />
                 </Row>
               )}
@@ -403,7 +403,7 @@ export function Settings() {
 
           <section id="uploads" className="scroll-mt-20">
             <h2 className="text-[15px] font-semibold tracking-tight">Uploads and clipboard</h2>
-            <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.tether/uploads on the session's machine, and the agent gets their paths.</p>
+            <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.inyon/uploads on the session's machine, and the agent gets their paths.</p>
             <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
               {!hub ? (
                 <div className="flex justify-center py-6"><Spinner /></div>
@@ -429,7 +429,7 @@ export function Settings() {
             <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
               <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />
             </Row>
-            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : perm === 'denied' ? 'Turned off in your phone\'s settings for Tether' : 'Alerts while Tether is in the background'}>
+            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : perm === 'denied' ? 'Turned off in your phone\'s settings for Inyon' : 'Alerts while Inyon is in the background'}>
               {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
                 <button type="button" onClick={allow} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
                   Allow
@@ -570,13 +570,13 @@ function PhoneKey() {
   )
 }
 
-/** Where to open Tether from a phone or another computer: this same hub address. */
+/** Where to open Inyon from a phone or another computer: this same hub address. */
 function OtherDevices() {
   const address = window.location.origin
   const local = /^https?:\/\/(localhost|127\.)/.test(address)
   const https = address.startsWith('https:')
   return (
-    <Section id="devices" title="Your other devices" desc="Everything runs on this hub. Open the same address anywhere you want Tether.">
+    <Section id="devices" title="Your other devices" desc="Everything runs on this hub. Open the same address anywhere you want Inyon.">
       <Row
         label="Hub address"
         hint={local ? 'This is the hub machine itself. Other devices use its Tailscale or NetBird name or IP with the same port.' : undefined}

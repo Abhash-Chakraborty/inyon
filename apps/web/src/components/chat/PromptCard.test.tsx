@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { fireEvent, screen } from '@testing-library/react'
-import { promptKey, type ScreenPrompt } from '@tether/protocol'
+import { promptKey, type ScreenPrompt } from '@inyon/protocol'
 import { PromptCard } from './PromptCard.tsx'
 import { api } from '../../test/fakes.ts'
 import { renderSettled as render } from '../../test/render.tsx'

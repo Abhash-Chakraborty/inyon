@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronRight, Copy, ExternalLink, TriangleAlert } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@tether/protocol'
+import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { api, type SignInScreen } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'

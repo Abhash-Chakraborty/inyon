@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Plug } from 'lucide-react'
-import type { AgentKind, HostState } from '@tether/protocol'
+import type { AgentKind, HostState } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { Button } from '../ui/primitives.tsx'

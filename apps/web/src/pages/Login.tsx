@@ -20,7 +20,7 @@ function PhoneFailed() {
     <div className="flex min-h-dvh items-center justify-center px-6">
       <div className="w-full max-w-[360px]">
         <Logo className="size-12 rounded-2xl" />
-        <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">Tether couldn't start</h1>
+        <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">Inyon couldn't start</h1>
         <p className="mt-1.5 text-[15px] text-fg-2">{error || 'Starting…'}</p>
         <Button variant="primary" size="lg" className="mt-6 w-full" onClick={() => window.location.reload()}>
           Try again
@@ -91,7 +91,7 @@ function SignIn() {
         )}
         {setup?.code && (
           <div className="mt-4">
-            <Field label="Setup code" hint="The hub printed it when it started. It's also in ~/.tether/setup-code on the hub machine.">
+            <Field label="Setup code" hint="The hub printed it when it started. It's also in ~/.inyon/setup-code on the hub machine.">
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}

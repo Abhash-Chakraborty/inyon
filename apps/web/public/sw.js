@@ -1,6 +1,6 @@
-// Tether service worker: caches the app shell so the installed app opens instantly.
+// Inyon service worker: caches the app shell so the installed app opens instantly.
 // API calls and the WebSocket always go to the network.
-const CACHE = 'tether-v1'
+const CACHE = 'inyon-v1'
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(['/', '/manifest.webmanifest', '/icon-192.png'])))

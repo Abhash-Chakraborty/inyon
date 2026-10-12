@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type HostConfig } from '@tether/protocol'
+import { AGENTS, type AgentKind, type HostConfig } from '@inyon/protocol'
 import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref } from '../lib/overview.ts'

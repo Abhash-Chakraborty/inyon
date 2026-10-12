@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { socket } from '../lib/socket.ts'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
-import { AGENTS, type BackgroundTask, type SubagentInfo } from '@tether/protocol'
+import { AGENTS, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
 import { paneFromSlug } from '../lib/api.ts'
 import { useStore } from '../lib/store.ts'
 import { paneTitle } from '../lib/overview.ts'
@@ -66,9 +66,9 @@ export function PanePage() {
 
   const title = ref?.pane.label || info?.title || (ref ? paneTitle(ref) : 'Session')
   useEffect(() => {
-    document.title = `${title} · Tether`
+    document.title = `${title} · Inyon`
     return () => {
-      document.title = 'Tether'
+      document.title = 'Inyon'
     }
   }, [title])
 

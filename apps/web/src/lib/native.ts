@@ -1,5 +1,5 @@
 /**
- * The Tether phone apps run this same web app inside a native shell (Capacitor). The shell injects
+ * The Inyon phone apps run this same web app inside a native shell (Capacitor). The shell injects
  * `window.Capacitor`, whose `Plugins` proxy calls straight into native code, so the web app needs
  * no extra packages and does nothing different in a normal browser.
  */
@@ -19,9 +19,10 @@ const go = (href: string) => {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
-// a tether://pair link (a laptop's code scanned with the camera) opens the pairing sheet
+// an inyon://pair link (a laptop's code scanned with the camera) opens the pairing sheet; tether:// is
+// how a laptop from before the rename to Inyon prints it
 const openUrl = (url: string | undefined) => {
-  if (url && /^tether:\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
+  if (url && /^(inyon|tether):\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
 }
 
 /** Native behaviour for the phone apps: back button, notification taps, deep links, status bar. */
@@ -37,7 +38,7 @@ export function installNative() {
   })
   // tapping a notification opens the session it's about: an event while the app runs, a stored
   // link when the tap started the app
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   device?.addListener('pushOpened', ({ href }: { href?: string }) => href && go(href))
   device
     ?.takeLaunchHref?.()
@@ -63,12 +64,12 @@ export function nativeTheme(theme: 'light' | 'dark') {
 }
 
 /**
- * A notification from the Android app, with Tether's logo and buttons that fit `kind` (waiting,
+ * A notification from the Android app, with Inyon's logo and buttons that fit `kind` (waiting,
  * done, offline, online). `tag` names the session or machine: its next notification replaces this
  * one, and opening it clears it. False where the app can't post notifications itself.
  */
 export async function nativeNotify(title: string, body: string, href: string, tag?: string, kind?: string) {
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   if (typeof device?.postNotification !== 'function') return false
   try {
     const r = await device.postNotification({ title, body, href, tag, kind })
@@ -80,12 +81,12 @@ export async function nativeNotify(title: string, body: string, href: string, ta
 
 /** You're looking at it now: take its notification away. */
 export function clearNativeNotification(tag: string) {
-  void Promise.resolve(plugin('TetherDevice')?.clearNotification?.({ tag })).catch(() => {})
+  void Promise.resolve(plugin('InyonDevice')?.clearNotification?.({ tag })).catch(() => {})
 }
 
 /** Asks for permission to notify; undefined where the app can't post notifications itself. */
 export async function askNativeNotifications() {
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   if (typeof device?.requestNotificationPermission !== 'function') return undefined
   try {
     return !!(await device.requestNotificationPermission())?.granted
@@ -94,9 +95,9 @@ export async function askNativeNotifications() {
   }
 }
 
-/** Whether the phone app may post notifications (permission given and not turned off for Tether). */
+/** Whether the phone app may post notifications (permission given and not turned off for Inyon). */
 export async function nativeNotificationsOn(): Promise<boolean | undefined> {
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   if (typeof device?.notificationsEnabled !== 'function') return undefined
   try {
     return !!(await device.notificationsEnabled())?.enabled
@@ -110,7 +111,7 @@ export async function nativeNotificationsOn(): Promise<boolean | undefined> {
  * reads it natively; elsewhere it's the browser's clipboard API, which may ask first or refuse.
  */
 export async function readClipboard(): Promise<string> {
-  const device = plugin('TetherDevice')
+  const device = plugin('InyonDevice')
   if (typeof device?.readClipboardText === 'function') {
     try {
       return ((await device.readClipboardText()) as { text?: string } | undefined)?.text ?? ''

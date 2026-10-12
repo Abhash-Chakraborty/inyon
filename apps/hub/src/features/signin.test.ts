@@ -33,7 +33,7 @@ https://claude.ai/oauth/authorize?code=true&client_id=abc&redirect_uri=https%3A%
 Paste code here if prompted >
 Login successful.
 
-[tether-exit 0]
+[inyon-exit 0]
 `)
   expect(s.links).toEqual(['https://claude.ai/oauth/authorize?code=true&client_id=abc&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=XYZ'])
   expect(s.code).toBeUndefined()

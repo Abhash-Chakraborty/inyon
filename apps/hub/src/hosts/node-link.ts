@@ -77,7 +77,7 @@ class NodeLinks {
   }
 
   disconnect(hostId: string) {
-    this.sockets.get(hostId)?.close(4001, 'removed from Tether')
+    this.sockets.get(hostId)?.close(4001, 'removed from Inyon')
   }
 
   message(hostId: string, raw: string) {

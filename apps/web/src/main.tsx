@@ -1,3 +1,5 @@
+// first: copies settings saved under the old name before anything reads them
+import './lib/legacy.ts'
 import { lazy, StrictMode, useEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
@@ -47,8 +49,8 @@ function App() {
   useEffect(() => {
     api.session().then((s) => setAuthed(s.authed)).catch(() => setAuthed(false))
     const out = () => setAuthed(false)
-    window.addEventListener('tether:signed-out', out)
-    return () => window.removeEventListener('tether:signed-out', out)
+    window.addEventListener('inyon:signed-out', out)
+    return () => window.removeEventListener('inyon:signed-out', out)
   }, [])
 
   useEffect(() => {

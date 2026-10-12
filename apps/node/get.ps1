@@ -1,5 +1,5 @@
-# Gets tether-node for this PC and sets it up for the Tether phone app. In PowerShell:
-#   irm https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download/get.ps1 | iex
+# Gets tether-node for this PC and sets it up for the Inyon phone app. In PowerShell:
+#   irm https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.ps1 | iex
 # It downloads tether-node into %USERPROFILE%\.tether-node\bin, checks it against the release's
 # checksums, starts it in the background when you sign in, and shows a code to scan with the app.
 # No admin rights needed.
@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-$base = if ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://github.com/Abhash-Chakraborty/tether-releases/releases/latest/download' }
+$base = if ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download' }
 # Windows on ARM runs the x64 build
 $name = 'tether-node-windows-x64.exe'
 $dir = Join-Path $env:USERPROFILE '.tether-node\bin'

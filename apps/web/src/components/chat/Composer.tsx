@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, X } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@tether/protocol'
+import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
 import { patchChat, toast, useStore } from '../../lib/store.ts'
@@ -316,8 +316,8 @@ export function Composer({
       return true
     }
     // the phone app's own Paste can bring an image the WebView doesn't see: ask for it
-    if (!pasted && plugin('TetherDevice')?.readClipboardFile) {
-      plugin('TetherDevice')!.readClipboardFile().then(
+    if (!pasted && plugin('InyonDevice')?.readClipboardFile) {
+      plugin('InyonDevice')!.readClipboardFile().then(
         (f: Partial<NativeFile>) => f?.data && addFiles([nativeFile(f as NativeFile)]),
         (err: Error) => toast({ title: "Couldn't paste that", body: err.message, tone: 'error' }),
       )
@@ -366,8 +366,8 @@ export function Composer({
   useEffect(() => {
     if (disabled) return
     const stops = [
-      onNative<NativeFile>('TetherDevice', 'pasteFile', (f) => addRef.current([nativeFile(f)])),
-      onNative<{ message: string }>('TetherDevice', 'pasteError', (e) => toast({ title: "Couldn't paste that", body: e.message, tone: 'error' })),
+      onNative<NativeFile>('InyonDevice', 'pasteFile', (f) => addRef.current([nativeFile(f)])),
+      onNative<{ message: string }>('InyonDevice', 'pasteError', (e) => toast({ title: "Couldn't paste that", body: e.message, tone: 'error' })),
     ]
     return () => stops.forEach((stop) => stop())
   }, [disabled])

@@ -1,4 +1,4 @@
-import { AGENTS, type HostState, type PaneInfo, type SessionInfo, type WindowInfo } from '@tether/protocol'
+import { AGENTS, type HostState, type PaneInfo, type SessionInfo, type WindowInfo } from '@inyon/protocol'
 import { paneSlug } from './api.ts'
 
 export interface PaneRef {

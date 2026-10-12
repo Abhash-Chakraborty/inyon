@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 import clsx from 'clsx'
-import { AGENTS, type AgentKind } from '@tether/protocol'
+import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { useStore } from './store.ts'
 import { AntigravityMark, CodexMark, TileMark } from '../components/ui/AgentMarks.tsx'
 import { AGENT_TILES } from '../components/ui/agentTiles.ts'

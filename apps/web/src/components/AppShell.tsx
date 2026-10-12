@@ -13,7 +13,7 @@ import { Spinner } from './ui/primitives.tsx'
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
 
-/** Tether's mark: a terminal prompt with a cable running out to a node (same art as public/icon.svg). */
+/** Inyon's mark: a terminal prompt with a cable running out to a node (same art as public/icon.svg). */
 export function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 512 512" className={clsx('shrink-0', className ?? 'size-[26px]')} aria-hidden>
@@ -113,7 +113,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
     <aside className="hidden w-[232px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[256px]">
       <div className="flex h-[52px] items-center gap-2.5 px-4">
         <Logo />
-        <span className="text-[15px] font-semibold tracking-tight">Tether</span>
+        <span className="text-[15px] font-semibold tracking-tight">Inyon</span>
         {!connected && <WifiOff className="ml-auto size-4 text-warn" aria-label="Reconnecting" />}
       </div>
       <div className="space-y-1 px-3">

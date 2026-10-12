@@ -1,4 +1,4 @@
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 
 type ItemOf<K extends ChatItem['kind']> = Extract<ChatItem, { kind: K }>
 export type UserItem = ItemOf<'user'>

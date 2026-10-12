@@ -1,4 +1,4 @@
-import { AGENTS, type AgentCatalog, type AgentModel } from '@tether/protocol'
+import { AGENTS, type AgentCatalog, type AgentModel } from '@inyon/protocol'
 import type { Host } from '../hosts/host.ts'
 
 /**

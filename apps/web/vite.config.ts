@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
 
-const HUB = process.env.TETHER_HUB ?? 'http://127.0.0.1:4777'
+const HUB = process.env.INYON_HUB ?? process.env.TETHER_HUB ?? 'http://127.0.0.1:4777'
 
 /** the commit a build came from, shown next to the version in Settings */
 const commit = () => {
@@ -18,16 +18,16 @@ const commit = () => {
 
 /** The dev server's hot reload needs an inline script, which index.html's CSP refuses: drop it there. */
 const devWithoutCsp: Plugin = {
-  name: 'tether-dev-without-csp',
+  name: 'inyon-dev-without-csp',
   apply: 'serve',
   transformIndexHtml: (html) => html.replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*>/, ''),
 }
 
 export default defineConfig({
   plugins: [react(), tailwindcss(), devWithoutCsp],
-  define: { __TETHER_COMMIT__: JSON.stringify(commit()) },
+  define: { __INYON_COMMIT__: JSON.stringify(commit()) },
   // the phone app runs the hub's core in-process (loaded only inside the app, see lib/phone.ts)
-  resolve: { alias: { '@tether/phone': fileURLToPath(new URL('../hub/src/phone/index.ts', import.meta.url)) } },
+  resolve: { alias: { '@inyon/phone': fileURLToPath(new URL('../hub/src/phone/index.ts', import.meta.url)) } },
   server: {
     port: 5173,
     host: '127.0.0.1',

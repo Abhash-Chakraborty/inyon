@@ -1,4 +1,4 @@
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { shq, type HostBackend } from './host.ts'
 import { nodeBackend } from './node-backend.ts'
 
@@ -12,7 +12,7 @@ export function viaCommand(c: HostConfig, cmd: string, tty = false) {
   const opts = [
     'BatchMode=yes',
     'ControlMaster=auto',
-    '"ControlPath=$HOME/.cache/tether-ssh/%C"',
+    '"ControlPath=$HOME/.cache/inyon-ssh/%C"',
     'ControlPersist=600',
     'ServerAliveInterval=15',
     'ServerAliveCountMax=3',
@@ -20,7 +20,7 @@ export function viaCommand(c: HostConfig, cmd: string, tty = false) {
     'StrictHostKeyChecking=accept-new',
   ].map((o) => `-o ${o}`)
   const port = c.port ? ` -p ${c.port}` : ''
-  return `mkdir -p "$HOME/.cache/tether-ssh" 2>/dev/null; exec ssh ${opts.join(' ')}${port} ${tty ? '-tt' : '-T'} -- ${shq(c.target!)} ${shq(`sh -c ${shq(cmd)}`)}`
+  return `mkdir -p "$HOME/.cache/inyon-ssh" 2>/dev/null; exec ssh ${opts.join(' ')}${port} ${tty ? '-tt' : '-T'} -- ${shq(c.target!)} ${shq(`sh -c ${shq(cmd)}`)}`
 }
 
 /** `lookup` finds the paired computer a server names in `via`. */
@@ -30,7 +30,7 @@ export function viaBackend(lookup: (id: string) => HostConfig | undefined): Host
     return v?.kind === 'link' || v?.kind === 'node' ? v : undefined
   }
   const gone = 'The computer this server is reached through is no longer paired. Edit the server and pick another.'
-  // the server itself runs nothing of Tether's: when the computer isn't there, say so by name
+  // the server itself runs nothing of Inyon's: when the computer isn't there, say so by name
   const away = (v: HostConfig) => `${v.name} isn't connected right now, and this server is reached through it.`
   return {
     async exec(config, cmd, opts) {

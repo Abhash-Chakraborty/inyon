@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
-import type { ChatItem, SendState } from '@tether/protocol'
+import type { ChatItem, SendState } from '@inyon/protocol'
 import { msgKey, norm, othersSends, reconcile, settle, type PendingMessage } from './pending.ts'
 import { item } from '../test/fixtures.ts'
 

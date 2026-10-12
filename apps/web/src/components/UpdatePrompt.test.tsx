@@ -1,7 +1,7 @@
 import { beforeEach, expect, test } from 'bun:test'
 import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { VERSION } from '@tether/protocol'
+import { VERSION } from '@inyon/protocol'
 import { UpdatePrompt } from './UpdatePrompt.tsx'
 import { forgetHub } from '../lib/updates.ts'
 import { api, setSocketUp } from '../test/fakes.ts'
@@ -14,7 +14,7 @@ async function hubRestarts(version: string, commit = 'abc1234') {
   act(() => setSocketUp(true))
   await flush()
 }
-const prompt = () => screen.queryByText('Tether was updated')
+const prompt = () => screen.queryByText('Inyon was updated')
 
 beforeEach(() => {
   forgetHub()

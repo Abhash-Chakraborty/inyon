@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind } from '@tether/protocol'
+import { AGENTS, chatKey, type AgentKind } from '@inyon/protocol'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
 import { clearNativeNotification } from '../../lib/native.ts'
@@ -275,7 +275,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                 <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
               ) : !chatCapable ? (
                 <Empty icon={<AgentLogo kind={agent} size={28} />} title={`${AGENTS[agent!].name} runs in the terminal`} action={<Button onClick={onTerminal}><SquareTerminal className="size-4" /> Open terminal</Button>}>
-                  Tether doesn't read {AGENTS[agent!].name}'s conversation files yet, so use the terminal view. Status and notifications still work.
+                  Inyon doesn't read {AGENTS[agent!].name}'s conversation files yet, so use the terminal view. Status and notifications still work.
                 </Empty>
               ) : (
                 <>

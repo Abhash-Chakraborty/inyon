@@ -1,6 +1,6 @@
 {
-  "name": "Tether",
-  "short_name": "Tether",
+  "name": "Inyon",
+  "short_name": "Inyon",
   "description": "Your coding agents and tmux sessions, on every device.",
   "start_url": "/",
   "scope": "/",

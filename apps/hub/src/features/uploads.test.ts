@@ -9,7 +9,7 @@ import { uploadFiles, uploadPiece } from './features.ts'
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
 
-const home = mkdtempSync(join(tmpdir(), 'tether-up-'))
+const home = mkdtempSync(join(tmpdir(), 'inyon-up-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 
 const host = new Host({ id: 'up', name: 'Up', kind: 'local' } as any)
@@ -30,7 +30,7 @@ test('a large file is written a few megabytes at a time, never in one go', async
 test('the phone sends pieces; they join into the file, in order only', async () => {
   const piece = (at: number, n: number) => new File([video.slice(at, at + n)], 'clip.mp4', { type: 'video/mp4' })
   const first = await uploadPiece('up', undefined, piece(0, 3_000_000), { total: video.length, offset: 0 })
-  expect(first.path.startsWith(`${home}/.tether/uploads/`)).toBe(true)
+  expect(first.path.startsWith(`${home}/.inyon/uploads/`)).toBe(true)
   // a piece that doesn't follow on from what's there is refused rather than corrupting the file
   await expect(uploadPiece('up', undefined, piece(4_000_000, 10), { total: video.length, offset: 4_000_000, path: first.path })).rejects.toThrow()
   const last = await uploadPiece('up', undefined, piece(3_000_000, video.length - 3_000_000), { total: video.length, offset: 3_000_000, path: first.path })
@@ -40,7 +40,7 @@ test('the phone sends pieces; they join into the file, in order only', async () 
 
 test('pieces only go into the uploads folder', async () => {
   const p = new File(['x'], 'a.txt')
-  for (const path of ['/etc/passwd', `${home}/.tether/uploads/../../.bashrc`, `${home}/.ssh/authorized_keys`, undefined]) {
+  for (const path of ['/etc/passwd', `${home}/.inyon/uploads/../../.bashrc`, `${home}/.ssh/authorized_keys`, undefined]) {
     await expect(uploadPiece('up', undefined, p, { total: 10, offset: 5, path })).rejects.toThrow('Bad upload path')
   }
   await expect(uploadPiece('up', undefined, p, { total: 200 * 1024 * 1024, offset: 0 })).rejects.toThrow('larger than')

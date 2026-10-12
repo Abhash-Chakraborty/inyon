@@ -1,4 +1,4 @@
-import type { AgentStatus, ChatItem, RateWindow } from '@tether/protocol'
+import type { AgentStatus, ChatItem, RateWindow } from '@inyon/protocol'
 import type { TranscriptMeta } from '../claude/transcript.ts'
 
 type Draft = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'seq'> : never) : never
@@ -22,7 +22,7 @@ const decode = (v: unknown) => {
   }
 }
 
-/** Antigravity tool names → the names Tether's tool rows know. */
+/** Antigravity tool names → the names Inyon's tool rows know. */
 export function mapAgyTool(name: string, raw: Record<string, unknown> = {}): { name: string; input: any } {
   const a: any = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, decode(v)]))
   const description = a.toolSummary ?? a.Description
@@ -213,7 +213,7 @@ export function agyMode(data: any): string | undefined {
 }
 
 /**
- * Live numbers from agy's status line payload (saved per pane by Tether's wrapper). Ignored when
+ * Live numbers from agy's status line payload (saved per pane by Inyon's wrapper). Ignored when
  * it was written before this process started or names another conversation.
  */
 export function agyStatus(

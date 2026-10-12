@@ -62,7 +62,7 @@ export function z32decode(text: string): Uint8Array {
   let value = 0
   for (const ch of text.toLowerCase()) {
     const v = ALPHABET.indexOf(ch)
-    if (v < 0) throw new Error('Not a Tether machine id')
+    if (v < 0) throw new Error('Not an Inyon machine id')
     value = (value << 5) | v
     bits += 5
     if (bits >= 8) {

@@ -17,7 +17,7 @@ const hub = `http://127.0.0.1:${server.port}`
 const sha = (b: string | Buffer) => crypto.createHash('sha256').update(b).digest('hex')
 
 // a machine with no systemd and a stand-in bun, so nothing real gets installed or started
-const root = mkdtempSync(join(tmpdir(), 'tether-pair-'))
+const root = mkdtempSync(join(tmpdir(), 'inyon-pair-'))
 const bin = join(root, 'bin')
 mkdirSync(bin)
 for (const [name, body] of [['bun', 'exit 0'], ['systemctl', 'exit 1'], ['launchctl', 'exit 1']]) {

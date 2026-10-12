@@ -5,7 +5,7 @@ import {
   AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, Image as ImageIcon, Info, Layers, Lightbulb,
   Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@tether/protocol'
+import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { Part, Row } from '../../lib/chat.ts'
 import type { PendingMessage } from '../../lib/store.ts'
 import { clock, duration } from '../../lib/format.ts'
@@ -81,11 +81,11 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
 
 /** Uploaded files show as chips instead of long paths. */
 function LinkedPaths({ text }: { text: string }) {
-  const parts = text.split(/(@?\/[^\s]*\/\.tether\/uploads\/[^\s]+)/g)
+  const parts = text.split(/(@?\/[^\s]*\/\.inyon\/uploads\/[^\s]+)/g)
   return (
     <>
       {parts.map((p, i) =>
-        /\.tether\/uploads\//.test(p) ? (
+        /\.inyon\/uploads\//.test(p) ? (
           <span key={i} className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-elev/70 px-1.5 py-px align-baseline font-mono text-[12px] text-fg-2">
             <ImageIcon className="size-3 shrink-0" />
             <span className="truncate">{p.split('/').pop()!.replace(/^\d{6}-/, '')}</span>

@@ -1,4 +1,4 @@
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 import { shq, type Host } from '../hosts/host.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'
 

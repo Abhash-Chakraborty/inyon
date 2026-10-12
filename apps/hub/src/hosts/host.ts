@@ -1,4 +1,4 @@
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 
 /** POSIX single-quote a string for a shell command line. */
 export const shq = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`

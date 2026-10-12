@@ -1,18 +1,18 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { useStore } from '../platform/store.ts'
 import { setHostBackends } from '../hosts/host.ts'
 import { setLocalHost } from '../config.ts'
 import { splitTarget, sshBackend, toBase64, fromBase64, type Credentials } from './ssh-backend.ts'
 import type { Handler, Method, Routes } from '../core.ts'
 import type { PhoneRuntime, StartPhone, SshPlugin } from './types.ts'
-import { identityFromSeed, parsePairLink, parseShortCode, resolveShortCode } from '@tether/link'
+import { identityFromSeed, parsePairLink, parseShortCode, resolveShortCode } from '@inyon/link'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { viaBackend } from '../hosts/via-backend.ts'
 import { linkConnector } from './link.ts'
 
 /**
- * The phone app runs Tether's core itself and SSHes straight into your servers: no hub, no
+ * The phone app runs Inyon's core itself and SSHes straight into your servers: no hub, no
  * password. The web app hands it a store and the native SSH plugin and calls it in-process.
  */
 export const startPhone: StartPhone = async ({ store, ssh }) => {
@@ -112,7 +112,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         // a typed ID and code: the relays say which machine the ID stands for
         const info = short ? await resolveShortCode(short).catch(() => undefined) : parsePairLink(text)
         if (short && !info) throw new HttpError(404, 'No computer has that ID right now. Check it, or run `tether-node pair` again for a new one (each lasts 10 minutes).')
-        if (!info) throw new HttpError(400, "That isn't a Tether pairing code. Run `tether-node pair` on the computer and scan the code it shows.")
+        if (!info) throw new HttpError(400, "That isn't an Inyon pairing code. Run `tether-node pair` on the computer and scan the code it shows.")
         let welcome
         try {
           welcome = await links.pair(info)
@@ -168,7 +168,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   const router = makeRouter([phoneRoutes, coreRoutes])
   startCore()
   ensureLinks()
-  // laptops paired with the phone update from tether-releases; its API answers the WebView (CORS)
+  // laptops paired with the phone update from inyon-releases; its API answers the WebView (CORS)
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   nodeUpdates.watchReleases()
 
@@ -272,7 +272,7 @@ function phoneKeys(ssh: SshPlugin) {
       blob.set(type, 4)
       view.setUint32(4 + type.length, pub.length)
       blob.set(pub, 8 + type.length)
-      return `ssh-ed25519 ${toBase64(blob)} tether-phone`
+      return `ssh-ed25519 ${toBase64(blob)} inyon-phone`
     },
     async credentials(config: HostConfig): Promise<Credentials> {
       // nothing to sign in with: the server's "none" sign-in is tried first anyway, and an empty

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, mock, test } from 'bun:test'
 import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { HostConfig } from '@tether/protocol'
+import type { HostConfig } from '@inyon/protocol'
 import { ServerSheet } from './ServerSheet.tsx'
 import { api } from '../test/fakes.ts'
 import { fresh, host } from '../test/fixtures.ts'
@@ -101,7 +101,7 @@ test("says why the phone-key command is missing instead of just hiding it", asyn
   key.mockRestore()
 })
 
-describe('servers Tether cannot run on', () => {
+describe('servers Inyon cannot run on', () => {
   test('a paired computer can connect instead: an alias, no fingerprint, no sign-in', async () => {
     const user = userEvent.setup()
     useStore.setState({ hosts: [host('jump', { config: { id: 'jump', kind: 'link', name: 'Jump box', target: undefined } })] })

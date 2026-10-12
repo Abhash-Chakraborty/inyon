@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { AgentState, HostState } from '@tether/protocol'
+import type { AgentState, HostState } from '@inyon/protocol'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName, type PaneRef } from './overview.ts'
 import { agentPane, host, pane } from '../test/fixtures.ts'
 

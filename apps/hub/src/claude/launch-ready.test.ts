@@ -8,7 +8,7 @@ import { shellReady } from './actions.ts'
 
 // A tmux server of its own, never the user's. $TMUX would make tmux ignore TMUX_TMPDIR and use the
 // server it runs inside, so every command drops it first.
-const dir = mkdtempSync(join(tmpdir(), 'tether-ready-'))
+const dir = mkdtempSync(join(tmpdir(), 'inyon-ready-'))
 const own = `unset TMUX TMUX_PANE; export TMUX_TMPDIR='${dir}';`
 const host = new Host({ id: 'ready', name: 'ready', kind: 'local' } as any)
 const tmuxHost = { ...host, exec: (cmd: string, o?: any) => host.exec(`${own} ${cmd}`, o) } as unknown as Host

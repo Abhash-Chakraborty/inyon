@@ -22,9 +22,9 @@
 
     <!-- the QR scanner: always dark, drawn behind the system bars -->
     <style name="AppTheme.Scanner" parent="Theme.AppCompat.NoActionBar">
-        <item name="android:windowBackground">@color/tether_ink</item>
+        <item name="android:windowBackground">@color/inyon_ink</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="colorAccent">@color/tether_paper</item>
+        <item name="colorAccent">@color/inyon_paper</item>
     </style>
 </resources>

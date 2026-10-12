@@ -29,7 +29,7 @@ mv -f "$DIR/tether-node.ts.download" "$DIR/tether-node.ts"
 umask 077
 printf 'TETHER_HUB=%s\nTETHER_TOKEN=%s\n' "$HUB" "$TOKEN" > "$DIR/env"
 
-if command -v tmux >/dev/null 2>&1; then :; else echo "Note: tmux is not installed. Install it so Tether can list and drive sessions."; fi
+if command -v tmux >/dev/null 2>&1; then :; else echo "Note: tmux is not installed. Install it so Inyon can list and drive sessions."; fi
 
 case "$(uname -s)" in
   Linux)
@@ -37,7 +37,7 @@ case "$(uname -s)" in
       mkdir -p "$HOME/.config/systemd/user"
       cat > "$HOME/.config/systemd/user/tether-node.service" <<UNIT
 [Unit]
-Description=Tether node (outbound connection to your Tether hub)
+Description=Inyon node (outbound connection to your Inyon hub)
 After=network-online.target
 
 [Service]
@@ -70,7 +70,7 @@ UNIT
 PL
     launchctl unload "$PLIST" 2>/dev/null || true
     launchctl load "$PLIST"
-    echo "tether-node is running (launchctl list | grep tether)."
+    echo "tether-node is running (launchctl list | grep inyon)."
     exit 0 ;;
 esac
 

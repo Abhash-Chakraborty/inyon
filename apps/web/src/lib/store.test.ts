@@ -1,5 +1,5 @@
 import { describe, expect, jest, setSystemTime, test, afterEach } from 'bun:test'
-import type { ChatItem } from '@tether/protocol'
+import type { ChatItem } from '@inyon/protocol'
 import { notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
 import { closeChat, emit } from '../test/fakes.ts'
@@ -104,7 +104,7 @@ describe('pending messages', () => {
   test('they survive a reload; one that was mid-send says delivery was interrupted', () => {
     setSystemTime(T + 60_000)
     patchChat('k', () => ({ pending: [p('sending', { status: 'sending' }), p('failed', { status: 'failed', error: 'boom' }), p('sent')] }))
-    const saved = sessionStorage.getItem('tether.pending.k')
+    const saved = sessionStorage.getItem('inyon.pending.k')
     expect(JSON.parse(saved!)).toHaveLength(3)
     // a fresh page: same tab storage, empty store
     useStore.setState({ chats: {} })
@@ -118,10 +118,10 @@ describe('pending messages', () => {
 
   test('old or malformed saved messages are dropped', () => {
     setSystemTime(T + PENDING_MS + 1)
-    sessionStorage.setItem('tether.pending.k', JSON.stringify([p('stale'), { id: 1, text: 'bad' }, null, p('fresh', { at: T + PENDING_MS })]))
+    sessionStorage.setItem('inyon.pending.k', JSON.stringify([p('stale'), { id: 1, text: 'bad' }, null, p('fresh', { at: T + PENDING_MS })]))
     patchChat('k', () => ({}))
     expect(chat('k').pending.map((m) => m.text)).toEqual(['fresh'])
-    sessionStorage.setItem('tether.pending.j', '{not json')
+    sessionStorage.setItem('inyon.pending.j', '{not json')
     patchChat('j', () => ({}))
     expect(chat('j').pending).toEqual([])
   })
@@ -129,7 +129,7 @@ describe('pending messages', () => {
   test('the saved copy goes away once nothing is pending', () => {
     patchChat('k', () => ({ pending: [p('a')] }))
     patchChat('k', () => ({ pending: [] }))
-    expect(sessionStorage.getItem('tether.pending.k')).toBeNull()
+    expect(sessionStorage.getItem('inyon.pending.k')).toBeNull()
   })
 })
 
@@ -148,7 +148,7 @@ describe('toasts and settings', () => {
   test('settings merge and persist', () => {
     useStore.getState().setSettings({ density: 'compact' })
     expect(useStore.getState().settings).toMatchObject({ density: 'compact', theme: 'system' })
-    expect(JSON.parse(localStorage.getItem('tether.settings.v2')!)).toMatchObject({ density: 'compact', haptics: true })
+    expect(JSON.parse(localStorage.getItem('inyon.settings.v2')!)).toMatchObject({ density: 'compact', haptics: true })
   })
 })
 
@@ -211,7 +211,7 @@ describe('notify', () => {
     ;(window as any).Capacitor = {
       isNativePlatform: () => true,
       getPlatform: () => 'android',
-      Plugins: { TetherDevice: { postNotification: async (o: any) => void posted.push(o), clearNotification: async (o: any) => void cleared.push(o.tag) } },
+      Plugins: { InyonDevice: { postNotification: async (o: any) => void posted.push(o), clearNotification: async (o: any) => void cleared.push(o.tag) } },
     }
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
     try {
@@ -235,7 +235,7 @@ describe('notify', () => {
     ;(window as any).Capacitor = {
       isNativePlatform: () => true,
       getPlatform: () => 'android',
-      Plugins: { TetherDevice: { postNotification: async () => ({ ok: true }), clearNotification: async (o: any) => void cleared.push(o.tag) } },
+      Plugins: { InyonDevice: { postNotification: async () => ({ ok: true }), clearNotification: async (o: any) => void cleared.push(o.tag) } },
     }
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
     const box = (state: 'waiting' | 'working' | 'idle', status: 'online' | 'error' = 'online') => host('box', { status, panes: [agentPane('%3', 'claude', { agent: { kind: 'claude', pid: 1, state } })] })

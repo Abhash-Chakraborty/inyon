@@ -1,5 +1,5 @@
 [1m[38;2;138;180;248m> /rename[0m
-[1m[38;2;138;180;248m  ⎿  [0m[38;2;189;193;198mConversation renamed to: Tether rename test[39m
+[1m[38;2;138;180;248m  ⎿  [0m[38;2;189;193;198mConversation renamed to: Inyon rename test[39m
 
 [38;2;60;64;67m────────────────────────────────────────────────────────────[39m
 [1m[38;2;138;180;248m> /goal Reply with the word ready, then stop[0m
@@ -7,7 +7,7 @@
   [38;2;232;234;237mready[39m
 
 [1m[38;2;138;180;248m> /rename[0m
-[1m[38;2;138;180;248m  ⎿  [0m[38;2;189;193;198mConversation renamed to: Tether QA run[39m
+[1m[38;2;138;180;248m  ⎿  [0m[38;2;189;193;198mConversation renamed to: Inyon QA run[39m
 
 [38;2;60;64;67m────────────────────────────────────────────────────────────[39m
 [1m[38;2;138;180;248m> /goal Reply with the word set, then stop[0m
@@ -29,7 +29,7 @@
 
 [1m  Conversations[0m
 [38;2;189;193;198m  Type to search conversations...[39m
-[38;2;138;180;248m> [CURRENT] Tether QA run[39m                                                               [3m[38;2;138;180;248m    27 steps[0m  [3m[38;2;138;180;248m      8m ago
+[38;2;138;180;248m> [CURRENT] Inyon QA run[39m                                                               [3m[38;2;138;180;248m    27 steps[0m  [3m[38;2;138;180;248m      8m ago
 [0m  Simple Greeting                                                      [38;2;189;193;198m    custom-tmux      47 steps       23m ago
 [39m  Execute Shell Command Sleep Hi                                       [38;2;189;193;198m            ws2       6 steps       39m ago
 [39m  Execute Shell Command Date                                           [38;2;189;193;198m             ws      21 steps        1h ago

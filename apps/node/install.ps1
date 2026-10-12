@@ -91,10 +91,10 @@ Set-Content -Path $envFile -Encoding ASCII -Value @(
 # only this user (and SYSTEM) may read it
 icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" "SYSTEM:(F)" | Out-Null
 
-# 4. psmux, the Windows tmux. Tether lists and drives its sessions.
+# 4. psmux, the Windows tmux. Inyon lists and drives its sessions.
 $mux = Get-Command psmux, tmux -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($mux -and $mux.Name -eq 'tmux.exe' -and -not (Get-Command psmux -ErrorAction SilentlyContinue)) {
-  Write-Host "Found $($mux.Source); Tether expects psmux's tmux.exe here."
+  Write-Host "Found $($mux.Source); Inyon expects psmux's tmux.exe here."
 }
 if (-not $mux -and -not $NoPsmux) {
   if (Get-Command winget -ErrorAction SilentlyContinue) {
@@ -102,7 +102,7 @@ if (-not $mux -and -not $NoPsmux) {
     # psmux ships psmux.exe, pmux.exe and tmux.exe (same program), so the hub's `tmux ...` calls work
     winget install psmux --silent --accept-source-agreements --accept-package-agreements | Out-Host
   } else {
-    Write-Host 'Note: psmux is not installed. Install it (winget install psmux, or scoop install psmux) so Tether can see your sessions.'
+    Write-Host 'Note: psmux is not installed. Install it (winget install psmux, or scoop install psmux) so Inyon can see your sessions.'
   }
 }
 
@@ -118,7 +118,7 @@ try {
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
   $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -Principal $principal -Description 'Outbound connection to your Tether hub' -Force | Out-Null
+    -Principal $principal -Description 'Outbound connection to your Inyon hub' -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
   $started = $true
   Write-Host "tether-node is running (Task Scheduler: '$TaskName'; log: $Dir\node.log)."
@@ -127,7 +127,7 @@ try {
 }
 
 if (-not $started) {
-  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tether node.lnk'
+  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Inyon node.lnk'
   $ws = New-Object -ComObject WScript.Shell
   $s = $ws.CreateShortcut($lnk)
   $s.TargetPath = $exe

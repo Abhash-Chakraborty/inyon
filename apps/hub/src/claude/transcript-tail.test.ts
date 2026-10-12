@@ -2,7 +2,7 @@ import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { appendFileSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ServerMsg } from '@tether/protocol'
+import type { ServerMsg } from '@inyon/protocol'
 import { metaCommand, parseSize, sizeCommand, tailCommand, TranscriptReader, untilStdinCloses, utf8Length } from './transcript-tail.ts'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
@@ -13,7 +13,7 @@ import { watchers } from './watcher.ts'
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
 
-const dir = mkdtempSync(join(tmpdir(), 'tether-tail-'))
+const dir = mkdtempSync(join(tmpdir(), 'inyon-tail-'))
 afterAll(() => {
   watchers.stop('tail-test:%1')
   watchers.stop('tail-test:%2')

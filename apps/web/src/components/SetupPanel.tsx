@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { Check, Copy, Download, ExternalLink, LogIn, RefreshCw, TriangleAlert } from 'lucide-react'
-import { AGENTS, type AgentKind, type HostState } from '@tether/protocol'
+import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type SetupReport } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { paneHref } from '../lib/overview.ts'
@@ -27,7 +27,7 @@ function CopyLine({ cmd }: { cmd: string }) {
   )
 }
 
-/** Everything a machine needs for Tether, with one-tap fixes where it's safe to run them. */
+/** Everything a machine needs for Inyon, with one-tap fixes where it's safe to run them. */
 export function SetupPanel({ host }: { host: HostState }) {
   const [report, setReport] = useState<SetupReport | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -99,7 +99,7 @@ export function SetupPanel({ host }: { host: HostState }) {
         <div className="flex items-center gap-3 px-4 py-3.5">
           <div className="min-w-0 flex-1 pl-8">
             <div className="text-[14px] font-medium">Keep a tmux session running</div>
-            <div className="text-[12.5px] text-fg-3">If every session closes, Tether starts a fresh one called “main”.</div>
+            <div className="text-[12.5px] text-fg-3">If every session closes, Inyon starts a fresh one called “main”.</div>
           </div>
           <Toggle on={report.keepSession} onChange={async (v) => (await api.keepSession(id, v), load())} label="Keep a tmux session running" />
         </div>

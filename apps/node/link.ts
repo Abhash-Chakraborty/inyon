@@ -5,11 +5,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync
 import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
-} from '@tether/link'
+} from '@inyon/link'
 import { serveOps, WIN } from './ops.ts'
 
 /**
- * Lets the Tether phone app reach this machine directly, with no hub. The phone pairs once by
+ * Lets the Inyon phone app reach this machine directly, with no hub. The phone pairs once by
  * scanning a code (`tether-node pair`), then connects over an end-to-end encrypted link (Noise)
  * through whichever way works: a free Cloudflare quick tunnel this machine opens by itself (so
  * it works from any network), this machine's LAN address, or a relay you run. The tunnel and the

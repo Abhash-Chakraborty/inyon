@@ -1,4 +1,4 @@
-import type { ClientMsg, ServerMsg } from '@tether/protocol'
+import type { ClientMsg, ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
 
@@ -107,7 +107,7 @@ class Socket {
       // the hub rejects the upgrade when the session expired
       if (isPhone()) return
       fetch('/api/session').then((r) => r.json()).then((s) => {
-        if (!s.authed) window.dispatchEvent(new Event('tether:signed-out'))
+        if (!s.authed) window.dispatchEvent(new Event('inyon:signed-out'))
       }).catch(() => {})
     }
   }
