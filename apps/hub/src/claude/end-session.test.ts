@@ -12,7 +12,15 @@ const host = { ...local, config: local.config, exec: (cmd: string, o?: any) => l
 // -f /dev/null: none of your tmux.conf (base-index and the like)
 const tmux = async (args: string) => (await host.exec(`tmux -f /dev/null ${args}`)).stdout.trim()
 /** Stops the test's server by its socket path, never whichever server happens to answer. */
-const killOwn = () => host.exec(`tmux -S '${dir}/tmux-${process.getuid!()}/default' kill-server 2>/dev/null; true`)
+const socket = `${dir}/tmux-${process.getuid!()}/default`
+async function killOwn() {
+  await host.exec(`tmux -S '${socket}' kill-server 2>/dev/null; true`)
+  // kill-server returns before the server is gone; a session started meanwhile would die with it
+  for (let i = 0; i < 40; i++) {
+    if ((await host.exec(`tmux -S '${socket}' list-sessions >/dev/null 2>&1 && echo up`)).stdout.trim() !== 'up') return
+    await Bun.sleep(50)
+  }
+}
 
 /** What tmux has now: session:window → pane ids. */
 async function layout() {
