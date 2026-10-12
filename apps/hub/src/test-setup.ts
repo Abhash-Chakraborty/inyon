@@ -6,6 +6,10 @@ import { setHostBackends } from './hosts/host.ts'
 import { processBackend } from './hosts/process-backend.ts'
 import { nodeBackend } from './hosts/node-backend.ts'
 
+// a test that imports env.ts (node-dist.ts does) gets a throwaway data folder, never ~/.inyon,
+// and never moves the real ~/.tether
+process.env.INYON_DATA_DIR = mkdtempSync(path.join(os.tmpdir(), 'inyon-test-data-'))
+
 const processes = processBackend(path.join(os.tmpdir(), 'inyon-test-cm'))
 setHostBackends((c) => (c.kind === 'node' ? nodeBackend : processes))
 

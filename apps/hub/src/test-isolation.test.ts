@@ -11,6 +11,12 @@ test("commands run by tests can't reach the tmux server the tests were started f
   expect(dir).toContain('inyon-test-tmux-')
 })
 
+// Importing env.ts once pointed tests at the real ~/.tether, and after the rename to Inyon moved it.
+test("tests keep their records in a throwaway folder, not the hub's own", async () => {
+  const { DATA_DIR } = await import('./env.ts')
+  expect(DATA_DIR).toContain('inyon-test-data-')
+})
+
 // Bun keeps a spyOn() mock in place for every test file that runs after it, in whatever order it
 // picks. A mocked registry.get once sent CI's phone tests into an endless search for a free id.
 test('a test file that mocks something puts it back when it ends', async () => {
