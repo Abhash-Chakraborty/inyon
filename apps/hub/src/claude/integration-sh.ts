@@ -1,7 +1,7 @@
 // Shell shared by the integration scripts and the probe (kept apart to avoid an import cycle).
 
 /** Bump when the scripts change; the probe reports older copies as outdated. */
-export const MARKER = 'inyon-integration 4'
+export const MARKER = 'inyon-integration 5'
 
 /**
  * Inyon was called Tether: moves ~/.tether to ~/.inyon once and leaves a link at the old path, so

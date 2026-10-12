@@ -141,6 +141,25 @@ describe('installIntegration', () => {
     await installIntegration(sandboxHost)
     expect(orig()).toBe('~/bin/new-bar.sh')
   })
+
+  test('a saved status line that leads back to the wrapper runs once instead of starting itself forever', async () => {
+    const { installIntegration, AGY_STATUS_SCRIPT } = await import('./integration.ts')
+    await installIntegration(sandboxHost)
+    Bun.spawnSync(['ln', '-sfn', join(home, '.inyon'), join(home, '.tether')])
+    writeFileSync(join(home, '.inyon/agy-statusline.sh'), AGY_STATUS_SCRIPT)
+    for (const [script, saved] of [['statusline.sh', '~/.tether/statusline.sh'], ['agy-statusline.sh', '~/.inyon/agy-statusline.sh']]) {
+      writeFileSync(join(home, `.inyon/${script.replace('.sh', '.orig')}`), `${saved}\necho drawn\n`)
+      const p = Bun.spawn(['sh', join(home, '.inyon', script)], { stdin: Buffer.from(payload('s1')), stdout: 'pipe', env: { HOME: home, PATH: process.env.PATH!, TMUX_PANE: '%9' } })
+      const timer = setTimeout(() => p.kill('SIGKILL'), 3000)
+      expect(await p.exited).toBe(0)
+      clearTimeout(timer)
+      expect((await new Response(p.stdout).text()).trim()).toBe('drawn')
+    }
+    // and healing the integration forgets it
+    writeFileSync(join(home, '.inyon/statusline.orig'), '~/.inyon/statusline.sh\n')
+    await installIntegration(sandboxHost)
+    expect(readFileSync(join(home, '.inyon/statusline.orig'), 'utf8')).toBe('')
+  })
 })
 
 describe('privacy', () => {

@@ -49,7 +49,8 @@ if [ -n "\${TMUX_PANE:-}" ]; then (
 )
 fi
 orig="$HOME/.inyon/statusline.orig"
-[ -s "$orig" ] && printf '%s' "$in" | sh "$orig"
+# never this wrapper a second time: a saved command that leads back here would start itself forever
+[ -s "$orig" ] && [ -z "\${INYON_STATUSLINE:-}" ] && printf '%s' "$in" | INYON_STATUSLINE=1 sh "$orig"
 exit 0
 `
 
@@ -71,7 +72,7 @@ if [ -n "\${TMUX_PANE:-}" ]; then (
 )
 fi
 orig="$HOME/.inyon/agy-statusline.orig"
-[ -s "$orig" ] && printf '%s' "$in" | sh "$orig"
+[ -s "$orig" ] && [ -z "\${INYON_STATUSLINE:-}" ] && printf '%s' "$in" | INYON_STATUSLINE=1 sh "$orig"
 exit 0
 `
 
@@ -131,7 +132,12 @@ export async function installIntegration(host: Host) {
     // Settings synced from a Windows machine bring a status line that can't run here. Keep the one that does.
     if (!(windowsPath(cmd) && prev && !windowsPath(prev))) await writeFile(host, '.inyon/statusline.orig', cmd ? `${cmd}\n` : '')
     settings.statusLine = { ...(sl ?? { padding: 0 }), type: 'command', command: STATUS_CMD }
-  } else if (sl.command !== STATUS_CMD) settings.statusLine = { ...sl, command: STATUS_CMD }
+  } else {
+    if (sl.command !== STATUS_CMD) settings.statusLine = { ...sl, command: STATUS_CMD }
+    // a saved "own" status line that is this wrapper again would start itself forever
+    const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
+    if (isOurStatus(prev)) await writeFile(host, '.inyon/statusline.orig', '')
+  }
   settings.hooks ??= {}
   for (const ev of EVENTS) {
     const groups: any[] = (settings.hooks[ev.name] ??= [])
@@ -184,7 +190,11 @@ export async function installAgyIntegration(host: Host) {
     // with no status line of your own, agy keeps drawing its default one (the wrapper prints nothing)
     settings.statusLine = cmd ? { ...sl, type: 'command', command: AGY_STATUS_CMD } : { type: 'command', command: AGY_STATUS_CMD, stack_with_default: true }
     await writeAgySettings(host, settings)
-  } else if (sl.command !== AGY_STATUS_CMD) await writeAgySettings(host, { ...settings, statusLine: { ...sl, command: AGY_STATUS_CMD } })
+  } else {
+    if (sl.command !== AGY_STATUS_CMD) await writeAgySettings(host, { ...settings, statusLine: { ...sl, command: AGY_STATUS_CMD } })
+    const prev = (await host.exec('cat "$HOME/.inyon/agy-statusline.orig" 2>/dev/null')).stdout.trim()
+    if (isOurAgyStatus(prev)) await writeFile(host, '.inyon/agy-statusline.orig', '')
+  }
   return true
 }
 
@@ -192,7 +202,7 @@ export async function uninstallAgyIntegration(host: Host) {
   const settings = await readAgySettings(host)
   if (settings && isOurAgyStatus(settings.statusLine?.command)) {
     const orig = (await host.exec('cat "$HOME/.inyon/agy-statusline.orig" 2>/dev/null')).stdout.trim()
-    if (orig) settings.statusLine = { ...settings.statusLine, command: orig }
+    if (orig && !isOurAgyStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
     else delete settings.statusLine
     await writeAgySettings(host, settings)
   }
@@ -257,7 +267,7 @@ export async function uninstallIntegration(host: Host) {
   const settings = await readSettings(host)
   if (isOurStatus(settings.statusLine?.command)) {
     const orig = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
-    if (orig) settings.statusLine = { ...settings.statusLine, command: orig }
+    if (orig && !isOurStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
     else delete settings.statusLine
   }
   for (const [name, groups] of Object.entries<any[]>(settings.hooks ?? {})) {
