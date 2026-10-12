@@ -2,11 +2,10 @@ name: inyon
 
 # Builds the inyon program as single binaries (Bun, the hub and the web app inside), so a machine
 # needs nothing else installed. Each is also published as tether-node-<system>, the name the
-# updater from before the rename to Inyon asks for. inyon-web.tar.gz is the web app built for
-# GitHub Pages, which pages.yml publishes from each release.
+# updater from before the rename to Inyon asks for. inyon-web.tar.gz is the web app as static
+# files, for anyone who wants to serve it themselves.
 #   push to main  -> refreshes the "node-latest" pre-release
-#   tag v1.2.3    -> attached to that release, which the one-line installers fetch from, and the
-#                    web app published from it
+#   tag v1.2.3    -> attached to that release, which the one-line installers fetch from
 on:
   push:
     branches: [main]
@@ -67,14 +66,3 @@ jobs:
               --title "Latest inyon build" \
               --notes "Built from $GITHUB_SHA on main. Run \`inyon pair\` on a laptop and scan the code with the Inyon app."
           fi
-
-  pages:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    uses: ./.github/workflows/pages.yml
-    with:
-      tag: ${{ github.ref_name }}

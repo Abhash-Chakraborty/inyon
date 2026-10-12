@@ -1,20 +1,12 @@
-name: Web app
+name: Site
 
-# Publishes the web app to GitHub Pages at inyon.abhashchakraborty.tech: the inyon-web.tar.gz
-# attached to a release, checked against that release's SHA256SUMS. Nothing is built here, so the
-# page serves exactly the file the release lists, and anyone can compare it or host the same files
-# themselves. node.yml runs this after each v* release; run it by hand to publish one again.
+# Publishes inyon.abhashchakraborty.tech: the download and docs page in site/, static files only.
+# The app itself is never hosted here; it runs on your own computers, phone and hub.
 on:
-  workflow_call:
-    inputs:
-      tag:
-        type: string
-        required: false
+  push:
+    branches: [main]
+    paths: ['site/**', 'apps/web/public/icon.svg', '.github/workflows/pages.yml']
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Release to publish (empty for the latest)
-        required: false
 
 permissions:
   contents: read
@@ -32,25 +24,17 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - name: Download the web app from the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+      - uses: actions/checkout@v4
+      - name: Assemble the site
         run: |
-          tag="${TAG:-$(gh release view -R "$GITHUB_REPOSITORY" --json tagName -q .tagName)}"
-          echo "Publishing $tag"
-          gh release download "$tag" -R "$GITHUB_REPOSITORY" -p inyon-web.tar.gz -p SHA256SUMS
-          grep -q ' inyon-web.tar.gz$' SHA256SUMS
-          sha256sum -c SHA256SUMS --ignore-missing
-          mkdir site
-          tar -xzf inyon-web.tar.gz -C site
-          # Pages answers unknown paths with 404.html: the app itself, which routes them
-          cp site/index.html site/404.html
-          touch site/.nojekyll
-          # the site's own domain (WEB_URL in packages/protocol/src/versions.ts)
-          echo inyon.abhashchakraborty.tech > site/CNAME
+          mkdir out
+          cp -r site/. out/
+          cp apps/web/public/icon.svg out/icon.svg
+          touch out/.nojekyll
+          # the site's own domain
+          echo inyon.abhashchakraborty.tech > out/CNAME
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: out
       - id: deploy
         uses: actions/deploy-pages@v4

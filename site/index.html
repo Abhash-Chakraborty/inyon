@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inyon: your coding agents, from your phone</title>
+<meta name="description" content="Watch, answer and steer the coding agents running in tmux on your computers, from your phone. Downloads and docs.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e9e8e4; --panel: #f4f3f0; --raised: #ecebe7; --line: #d6d5cf; --line-strong: #bdbcb5;
+    --fg: #1d1c1a; --fg-2: #4a4844; --fg-3: #5f5d58; --hi: rgba(255,255,255,.9);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1a18; --panel: #252422; --raised: #2a2927; --line: #33312e; --line-strong: #45433f;
+      --fg: #f1f0ec; --fg-2: #b4b2ab; --fg-3: #959389; --hi: rgba(255,255,255,.04); color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 400 16px/1.6 Geist, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 17px; text-decoration: none; }
+  .brand img { width: 30px; height: 30px; }
+  nav { display: flex; gap: 20px; font-size: 14.5px; color: var(--fg-2); }
+  nav a { text-decoration: none; }
+  nav a:hover { color: var(--fg); }
+  .hero { padding: 56px 0 40px; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: .98; letter-spacing: -.045em; font-weight: 500; margin: 0 0 18px; }
+  .lede { font-size: 18px; color: var(--fg-2); max-width: 36em; margin: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 24px; box-shadow: inset 0 1px 0 var(--hi); padding: 26px; }
+  .pair { margin: 0 0 28px; display: none; }
+  .pair.on { display: block; }
+  .pair h2 { margin: 0 0 6px; font-size: 18px; font-weight: 600; letter-spacing: -.01em; }
+  .pair p { margin: 0 0 16px; color: var(--fg-2); }
+  .label { font: 500 12px 'Geist Mono', monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); margin: 0 0 14px; }
+  section { padding: 22px 0; }
+  h2.title { font-size: 24px; font-weight: 500; letter-spacing: -.03em; margin: 0 0 18px; }
+  .grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 720px) { .grid.two { grid-template-columns: 1fr 1fr; } }
+  .step h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+  .step p { margin: 0 0 16px; color: var(--fg-2); font-size: 15px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px; border-radius: 999px; background: var(--fg); color: var(--bg);
+    font: 500 15px Geist, sans-serif; text-decoration: none; border: 0; cursor: pointer; transition: opacity .15s, transform .15s cubic-bezier(.2,.7,.2,1); }
+  .btn:hover { opacity: .9; }
+  .btn:active { transform: scale(.97); }
+  .btn.quiet { background: transparent; color: var(--fg); border: 1px solid var(--line-strong); }
+  .meta { font: 400 12.5px 'Geist Mono', monospace; color: var(--fg-3); margin-top: 10px; }
+  .cmd { display: flex; align-items: center; gap: 8px; background: var(--raised); border: 1px solid var(--line); border-radius: 14px; padding: 6px 6px 6px 14px; margin: 8px 0 0; }
+  .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; font: 400 13px/1.9 'Geist Mono', monospace; scrollbar-width: none; }
+  .cmd code::-webkit-scrollbar { display: none; }
+  .cmd button { flex: none; height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--fg);
+    font: 500 12.5px Geist, sans-serif; cursor: pointer; }
+  .os { font: 500 12px 'Geist Mono', monospace; color: var(--fg-3); margin-top: 14px; }
+  .docs a { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); text-decoration: none; }
+  .docs a:first-child { border-top: 0; padding-top: 0; }
+  .docs a span { color: var(--fg-3); font-size: 14.5px; }
+  .docs a b { font-weight: 500; }
+  .docs a:hover b { text-decoration: underline; text-underline-offset: 3px; }
+  .note { color: var(--fg-3); font-size: 14.5px; }
+  footer { padding: 40px 0 56px; font-size: 14px; color: var(--fg-3); display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  footer a { text-decoration: none; }
+  footer a:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a class="brand" href="./"><img src="icon.svg" alt="">Inyon</a>
+    <nav>
+      <a href="https://github.com/Abhash-Chakraborty/inyon#readme">Docs</a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases</a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon">Source ↗</a>
+    </nav>
+  </header>
+
+  <div class="card pair" id="pair">
+    <div class="label">Pairing code</div>
+    <h2>Open this in the Inyon app</h2>
+    <p>This link pairs a computer with your phone. In the app, tap <b>Add a computer</b> and scan the code again, or copy this link and paste it there. It never leaves this page.</p>
+    <button class="btn" id="copy-pair" type="button">Copy the link</button>
+    <a class="btn quiet" href="#get" id="no-app">Get the app</a>
+  </div>
+
+  <div class="hero">
+    <h1>Your coding agents,<br>from your phone.</h1>
+    <p class="lede">Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot running in tmux on your own computers. Each one keeps its own account, and nothing changes at the keyboard.</p>
+  </div>
+
+  <section id="get">
+    <h2 class="title">Get started</h2>
+    <div class="grid two">
+      <div class="card step">
+        <div class="label">01 · Phone</div>
+        <h3>Install the Android app</h3>
+        <p>Download the APK and open it. Later versions install over it, and the app tells you when one is out.</p>
+        <a class="btn" id="apk" href="https://github.com/Abhash-Chakraborty/inyon/releases/latest">Download for Android</a>
+        <div class="meta" id="apk-meta">From the latest release on GitHub</div>
+      </div>
+      <div class="card step">
+        <div class="label">02 · Computer</div>
+        <h3>Set up a computer</h3>
+        <p>Run one line in a terminal. It prints a code; scan it in the app with <b>Add a computer</b>.</p>
+        <div class="os">macOS or Linux</div>
+        <div class="cmd"><code>curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh</code><button type="button">Copy</button></div>
+        <div class="os">Windows, in PowerShell</div>
+        <div class="cmd"><code>irm https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.ps1 | iex</code><button type="button">Copy</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="card step">
+      <div class="label">Optional · Browser</div>
+      <h3>Use it from a browser with your own hub</h3>
+      <p>A hub is a small server you run on one of your machines, reached over your private network. Open it from any browser.</p>
+      <div class="cmd"><code>curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh -s -- --hub</code><button type="button">Copy</button></div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="title">Docs</h2>
+    <div class="card docs">
+      <a href="https://github.com/Abhash-Chakraborty/inyon#quick-start"><b>Quick start</b><span>Install, pair, first session →</span></a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon#adding-machines"><b>Adding machines</b><span>Laptops, servers, SSH →</span></a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon#android-app"><b>Android app</b><span>Pairing, servers over SSH →</span></a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon#agent-support"><b>Agent support</b><span>What works with each agent →</span></a>
+      <a href="https://github.com/Abhash-Chakraborty/inyon/blob/main/SECURITY.md"><b>Security</b><span>How it's meant to be run →</span></a>
+    </div>
+  </section>
+
+  <p class="note">This site is only downloads and docs. Inyon runs on your own computers and phone; nothing here connects to them.</p>
+
+  <footer>
+    <span>MIT licence</span>
+    <a href="https://github.com/Abhash-Chakraborty/inyon">GitHub ↗</a>
+    <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases ↗</a>
+    <a href="https://github.com/sponsors/Abhash-Chakraborty">Sponsor ↗</a>
+  </footer>
+</div>
+<script>
+  // a computer's pairing QR opens this page with its code after the #, which browsers never send
+  // to a server; offer to copy it for the app, then take it out of the address bar
+  const link = location.hash.startsWith('#pair?') ? location.href : ''
+  if (link) {
+    document.getElementById('pair').classList.add('on')
+    history.replaceState(null, '', location.pathname)
+    document.getElementById('copy-pair').onclick = async (e) => {
+      try { await navigator.clipboard.writeText(link); e.target.textContent = 'Copied' } catch { e.target.textContent = 'Copy failed' }
+    }
+  }
+  for (const b of document.querySelectorAll('.cmd button')) {
+    b.onclick = async () => {
+      try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1500) } catch {}
+    }
+  }
+  // the APK's name carries its version, so ask GitHub which one is newest
+  fetch('https://api.github.com/repos/Abhash-Chakraborty/inyon/releases/latest')
+    .then((r) => (r.ok ? r.json() : Promise.reject()))
+    .then((r) => {
+      const apk = (r.assets || []).find((a) => /\.apk$/.test(a.name))
+      if (!apk) return
+      document.getElementById('apk').href = apk.browser_download_url
+      document.getElementById('apk-meta').textContent = `Inyon ${String(r.tag_name).replace(/^v/, '')} · ${(apk.size / 1048576).toFixed(1)} MB`
+    })
+    .catch(() => {})
+</script>
+</body>
+</html>
