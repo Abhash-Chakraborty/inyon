@@ -203,8 +203,9 @@ function parseInputDialog(lines: string[], tops: number[], width: number): Scree
 function parseCursorMenu(lines: string[]): ScreenPrompt | undefined {
   const tail = lines.slice(-30)
   const footerAt = tail.findIndex((l) => /Enter to (select|confirm)/i.test(l))
-  if (footerAt < 0) return undefined
-  const block = tail.slice(0, footerAt)
+  // some dialogs have no key hint (a held message from another session): then the menu has to be
+  // the last thing on screen, where an idle or working Claude has its input box
+  const block = footerAt >= 0 ? tail.slice(0, footerAt) : tail.slice(0, tail.findLastIndex((l) => l.trim()) + 1)
   const cur = block.findLastIndex((l) => /^\s*❯\s+\S/.test(l) && !OPTION.test(l))
   if (cur < 0) return undefined
   const col = block[cur].indexOf('❯') + 2
@@ -214,17 +215,24 @@ function parseCursorMenu(lines: string[]): ScreenPrompt | undefined {
   let end = cur
   while (end < block.length - 1 && isItem(block[end + 1])) end++
   if (end === start) return undefined
+  if (footerAt < 0 && block.slice(end + 1).some((l) => l.trim())) return undefined
   const options: PromptOption[] = []
   for (let i = start; i <= end; i++) {
     const text = i === cur ? block[i].slice(block[i].indexOf('❯') + 1).trim() : block[i].trim()
-    const [label, ...rest] = text.split(/\s{3,}/)
+    // "Deny — drop it and tell the sender it was declined": the button, then what it does
+    const [label, ...rest] = text.split(/\s{3,}| — /)
     options.push({ n: options.length + 1, label, detail: rest.join(' ') || undefined, selected: i === cur })
   }
   // the title and description sit above the items, after the last rule
   let top = start - 1
   while (top > 0 && !RULE.test(block[top]) && !/^▔+$/.test(block[top].trim())) top--
-  const body = block.slice(top + 1, start).map((l) => l.trim()).filter(Boolean)
-  return { body, options, footer: tail[footerAt].trim(), multi: false, navigate: true }
+  if (footerAt < 0 && top <= 0) return undefined
+  // a quoted message is framed by dashes and marked "│ "; keep the frame as one '╌' marker
+  const body = block
+    .slice(top + 1, start)
+    .map((l) => (/^\s*╌+\s*$/.test(l) ? '╌' : l.trim().replace(/^│ ?/, '')))
+    .filter(Boolean)
+  return { body, options, footer: footerAt >= 0 ? tail[footerAt].trim() : undefined, multi: false, navigate: true }
 }
 
 function parsePrompt(lines: string[], rules: number[], width: number): ScreenPrompt | undefined {

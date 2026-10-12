@@ -533,3 +533,33 @@ test("Codex's question to trust new hooks is buttons, without its banner", () =>
   expect(s.prompt?.body).toEqual(['Hooks need review', '2 hooks are new or changed.', 'Hooks can run outside the sandbox after you trust them.'])
   expect(s.prompt?.options.map((o) => o.label)).toEqual(['Review hooks', 'Trust all and continue', "Continue without trusting (hooks won't run)"])
 })
+
+test('a message from another session waiting to be let through is a question with buttons', () => {
+  const dash = '╌'.repeat(100)
+  const s = parseScreen([
+    ' ▐▛███▛█   Claude Code v2.1.296',
+    '● Held peer message — from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Tether development); preview: «Test',
+    '  message …» — not delivered to Claude (1 held).',
+    '─'.repeat(100),
+    ' Held message from another session',
+    ' Another Claude session sent a message: from uds:/run/user/1001/cc-socks/49259.sock [verified pid 49259] (peer claims name: Tether development)',
+    " The sending session's permission mode class doesn't match this session's, so it wasn't delivered automatically.",
+    ' Message body (this is what will be delivered):',
+    dash,
+    ' │ Test message from the Tether development session: please reply with only',
+    ' │ …[1 line, 163 chars total — full body will be delivered on approve]',
+    dash,
+    ' ❯ Deny — drop it and tell the sender it was declined',
+    '   Deliver this message to Claude',
+    '',
+    '',
+  ], 150)
+  expect(s.prompt?.navigate).toBe(true)
+  expect(s.prompt?.options.map((o) => [o.label, o.detail, o.selected])).toEqual([
+    ['Deny', 'drop it and tell the sender it was declined', true],
+    ['Deliver this message to Claude', undefined, false],
+  ])
+  expect(s.prompt?.body[0]).toBe('Held message from another session')
+  expect(s.prompt?.body).toContain('Test message from the Tether development session: please reply with only')
+  expect(s.prompt?.body.filter((l) => l === '╌').length).toBe(2)
+})
