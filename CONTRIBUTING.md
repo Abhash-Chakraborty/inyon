@@ -19,6 +19,8 @@ no npm or pnpm step.
 bun run typecheck
 cd apps/hub && bun test
 cd apps/web && bun test
+cd apps/node && bun test
+cd packages/link && bun test
 ```
 
 The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the

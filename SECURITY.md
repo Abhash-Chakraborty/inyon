@@ -46,7 +46,14 @@ A paired phone gets a shell on the laptop as the user running `inyon`, the same 
   it has paired.
 - **The tunnel is public, the listener isn't open.** The Cloudflare quick tunnel gives the laptop
   a public address, but it only reaches the link's listener on `127.0.0.1`, which answers nothing
-  until the handshake proves a paired phone. `--lan` also listens on the local network.
+  until the handshake proves a paired phone. The link also listens on the laptop's
+  private-network addresses (Tailscale, NetBird, ZeroTier, WireGuard; not on Windows) with the
+  same handshake, and `--no-vpn` turns that off. `--lan` also listens on the local network.
+- **Notifications for a closed browser.** A paired browser that turns on notifications gives the
+  laptop its push subscription and the key that signs pushes to it. They're kept in
+  `~/.inyon/node/push.json`, readable only by you. Each message is encrypted to that browser,
+  so the push service (Google, Mozilla or Apple) sees only ciphertext. `inyon forget` drops
+  that phone's subscriptions.
 - **Addresses are signed.** The laptop publishes where it can be reached as a pkarr record signed
   by its own key. The record names addresses only; it says nothing about you or your sessions.
 - **Keys on the laptop** live in `~/.inyon/node/` (`identity.json`, `phones.json`), readable only
@@ -82,5 +89,6 @@ percentages and reset times come back to the hub.
 
 ## Reporting a vulnerability
 
-Please email the maintainer instead of opening a public issue, with steps to reproduce. You will
-get a reply within a few days.
+Please report it privately through
+[GitHub's vulnerability reporting](https://github.com/Abhash-Chakraborty/inyon/security/advisories/new)
+instead of opening a public issue, with steps to reproduce. You will get a reply within a few days.
