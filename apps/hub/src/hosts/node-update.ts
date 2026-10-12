@@ -66,7 +66,7 @@ export class NodeUpdates {
   private listeners = new Set<() => void>()
   /** the hub's script for an old Windows machine (platform and arch as it reports them), checksum filled in */
   private script?: (platform: string, arch: string) => Promise<string>
-  /** the newest release on inyon-releases, for phone-paired laptops */
+  /** the newest release on GitHub, for phone-paired laptops */
   latestRelease?: string
 
   constructor(private o = { pollMs: 3000, timeoutMs: 15 * 60_000, keepMs: 60_000, failedMs: 30 * 60_000 }) {}

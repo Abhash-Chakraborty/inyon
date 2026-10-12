@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Bell, BookOpen, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
-import { AGENTS } from '@inyon/protocol'
+import { AGENTS, SOURCE_REPO } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
@@ -58,8 +58,8 @@ function Background() {
 }
 
 /** Which Inyon this is, to check for updates or put in a bug report. */
-/** The public guide: setup, pairing and commands, kept with the releases. */
-const GUIDE = 'https://github.com/Abhash-Chakraborty/inyon-releases#readme'
+/** The public guide: setup, pairing and commands. */
+const GUIDE = `https://github.com/${SOURCE_REPO}#readme`
 
 function About() {
   const [app, setApp] = useState<{ version: string; build: string } | undefined>()
@@ -244,7 +244,7 @@ function HubUpdateRow() {
   )
 }
 
-/** The Android app: its version, the newest APK on inyon-releases, and Download. */
+/** The Android app: its version, the newest APK on GitHub, and Download. */
 function AppUpdateRow() {
   const [u, setU] = useState<AppUpdate | undefined>()
   const [failed, setFailed] = useState(false)

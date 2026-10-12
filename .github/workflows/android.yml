@@ -281,6 +281,20 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Inyon $VERSION" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
+            # list the APK in SHA256SUMS too, next to the files node.yml attached
+            sums="$RUNNER_TEMP/sums"
+            for i in $(seq 1 30); do
+              gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -D "$sums" --clobber 2>/dev/null && break
+              sleep 20
+            done
+            if [ -f "$sums/SHA256SUMS" ]; then
+              grep -v " inyon-$VERSION.apk\$" "$sums/SHA256SUMS" > "$sums/new" || true
+              (cd "$RUNNER_TEMP" && sha256sum "inyon-$VERSION.apk") >> "$sums/new"
+              mv "$sums/new" "$sums/SHA256SUMS"
+              gh release upload "$GITHUB_REF_NAME" "$sums/SHA256SUMS" --clobber
+            else
+              echo "::warning::The release has no SHA256SUMS yet, so the APK isn't listed in it"
+            fi
           else
             gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true
             gh release create android-latest "$apk" --prerelease --target "$GITHUB_SHA" \

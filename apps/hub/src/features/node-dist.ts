@@ -17,7 +17,7 @@ import { unixPairCommand } from './pair-command.ts'
  * What a machine downloads from its hub to run Inyon: the inyon program for its system (Bun inside,
  * nothing else to install), and on Windows busybox-w32, the small sh the hub's commands run with.
  * A hub run from a git checkout builds the program from its own source, without the hub in it. The
- * inyon program (get.sh --hub) hands out the release of its own version from inyon-releases,
+ * inyon program (get.sh --hub) hands out the release of its own version from GitHub,
  * checked against that release's SHA256SUMS. Either way it's kept under ~/.inyon/node-dist.
  */
 export const NODE_DIR = path.resolve(import.meta.dir, '../../../node')

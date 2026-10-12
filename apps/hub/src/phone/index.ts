@@ -172,7 +172,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   startCore()
   ensureLinks()
   startNodePush(async () => (await keys.noise()).publicKey)
-  // laptops paired with the phone update from inyon-releases; its API answers the WebView (CORS)
+  // laptops paired with the phone update from the GitHub releases; their API answers the WebView (CORS)
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   nodeUpdates.watchReleases()
 

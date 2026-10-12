@@ -9,7 +9,7 @@ import {
   update, UpdateError, waitStarted, type Deps,
 } from './update.ts'
 
-// Nothing real is touched: home is a throwaway folder, a local server stands in for inyon-releases
+// Nothing real is touched: home is a throwaway folder, a local server stands in for the GitHub releases
 // and the hub, and restarting the services is a fake that records what it was asked.
 afterAll(() => mock.restore())
 

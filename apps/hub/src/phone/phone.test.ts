@@ -66,7 +66,7 @@ const until = async (check: () => boolean) => {
 test('the phone looks up the newest inyon for laptops paired with it', async () => {
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   await until(() => nodeUpdates.latestRelease === '9.9.9')
-  expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon-releases/releases/latest'])
+  expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon/releases/latest'])
 })
 
 test('the phone needs no sign-in', async () => {

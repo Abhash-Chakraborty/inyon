@@ -32,7 +32,7 @@ afterEach(() => {
 })
 
 describe('the Android app looks for a newer APK', () => {
-  test('finds the newer release and its APK on inyon-releases', async () => {
+  test('finds the newer release and its APK on GitHub', async () => {
     expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3', latest: '0.6.4', url: 'https://github.com/x/releases/download/v0.6.4/inyon-0.6.4.apk' })
     expect(fetched.mock.calls[0][0]).toBe(RELEASES_API)
   })

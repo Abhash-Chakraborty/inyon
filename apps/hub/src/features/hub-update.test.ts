@@ -248,7 +248,7 @@ describe('the hub checks for updates and starts one', () => {
 describe('a hub run as the inyon program', () => {
   const releases = (tag: string) => (async () => Response.json({ tag_name: tag })) as unknown as typeof fetch
 
-  test('looks for a new release on inyon-releases, not in a checkout', async () => {
+  test('looks for a new release on GitHub, not in a checkout', async () => {
     const asked: string[][] = []
     const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
     const dataDir = path.join(root, 'bin1')

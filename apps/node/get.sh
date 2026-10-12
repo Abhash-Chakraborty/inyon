@@ -1,12 +1,12 @@
 #!/bin/sh
 # Gets inyon for this computer and sets it up for the Inyon phone app:
-#   curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh
+#   curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh
 # It downloads the right build into ~/.inyon/bin, checks it against the release's checksums, starts
 # it in the background at login, and shows a code to scan with the app. With --hub it sets up an
 # Inyon hub instead (the server the app signs in to):
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
-BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download}}"
+BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/inyon/releases/latest/download}}"
 ROLE=setup
 for a in "$@"; do
   case "$a" in

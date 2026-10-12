@@ -3,10 +3,10 @@ name: inyon
 # Builds the inyon program as single binaries (Bun, the hub and the web app inside), so a machine
 # needs nothing else installed. Each is also published as tether-node-<system>, the name the
 # updater from before the rename to Inyon asks for. inyon-web.tar.gz is the web app built for
-# GitHub Pages; the releases repo deploys it from each release (its pages.yml).
+# GitHub Pages, which pages.yml publishes from each release.
 #   push to main  -> refreshes the "node-latest" pre-release
-#   tag v1.2.3    -> attached to that release, and copied to the public downloads repo
-#                    (Abhash-Chakraborty/inyon-releases) that the one-line installers fetch from
+#   tag v1.2.3    -> attached to that release, which the one-line installers fetch from, and the
+#                    web app published from it
 on:
   push:
     branches: [main]
@@ -68,13 +68,13 @@ jobs:
               --notes "Built from $GITHUB_SHA on main. Run \`inyon pair\` on a laptop and scan the code with the Inyon app."
           fi
 
-      # this repo is private, so the installers download from a public one; needs a fine-grained
-      # token with contents: write on inyon-releases, saved as the RELEASES_TOKEN secret
-      - name: Publish downloads
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-        run: |
-          if [ -z "$GH_TOKEN" ]; then echo "No RELEASES_TOKEN secret: skipping the public downloads"; exit 0; fi
-          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* -R Abhash-Chakraborty/inyon-releases \
-            --title "Inyon ${GITHUB_REF_NAME#v}" --notes "Inyon ${GITHUB_REF_NAME#v}. See the README for the one-line setup." --latest
+  pages:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+    with:
+      tag: ${{ github.ref_name }}

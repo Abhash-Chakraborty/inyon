@@ -3,7 +3,7 @@ import { isNative, plugin } from './native.ts'
 import { toast } from './store.ts'
 
 /**
- * The Android app checks inyon-releases for a newer APK: at most once a day on its own, and
+ * The Android app checks the GitHub releases for a newer APK: at most once a day on its own, and
  * whenever Settings opens. It never installs anything. Download opens the APK in the browser and
  * Android asks before installing it.
  */
@@ -46,7 +46,7 @@ async function appVersion(): Promise<string | undefined> {
 }
 
 /**
- * The newest release that has an APK. inyon-releases carries the inyon program too, so a release
+ * The newest release that has an APK. Releases carry the inyon program too, so a release
  * without an APK doesn't count.
  */
 export async function latestApk(): Promise<{ version: string; url: string } | undefined> {

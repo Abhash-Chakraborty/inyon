@@ -97,7 +97,7 @@ The agent runs it and handles permissions, and the output shows up in the chat.
 On Linux or macOS, this installs the hub and keeps it running as a user service:
 
 ```sh
-curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh -s -- --hub
+curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh -s -- --hub
 ```
 
 It prints the address to open and a setup code. Settings like `PORT`, `BIND` or `TLS_CERT` go in
@@ -171,8 +171,9 @@ Nothing updates by itself. When a release is out, Settings shows *Update availab
   restarts the `inyon-hub` user unit.
 - A machine paired with a hub updates from its page under *Machines*. That works for any version,
   because the hub sends a short script that checks the download first.
-- The Android app checks [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases)
-  once a day. *Download* fetches the new APK, and Android installs it over the old one.
+- The Android app checks this repo's
+  [latest release](https://github.com/Abhash-Chakraborty/inyon/releases/latest) once a day.
+  *Download* fetches the new APK, and Android installs it over the old one.
 
 Before 0.7.0 the machine program was called `tether-node`. It updates the same way, then moves its
 service and files (`~/.tether-node` to `~/.inyon/node`) to the new name a few minutes later. A
@@ -189,13 +190,13 @@ server in between and no password.
 On a Mac or Linux machine, run this in a terminal (on a server, in your SSH session):
 
 ```sh
-curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh
+curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.ps1 | iex
+irm https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.ps1 | iex
 ```
 
 It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In the app,
@@ -274,11 +275,9 @@ the same Wi-Fi or a VPN. A server on Tailscale SSH lets the phone in with no key
 ### Getting and building it
 
 Every push to `main` refreshes the "Latest Android build" pre-release, and each `v*` tag attaches
-the APK to its release. Each release's APK is also published to
-[inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases) as `inyon-X.Y.Z.apk`, which
-is where the app looks for updates. A fork without signing secrets (`ANDROID_KEYSTORE_BASE64`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD` and the `ANDROID_KEY_ALIAS` variable) gets a
-debug build.
+the APK to its release as `inyon-X.Y.Z.apk`, which is where the app looks for updates. A fork
+without signing secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_PASSWORD` and the `ANDROID_KEY_ALIAS` variable) gets a debug build.
 
 To build it yourself, with Android Studio installed:
 

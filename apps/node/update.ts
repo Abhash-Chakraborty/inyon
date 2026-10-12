@@ -14,7 +14,7 @@ export { readEnvFile, savedHub }
  * `inyon update`: replaces the installed program with the newest build and restarts each job it
  * runs as (the phone link, the hub connection, the hub). A machine added to a hub takes the build
  * that hub serves, checked against the sha256 the hub publishes, so it always matches its hub;
- * anything else updates from inyon-releases, checked against the release's SHA256SUMS like get.sh
+ * anything else updates from the GitHub releases, checked against the release's SHA256SUMS like get.sh
  * does. Nothing is replaced until the download matches, and the old copy comes back if the new one
  * doesn't start.
  */
@@ -174,7 +174,7 @@ export function cleanupOld(target: string, now = Date.now()) {
 }
 
 export type Install =
-  /** from inyon-releases (get.sh, get.ps1) */
+  /** from the GitHub releases (get.sh, get.ps1) */
   | { kind: 'binary'; file: string; cmd: string[] }
   /** from the hub this machine was added to */
   | { kind: 'hub'; file: string; cmd: string[]; hub: string }
