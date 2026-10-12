@@ -16,6 +16,7 @@ import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { readClipboard } from '../../lib/native.ts'
+import { touchScroll } from './touchScroll.ts'
 
 const LIGHT: ITheme = {
   background: '#e9e8e4', foreground: '#1d1c1a', cursor: '#1d1c1a', cursorAccent: '#e9e8e4',
@@ -102,6 +103,8 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
       )
     }
     host_.addEventListener('paste', onPaste, true)
+    // a finger drag scrolls tmux's history, as the mouse wheel does
+    const untouch = touchScroll(host_, () => term.rows)
     term.onData((d) => {
       // apply sticky Ctrl/Alt from the touch key bar
       const m = mods.current
@@ -142,6 +145,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
 
     return () => {
       host_.removeEventListener('paste', onPaste, true)
+      untouch()
       ro.disconnect()
       off()
       socket.send({ t: 'term.close', id })
