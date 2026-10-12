@@ -1,12 +1,17 @@
 import type { PhoneRuntime, PhoneStore, SshPlugin } from '@inyon/phone'
 import { isNative, plugin } from './native.ts'
+import { isHosted } from './base.ts'
 
 /**
  * The phone app has no hub: it runs Inyon's core here, in the app, and SSHes into your servers
- * through the native InyonSsh plugin. The core is only loaded inside the app (it's a separate
- * chunk a browser never fetches), and `api.ts` and `socket.ts` call it instead of the network.
+ * through the native InyonSsh plugin. The web app on GitHub Pages runs the same core in the page,
+ * without SSH. The core is a separate chunk a hub's browser never fetches, and `api.ts` and
+ * `socket.ts` call it instead of the network.
  */
-export const isPhone = isNative
+export const isPhone = () => isNative() || isHosted()
+
+/** Whether this device can SSH into a server itself (the Android app can; a browser can't). */
+export const canSsh = isNative
 
 /** Adds the phone's key to authorized_keys once, with the permissions sshd insists on. */
 export const authorizeCommand = (key: string) =>
@@ -16,7 +21,7 @@ let runtime: Promise<PhoneRuntime> | undefined
 
 export function phone(): Promise<PhoneRuntime> {
   return (runtime ??= (async () => {
-    const ssh = plugin('InyonSsh') as unknown as SshPlugin | undefined
+    const ssh = (plugin('InyonSsh') as unknown as SshPlugin | undefined) ?? (isHosted() ? (await import('./browserSsh.ts')).browserSsh() : undefined)
     if (!ssh) throw new Error('This build of the app is missing its SSH support')
     const [store, { startPhone }] = await Promise.all([idbStore(), import('@inyon/phone')])
     const rt = await startPhone({ store, ssh })

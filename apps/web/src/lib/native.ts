@@ -4,6 +4,7 @@
  * no extra packages and does nothing different in a normal browser.
  */
 import { backHandled } from './back.ts'
+import { appHref } from './base.ts'
 
 type Plugin = Record<string, (...args: any[]) => Promise<any>>
 
@@ -14,8 +15,8 @@ export const platform = () => (isNative() ? cap()!.getPlatform!() : 'web') as 'i
 export const plugin = (name: string): Plugin | undefined => (isNative() ? cap()?.Plugins?.[name] : undefined)
 
 const go = (href: string) => {
-  if (location.pathname + location.search === href) return
-  window.history.pushState({}, '', href)
+  if (location.pathname + location.search === appHref(href)) return
+  window.history.pushState({}, '', appHref(href))
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
@@ -24,6 +25,21 @@ const go = (href: string) => {
 const openUrl = (url: string | undefined) => {
   if (url && /^(inyon|tether):\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
 }
+
+let fragmentLink: string | undefined
+
+/**
+ * The web app opened from a computer's QR code: `https://…/#pair?m=…`. The code rides after `#`,
+ * which browsers never send to the host; it comes out of the address bar before the app starts, so
+ * it isn't left in history or sent anywhere on a reload. The pairing sheet then offers it.
+ */
+export function takePairFragment() {
+  if (!location.hash.startsWith('#pair?')) return
+  fragmentLink = `inyon://pair?${location.hash.slice('#pair?'.length)}`
+  window.history.replaceState(null, '', appHref('/machines'))
+}
+export const pairFragment = () => fragmentLink
+export const forgetPairFragment = () => void (fragmentLink = undefined)
 
 /** Native behaviour for the phone apps: back button, notification taps, deep links, status bar. */
 export function installNative() {

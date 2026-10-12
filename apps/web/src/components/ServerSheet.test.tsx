@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { HostConfig } from '@inyon/protocol'
@@ -10,6 +10,11 @@ import { flush, renderSettled as render } from '../test/render.tsx'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
+
+// these run as the Android app, which can SSH itself; the web app's sheet is tested at the end
+const asAndroid = () => ((window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} })
+beforeEach(asAndroid)
+afterEach(() => delete (window as any).Capacitor)
 
 const work: HostConfig = { id: 's1', name: 'Work', kind: 'ssh', target: 'me@10.0.0.1', port: 2222, auth: 'phone-key', hostKey: 'SHA256:abc' }
 const home: HostConfig = { id: 's2', name: 'Home', kind: 'ssh', target: 'pi@192.168.1.2', auth: 'password', hostKey: 'SHA256:def' }
@@ -138,5 +143,33 @@ describe('servers Inyon cannot run on', () => {
     fireEvent.submit(document.getElementById('server-form')!)
     await flush()
     expect(api.addServer.mock.calls[0]![0]).toMatchObject({ target: 'me@10.0.0.7', auth: 'none', hostKey: 'SHA256:xyz', via: '', password: undefined })
+  })
+})
+
+describe('in a browser, which has no SSH', () => {
+  beforeEach(() => delete (window as any).Capacitor)
+
+  test('with no paired computer it asks for one, and offers no form to fill', async () => {
+    useStore.setState({ hosts: [] })
+    await render(<ServerSheet open onClose={noop} />)
+    expect(screen.getByText(/Pair a computer first/)).toBeTruthy()
+    expect(screen.queryByPlaceholderText('Work server')).toBeNull()
+    expect((screen.getByRole('button', { name: 'Continue', hidden: true }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  test('it connects through the paired computer, with no "This phone" choice', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [host('jump', { config: { id: 'jump', kind: 'link', name: 'Jump box', target: undefined } })] })
+    api.addServer.mockClear()
+    await render(<ServerSheet open onClose={noop} />)
+    // the one computer is the only way in, so there's nothing to pick
+    expect(screen.queryByText('Connect from')).toBeNull()
+    expect(screen.queryByText('Sign in with')).toBeNull()
+    await user.type(field('Work server'), 'DB')
+    await user.type(field('work-db or you@10.0.0.5'), 'work-db')
+    fireEvent.submit(document.getElementById('server-form')!)
+    await flush()
+    expect(api.addServer.mock.calls[0]).toEqual([{ name: 'DB', target: 'work-db', port: undefined, via: 'jump' }])
+    useStore.setState({ hosts: [] })
   })
 })

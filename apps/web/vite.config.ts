@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
+import { VERSION } from '@inyon/protocol'
 
 const HUB = process.env.INYON_HUB ?? process.env.TETHER_HUB ?? 'http://127.0.0.1:4777'
 
@@ -23,8 +24,17 @@ const devWithoutCsp: Plugin = {
   transformIndexHtml: (html) => html.replace(/<meta\s+http-equiv="Content-Security-Policy"[^>]*>/, ''),
 }
 
+/** What this build is, for the web app to compare with what its host serves (lib/updates.ts). */
+const versionFile: Plugin = {
+  name: 'inyon-version-file',
+  apply: 'build',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'version.json', source: JSON.stringify({ version: VERSION, commit: commit() }) })
+  },
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), devWithoutCsp],
+  plugins: [react(), tailwindcss(), devWithoutCsp, versionFile],
   define: { __INYON_COMMIT__: JSON.stringify(commit()) },
   // the phone app runs the hub's core in-process (loaded only inside the app, see lib/phone.ts)
   resolve: { alias: { '@inyon/phone': fileURLToPath(new URL('../hub/src/phone/index.ts', import.meta.url)) } },

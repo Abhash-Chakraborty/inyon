@@ -12,6 +12,8 @@ import { toast } from '../lib/store.ts'
 import type { AgentPaneInfo } from '@inyon/protocol'
 import { MachineSheet } from '../components/Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { isHosted } from '../lib/base.ts'
+import { InstallCard } from '../components/InstallCard.tsx'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 
@@ -85,13 +87,16 @@ export function Home() {
                   </Button>
                 }
               >
-                {isPhone()
+                {isHosted()
+                  ? 'See the coding agents on your laptop or server and talk to them from here. Run one command on it, then scan the code it shows with your phone\u2019s camera, or type it here.'
+                  : isPhone()
                   ? 'See the coding agents on your laptop or server and talk to them from here. Run one command on it, then scan the code it shows.'
                   : 'Pair a machine or add one over SSH to see the coding agents running in tmux on it.'}
               </Empty>
             </div>
           ) : (
             <>
+              {isHosted() && <InstallCard />}
               <div>
               <h1 className="text-[1.75rem] leading-[0.95] font-semibold tracking-[-0.04em] md:text-[44px] md:tracking-[-0.045em]">Overview</h1>
               <p className="mt-1.5 truncate text-[14px] text-fg-2 md:mt-3 md:text-[15px]">

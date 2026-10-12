@@ -3,6 +3,7 @@ import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@iny
 import { socket } from './socket.ts'
 import { haptic } from './haptics.ts'
 import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
+import { appHref, publicFile, routeOf } from './base.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
@@ -237,7 +238,7 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   }
   if (m.kind === 'done' && !settings.notifyDone) return
   // don't toast about the conversation you're looking at
-  const here = location.pathname === href && document.visibilityState === 'visible'
+  const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
   if (!here) toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
   // two pulses when an agent needs you or finishes, even on its own screen; a buzz for a lost machine
   if (document.visibilityState === 'visible') {
@@ -255,7 +256,7 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
     try {
       closeShown(tag)
-      const n = new Notification(m.title, { body: m.body, tag, icon: '/icon-192.png', badge: '/badge-96.png' })
+      const n = new Notification(m.title, { body: m.body, tag, icon: publicFile('icon-192.png'), badge: publicFile('badge-96.png') })
       shown.set(tag, n)
       if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
       else asking.delete(tag)
@@ -263,7 +264,7 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
       n.onclick = () => {
         closeShown(tag)
         window.focus()
-        window.history.pushState({}, '', href)
+        window.history.pushState({}, '', appHref(href))
         window.dispatchEvent(new PopStateEvent('popstate'))
       }
     } catch {}

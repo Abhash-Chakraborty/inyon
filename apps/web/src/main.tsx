@@ -22,7 +22,9 @@ const MachinesPage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ de
 const MachinePage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ default: m.MachinePage })))
 import { installTapHaptics } from './lib/haptics.ts'
 import { installKeepAlive } from './lib/keepalive.ts'
-import { installNative, isNative, nativeTheme } from './lib/native.ts'
+import { installNative, isNative, nativeTheme, takePairFragment } from './lib/native.ts'
+import { watchInstall } from './lib/install.ts'
+import { appHref, BASE, isHosted, publicFile } from './lib/base.ts'
 
 function useTheme() {
   const theme = useStore((s) => s.settings.theme)
@@ -97,9 +99,13 @@ installKeepAlive()
 // the Android app looks for a newer APK once a day; it never installs one by itself
 if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m.startAppUpdateCheck()), 4000)
 
+// before the router reads the address: a pairing code in it is taken out first
+takePairFragment()
+if (isHosted()) watchInstall()
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
+    <BrowserRouter basename={appHref('') || undefined}>
       <App />
     </BrowserRouter>
   </StrictMode>,
@@ -107,5 +113,5 @@ createRoot(document.getElementById('root')!).render(
 
 // Offline shell for the installed app (service workers need HTTPS or localhost).
 if ('serviceWorker' in navigator && window.isSecureContext && import.meta.env.PROD && !isNative()) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {})
+  navigator.serviceWorker.register(publicFile('sw.js'), { scope: BASE }).catch(() => {})
 }

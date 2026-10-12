@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import clsx from 'clsx'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { useStore } from './store.ts'
+import { publicFile } from './base.ts'
 import { AntigravityMark, CodexMark, TileMark } from '../components/ui/AgentMarks.tsx'
 import { AGENT_TILES } from '../components/ui/agentTiles.ts'
 
@@ -51,7 +52,7 @@ export function SkinScope({ agent, className, children }: { agent?: AgentKind; c
   )
 }
 
-export const agentLogo = (kind: AgentKind) => `/agents/${kind}.svg`
+export const agentLogo = (kind: AgentKind) => publicFile(`agents/${kind}.svg`)
 
 export function AgentLogo({ kind, size = 20, className, active }: { kind?: AgentKind; size?: number; className?: string; active?: boolean }) {
   if (active && (kind === 'codex' || kind === 'antigravity')) {

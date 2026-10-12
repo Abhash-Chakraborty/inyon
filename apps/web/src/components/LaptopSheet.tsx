@@ -9,6 +9,8 @@ import { plugin, readClipboard } from '../lib/native.ts'
 import { useOpened } from '../lib/useOpened.ts'
 import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
+import { isHosted } from '../lib/base.ts'
+import { keepData } from '../lib/install.ts'
 
 const PAIR_COMMAND = 'inyon pair'
 const DOWNLOADS = RELEASES_DOWNLOAD
@@ -18,6 +20,14 @@ export const SETUP_COMMANDS = {
   windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${DOWNLOADS}/get.ps1 | iex` },
 } as const
 // tether:// is how a laptop from before the rename to Inyon prints its code
+/** The computer's name in a pairing link, if it says. */
+const pairName = (link: string) => {
+  try {
+    return new URL(link).searchParams.get('n') || 'this computer'
+  } catch {
+    return 'this computer'
+  }
+}
 const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
 /** inyon prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
 const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
@@ -59,12 +69,16 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     setCode('')
   })
   const scanner = plugin('InyonDevice')?.scanQr
+  // opened from a scanned code: the computer's name, to confirm with one tap
+  const scanned = given && link === given ? pairName(given) : undefined
 
   const pair = async (text: string) => {
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
     try {
       await api.pairLaptop(text.trim())
+      // the web app: ask the browser to keep this pairing when it clears space
+      if (isHosted()) keepData()
       toast({ title: 'Paired', body: 'It stays paired until you remove it here or run inyon forget there.', tone: 'success' })
       // alerts only arrive while the app runs; the first pairing is the moment to say so
       if (keepAliveSupported() && !keepAliveWanted()) {
@@ -178,8 +192,17 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       }
     >
       <form id="laptop-form" onSubmit={(e) => (e.preventDefault(), pair(how === 'type' ? typed ?? '' : link))} className="space-y-4">
+        {scanned ? (
+          <p className="text-[14px] leading-relaxed text-fg-2">
+            Pair with <span className="font-medium text-fg">{scanned}</span>? {isHosted() ? 'This browser' : 'The phone'} connects to it directly from any network, end to end encrypted.
+            <button type="button" onClick={() => (setLink(''), setHow('type'))} className="mt-2 block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+              Use a different code
+            </button>
+          </p>
+        ) : (
+        <>
         <p className="text-[13px] leading-relaxed text-fg-2">
-          A laptop, desktop or server. The phone connects to it directly from any network, end to end encrypted. No VPN or open ports.
+          A laptop, desktop or server. {isHosted() ? 'This browser' : 'The phone'} connects to it directly from any network, end to end encrypted. No VPN or open ports.
         </p>
         <div className="rounded-2xl border border-line bg-code p-3">
           <div className="flex items-center justify-between gap-2">
@@ -278,10 +301,12 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-[13.5px] font-medium text-fg">Connect over SSH</span>
-              <span className="block text-[12px] leading-snug text-fg-3">Advanced. For servers you can't install Inyon on: a key, a password, or none.</span>
+              <span className="block text-[12px] leading-snug text-fg-3">{isHosted() ? "Advanced. For servers you can't install Inyon on, reached through a computer you paired." : "Advanced. For servers you can't install Inyon on: a key, a password, or none."}</span>
             </span>
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
           </button>
+        )}
+        </>
         )}
       </form>
     </Sheet>

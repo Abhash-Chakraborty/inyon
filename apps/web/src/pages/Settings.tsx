@@ -10,9 +10,10 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
+import { isHosted, publicFile } from '../lib/base.ts'
 import { allowBackground, batteryUnrestricted, keepAliveSupported, keepAliveWanted, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
-import { authorizeCommand } from '../lib/phone.ts'
+import { authorizeCommand, canSsh, isPhone } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { COMMIT, VERSION } from '../lib/version.ts'
@@ -98,10 +99,43 @@ function About() {
  */
 function Updates() {
   const native = isNative()
+  if (isHosted()) {
+    return (
+      <Section id="updates" title="Updates" desc="Each Inyon release publishes a new version of this web app. Reload to get it.">
+        <WebUpdateRow />
+      </Section>
+    )
+  }
   return (
     <Section id="updates" title="Updates" desc={native ? 'Nothing updates by itself. A new version downloads in your browser, and Android asks before installing it.' : 'Nothing updates by itself. Update here, or run inyon update on the hub (bun hub:update in a git checkout).'}>
       {native ? <AppUpdateRow /> : <HubUpdateRow />}
     </Section>
+  )
+}
+
+/** The web app: what's published now, next to what this page runs. */
+function WebUpdateRow() {
+  const latest = useHubBuild()
+  const [checking, setChecking] = useState(false)
+  useEffect(() => watchHub(), [])
+  const newer = latest && !sameBuild(latest, { version: VERSION, commit: COMMIT || undefined })
+  if (newer) {
+    return (
+      <Row label={`New version: ${latest.version}`} hint={`You have ${VERSION}.`}>
+        <Button size="sm" variant="primary" onClick={() => location.reload()}>
+          Reload
+        </Button>
+      </Row>
+    )
+  }
+  return (
+    <Row label="Up to date" hint={`This web app is version ${VERSION}.`}>
+      {checking ? <Spinner /> : (
+        <Button size="sm" variant="ghost" onClick={() => (setChecking(true), void checkHub().finally(() => setChecking(false)))}>
+          Check now
+        </Button>
+      )}
+    </Row>
   )
 }
 
@@ -266,9 +300,9 @@ const NAV = [
   ['agents', 'Agents'],
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
-  ['machines', isNative() ? 'Computers' : 'Machines'],
-  ...(isNative()
-    ? ([['phone-key', "This phone's key"]] as const)
+  ['machines', isPhone() ? 'Computers' : 'Machines'],
+  ...(isPhone()
+    ? canSsh() ? ([['phone-key', "This phone's key"]] as const) : []
     : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
   ['updates', 'Updates'],
   ['about', 'About'],
@@ -293,7 +327,7 @@ export function Settings() {
     const body = 'Notifications work. You\u2019ll get one when an agent finishes or needs you.'
     if (native ? await nativeNotify(title, body, '/settings#notifications', 'test', 'done') : (() => {
       try {
-        new Notification(title, { body, tag: 'test', icon: '/icon-192.png', badge: '/badge-96.png' })
+        new Notification(title, { body, tag: 'test', icon: publicFile('icon-192.png'), badge: publicFile('badge-96.png') })
         return true
       } catch {
         return false
@@ -455,7 +489,7 @@ export function Settings() {
 
           {keepAliveSupported() && <Background />}
 
-          <Section id="machines" title="Machines">
+          <Section id="machines" title={isPhone() ? 'Computers' : 'Machines'}>
             {hosts.map((h) => (
               <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3.5 hover:bg-hover/50">
                 <HostDot status={h.status} />
@@ -468,8 +502,8 @@ export function Settings() {
             ))}
           </Section>
 
-          {native ? (
-            <PhoneKey />
+          {isPhone() ? (
+            canSsh() && <PhoneKey />
           ) : (
             <>
           <OtherDevices />

@@ -1,8 +1,8 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
-import { screen } from '@testing-library/react'
+import { fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { LaptopSheet, SETUP_COMMANDS } from './LaptopSheet.tsx'
-import { renderSettled as render } from '../test/render.tsx'
+import { flush, renderSettled as render } from '../test/render.tsx'
 import { api } from '../lib/api.ts'
 import { useStore } from '../lib/store.ts'
 
@@ -69,9 +69,23 @@ test('"Type a code instead" on the scanner goes to the ID box', async () => {
   const user = userEvent.setup()
   phone(async () => ({ type: true }))
   await render(<LaptopSheet open onClose={() => {}} link="inyon://pair?m=x" />)
+  await user.click(screen.getByRole('button', { name: 'Use a different code' }))
   await user.click(screen.getByRole('button', { name: /Scan the code/ }))
   expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'ID' }))
   expect(useStore.getState().toasts).toEqual([])
+})
+
+test('a scanned code asks to pair with that computer by name, in one tap', async () => {
+  const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'x' })
+  const link = 'inyon://pair?m=abc&s=secret&n=studio'
+  await render(<LaptopSheet open onClose={() => {}} link={link} />)
+  expect(screen.getByText('studio')).toBeTruthy()
+  // nothing to set up or type: the steps stay out of the way
+  expect(screen.queryByText('1. On the computer')).toBeNull()
+  fireEvent.submit(document.getElementById('laptop-form')!)
+  await flush()
+  expect(pairLaptop).toHaveBeenCalledWith(link)
+  pairLaptop.mockRestore()
 })
 
 test('a paste request from the scanner goes to the link box, which reads the clipboard', async () => {

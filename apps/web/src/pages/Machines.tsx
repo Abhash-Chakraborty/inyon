@@ -16,6 +16,7 @@ import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { forgetPairFragment, pairFragment } from '../lib/native.ts'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 import { AgentBadges } from '../components/Overview.tsx'
@@ -46,7 +47,7 @@ export function MachinesPage() {
   const hosts = useStore((s) => s.hosts)
   // a pairing link opened from outside (a QR code scanned with the camera) lands here
   const [params, setParams] = useSearchParams()
-  const pairLink = params.get('pair') ?? undefined
+  const pairLink = params.get('pair') ?? pairFragment()
   const [sheet, setSheet] = useState(!!pairLink)
   // a code scanned while this page is already open
   useEffect(() => {
@@ -54,7 +55,8 @@ export function MachinesPage() {
   }, [pairLink])
   const close = () => {
     setSheet(false)
-    if (pairLink) setParams({}, { replace: true })
+    forgetPairFragment()
+    if (params.get('pair')) setParams({}, { replace: true })
   }
   return (
     <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
