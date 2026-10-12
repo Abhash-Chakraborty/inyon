@@ -18,7 +18,7 @@ import { binDir, nodeDir } from './paths.ts'
  * machine publishes its current addresses under its own key (pkarr) and the phone looks them up.
  */
 
-export const VERSION = '0.8.0'
+export const VERSION = '0.9.0'
 const file = (name: string) => path.join(nodeDir(), name)
 const PAIR_MINUTES = 10
 
