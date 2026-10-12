@@ -106,13 +106,13 @@ ${authTests}
  * installer reports success even when its download failed) and npm is there, its npm package.
  * npm installs into the user's prefix when the global one isn't writable.
  */
-export function installCommand(def: Pick<AgentDef, 'install' | 'version'>): string {
+export function installCommand(def: Pick<AgentDef, 'install' | 'version'>, paths = PATHS): string {
   const { cmd, npm } = def.install
   const viaNpm = `{ npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; npm install -g ${npm}; }`
-  if (!cmd) return `${PATHS}; ${viaNpm}`
-  if (!npm) return `${PATHS}; ${cmd}`
+  if (!cmd) return `${paths}; ${viaNpm}`
+  if (!npm) return `${paths}; ${cmd}`
   return [
-    `${PATHS}; ${cmd}`,
+    `${paths}; ${cmd}`,
     `if ${def.version} >/dev/null 2>&1; then :`,
     `elif command -v npm >/dev/null 2>&1; then echo "The installer didn't finish; trying npm instead."; ${viaNpm}`,
     `else echo "The installer didn't finish, and there's no npm here to try instead."; false; fi`,
