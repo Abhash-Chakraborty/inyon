@@ -27,3 +27,20 @@ jobs:
       - run: bun test
         working-directory: apps/node
       - run: bun run build
+
+  # the built app in Chromium at phone widths: text stays inside the composer and chat bubbles
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+        working-directory: apps/web
+      - run: bun run build
+        working-directory: apps/web
+      - run: bun run e2e
+        working-directory: apps/web

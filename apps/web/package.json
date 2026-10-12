@@ -8,6 +8,7 @@
     "build:hosted": "VITE_INYON_HOSTED=1 vite build --base /inyon-releases/ --outDir dist-hosted",
     "icons": "bun ../mobile/scripts/icons.ts",
     "typecheck": "tsc --noEmit",
+    "e2e": "bun e2e/layout.ts",
     "test": "bun test"
   },
   "dependencies": {
@@ -41,6 +42,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "playwright": "1.56.1",
     "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
-import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, X } from 'lucide-react'
+import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, SquareTerminal, X } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
@@ -554,7 +554,13 @@ export function Composer({
             ))}
           </div>
         )}
-        {shellMode && <div className="px-1 pb-1 text-[12px] text-fg-3">Shell command · runs in this session’s folder</div>}
+        {/* inset like the text below it: at the box's edge it ran over the rounded corner */}
+        {shellMode && (
+          <div className="flex items-center gap-1.5 px-4 pt-2.5 text-[12px] text-fg-3">
+            <SquareTerminal className="size-3.5 shrink-0" />
+            <span className="truncate">Shell command · runs in this session’s folder</span>
+          </div>
+        )}
         <textarea
           ref={ta}
           rows={1}
@@ -607,7 +613,7 @@ export function Composer({
           }}
           placeholder={working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
           aria-label={`Message ${agentName}`}
-          className="block max-h-[40vh] w-full resize-none bg-transparent px-4 pt-3 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3"
+          className={clsx('block max-h-[40vh] w-full resize-none bg-transparent px-4 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3', shellMode ? 'pt-1' : 'pt-3')}
         />
         <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
           <ToolbarButton label="Attach files" onClick={() => fileInput.current?.click()}>

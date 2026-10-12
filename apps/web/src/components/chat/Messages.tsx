@@ -27,7 +27,8 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
   if (item.shell) {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-3xl bg-bubble px-4 py-2.5 font-mono text-[13px]">
+        {/* commands keep their lines, and a long path wraps instead of running out of the bubble */}
+        <div className="max-w-[88%] min-w-0 whitespace-pre-wrap rounded-3xl bg-bubble px-4 py-2.5 font-mono text-[13px] [overflow-wrap:anywhere]">
           <span className="mr-2 text-accent-text">!</span>
           {item.text}
         </div>
