@@ -13,6 +13,8 @@ import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
 import { VERSION } from '@inyon/protocol'
 import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
+import { pushAll, startHubPush } from './push/hub-push.ts'
+import { pushRoutes, TEST_PAYLOAD } from './push/routes.ts'
 
 /** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
 
@@ -139,6 +141,7 @@ const setupCode = !hasPassword() ? crypto.randomBytes(4).toString('hex') : undef
 if (setupCode) fs.writeFileSync(SETUP_CODE_FILE, setupCode + '\n', { mode: 0o600 })
 const setupAttempts = { n: 0, reset: 0 }
 startCore()
+startHubPush()
 
 /** HTTPS directly, or behind a local HTTPS proxy (Tailscale Serve, Caddy…) where the hub only sees http. */
 function secureRequest(req: Request): boolean {
@@ -246,6 +249,7 @@ const server = Bun.serve<SocketData>({
     },
     ...nodeRoutes,
     ...guarded(coreRoutes),
+    ...guarded(pushRoutes((endpoint) => pushAll(TEST_PAYLOAD, undefined, endpoint))),
     ...guarded(hubUpdate.routes),
   },
   async fetch(req, srv) {

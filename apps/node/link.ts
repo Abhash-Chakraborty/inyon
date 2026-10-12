@@ -8,6 +8,7 @@ import {
 } from '@inyon/link'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
+import { forgetPushes, startPush } from './push.ts'
 import { binDir, nodeDir } from './paths.ts'
 
 /**
@@ -115,6 +116,7 @@ export function forgetPhone(key: string) {
   delete all[key]
   writeJson('phones.json', all)
   endSessions(key)
+  forgetPushes(key)
 }
 
 /** Open phone sessions by the phone's key, so forgetting a phone also ends what it has open. */
@@ -480,6 +482,8 @@ export function startLink(config: LinkConfig) {
     })
   }
   for (const r of config.relays) relay(id, r, () => update())
+  // notifications for paired browsers while their page is closed
+  startPush()
 
   // networks come and go (NetBird often connects after this starts), so look again now and then
   const networks = async () => {

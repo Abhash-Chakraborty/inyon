@@ -9,7 +9,7 @@ const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-test-'))
 const port = 4790 + Math.floor(Math.random() * 100)
 const env = { ...process.env, HOME: home, USERPROFILE: home }
 const cli = (...args: string[]) => Bun.spawn([process.execPath, path.join(import.meta.dir, 'inyon.ts'), ...args], { env, stdout: 'pipe', stderr: 'pipe' })
-const service = cli('link', '--no-tunnel', '--lan', '--port', String(port))
+const service = cli('link', '--no-tunnel', '--no-vpn', '--lan', '--port', String(port))
 afterAll(() => {
   service.kill()
   rmSync(home, { recursive: true, force: true })

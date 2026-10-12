@@ -111,7 +111,11 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 )
 
-// Offline shell for the installed app (service workers need HTTPS or localhost).
+// Offline shell for the installed app, and notifications while it's closed (service workers need
+// HTTPS or localhost).
 if ('serviceWorker' in navigator && window.isSecureContext && import.meta.env.PROD && !isNative()) {
-  navigator.serviceWorker.register(publicFile('sw.js'), { scope: BASE }).catch(() => {})
+  navigator.serviceWorker.register(publicFile('sw.js'), { scope: BASE }).then(
+    () => void import('./lib/push.ts').then((m) => m.watchPush()),
+    () => {},
+  )
 }

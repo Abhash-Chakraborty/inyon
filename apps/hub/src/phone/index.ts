@@ -165,9 +165,13 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
     },
   }
 
-  const router = makeRouter([phoneRoutes, coreRoutes])
+  // notifications while the page is closed come from the computers (push/node-push.ts)
+  const { startNodePush, pushTest } = await import('../push/node-push.ts')
+  const { pushRoutes } = await import('../push/routes.ts')
+  const router = makeRouter([phoneRoutes, pushRoutes(pushTest, { only: true }), coreRoutes])
   startCore()
   ensureLinks()
+  startNodePush(async () => (await keys.noise()).publicKey)
   // laptops paired with the phone update from inyon-releases; its API answers the WebView (CORS)
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   nodeUpdates.watchReleases()

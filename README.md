@@ -132,7 +132,8 @@ deploy anywhere else.
 - In a browser, the hub's address is the app: `http://my-server:4777` over Tailscale or NetBird,
   or `https://inyon.example.com` behind a reverse proxy.
 - Installed on a phone from the browser, with system notifications, it needs HTTPS. Use Caddy or
-  `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`.
+  `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`. The hub then sends Web Push itself, so
+  alerts reach a closed tab or installed app, for every agent and for machines going offline.
 - The Android app needs nothing hosted. It talks to your computers itself.
 - The web app at [abhash-chakraborty.github.io/inyon-releases](https://abhash-chakraborty.github.io/inyon-releases/)
   needs no hub either. It runs the same core as the Android app, in the page.
@@ -239,6 +240,14 @@ The same phone core also runs in a web page, published to GitHub Pages from ever
 in the link, which the browser never sends to GitHub, and the app takes it out of the address bar
 before anything loads. On a laptop, open the page and type the ID and code. Pairing keys stay in
 the browser's IndexedDB, sealed with a key the browser won't hand out.
+
+Once you allow notifications, the page subscribes with the browser's own push service (Google's,
+Apple's or Mozilla's) and hands the subscription to each paired computer over the encrypted link.
+When an agent's hook says it needs you or finished, the computer sends an encrypted message
+straight to that push service, so alerts arrive with the page closed and no server of Inyon's is
+involved. The push service only sees ciphertext (RFC 8291). This needs `inyon` 0.10 or later on the
+computer, and today covers Claude Code, whose hook Inyon installs. `inyon push` lists the browsers
+a computer sends to, and `inyon forget` stops them along with the pairing.
 
 It can't open SSH connections, so a server without `inyon` goes through a paired computer. On
 iPhone, add it to the Home Screen first and pair from there: Safari forgets a site after 7 days

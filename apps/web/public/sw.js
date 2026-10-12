@@ -34,3 +34,46 @@ self.addEventListener('fetch', (e) => {
     )
   }
 })
+
+// Notifications while Inyon is closed: a hub, or in the web app a paired computer, sends them
+// through the browser's push service (apps/web/src/lib/push.ts). The tag matches the open app's,
+// so a newer one replaces an older one for the same session.
+const APPLE = /iPhone|iPad|Macintosh/.test(navigator.userAgent) && !/Chrome|Chromium|Edg|Firefox/.test(navigator.userAgent)
+self.addEventListener('push', (e) => {
+  let p = {}
+  try {
+    p = e.data ? e.data.json() : {}
+  } catch {}
+  e.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      // the open app shows it itself; Safari ends a subscription whose pushes show nothing, so it always shows
+      if (!APPLE && p.kind !== 'test' && wins.some((w) => w.focused && w.visibilityState === 'visible')) return
+      await self.registration.showNotification(p.title || 'Inyon', {
+        body: p.body || '',
+        tag: p.tag || 'inyon',
+        renotify: p.kind === 'waiting',
+        data: { href: p.href || '/' },
+        icon: BASE + 'icon-192.png',
+        badge: BASE + 'badge-96.png',
+      })
+    })(),
+  )
+})
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close()
+  const href = (e.notification.data && e.notification.data.href) || '/'
+  e.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+      const win = wins.find((w) => new URL(w.url).pathname.startsWith(BASE))
+      if (win) {
+        await win.focus()
+        win.postMessage({ t: 'open', href })
+        return
+      }
+      await self.clients.openWindow(BASE.replace(/\/$/, '') + href)
+    })(),
+  )
+})

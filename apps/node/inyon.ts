@@ -13,6 +13,7 @@
  *       --port <n>                 local port (4780)
  *   inyon phones                   list paired phones
  *   inyon forget <name|key>        unpair a phone
+ *   inyon push                     list the browsers this machine sends notifications to
  *   inyon join <hub-url>           add this machine to an Inyon hub (its "Add a machine" command
  *                                  runs this), with the token in INYON_TOKEN
  *   inyon connect                  run the connection to that hub
@@ -360,6 +361,7 @@ const USAGE = `inyon ${VERSION}
     --port <n>                      local port (4780)
   inyon phones                      list paired phones
   inyon forget <name|key>           unpair a phone
+  inyon push                        list the browsers this machine sends notifications to
   inyon join <hub-url>              add this machine to an Inyon hub, with the token in INYON_TOKEN
   inyon connect                     run the connection to that hub
   inyon hub                         run the hub
@@ -458,6 +460,7 @@ else if (cmd === 'install') {
 else if (cmd === 'migrate') migrate()
 else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])
+else if (cmd === 'push') await (await import('./push.ts')).pushCommand(rest)
 else if (cmd === 'version' || cmd === '--version') console.log(VERSION)
 else if (cmd === 'help' || cmd === '--help' || cmd === '-h') console.log(USAGE)
 // the form tether-node's installers used: a hub address, with the token in the environment

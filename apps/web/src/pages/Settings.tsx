@@ -13,6 +13,8 @@ import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, 
 import { isHosted, publicFile } from '../lib/base.ts'
 import { allowBackground, batteryUnrestricted, keepAliveSupported, keepAliveWanted, setKeepAlive } from '../lib/keepalive.ts'
 import { copyText } from '../lib/clipboard.ts'
+import { appleMobile, standalone } from '../lib/install.ts'
+import { enablePush, pushSupported, testPush } from '../lib/push.ts'
 import { authorizeCommand, canSsh, isPhone } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
@@ -320,11 +322,20 @@ export function Settings() {
     if (native) void nativeNotificationsOn().then((on) => on !== undefined && setPerm(on ? 'granted' : 'default'))
   }, [native])
   const secure = native || window.isSecureContext
-  const allow = () => (native ? askNativeNotifications().then((ok) => setPerm(ok ? 'granted' : 'denied')) : Notification.requestPermission().then(setPerm))
+  const allow = () =>
+    native
+      ? askNativeNotifications().then((ok) => setPerm(ok ? 'granted' : 'denied'))
+      : Notification.requestPermission().then((p) => {
+          setPerm(p)
+          // with permission, the browser can be notified while Inyon is closed too
+          if (p === 'granted') void enablePush()
+        })
   /** Shows what a notification looks like here, so you know they get through. */
   const testNotification = async () => {
     const title = 'Inyon'
     const body = 'Notifications work. You\u2019ll get one when an agent finishes or needs you.'
+    // through the browser's push service, the way they arrive while Inyon is closed
+    if (!native && pushSupported() && (await testPush()) > 0) return toast({ title: 'Test sent', body: 'It went through your browser\u2019s push service.', tone: 'success' })
     if (native ? await nativeNotify(title, body, '/settings#notifications', 'test', 'done') : (() => {
       try {
         new Notification(title, { body, tag: 'test', icon: publicFile('icon-192.png'), badge: publicFile('badge-96.png') })
@@ -473,7 +484,7 @@ export function Settings() {
             <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
               <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />
             </Row>
-            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : perm === 'denied' ? 'Turned off in your phone\'s settings for Inyon' : 'Alerts while Inyon is in the background'}>
+            <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'unsupported' && appleMobile() && !standalone() ? 'On iPhone, add Inyon to the Home Screen to get these' : perm === 'granted' ? (pushSupported() ? 'On for this device, also while Inyon is closed' : 'On for this device') : perm === 'denied' ? 'Turned off in your phone\'s settings for Inyon' : 'Alerts when an agent needs you, even with Inyon closed'}>
               {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
                 <button type="button" onClick={allow} className="h-8 rounded-full border border-line bg-elev px-3.5 shadow-card text-[13px] font-medium hover:bg-hover">
                   Allow

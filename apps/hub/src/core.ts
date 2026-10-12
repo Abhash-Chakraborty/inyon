@@ -115,6 +115,10 @@ export interface Client extends Subscriber {
 
 export const clients = new Set<Client>()
 
+type Notice = Extract<ServerMsg, { t: 'notify' }>
+/** Others that hear each notification with its final text: a hub's Web Push (push/hub-push.ts). */
+export const noticeSinks = new Set<(n: Notice) => void>()
+
 registry.on((e) => {
   if (e.type === 'overview') {
     const msg: ServerMsg = { t: 'overview', hosts: registry.overview() }
@@ -124,7 +128,9 @@ registry.on((e) => {
     const send = (body: string) => {
       if (sent) return
       sent = true
-      for (const c of clients) c.send({ t: 'notify', host: e.host, pane: e.pane, kind: e.kind, title: e.title, body, agent: e.agent as any })
+      const n: Notice = { t: 'notify', host: e.host, pane: e.pane, kind: e.kind, title: e.title, body, agent: e.agent as any }
+      for (const c of clients) c.send(n)
+      for (const sink of noticeSinks) sink(n)
     }
     if (e.kind !== 'done') return send(e.body)
     // "Claude finished" says little: show the start of its reply instead, if it's quick to find
