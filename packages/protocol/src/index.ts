@@ -35,7 +35,7 @@ export interface HostConfig {
   pairedAt?: number
   /** node only: when its current token was made; one that's never used stops working after a day */
   tokenIssuedAt?: number
-  /** link only (a laptop the phone app paired with directly): its id, from `tether-node pair` */
+  /** link only (a laptop the phone app paired with directly): its id, from `inyon pair` */
   machineId?: string
   /** link only: where it was last reachable, and the relays it uses */
   urls?: string[]
@@ -145,16 +145,16 @@ export interface SessionInfo {
 
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
-/** Inyon's version, the same for the app, the hub and tether-node (the root package.json's). */
+/** Inyon's version, the same for the app, the hub and the inyon program (the root package.json's). */
 export const VERSION = '0.6.5'
 
 /**
- * A tether-node that can be updated from the app, or an update the app started. `latest` is the
+ * A machine's inyon that can be updated from the app, or an update the app started. `latest` is the
  * hub's own version for a machine paired with the hub, the newest release for a phone-paired one.
  */
 export interface NodeUpdate {
   latest: string
-  /** false for a tether-node too old to update itself (its setup command has to be run again) */
+  /** false for an inyon (or tether-node) too old to update itself (its setup command has to be run again) */
   supported: boolean
   state?: 'updating' | 'updated' | 'failed'
   error?: string
@@ -179,9 +179,9 @@ export interface HostState {
   /** agents with a saved sign-in on the machine (unknown until the first probe) */
   signedIn?: AgentKind[]
   os?: string
-  /** the tether-node version a paired machine or laptop runs */
+  /** the inyon version a paired machine or laptop runs */
   nodeVersion?: string
-  /** set when that tether-node is behind, or while an update runs */
+  /** set when that inyon is behind, or while an update runs */
   nodeUpdate?: NodeUpdate
   latencyMs?: number
   sessions: SessionInfo[]

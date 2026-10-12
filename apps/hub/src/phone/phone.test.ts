@@ -36,7 +36,7 @@ function fakeSsh() {
 }
 
 const { ssh, secrets, calls } = fakeSsh()
-// the phone asks GitHub for the newest tether-node release; here it gets a fixed answer
+// the phone asks GitHub for the newest release; here it gets a fixed answer
 const realFetch = globalThis.fetch
 const releaseChecks: string[] = []
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -63,7 +63,7 @@ const until = async (check: () => boolean) => {
   expect(check()).toBe(true)
 }
 
-test('the phone looks up the newest tether-node for laptops paired with it', async () => {
+test('the phone looks up the newest inyon for laptops paired with it', async () => {
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   await until(() => nodeUpdates.latestRelease === '9.9.9')
   expect(releaseChecks).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon-releases/releases/latest'])

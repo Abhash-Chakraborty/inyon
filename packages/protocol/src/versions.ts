@@ -13,8 +13,7 @@ export const WEB_URL = 'https://inyon.abhashchakraborty.tech'
 export const APP_ID = 'tech.abhashchakraborty.inyon'
 
 /**
- * The public repository the app and tether-node are downloaded from (the source is private).
- * tether-node keeps its own copy as it bundles no shared code.
+ * The public repository the app and the inyon program are downloaded from (the source is private).
  */
 export const RELEASES_REPO = 'Abhash-Chakraborty/inyon-releases'
 export const RELEASES_DOWNLOAD = `https://github.com/${RELEASES_REPO}/releases/latest/download`

@@ -2,7 +2,7 @@ import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { newerRelease, VERSION, type HostState } from '@inyon/protocol'
 import type { Host, ExecResult } from './host.ts'
 import { nodeLinks } from './node-link.ts'
-import { LINK_UPDATE, NodeUpdates, nodeUpdates, updateLauncher } from './node-update.ts'
+import { LINK_UPDATE, NodeUpdates, nodeUpdates, SELF_UPDATE, WINDOWS_LAUNCHER } from './node-update.ts'
 import { registry } from './registry.ts'
 
 afterAll(() => mock.restore())
@@ -37,14 +37,14 @@ const until = async (check: () => boolean) => {
   expect(check()).toBe(true)
 }
 
-test('tether-node versions compare by number', () => {
+test('versions compare by number', () => {
   expect(newerRelease('0.6.3', '0.3.0')).toBe(true)
   expect(newerRelease('0.10.0', '0.9.12')).toBe(true)
   expect(newerRelease('0.6.3', '0.6.3')).toBe(false)
   expect(newerRelease('garbage', '0.1.0')).toBe(false)
 })
 
-test('a machine paired with the hub that runs an older tether-node shows an update', () => {
+test('a machine paired with the hub that runs an older inyon shows an update', () => {
   const u = new NodeUpdates(fast)
   expect(u.view(state('old', { nodeVersion: '0.3.0' }))).toEqual({ latest: VERSION, supported: true })
   expect(u.view(state('same', { nodeVersion: VERSION }))).toBeUndefined()
@@ -61,16 +61,20 @@ test('refusals say why', () => {
   const u = new NodeUpdates(fast)
   u.useScripts(async () => 'script')
   const host = fakeHost('r').host
-  expect(u.start(host, state('r', { kind: 'ssh' }))).toBe('Only machines running tether-node can be updated from here.')
+  expect(u.start(host, state('r', { kind: 'ssh' }))).toBe('Only machines running inyon can be updated from here.')
   expect(u.start(host, state('r', { status: 'connecting', nodeVersion: '0.3.0' }))).toBe("r isn't connected. Update it once it's back online.")
   // the registry still thinks it's online, but the link just dropped
   expect(u.start(host, state('r', { nodeVersion: '0.3.0' }))).toBe("r isn't connected. Update it once it's back online.")
   connect('r', VERSION)
-  expect(u.start(host, state('r', { nodeVersion: VERSION }))).toBe('tether-node on r is already up to date.')
-  connect('r', '0.3.0')
-  expect(new NodeUpdates(fast).start(host, state('r', { nodeVersion: '0.3.0' }))).toBe("This hub can't send tether-node updates.")
+  expect(u.start(host, state('r', { nodeVersion: VERSION }))).toBe('inyon on r is already up to date.')
+  // tether-node as a Bun script, from before the rename: set up again rather than updated
+  connect('r', '0.3.0', 'linux x64')
+  expect(u.start(host, state('r', { nodeVersion: '0.3.0' }))).toBe('r runs tether-node from before the rename to Inyon. Copy the "Add a machine" command again and run it there.')
+  expect(u.view(state('r', { nodeVersion: '0.3.0' }))).toEqual({ latest: VERSION, supported: false })
+  connect('r', '0.3.0', 'win32 x64')
+  expect(new NodeUpdates(fast).start(host, state('r', { nodeVersion: '0.3.0' }))).toBe("This hub can't send updates to tether-node.")
   expect(u.start(host, state('r', { nodeVersion: '0.3.0' }))).toBeUndefined()
-  expect(u.start(host, state('r', { nodeVersion: '0.3.0' }))).toBe('tether-node on r is already updating.')
+  expect(u.start(host, state('r', { nodeVersion: '0.3.0' }))).toBe('inyon on r is already updating.')
   connect('l', '0.6.3')
   u.latestRelease = '0.7.0'
   expect(u.start(host, state('l', { kind: 'link', nodeVersion: '0.6.3' }))).toBe("tether-node 0.6.3 can't update itself. Run its setup command on l again.")
@@ -88,7 +92,7 @@ test('an old Windows machine gets the script through exec, and the update ends w
   expect(u.view(state('win', { nodeVersion: '0.3.0' }))).toEqual({ latest: VERSION, supported: true, state: 'updating' })
   await until(() => m.calls.length >= 2)
   expect(asked).toEqual([['win32', 'x64']])
-  expect(m.calls[0]).toEqual({ cmd: updateLauncher('win32'), input: 'the ps1 with its checksum' })
+  expect(m.calls[0]).toEqual({ cmd: WINDOWS_LAUNCHER, input: 'the ps1 with its checksum' })
   expect(m.calls[0]!.cmd).toContain('-File "$d/update.ps1" -Launch')
 
   // the node restarts and comes back with the hub's version
@@ -103,7 +107,7 @@ test('an old Windows machine gets the script through exec, and the update ends w
 test('a failure the script reports is shown, and the next try starts over', async () => {
   const u = new NodeUpdates(fast)
   u.useScripts(async () => 'script')
-  connect('bad', '0.3.0')
+  connect('bad', '0.3.0', 'win32 x64')
   const m = fakeHost('bad')
   u.start(m.host, state('bad', { nodeVersion: '0.3.0' }))
   await until(() => m.calls.length >= 2)
@@ -118,7 +122,7 @@ test('a failure the script reports is shown, and the next try starts over', asyn
 test("a launcher that can't start fails at once, with its last line of output", async () => {
   const u = new NodeUpdates(fast)
   u.useScripts(async () => 'script')
-  connect('nolaunch', '0.3.0')
+  connect('nolaunch', '0.3.0', 'win32 x64')
   const m = fakeHost('nolaunch', { code: 1, stderr: 'powershell.exe: not found\n' })
   u.start(m.host, state('nolaunch', { nodeVersion: '0.3.0' }))
   await until(() => u.view(state('nolaunch', { nodeVersion: '0.3.0' }))?.state === 'failed')
@@ -128,13 +132,13 @@ test("a launcher that can't start fails at once, with its last line of output", 
 test('an update that never finishes times out', async () => {
   const u = new NodeUpdates({ ...fast, timeoutMs: 30 })
   u.useScripts(async () => 'script')
-  connect('slow', '0.3.0')
+  connect('slow', '0.3.0', 'win32 x64')
   u.start(fakeHost('slow').host, state('slow', { nodeVersion: '0.3.0' }))
   await until(() => u.view(state('slow', { nodeVersion: '0.3.0' }))?.state === 'failed')
   expect(u.view(state('slow', { nodeVersion: '0.3.0' }))?.error).toContain('taking too long')
 })
 
-test('a laptop paired with the phone runs its own tether-node update, detached', async () => {
+test('a laptop paired with the phone that still runs tether-node runs its own update, detached', async () => {
   const u = new NodeUpdates(fast)
   u.latestRelease = '0.7.0'
   connect('lap', '0.6.4', 'darwin arm64')
@@ -143,6 +147,18 @@ test('a laptop paired with the phone runs its own tether-node update, detached',
   await until(() => m.calls.length >= 1)
   expect(m.calls[0]).toEqual({ cmd: LINK_UPDATE, input: undefined })
   expect(LINK_UPDATE).toBe('"$TETHER_NODE_EXE" ${TETHER_NODE_SCRIPT:+"$TETHER_NODE_SCRIPT"} update --background')
+})
+
+test('from 0.7.0 a machine runs its own inyon update, detached, and its status is read where inyon keeps it', async () => {
+  const u = new NodeUpdates(fast)
+  u.latestRelease = '0.7.1'
+  connect('new', '0.7.0', 'linux arm64')
+  const m = fakeHost('new')
+  expect(u.start(m.host, state('new', { kind: 'link', nodeVersion: '0.7.0' }))).toBeUndefined()
+  await until(() => m.calls.length >= 2)
+  expect(m.calls[0]).toEqual({ cmd: SELF_UPDATE, input: undefined })
+  expect(SELF_UPDATE).toBe('"$INYON_EXE" ${INYON_SCRIPT:+"$INYON_SCRIPT"} update --background')
+  expect(m.calls[1]!.cmd).toBe('cat "$HOME/.inyon/node/update-status" 2>/dev/null || cat "$HOME/.tether-node/update-status" 2>/dev/null; true')
 })
 
 test('the phone learns the newest release from the GitHub API', async () => {
@@ -169,9 +185,9 @@ test('the API refuses machines it cannot update, with a clear 409', async () => 
   const get = spyOn(registry, 'get').mockImplementation(((id: string) => rts[id]) as any)
   connect('fine', VERSION)
   expect(await ask('nope')).toEqual({ status: 404, error: 'Unknown machine' })
-  expect(await ask('box')).toEqual({ status: 409, error: 'Only machines running tether-node can be updated from here.' })
+  expect(await ask('box')).toEqual({ status: 409, error: 'Only machines running inyon can be updated from here.' })
   expect(await ask('away')).toEqual({ status: 409, error: "away isn't connected. Update it once it's back online." })
-  expect(await ask('fine')).toEqual({ status: 409, error: 'tether-node on fine is already up to date.' })
+  expect(await ask('fine')).toEqual({ status: 409, error: 'inyon on fine is already up to date.' })
   get.mockRestore()
 })
 

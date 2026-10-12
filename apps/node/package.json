@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@inyon/link": "workspace:*",
+    "@inyon/protocol": "workspace:*",
     "uqr": "^0.1.3"
   }
 }

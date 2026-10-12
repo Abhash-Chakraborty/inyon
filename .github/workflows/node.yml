@@ -1,6 +1,8 @@
-name: tether-node
+name: inyon
 
-# Builds tether-node as single binaries (Bun included), so a laptop needs nothing else installed.
+# Builds the inyon program as single binaries (Bun, the hub and the web app inside), so a machine
+# needs nothing else installed. Each is also published as tether-node-<system>, the name the
+# updater from before the rename to Inyon asks for.
 #   push to main  -> refreshes the "node-latest" pre-release
 #   tag v1.2.3    -> attached to that release, and copied to the public downloads repo
 #                    (Abhash-Chakraborty/inyon-releases) that the one-line installers fetch from
@@ -8,7 +10,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['apps/node/**', 'packages/link/**', '.github/workflows/node.yml']
+    paths: ['apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', '.github/workflows/node.yml']
   workflow_dispatch:
 
 permissions:
@@ -31,23 +33,19 @@ jobs:
       - run: bun test
         working-directory: apps/node
 
+      - run: pnpm --filter @inyon/web build
+
       - name: Build
-        working-directory: apps/node
         run: |
           out="$RUNNER_TEMP/dist"
-          mkdir -p "$out"
-          for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64 windows-x64; do
-            ext=""; [[ $t == windows-* ]] && ext=".exe"
-            bun build --compile --minify --target="bun-$t" tether-node.ts --outfile "$out/tether-node-$t$ext"
-          done
-          (cd "$out" && sha256sum tether-node-* > SHA256SUMS)
-          "$out/tether-node-linux-x64" --version
+          bun apps/node/build.ts "$out"
+          "$out/inyon-linux-x64" --version
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
-          cp get.sh get.ps1 "$out/"
+          cp apps/node/get.sh apps/node/get.ps1 "$out/"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tether-node
+          name: inyon
           path: ${{ runner.temp }}/dist
 
       - name: Publish
@@ -62,8 +60,8 @@ jobs:
           else
             gh release delete node-latest --yes --cleanup-tag 2>/dev/null || true
             gh release create node-latest "${files[@]}" --prerelease --target "$GITHUB_SHA" \
-              --title "Latest tether-node build" \
-              --notes "Built from $GITHUB_SHA on main. Run \`tether-node pair\` on a laptop and scan the code with the Inyon app."
+              --title "Latest inyon build" \
+              --notes "Built from $GITHUB_SHA on main. Run \`inyon pair\` on a laptop and scan the code with the Inyon app."
           fi
 
       # this repo is private, so the installers download from a public one; needs a fine-grained
@@ -75,4 +73,4 @@ jobs:
         run: |
           if [ -z "$GH_TOKEN" ]; then echo "No RELEASES_TOKEN secret: skipping the public downloads"; exit 0; fi
           gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP"/dist/* -R Abhash-Chakraborty/inyon-releases \
-            --title "tether-node ${GITHUB_REF_NAME#v}" --notes "tether-node ${GITHUB_REF_NAME#v}. See the README for the one-line setup." --latest
+            --title "Inyon ${GITHUB_REF_NAME#v}" --notes "Inyon ${GITHUB_REF_NAME#v}. See the README for the one-line setup." --latest

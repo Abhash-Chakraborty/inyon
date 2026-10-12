@@ -244,3 +244,45 @@ describe('the hub checks for updates and starts one', () => {
     expect((await u.status()).restartNeeded).toBe(true)
   })
 })
+
+describe('a hub run as the inyon program', () => {
+  const releases = (tag: string) => (async () => Response.json({ tag_name: tag })) as unknown as typeof fetch
+
+  test('looks for a new release on inyon-releases, not in a checkout', async () => {
+    const asked: string[][] = []
+    const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
+    const dataDir = path.join(root, 'bin1')
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    expect(await u.status()).toMatchObject({ current: '0.7.0', latest: '0.7.2', canUpdate: true })
+    expect(asked).toEqual([])
+    const same = hubUpdater({ dataDir, version: '0.7.2', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    expect((await same.status()).latest).toBeUndefined()
+  })
+
+  test("POST runs the program's own update on its own, and its status file says how it went", async () => {
+    const dataDir = path.join(root, 'bin2')
+    const statusFile = path.join(dataDir, 'node', 'update-status')
+    fs.mkdirSync(path.dirname(statusFile), { recursive: true })
+    const asked: string[][] = []
+    const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, fetch: releases('v0.7.2') })
+    const post = u.routes['/api/hub/update'].POST as () => Promise<Response>
+    expect((await post()).status).toBe(202)
+    expect(asked).toEqual([[process.execPath, 'update', '--background']])
+    fs.writeFileSync(statusFile, 'running\n')
+    expect(await u.status()).toMatchObject({ running: true })
+    expect((await post()).status).toBe(409)
+    fs.writeFileSync(statusFile, "failed: The download didn't match the release's checksum, so nothing was changed. Try again.\n")
+    expect(await u.status()).toMatchObject({ error: "The download didn't match the release's checksum, so nothing was changed. Try again.", log: path.join(dataDir, 'node', 'update.log') })
+  })
+
+  test("an update that can't start says why", async () => {
+    const dataDir = path.join(root, 'bin3')
+    const run: Exec = async () => ({ code: 1, out: 'systemd-run: not found' })
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    const res = await (u.routes['/api/hub/update'].POST as () => Promise<Response>)()
+    expect(res.status).toBe(500)
+    expect(((await res.json()) as { error: string }).error).toBe('systemd-run: not found')
+    expect(await u.status()).toMatchObject({ error: 'systemd-run: not found' })
+  })
+})

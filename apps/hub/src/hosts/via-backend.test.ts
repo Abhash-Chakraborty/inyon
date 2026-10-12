@@ -28,7 +28,7 @@ test('a command reaches the server through the computer exactly as written', () 
   })
 })
 
-test("when the computer isn't connected, the server's error names it, not tether-node", async () => {
+test("when the computer isn't connected, the server's error names it, not inyon", async () => {
   const { viaBackend } = await import('./via-backend.ts')
   const jump = { id: 'jump-offline', name: 'Jump box', kind: 'link' as const }
   const via = viaBackend((id) => (id === jump.id ? jump : undefined))

@@ -7,10 +7,11 @@ import {
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
 import { serveOps, WIN } from './ops.ts'
+import { binDir, nodeDir } from './paths.ts'
 
 /**
  * Lets the Inyon phone app reach this machine directly, with no hub. The phone pairs once by
- * scanning a code (`tether-node pair`), then connects over an end-to-end encrypted link (Noise)
+ * scanning a code (`inyon pair`), then connects over an end-to-end encrypted link (Noise)
  * through whichever way works: a free Cloudflare quick tunnel this machine opens by itself (so
  * it works from any network), this machine's LAN address, or a relay you run. The tunnel and the
  * relay only ever carry ciphertext. The tunnel's address changes when it restarts, so the
@@ -18,8 +19,7 @@ import { serveOps, WIN } from './ops.ts'
  */
 
 export const VERSION = '0.6.5'
-const DIR = path.join(os.homedir(), '.tether-node')
-const file = (name: string) => path.join(DIR, name)
+const file = (name: string) => path.join(nodeDir(), name)
 const PAIR_MINUTES = 10
 
 export interface LinkConfig {
@@ -59,7 +59,7 @@ function readJson<T>(name: string, fallback: T): T {
 
 /** Written whole or not at all, readable only by this user (it holds keys and pairings). */
 function writeJson(name: string, value: unknown) {
-  mkdirSync(DIR, { recursive: true, mode: 0o700 })
+  mkdirSync(nodeDir(), { recursive: true, mode: 0o700 })
   const tmp = `${file(name)}.${process.pid}.tmp`
   writeFileSync(tmp, JSON.stringify(value, null, 2), { mode: 0o600 })
   renameSync(tmp, file(name))
@@ -118,7 +118,7 @@ function endSessions(key: string) {
   for (const end of ends ?? []) end()
 }
 
-/** `tether-node forget` runs as a process of its own: notice phones.json changing and drop who's gone. */
+/** `inyon forget` runs as a process of its own: notice phones.json changing and drop who's gone. */
 function dropForgotten() {
   let stamp = -1
   try {
@@ -170,11 +170,11 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
     // a wrong code: count it, and stop taking short codes before guessing could pay off
     const failures = (pairing.failures ?? 0) + 1
     writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
-    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
+    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
     throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
   }
-  if (hello.pair) throw new LinkError('NOT_PAIRED', `That pairing code has expired or was already used. Run \`tether-node pair\` on ${os.hostname()} for a new one.`)
-  throw new LinkError('NOT_PAIRED', `This phone isn't paired with ${os.hostname()} any more. Run \`tether-node pair\` there and scan the code again.`)
+  if (hello.pair) throw new LinkError('NOT_PAIRED', `That pairing code has expired or was already used. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
+  throw new LinkError('NOT_PAIRED', `This phone isn't paired with ${os.hostname()} any more. Run \`inyon pair\` there and scan the code again.`)
 }
 
 /** One phone session: the encrypted handshake, then the same commands the hub sends. */
@@ -229,7 +229,7 @@ function listen(id: Identity, config: LinkConfig) {
         if (srv.upgrade(req, { data: { wire } })) return
         return new Response('Upgrade failed', { status: 400 })
       }
-      return new Response('tether-node\n')
+      return new Response('inyon\n')
     },
     websocket: {
       maxPayloadLength: 1 << 20,
@@ -291,11 +291,11 @@ export function cloudflaredAsset(platform: string = os.platform(), cpu: string =
 
 const sha256 = (data: Uint8Array) => crypto.createHash('sha256').update(data).digest('hex')
 
-/** cloudflared from PATH, or the pinned release downloaded once into ~/.tether-node/bin. */
+/** cloudflared from PATH, or the pinned release downloaded once into ~/.inyon/bin. */
 async function cloudflared(): Promise<string> {
   const onPath = Bun.which('cloudflared')
   if (onPath) return onPath
-  const bin = path.join(DIR, 'bin', WIN ? 'cloudflared.exe' : 'cloudflared')
+  const bin = path.join(binDir(), WIN ? 'cloudflared.exe' : 'cloudflared')
   if (existsSync(bin)) return bin
   const asset = cloudflaredAsset()
   const want = CLOUDFLARED.assets[asset]!
@@ -467,6 +467,6 @@ export function startLink(config: LinkConfig) {
     lastPublished = ''
     update()
   }, 30 * 60_000)
-  console.log(`tether-node ${VERSION} link service for ${id.id} on port ${config.port}${config.lan ? ' (LAN too)' : ''}`)
+  console.log(`inyon ${VERSION} link service for ${id.id} on port ${config.port}${config.lan ? ' (LAN too)' : ''}`)
   return id
 }

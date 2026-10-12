@@ -5,10 +5,10 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Channel } from '@inyon/link'
 
 // the real CLI in a throwaway home, reached the way a phone on the same network would
-const home = mkdtempSync(path.join(os.tmpdir(), 'tether-node-test-'))
+const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-test-'))
 const port = 4790 + Math.floor(Math.random() * 100)
 const env = { ...process.env, HOME: home, USERPROFILE: home }
-const cli = (...args: string[]) => Bun.spawn([process.execPath, path.join(import.meta.dir, 'tether-node.ts'), ...args], { env, stdout: 'pipe', stderr: 'pipe' })
+const cli = (...args: string[]) => Bun.spawn([process.execPath, path.join(import.meta.dir, 'inyon.ts'), ...args], { env, stdout: 'pipe', stderr: 'pipe' })
 const service = cli('link', '--no-tunnel', '--lan', '--port', String(port))
 afterAll(() => {
   service.kill()
@@ -108,7 +108,7 @@ test('forgetting a phone ends the session it has open and what that session runs
 
 test('the typed-in ID and code pair a phone, and five wrong codes cancel it', async () => {
   const info = await pairingLink()
-  const short = () => JSON.parse(readFileSync(path.join(home, '.tether-node', 'pairing.json'), 'utf8')).short as string | undefined
+  const short = () => JSON.parse(readFileSync(path.join(home, '.inyon', 'node', 'pairing.json'), 'utf8')).short as string | undefined
   const right = short()!
   expect(right).toMatch(/^[0-9A-Z]{8}:\d{6}$/)
   const phone = generateKeyPair()

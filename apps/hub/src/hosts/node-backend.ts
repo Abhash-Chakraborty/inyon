@@ -3,7 +3,7 @@ import { nodeLinks } from './node-link.ts'
 import { fromBase64, toBase64 } from '../platform/base64.ts'
 
 
-/** Machines running tether-node: commands travel over the node's outbound WebSocket. */
+/** Machines running inyon: commands travel over the node's outbound WebSocket. */
 export const nodeBackend: HostBackend = {
   exec(config, cmd, opts) {
     return new Promise((resolve, reject) => {

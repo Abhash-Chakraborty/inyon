@@ -21,7 +21,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   setLocalHost(undefined)
   const keys = phoneKeys(ssh)
   const conn = sshBackend(ssh, (config) => keys.credentials(config))
-  // laptops paired with `tether-node pair` take the same commands a hub sends to tether-node, and
+  // laptops paired with `inyon pair` take the same commands a hub sends to inyon, and
   // a server reached through one of them goes as `ssh` commands run there
   let lookup = (_id: string): HostConfig | undefined => undefined
   const via = viaBackend((id) => lookup(id))
@@ -111,8 +111,8 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
         const short = parseShortCode(text)
         // a typed ID and code: the relays say which machine the ID stands for
         const info = short ? await resolveShortCode(short).catch(() => undefined) : parsePairLink(text)
-        if (short && !info) throw new HttpError(404, 'No computer has that ID right now. Check it, or run `tether-node pair` again for a new one (each lasts 10 minutes).')
-        if (!info) throw new HttpError(400, "That isn't an Inyon pairing code. Run `tether-node pair` on the computer and scan the code it shows.")
+        if (short && !info) throw new HttpError(404, 'No computer has that ID right now. Check it, or run `inyon pair` again for a new one (each lasts 10 minutes).')
+        if (!info) throw new HttpError(400, "That isn't an Inyon pairing code. Run `inyon pair` on the computer and scan the code it shows.")
         let welcome
         try {
           welcome = await links.pair(info)

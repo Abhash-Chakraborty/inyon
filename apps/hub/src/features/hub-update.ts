@@ -2,12 +2,14 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as spawnChild } from 'node:child_process'
-import { VERSION, newestRelease } from '@inyon/protocol'
+import { RELEASES_API, VERSION, newerRelease, newestRelease } from '@inyon/protocol'
+import { nodeDir } from '../../../node/paths.ts'
 
 /**
- * Updating a hub that was installed with git clone: pull, install, build the web app, restart.
- * `pnpm hub:update` runs it in a terminal; Settings starts the same script from the hub. Nothing
- * here runs by itself: the hub only looks for new tags, at most every half hour.
+ * Updating the hub. Installed with git clone: pull, install, build the web app, restart; `pnpm
+ * hub:update` runs it in a terminal, and Settings starts the same script from the hub. Run as the
+ * inyon program (get.sh --hub): `inyon update`, which swaps in the newest release and restarts it.
+ * Nothing here runs by itself: the hub only looks for a new release, at most every half hour.
  */
 
 /** the checkout the hub runs from */
@@ -159,6 +161,11 @@ export interface HubUpdateOptions {
   spawn?: (cmd: string[], o: { cwd: string; log: string }) => number | undefined
   now?: () => number
   alive?: (pid: number) => boolean
+  /** run as the inyon program rather than from a checkout */
+  binary?: boolean
+  /** the inyon program's update status file (see apps/node/update.ts) */
+  statusFile?: string
+  fetch?: typeof fetch
 }
 
 /** A refusal with the HTTP status the route answers with. */
@@ -193,6 +200,8 @@ const pidAlive = (pid: number) => {
 
 /** The commit `repo` has checked out, short, or '' when it isn't a git checkout. */
 export function headCommit(repo = REPO) {
+  // the inyon program knows the commit it was built from (see apps/node/build.ts)
+  if (Bun.isStandaloneExecutable) return process.env.INYON_BUILD_COMMIT ?? ''
   try {
     const r = Bun.spawnSync(['git', 'rev-parse', '--short', 'HEAD'], { cwd: repo, stdout: 'pipe', stderr: 'ignore' })
     return r.exitCode === 0 ? r.stdout.toString().trim() : ''
@@ -210,7 +219,10 @@ export function hubUpdater(o: HubUpdateOptions) {
   const now = o.now ?? Date.now
   const alive = o.alive ?? pidAlive
   const jobFile = path.join(o.dataDir, 'hub-update.json')
-  const logFile = path.join(o.dataDir, 'hub-update.log')
+  const binary = o.binary ?? Bun.isStandaloneExecutable
+  const statusFile = o.statusFile ?? path.join(nodeDir(), 'update-status')
+  const logFile = binary ? path.join(path.dirname(statusFile), 'update.log') : path.join(o.dataDir, 'hub-update.log')
+  const get = o.fetch ?? fetch
   let cache: Omit<HubUpdateStatus, 'running' | 'error' | 'log' | 'restartNeeded'> | undefined
   let checking: Promise<typeof cache> | undefined
 
@@ -222,7 +234,19 @@ export function hubUpdater(o: HubUpdateOptions) {
     }
   }
 
+  /** the newest release, from the releases repo's API */
+  async function checkRelease() {
+    let latest: string | undefined
+    try {
+      const r = await get(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } })
+      const tag = r.ok ? String(((await r.json()) as { tag_name?: string })?.tag_name ?? '').replace(/^v/, '') : ''
+      if (newerRelease(tag, version)) latest = tag
+    } catch {}
+    return { current: version, latest, canUpdate: true, checkedAt: now() }
+  }
+
   async function check() {
+    if (binary) return checkRelease()
     const co = await checkCheckout(repo, run)
     let latest: string | undefined
     let behind: number | undefined
@@ -237,6 +261,19 @@ export function hubUpdater(o: HubUpdateOptions) {
 
   /** what an update from Settings is doing, or how the last one ended */
   async function jobState(): Promise<Pick<HubUpdateStatus, 'running' | 'error' | 'log' | 'restartNeeded'>> {
+    if (binary) {
+      const job = readJob()
+      let line = ''
+      try {
+        line = fs.readFileSync(statusFile, 'utf8').trim()
+      } catch {}
+      if (!job || job.done) return {}
+      if (job.error) return { error: job.error, log: logFile }
+      if (line.startsWith('failed:')) return { error: line.slice(7).trim(), log: logFile }
+      // `inyon update` restarts this hub when it's done; until then it says running
+      if (line === 'running' || now() - job.started < 10_000) return { running: true }
+      return {}
+    }
     const job = readJob()
     if (!job) return {}
     if (job.error) return { error: job.error, log: logFile }
@@ -260,6 +297,18 @@ export function hubUpdater(o: HubUpdateOptions) {
 
   async function start() {
     if ((await jobState()).running) throw new UpdateRefused(409, 'An update is already running.')
+    if (binary) {
+      fs.mkdirSync(o.dataDir, { recursive: true })
+      fs.writeFileSync(jobFile, JSON.stringify({ started: now(), step: 'start' } satisfies Job), { mode: 0o600 })
+      // runs on its own (see detach in apps/node/service.ts), since it restarts this hub
+      const r = await run([process.execPath, 'update', '--background'], o.dataDir)
+      if (r.code !== 0) {
+        writeJob(jobFile, { error: r.out || "Couldn't start the update." })
+        throw new UpdateRefused(500, r.out || "Couldn't start the update.")
+      }
+      cache = undefined
+      return undefined
+    }
     const co = await checkCheckout(repo, run)
     if (co.reason) throw new UpdateRefused(409, co.reason)
     fs.mkdirSync(o.dataDir, { recursive: true })

@@ -221,6 +221,9 @@ importers:
       '@inyon/link':
         specifier: workspace:*
         version: link:../../packages/link
+      '@inyon/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       uqr:
         specifier: ^0.1.3
         version: 0.1.3

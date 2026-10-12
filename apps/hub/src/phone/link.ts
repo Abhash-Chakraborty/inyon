@@ -3,8 +3,8 @@ import type { HostConfig } from '@inyon/protocol'
 import { nodeLinks } from '../hosts/node-link.ts'
 
 /**
- * The phone's side of `tether-node link`: one end-to-end encrypted channel per paired laptop,
- * carrying the same commands a hub sends to tether-node. It tries the addresses the laptop gave
+ * The phone's side of `inyon link`: one end-to-end encrypted channel per paired laptop,
+ * carrying the same commands a hub sends to inyon. It tries the addresses the laptop gave
  * last (its LAN address first, then its tunnel), looks up its current ones by its id when those
  * fail (a tunnel's address changes every time it restarts), then its relays. A lost connection
  * comes back on its own, and at once when the app returns to the foreground.
@@ -90,7 +90,7 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
     }
   }
   if (relays.length) return { ...(await firstOf(relays.map((r) => relayWs(r, phonePath(o.id))), DIRECT_MS * 2)), urls: found?.urls ?? o.urls }
-  throw new LinkError('TIMEOUT', found ? "The computer isn't answering at its addresses. Is `tether-node link` running there?" : "Couldn't find the computer online. Is `tether-node link` running there? It needs to be on and connected to the internet.")
+  throw new LinkError('TIMEOUT', found ? "The computer isn't answering at its addresses. Is `inyon link` running there?" : "Couldn't find the computer online. Is `inyon link` running there? It needs to be on and connected to the internet.")
 }
 
 /**

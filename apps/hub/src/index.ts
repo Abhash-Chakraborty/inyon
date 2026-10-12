@@ -23,7 +23,8 @@ function pairOrigin(req: Request, origin?: string) {
   return hub
 }
 
-const WEB_DIST = path.resolve(import.meta.dir, '../../web/dist')
+// the inyon program carries the web app next to its code (see apps/node/build.ts)
+const WEB_DIST = Bun.isStandaloneExecutable ? path.join(import.meta.dir, 'inyon-web') : path.resolve(import.meta.dir, '../../web/dist')
 // what this hub runs, so an open app can tell it was updated; and its update from Settings
 const HUB_COMMIT = headCommit()
 const hubUpdate = hubUpdater({ dataDir: DATA_DIR, commit: HUB_COMMIT })
@@ -247,7 +248,7 @@ const server = Bun.serve<SocketData>({
   async fetch(req, srv) {
     const url = new URL(req.url)
     if (url.pathname === '/node') {
-      // tether-node machines authenticate with their pairing token
+      // machines running inyon authenticate with their pairing token
       const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
       const hash = token ? sha256(token) : ''
       const cfg = hash && registry.configs().find((c) => c.kind === 'node' && c.tokenHash && crypto.timingSafeEqual(Buffer.from(c.tokenHash), Buffer.from(hash)))

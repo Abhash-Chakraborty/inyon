@@ -2,29 +2,24 @@ import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import zlib from 'node:zlib'
-import { fillUpdateScript, updateLauncher } from './node-update.ts'
+import { fillUpdateScript, WINDOWS_LAUNCHER } from './node-update.ts'
 
-// The scripts the hub sends to update tether-node. The shell one runs for real, under a throwaway
-// HOME, with systemctl, systemd-run, sleep and bun replaced by stubs that log what they're asked,
-// and a local server standing in for the hub. Nothing touches a real service. The Windows script
-// is checked for the order of its steps, and also run under PowerShell where one is installed
-// (pwsh, or PWSH=<path>), with the Windows-only cmdlets replaced by stubs.
+// The script the hub sends to update a Windows machine still on tether-node, from before the rename
+// to Inyon. It's checked for the order of its steps, and also run under PowerShell where one is
+// installed (pwsh, or PWSH=<path>), with the Windows-only cmdlets replaced by stubs, a throwaway
+// home, and a local server standing in for the hub. Nothing touches a real service.
 
 const NODE = path.resolve(import.meta.dir, '../../../node')
-const SH = readFileSync(path.join(NODE, 'hub-update.sh'), 'utf8')
 const PS1 = readFileSync(path.join(NODE, 'hub-update.ps1'), 'utf8')
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
-const REAL_SLEEP = Bun.which('sleep')!
 
-let served = 'console.log("new tether-node")'
 const server = Bun.serve({
   port: 4791,
   hostname: '127.0.0.1',
   fetch: (req) => {
     const u = new URL(req.url)
-    if (u.pathname === '/node/tether-node.ts') return new Response(served)
     if (u.pathname === '/node/tether-node.exe.gz' && u.searchParams.get('arch') === 'x64') return new Response(zlib.gzipSync('new exe'))
     return new Response('no', { status: 404 })
   },
@@ -33,149 +28,30 @@ afterAll(() => server.stop(true))
 
 let root: string
 let home: string
-let stubs: string
 const log = () => (existsSync(path.join(root, 'calls')) ? readFileSync(path.join(root, 'calls'), 'utf8') : '')
-const nodeDir = () => path.join(home, '.tether-node')
-const status = () => readFileSync(path.join(nodeDir(), 'update-status'), 'utf8').trim()
-const installed = () => readFileSync(path.join(nodeDir(), 'tether-node.ts'), 'utf8')
-const stub = (name: string, body: string) => {
-  writeFileSync(path.join(stubs, name), `#!/bin/sh\necho "${name} $*" >> '${root}/calls'\n${body}\n`)
-  chmodSync(path.join(stubs, name), 0o755)
-}
-/** what a started tether-node does: write node.json, then keep running */
-const startsNode = (version: string) => `${REAL_SLEEP} 30 < /dev/null > /dev/null 2>&1 &\nprintf '{"pid":%s,"version":"${version}"}' $! > "$HOME/.tether-node/node.json"`
 
 beforeEach(() => {
   root = mkdtempSync(path.join(os.tmpdir(), 'inyon-hub-update-'))
   // a home with a space and a quote in it: everything must stay quoted
   home = path.join(root, "home dir/o'brien")
-  stubs = path.join(root, 'stubs')
-  mkdirSync(nodeDir(), { recursive: true })
-  mkdirSync(stubs)
-  writeFileSync(path.join(nodeDir(), 'tether-node.ts'), 'old tether-node')
-  writeFileSync(path.join(nodeDir(), 'env'), 'TETHER_HUB=http://127.0.0.1:4791/\nTETHER_TOKEN=secret\n')
-  served = 'console.log("new tether-node")'
-  // never the real ones, whatever a test sets up
-  stub('systemctl', 'exit 1')
-  stub('systemd-run', 'exit 1')
-  stub('launchctl', 'exit 1')
-  stub('sleep', 'exit 0')
+  mkdirSync(home, { recursive: true })
 })
 afterEach(() => {
-  // stop the stand-in node processes this test started
-  for (const f of ['node.json']) {
-    try {
-      process.kill(JSON.parse(readFileSync(path.join(nodeDir(), f), 'utf8')).pid)
-    } catch {}
-  }
   rmSync(root, { recursive: true, force: true })
 })
 
-// not spawnSync: the stand-in hub answers from this same process
-const run = (script: string, env: Record<string, string> = {}) =>
-  Bun.spawn(['/bin/sh', '-c', script], { env: { HOME: home, PATH: `${stubs}:/usr/bin:/bin`, ...env }, stdout: 'ignore', stderr: 'ignore' }).exited
-const filled = (version = '0.6.3', want = sha(served)) => fillUpdateScript(SH, { sha256: want, version, arch: 'x64' })
-
-test('only a plain checksum, version and architecture go into a script', () => {
+test('only a plain checksum, version and architecture go into the script', () => {
   const ok = { sha256: 'a'.repeat(64), version: '0.6.3', arch: 'x64' }
-  expect(fillUpdateScript(SH, ok)).toContain(`WANT='${'a'.repeat(64)}'`)
+  expect(fillUpdateScript(PS1, ok)).toContain(`$Want = '${'a'.repeat(64)}'`)
   expect(fillUpdateScript(PS1, { ...ok, arch: 'arm64' })).toContain("$Arch = 'arm64'")
-  expect(() => fillUpdateScript(SH, { ...ok, version: "0.6.3'; rm -rf ~; '" })).toThrow('Bad version')
-  expect(() => fillUpdateScript(SH, { ...ok, sha256: 'A'.repeat(64) })).toThrow('Bad checksum')
+  expect(() => fillUpdateScript(PS1, { ...ok, version: "0.6.3'; rm -rf ~; '" })).toThrow('Bad version')
+  expect(() => fillUpdateScript(PS1, { ...ok, sha256: 'A'.repeat(64) })).toThrow('Bad checksum')
   expect(() => fillUpdateScript(PS1, { ...ok, arch: 'x86' })).toThrow('Bad architecture')
   expect(fillUpdateScript(PS1, ok)).not.toContain('@@')
 })
 
-test("a download that doesn't match the checksum leaves everything as it was", async () => {
-  stub('systemctl', 'exit 0')
-  mkdirSync(path.join(home, '.config/systemd/user'), { recursive: true })
-  writeFileSync(path.join(home, '.config/systemd/user/tether-node.service'), '')
-  await run(filled('0.6.3', sha('what the hub meant to send')))
-  expect(installed()).toBe('old tether-node')
-  expect(status()).toBe("failed: the download didn't match the hub's checksum, so nothing was changed")
-  expect(readdirSync(nodeDir()).sort()).toEqual(['env', 'tether-node.ts', 'update-status', 'update.log'])
-  expect(log()).not.toContain('systemctl')
-})
-
-test('with a systemd unit: replaced, restarted, and done once the new version runs', async () => {
-  mkdirSync(path.join(home, '.config/systemd/user'), { recursive: true })
-  writeFileSync(path.join(home, '.config/systemd/user/tether-node.service'), '')
-  stub('systemctl', startsNode('0.6.3'))
-  await run(filled())
-  expect(installed()).toBe(served)
-  expect(log()).toContain('systemctl --user restart tether-node')
-  expect(status()).toBe('done 0.6.3')
-  // the old copy is gone once the new one runs
-  expect(readdirSync(nodeDir()).filter((f) => f.includes('.old-'))).toEqual([])
-})
-
-test("a new version that doesn't stay up is swapped back out", async () => {
-  mkdirSync(path.join(home, '.config/systemd/user'), { recursive: true })
-  writeFileSync(path.join(home, '.config/systemd/user/tether-node.service'), '')
-  // it starts and dies at once: node.json names a process that isn't there
-  stub('systemctl', `printf '{"pid":%s,"version":"0.6.3"}' 4194000 > "$HOME/.tether-node/node.json"`)
-  await run(filled())
-  expect(installed()).toBe('old tether-node')
-  expect(log().match(/systemctl --user restart tether-node/g)).toHaveLength(2)
-  expect(status()).toBe("failed: the new version didn't start, so the previous one is running again")
-})
-
-test('without a service manager: stops the tether-node that ran it and starts the new one with nohup', async () => {
-  // the running node, as `ps` shows it: a program whose name has tether-node in it
-  writeFileSync(path.join(root, 'tether-node-running'), `while :; do ${REAL_SLEEP} 1; done`)
-  const old = Bun.spawn(['/bin/sh', path.join(root, 'tether-node-running')], { stdout: 'ignore', stderr: 'ignore' })
-  stub('bun', startsNode('0.6.3'))
-  await run(filled(), { TETHER_NODE_PID: String(old.pid) })
-  expect(installed()).toBe(served)
-  expect(log()).toContain(`bun ${nodeDir()}/tether-node.ts`)
-  expect(status()).toBe('done 0.6.3')
-  await Promise.race([old.exited, Bun.sleep(3000)])
-  expect(old.signalCode).toBe('SIGTERM')
-})
-
-test('a pid that no longer belongs to tether-node is not stopped', async () => {
-  const other = Bun.spawn([REAL_SLEEP, '30'], { stdout: 'ignore', stderr: 'ignore' })
-  stub('bun', startsNode('0.6.3'))
-  await run(filled(), { TETHER_NODE_PID: String(other.pid) })
-  expect(other.exitCode).toBeNull()
-  other.kill()
-})
-
-test('the launcher returns at once and the update carries on detached', async () => {
-  // the "update" here waits a moment, then leaves a mark
-  const script = `${REAL_SLEEP} 1; echo done > "$HOME/mark"`
-  const started = Date.now()
-  const p = Bun.spawn(['/bin/sh', '-c', updateLauncher('linux')], {
-    env: { HOME: home, PATH: `${stubs}:/usr/bin:/bin` },
-    stdin: new TextEncoder().encode(script),
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  // tether-node 0.3.0 waits for the output to close, not just for the shell: both must end now
-  const [out] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
-  expect(p.exitCode).toBe(0)
-  expect(out).toBe('')
-  expect(Date.now() - started).toBeLessThan(800)
-  expect(readFileSync(path.join(nodeDir(), 'update.sh'), 'utf8')).toBe(script)
-  expect(status()).toBe('running')
-  expect(existsSync(path.join(home, 'mark'))).toBe(false)
-  for (let i = 0; i < 40 && !existsSync(path.join(home, 'mark')); i++) await Bun.sleep(100)
-  expect(existsSync(path.join(home, 'mark'))).toBe(true)
-  // no systemd unit here, so no transient unit either
-  expect(log()).not.toContain('systemd-run')
-})
-
-test('with a systemd unit the update runs as a transient unit, outside the one it restarts', () => {
-  mkdirSync(path.join(home, '.config/systemd/user'), { recursive: true })
-  writeFileSync(path.join(home, '.config/systemd/user/tether-node.service'), '')
-  stub('systemd-run', 'exit 0')
-  const r = Bun.spawnSync(['/bin/sh', '-c', updateLauncher('linux')], { env: { HOME: home, PATH: `${stubs}:/usr/bin:/bin` }, stdin: new TextEncoder().encode('true') })
-  expect(r.exitCode).toBe(0)
-  expect(log()).toBe(`systemd-run --user --collect --quiet /bin/sh ${nodeDir()}/update.sh\n`)
-})
-
 test('the Windows launcher writes the script and hands it to PowerShell to start as a task', () => {
-  const l = updateLauncher('win32')
+  const l = WINDOWS_LAUNCHER
   expect(l).toContain('cat > "$d/update.ps1"')
   expect(l).toContain(`printf 'running\\n' > "$d/update-status"`)
   expect(l).toContain('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$d/update.ps1" -Launch')

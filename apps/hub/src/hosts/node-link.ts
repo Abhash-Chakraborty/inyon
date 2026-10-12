@@ -1,5 +1,5 @@
 /**
- * Machines running `tether-node` keep one outbound WebSocket to the hub. Commands travel over it
+ * Machines running `inyon` keep one outbound WebSocket to the hub. Commands travel over it
  * as JSON frames, so the machine never has to accept incoming connections.
  *
  *   hub → node   { id, op: 'exec' | 'stream' | 'pty' | 'write' | 'resize' | 'kill', ... }
@@ -101,7 +101,7 @@ class NodeLinks {
   /** Starts an operation; `onMsg` receives its frames until you call the returned `done`. */
   start(hostId: string, op: Record<string, unknown>, onMsg: Handler) {
     const ws = this.sockets.get(hostId)
-    if (!ws) throw new Error('This machine is not connected. Is tether-node running on it?')
+    if (!ws) throw new Error('This machine is not connected. Is inyon running on it?')
     const id = String(++this.seq)
     const key = `${hostId}:${id}`
     this.handlers.set(key, { ws, onMsg })

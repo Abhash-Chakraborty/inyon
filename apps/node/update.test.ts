@@ -10,13 +10,13 @@ import {
 } from './update.ts'
 
 // Nothing real is touched: home is a throwaway folder, a local server stands in for inyon-releases
-// and the hub, and restarting the service is a fake that records what it was asked.
+// and the hub, and restarting the services is a fake that records what it was asked.
 afterAll(() => mock.restore())
 
 const sha = (b: string | Uint8Array) => crypto.createHash('sha256').update(b).digest('hex')
 const NAME = binaryName()
 let release = { version: '9.9.9', body: 'new build', sums: '' }
-let hub = { script: 'new script', exe: 'new exe', sumOverride: '' }
+let hub = { builds: { 'linux-x64': 'new linux build', 'windows-x64': 'new exe' } as Record<string, string>, sumOverride: '' }
 let requests: string[] = []
 const server = Bun.serve({
   port: 4790,
@@ -26,11 +26,10 @@ const server = Bun.serve({
     requests.push(u.pathname + u.search)
     if (u.pathname === '/releases/latest') return new Response(null, { status: 302, headers: { location: `https://github.com/x/y/releases/tag/v${release.version}` } })
     if (u.pathname === `/releases/latest/download/${NAME}`) return new Response(release.body)
-    if (u.pathname === '/releases/latest/download/SHA256SUMS') return new Response(release.sums || `${sha(release.body)}  ${NAME}\n${sha('other')}  tether-node-other\n`)
-    if (u.pathname === '/node/tether-node.ts.sha256') return new Response(hub.sumOverride || sha(hub.script))
-    if (u.pathname === '/node/tether-node.ts') return new Response(hub.script)
-    if (u.pathname === '/node/tether-node.exe.sha256' && u.searchParams.get('arch') === 'x64') return new Response(hub.sumOverride || sha(hub.exe))
-    if (u.pathname === '/node/tether-node.exe.gz' && u.searchParams.get('arch') === 'x64') return new Response(zlib.gzipSync(hub.exe))
+    if (u.pathname === '/releases/latest/download/SHA256SUMS') return new Response(release.sums || `${sha(release.body)}  ${NAME}\n${sha('other')}  inyon-other\n`)
+    const build = hub.builds[`${u.searchParams.get('os')}-${u.searchParams.get('arch')}`]
+    if (u.pathname === '/node/inyon.sha256' && build) return new Response(hub.sumOverride || sha(build))
+    if (u.pathname === '/node/inyon.gz' && build) return new Response(zlib.gzipSync(build))
     return new Response('not found', { status: 404 })
   },
 })
@@ -39,33 +38,36 @@ const BASE = 'http://127.0.0.1:4790'
 
 let home: string
 let restarts: [string, string[]][]
+let waited: string[]
 let startedOk: boolean
 const deps = (more: Partial<Deps> = {}): Deps => ({
   version: '0.6.3',
   fetch,
-  restart: (which, cmd) => (restarts.push([which, cmd]), { ok: true, how: 'fake' }),
-  started: async () => startedOk,
+  roles: () => ['link'],
+  restart: (role, cmd) => (restarts.push([role, cmd]), { ok: true, how: 'fake' }),
+  started: async (role) => (waited.push(role), startedOk),
   log: () => {},
   ...more,
 })
-const binDir = () => path.join(home, '.tether-node', 'bin')
-const installed = () => path.join(binDir(), process.platform === 'win32' ? 'tether-node.exe' : 'tether-node')
+const binDir = () => path.join(home, '.inyon', 'bin')
+const installed = () => path.join(binDir(), process.platform === 'win32' ? 'inyon.exe' : 'inyon')
 
 beforeAll(() => {
-  process.env.TETHER_DOWNLOAD = `${BASE}/releases/latest/download`
+  process.env.INYON_DOWNLOAD = `${BASE}/releases/latest/download`
 })
 afterAll(() => {
-  delete process.env.TETHER_DOWNLOAD
+  delete process.env.INYON_DOWNLOAD
 })
 beforeEach(() => {
-  home = mkdtempSync(path.join(os.tmpdir(), 'tether-node-update-'))
+  home = mkdtempSync(path.join(os.tmpdir(), 'inyon-update-'))
   spyOn(os, 'homedir').mockReturnValue(home)
   mkdirSync(binDir(), { recursive: true })
   writeFileSync(installed(), 'old build')
   release = { version: '9.9.9', body: 'new build', sums: '' }
-  hub = { script: 'new script', exe: 'new exe', sumOverride: '' }
+  hub = { builds: { 'linux-x64': 'new linux build', 'windows-x64': 'new exe' }, sumOverride: '' }
   requests = []
   restarts = []
+  waited = []
   startedOk = true
 })
 afterEach(() => {
@@ -86,10 +88,18 @@ test('versions compare by number, and a release beats its own pre-releases', () 
 })
 
 test('SHA256SUMS lines match the exact file name, in either sha256sum format', () => {
-  const sums = `${'a'.repeat(64)}  tether-node-linux-x64\n${'b'.repeat(64)} *tether-node-windows-x64.exe\n`
-  expect(sumFor(sums, 'tether-node-linux-x64')).toBe('a'.repeat(64))
-  expect(sumFor(sums, 'tether-node-windows-x64.exe')).toBe('b'.repeat(64))
-  expect(sumFor(sums, 'tether-node-linux')).toBeUndefined()
+  const sums = `${'a'.repeat(64)}  inyon-linux-x64\n${'b'.repeat(64)} *inyon-windows-x64.exe\n`
+  expect(sumFor(sums, 'inyon-linux-x64')).toBe('a'.repeat(64))
+  expect(sumFor(sums, 'inyon-windows-x64.exe')).toBe('b'.repeat(64))
+  expect(sumFor(sums, 'inyon-linux')).toBeUndefined()
+})
+
+test('the release file for each system', () => {
+  expect(binaryName('linux', 'arm64')).toBe('inyon-linux-arm64')
+  expect(binaryName('darwin', 'x64')).toBe('inyon-darwin-x64')
+  // Windows on ARM runs the x64 build
+  expect(binaryName('win32', 'arm64')).toBe('inyon-windows-x64.exe')
+  expect(() => binaryName('freebsd', 'x64')).toThrow(UpdateError)
 })
 
 test('the newest version comes from where releases/latest redirects, or from a pinned tag', async () => {
@@ -99,11 +109,12 @@ test('the newest version comes from where releases/latest redirects, or from a p
   await expect(latestVersion(`${BASE}/nothing-here/download`)).rejects.toThrow(UpdateError)
 })
 
-test('a phone-link install downloads the newer build, checks it, swaps it in and restarts the link', async () => {
-  const r = await update(findInstall([installed()], undefined), deps())
+test('a release install downloads the newer build, checks it, swaps it in and restarts each job', async () => {
+  const r = await update(findInstall([installed()], undefined), deps({ roles: () => ['link', 'hub'] }))
   expect(r).toMatchObject({ changed: true, version: '9.9.9' })
   expect(readFileSync(installed(), 'utf8')).toBe('new build')
-  expect(restarts).toEqual([['link', [installed()]]])
+  expect(restarts).toEqual([['link', [installed()]], ['hub', [installed()]]])
+  expect(waited).toEqual(['link', 'hub'])
   // the old copy is gone once the new one runs, and no download is left behind
   expect(readdirSync(binDir())).toEqual([path.basename(installed())])
 })
@@ -117,7 +128,7 @@ test("a download that doesn't match SHA256SUMS changes nothing", async () => {
 })
 
 test('a build missing from SHA256SUMS is refused too', async () => {
-  release.sums = `${sha(release.body)}  tether-node-some-other-build\n`
+  release.sums = `${sha(release.body)}  inyon-some-other-build\n`
   await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow(UpdateError)
   expect(readFileSync(installed(), 'utf8')).toBe('old build')
 })
@@ -125,54 +136,58 @@ test('a build missing from SHA256SUMS is refused too', async () => {
 test('already on the newest version: says so and downloads nothing', async () => {
   release.version = '0.6.3'
   const r = await update(findInstall([installed()], undefined), deps())
-  expect(r).toEqual({ changed: false, message: 'tether-node 0.6.3 is up to date.', version: '0.6.3' })
+  expect(r).toEqual({ changed: false, message: 'inyon 0.6.3 is up to date.', version: '0.6.3' })
   expect(requests).toEqual(['/releases/latest'])
   expect(restarts).toEqual([])
 })
 
-test("a new version that doesn't start is swapped back out and the old one restarted", async () => {
+test("a new version that doesn't start is swapped back out and every job restarted on the old one", async () => {
   startedOk = false
-  await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow('the previous version is running again')
+  await expect(update(findInstall([installed()], undefined), deps({ roles: () => ['link', 'node'] }))).rejects.toThrow('the previous version is running again')
   expect(readFileSync(installed(), 'utf8')).toBe('old build')
-  expect(restarts.map(([w]) => w)).toEqual(['link', 'link'])
+  expect(restarts.map(([r]) => r)).toEqual(['link', 'node', 'link', 'node'])
 })
 
-test('a hub install takes the hub build when it differs, checked against the hub sha256', async () => {
-  const script = path.join(home, '.tether-node', 'tether-node.ts')
-  writeFileSync(script, 'old script')
-  const install = findInstall([process.execPath, script], BASE)
+test('nothing running in the background: the new file is in place for the next start', async () => {
+  const r = await update(findInstall([installed()], undefined), deps({ roles: () => [] }))
+  expect(r.message).toContain("isn't running as a background service")
+  expect(readFileSync(installed(), 'utf8')).toBe('new build')
+})
+
+test('a machine added to a hub takes the hub build when it differs, checked against the hub sha256', async () => {
+  const install = findInstall([installed()], BASE)
   expect(install.kind).toBe('hub')
-  expect(await update(install, deps())).toMatchObject({ changed: true })
-  expect(readFileSync(script, 'utf8')).toBe('new script')
-  expect(restarts).toEqual([['hub', [process.execPath, script]]])
+  const linux = deps({ platform: 'linux', arch: 'x64', roles: () => ['node'] })
+  expect(await update(install, linux)).toMatchObject({ changed: true })
+  expect(readFileSync(installed(), 'utf8')).toBe('new linux build')
+  expect(restarts).toEqual([['node', [installed()]]])
+  expect(requests).toContain('/node/inyon.gz?os=linux&arch=x64')
 
   // the same file as the hub's: nothing to do
   restarts = []
-  expect(await update(install, deps())).toMatchObject({ changed: false })
+  expect(await update(install, linux)).toMatchObject({ changed: false })
   expect(restarts).toEqual([])
 
   // a checksum that doesn't match leaves the running copy alone
-  hub.script = 'tampered'
+  hub.builds['linux-x64'] = 'tampered'
   hub.sumOverride = sha('what the hub meant')
-  await expect(update(install, deps())).rejects.toThrow("didn't match the hub's checksum")
-  expect(readFileSync(script, 'utf8')).toBe('new script')
+  await expect(update(install, linux)).rejects.toThrow("didn't match the hub's checksum")
+  expect(readFileSync(installed(), 'utf8')).toBe('new linux build')
 })
 
-test('a Windows hub install gets the gzipped .exe for its architecture', async () => {
-  const exe = path.join(home, '.tether-node', 'tether-node.exe')
-  writeFileSync(exe, 'old exe')
-  const install = findInstall([exe], BASE)
-  expect(install).toMatchObject({ kind: 'hub', exe: true })
-  expect(await update(install, deps({ platform: 'win32', arch: 'x64' }))).toMatchObject({ changed: true })
-  expect(readFileSync(exe, 'utf8')).toBe('new exe')
-  expect(requests).toContain('/node/tether-node.exe.gz?arch=x64')
+test('a Windows machine asks its hub for the Windows build, whatever its processor', async () => {
+  const install = findInstall([installed()], BASE)
+  expect(await update(install, deps({ platform: 'win32', arch: 'arm64' }))).toMatchObject({ changed: true })
+  expect(readFileSync(installed(), 'utf8')).toBe('new exe')
+  expect(requests).toContain('/node/inyon.gz?os=windows&arch=x64')
 })
 
 test('which install is running', () => {
-  expect(findInstall([installed()], 'http://hub').kind).toBe('binary')
-  expect(findInstall([path.join(home, '.tether-node', 'tether-node.exe')], 'http://hub')).toMatchObject({ kind: 'hub', exe: true })
-  expect(findInstall(['/tmp/Downloads/tether-node-linux-x64'], undefined).kind).toBe('binary')
-  expect(() => findInstall([process.execPath, '/src/inyon/apps/node/tether-node.ts'], undefined)).toThrow('source checkout')
+  expect(findInstall([installed()], undefined).kind).toBe('binary')
+  expect(findInstall([installed()], 'http://hub')).toMatchObject({ kind: 'hub', hub: 'http://hub' })
+  // tether-node's old place, before it has moved
+  expect(findInstall([path.join(home, '.tether-node', 'tether-node.exe')], 'http://hub').kind).toBe('hub')
+  expect(() => findInstall([process.execPath, '/src/inyon/apps/node/inyon.ts'], undefined)).toThrow('source checkout')
 })
 
 /** Acts like Windows: a running program can be renamed, but not deleted or overwritten. */
@@ -238,7 +253,8 @@ test('Windows: going back renames the new copy aside too, in case it is still ru
 })
 
 test('the restarted copy counts once it names the new version, is a new process, and stays up', async () => {
-  const state = path.join(home, '.tether-node', 'state.json')
+  const state = path.join(home, '.inyon', 'node', 'state.json')
+  mkdirSync(path.dirname(state), { recursive: true })
   const fast = { tries: 3, every: 1, settle: 1 }
   writeFileSync(state, JSON.stringify({ pid: process.pid, version: '9.9.9' }))
   expect(await waitStarted('link', '9.9.9', undefined, fast)).toBe(true)

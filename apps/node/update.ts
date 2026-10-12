@@ -4,19 +4,24 @@ import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { appendFileSync, chmodSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
+import { RELEASES_REPO } from '@inyon/protocol'
+import { nodeDir, readEnvFile, savedHub } from './paths.ts'
+import type { Role } from './service.ts'
+
+export { readEnvFile, savedHub }
 
 /**
- * `tether-node update`: replaces this install with the newest build and restarts its service.
- * A phone-link install (get.sh / get.ps1) updates from inyon-releases, checked against the
- * release's SHA256SUMS like get.sh does; a hub install (install.sh / install.ps1) takes the build
- * its hub serves, checked against the sha256 the hub publishes. Nothing is replaced until the
- * download matches, and the old copy comes back if the new one doesn't start.
+ * `inyon update`: replaces the installed program with the newest build and restarts each job it
+ * runs as (the phone link, the hub connection, the hub). A machine added to a hub takes the build
+ * that hub serves, checked against the sha256 the hub publishes, so it always matches its hub;
+ * anything else updates from inyon-releases, checked against the release's SHA256SUMS like get.sh
+ * does. Nothing is replaced until the download matches, and the old copy comes back if the new one
+ * doesn't start.
  */
 
-export const RELEASES = 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download'
-const dir = () => path.join(os.homedir(), '.tether-node')
+export const RELEASES = `https://github.com/${RELEASES_REPO}/releases/latest/download`
 /** What the app reads to follow an update it started: running, done <version>, current, failed: … */
-export const statusFile = () => path.join(dir(), 'update-status')
+export const statusFile = () => path.join(nodeDir(), 'update-status')
 
 export class UpdateError extends Error {}
 
@@ -41,13 +46,19 @@ export function compareVersions(a: string, b: string): number {
 }
 export const isNewer = (a: string, b: string) => compareVersions(a, b) > 0
 
-/** The release file for this computer, as get.sh and get.ps1 pick it (Windows on ARM runs x64). */
-export function binaryName(platform: string = process.platform, arch: string = os.arch()) {
-  if (platform === 'win32') return 'tether-node-windows-x64.exe'
+/** The build for this computer as the releases and the hub name it (Windows on ARM runs x64). */
+export function target(platform: string = process.platform, arch: string = os.arch()) {
+  if (platform === 'win32') return { os: 'windows', arch: 'x64' }
   const o = platform === 'darwin' ? 'darwin' : platform === 'linux' ? 'linux' : undefined
   const a = arch === 'x64' ? 'x64' : arch === 'arm64' ? 'arm64' : undefined
-  if (!o || !a) throw new UpdateError(`There's no tether-node build for ${platform} ${arch}.`)
-  return `tether-node-${o}-${a}`
+  if (!o || !a) throw new UpdateError(`There's no Inyon build for ${platform} ${arch}.`)
+  return { os: o, arch: a }
+}
+
+/** The release file for this computer, as get.sh and get.ps1 pick it. */
+export function binaryName(platform: string = process.platform, arch: string = os.arch()) {
+  const t = target(platform, arch)
+  return `inyon-${t.os}-${t.arch}${t.os === 'windows' ? '.exe' : ''}`
 }
 
 /** The checksum SHA256SUMS lists for `name` (sha256sum writes "<hex>  name" or "<hex> *name"). */
@@ -162,47 +173,28 @@ export function cleanupOld(target: string, now = Date.now()) {
   }
 }
 
-export function readEnvFile(file: string): Record<string, string> {
-  try {
-    return Object.fromEntries(
-      readFileSync(file, 'utf8').split(/\r?\n/).flatMap((l) => {
-        const m = l.match(/^(\w+)=(.*)$/)
-        return m ? [[m[1], m[2]!.trim()]] : []
-      }),
-    )
-  } catch {
-    return {}
-  }
-}
-
-/** The hub this machine is paired with: install.sh writes ~/.tether-node/env, install.ps1 .env. */
-export function savedHub(env: Record<string, string | undefined> = process.env) {
-  const hub = env.TETHER_HUB || readEnvFile(path.join(dir(), 'env')).TETHER_HUB || readEnvFile(path.join(dir(), '.env')).TETHER_HUB
-  return hub ? hub.replace(/\/+$/, '') : undefined
-}
-
 export type Install =
-  /** a compiled binary from inyon-releases (get.sh, get.ps1) */
+  /** from inyon-releases (get.sh, get.ps1) */
   | { kind: 'binary'; file: string; cmd: string[] }
-  /** from a hub: tether-node.ts run by Bun (install.sh), or tether-node.exe (install.ps1) */
-  | { kind: 'hub'; file: string; cmd: string[]; hub: string; exe: boolean }
+  /** from the hub this machine was added to */
+  | { kind: 'hub'; file: string; cmd: string[]; hub: string }
 
-/** Which kind of install `cmd` (the program, or Bun and the script) is. */
+/** Which kind of install `cmd` (the program, or Bun and a script) is. */
 export function findInstall(cmd: string[], hub = savedHub()): Install {
-  const file = cmd.length === 1 ? cmd[0]! : cmd[1]!
-  const inBin = path.resolve(path.dirname(file)) === path.resolve(dir(), 'bin')
-  if (cmd.length === 1) return hub && !inBin ? { kind: 'hub', file, cmd, hub, exe: true } : { kind: 'binary', file, cmd }
-  if (hub) return { kind: 'hub', file, cmd, hub, exe: false }
-  throw new UpdateError('This copy of tether-node runs from a source checkout. Update it with git pull.')
+  if (cmd.length > 1) throw new UpdateError('This copy of inyon runs from a source checkout. Update it with git pull.')
+  const file = cmd[0]!
+  return hub ? { kind: 'hub', file, cmd, hub } : { kind: 'binary', file, cmd }
 }
 
 export interface Deps {
   version: string
   fetch: typeof fetch
-  /** restarts the background service so the new file runs */
-  restart(which: 'link' | 'hub', cmd: string[]): { ok: boolean; how: string }
+  /** the jobs this machine runs inyon as in the background, each restarted after the swap */
+  roles(): Role[]
+  /** restarts a job's background service so the new file runs */
+  restart(role: Role, cmd: string[]): { ok: boolean; how: string }
   /** waits for the restarted copy to come up (not the copy `before`); true once it runs and stays up */
-  started(which: 'link' | 'hub', version?: string, before?: number): Promise<boolean>
+  started(role: Role, version?: string, before?: number): Promise<boolean>
   log(line: string): void
   platform?: NodeJS.Platform
   arch?: string
@@ -222,24 +214,23 @@ export async function update(install: Install, deps: Deps): Promise<Result> {
   let version: string | undefined
   try {
     if (install.kind === 'binary') {
-      const base = (process.env.TETHER_DOWNLOAD || RELEASES).replace(/\/+$/, '')
+      const base = (process.env.INYON_DOWNLOAD || RELEASES).replace(/\/+$/, '')
       version = await latestVersion(base, deps.fetch)
-      if (!isNewer(version, deps.version)) return { changed: false, message: `tether-node ${deps.version} is up to date.`, version: deps.version }
+      if (!isNewer(version, deps.version)) return { changed: false, message: `inyon ${deps.version} is up to date.`, version: deps.version }
       const name = binaryName(platform, deps.arch)
-      deps.log(`Downloading tether-node ${version} (${name})…`)
+      deps.log(`Downloading inyon ${version} (${name})…`)
       await download(`${base}/${name}`, tmp, deps.fetch)
       const want = sumFor(await text(`${base}/SHA256SUMS`, deps.fetch), name)
       if (!want || want !== (await sha256File(tmp))) throw new UpdateError("The download didn't match the release's checksum, so nothing was changed. Try again.")
     } else {
-      const arch = (deps.arch ?? os.arch()) === 'arm64' ? 'arm64' : 'x64'
-      const url = install.exe ? `${install.hub}/node/tether-node.exe` : `${install.hub}/node/tether-node.ts`
-      const q = install.exe ? `?arch=${arch}` : ''
-      const want = (await text(`${url}.sha256${q}`, deps.fetch)).toLowerCase()
-      if (!/^[0-9a-f]{64}$/.test(want)) throw new UpdateError(`${install.hub} didn't give a checksum for tether-node. Update the hub first.`)
-      if (existsSync(install.file) && (await sha256File(install.file)) === want) return { changed: false, message: `tether-node ${deps.version} is the same as the hub's.`, version: deps.version }
-      deps.log(`Downloading tether-node from ${install.hub}…`)
-      // the .exe comes gzipped (about 40 MB instead of 86), as install.ps1 fetches it
-      await download(install.exe ? `${url}.gz${q}` : url, tmp, deps.fetch, install.exe)
+      const t = target(platform, deps.arch)
+      const q = `?os=${t.os}&arch=${t.arch}`
+      const want = (await text(`${install.hub}/node/inyon.sha256${q}`, deps.fetch)).toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(want)) throw new UpdateError(`${install.hub} didn't give a checksum for inyon. Update the hub first.`)
+      if (existsSync(install.file) && (await sha256File(install.file)) === want) return { changed: false, message: `inyon ${deps.version} is the same as the hub's.`, version: deps.version }
+      deps.log(`Downloading inyon from ${install.hub}…`)
+      // it comes gzipped (about half the size), which matters over a VPN
+      await download(`${install.hub}/node/inyon.gz${q}`, tmp, deps.fetch, true)
       if ((await sha256File(tmp)) !== want) throw new UpdateError("The download didn't match the hub's checksum, so nothing was changed. Try again.")
     }
   } catch (err) {
@@ -248,22 +239,23 @@ export async function update(install: Install, deps: Deps): Promise<Result> {
   }
   if (platform !== 'win32') chmodSync(tmp, 0o755)
   // Apple Silicon only runs signed programs; a local signature is enough (as get.sh does)
-  if (platform === 'darwin' && install.kind === 'binary') Bun.spawnSync(['codesign', '--force', '--sign', '-', tmp], { stdout: 'ignore', stderr: 'ignore' })
+  if (platform === 'darwin') Bun.spawnSync(['codesign', '--force', '--sign', '-', tmp], { stdout: 'ignore', stderr: 'ignore' })
   return put(install, tmp, version, deps)
 }
 
-/** Swaps the checked download in, restarts the service, and goes back if the new copy won't run. */
+/** Swaps the checked download in, restarts each job, and goes back if the new copy won't run. */
 async function put(install: Install, tmp: string, version: string | undefined, deps: Deps): Promise<Result> {
-  const which = install.kind === 'binary' ? 'link' : 'hub'
+  const roles = deps.roles()
   const old = swapIn(install.file, tmp)
-  const label = version ? `tether-node ${version}` : 'The new tether-node'
-  const before = readRunning(which)?.pid
-  const restarted = deps.restart(which, install.cmd)
-  if (!restarted.ok) {
+  const label = version ? `inyon ${version}` : 'The new inyon'
+  const before = new Map(roles.map((r) => [r, readRunning(r)?.pid]))
+  const restarted = roles.filter((r) => deps.restart(r, install.cmd).ok)
+  if (!restarted.length) {
     // nothing runs it in the background: the new file is in place for the next start
-    return { changed: true, version, message: `${label} is installed. It isn't running as a background service (${restarted.how}), so start it again to use it.` }
+    return { changed: true, version, message: `${label} is installed. It isn't running as a background service, so start it again to use it.` }
   }
-  if (await deps.started(which, version, before)) {
+  const up = await Promise.all(restarted.map((r) => deps.started(r, version, before.get(r))))
+  if (up.every(Boolean)) {
     if (old) {
       try {
         files.remove(old)
@@ -273,26 +265,41 @@ async function put(install: Install, tmp: string, version: string | undefined, d
   }
   if (!old) throw new UpdateError(`${label} didn't start.`)
   swapBack(install.file, old)
-  deps.restart(which, install.cmd)
+  for (const r of restarted) deps.restart(r, install.cmd)
   throw new UpdateError(`${label} didn't start, so the previous version is running again.`)
 }
 
-/** What a started copy writes: the link's state.json, or node.json in hub mode. */
-export const runningFile = (which: 'link' | 'hub') => path.join(dir(), which === 'link' ? 'state.json' : 'node.json')
+/** What a started copy writes with its pid and version: state.json (the link), node.json, hub.json. */
+export const runningFile = (role: Role) => path.join(nodeDir(), role === 'link' ? 'state.json' : `${role}.json`)
 
 const alive = (pid: unknown) => {
   if (typeof pid !== 'number' || pid <= 1) return false
   try {
     process.kill(pid, 0)
-    return true
+  } catch {
+    return false
+  }
+  return !exited(pid)
+}
+
+/**
+ * A process that has exited but wasn't collected yet (in a container whose first process doesn't
+ * collect them, say) still answers kill(pid, 0). Linux shows it as Z.
+ */
+export function exited(pid: number) {
+  try {
+    return /^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8'))
   } catch {
     return false
   }
 }
 
-export function readRunning(which: 'link' | 'hub'): { pid?: number; version?: string } | undefined {
+/** Whether a copy doing `role` has started and still runs. */
+export const isRunning = (role: Role) => alive(readRunning(role)?.pid)
+
+export function readRunning(role: Role): { pid?: number; version?: string } | undefined {
   try {
-    return JSON.parse(readFileSync(runningFile(which), 'utf8'))
+    return JSON.parse(readFileSync(runningFile(role), 'utf8'))
   } catch {
     return undefined
   }
@@ -302,9 +309,9 @@ export function readRunning(which: 'link' | 'hub'): { pid?: number; version?: st
  * Waits for the restarted copy: it writes its pid and version when it starts (a pid other than the
  * copy before it), and must still be running a few seconds later.
  */
-export async function waitStarted(which: 'link' | 'hub', version: string | undefined, before?: number, o = { tries: 60, every: 500, settle: 4000 }) {
+export async function waitStarted(role: Role, version: string | undefined, before?: number, o = { tries: 60, every: 500, settle: 4000 }) {
   for (let i = 0; i < o.tries; i++) {
-    const s = readRunning(which)
+    const s = readRunning(role)
     if (s && s.pid !== before && alive(s.pid) && (!version || s.version === version)) {
       await Bun.sleep(o.settle)
       return alive(s.pid)
@@ -317,9 +324,9 @@ export async function waitStarted(which: 'link' | 'hub', version: string | undef
 /** Records how the update went, for the app (and appends to update.log). */
 export function setStatus(line: string) {
   try {
-    mkdirSync(dir(), { recursive: true })
+    mkdirSync(nodeDir(), { recursive: true })
     writeFileSync(statusFile(), `${line}\n`)
-    appendFileSync(path.join(dir(), 'update.log'), `${new Date().toISOString()} ${line}\n`)
+    appendFileSync(path.join(nodeDir(), 'update.log'), `${new Date().toISOString()} ${line}\n`)
   } catch {}
 }
 

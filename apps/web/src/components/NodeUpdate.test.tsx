@@ -15,12 +15,12 @@ const laptop = (nodeUpdate?: Update, more: Partial<HostState> = {}) =>
   host('laptop', { config: { id: 'laptop', name: 'Laptop', kind: 'node' }, nodeVersion: '0.3.0', nodeUpdate, ...more })
 const update = () => screen.queryByRole('button', { name: 'Update' })
 
-describe('a tether-node that is behind', () => {
+describe('a machine whose inyon is behind', () => {
   test('shows the version and an Update button, and only updates on a tap', async () => {
     const user = userEvent.setup()
     await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true })} />)
-    expect(screen.getByText('tether-node 0.3.0 · update available')).toBeTruthy()
-    expect(screen.getByText('Version 0.6.3 is ready. tether-node restarts for a moment while it updates.')).toBeTruthy()
+    expect(screen.getByText('inyon 0.3.0 · update available')).toBeTruthy()
+    expect(screen.getByText('Version 0.6.3 is ready. inyon restarts for a moment while it updates.')).toBeTruthy()
     expect(api.nodeUpdate).not.toHaveBeenCalled()
     await user.click(update()!)
     await flush()
@@ -29,21 +29,21 @@ describe('a tether-node that is behind', () => {
 
   test('says it is updating in a sentence, without a button', async () => {
     await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true, state: 'updating' })} />)
-    expect(screen.getByText('Updating tether-node…')).toBeTruthy()
+    expect(screen.getByText('Updating inyon…')).toBeTruthy()
     expect(screen.getByText('It restarts and reconnects by itself, usually within a minute.')).toBeTruthy()
     expect(update()).toBeNull()
   })
 
   test('says when it worked', async () => {
     await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true, state: 'updated' }, { nodeVersion: '0.6.3' })} />)
-    expect(screen.getByText('Updated to tether-node 0.6.3')).toBeTruthy()
+    expect(screen.getByText('Updated to inyon 0.6.3')).toBeTruthy()
     expect(screen.queryByRole('button')).toBeNull()
   })
 
   test('shows what went wrong, with a way to try again', async () => {
     const user = userEvent.setup()
     await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true, state: 'failed', error: "the download didn't match the hub's checksum" })} />)
-    expect(screen.getByText("Couldn't update tether-node")).toBeTruthy()
+    expect(screen.getByText("Couldn't update inyon")).toBeTruthy()
     expect(screen.getByText("the download didn't match the hub's checksum")).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     expect(api.nodeUpdate).toHaveBeenCalledTimes(1)
@@ -91,9 +91,9 @@ describe('on the Machines pages', () => {
     await flush()
     expect(api.nodeUpdate.mock.calls).toEqual([['laptop']])
     act(() => emit({ t: 'overview', hosts: fresh([laptop({ latest: '0.6.3', supported: true, state: 'updating' }, { status: 'connecting' })]) }))
-    expect(screen.getByText('Updating tether-node…')).toBeTruthy()
+    expect(screen.getByText('Updating inyon…')).toBeTruthy()
     act(() => emit({ t: 'overview', hosts: fresh([laptop({ latest: '0.6.3', supported: true, state: 'updated' }, { nodeVersion: '0.6.3' })]) }))
-    expect(screen.getByText('Updated to tether-node 0.6.3')).toBeTruthy()
+    expect(screen.getByText('Updated to inyon 0.6.3')).toBeTruthy()
   })
 
   test('the list marks a machine with an update', async () => {

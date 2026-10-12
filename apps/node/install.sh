@@ -1,79 +1,47 @@
 #!/bin/sh
-# Installs tether-node as a background service for the current user.
-# Usage: TETHER_TOKEN=<token> TETHER_NODE_SHA256=<sha256> sh install.sh <hub-url>
+# Adds this machine to an Inyon hub: gets the inyon program from the hub and runs its connection to
+# the hub in the background, as the current user.
+# Usage: INYON_TOKEN=<token> INYON_SUMS_SHA256=<sha256> sh install.sh <hub-url>
 # (the hub's "Add a machine" command does this; `sh -s -- <hub-url> <token>` still works)
 # The token comes from the environment so it doesn't show in the process list. With
-# TETHER_NODE_SHA256 set, the downloaded tether-node.ts must match it.
+# INYON_SUMS_SHA256 set, the hub's list of checksums must match it, and the program its line.
 set -e
-HUB="$1"; TOKEN="${2:-$TETHER_TOKEN}"
-[ -n "$HUB" ] && [ -n "$TOKEN" ] || { echo "usage: TETHER_TOKEN=<token> install.sh <hub-url>" >&2; exit 2; }
-DIR="$HOME/.tether-node"
-mkdir -p "$DIR"
-
-if ! command -v bun >/dev/null 2>&1 && [ ! -x "$HOME/.bun/bin/bun" ]; then
-  echo "Installing Bun (https://bun.sh)…"
-  curl -fsSL https://bun.sh/install | bash >/dev/null
-fi
-BUN="$(command -v bun || echo "$HOME/.bun/bin/bun")"
-
-curl -fsSL "$HUB/node/tether-node.ts" -o "$DIR/tether-node.ts.download"
-if [ -n "$TETHER_NODE_SHA256" ]; then
-  have="$( (sha256sum "$DIR/tether-node.ts.download" 2>/dev/null || shasum -a 256 "$DIR/tether-node.ts.download") | cut -c1-64)"
-  if [ "$have" != "$TETHER_NODE_SHA256" ]; then
-    rm -f "$DIR/tether-node.ts.download"
-    echo "tether-node.ts did not match its checksum. Get a new command from the hub and run it again." >&2
-    exit 1
-  fi
-fi
-mv -f "$DIR/tether-node.ts.download" "$DIR/tether-node.ts"
-umask 077
-printf 'TETHER_HUB=%s\nTETHER_TOKEN=%s\n' "$HUB" "$TOKEN" > "$DIR/env"
-
-if command -v tmux >/dev/null 2>&1; then :; else echo "Note: tmux is not installed. Install it so Inyon can list and drive sessions."; fi
+HUB="${1%/}"; TOKEN="${2:-${INYON_TOKEN:-$TETHER_TOKEN}}"
+[ -n "$HUB" ] && [ -n "$TOKEN" ] || { echo "usage: INYON_TOKEN=<token> install.sh <hub-url>" >&2; exit 2; }
 
 case "$(uname -s)" in
-  Linux)
-    if command -v systemctl >/dev/null 2>&1 && systemctl --user status >/dev/null 2>&1; then
-      mkdir -p "$HOME/.config/systemd/user"
-      cat > "$HOME/.config/systemd/user/tether-node.service" <<UNIT
-[Unit]
-Description=Inyon node (outbound connection to your Inyon hub)
-After=network-online.target
-
-[Service]
-EnvironmentFile=$DIR/env
-ExecStart=$BUN $DIR/tether-node.ts
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=default.target
-UNIT
-      systemctl --user daemon-reload
-      systemctl --user enable --now tether-node
-      loginctl enable-linger "$USER" 2>/dev/null || true
-      echo "tether-node is running (systemctl --user status tether-node)."
-      exit 0
-    fi ;;
-  Darwin)
-    PLIST="$HOME/Library/LaunchAgents/dev.tether.node.plist"
-    mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$PLIST" <<PL
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>dev.tether.node</string>
-  <key>ProgramArguments</key><array><string>$BUN</string><string>$DIR/tether-node.ts</string></array>
-  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-  <key>StandardErrorPath</key><string>$DIR/node.log</string>
-</dict></plist>
-PL
-    launchctl unload "$PLIST" 2>/dev/null || true
-    launchctl load "$PLIST"
-    echo "tether-node is running (launchctl list | grep inyon)."
-    exit 0 ;;
+  Linux) os=linux ;;
+  Darwin) os=darwin ;;
+  *) echo "This is for Linux and macOS. On Windows, use the PowerShell command from the hub." >&2; exit 1 ;;
 esac
+case "$(uname -m)" in
+  x86_64 | amd64) arch=x64 ;;
+  arm64 | aarch64) arch=arm64 ;;
+  *) echo "There's no inyon build for $(uname -m) yet." >&2; exit 1 ;;
+esac
+name="inyon-$os-$arch"
+sum() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -c1-64; }
 
-# reads the hub and token from $DIR/env, so the token isn't visible in ps
-nohup "$BUN" "$DIR/tether-node.ts" >> "$DIR/node.log" 2>&1 &
-echo "tether-node started in the background (log: $DIR/node.log)."
+DIR="$HOME/.inyon/bin"
+mkdir -p "$DIR"
+tmp="$DIR/inyon.download"
+trap 'rm -f "$tmp" "$tmp.sums"' EXIT
+curl -fsSL "$HUB/node/SHA256SUMS" -o "$tmp.sums"
+if [ -n "$INYON_SUMS_SHA256" ] && [ "$(sum "$tmp.sums")" != "$INYON_SUMS_SHA256" ]; then
+  echo "The hub's checksums did not match. Get a new command from the hub and run it again." >&2
+  exit 1
+fi
+want="$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }' "$tmp.sums")"
+echo "Downloading inyon from the hub…"
+curl -fL --progress-bar "$HUB/node/inyon?os=$os&arch=$arch" -o "$tmp"
+if [ -z "$want" ] || [ "$(sum "$tmp")" != "$want" ]; then
+  echo "inyon did not match its checksum. Get a new command from the hub and run it again." >&2
+  exit 1
+fi
+chmod +x "$tmp"
+mv -f "$tmp" "$DIR/inyon"
+# Apple Silicon only runs signed programs; a local signature is enough
+[ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$DIR/inyon" >/dev/null 2>&1 || true
+
+# saves the hub and token (readable only by you) and starts the connection in the background
+INYON_TOKEN="$TOKEN" "$DIR/inyon" join "$HUB"

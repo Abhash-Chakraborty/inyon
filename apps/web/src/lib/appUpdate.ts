@@ -46,7 +46,7 @@ async function appVersion(): Promise<string | undefined> {
 }
 
 /**
- * The newest release that has an APK. inyon-releases carries tether-node too, so a release
+ * The newest release that has an APK. inyon-releases carries the inyon program too, so a release
  * without an APK doesn't count.
  */
 export async function latestApk(): Promise<{ version: string; url: string } | undefined> {

@@ -1,29 +1,33 @@
 import { afterAll, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { unixPairCommand } from './pair-command.ts'
 
-// a hub serving the real install.sh and a stand-in tether-node.ts
+// A hub serving the real install.sh and a stand-in inyon program: a script that writes down how it
+// was run. Nothing real gets installed or started.
 const installSh = readFileSync(resolve(import.meta.dir, '../../../node/install.sh'))
-let script = 'console.log("tether-node")\n'
+const os = process.platform === 'darwin' ? 'darwin' : 'linux'
+const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+let program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'
+const sha = (b: string | Buffer) => crypto.createHash('sha256').update(b).digest('hex')
+const sums = () => `${sha(program)}  inyon-${os}-${arch}\n${sha('another build')}  inyon-other-x64\n`
+/** a list the hub serves as it is, whatever the program has become */
+let fixedList: string | undefined
 const server = Bun.serve({
   port: 0,
   hostname: '127.0.0.1',
-  fetch: (req) => new Response(new URL(req.url).pathname === '/node/install.sh' ? installSh : script),
+  fetch: (req) => {
+    const u = new URL(req.url)
+    if (u.pathname === '/node/install.sh') return new Response(installSh)
+    if (u.pathname === '/node/SHA256SUMS') return new Response(fixedList ?? sums())
+    if (u.pathname === '/node/inyon' && u.searchParams.get('os') === os && u.searchParams.get('arch') === arch) return new Response(program)
+    return new Response('not found', { status: 404 })
+  },
 })
 const hub = `http://127.0.0.1:${server.port}`
-const sha = (b: string | Buffer) => crypto.createHash('sha256').update(b).digest('hex')
-
-// a machine with no systemd and a stand-in bun, so nothing real gets installed or started
 const root = mkdtempSync(join(tmpdir(), 'inyon-pair-'))
-const bin = join(root, 'bin')
-mkdirSync(bin)
-for (const [name, body] of [['bun', 'exit 0'], ['systemctl', 'exit 1'], ['launchctl', 'exit 1']]) {
-  writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`)
-  chmodSync(join(bin, name), 0o755)
-}
 afterAll(() => {
   server.stop(true)
   rmSync(root, { recursive: true, force: true })
@@ -31,38 +35,40 @@ afterAll(() => {
 
 async function run(cmd: string) {
   const home = mkdtempSync(join(root, 'home-'))
-  const p = Bun.spawn(['sh', '-c', cmd], { env: { HOME: home, PATH: `${bin}:/usr/local/bin:/usr/bin:/bin` }, stdout: 'ignore', stderr: 'pipe' })
+  const p = Bun.spawn(['sh', '-c', cmd], { env: { HOME: home, PATH: '/usr/local/bin:/usr/bin:/bin' }, stdout: 'ignore', stderr: 'pipe' })
   const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited])
-  return { code, err, dir: join(home, '.tether-node') }
+  const ran = existsSync(join(home, 'ran')) ? readFileSync(join(home, 'ran'), 'utf8') : undefined
+  return { code, err, ran, bin: join(home, '.inyon', 'bin') }
 }
 
-test('the one-liner installs what the hub vouched for, with the token kept out of argv', async () => {
-  const cmd = unixPairCommand(hub, 'tok_123-abc', sha(installSh), sha(script))
+test('the one-liner installs what the hub vouched for and has it join, with the token kept out of argv', async () => {
+  const cmd = unixPairCommand(hub, 'tok_123-abc', sha(installSh), sha(sums()))
   expect(cmd.split(" sh -c '")[1]).not.toContain('tok_123-abc')
   const r = await run(cmd)
   expect(r.err).not.toContain('checksum')
   expect(r.code).toBe(0)
-  expect(readFileSync(join(r.dir, 'tether-node.ts'), 'utf8')).toBe(script)
-  expect(readFileSync(join(r.dir, 'env'), 'utf8')).toBe(`TETHER_HUB=${hub}\nTETHER_TOKEN=tok_123-abc\n`)
+  expect(readFileSync(join(r.bin, 'inyon'), 'utf8')).toBe(program)
+  expect(r.ran).toBe(`join ${hub}\ntok_123-abc\n`)
+  expect(existsSync(join(r.bin, 'inyon.download'))).toBe(false)
 })
 
-test('a swapped install.sh or tether-node.ts is refused', async () => {
-  const swappedInstaller = await run(unixPairCommand(hub, 'tok', sha('something else'), sha(script)))
+test('a swapped install.sh, checksum list or program is refused, and nothing runs', async () => {
+  const swappedInstaller = await run(unixPairCommand(hub, 'tok', sha('something else'), sha(sums())))
   expect(swappedInstaller.code).not.toBe(0)
   expect(swappedInstaller.err).toContain('install.sh did not match')
-  expect(existsSync(swappedInstaller.dir)).toBe(false)
+  expect(swappedInstaller.ran).toBeUndefined()
 
-  const want = sha(script)
-  script = 'console.log("not what the hub built")\n'
-  const swappedScript = await run(unixPairCommand(hub, 'tok', sha(installSh), want))
-  expect(swappedScript.code).not.toBe(0)
-  expect(swappedScript.err).toContain('tether-node.ts did not match')
-  expect(existsSync(join(swappedScript.dir, 'tether-node.ts'))).toBe(false)
-  expect(existsSync(join(swappedScript.dir, 'env'))).toBe(false)
-})
+  const swappedSums = await run(unixPairCommand(hub, 'tok', sha(installSh), sha('a different list')))
+  expect(swappedSums.code).not.toBe(0)
+  expect(swappedSums.err).toContain("The hub's checksums did not match")
+  expect(swappedSums.ran).toBeUndefined()
 
-test('the old form, with the token as an argument, still installs', async () => {
-  const r = await run(`curl -fsSL ${hub}/node/install.sh | sh -s -- ${hub} tok_old`)
-  expect(r.code).toBe(0)
-  expect(readFileSync(join(r.dir, 'env'), 'utf8')).toContain('TETHER_TOKEN=tok_old')
+  // the list as vouched for, but the program swapped on the way
+  fixedList = sums()
+  program = '#!/bin/sh\necho "not what the hub built" > "$HOME/ran"\n'
+  const swappedProgram = await run(unixPairCommand(hub, 'tok', sha(installSh), sha(fixedList)))
+  expect(swappedProgram.code).not.toBe(0)
+  expect(swappedProgram.err).toContain('inyon did not match its checksum')
+  expect(swappedProgram.ran).toBeUndefined()
+  expect(existsSync(join(swappedProgram.bin, 'inyon'))).toBe(false)
 })

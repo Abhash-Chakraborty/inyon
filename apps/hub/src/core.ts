@@ -287,7 +287,7 @@ export const coreRoutes: Routes = {
       return ok()
     }),
   },
-  // one tap in the app: brings the machine's tether-node up to date (see hosts/node-update.ts)
+  // one tap in the app: brings the machine's inyon up to date (see hosts/node-update.ts)
   '/api/hosts/:id/node/update': {
     POST: api((req) => {
       const rt = registry.get(req.params.id)

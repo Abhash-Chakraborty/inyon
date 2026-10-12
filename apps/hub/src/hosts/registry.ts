@@ -124,9 +124,9 @@ function offlineSessions(sessions: SessionInfo[]): SessionInfo[] {
 
 export const paneTitle = (p: PaneInfo) => p.title.replace(/^[^\w\s]\s+/u, '').trim()
 
-/** What a machine reached through tether-node is waiting on. */
+/** What a machine reached through inyon is waiting on. */
 const waitingFor = (c: HostConfig) =>
-  nodeLinks.why(c.id) ?? (c.kind === 'link' ? `Connecting to ${c.name}…` : 'Waiting for the machine to connect (is tether-node running?)')
+  nodeLinks.why(c.id) ?? (c.kind === 'link' ? `Connecting to ${c.name}…` : 'Waiting for the machine to connect (is inyon running?)')
 
 class Registry {
   private hosts = new Map<string, Runtime>()
@@ -141,7 +141,7 @@ class Registry {
       if (c.kind === 'node' && !c.pairedAt && c.tokenHash && !c.tokenIssuedAt) c.tokenIssuedAt = Date.now()
       this.add(c, false)
     }
-    // a tether-node machine (re)connected or dropped: re-probe it right away
+    // a machine running inyon (re)connected or dropped: re-probe it right away
     nodeLinks.onChange((id, up) => {
       const rt = this.hosts.get(id)
       if (!rt) return
@@ -153,7 +153,7 @@ class Registry {
       }
       this.refresh(id, up ? 100 : 1000)
     })
-    // a tether-node update started, progressed or finished
+    // an update of a machine's inyon started, progressed or finished
     nodeUpdates.onChange(() => this.emit({ type: 'overview' }))
   }
 

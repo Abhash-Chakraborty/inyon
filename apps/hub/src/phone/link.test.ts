@@ -8,11 +8,11 @@ import { nodeBackend } from '../hosts/node-backend.ts'
 import { nodeLinks } from '../hosts/node-link.ts'
 import { linkConnector } from './link.ts'
 
-// the phone's connector against the real tether-node, in a throwaway home on a LAN address
+// the phone's connector against the real inyon, in a throwaway home on a LAN address
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-phone-link-'))
 const port = 4890 + Math.floor(Math.random() * 100)
 const env = { ...process.env, HOME: home, USERPROFILE: home }
-const NODE = path.resolve(import.meta.dir, '../../../node/tether-node.ts')
+const NODE = path.resolve(import.meta.dir, '../../../node/inyon.ts')
 const cli = (...args: string[]) => Bun.spawn([process.execPath, NODE, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
 let service = cli('link', '--no-tunnel', '--lan', '--port', String(port))
 afterAll(() => {

@@ -1,11 +1,12 @@
-# Installs tether-node on Windows as a per-user background task. No admin rights needed.
+# Adds this Windows machine to an Inyon hub and runs its connection in the background, as you.
+# No admin rights needed.
 #
 # The hub's "Add machine" sheet generates a one-liner that works from both PowerShell and cmd.exe:
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '<hub>/node/install.ps1'))) -Hub '<hub>' -Token '<token>'"
 #
 # The token is base64url ([A-Za-z0-9_-]), so single quotes are always safe around it. It is written
-# to %USERPROFILE%\.tether-node\.env (readable only by you) and never put on a command line that
+# to %USERPROFILE%\.inyon\node\.env (readable only by you) and never put on a command line that
 # Task Scheduler or the process list would show.
 param(
   [Parameter(Mandatory = $true)][string]$Hub,
@@ -24,9 +25,12 @@ $env:Path = @([Environment]::GetEnvironmentVariable('Path', 'Machine'), [Environ
 $Hub = $Hub.TrimEnd('/')
 if ($Token -notmatch '^[A-Za-z0-9_-]{20,}$') { throw 'That token does not look right. Copy the command again from the hub.' }
 
-$Dir = Join-Path $env:USERPROFILE '.tether-node'
-$Bin = Join-Path $Dir 'bin'
-New-Item -ItemType Directory -Force -Path $Dir, $Bin | Out-Null
+$Root = Join-Path $env:USERPROFILE '.inyon'
+$Bin = Join-Path $Root 'bin'
+$Dir = Join-Path $Root 'node'
+$OldDir = Join-Path $env:USERPROFILE '.tether-node'
+$TaskName = 'Inyon node'
+$Startup = [Environment]::GetFolderPath('Startup')
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) { 'ARM64' { 'arm64' } default { 'x64' } }
 
@@ -54,39 +58,64 @@ function Expand-Gzip([string]$In, [string]$Out) {
   try { $gz.CopyTo($dst) } finally { $dst.Dispose(); $gz.Dispose(); $src.Dispose() }
 }
 
-# Stop a running copy first, or Windows keeps the .exe locked.
-$TaskName = 'Tether node'
-try { Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
-Get-Process -Name 'tether-node' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+# Stop the running connection first, or Windows keeps its files locked. Before the rename to Inyon
+# it was tether-node, started by the 'Tether node' task or a Startup shortcut. A phone link on this
+# machine keeps running.
+foreach ($t in $TaskName, 'Tether node') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='inyon.exe' or Name='tether-node.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { $_.CommandLine -notmatch '\s"?(link|update|migrate)"?(\s|$)' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 500
 
-# 1. tether-node itself: the hub compiles tether-node.ts into a single .exe (Bun runtime included,
-#    console window hidden), so Bun does not have to be installed here.
-# It comes gzipped (about 40 MB instead of 86) and is checked against the hub's checksum.
-Write-Host 'Downloading tether-node (about 40 MB)...'
-$exePath = Join-Path $Dir 'tether-node.exe'
-Remove-Item -Force "$exePath.download" -ErrorAction SilentlyContinue
+# tether-node kept its files in .tether-node: they move to .inyon\node, with a link left behind.
+# While something still runs from there (a phone link), they stay, and inyon uses them where they are.
+$old = Get-Item $OldDir -Force -ErrorAction SilentlyContinue
+if ($old -and -not ($old.Attributes -band [IO.FileAttributes]::ReparsePoint) -and -not (Test-Path $Dir)) {
+  try {
+    New-Item -ItemType Directory -Force -Path $Root | Out-Null
+    Move-Item $OldDir $Dir
+    New-Item -ItemType Junction -Path $OldDir -Target $Dir | Out-Null
+  } catch {
+    $Dir = $OldDir
+  }
+}
+New-Item -ItemType Directory -Force -Path $Bin, $Dir | Out-Null
+
+# 1. inyon itself: one .exe with everything in it, so nothing else has to be installed here.
+# It comes gzipped (about half the size) and is checked against the hub's checksum.
+Write-Host 'Downloading inyon (about 40 MB)...'
+$exe = Join-Path $Bin 'inyon.exe'
+Remove-Item -Force "$exe.download", "$exe.new" -ErrorAction SilentlyContinue
 for ($try = 1; ; $try++) {
-  $want = ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/tether-node.exe.sha256?arch=$arch")).Trim().ToLower()
-  Get-File "$Hub/node/tether-node.exe.gz?arch=$arch" "$exePath.gz"
-  Expand-Gzip "$exePath.gz" "$exePath.new"
-  Remove-Item -Force "$exePath.gz"
-  if ((Get-FileHash -Algorithm SHA256 "$exePath.new").Hash.ToLower() -eq $want) { Move-Item -Force "$exePath.new" $exePath; break }
-  Remove-Item -Force "$exePath.new"
-  if ($try -ge 2) { throw 'tether-node.exe did not arrive intact. Run the command again.' }
+  $want = ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/inyon.sha256?os=windows&arch=$arch")).Trim().ToLower()
+  Get-File "$Hub/node/inyon.gz?os=windows&arch=$arch" "$exe.gz"
+  Expand-Gzip "$exe.gz" "$exe.new"
+  Remove-Item -Force "$exe.gz"
+  if ((Get-FileHash -Algorithm SHA256 "$exe.new").Hash.ToLower() -eq $want) {
+    # a phone link may be running this same file: it can't be replaced, but it can be renamed
+    if (Test-Path $exe) {
+      try { Remove-Item -Force $exe } catch { Move-Item -Force $exe "$exe.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+    }
+    Move-Item -Force "$exe.new" $exe
+    break
+  }
+  Remove-Item -Force "$exe.new"
+  if ($try -ge 2) { throw 'inyon.exe did not arrive intact. Run the command again.' }
   Write-Host '  The file did not match its checksum; downloading it again...'
 }
 
 # 2. A small POSIX shell (busybox-w32). The hub drives every machine with short sh scripts, and this
 #    keeps them working on Windows without Git Bash or WSL. Served (and pinned) by the hub.
 Write-Host 'Downloading the shell helper (busybox-w32)...'
-Get-File "$Hub/node/busybox.exe?arch=$arch" (Join-Path $Bin 'busybox.exe')
+$busybox = Join-Path $Bin 'busybox.exe'
+if (-not (Test-Path $busybox)) { Get-File "$Hub/node/busybox.exe?arch=$arch" $busybox }
 
-# 3. The secrets file. A compiled Bun app loads .env from its working directory.
+# 3. The secrets file, which inyon reads when it connects.
 $envFile = Join-Path $Dir '.env'
 Set-Content -Path $envFile -Encoding ASCII -Value @(
-  "TETHER_HUB=$Hub",
-  "TETHER_TOKEN=$Token",
-  "TETHER_SH=$(Join-Path $Bin 'busybox.exe')"
+  "INYON_HUB=$Hub",
+  "INYON_TOKEN=$Token",
+  "INYON_SH=$busybox"
 )
 # only this user (and SYSTEM) may read it
 icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" "SYSTEM:(F)" | Out-Null
@@ -106,34 +135,38 @@ if (-not $mux -and -not $NoPsmux) {
   }
 }
 
-# 5. Start at sign-in and keep running. A scheduled task can restart it if it ever crashes;
+# 5. Start at sign-in and keep running, hidden. A scheduled task can restart it if it ever crashes;
 #    if task creation is blocked by policy, fall back to the Startup folder.
-$exe = Join-Path $Dir 'tether-node.exe'
+$argument = "-NoProfile -WindowStyle Hidden -Command `"Start-Process -FilePath '$($exe -replace "'", "''")' -ArgumentList 'connect' -WindowStyle Hidden -Wait`""
 $started = $false
 try {
-  $action = New-ScheduledTaskAction -Execute $exe -WorkingDirectory $Dir
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argument -WorkingDirectory $Dir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
   $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -LogonType Interactive -RunLevel Limited
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-    -Principal $principal -Description 'Outbound connection to your Inyon hub' -Force | Out-Null
+    -Principal $principal -Description 'Inyon node (outbound connection to your Inyon hub)' -Force | Out-Null
   Start-ScheduledTask -TaskName $TaskName
   $started = $true
-  Write-Host "tether-node is running (Task Scheduler: '$TaskName'; log: $Dir\node.log)."
+  Write-Host "inyon is running (Task Scheduler: '$TaskName'; log: $Dir\node.log)."
 } catch {
   Write-Host "Could not create a scheduled task ($($_.Exception.Message)); using the Startup folder instead."
 }
 
 if (-not $started) {
-  $lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Tether node.lnk'
-  $ws = New-Object -ComObject WScript.Shell
-  $s = $ws.CreateShortcut($lnk)
-  $s.TargetPath = $exe
+  $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $Startup "$TaskName.lnk"))
+  $s.TargetPath = 'powershell.exe'
+  $s.Arguments = $argument
   $s.WorkingDirectory = $Dir
   $s.WindowStyle = 7
   $s.Save()
-  Start-Process -FilePath $exe -WorkingDirectory $Dir -WindowStyle Hidden
-  Write-Host "tether-node is running and starts when you sign in (log: $Dir\node.log)."
+  Start-Process -FilePath $exe -ArgumentList 'connect' -WorkingDirectory $Dir -WindowStyle Hidden
+  Write-Host "inyon is running and starts when you sign in (log: $Dir\node.log)."
 }
+
+# what tether-node set up, now replaced
+Unregister-ScheduledTask -TaskName 'Tether node' -Confirm:$false -ErrorAction SilentlyContinue
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Startup 'Tether node.lnk')
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Dir 'tether-node.exe*')

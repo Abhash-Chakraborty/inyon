@@ -7,7 +7,7 @@ import { haptic } from '../lib/haptics.ts'
 import { Button } from './ui/primitives.tsx'
 
 /**
- * A machine whose tether-node is behind: what's available and an Update button (only ever on a
+ * A machine whose inyon is behind: what's available and an Update button (only ever on a
  * tap). While it runs it says so in a sentence, then that it worked once the machine is back on
  * the new version, or what went wrong.
  */
@@ -44,16 +44,16 @@ export function NodeUpdate({ host }: { host: HostState }) {
     : failed ? <AlertCircle className="size-4 text-danger" />
     : <ArrowUpCircle className="size-4 text-fg-2" />
   const title =
-    u.state === 'updating' ? 'Updating tether-node…'
-    : u.state === 'updated' ? `Updated to tether-node ${u.latest}`
-    : failed ? "Couldn't update tether-node"
-    : `tether-node ${host.nodeVersion ?? ''} · update available`
+    u.state === 'updating' ? 'Updating inyon…'
+    : u.state === 'updated' ? `Updated to inyon ${u.latest}`
+    : failed ? "Couldn't update inyon"
+    : `inyon ${host.nodeVersion ?? ''} · update available`
   const detail =
     u.state === 'updating' ? 'It restarts and reconnects by itself, usually within a minute.'
     : u.state === 'updated' ? undefined
     : failed ? (refused || u.error || 'Something went wrong.')
     : !u.supported ? `This version can't update itself. Run the setup command on ${host.config.name} again to get ${u.latest}.`
-    : online ? `Version ${u.latest} is ready. tether-node restarts for a moment while it updates.`
+    : online ? `Version ${u.latest} is ready. inyon restarts for a moment while it updates.`
     : `Version ${u.latest} is ready. Update it once ${host.config.name} is back online.`
   const button = u.supported && u.state !== 'updating' && u.state !== 'updated'
 

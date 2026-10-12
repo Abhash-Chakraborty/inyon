@@ -1,18 +1,18 @@
-# Gets tether-node for this PC and sets it up for the Inyon phone app. In PowerShell:
+# Gets inyon for this PC and sets it up for the Inyon phone app. In PowerShell:
 #   irm https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.ps1 | iex
-# It downloads tether-node into %USERPROFILE%\.tether-node\bin, checks it against the release's
-# checksums, starts it in the background when you sign in, and shows a code to scan with the app.
+# It downloads inyon into %USERPROFILE%\.inyon\bin, checks it against the release's checksums,
+# starts it in the background when you sign in, and shows a code to scan with the app.
 # No admin rights needed.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-$base = if ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download' }
+$base = if ($env:INYON_DOWNLOAD) { $env:INYON_DOWNLOAD } elseif ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download' }
 # Windows on ARM runs the x64 build
-$name = 'tether-node-windows-x64.exe'
-$dir = Join-Path $env:USERPROFILE '.tether-node\bin'
+$name = 'inyon-windows-x64.exe'
+$dir = Join-Path $env:USERPROFILE '.inyon\bin'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
-$exe = Join-Path $dir 'tether-node.exe'
+$exe = Join-Path $dir 'inyon.exe'
 $tmp = "$exe.download"
 $sums = "$exe.sums"
 
@@ -26,11 +26,11 @@ if (-not $want -or (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower() -ne $wan
   throw "The download didn't match the release's checksum. Run the command again."
 }
 
-# a running copy can't be replaced: stop the background one first
-Stop-ScheduledTask -TaskName 'Tether link' -ErrorAction SilentlyContinue
-Get-Process tether-node -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
-Start-Sleep -Milliseconds 500
+# a running copy can't be replaced, but it can be renamed; setup restarts the background one
+if (Test-Path $exe) {
+  try { Remove-Item -Force $exe } catch { Move-Item -Force $exe "$exe.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+}
 Move-Item -Force $tmp $exe
 
-$env:TETHER_NO_PAUSE = '1'
+$env:INYON_NO_PAUSE = '1'
 & $exe setup

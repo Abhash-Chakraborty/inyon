@@ -52,7 +52,7 @@ test.skipIf(WIN || !Bun.which('setsid'))('output held open by a child that left 
   for (const pid of left(ESCAPED)) process.kill(pid, 'SIGKILL')
 })
 
-test.skipIf(WIN)('commands end when tether-node itself exits', async () => {
+test.skipIf(WIN)('commands end when inyon itself exits', async () => {
   const code = `import { serveOps } from './ops.ts'; serveOps(() => {}).message({ op: 'stream', id: 'x', cmd: 'sleep ${MARK} | cat' }); setTimeout(() => process.exit(0), 1500)`
   const p = Bun.spawn([process.execPath, '-e', code], { cwd: import.meta.dir, stdout: 'ignore', stderr: 'ignore' })
   for (let i = 0; i < 25 && !left().length; i++) await Bun.sleep(50)

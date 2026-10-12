@@ -28,7 +28,7 @@ export interface StreamHandle {
 
 /**
  * How commands reach a machine. The hub runs them as processes (directly, or through the system
- * `ssh`) and over tether-node links; the phone app opens its own SSH connections.
+ * `ssh`) and over inyon links; the phone app opens its own SSH connections.
  */
 export interface HostBackend {
   exec(config: HostConfig, cmd: string, opts: ExecOptions): Promise<ExecResult>

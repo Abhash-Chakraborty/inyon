@@ -210,7 +210,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
   for (const line of r.stdout.split('\n')) {
     if (line.startsWith('@@HOST ')) res.hostname = line.slice(7).trim()
     else if (line.startsWith('@@HOME ')) res.home = line.slice(7).trim()
-    // busybox-w32 (tether-node on Windows) says Windows_NT
+    // busybox-w32 (inyon on Windows) says Windows_NT
     else if (line.startsWith('@@OS ')) res.os = line.slice(5).trim().replace(/^Windows_NT$/, 'Windows')
     else if (line.startsWith('@@NOW ')) res.now = Number(line.slice(6))
     else if (line.startsWith('@@AUTH')) res.signedIn = AGENT_KINDS.filter((k) => line.slice(6).trim().split(/\s+/).includes(k))

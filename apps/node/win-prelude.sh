@@ -1,4 +1,4 @@
-# Sourced before every command tether-node runs on Windows (busybox-w32 sh).
+# Sourced before every command inyon runs on Windows (busybox-w32 sh).
 # Windows: the hub speaks POSIX sh to every machine, so commands run in busybox-w32's sh, and
 # `tmux` is psmux. psmux numbers panes and windows per session (every session has a %1), so
 # the hub sees them as %<session>.<pane> and @<session>.<window>; this prelude turns those back
@@ -41,5 +41,5 @@ tmux() {
   [ -n "$_out" ] && printf '%s\n' "$_out" | sed 's/\$\([0-9][0-9]*\):%\([0-9][0-9]*\)/%\1.\2/g; s/\$\([0-9][0-9]*\):@\([0-9][0-9]*\)/@\1.\2/g'
   return $_rc
 }
-ps() { cat "$TETHER_PS" 2>/dev/null; }
+ps() { cat "$INYON_PS" 2>/dev/null; }
 pgrep() { return 1; }

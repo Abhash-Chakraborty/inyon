@@ -43,7 +43,7 @@ test('list-clients is answered per session from psmux default output', () => {
 test('ps reads the snapshot the node wrote; pgrep finds nothing', () => {
   const snap = join(bin, 'ps.txt')
   writeFileSync(snap, '4 0 100 claude claude --resume x\n')
-  const r = Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\nps -e -o pid=; pgrep -f claude || echo none`], { env: { PATH: `${bin}:/usr/bin:/bin`, TETHER_PS: snap } })
+  const r = Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\nps -e -o pid=; pgrep -f claude || echo none`], { env: { PATH: `${bin}:/usr/bin:/bin`, INYON_PS: snap } })
   expect(r.stdout.toString()).toBe('4 0 100 claude claude --resume x\nnone\n')
 })
 

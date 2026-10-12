@@ -10,16 +10,16 @@ import { useOpened } from '../lib/useOpened.ts'
 import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 
-const PAIR_COMMAND = 'tether-node pair'
+const PAIR_COMMAND = 'inyon pair'
 const DOWNLOADS = RELEASES_DOWNLOAD
-/** One line that downloads tether-node, starts it in the background and shows the code. */
+/** One line that downloads inyon, starts it in the background and shows the code. */
 export const SETUP_COMMANDS = {
   unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${DOWNLOADS}/get.sh | sh` },
   windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${DOWNLOADS}/get.ps1 | iex` },
 } as const
 // tether:// is how a laptop from before the rename to Inyon prints its code
 const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
-/** tether-node prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
+/** inyon prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
 const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
 const cleanId = (s: string) => s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(ID_CHARS, '').slice(0, 8)
 const showId = (id: string) => (id.length > 4 ? `${id.slice(0, 4)}-${id.slice(4)}` : id)
@@ -27,7 +27,7 @@ const showId = (id: string) => (id.length > 4 ? `${id.slice(0, 4)}-${id.slice(4)
 const splitCode = (s: string) => /^\s*([0-9a-z]{4})[\s-]*([0-9a-z]{4})[\s:,-]+(\d{3})\s?(\d{3})\s*$/i.exec(s)
 
 /**
- * Pairing a computer (laptop, desktop or server) that runs `tether-node pair`: scan the code it
+ * Pairing a computer (laptop, desktop or server) that runs `inyon pair`: scan the code it
  * shows (or paste its link) and the phone connects to it directly, end to end encrypted, from any
  * network. A server shows the code right in the SSH session. Editing one only renames it.
  */
@@ -65,7 +65,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     setBusy(true)
     try {
       await api.pairLaptop(text.trim())
-      toast({ title: 'Paired', body: 'It stays paired until you remove it here or run tether-node forget there.', tone: 'success' })
+      toast({ title: 'Paired', body: 'It stays paired until you remove it here or run inyon forget there.', tone: 'success' })
       // alerts only arrive while the app runs; the first pairing is the moment to say so
       if (keepAliveSupported() && !keepAliveWanted()) {
         setTimeout(() => toast({ title: 'Want alerts while Inyon is closed?', body: 'Turn on Stay connected in Settings. Tap to open it.', tone: 'info', href: '/settings#background' }), 1200)
@@ -95,7 +95,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
         // without the camera, the ID and code are the shortest way in
         setHow('type')
         setFocusBox('id')
-        toast({ title: 'No camera access', body: 'Type the ID and code tether-node shows instead.', tone: 'info' })
+        toast({ title: 'No camera access', body: 'Type the ID and code inyon shows instead.', tone: 'info' })
       }
     } catch (err) {
       toast({ title: "Couldn't open the scanner", body: (err as Error).message, tone: 'error' })
@@ -105,7 +105,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   const paste = async () => {
     const text = await readClipboard().catch(() => '')
     if (text.trim()) setLink(text.trim())
-    else toast({ title: 'Nothing to paste', body: 'Copy the link tether-node printed, then tap Paste.', tone: 'error' })
+    else toast({ title: 'Nothing to paste', body: 'Copy the link inyon printed, then tap Paste.', tone: 'error' })
   }
 
   /** A whole "ID code" pasted into either box fills both; a finished code pairs straight away. */

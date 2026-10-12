@@ -11,7 +11,7 @@ const apk = (version: string, name = `inyon-${version}.apk`) => ({
   tag_name: `v${version}`,
   prerelease: false,
   assets: [
-    { name: 'tether-node-linux-x64', browser_download_url: `https://github.com/x/releases/download/v${version}/tether-node-linux-x64` },
+    { name: 'inyon-linux-x64', browser_download_url: `https://github.com/x/releases/download/v${version}/inyon-linux-x64` },
     { name, browser_download_url: `https://github.com/x/releases/download/v${version}/${name}` },
   ],
 })

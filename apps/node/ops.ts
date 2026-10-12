@@ -2,6 +2,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { rmSync, writeFileSync } from 'node:fs'
 import WIN_PRELUDE from './win-prelude.sh' with { type: 'text' }
+// before the commands' environment is made, so TETHER_* variables count as their INYON_* names
+import './paths.ts'
 
 /**
  * What a hub or a phone can ask a machine to do: run a shell command, stream one's output line by
@@ -17,11 +19,11 @@ type Proc = { kill(): void; write?(d: string): void; resize?(c: number, r: numbe
 /** The command that runs this program: the compiled binary itself, or Bun with the script. */
 export function selfCommand(): string[] {
   const script = process.argv[1]
-  const compiled = !script || script.startsWith('/$bunfs/') || /^[A-Z]:\\~BUN\\/i.test(script) || path.basename(process.execPath).startsWith('tether-node')
+  const compiled = !script || script.startsWith('/$bunfs/') || /^[A-Z]:\\~BUN\\/i.test(script) || /^(inyon|tether-node)/.test(path.basename(process.execPath))
   return compiled ? [process.execPath] : [process.execPath, path.resolve(script)]
 }
 
-const shellFor = (cmd: string) => (WIN ? [process.env.TETHER_SH || 'busybox.exe', 'sh', '-c', `${WIN_PRELUDE}\n${cmd}`] : ['/bin/sh', '-c', cmd])
+const shellFor = (cmd: string) => (WIN ? [process.env.INYON_SH || 'busybox.exe', 'sh', '-c', `${WIN_PRELUDE}\n${cmd}`] : ['/bin/sh', '-c', cmd])
 
 /** Child environment on Windows: a Unix-style HOME, the usual install folders on PATH, no SHELL. */
 function winEnv(): Record<string, string | undefined> {
@@ -41,9 +43,15 @@ function winEnv(): Record<string, string | undefined> {
   env[key] = [...extra, env[key]].join(';')
   return env
 }
-// how a command can run tether-node itself, as in "$TETHER_NODE_EXE" ${TETHER_NODE_SCRIPT:+"$TETHER_NODE_SCRIPT"} update
+// how a command can run this program, as in "$INYON_EXE" ${INYON_SCRIPT:+"$INYON_SCRIPT"} update. Hubs
+// and apps from before the rename to Inyon ask with the TETHER_NODE_* names.
 const [selfExe, selfScript] = selfCommand()
-const childEnv = Object.assign(WIN ? winEnv() : process.env, { TETHER_NODE_EXE: selfExe, TETHER_NODE_SCRIPT: selfScript ?? '' })
+const childEnv = Object.assign(WIN ? winEnv() : process.env, {
+  INYON_EXE: selfExe,
+  INYON_SCRIPT: selfScript ?? '',
+  TETHER_NODE_EXE: selfExe,
+  TETHER_NODE_SCRIPT: selfScript ?? '',
+})
 /** PATH the commands run with, which also covers the usual per-user install folders. */
 export const childPath = () => childEnv[Object.keys(childEnv).find((k) => k.toLowerCase() === 'path') ?? 'PATH'] ?? ''
 
@@ -128,7 +136,7 @@ function winLine(cmd: string): ((l: string) => string) | undefined {
   return (l) => l.replace(/^(%(?:extended-)?output) %(\d+) /, `$1 %${sid}.$2 `)
 }
 
-// commands have process groups of their own, so they would outlive tether-node: end them as it exits
+// commands have process groups of their own, so they would outlive inyon: end them as it exits
 const everyConnection = new Set<Map<string, Proc>>()
 process.on('exit', () => {
   for (const running of everyConnection) for (const p of running.values()) p.kill()
@@ -148,7 +156,7 @@ export function serveOps(send: (m: unknown) => void) {
           if (WIN && /\bps -e -o /.test(m.cmd)) {
             snapshot = path.join(os.tmpdir(), `inyon-ps-${process.pid}-${id}.txt`)
             writeFileSync(snapshot, await winProcs())
-            env = { ...childEnv, TETHER_PS: snapshot }
+            env = { ...childEnv, INYON_PS: snapshot }
           }
           const p = Bun.spawn(shellFor(m.cmd), {
             stdin: m.input ? Buffer.from(m.input, 'base64') : 'ignore',

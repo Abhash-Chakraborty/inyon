@@ -139,7 +139,7 @@ export function MachinePage() {
               : host.config.kind === 'link'
                 ? `Paired${host.hostname ? ` · ${host.hostname}` : ''}`
                 : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}${via ? ` from ${via}` : ''}`}
-          {host.nodeVersion && ` · tether-node ${host.nodeVersion}`}
+          {host.nodeVersion && ` · inyon ${host.nodeVersion}`}
           {host.os && ` · ${host.os}`}
           {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}
         </p>
