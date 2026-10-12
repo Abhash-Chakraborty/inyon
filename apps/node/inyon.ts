@@ -330,21 +330,21 @@ function forget(which?: string) {
 
 const USAGE = `inyon ${VERSION}
 
-  inyon                         set up this machine: run in the background and show a code
-  inyon pair                    show a code to pair the phone app with this machine
-  inyon link [options]          run the phone link (pair starts it too)
-      --lan / --no-lan          also answer on this machine's LAN addresses
-      --tunnel / --no-tunnel    open a free Cloudflare tunnel so any network works (on)
-      --relay <url> / --no-relay  keep a connection to an Inyon relay (repeatable)
-      --port <n>                local port (4780)
-  inyon phones                  list paired phones
-  inyon forget <name|key>       unpair a phone
-  inyon join <hub-url>          add this machine to an Inyon hub, with the token in INYON_TOKEN
-  inyon connect                 run the connection to that hub
-  inyon hub                     run the hub
-  inyon install [link|node|hub] start running in the background (at login)
-  inyon uninstall [link|node|hub]  stop running in the background
-  inyon update                  get the newest version and restart what runs in the background`
+  inyon                             set up this machine: run in the background and show a code
+  inyon pair                        show a code to pair the phone app with this machine
+  inyon link [options]              run the phone link (pair starts it too)
+    --lan / --no-lan                also answer on this machine's LAN addresses
+    --tunnel / --no-tunnel          open a free Cloudflare tunnel so any network works (on)
+    --relay <url> / --no-relay      keep a connection to an Inyon relay (repeatable)
+    --port <n>                      local port (4780)
+  inyon phones                      list paired phones
+  inyon forget <name|key>           unpair a phone
+  inyon join <hub-url>              add this machine to an Inyon hub, with the token in INYON_TOKEN
+  inyon connect                     run the connection to that hub
+  inyon hub                         run the hub
+  inyon install [link|node|hub]     start running in the background (at login)
+  inyon uninstall [link|node|hub]   stop running in the background
+  inyon update                      get the newest version and restart what runs in the background`
 
 /**
  * Gets the newest version and restarts what runs in the background with it. With --background
