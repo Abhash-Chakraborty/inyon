@@ -157,7 +157,7 @@ async function join(hubArg?: string) {
   if (mux) console.log(`Note: ${mux}`)
   const r = installService('node', true)
   if (!r.ok) fail(`Couldn't run the connection in the background (${r.how}). Run \`inyon connect\` to connect now.`)
-  console.log(`inyon is connecting to ${new URL(hub).host}. It runs in the background as ${r.how}.`)
+  console.log(`inyon is connecting to ${new URL(hub).host}. It runs as ${r.how}.`)
 }
 
 /**
@@ -286,7 +286,7 @@ async function setup() {
     const stale = running() && staleLink(currentState(), VERSION)
     const already = running() && !stale
     svc = already ? { ok: true, how: '' } : installService('link', stale)
-    note = already ? '✓ Already running in the background' : stale ? `✓ Restarted with version ${VERSION}.` : `✓ Runs in the background as ${svc.how}.`
+    note = already ? '✓ Already running in the background' : stale ? `✓ Restarted with version ${VERSION}.` : `✓ Runs as ${svc.how}.`
   }
   if (svc.ok) {
     console.log(note)
@@ -417,7 +417,7 @@ else if (cmd === 'connect' || !cmd) {
 else if (cmd === 'install') {
   const role = roleArg(rest[0], true)
   const r = installService(role, true)
-  console.log(r.ok ? `inyon ${role} runs in the background as ${r.how}.` : `Couldn't install the service: ${r.how}`)
+  console.log(r.ok ? `inyon ${role} runs as ${r.how}.` : `Couldn't install the service: ${r.how}`)
   if (!r.ok) process.exit(1)
 } else if (cmd === 'uninstall') {
   const role = roleArg(rest[0], false)

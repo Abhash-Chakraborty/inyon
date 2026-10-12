@@ -56,7 +56,7 @@ async function install() {
   const tls = !!(env.TLS_CERT && env.TLS_KEY)
   const bind = env.BIND || '127.0.0.1'
   const where = `${tls ? 'https' : 'http'}://${/^(127\.|::1$|localhost$|0\.0\.0\.0$|::$)/.test(bind) ? 'localhost' : bind}:${env.PORT || 4777}`
-  console.log(`The ${PRODUCT} hub runs in the background as ${r.how}.`)
+  console.log(`The ${PRODUCT} hub runs as ${r.how}.`)
   // a new hub writes a one-time code for choosing its password as it starts
   const local = `${tls ? 'https' : 'http'}://${bind === '0.0.0.0' || bind === '::' || bind === '127.0.0.1' ? '127.0.0.1' : bind}:${env.PORT || 4777}`
   let code = ''
