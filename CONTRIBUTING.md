@@ -2,6 +2,21 @@
 
 Thanks for helping. A few notes before you open a pull request.
 
+## How changes get in
+
+- For anything bigger than a small fix, open an issue first, so we can agree on the shape before
+  you spend time on it.
+- Fork the repo, branch from `main` and open a pull request against it. One change per pull
+  request is easiest to review.
+- `main` only takes pull requests. Each one needs CI green and a review from the maintainer, and
+  it's squash-merged, so the commits inside it can be messy.
+- CI doesn't run on an outside contributor's pull request until the maintainer approves the run,
+  and it never sees the repo's secrets.
+- Security problems go through private reporting, not issues or pull requests. See
+  [SECURITY.md](SECURITY.md).
+- By sending a pull request you agree to license your change under the [MIT licence](LICENSE).
+  Everyone here follows the [code of conduct](CODE_OF_CONDUCT.md).
+
 ## Setup
 
 ```sh
@@ -21,6 +36,7 @@ cd apps/hub && bun test
 cd apps/web && bun test
 cd apps/node && bun test
 cd packages/link && bun test
+cd apps/web && bun run build && bun run e2e   # layout at phone widths, needs Playwright's Chromium
 ```
 
 The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the
