@@ -29,3 +29,12 @@ test('a cleared goal is gone, not met; a met goal stays as the last one', () => 
   expect(goal({ met: true, condition: 'build is green', reason: 'it is' })).toMatchObject([{ kind: 'goal', met: true }])
   expect(meta.goal).toMatchObject({ condition: 'build is green', met: true })
 })
+
+test("a message from another session leaves the queue once Claude takes it, though its tag changed", () => {
+  const meta = newMeta()
+  const op = (operation: string, content: string, extra = {}) => normalize({ type: 'queue-operation', operation, content, timestamp: '2026-10-12T04:36:35Z', ...extra } as any, meta)
+  op('enqueue', '<cross-session-message from="uds:/run/user/1001/cc-socks/49259.sock" hop-chain="d6c7" from-name="custom-tmux-de" from-mode="bypass">\nAnswer: yes\n</cross-session-message>')
+  expect(meta.queue.length).toBe(1)
+  op('remove', '<cross-session-message from="uds:/run/user/1001/cc-socks/49259.sock" from-name="custom-tmux-de" from-mode="bypass" hop-chain="d6c7">\nAnswer: yes\n</cross-session-message>', { reason: 'absorbed_mid_turn' })
+  expect(meta.queue).toEqual([])
+})

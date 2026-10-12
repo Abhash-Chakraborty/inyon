@@ -186,7 +186,9 @@ export function normalize(e: any, meta: TranscriptMeta, opts: { sidechain?: bool
       // pressing Esc/↑ pulls every queued message back into the input box at once
       else if (e.operation === 'popAll') meta.queue.length = 0
       else {
-        const i = meta.queue.indexOf(unwrapPaste(c))
+        // a message from another session is logged with different attributes on its
+        // <cross-session-message …> tag when it's queued and when it's taken: compare what's inside
+        const i = meta.queue.findIndex((q) => queueKey(q) === queueKey(unwrapPaste(c)))
         if (i >= 0) meta.queue.splice(i, 1)
         else if (e.operation === 'dequeue' && meta.queue.length) meta.queue.shift()
       }
@@ -278,6 +280,8 @@ function trackToolResult(meta: TranscriptMeta, toolUseId: string, isError: boole
     meta.artifacts.set(tur.url, { url: tur.url, title: tur.title ?? meta.artifacts.get(tur.url)?.title, updatedAt: ts })
   }
 }
+
+const queueKey = (text: string) => text.replace(/^<cross-session-message\b[^>]*>/, '<cross-session-message>')
 
 function attachmentItems(e: any, base: { uuid: string; ts: string }, meta: TranscriptMeta): Draft[] {
   const a = e.attachment
