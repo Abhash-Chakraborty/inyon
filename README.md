@@ -2,26 +2,45 @@
 
 <h1 align="center">Inyon</h1>
 
-<p align="center">Watch, answer and steer the coding agents running in tmux on your machines, from your phone or any browser.</p>
+<p align="center">Watch, answer and steer the coding agents running in tmux on your computers, from a phone, tablet or browser.</p>
+
+<p align="center"><a href="https://inyon.abhashchakraborty.tech/">Download</a> · <a href="#quick-start">Quick start</a> · <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases</a></p>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
-  <img src="docs/hero-light.webp" alt="Inyon's overview on a desktop browser and a phone: four agent sessions with their state, model, cost and context, and the plan limits beside them">
+  <img src="docs/hero-light.webp" alt="Inyon on a desktop, a tablet and a phone: the overview of every agent session across four machines, a Claude Code session read as a chat, and Codex asking to run the tests">
 </picture>
 
 Inyon works with Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot, on as many
 machines as you have, each signed in to whatever account it already uses. Nothing changes at the
-keyboard: walk away from your laptop, pick the session up on your phone, sit back down and carry
-on in the same terminal.
+keyboard: walk away from your laptop, pick the session up on your phone, then sit back down and
+carry on in the same terminal.
 
 The name comes from 인연 (*inyeon*), the Korean word for a bond between people; 연 on its own
 also means kite, which is the mark.
 
+## See it work
+
+Codex asks before it runs the tests. Answer it from the overview, then open the session and watch
+the results come in.
+
+<img src="docs/answer.webp" alt="On a desktop browser, the overview zooms in on a Codex session asking to run bun test src/auth. The cursor clicks Yes, run it, opens the session as a chat, and the reply says all 31 auth tests pass.">
+
+On a phone, open a session as a chat, read the change it made, watch the test run finish and send
+the next instruction.
+
+<img src="docs/phone.webp" alt="On a phone, the overview scrolls to a Claude Code session fixing a flaky checkout test. Tapping it opens the chat, the edit expands into a diff, the 50-run test suite finishes with no failures, and a reply asking for a regression test is typed and sent.">
+
+On a tablet, sessions sit in a tree by machine and tmux session. Ending one says exactly what
+closes, and only that pane goes.
+
+<img src="docs/tablet.webp" alt="On a tablet, the sidebar tree of machines and sessions is zoomed in, then an OpenCode session's menu opens End session. The confirmation sheet says the agent exits and its pane closes, and a Session ended toast appears.">
+
 ## Why
 
-I run agents on a laptop, a personal server and a company server. Each is signed in to a
-different account, and on the company machine I only have the CLI. Built-in remote features
-follow one account at a time, so switching machines meant switching accounts.
+I run agents on a laptop and two servers. Each is signed in to a different account, and on one
+server I only have the CLI. Built-in remote features follow one account at a time, so switching
+machines meant switching accounts.
 
 Inyon never signs in anywhere. It drives the agent CLI that is already running in tmux on each
 machine, so every machine keeps its own account, subscription or API key.
@@ -45,9 +64,21 @@ machine, so every machine keeps its own account, subscription or API key.
 - Set up a machine from the app: it checks for tmux and each agent, installs what's missing and
   opens sign-in.
 
-It runs on phones, tablets and desktops, light and dark, and installs as a web app. Inside a
-session the app takes on that agent's colours, logo and reply font; everywhere else it stays ink
-on silver.
+It runs on phones, tablets and desktops, light and dark. Inside a session the app takes on that
+agent's colours, logo and reply font; everywhere else it stays ink on silver.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/phones-dark.webp">
+  <img src="docs/phones-light.webp" alt="Three phones: the overview with a Codex prompt waiting for an answer, a Claude Code session as a chat with its to-do list, and the Machines page with four machines, one offline">
+</picture>
+
+The terminal is always there too, with a key bar for the keys a phone keyboard lacks and the
+session's changes beside it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/terminal-dark.webp">
+  <img src="docs/terminal-light.webp" alt="A desktop browser showing a Claude Code session's terminal, with the sidebar of machines and sessions on the left and the edited file's diff on the right">
+</picture>
 
 ## How it works
 
@@ -94,7 +125,16 @@ The agent runs it and handles permissions, and the output shows up in the chat.
 
 ## Quick start
 
-On Linux or macOS, this installs the hub and keeps it running as a user service:
+The quickest way in is the Android app, with nothing hosted anywhere:
+
+1. Install the APK from the [download page](https://inyon.abhashchakraborty.tech/) or the
+   [latest release](https://github.com/Abhash-Chakraborty/inyon/releases/latest).
+2. On each computer, run the one line for its system from [Android app](#android-app). It prints
+   a QR code.
+3. In the app, tap *Add a computer* and scan it.
+
+For a browser, or one place that reaches all your machines, run a hub on a machine that stays on.
+On Linux or macOS, this installs it and keeps it running as a user service:
 
 ```sh
 curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh -s -- --hub
@@ -125,9 +165,9 @@ network's address. Behind a proxy on a public domain, add that domain to `INYON_
 
 ## Where everything runs
 
-The only thing to host is the hub: one Bun process on a machine that stays on, such as a home
-server, a VPS or a desktop that doesn't sleep. It serves the web app itself, so there's nothing to
-deploy anywhere else.
+With the Android app there's nothing to host. For a browser, the hub is the one thing you run
+yourself: one Bun process on a machine that stays on, such as a home server, a VPS or a desktop
+that doesn't sleep. It serves the web app itself, so there's nothing to deploy anywhere else.
 
 - In a browser, the hub's address is the app: `http://my-server:4777` over Tailscale or NetBird,
   or `https://inyon.example.com` behind a reverse proxy.
@@ -135,9 +175,10 @@ deploy anywhere else.
   `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`. The hub then sends Web Push itself, so
   alerts reach a closed tab or installed app, for every agent and for machines going offline.
 - The Android app needs nothing hosted. It talks to your computers itself.
-- The web app at [inyon.abhashchakraborty.tech](https://inyon.abhashchakraborty.tech/)
-  needs no hub either. It runs the same core as the Android app, in the page.
 - Other machines host nothing. They run tmux and your agents.
+
+[inyon.abhashchakraborty.tech](https://inyon.abhashchakraborty.tech/) is only a download page
+and these docs. Nothing there connects to your machines.
 
 Don't open port 4777 to the internet without HTTPS. The hub can run commands on every machine you
 add, so anyone who reaches it gets to try your password.
@@ -201,8 +242,8 @@ irm https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.ps1
 
 It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In the app,
 tap *Add a computer*, then *Scan the code*. Scanned with the phone's camera instead, the code opens
-the web app (below). If the SSH session is on the same phone, use the
-one-time ID and 6-digit code it also prints. The code works once, for 10 minutes, and five wrong
+the download page, which offers to copy the link for the app. If the SSH session is on the same
+phone, use the one-time ID and 6-digit code it also prints. The code works once, for 10 minutes, and five wrong
 tries cancel it.
 
 `inyon` opens a free Cloudflare quick tunnel, so the phone reaches the computer from any network
@@ -213,8 +254,8 @@ signature check. `--lan` also answers on the local network, which is faster at h
 
 On Tailscale, Headscale, NetBird, ZeroTier or WireGuard, `inyon` also answers on that network's
 address, and setup says which. The Android app on the same network connects straight to it, with
-no tunnel in between. Browsers only open `wss://` from a web page, so the web app keeps using the
-tunnel, or an HTTPS address you publish with `--url`. With Tailscale, for example:
+no tunnel in between. A browser copy (below) only opens `wss://`, so it keeps using the tunnel, or
+an HTTPS address you publish with `--url`. With Tailscale, for example:
 
 ```sh
 tailscale serve --bg --https=8443 http://127.0.0.1:4780
@@ -234,26 +275,24 @@ On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the nativ
 Windows, and setup installs it with winget. Everything works as on Linux, except that the terminal
 is drawn from the pane's screen, so it shows what's on screen now without the scrollback.
 
-### In a browser, without the app
+### Your own copy in a browser
 
-The same phone core also runs in a web page, published to GitHub Pages from every release (the
-`inyon-web.tar.gz` in its SHA256SUMS). A computer's QR code opens it: the code rides after the `#`
-in the link, which the browser never sends to GitHub, and the app takes it out of the address bar
-before anything loads. On a laptop, open the page and type the ID and code. Pairing keys stay in
-the browser's IndexedDB, sealed with a key the browser won't hand out.
+The same phone core also builds as a static web page, for anyone who wants to serve it
+themselves: `inyon-web.tar.gz` in each release, or `bun --filter @inyon/web build:hosted`.
+Set `INYON_WEB_URL` on a computer to point its QR codes at your copy. The pairing code rides
+after the `#` in the link, which browsers never send to a server, and the page takes it out of
+the address bar before anything loads. Pairing keys stay in the browser's IndexedDB, sealed with
+a key the browser won't hand out.
 
-Once you allow notifications, the page subscribes with the browser's own push service (Google's,
-Apple's or Mozilla's) and hands the subscription to each paired computer over the encrypted link.
-When an agent's hook says it needs you or finished, the computer sends an encrypted message
-straight to that push service, so alerts arrive with the page closed and no server of Inyon's is
-involved. The push service only sees ciphertext (RFC 8291). This needs `inyon` 0.10 or later on the
-computer, and today covers Claude Code, whose hook Inyon installs. `inyon push` lists the browsers
-a computer sends to, and `inyon forget` stops them along with the pairing.
+Once you allow notifications, the page subscribes with the browser's own push service and hands
+the subscription to each paired computer over the encrypted link. When an agent's hook says it
+needs you or finished, the computer sends an encrypted message straight to that push service
+(RFC 8291), so alerts arrive with the page closed. This needs `inyon` 0.10 or later and today
+covers Claude Code. `inyon push` lists the browsers a computer sends to.
 
-It can't open SSH connections, so a server without `inyon` goes through a paired computer. On
-iPhone, add it to the Home Screen first and pair from there: Safari forgets a site after 7 days
-unused, and the Home Screen app keeps its own data. `bun --filter @inyon/web build:hosted` builds
-the same files, and `INYON_WEB_URL` on a computer points its QR codes at your own copy.
+A page can't open SSH connections, so a server without `inyon` goes through a paired computer.
+On iPhone, add it to the Home Screen first and pair from there: Safari forgets a site after 7 days
+unused.
 
 ### A server over SSH
 
@@ -332,7 +371,9 @@ packages/protocol  types and the agent registry shared by hub and app
 ```
 
 Every icon, splash screen and favicon comes from `apps/web/public/icon.svg`; run
-`bun --filter @inyon/mobile icons` after changing it. See [CONTRIBUTING.md](CONTRIBUTING.md) to add
+`bun --filter @inyon/mobile icons` after changing it. The pictures in this README are the real
+app fed a made-up set of machines: `bun run build` in `apps/web`, then
+`bun scripts/readme/shots.ts` makes them again. See [CONTRIBUTING.md](CONTRIBUTING.md) to add
 an agent or fix a parser.
 
 ## Status
