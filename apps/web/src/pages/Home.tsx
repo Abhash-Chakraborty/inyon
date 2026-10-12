@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import clsx from 'clsx'
 import { Link } from 'react-router-dom'
-import { Laptop, Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
+import { ChevronRight, Laptop, Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes } from '../lib/overview.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, NeedsYouCard, SessionCard } from '../components/Overview.tsx'
@@ -16,6 +17,12 @@ import { isHosted } from '../lib/base.ts'
 import { InstallCard } from '../components/InstallCard.tsx'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
+import { groupPanes, loadFolded, saveFolded } from '../lib/groups.ts'
+import { FilterInput } from '../components/ui/FilterInput.tsx'
+import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
+
+/** Past this many agent sessions the overview gets a search box. */
+const SEARCH_FROM = 6
 
 /** working, or idle with shells or tasks still running */
 const busy = (a: AgentPaneInfo) => a.state === 'working' || (a.state === 'idle' && !!a.background)
@@ -28,7 +35,23 @@ export function Home() {
   const [adding, setAdding] = useState(false)
   const panes = agentPanes(hosts)
   const waiting = panes.filter((r) => r.pane.agent!.state === 'waiting')
-  const rest = panes.filter((r) => r.pane.agent!.state !== 'waiting').filter((r) => filter === 'all' || (filter === 'working' ? busy(r.pane.agent!) : !busy(r.pane.agent!)))
+  const [q, setQ] = useState('')
+  const [folded, setFolded] = useState(loadFolded)
+  const toggle = (key: string) =>
+    setFolded((f) => {
+      const n = new Set(f)
+      const k = `home:${key}`
+      if (n.has(k)) n.delete(k)
+      else n.add(k)
+      saveFolded(n)
+      return n
+    })
+  // the cards below "Needs you", grouped by machine; a search looks through every machine
+  const groups = useMemo(
+    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && r.pane.agent.state !== 'waiting' && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
+    [hosts, q, filter],
+  )
+  const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
   const working = panes.filter((r) => busy(r.pane.agent!)).length
   const needsIntegration = hosts.filter((h) => h.status === 'online' && (h.integration === 'missing' || h.integration === 'removed' || h.integration === 'outdated') && h.agents.includes('claude'))
   const panesTotal = hosts.reduce((n, h) => n + h.sessions.reduce((m, s) => m + s.windows.reduce((k, w) => k + w.panes.length, 0), 0), 0)
@@ -157,16 +180,45 @@ export function Home() {
                 >
                   Agent sessions
                 </SectionLabel>
-                {rest.length ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
-                    {rest.map((r) => (
-                      <SessionCard key={r.host.config.id + r.pane.id} r={r} />
-                    ))}
-                  </div>
+                {panes.length > SEARCH_FROM && <FilterInput value={q} onChange={setQ} placeholder={`Search ${panes.length} sessions`} className="mb-3" />}
+                {groups.length ? (
+                  hosts.length > 1 ? (
+                    <div className="flex flex-col gap-2">
+                      {groups.map((g) => {
+                        const open = !!q || !homeFolded.has(g.key)
+                        return (
+                          <div key={g.key}>
+                            <button type="button" onClick={() => toggle(g.key)} aria-expanded={open} className="-mx-2 flex h-10 w-[calc(100%+1rem)] items-center gap-2 rounded-full px-2 text-left hover:bg-hover/60">
+                              <ChevronRight className={clsx('size-4 shrink-0 text-fg-3 transition-transform duration-200', open && 'rotate-90')} />
+                              <MachineIcon kind={machineKindOf(g.host)} size={16} className={clsx('shrink-0', g.host.status === 'online' ? 'text-fg-2' : 'text-fg-3')} />
+                              <span className={clsx('truncate text-[14px] font-medium', g.host.status !== 'online' && 'text-fg-2')}>{g.host.config.name}</span>
+                              {g.host.status !== 'online' && <span className="shrink-0 text-[12px] text-fg-3">{g.host.status === 'error' ? 'Offline' : 'Connecting'}</span>}
+                              <span className="tabular ml-auto shrink-0 font-mono text-[12px] text-fg-3">{g.panes}</span>
+                            </button>
+                            <div className="expand" data-open={open}>
+                              <div inert={!open}>
+                                <div className="grid grid-cols-1 gap-3 pt-2 pb-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
+                                  {g.sessions.flatMap((sg) => sg.panes).map((r) => (
+                                    <SessionCard key={r.host.config.id + r.pane.id} r={r} showHost={false} />
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
+                      {groups.flatMap((g) => g.sessions.flatMap((sg) => sg.panes)).map((r) => (
+                        <SessionCard key={r.host.config.id + r.pane.id} r={r} />
+                      ))}
+                    </div>
+                  )
                 ) : (
                   <div className="rounded-3xl border border-dashed border-line-strong">
                     <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
-                      {panes.length ? 'Try another filter.' : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
+                      {panes.length ? (q ? `No session matches “${q}”.` : 'Try another filter.') : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
                     </Empty>
                   </div>
                 )}

@@ -11,7 +11,7 @@ mock.module(new URL('../lib/api.ts', import.meta.url).pathname, () => ({ ...fake
 mock.module(new URL('../lib/socket.ts', import.meta.url).pathname, () => ({ socket: fakes.socket }))
 
 const { cleanup } = await import('@testing-library/react')
-const { useStore } = await import('../lib/store.ts')
+const { useStore, forgetEnded } = await import('../lib/store.ts')
 const initial = useStore.getState()
 
 afterEach(() => {
@@ -21,6 +21,7 @@ afterEach(() => {
   fakes.socket.subscribeChat.mockClear()
   fakes.socket.up = false
   useStore.setState(initial, true)
+  forgetEnded()
   localStorage.clear()
   sessionStorage.clear()
 })

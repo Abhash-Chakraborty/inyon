@@ -2,7 +2,7 @@ import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protoco
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
-import { answer, codexRewind, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
+import { answer, codexRewind, endSession, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
@@ -502,6 +502,9 @@ export const coreRoutes: Routes = {
       await exitAgent(req.params.id, paneParam(req.params.pane))
       return ok()
     }),
+  },
+  '/api/hosts/:id/panes/:pane/end': {
+    POST: api(async (req) => json(await endSession(req.params.id, paneParam(req.params.pane)))),
   },
   '/api/hosts/:id/panes/:pane/rewind': {
     POST: api(async (req) => {

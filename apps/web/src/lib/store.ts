@@ -151,10 +151,39 @@ export function patchChat(key: string, fn: (c: ChatState) => Partial<ChatState>)
 }
 
 
+/**
+ * Panes ended from here: gone from every list at once, and kept out of the updates that still list
+ * them for a moment while tmux closes them.
+ */
+const ended = new Map<string, number>()
+const endedKey = (host: string, pane: string) => `${host}\u0000${pane}`
+
+export function withoutEnded(hosts: HostState[], now = Date.now()): HostState[] {
+  for (const [k, until] of ended) if (until < now) ended.delete(k)
+  if (!ended.size) return hosts
+  return hosts.map((h) => {
+    if (![...ended.keys()].some((k) => k.startsWith(`${h.config.id}\u0000`))) return h
+    const sessions = h.sessions
+      .map((s) => ({ ...s, windows: s.windows.map((w) => ({ ...w, panes: w.panes.filter((p) => !ended.has(endedKey(h.config.id, p.id))) })).filter((w) => w.panes.length) }))
+      .filter((s) => s.windows.length)
+    return { ...h, sessions }
+  })
+}
+
+/** Forgets every hidden pane (tests start clean). */
+export const forgetEnded = () => ended.clear()
+
+/** Hides a pane being ended; `false` brings it back (the end failed). */
+export function hidePane(host: string, pane: string, hide = true) {
+  if (hide) ended.set(endedKey(host, pane), Date.now() + 15_000)
+  else ended.delete(endedKey(host, pane))
+  if (hide) useStore.setState((s) => ({ hosts: withoutEnded(s.hosts) }))
+}
+
 function onMessage(m: ServerMsg) {
   switch (m.t) {
     case 'overview':
-      useStore.setState({ hosts: m.hosts, hostsLoaded: true })
+      useStore.setState({ hosts: withoutEnded(m.hosts), hostsLoaded: true })
       clearAnswered(m.hosts)
       break
     case 'chat.reset':

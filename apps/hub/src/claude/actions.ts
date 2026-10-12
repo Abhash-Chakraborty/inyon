@@ -963,10 +963,16 @@ const EXIT_COMMAND: Partial<Record<AgentKind, string>> = { claude: '/exit', code
  * command). Stops a running turn first and backs out of any dialog, then asks the agent to exit;
  * Ctrl+C is the fallback when that doesn't work.
  */
-export async function exitAgent(hostId: string, paneId: string) {
+export async function exitAgent(hostId: string, paneId: string, o: { end?: boolean } = {}) {
   const { host, found } = agentPane(hostId, paneId)
   const a = found.pane.agent
   if (!a) throw new HttpError(409, 'No agent is running in this pane')
+  const p = shq(paneId)
+  // ending the session closes the pane after the agent, and anything still running in it
+  const close = async () => {
+    await host.exec(`tmux kill-pane -t ${p} 2>/dev/null; true`)
+    registry.refresh(hostId, 300)
+  }
   const proc = registry.agentProc(hostId, paneId)
   const alive = async () => !proc || (await host.exec(`kill -0 ${proc.pid} 2>/dev/null && echo alive`)).stdout.includes('alive')
   const waitGone = async (ms: number) => {
@@ -977,7 +983,7 @@ export async function exitAgent(hostId: string, paneId: string) {
     return false
   }
   const s = await currentScreen(hostId, paneId)
-  if (s.background) throw new HttpError(409, `Exiting would stop ${s.background} running in the background`)
+  if (s.background && !o.end) throw new HttpError(409, `Exiting would stop ${s.background} running in the background`)
   if (s.working) await interrupt(hostId, paneId)
   // a dialog (permission, folder trust): back out of it before typing the command
   if (s.prompt && !s.prompt.api) {
@@ -985,8 +991,7 @@ export async function exitAgent(hostId: string, paneId: string) {
     await sleep(300)
   }
   // started as the pane's own command (`tmux new agy`): keep the pane, and give it a shell after
-  const direct = !!proc && proc.pid === proc.panePid
-  const p = shq(paneId)
+  const direct = !!proc && proc.pid === proc.panePid && !o.end
   const win = onPsmux(hostId)
   if (direct) await host.exec(remainOnExit(win, p, true))
   // the "/exit" and Ctrl+C below are Inyon's, not a draft to keep
@@ -994,6 +999,7 @@ export async function exitAgent(hostId: string, paneId: string) {
   await w?.beginSend()
   const done = async () => {
     w?.draftSent()
+    if (o.end) return close()
     if (direct) {
       await paneDead(host, p)
       // with no command tmux would rerun the agent; ask for the login shell instead
@@ -1014,9 +1020,33 @@ export async function exitAgent(hostId: string, paneId: string) {
     if (await waitGone(2500)) return done()
   }
   w?.draftSent()
+  // it wouldn't go: closing its pane ends it anyway
+  if (o.end) return close()
   if (direct) await host.exec(remainOnExit(win, p, false))
   registry.refresh(hostId, 300)
   throw new HttpError(504, `${AGENTS[a.kind].name} did not exit; close it from the terminal`)
+}
+
+/** What closing a pane takes with it: tmux closes a window with its last pane, a session with its last window. */
+export function closes(found: { session: { windows: unknown[] }; window: { panes: unknown[] } }): 'pane' | 'window' | 'session' {
+  if (found.window.panes.length > 1) return 'pane'
+  return found.session.windows.length > 1 ? 'window' : 'session'
+}
+
+/**
+ * Ends a session for good. The agent exits the way /exit would (a running turn is stopped first,
+ * a dialog backed out of), then its tmux pane is killed. Only that pane: its window goes too only
+ * when it was the last pane there, and the tmux session only when that was its last window.
+ */
+export async function endSession(hostId: string, paneId: string) {
+  const { host, found } = agentPane(hostId, paneId)
+  const closed = closes(found)
+  if (found.pane.agent) await exitAgent(hostId, paneId, { end: true })
+  else {
+    await host.exec(`tmux kill-pane -t ${shq(paneId)} 2>/dev/null; true`)
+    registry.refresh(hostId, 300)
+  }
+  return { closed }
 }
 
 export interface LaunchOpts {

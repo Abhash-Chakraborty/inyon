@@ -6,6 +6,7 @@ import { allPanes } from '../../lib/overview.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { useAgentCatalog } from './useAgentCatalog.ts'
 import { confirmAction } from '../Confirm.tsx'
+import { endSession } from '../../lib/end.ts'
 
 /** Everything a session view needs: pane ref, live status, transcript summary, and actions. */
 export function useSession(host: string, pane: string) {
@@ -83,8 +84,10 @@ export function useSession(host: string, pane: string) {
       })
     },
     interrupt: () => run('Could not interrupt', () => api.interrupt(host, pane)),
+    /** ends the session for good: the agent exits and its tmux pane closes */
+    end: (after?: () => void) => ref && endSession(ref, after),
     exit: async () => {
-      if (!def || !(await confirmAction({ title: `Exit ${def.name}?`, body: 'The conversation is saved; the pane goes back to its shell.', yes: 'Exit' }))) return
+      if (!def || !(await confirmAction({ title: `Exit ${def.name} to the shell?`, body: 'The conversation is saved, and the pane stays open at its shell. To close the pane too, use End session.', yes: 'Exit' }))) return
       return run(`Could not exit ${def.name}`, async () => {
         await api.exit(host, pane)
         toast({ title: `${def.name} exited`, tone: 'success' })

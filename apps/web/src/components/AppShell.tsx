@@ -1,11 +1,11 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { LayoutGrid, Monitor, Plus, Search, Settings, SquareTerminal, WifiOff } from 'lucide-react'
+import { LayoutGrid, Monitor, Plus, Search, Settings, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
+import { SessionTree } from './SessionTree.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
-import { HostDot, StateDot, shownState } from './ui/status.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { Spinner } from './ui/primitives.tsx'
@@ -100,9 +100,7 @@ function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) 
 function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void }) {
   const hosts = useStore((s) => s.hosts)
   const connected = useStore((s) => s.connected)
-  const loc = useLocation()
-  const agents = agentPanes(hosts)
-  const terminals = allPanes(hosts).filter((r) => !r.pane.agent)
+  const online = hosts.filter((h) => h.status === 'online').length
   const item = (active: boolean) =>
     clsx(
       'relative flex h-9 items-center gap-2.5 rounded-full px-3 text-[13.5px] transition-colors',
@@ -131,56 +129,22 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
         <NavLink to="/" end className={({ isActive }) => item(isActive)}>
           <LayoutGrid className="size-4" /> Overview
         </NavLink>
-        <NavLink to="/machines" className={({ isActive }) => item(isActive)}>
-          <Monitor className="size-4" /> {machinesLabel}
-        </NavLink>
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        {agents.length > 0 && (
-          <>
-            <div className="px-3 pt-6 pb-2 text-[12px] font-medium text-fg-3">Sessions</div>
-            {agents.map((r) => {
-              const href = paneHref(r.host.config.id, r.pane.id)
-              return (
-                <Link key={`${r.host.config.id}${r.pane.id}`} to={href} className={item(loc.pathname === href)}>
-                  <AgentLogo kind={r.pane.agent!.kind} size={17} active={r.pane.agent!.state === 'working'} />
-                  <span className="min-w-0 flex-1 truncate">{paneTitle(r)}</span>
-                  <StateDot state={shownState(r.pane.agent!, r.host)} />
-                </Link>
-              )
-            })}
-          </>
-        )}
-        {terminals.length > 0 && (
-          <>
-            <div className="px-3 pt-6 pb-2 text-[12px] font-medium text-fg-3">Terminals</div>
-            {terminals.map((r) => {
-              const href = paneHref(r.host.config.id, r.pane.id)
-              return (
-                <Link key={`${r.host.config.id}${r.pane.id}`} to={href} className={item(loc.pathname === href)}>
-                  <SquareTerminal className="size-4 shrink-0 text-fg-3" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {terminalName(r) ?? `${r.session.name}:${r.window.index}`} <span className="text-fg-3">{r.pane.command}</span>
-                  </span>
-                </Link>
-              )
-            })}
-          </>
-        )}
+        <SessionTree hosts={hosts} />
       </nav>
       <div className="space-y-1 border-t border-line p-3">
+        <NavLink to="/machines" className={({ isActive }) => item(isActive)}>
+          <Monitor className="size-4" /> {machinesLabel}
+          {hosts.length > 0 && (
+            <span className="tabular ml-auto font-mono text-[12px] text-fg-3" title={`${online} of ${hosts.length} online`}>
+              {online === hosts.length ? hosts.length : `${online}/${hosts.length}`}
+            </span>
+          )}
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => item(isActive)}>
           <Settings className="size-4" /> Settings
         </NavLink>
-        <Link to="/machines" className="flex min-w-0 items-center gap-2 overflow-hidden px-3 pt-1.5 font-mono text-[12px] text-fg-3 hover:text-fg-2">
-          {hosts.slice(0, 3).map((h) => (
-            <span key={h.config.id} className="flex min-w-0 items-center gap-1" title={`${h.config.name}: ${h.status}`}>
-              <HostDot status={h.status} />
-              <span className="max-w-[64px] truncate">{h.config.name}</span>
-            </span>
-          ))}
-          {hosts.length > 3 && <span className="shrink-0">+{hosts.length - 3}</span>}
-        </Link>
       </div>
     </aside>
   )

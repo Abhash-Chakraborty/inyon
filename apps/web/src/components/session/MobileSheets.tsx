@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { Copy, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { CircleX, Copy, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
@@ -14,6 +15,7 @@ const EFFORT_SHORT: Record<string, string> = { minimal: 'Min', low: 'Low', mediu
 
 export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boolean; onClose: () => void }) {
   const [goalOpen, setGoalOpen] = useState(false)
+  const nav = useNavigate()
   const { def, status, info, agent, actions } = s
   if (!def) return null
   const modelId = currentModelId(def, status, info?.model)
@@ -107,12 +109,13 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { label: agent === 'opencode' ? 'Undo' : 'Rewind', icon: RotateCcw, on: actions.rewind },
               { label: 'Copy ID', icon: Copy, on: actions.copyId },
               def.set.clear && { label: 'Clear', icon: Trash2, on: async () => (await confirmAction({ title: 'Start a fresh conversation?', body: 'The current one is saved and can be resumed later.', yes: 'Clear' })) && actions.clear() },
-              { label: 'Exit', icon: LogOut, on: actions.exit },
+              { label: 'To shell', icon: LogOut, on: actions.exit },
+              { label: 'End', icon: CircleX, danger: true, on: () => (onClose(), actions.end(() => nav('/'))) },
             ]
               .filter(Boolean)
               .map((a: any) => (
-                <button key={a.label} type="button" onClick={a.on} className="flex h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-line text-[12px] hover:bg-hover">
-                  <a.icon className="size-4 text-fg-2" />
+                <button key={a.label} type="button" onClick={a.on} className={clsx('flex h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-line text-[12px] hover:bg-hover', a.danger && 'text-danger')}>
+                  <a.icon className={clsx('size-4', a.danger ? 'text-danger' : 'text-fg-2')} />
                   {a.label}
                 </button>
               ))}

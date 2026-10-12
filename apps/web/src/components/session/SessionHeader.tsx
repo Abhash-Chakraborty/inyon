@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield,
+  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX,
 } from 'lucide-react'
 import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
@@ -75,6 +75,7 @@ export function SessionHeader({
   togglePanel: () => void
   openSheet: (which: 'controls' | 'activity') => void
 }) {
+  const nav = useNavigate()
   useTick(15_000)
   const { ref, def, info, agent, actions } = s
   const [renaming, setRenaming] = useState(false)
@@ -176,8 +177,9 @@ export function SessionHeader({
               { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, onSelect: () => setRenaming(true) },
               { key: 'copy', label: 'Copy session ID', icon: <Copy className="size-4" />, onSelect: actions.copyId },
               def.set.clear && { key: 'clear', label: 'Clear conversation', icon: <Trash2 className="size-4" />, danger: true, onSelect: actions.clear },
-              { key: 'exit', label: `Exit ${def.name}`, icon: <LogOut className="size-4" />, danger: true, onSelect: actions.exit },
-            ].filter((it: any) => it && (!s.screen?.prompt || it.key === 'rename' || it.key === 'copy')) as any}
+              { key: 'exit', label: 'Exit to shell', icon: <LogOut className="size-4" />, onSelect: actions.exit },
+              { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, onSelect: () => actions.end(() => nav('/')) },
+            ].filter((it: any) => it && (!s.screen?.prompt || it.key === 'rename' || it.key === 'copy' || it.key === 'end')) as any}
             trigger={({ toggle, ref: r }) => (
               <button ref={r} type="button" onClick={toggle} aria-label="More" className="hidden size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover md:flex">
                 <MoreHorizontal className="size-4" />

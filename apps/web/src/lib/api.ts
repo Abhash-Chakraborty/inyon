@@ -162,6 +162,8 @@ export const api = {
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),
   restart: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/restart`),
   exit: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/exit`),
+  /** the agent exits, then its tmux pane closes (and its window or session, if that was the last) */
+  end: (host: string, pane: string) => request<{ closed: 'pane' | 'window' | 'session' }>('POST', `${panePath(host, pane)}/end`),
   keys: (host: string, pane: string, keys: string[]) => request('POST', `${panePath(host, pane)}/keys`, { keys }),
   rewind: (host: string, pane: string, text?: string) => request('POST', `${panePath(host, pane)}/rewind`, { text }, 60_000),
   mode: (host: string, pane: string, mode: string) => request('POST', `${panePath(host, pane)}/mode`, { mode }),

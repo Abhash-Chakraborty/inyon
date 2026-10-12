@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronRight, ArrowRight, Check, Gauge } from 'lucide-react'
+import { ChevronRight, ArrowRight, Check, CircleX, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
 import { AGENTS, type HostState } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { liveWindow, money, resetsIn, shortPath, timeAgo, tokens } from '../lib/format.ts'
@@ -10,7 +10,10 @@ import { haptic } from '../lib/haptics.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { AgentLogo, useAgentAccent } from '../lib/skin.tsx'
 import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
-import { Meter } from './ui/primitives.tsx'
+import { Menu, Meter, openMenu } from './ui/primitives.tsx'
+import { useLongPress } from '../lib/longPress.ts'
+import { endSession } from '../lib/end.ts'
+import { tmuxTarget } from '../lib/groups.ts'
 
 /** A session waiting on you, with its answers as buttons. */
 export function NeedsYouCard({ r }: { r: PaneRef }) {
@@ -77,37 +80,72 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
   )
 }
 
-export function SessionCard({ r }: { r: PaneRef }) {
+/**
+ * An agent session as a card. The whole card opens it; ⋯ (shown on hover with a mouse, always on a
+ * touch screen) and a long-press offer the actions that don't need the session open.
+ */
+export function SessionCard({ r, showHost = true }: { r: PaneRef; showHost?: boolean }) {
   const a = r.pane.agent!
   const st = a.status
   const pct = st?.contextPct
+  const nav = useNavigate()
+  const href = paneHref(r.host.config.id, r.pane.id)
+  const menu = `card:${r.host.config.id}:${r.pane.id}`
+  const press = useLongPress(() => openMenu(menu))
   return (
-    <Link to={paneHref(r.host.config.id, r.pane.id)} className="group flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors hover:border-line-strong sm:gap-4 sm:p-5">
-      <div className="flex items-center gap-2.5">
+    <div {...press} className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors [-webkit-touch-callout:none] hover:border-line-strong sm:gap-4 sm:p-5">
+      <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
+      <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={a.state === 'working'} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{AGENTS[a.kind].name}</span>
         <StatePill state={shownState(a, r.host)} title={a.background} />
+        <span className="pointer-events-auto relative -my-1 -mr-1.5">
+          <Menu
+            name={menu}
+            align="end"
+            width={220}
+            items={[
+              { key: 'open', label: 'Open', icon: <ArrowRight className="size-4" />, onSelect: () => nav(href) },
+              { key: 'terminal', label: 'Open terminal', icon: <SquareTerminal className="size-4" />, onSelect: () => nav(paneHref(r.host.config.id, r.pane.id, 'terminal')) },
+              { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, onSelect: () => void endSession(r) },
+            ]}
+            trigger={({ toggle, ref, open }) => (
+              <button
+                ref={ref}
+                type="button"
+                onClick={toggle}
+                aria-label={`Actions for ${paneTitle(r)}`}
+                className={clsx(
+                  'flex size-8 items-center justify-center rounded-full text-fg-3 transition-opacity hover:bg-hover hover:text-fg focus-visible:opacity-100 pointer-coarse:opacity-100',
+                  open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                )}
+              >
+                <MoreHorizontal className="size-4" />
+              </button>
+            )}
+          />
+        </span>
       </div>
-      <div className="min-w-0">
+      <div className="pointer-events-none min-w-0">
         <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{paneTitle(r)}</div>
         <div className="mt-1 truncate font-mono text-[12px] text-fg-3">
-          {r.host.config.name} · {shortPath(r.pane.cwd, 34)}
+          {[showHost && r.host.config.name, tmuxTarget(r), shortPath(r.pane.cwd, 34)].filter(Boolean).join(' · ')}
         </div>
       </div>
-      <div className="truncate text-[13.5px] text-fg-2">
+      <div className="pointer-events-none truncate text-[13.5px] text-fg-2">
         {a.state === 'working' ? a.activity ?? 'Working…' : a.state === 'waiting' ? a.waitingFor : a.background ? backgroundText(a.background) : `Active ${timeAgo(r.window.activity * 1000)}`}
       </div>
-      <div className="mt-auto flex items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
+      <div className="pointer-events-none mt-auto flex items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
         <span className="truncate">{[st?.model, st?.effort].filter(Boolean).join(' · ') || ' '}</span>
         {st?.costUsd !== undefined && <span className="tabular shrink-0">{money(st.costUsd)}</span>}
         {pct !== undefined && (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5" title={`${tokens(st?.contextUsed)} of ${tokens(st?.contextSize)} tokens`}>
+          <span className="pointer-events-auto ml-auto flex shrink-0 items-center gap-1.5" title={`${tokens(st?.contextUsed)} of ${tokens(st?.contextSize)} tokens`}>
             <span className="tabular">{Math.round(pct)}%</span>
             <Meter value={pct} tone="auto" className="w-12" />
           </span>
         )}
       </div>
-    </Link>
+    </div>
   )
 }
 
