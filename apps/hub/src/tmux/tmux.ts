@@ -1,8 +1,9 @@
 import { sleep } from '../platform/store.ts'
 import { Host, shq } from '../hosts/host.ts'
 import { ACCOUNT_SH, MARKER, MOVE_OLD_FOLDER_SH } from '../claude/integration-sh.ts'
+import { MACHINE_KIND_SH, machineKind } from './machine-kind.ts'
 import { SIGNED_IN_SH } from '../agents/auth-sh.ts'
-import { AGENTS, AGENT_KINDS, detectAgent, type AgentKind, type IntegrationState, type PaneInfo, type SessionInfo, type WindowInfo } from '@inyon/protocol'
+import { AGENTS, AGENT_KINDS, detectAgent, type AgentKind, type IntegrationState, type MachineKind, type PaneInfo, type SessionInfo, type WindowInfo } from '@inyon/protocol'
 
 /** Sessions Inyon creates for terminal views; hidden from listings. */
 export const VIEW_PREFIX = 'inyon-view-'
@@ -84,6 +85,7 @@ export interface ProbeResult {
   agyTitles: Map<string, string>
   /** whether Inyon's status line is in Antigravity CLI's settings (undefined when agy isn't installed) */
   agyIntegration?: 'installed' | 'missing'
+  machineKind?: MachineKind
 }
 
 /** Prints whether Claude's integration is installed, missing, removed from settings or outdated. */
@@ -106,6 +108,7 @@ echo "@@HOME $HOME"
 echo "@@OS $(uname -s)"
 echo "@@NOW $(date +%s)"
 ${MOVE_OLD_FOLDER_SH}
+${MACHINE_KIND_SH}
 echo "@@BINS"
 for b in ${BINS.join(' ')}; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
 if command -v tmux >/dev/null 2>&1; then
@@ -213,6 +216,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
     // busybox-w32 (inyon on Windows) says Windows_NT
     else if (line.startsWith('@@OS ')) res.os = line.slice(5).trim().replace(/^Windows_NT$/, 'Windows')
     else if (line.startsWith('@@NOW ')) res.now = Number(line.slice(6))
+    else if (line.startsWith('@@KIND ')) res.machineKind = machineKind(line.slice(7))
     else if (line.startsWith('@@AUTH')) res.signedIn = AGENT_KINDS.filter((k) => line.slice(6).trim().split(/\s+/).includes(k))
     else if (line.startsWith('@@ACCOUNT ')) res.account = line.slice(10).trim() === '-' ? undefined : line.slice(10).trim()
     else if (line.startsWith('@@AGYINT ')) res.agyIntegration = line.slice(9).trim() === 'installed' ? 'installed' : 'missing'

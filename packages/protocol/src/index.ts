@@ -160,6 +160,8 @@ export interface NodeUpdate {
   error?: string
 }
 
+export type MachineKind = 'server' | 'laptop' | 'desktop'
+
 export interface HostState {
   config: HostConfig
   status: HostStatus
@@ -179,6 +181,8 @@ export interface HostState {
   /** agents with a saved sign-in on the machine (unknown until the first probe) */
   signedIn?: AgentKind[]
   os?: string
+  /** what the machine is, for its icon (detected on the machine) */
+  machineKind?: MachineKind
   /** the inyon version a paired machine or laptop runs */
   nodeVersion?: string
   /** set when that inyon is behind, or while an update runs */

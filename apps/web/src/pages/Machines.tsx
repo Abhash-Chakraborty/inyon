@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Loader2, Monitor, Pencil, Plug, Plus, RotateCcw, Save, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Loader2, Pencil, Plug, Plus, RotateCcw, Save, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -20,6 +20,9 @@ import { forgetPairFragment, pairFragment } from '../lib/native.ts'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 import { AgentBadges } from '../components/Overview.tsx'
+import { MachineIcon, machineKindOf, onlineFirst } from '../components/ui/MachineIcon.tsx'
+import { FilterInput } from '../components/ui/FilterInput.tsx'
+import { matchesQuery } from '../lib/groups.ts'
 import { confirmAction } from '../components/Confirm.tsx'
 import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 
@@ -43,8 +46,43 @@ function PageHeader({ title, back, right }: { title: React.ReactNode; back?: str
   )
 }
 
+/** Past this many machines the list gets a search box. */
+const SEARCH_FROM = 8
+
+/** One machine in the list: what it is, whether it answers, and what runs there. */
+function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: number }) {
+  const where = h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)
+  const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.filter((p) => p.agent).length, 0), 0)
+  return (
+    <Link style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
+      <span className={clsx('relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-sunken', h.status === 'online' ? 'text-fg-2' : 'text-fg-3')}>
+        <MachineIcon kind={machineKindOf(h)} size={18} />
+        <span className="absolute -right-0.5 -bottom-0.5 flex size-[11px] items-center justify-center rounded-full bg-elev">
+          {h.status === 'online' || h.status === 'error' ? <HostDot status={h.status} /> : <span className="size-[7px] rounded-full border border-fg-3" />}
+        </span>
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className={clsx('truncate text-[14px] font-medium', h.status !== 'online' && 'text-fg-2')}>{h.config.name}</span>
+          {nodeUpdateLabel(h) && <span className="inline-flex h-5 shrink-0 items-center rounded-full border border-line bg-white/45 px-2 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
+        </div>
+        <div className="truncate font-mono text-[12px] text-fg-3">
+          {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${where} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'}${panes ? ` · ${panes} agent${panes === 1 ? '' : 's'}` : ''}${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
+        </div>
+      </div>
+      {/* on a phone the address needs the room more; the machine page lists the agents */}
+      <span className="hidden sm:contents">
+        <AgentBadges host={h} size={18} />
+      </span>
+      <ChevronRight className="size-4 shrink-0 text-fg-3" />
+    </Link>
+  )
+}
+
 export function MachinesPage() {
   const hosts = useStore((s) => s.hosts)
+  const [q, setQ] = useState('')
+  const shown = useMemo(() => onlineFirst(hosts).filter((h) => !q || matchesQuery(`${h.config.name} ${h.hostname ?? ''} ${h.machineKind ?? ''} ${h.os ?? ''} ${h.agents.join(' ')}`, q)), [hosts, q])
   // a pairing link opened from outside (a QR code scanned with the camera) lands here
   const [params, setParams] = useSearchParams()
   const pairLink = params.get('pair') ?? pairFragment()
@@ -61,29 +99,16 @@ export function MachinesPage() {
   return (
     <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
       <PageHeader title={isPhone() ? 'Computers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
-      <div className="stagger mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
-        {hosts.map((h, i) => (
-          <Link key={h.config.id} style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="press flex items-center gap-4 rounded-3xl border border-line bg-elev shadow-card p-4 hover:border-line-strong">
-            <span className="flex size-10 items-center justify-center rounded-xl border border-line bg-sunken">
-              {h.config.kind === 'local' ? <Server className="size-[18px] text-fg-2" /> : <Monitor className="size-[18px] text-fg-2" />}
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className="truncate text-[15px] font-semibold">{h.config.name}</span>
-                <HostDot status={h.status} />
-                {nodeUpdateLabel(h) && <span className="inline-flex h-6 shrink-0 items-center rounded-full border border-line bg-white/45 px-2.5 font-mono text-[12px] text-fg-2 dark:bg-white/[0.03]">{nodeUpdateLabel(h)}</span>}
-              </div>
-              <div className="truncate text-[12.5px] text-fg-3">
-                {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
-              </div>
-            </div>
-            {/* on a phone the address needs the room more; the server page lists the agents */}
-            <span className="hidden sm:contents">
-              <AgentBadges host={h} size={20} />
-            </span>
-            <ChevronRight className="size-4 text-fg-3" />
-          </Link>
-        ))}
+      <div className="mx-auto max-w-[880px] px-4 py-6 lg:px-7">
+        {hosts.length > SEARCH_FROM && <FilterInput value={q} onChange={setQ} placeholder={`Search ${hosts.length} ${isPhone() ? 'computers' : 'machines'}`} className="mb-3" />}
+        {shown.length > 0 && (
+          <div className="stagger divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
+            {shown.map((h, i) => (
+              <MachineRow key={h.config.id} h={h} hosts={hosts} i={i} />
+            ))}
+          </div>
+        )}
+        {q && !shown.length && <p className="px-1 py-6 text-center text-[13px] text-fg-3">No {isPhone() ? 'computer' : 'machine'} matches “{q}”</p>}
       </div>
       <MachineSheet open={sheet} onClose={close} link={pairLink} />
     </PullRefresh>
@@ -121,7 +146,7 @@ export function MachinePage() {
         back="/machines"
         title={
           <span className="flex items-center gap-2">
-            <HostDot status={host.status} /> {host.config.name}
+            <MachineIcon kind={machineKindOf(host)} size={17} className="shrink-0 text-fg-2" /> {host.config.name} <HostDot status={host.status} />
           </span>
         }
         right={
