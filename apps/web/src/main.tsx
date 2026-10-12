@@ -33,7 +33,7 @@ function useTheme() {
       document.documentElement.dataset.theme = t
       useStore.setState({ resolvedTheme: t })
       nativeTheme(t)
-      document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#0a0a0b' : '#fafafa'))
+      document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', t === 'dark' ? '#1b1a18' : '#e9e8e4'))
     }
     apply()
     mq.addEventListener('change', apply)

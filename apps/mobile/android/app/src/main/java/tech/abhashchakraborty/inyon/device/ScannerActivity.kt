@@ -297,8 +297,8 @@ class ScannerActivity : ComponentActivity() {
         private const val INSTALLING = "Getting the scanner ready…"
         private const val IDLE_AFTER_MS = 12_000L
         private const val REJECT_EVERY_MS = 2_500L
-        private val INK = 0xFF14161B.toInt()
-        private val PAPER = 0xFFF4F4F1.toInt()
+        private val INK = 0xFF1D1C1A.toInt()
+        private val PAPER = 0xFFF1F0EC.toInt()
 
         private fun textOf(code: Barcode) = code.rawValue ?: code.rawBytes?.toString(Charsets.UTF_8)
 

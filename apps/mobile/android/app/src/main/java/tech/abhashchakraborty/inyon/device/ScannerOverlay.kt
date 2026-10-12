@@ -31,7 +31,7 @@ class ScannerOverlay(context: Context, attrs: AttributeSet?) : View(context, att
     private val bracket = 30 * density
     private val scrim = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xB814161B.toInt() }
     private val corners = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFF4F4F1.toInt()
+        color = 0xFFF1F0EC.toInt()
         style = Paint.Style.STROKE
         strokeWidth = 4 * density
         strokeCap = Paint.Cap.ROUND

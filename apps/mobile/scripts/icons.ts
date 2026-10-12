@@ -1,42 +1,53 @@
-// Renders the app icons and splash screens from the web app's icon (run: bun --filter @inyon/mobile icons)
+// Renders every app icon and splash screen from apps/web/public/icon.svg (run: bun --filter @inyon/mobile icons)
 import sharp from 'sharp'
 import path from 'node:path'
 
 const root = path.join(import.meta.dir, '..')
 const svg = await Bun.file(path.join(root, '../web/public/icon.svg')).text()
-const BG = '#14161B'
-// the mark alone on a transparent square, scaled into the middle (adaptive icons and splash screens)
-const mark = (scale: number) => {
-  const inner = svg.replace(/<rect[^>]*\/>/, '')
-  const off = (512 - 512 * scale) / 2
-  return Buffer.from(inner.replace('<path', `<g transform="translate(${off} ${off}) scale(${scale})"><path`).replace('</svg>', '</g></svg>'))
+const BG = '#1D1C1A'
+const glyph = svg.match(/<g id="glyph"[\s\S]*?<\/g>/)![0]
+const tile = svg.match(/<path id="tile"[^>]*\/>/)![0]
+
+/**
+ * The kite alone on a transparent square, `scale` of the tile's width, centred. The kite reaches
+ * 33 of the tile's 64 units out from the middle, so 0.55 keeps it inside Android's 66dp safe
+ * circle and 0.7 inside a maskable icon's 80%.
+ */
+const mark = (scale: number, colour?: string) => {
+  const off = (64 - 64 * scale) / 2
+  const g = colour ? glyph.replaceAll('#F1F0EC', colour) : glyph
+  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g transform="translate(${off} ${off}) scale(${scale})">${g}</g></svg>`)
 }
-const square = Buffer.from(svg.replace('rx="116"', 'rx="0"'))
-const round = Buffer.from(svg.replace('rx="116"', 'rx="256"'))
+// a full-bleed square or circle behind the kite, for places that cut their own shape
+const filled = (shape: 'square' | 'circle', scale: number) =>
+  Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${shape === 'square' ? `<rect width="64" height="64" fill="${BG}"/>` : `<circle cx="32" cy="32" r="32" fill="${BG}"/>`}<g transform="translate(${(64 - 64 * scale) / 2} ${(64 - 64 * scale) / 2}) scale(${scale})">${glyph}</g></svg>`,
+  )
+const png = (input: Buffer, size: number) => sharp(input, { density: 72 * Math.max(1, size / 64) }).resize(size, size).png()
 
-// the browser's notification badge: the mark alone, white on transparent (it's shown as a mask)
-await sharp(Buffer.from(mark(0.9).toString().replaceAll('#F4F4F1', '#FFFFFF'))).resize(96, 96).png().toFile(path.join(root, '../web/public/badge-96.png'))
-
-// the web app's own icons (home screen, install prompt, Apple touch icon)
 const web = path.join(root, '../web/public')
-await sharp(Buffer.from(svg)).resize(192, 192).png().toFile(`${web}/icon-192.png`)
-await sharp(Buffer.from(svg)).resize(512, 512).png().toFile(`${web}/icon-512.png`)
-await sharp({ create: { width: 512, height: 512, channels: 3, background: BG } }).composite([{ input: await sharp(mark(0.72)).resize(512, 512).png().toBuffer() }]).png().toFile(`${web}/icon-maskable-512.png`)
-await sharp(square).resize(180, 180).flatten({ background: BG }).png().toFile(`${web}/apple-touch-icon.png`)
+// the browser's notification badge: white on transparent (shown as a mask)
+await png(mark(0.86, '#FFFFFF'), 96).toFile(`${web}/badge-96.png`)
+// home screen, install prompt and Apple touch icon
+await png(Buffer.from(svg), 192).toFile(`${web}/icon-192.png`)
+await png(Buffer.from(svg), 512).toFile(`${web}/icon-512.png`)
+await png(filled('square', 0.7), 512).toFile(`${web}/icon-maskable-512.png`)
+await png(filled('square', 0.78), 180).flatten({ background: BG }).toFile(`${web}/apple-touch-icon.png`)
+await png(Buffer.from(svg), 32).toFile(`${web}/favicon-32.png`)
 
 const res = path.join(root, 'android/app/src/main/res')
 for (const [dir, size] of [['mdpi', 48], ['hdpi', 72], ['xhdpi', 96], ['xxhdpi', 144], ['xxxhdpi', 192]] as const) {
-  await sharp(Buffer.from(svg)).resize(size, size).png().toFile(`${res}/mipmap-${dir}/ic_launcher.png`)
-  await sharp(round).resize(size, size).png().toFile(`${res}/mipmap-${dir}/ic_launcher_round.png`)
-  // adaptive icons crop to the middle 66%, so the mark sits well inside it
+  await png(Buffer.from(svg), size).toFile(`${res}/mipmap-${dir}/ic_launcher.png`)
+  await png(filled('circle', 0.78), size).toFile(`${res}/mipmap-${dir}/ic_launcher_round.png`)
+  // adaptive icons are 108dp with a 66dp safe circle in the middle
   const fg = Math.round((size * 108) / 48)
-  await sharp(mark(0.74)).resize(fg, fg).png().toFile(`${res}/mipmap-${dir}/ic_launcher_foreground.png`)
+  await png(mark(0.55), fg).toFile(`${res}/mipmap-${dir}/ic_launcher_foreground.png`)
 }
 await Bun.write(`${res}/values/ic_launcher_background.xml`, `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">${BG}</color>\n</resources>\n`)
 
 async function splash(file: string, w: number, h: number) {
-  const s = Math.round(Math.min(w, h) * 0.5)
-  const icon = await sharp(mark(1)).resize(s, s).png().toBuffer()
+  const s = Math.round(Math.min(w, h) * 0.42)
+  const icon = await png(Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">${tile.replace(`fill="${BG}"`, 'fill="#252422"')}${glyph}</svg>`), s).toBuffer()
   await sharp({ create: { width: w, height: h, channels: 3, background: BG } }).composite([{ input: icon, gravity: 'center' }]).png().toFile(file)
 }
 await splash(`${res}/drawable/splash.png`, 480, 320)
@@ -47,6 +58,6 @@ for (const [dir, w, h] of [['mdpi', 320, 480], ['hdpi', 480, 800], ['xhdpi', 720
 
 const xc = path.join(root, 'ios/App/App/Assets.xcassets')
 // iOS rounds the corners itself and wants no transparency
-await sharp(square).resize(1024, 1024).flatten({ background: BG }).png().toFile(`${xc}/AppIcon.appiconset/AppIcon-512@2x.png`)
+await png(filled('square', 0.78), 1024).flatten({ background: BG }).toFile(`${xc}/AppIcon.appiconset/AppIcon-512@2x.png`)
 for (const f of ['splash-2732x2732.png', 'splash-2732x2732-1.png', 'splash-2732x2732-2.png']) await splash(`${xc}/Splash.imageset/${f}`, 2732, 2732)
 console.log('icons and splash screens written')

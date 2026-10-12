@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="inyon_ink">#14161B</color>
-    <color name="inyon_paper">#F4F4F1</color>
-    <color name="inyon_accent">#D97757</color>
+    <color name="inyon_ink">#1D1C1A</color>
+    <color name="inyon_paper">#F1F0EC</color>
+    <color name="inyon_accent">#1D1C1A</color>
 </resources>

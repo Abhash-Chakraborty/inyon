@@ -42,7 +42,7 @@ internal object Notifications {
     private const val EVENT_ID = 7002
     private const val SUMMARY_ID = 7003
     private const val GROUP = "tech.abhashchakraborty.inyon.EVENTS"
-    private const val ACCENT = 0xFFD97757.toInt()
+    private const val ACCENT = 0xFF1D1C1A.toInt()
     private const val MACHINES_HREF = "/machines"
     private var logo: Bitmap? = null
     private val nextId = AtomicInteger((System.currentTimeMillis() / 1000 % 1_000_000).toInt() + 10_000)
