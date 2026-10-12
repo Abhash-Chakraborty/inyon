@@ -8,16 +8,14 @@ export const SLUG = 'inyon'
 export const OLD_SLUG = 'tether'
 export const SOURCE_REPO = 'Abhash-Chakraborty/inyon'
 /**
- * The web app (a static PWA on the releases repo's GitHub Pages). A computer's QR code opens it
- * when scanned with a phone's camera.
+ * The web app (a static PWA on the releases repo's GitHub Pages, at its own domain). A computer's
+ * QR code opens it when scanned with a phone's camera.
  */
-export const WEB_URL = 'https://abhash-chakraborty.github.io/inyon-releases/'
+export const WEB_URL = 'https://inyon.abhashchakraborty.tech/'
 /** The Android application id */
 export const APP_ID = 'tech.abhashchakraborty.inyon'
 
-/**
- * The public repository the app and the inyon program are downloaded from (the source is private).
- */
+/** The repository the app and the inyon program are downloaded from. */
 export const RELEASES_REPO = 'Abhash-Chakraborty/inyon-releases'
 export const RELEASES_DOWNLOAD = `https://github.com/${RELEASES_REPO}/releases/latest/download`
 export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`

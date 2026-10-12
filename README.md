@@ -135,7 +135,7 @@ deploy anywhere else.
   `tailscale serve`, or set `TLS_CERT` and `TLS_KEY`. The hub then sends Web Push itself, so
   alerts reach a closed tab or installed app, for every agent and for machines going offline.
 - The Android app needs nothing hosted. It talks to your computers itself.
-- The web app at [abhash-chakraborty.github.io/inyon-releases](https://abhash-chakraborty.github.io/inyon-releases/)
+- The web app at [inyon.abhashchakraborty.tech](https://inyon.abhashchakraborty.tech/)
   needs no hub either. It runs the same core as the Android app, in the page.
 - Other machines host nothing. They run tmux and your agents.
 

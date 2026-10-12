@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:hosted": "VITE_INYON_HOSTED=1 vite build --base /inyon-releases/ --outDir dist-hosted",
+    "build:hosted": "VITE_INYON_HOSTED=1 vite build --outDir dist-hosted",
     "icons": "bun ../mobile/scripts/icons.ts",
     "typecheck": "tsc --noEmit",
     "e2e": "bun e2e/layout.ts",

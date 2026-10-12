@@ -1,7 +1,7 @@
 /**
- * Where the app is served from: `/` on a hub and in the phone app, `/inyon-releases/` for the
- * web app on GitHub Pages. Routes inside the app (`/machines`, `/m/…`) never carry it; only
- * addresses the browser sees do.
+ * Where the app is served from: `/` on a hub, in the phone app and for the web app at
+ * inyon.abhashchakraborty.tech, or a folder for a copy someone hosts under one. Routes inside the
+ * app (`/machines`, `/m/…`) never carry it; only addresses the browser sees do.
  */
 export const BASE = (import.meta.env?.BASE_URL as string | undefined) || '/'
 
