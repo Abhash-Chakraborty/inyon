@@ -1,4 +1,4 @@
-import { AGENTS, AGENT_KINDS, type AgentKind } from '@inyon/protocol'
+import { AGENTS, AGENT_KINDS, type AgentDef, type AgentKind } from '@inyon/protocol'
 import { shq } from '../hosts/host.ts'
 import { HIDDEN_PREFIXES } from '../tmux/tmux.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
@@ -101,6 +101,24 @@ ${authTests}
   return { os, pkg, sudo, checks, agents, keepSession }
 }
 
+/**
+ * The agent's own installer when it has one. If the agent still doesn't run after it (a piped
+ * installer reports success even when its download failed) and npm is there, its npm package.
+ * npm installs into the user's prefix when the global one isn't writable.
+ */
+export function installCommand(def: Pick<AgentDef, 'install' | 'version'>): string {
+  const { cmd, npm } = def.install
+  const viaNpm = `{ npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; npm install -g ${npm}; }`
+  if (!cmd) return `${PATHS}; ${viaNpm}`
+  if (!npm) return `${PATHS}; ${cmd}`
+  return [
+    `${PATHS}; ${cmd}`,
+    `if ${def.version} >/dev/null 2>&1; then :`,
+    `elif command -v npm >/dev/null 2>&1; then echo "The installer didn't finish; trying npm instead."; ${viaNpm}`,
+    `else echo "The installer didn't finish, and there's no npm here to try instead."; false; fi`,
+  ].join('\n')
+}
+
 /** Runs one setup step. Installs run non-interactively; sign-ins go through features/signin.ts. */
 export async function runSetup(hostId: string, action: string): Promise<{ ok: boolean; output?: string; pane?: string }> {
   const host = registry.host(hostId)
@@ -118,11 +136,8 @@ export async function runSetup(hostId: string, action: string): Promise<{ ok: bo
     const kind = action.slice(6) as AgentKind
     const def = AGENTS[kind]
     if (!def) throw new HttpError(400, 'Unknown agent')
-    if (def.install.needsNode && !report.checks.find((c) => c.id === 'node')?.ok) throw new HttpError(409, 'Install Node.js first')
-    // npm -g into the user's prefix when the global one isn't writable
-    cmd = def.install.needsNode
-      ? `${PATHS}; npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; ${def.install.cmd}`
-      : `${PATHS}; ${def.install.cmd}`
+    if (!def.install.cmd && !report.checks.find((c) => c.id === 'node')?.ok) throw new HttpError(409, 'Install Node.js first')
+    cmd = installCommand(def)
   } else throw new HttpError(400, 'Unknown setup step')
   if (!cmd) throw new HttpError(409, 'No package manager found on that machine')
   const r = await host.exec(cmd, { timeoutMs: 600_000 })

@@ -50,8 +50,11 @@ export interface AgentCatalog {
 
 export interface AgentDef {
   kind: AgentKind
-  /** how to install it (official instructions) and how to sign in */
-  install: { cmd: string; needsNode?: boolean; docs: string }
+  /**
+   * How to install it, from its official instructions: its own installer when it has one, and its
+   * npm package, used when there's no installer or the installer fails. Then how to sign in.
+   */
+  install: { cmd?: string; npm?: string; docs: string }
   login: string
   /** a command that prints the version */
   version: string
@@ -338,7 +341,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   },
   codex: {
     kind: 'codex',
-    install: { cmd: 'npm install -g @openai/codex', needsNode: true, docs: 'https://developers.openai.com/codex/cli' },
+    install: { cmd: 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh', npm: '@openai/codex', docs: 'https://developers.openai.com/codex/cli' },
     login: 'codex login',
     version: 'codex --version',
     authFiles: ['~/.codex/auth.json'],
@@ -441,7 +444,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   },
   copilot: {
     kind: 'copilot',
-    install: { cmd: 'npm install -g @github/copilot', needsNode: true, docs: 'https://docs.github.com/en/copilot/how-tos/copilot-cli' },
+    install: { cmd: 'curl -fsSL https://gh.io/copilot-install | bash', npm: '@github/copilot', docs: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli' },
     login: 'copilot login --device-code',
     version: 'copilot --version',
     authFiles: ['~/.copilot/config.json'],
@@ -475,7 +478,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   },
   gemini: {
     kind: 'gemini',
-    install: { cmd: 'npm install -g @google/gemini-cli', needsNode: true, docs: 'https://github.com/google-gemini/gemini-cli' },
+    install: { npm: '@google/gemini-cli', docs: 'https://github.com/google-gemini/gemini-cli' },
     login: 'gemini',
     version: 'gemini --version',
     authFiles: ['~/.gemini/oauth_creds.json', '~/.gemini/google_accounts.json'],
