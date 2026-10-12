@@ -35,7 +35,7 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
   const opts = a.options ?? []
   const accent = useAgentAccent(a.kind)
   return (
-    <div style={accent} className="animate-fade-in rounded-[16px] border border-accent/35 bg-accent-soft/40 p-4">
+    <div style={accent} className="animate-fade-in rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
       <div className="flex items-center gap-3">
         <AgentLogo kind={a.kind} size={30} />
         <div className="min-w-0 flex-1">
@@ -48,7 +48,7 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
           Open <ArrowRight className="size-3.5" />
         </Link>
       </div>
-      {a.waitingFor && <div className="mt-3 rounded-[10px] border border-line bg-elev px-3 py-2 font-mono text-[12.5px] leading-relaxed break-words text-fg">{a.waitingFor}</div>}
+      {a.waitingFor && <div className="mt-4 rounded-2xl border border-line bg-sunken px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed break-words text-fg">{a.waitingFor}</div>}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {done ? (
           <span className="flex h-8 items-center gap-1.5 text-[13px] text-ok"><Check className="size-4" /> Answered</span>
@@ -60,7 +60,7 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
               disabled={busy !== null}
               onClick={() => answer(o.n)}
               className={clsx(
-                'h-8 max-w-full truncate rounded-[9px] px-3 text-[12.5px] font-medium transition-opacity disabled:opacity-50',
+                'press h-9 max-w-full truncate rounded-full px-4 text-[13px] font-medium disabled:opacity-50',
                 i === 0 ? 'bg-accent text-accent-fg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
               )}
             >
@@ -68,7 +68,7 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
             </button>
           ))
         ) : (
-          <button type="button" onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="h-8 rounded-[9px] bg-accent px-3 text-[12.5px] font-medium text-accent-fg">
+          <button type="button" onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="press h-9 rounded-full bg-accent px-4 text-[13px] font-medium text-accent-fg">
             Answer
           </button>
         )}
@@ -82,23 +82,23 @@ export function SessionCard({ r }: { r: PaneRef }) {
   const st = a.status
   const pct = st?.contextPct
   return (
-    <Link to={paneHref(r.host.config.id, r.pane.id)} className="group flex flex-col gap-3 rounded-[16px] border border-line bg-elev p-4 transition-colors hover:border-line-strong">
+    <Link to={paneHref(r.host.config.id, r.pane.id)} className="group flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors hover:border-line-strong sm:gap-4 sm:p-5">
       <div className="flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={a.state === 'working'} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{AGENTS[a.kind].name}</span>
         <StatePill state={shownState(a, r.host)} title={a.background} />
       </div>
       <div className="min-w-0">
-        <div className="truncate text-[15px] font-semibold tracking-tight">{paneTitle(r)}</div>
-        <div className="mt-0.5 truncate text-[12.5px] text-fg-3">
+        <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{paneTitle(r)}</div>
+        <div className="mt-1 truncate font-mono text-[12px] text-fg-3">
           {r.host.config.name} · {shortPath(r.pane.cwd, 34)}
         </div>
       </div>
-      <div className="truncate text-[12.5px] text-fg-2">
+      <div className="truncate text-[13.5px] text-fg-2">
         {a.state === 'working' ? a.activity ?? 'Working…' : a.state === 'waiting' ? a.waitingFor : a.background ? backgroundText(a.background) : `Active ${timeAgo(r.window.activity * 1000)}`}
       </div>
-      <div className="mt-auto flex items-center gap-2 text-[11.5px] text-fg-3">
-        <span className="truncate font-mono">{[st?.model, st?.effort].filter(Boolean).join(' · ') || ' '}</span>
+      <div className="mt-auto flex items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
+        <span className="truncate">{[st?.model, st?.effort].filter(Boolean).join(' · ') || ' '}</span>
         {st?.costUsd !== undefined && <span className="tabular shrink-0">{money(st.costUsd)}</span>}
         {pct !== undefined && (
           <span className="ml-auto flex shrink-0 items-center gap-1.5" title={`${tokens(st?.contextUsed)} of ${tokens(st?.contextSize)} tokens`}>
@@ -127,14 +127,14 @@ export function LimitsCard({ hosts }: { hosts: HostState[] }) {
   })
   if (!rows.length) return null
   return (
-    <section className="rounded-[16px] border border-line bg-elev p-4">
-      <h2 className="mb-3 flex items-center gap-2 text-[13px] font-semibold">
+    <section className="rounded-3xl border border-line bg-elev shadow-card p-5">
+      <h2 className="mb-4 flex items-center gap-2 text-[15px] font-semibold tracking-[-0.02em]">
         <Gauge className="size-4 text-fg-3" /> Plan limits
       </h2>
       <div className="space-y-4">
         {rows.map(({ host, kind, st }) => (
           <div key={host.config.id + kind}>
-            <div className="mb-2 flex items-center gap-2 text-[12.5px]">
+            <div className="mb-2.5 flex items-center gap-2 text-[13px]">
               <AgentLogo kind={kind} size={16} />
               <span className="font-medium">{host.config.name}</span>
             </div>
@@ -144,10 +144,10 @@ export function LimitsCard({ hosts }: { hosts: HostState[] }) {
             ] as const).map(([label, w]) =>
               w ? (
                 <div key={label} className="mb-2">
-                  <div className="mb-1 flex items-baseline text-[12px]">
+                  <div className="mb-1.5 flex items-baseline text-[12.5px]">
                     <span className="text-fg-2">{label}</span>
-                    <span className="ml-2 text-fg-3">{w.reset ? 'reset' : resetsIn(w.resetsAt)}</span>
-                    <span className="tabular ml-auto font-medium">{Math.round(w.pct)}%</span>
+                    <span className="ml-2 font-mono text-[12px] text-fg-3">{w.reset ? 'reset' : resetsIn(w.resetsAt)}</span>
+                    <span className="tabular ml-auto font-mono text-[12px] font-medium">{Math.round(w.pct)}%</span>
                   </div>
                   <Meter value={w.pct} tone="auto" />
                 </div>
@@ -173,13 +173,9 @@ export function AgentBadges({ host, size = 18 }: { host: HostState; size?: numbe
       {host.agents.map((k) => {
         const n = running.get(k) ?? 0
         return (
-          <span key={k} title={n ? `${AGENTS[k].name}: ${n} running` : `${AGENTS[k].name}: installed, not running`} className={clsx('relative flex', !n && 'opacity-35 grayscale')}>
+          <span key={k} title={n ? `${AGENTS[k].name}: ${n} running` : `${AGENTS[k].name}: installed, not running`} className={clsx('flex items-center gap-1', !n && 'opacity-35 grayscale')}>
             <AgentLogo kind={k} size={size} />
-            {n > 1 && (
-              <span className="tabular absolute -top-1.5 -right-1.5 flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-fg px-[3px] text-[8.5px] font-bold text-bg ring-2 ring-elev">
-                {n}
-              </span>
-            )}
+            {n > 1 && <span className="tabular font-mono text-[12px] text-fg-3">{n}</span>}
           </span>
         )
       })}
@@ -190,7 +186,7 @@ export function AgentBadges({ host, size = 18 }: { host: HostState; size?: numbe
 export function MachinesTable({ hosts }: { hosts: HostState[] }) {
   return (
     <>
-    <div className="divide-y divide-line overflow-hidden rounded-[16px] border border-line bg-elev sm:hidden">
+    <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card sm:hidden">
       {hosts.map((h) => {
         const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
         return (
@@ -201,7 +197,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                 <span className="truncate text-[14px] font-medium">{h.config.name}</span>
                 <AgentBadges host={h} size={15} />
               </div>
-              <div className="truncate text-[12px] text-fg-3">
+              <div className="truncate font-mono text-[12px] text-fg-3">
                 {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
               </div>
             </div>
@@ -210,15 +206,15 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
         )
       })}
     </div>
-    <div className="hidden overflow-hidden rounded-[16px] border border-line bg-elev sm:block">
+    <div className="hidden overflow-hidden rounded-3xl border border-line bg-elev shadow-card sm:block">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse text-[13px]">
           <thead>
             <tr className="text-left text-[12px] text-fg-3">
-              <th className="border-b border-line px-4 py-2.5 font-medium">Machine</th>
-              <th className="border-b border-line px-4 py-2.5 font-medium" title="In colour: running now. Grey: installed.">Agents</th>
-              <th className="border-b border-line px-4 py-2.5 font-medium">tmux</th>
-              <th className="border-b border-line px-4 py-2.5 text-right font-medium">Latency</th>
+              <th className="border-b border-line px-5 py-3 font-medium">Machine</th>
+              <th className="border-b border-line px-5 py-3 font-medium" title="In colour: running now. Grey: installed.">Agents</th>
+              <th className="border-b border-line px-5 py-3 font-medium">tmux</th>
+              <th className="border-b border-line px-5 py-3 text-right font-medium">Latency</th>
             </tr>
           </thead>
           <tbody>
@@ -226,26 +222,26 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
               const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
               return (
                 <tr key={h.config.id} className="hover:bg-hover/50">
-                  <td className="border-b border-line/60 px-4 py-3">
+                  <td className="border-b border-line/60 px-5 py-3.5">
                     <Link to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-2.5">
                       <HostDot status={h.status} />
                       <div className="min-w-0">
                         <div className="font-medium">{h.config.name}</div>
-                        <div className="truncate text-[11.5px] text-fg-3">
+                        <div className="truncate font-mono text-[12px] text-fg-3">
                           {h.status === 'error' ? h.error : h.config.kind === 'local' ? `This hub${h.os ? ` · ${h.os}` : ''}` : sshAddress(h.config, hosts)}
                         </div>
                       </div>
                     </Link>
                   </td>
-                  <td className="border-b border-line/60 px-4 py-3">
+                  <td className="border-b border-line/60 px-5 py-3.5">
                     <div className="flex items-center gap-1">
                       {h.agents.length ? <AgentBadges host={h} /> : <span className="text-fg-3">—</span>}
                     </div>
                   </td>
-                  <td className="border-b border-line/60 px-4 py-3 text-fg-2">
+                  <td className="border-b border-line/60 px-5 py-3.5 text-fg-2">
                     {h.status !== 'online' ? (h.lastSeen ? 'Offline' : '—') : h.tmux === 'missing' ? 'Not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}`}
                   </td>
-                  <td className="tabular border-b border-line/60 px-4 py-3 text-right font-mono text-[12px] text-fg-2">{h.latencyMs !== undefined ? `${h.latencyMs} ms` : '—'}</td>
+                  <td className="tabular border-b border-line/60 px-5 py-3.5 text-right font-mono text-[12px] text-fg-2">{h.latencyMs !== undefined ? `${h.latencyMs} ms` : '—'}</td>
                 </tr>
               )
             })}
@@ -261,8 +257,8 @@ export function ActivityFeed() {
   const activity = useStore((s) => s.activity)
   if (!activity.length) return null
   return (
-    <section className="rounded-[16px] border border-line bg-elev p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">Recent activity</h2>
+    <section className="rounded-3xl border border-line bg-elev shadow-card p-5">
+      <h2 className="mb-4 text-[15px] font-semibold tracking-[-0.02em]">Recent activity</h2>
       <div className="space-y-3">
         {activity.slice(0, 8).map((e) => (
           <Link key={e.id} to={paneHref(e.host, e.pane)} className="flex gap-2.5">
@@ -271,7 +267,7 @@ export function ActivityFeed() {
               <div className="truncate text-[13px]">
                 <span className="font-medium">{e.title}</span> <span className="text-fg-2">· {e.kind === 'waiting' ? 'needs you' : 'finished'}</span>
               </div>
-              <div className="text-[11.5px] text-fg-3">{timeAgo(e.at)}</div>
+              <div className="font-mono text-[12px] text-fg-3">{timeAgo(e.at)}</div>
             </div>
           </Link>
         ))}

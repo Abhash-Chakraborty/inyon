@@ -169,9 +169,9 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
       )}
 
       {!done && !menu && screen.code && (
-        <div className="flex items-center justify-between gap-3 rounded-[14px] border border-line bg-sunken px-4 py-3">
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-sunken px-4 py-3">
           <div>
-            <div className="text-[11.5px] font-medium tracking-[0.05em] text-fg-3 uppercase">Your code</div>
+            <div className="text-[12.5px] font-medium text-fg-3">Your code</div>
             <div className="tabular font-mono text-[22px] font-semibold tracking-[0.12em]">{screen.code}</div>
           </div>
           <Button size="sm" onClick={() => copy(screen.code!, 'Code')}>
@@ -188,7 +188,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
             target="_blank"
             rel="noreferrer"
             onClick={() => setOpened(true)}
-            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-[11px] bg-fg px-4 text-[14.5px] font-medium text-bg outline-offset-2 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-accent"
+            className="inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-fg px-4 text-[14.5px] font-medium text-bg outline-offset-2 hover:opacity-90 focus-visible:outline-2 focus-visible:outline-accent"
           >
             <ExternalLink className="size-4" /> Open the sign-in page
           </a>
@@ -238,7 +238,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
           <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
           Details from {hostName ?? 'the machine'}
         </summary>
-        <pre ref={out} className="mt-2 max-h-[30dvh] overflow-auto rounded-[12px] border border-line bg-code px-3 py-2.5 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-fg-3">
+        <pre ref={out} className="mt-2 max-h-[30dvh] overflow-auto rounded-2xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed whitespace-pre-wrap break-all text-fg-3">
           {screen.lines.join('\n') || ' '}
         </pre>
       </details>
@@ -265,7 +265,7 @@ function Steps({ code, link, name }: { code: boolean; link: boolean; name: strin
     <ol className="space-y-1.5">
       {steps.map((t, i) => (
         <li key={t} className="flex items-center gap-2.5 text-[13.5px] text-fg-2">
-          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-sunken text-[11px] font-semibold text-fg-3">{i + 1}</span>
+          <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-sunken text-[12px] font-semibold text-fg-3">{i + 1}</span>
           {t}
         </li>
       ))}
@@ -319,12 +319,12 @@ function MenuStep({ menu, onPick }: { menu: NonNullable<SignInScreen['menu']>; o
             disabled={picked !== null}
             onClick={() => pick(o.n)}
             className={clsx(
-              'flex w-full items-center gap-3 rounded-[12px] border px-3.5 py-3 text-left outline-none transition-colors',
+              'flex w-full items-center gap-3 rounded-2xl border px-3.5 py-3 text-left outline-none transition-colors',
               'focus:border-accent focus:bg-accent-soft hover:bg-hover disabled:opacity-60',
               picked === o.n ? 'border-accent bg-accent-soft' : 'border-line',
             )}
           >
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-[7px] bg-sunken font-mono text-[12px] text-fg-3">{o.n}</span>
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-xl bg-sunken font-mono text-[12px] text-fg-3">{o.n}</span>
             <span className="min-w-0 flex-1">
               <span className="block text-[14px] font-medium">{o.label}</span>
               {o.detail && <span className="block text-[12px] text-fg-3">{o.detail}</span>}
@@ -333,14 +333,14 @@ function MenuStep({ menu, onPick }: { menu: NonNullable<SignInScreen['menu']>; o
           </button>
         ))}
       </div>
-      <div className="text-[11.5px] text-fg-3">Click one, or use ↑ ↓ and Enter, or press its number.</div>
+      <div className="text-[12px] text-fg-3">Click one, or use ↑ ↓ and Enter, or press its number.</div>
     </div>
   )
 }
 
 function Notice({ tone, children }: { tone: 'ok' | 'error'; children: React.ReactNode }) {
   return (
-    <div className={clsx('flex items-start gap-2 rounded-[12px] px-3.5 py-3 text-[13.5px]', tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-danger-soft text-danger')}>
+    <div className={clsx('flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13.5px]', tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-danger-soft text-danger')}>
       {tone === 'ok' ? <Check className="mt-0.5 size-4 shrink-0" /> : <TriangleAlert className="mt-0.5 size-4 shrink-0" />}
       <span className="min-w-0 break-words">{children}</span>
     </div>

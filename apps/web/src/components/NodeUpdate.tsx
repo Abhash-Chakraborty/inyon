@@ -58,7 +58,7 @@ export function NodeUpdate({ host }: { host: HostState }) {
   const button = u.supported && u.state !== 'updating' && u.state !== 'updated'
 
   return (
-    <div role="status" className={clsx('animate-slide-up mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-[12px] border px-3.5 py-3', failed ? 'border-transparent bg-danger-soft' : 'border-line bg-elev')}>
+    <div role="status" className={clsx('animate-slide-up mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border px-3.5 py-3', failed ? 'border-transparent bg-danger-soft' : 'border-line bg-elev')}>
       <span className="shrink-0">{icon}</span>
       <div className="min-w-0 flex-[1_1_200px]">
         <div className="text-[13.5px] font-medium">{title}</div>

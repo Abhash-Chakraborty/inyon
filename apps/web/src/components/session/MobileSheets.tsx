@@ -21,13 +21,13 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
   const goalOn = !!info?.goal && !info.goal.met
   // while the agent asks something, it takes no commands: typing one would answer the question
   const asking = !!s.screen?.prompt
-  const Label = ({ children }: { children: React.ReactNode }) => <div className="mb-2 text-[11.5px] font-medium tracking-[0.05em] text-fg-3 uppercase">{children}</div>
+  const Label = ({ children }: { children: React.ReactNode }) => <div className="mb-2 text-[13px] font-medium text-fg-2">{children}</div>
   return (
     <>
       <Sheet open={open} onClose={onClose} title={def.name} icon={<AgentLogo kind={agent} size={24} />}>
         <div className="space-y-5">
           {asking && (
-            <div className="rounded-[12px] border border-warn/35 bg-warn-soft/50 px-3.5 py-2.5 text-[13px] text-fg-2">
+            <div className="rounded-2xl border border-warn/35 bg-warn-soft/50 px-3.5 py-2.5 text-[13px] text-fg-2">
               {def.name} is asking you something. Answer it in the chat, and the model, effort and mode controls come back.
             </div>
           )}
@@ -42,10 +42,10 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
                     key={m.id}
                     type="button"
                     onClick={() => actions.setModel(m.id)}
-                    className={clsx('rounded-[12px] border px-3 py-2.5 text-left', m.id === modelId ? 'border-accent bg-accent-soft' : 'border-line hover:bg-hover')}
+                    className={clsx('rounded-2xl border px-3 py-2.5 text-left', m.id === modelId ? 'border-accent bg-accent-soft' : 'border-line hover:bg-hover')}
                   >
                     <div className="text-[14px] font-semibold">{m.label}</div>
-                    {m.note && <div className="text-[11.5px] text-fg-3">{m.note}</div>}
+                    {m.note && <div className="text-[12px] text-fg-3">{m.note}</div>}
                   </button>
                 ))}
               </div>
@@ -66,7 +66,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
                     key={m.id}
                     type="button"
                     onClick={() => actions.setMode(m.id)}
-                    className={clsx('h-9 rounded-[10px] border px-3 text-[13px]', modeMatches(mode, m.id, agent) ? 'border-accent bg-accent-soft font-medium' : 'border-line text-fg-2 hover:bg-hover')}
+                    className={clsx('h-9 rounded-xl border px-3 text-[13px]', modeMatches(mode, m.id, agent) ? 'border-accent bg-accent-soft font-medium' : 'border-line text-fg-2 hover:bg-hover')}
                   >
                     {m.label}
                   </button>
@@ -74,7 +74,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
               </div>
             </div>
           )}
-          <div className="divide-y divide-line rounded-[14px] border border-line">
+          <div className="divide-y divide-line rounded-3xl border border-line">
             {def.set.goal && (
               <div className="flex items-center gap-3 px-3.5 py-3">
                 <Target className="size-4 text-fg-3" />
@@ -93,7 +93,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
                   <div className="truncate text-[12px] text-fg-3">{info?.rc ? `On · reachable from ${agent === 'antigravity' ? 'Antigravity' : 'claude.ai'}` : 'Off'}</div>
                 </div>
                 {info?.rc && (
-                  <a href={info.rc.url} target="_blank" rel="noreferrer" className="rounded-[8px] border border-line-strong px-2.5 py-1 text-[12.5px] font-medium">
+                  <a href={info.rc.url} target="_blank" rel="noreferrer" className="rounded-full border border-line-strong px-2.5 py-1 text-[12.5px] font-medium">
                     Open
                   </a>
                 )}
@@ -111,7 +111,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
             ]
               .filter(Boolean)
               .map((a: any) => (
-                <button key={a.label} type="button" onClick={a.on} className="flex h-16 flex-col items-center justify-center gap-1.5 rounded-[12px] border border-line text-[12px] hover:bg-hover">
+                <button key={a.label} type="button" onClick={a.on} className="flex h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-line text-[12px] hover:bg-hover">
                   <a.icon className="size-4 text-fg-2" />
                   {a.label}
                 </button>

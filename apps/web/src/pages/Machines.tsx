@@ -61,15 +61,15 @@ export function MachinesPage() {
       <PageHeader title={isPhone() ? 'Computers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
       <div className="stagger mx-auto max-w-[880px] space-y-3 px-4 py-6 lg:px-7">
         {hosts.map((h, i) => (
-          <Link key={h.config.id} style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="press flex items-center gap-4 rounded-[16px] border border-line bg-elev p-4 hover:border-line-strong">
-            <span className="flex size-10 items-center justify-center rounded-[11px] border border-line bg-sunken">
+          <Link key={h.config.id} style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="press flex items-center gap-4 rounded-3xl border border-line bg-elev shadow-card p-4 hover:border-line-strong">
+            <span className="flex size-10 items-center justify-center rounded-xl border border-line bg-sunken">
               {h.config.kind === 'local' ? <Server className="size-[18px] text-fg-2" /> : <Monitor className="size-[18px] text-fg-2" />}
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="truncate text-[15px] font-semibold">{h.config.name}</span>
                 <HostDot status={h.status} />
-                {nodeUpdateLabel(h) && <span className="shrink-0 rounded-[5px] bg-sunken px-1.5 py-px text-[11px] text-fg-2">{nodeUpdateLabel(h)}</span>}
+                {nodeUpdateLabel(h) && <span className="shrink-0 rounded-full bg-sunken px-1.5 py-px text-[12px] text-fg-2">{nodeUpdateLabel(h)}</span>}
               </div>
               <div className="truncate text-[12.5px] text-fg-3">
                 {waitingToPair(h) ? 'Waiting for its pairing command' : hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)} · ${h.sessions.length} tmux session${h.sessions.length === 1 ? '' : 's'} · ${h.latencyMs ?? '?'} ms`)}
@@ -145,7 +145,7 @@ export function MachinePage() {
         </p>
         <NodeUpdate host={host} />
         {host.error && host.status !== 'online' && (
-          <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-[12px] px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
+          <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
             {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />}
             <span className="min-w-0 flex-1 break-words">{host.error}</span>
             {/* unpaired on the computer: scanning a fresh code fixes it, in place */}
@@ -155,7 +155,7 @@ export function MachinePage() {
           </div>
         )}
         {waitingToPair(host) ? (
-          <div className="max-w-[560px] rounded-[14px] border border-line p-4">
+          <div className="max-w-[560px] rounded-2xl border border-line p-4">
             <PairMachine existing={host.config.id} />
           </div>
         ) : (
@@ -186,10 +186,10 @@ function SessionsTab({ host }: { host: HostState }) {
   return (
     <div className="space-y-4">
       {host.sessions.map((s) => (
-        <section key={s.id} className="overflow-hidden rounded-[16px] border border-line bg-elev">
+        <section key={s.id} className="overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
           <div className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[12.5px]">
             <span className="font-semibold">{s.name}</span>
-            {s.attached > 0 && <span className="rounded-[5px] bg-sunken px-1.5 py-px text-[11px] text-fg-3">attached</span>}
+            {s.attached > 0 && <span className="rounded-full bg-sunken px-1.5 py-px text-[12px] text-fg-3">attached</span>}
             <span className="ml-auto text-fg-3">{s.windows.length} window{s.windows.length === 1 ? '' : 's'}</span>
           </div>
           {s.windows.flatMap((w) =>
@@ -200,10 +200,10 @@ function SessionsTab({ host }: { host: HostState }) {
                   {p.agent ? <AgentLogo kind={p.agent.kind} size={20} /> : <SquareTerminal className="size-4 text-fg-3" />}
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13.5px] font-medium">
-                      <span className="mr-2 font-mono text-[11.5px] text-fg-3">{w.index}.{p.index}</span>
+                      <span className="mr-2 font-mono text-[12px] text-fg-3">{w.index}.{p.index}</span>
                       {p.agent ? paneTitle(r) : p.command}
                     </div>
-                    <div className="truncate text-[11.5px] text-fg-3">{shortPath(p.cwd, 50)}</div>
+                    <div className="truncate text-[12px] text-fg-3">{shortPath(p.cwd, 50)}</div>
                   </div>
                   {p.agent && <StateDot state={shownState(p.agent, host)} />}
                   <ChevronRight className="size-4 text-fg-3" />
@@ -283,20 +283,20 @@ function ConfigTab({ host }: { host: HostState }) {
                 key={f.path}
                 type="button"
                 onClick={async () => (dirty && !(await confirmAction({ title: 'Discard unsaved changes?', yes: 'Discard', danger: true })) ? null : setSel(f.path))}
-                className={clsx('flex w-full items-center gap-2 rounded-[8px] px-2.5 py-1.5 text-left text-[12.5px]', sel === f.path ? 'bg-hover' : 'hover:bg-hover/60')}
+                className={clsx('flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-[12.5px]', sel === f.path ? 'bg-hover' : 'hover:bg-hover/60')}
               >
                 <span className={clsx('min-w-0 flex-1 truncate', !f.exists && 'text-fg-3')}>{f.label}</span>
-                <span className="shrink-0 text-[11px] text-fg-3">{f.exists ? bytes(f.size) : 'new'}</span>
+                <span className="shrink-0 text-[12px] text-fg-3">{f.exists ? bytes(f.size) : 'new'}</span>
               </button>
             ))}
           </div>
         ))}
       </nav>
       <div className="min-w-0 flex-[999_1_480px]">
-        <div className="overflow-hidden rounded-[14px] border border-line bg-elev">
+        <div className="overflow-hidden rounded-2xl border border-line bg-elev">
           <div className="flex items-center gap-2 border-b border-line px-3.5 py-2.5">
             <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{sel?.replace(/^\/home\/[^/]+/, '~')}</span>
-            {cur?.mtime && <span className="hidden shrink-0 text-[11.5px] text-fg-3 sm:inline">changed {timeAgo(cur.mtime * 1000)}</span>}
+            {cur?.mtime && <span className="hidden shrink-0 text-[12px] text-fg-3 sm:inline">changed {timeAgo(cur.mtime * 1000)}</span>}
           </div>
           {loading ? (
             <div className="flex justify-center py-16"><Spinner /></div>
@@ -317,7 +317,7 @@ function ConfigTab({ host }: { host: HostState }) {
             <Button size="sm" variant="primary" disabled={!dirty || !!jsonError} loading={saving} onClick={save}><Save className="size-3.5" /> Save</Button>
           </div>
         </div>
-        <p className="mt-2 text-[11.5px] text-fg-3">Every save keeps the previous version as a .inyon-bak file next to it (the last five).</p>
+        <p className="mt-2 text-[12px] text-fg-3">Every save keeps the previous version as a .inyon-bak file next to it (the last five).</p>
       </div>
     </div>
   )
@@ -342,7 +342,7 @@ export function UploadsCard({ host, compact }: { host: HostState; compact?: bool
     }
   }
   return (
-    <div className={clsx('rounded-[14px] border border-line bg-elev p-4', compact && 'p-3.5')}>
+    <div className={clsx('rounded-3xl border border-line bg-elev shadow-card p-4', compact && 'p-3.5')}>
       <div className="flex items-center gap-2.5">
         <HardDrive className="size-4 text-fg-3" />
         <span className="text-[13.5px] font-semibold">{host.config.name}</span>
@@ -350,7 +350,7 @@ export function UploadsCard({ host, compact }: { host: HostState; compact?: bool
       </div>
       {usage && (
         <>
-          <div className="mt-1 truncate font-mono text-[11.5px] text-fg-3">{usage.dir.replace(/^\/home\/[^/]+/, '~')}</div>
+          <div className="mt-1 truncate font-mono text-[12px] text-fg-3">{usage.dir.replace(/^\/home\/[^/]+/, '~')}</div>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button size="sm" onClick={() => clean(7)} loading={busy === '7'} disabled={!usage.files}>Clean older than 7 days{usage.expired ? ` (${usage.expired})` : ''}</Button>
             <Button size="sm" variant="danger" onClick={() => clean(0)} loading={busy === '0'} disabled={!usage.files}>Delete all</Button>
@@ -378,7 +378,7 @@ function IntegrationCard({ host }: { host: HostState }) {
   }
   return (
     <div className="max-w-2xl space-y-4">
-      <div className="rounded-[16px] border border-line bg-elev p-5">
+      <div className="rounded-3xl border border-line bg-elev shadow-card p-5">
         <div className="flex items-center gap-3">
           <Plug className={clsx('size-5', on ? 'text-ok' : 'text-fg-3')} />
           <div className="flex-1">
@@ -400,7 +400,7 @@ function IntegrationCard({ host }: { host: HostState }) {
         {host.agents.length ? host.agents.map((k) => {
           const signedIn = host.signedIn?.includes(k)
           return (
-            <span key={k} className="flex items-center gap-2 rounded-[10px] border border-line bg-elev py-1.5 pr-1.5 pl-3 text-[13px]">
+            <span key={k} className="flex items-center gap-2 rounded-xl border border-line bg-elev py-1.5 pr-1.5 pl-3 text-[13px]">
               <AgentLogo kind={k} size={18} /> {AGENTS[k].name}
               {host.signedIn && (signedIn ? (
                 <span className="pr-1.5 text-[12px] text-fg-3">· signed in</span>

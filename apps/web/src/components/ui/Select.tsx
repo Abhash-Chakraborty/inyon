@@ -109,7 +109,7 @@ export function Select<T extends string>({
           }
         }}
         className={clsx(
-          'press flex h-10 w-full items-center gap-2 rounded-[10px] border border-line bg-elev px-3 text-left text-[14px] text-fg transition-colors focus:border-line-strong',
+          'press flex h-10 w-full items-center gap-2 rounded-xl border border-line bg-elev px-3 text-left text-[14px] text-fg transition-colors focus:border-line-strong',
           open && 'border-line-strong',
           className,
         )}
@@ -151,7 +151,7 @@ function Options<T extends string>({ id, options, value, active, onPick, listRef
           onClick={() => onPick(o)}
           style={{ '--i': Math.min(i, 8) } as React.CSSProperties}
           className={clsx(
-            'press flex w-full items-center gap-3 rounded-[10px] text-left text-fg',
+            'press flex w-full items-center gap-3 rounded-xl text-left text-fg',
             roomy ? 'min-h-12 px-3.5 py-2.5 text-[15px]' : 'px-2.5 py-2 text-[13.5px]',
             i === active && 'bg-hover',
           )}
@@ -176,7 +176,7 @@ function PickerSheet<T extends string>(props: ListProps<T> & { title?: string })
   return createPortal(
     <div className="fixed inset-0 z-[80] flex items-end justify-center" role="dialog" aria-modal aria-label={props.title}>
       <div className={clsx('absolute inset-0 bg-black/45', closing ? 'animate-fade-out' : 'animate-fade-in')} onClick={() => leave(props.onClose)} />
-      <div className={clsx('pb-safe-2 relative max-h-[70dvh] w-full overflow-y-auto rounded-t-[22px] border border-line bg-elev px-2 pt-2 shadow-float', closing ? 'animate-sheet-out' : 'animate-sheet-in')}>
+      <div className={clsx('pb-safe-2 relative max-h-[70dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-elev px-2 pt-2 shadow-float', closing ? 'animate-sheet-out' : 'animate-sheet-in')}>
         <div className="mx-auto mb-1 h-1 w-9 rounded-full bg-line-strong" />
         {props.title && <p className="px-3.5 pt-2 pb-1.5 text-[12.5px] font-medium text-fg-3">{props.title}</p>}
         <Options {...props} roomy onPick={(o) => leave(() => props.onPick(o))} />
@@ -197,7 +197,7 @@ function PickerList<T extends string>(props: ListProps<T> & { anchor: React.RefO
   return createPortal(
     <>
       <div className="fixed inset-0 z-[80]" onClick={props.onClose} />
-      <div className="animate-pop fixed z-[81] max-h-[min(320px,60dvh)] overflow-y-auto rounded-[12px] border border-line bg-elev p-1 shadow-float" style={pos}>
+      <div className="animate-pop fixed z-[81] max-h-[min(320px,60dvh)] overflow-y-auto rounded-2xl border border-line bg-elev p-1 shadow-float" style={pos}>
         <Options {...props} />
       </div>
     </>,

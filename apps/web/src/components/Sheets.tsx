@@ -47,7 +47,7 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
   if (!pair) {
     return (
       <div className="space-y-4">
-        <div className="flex gap-3 rounded-[12px] bg-ok-soft/60 px-3.5 py-3 text-[13px] leading-relaxed text-fg-2">
+        <div className="flex gap-3 rounded-2xl bg-ok-soft/60 px-3.5 py-3 text-[13px] leading-relaxed text-fg-2">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-ok" />
           <span>
             You run one command on the machine you're adding. From then on it connects out to this hub by itself, so it works behind a router or firewall and you don't open SSH or any port on it. Best for laptops and anything the hub can't reach. Remove the machine to revoke it.
@@ -73,7 +73,7 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
           ? 'Paste this once into PowerShell or Command Prompt on that machine. It installs a small background app for your user that starts when you sign in, plus psmux (tmux for Windows) if it is missing. No admin rights, no open ports.'
           : 'Run this once in a terminal on that machine. It installs a small background service (and Bun if needed) for your user. No sudo, no open ports.'}
       </p>
-      <div className="rounded-[12px] border border-line bg-code p-3">
+      <div className="rounded-2xl border border-line bg-code p-3">
         <code className="block break-all font-mono text-[12px] leading-relaxed">{command}</code>
         <Button size="sm" className="mt-2.5" onClick={() => copyText(command).then((ok) => toast(ok ? { title: 'Command copied', tone: 'success' } : { title: 'Could not copy', body: 'Select the command and copy it by hand.', tone: 'error' }))}>
           <Copy className="size-3.5" /> Copy command
@@ -286,12 +286,12 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
                 key={k}
                 type="button"
                 onClick={() => setKind(k)}
-                className={clsx('flex items-center gap-3 rounded-[12px] border px-3 py-3 text-left transition-colors', kind === k ? 'border-fg bg-hover' : 'border-line hover:bg-hover')}
+                className={clsx('flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors', kind === k ? 'border-fg bg-hover' : 'border-line hover:bg-hover')}
               >
                 {k === 'shell' ? <AgentLogo size={26} /> : <AgentLogo kind={k} size={26} />}
                 <span className="min-w-0">
                   <span className="block truncate text-[13.5px] font-semibold">{k === 'shell' ? 'Terminal' : AGENTS[k].name}</span>
-                  <span className="block truncate text-[11.5px] text-fg-3">{k === 'shell' ? 'Plain shell' : AGENTS[k].vendor}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{k === 'shell' ? 'Plain shell' : AGENTS[k].vendor}</span>
                 </span>
               </button>
             ))}
@@ -310,7 +310,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         {recent.length > 0 && (
           <div className="-mt-2 flex flex-wrap gap-1.5">
             {recent.map((r) => (
-              <button key={r} type="button" title={r} onClick={() => setCwd(r)} className={clsx('max-w-full truncate rounded-[7px] border px-2 py-0.5 font-mono text-[11.5px] pointer-coarse:px-2.5 pointer-coarse:py-1.5', cwd === r ? 'border-fg text-fg' : 'border-line text-fg-3 hover:text-fg-2')}>
+              <button key={r} type="button" title={r} onClick={() => setCwd(r)} className={clsx('max-w-full truncate rounded-full border px-2 py-0.5 font-mono text-[12px] pointer-coarse:px-2.5 pointer-coarse:py-1.5', cwd === r ? 'border-fg text-fg' : 'border-line text-fg-3 hover:text-fg-2')}>
                 {shortPath(r)}
               </button>
             ))}

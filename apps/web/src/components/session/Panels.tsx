@@ -83,14 +83,14 @@ export function ChangesTab({ items }: { items: ChatItem[] }) {
             key={c.path}
             type="button"
             onClick={() => setSel(c.path)}
-            className={clsx('flex w-full items-center gap-2.5 rounded-[8px] px-2.5 py-1.5 text-left text-[12.5px]', cur?.path === c.path ? 'bg-hover' : 'hover:bg-hover/60')}
+            className={clsx('flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[12.5px]', cur?.path === c.path ? 'bg-hover' : 'hover:bg-hover/60')}
           >
-            <span className={clsx('w-3 font-mono text-[11px] font-semibold', c.created ? 'text-ok' : 'text-accent-text')}>{c.created ? 'A' : 'M'}</span>
+            <span className={clsx('w-3 font-mono text-[12px] font-semibold', c.created ? 'text-ok' : 'text-accent-text')}>{c.created ? 'A' : 'M'}</span>
             <span className="min-w-0 flex-1 truncate">
               <span className="text-fg-3">{shortPath(c.path.slice(0, c.path.lastIndexOf('/') + 1), 30)}</span>
               {c.path.split('/').pop()}
             </span>
-            <span className="tabular shrink-0 font-mono text-[11.5px]">
+            <span className="tabular shrink-0 font-mono text-[12px]">
               <span className="text-ok">+{c.add}</span> <span className="text-danger">−{c.del}</span>
             </span>
           </button>
@@ -103,7 +103,7 @@ export function ChangesTab({ items }: { items: ChatItem[] }) {
             .reverse()
             .map((e, n) => (
               <div key={n} className="border-b border-line">
-                <div className="sticky top-0 z-[1] flex items-center gap-2 bg-bg/95 px-3 py-1.5 text-[11.5px] text-fg-3 backdrop-blur">
+                <div className="sticky top-0 z-[1] flex items-center gap-2 bg-bg/95 px-3 py-1.5 text-[12px] text-fg-3 backdrop-blur">
                   <span className="font-medium text-fg-2">{e.name === 'Write' ? (e.meta?.created ? 'Created' : 'Rewrote') : 'Edited'}</span>
                   <span>{since(e.ts)} ago</span>
                 </div>
@@ -135,7 +135,7 @@ function StopButton({ host, task }: { host: string; task: BackgroundTask }) {
           setBusy(false)
         }
       }}
-      className="shrink-0 rounded-[7px] border border-line-strong px-2 py-1 text-[11.5px] text-danger hover:bg-danger-soft disabled:opacity-50"
+      className="shrink-0 rounded-full border border-line-strong px-2 py-1 text-[12px] text-danger hover:bg-danger-soft disabled:opacity-50"
     >
       {busy ? 'Stopping…' : 'Stop'}
     </button>
@@ -157,16 +157,16 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
   }
   const Group = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <section className="space-y-1.5">
-      <h3 className="px-0.5 text-[11px] font-medium tracking-[0.06em] text-fg-3 uppercase">{title}</h3>
+      <h3 className="px-0.5 text-[13px] font-medium text-fg-2">{title}</h3>
       {children}
     </section>
   )
   const Row = ({ icon, title, sub, live, onClick, right }: { icon: React.ReactNode; title: string; sub: string; live?: boolean; onClick?: () => void; right?: React.ReactNode }) => (
-    <div className="flex items-center gap-3 rounded-[12px] border border-line bg-elev px-3 py-2.5">
-      <span className={clsx('flex size-7 shrink-0 items-center justify-center rounded-[8px] bg-sunken', live ? 'text-accent' : 'text-fg-3')}>{icon}</span>
+    <div className="flex items-center gap-3 rounded-2xl border border-line bg-elev px-3 py-2.5">
+      <span className={clsx('flex size-7 shrink-0 items-center justify-center rounded-xl bg-sunken', live ? 'text-accent' : 'text-fg-3')}>{icon}</span>
       <button type="button" onClick={onClick} disabled={!onClick} className="min-w-0 flex-1 text-left">
         <div className="truncate text-[13px] font-medium">{title}</div>
-        <div className="truncate text-[11.5px] text-fg-3">
+        <div className="truncate text-[12px] text-fg-3">
           {live && <span className="pulse-soft mr-1 inline-block size-1.5 rounded-full bg-accent align-middle" />}
           {sub}
         </div>
@@ -179,7 +179,7 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
       {info.queue.length > 0 && (
         <Group title="Queued messages">
           {info.queue.map((q, i) => (
-            <div key={i} className="truncate rounded-[10px] border border-dashed border-line-strong px-3 py-2 text-[13px] text-fg-2">{q}</div>
+            <div key={i} className="truncate rounded-xl border border-dashed border-line-strong px-3 py-2 text-[13px] text-fg-2">{q}</div>
           ))}
         </Group>
       )}
@@ -233,17 +233,17 @@ export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask
               onClick={() => openLink(a.url)}
               right={
                 <div className="flex shrink-0 gap-1">
-                  <button type="button" title="Copy link" onClick={() => copyText(a.url).then((ok) => ok && toast({ title: 'Link copied', tone: 'success' }))} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-hover hover:text-fg">
+                  <button type="button" title="Copy link" onClick={() => copyText(a.url).then((ok) => ok && toast({ title: 'Link copied', tone: 'success' }))} className="flex size-7 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg">
                     <Copy className="size-3.5" />
                   </button>
-                  <button type="button" title="Ask the agent to delete it" onClick={async () => (await confirmAction({ title: 'Delete this artifact?', body: `The agent is asked to delete “${a.title ?? a.url}”.`, yes: 'Ask to delete', danger: true })) && s.actions.send(`Delete the artifact ${a.url}`)} className="flex size-7 items-center justify-center rounded-[7px] text-fg-3 hover:bg-danger-soft hover:text-danger">
+                  <button type="button" title="Ask the agent to delete it" onClick={async () => (await confirmAction({ title: 'Delete this artifact?', body: `The agent is asked to delete “${a.title ?? a.url}”.`, yes: 'Ask to delete', danger: true })) && s.actions.send(`Delete the artifact ${a.url}`)} className="flex size-7 items-center justify-center rounded-full text-fg-3 hover:bg-danger-soft hover:text-danger">
                     <Trash2 className="size-3.5" />
                   </button>
                 </div>
               }
             />
           ))}
-          <p className="px-0.5 text-[11.5px] leading-relaxed text-fg-3">Artifacts open on claude.ai in your browser, where you're signed in.</p>
+          <p className="px-0.5 text-[12px] leading-relaxed text-fg-3">Artifacts open on claude.ai in your browser, where you're signed in.</p>
         </Group>
       )}
     </div>
@@ -275,21 +275,21 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
     <div className="flex min-h-0 flex-1 flex-col">
       <form className="flex items-center gap-1.5 p-2.5" onSubmit={(e) => (e.preventDefault(), go(draft))}>
         <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="http://my-server:3000" className={clsx(inputClass, 'h-8 font-mono text-[12px]')} aria-label="Preview address" />
-        <button type="button" title="Reload" onClick={() => setN((x) => x + 1)} className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:bg-hover">
+        <button type="button" title="Reload" onClick={() => setN((x) => x + 1)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
           <RefreshCw className="size-3.5" />
         </button>
-        <button type="button" title={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:bg-hover">
+        <button type="button" title={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
           {phone ? <MonitorIcon className="size-3.5" /> : <Smartphone className="size-3.5" />}
         </button>
         {url && (
-          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:bg-hover">
+          <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
             <ExternalLink className="size-3.5" />
           </a>
         )}
       </form>
       {url ? (
         <div className="flex min-h-0 flex-1 justify-center bg-sunken p-2.5 pt-0">
-          <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-[10px] border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
+          <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-xl border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
         </div>
       ) : (
         <div className="p-3">
@@ -297,7 +297,7 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
           {suggestions.length > 0 && (
             <div className="flex flex-wrap justify-center gap-1.5">
               {suggestions.map((u) => (
-                <button key={u} type="button" onClick={() => go(u)} className="rounded-[8px] border border-line px-2.5 py-1 font-mono text-[12px] text-fg-2 hover:bg-hover">
+                <button key={u} type="button" onClick={() => go(u)} className="rounded-full border border-line px-2.5 py-1 font-mono text-[12px] text-fg-2 hover:bg-hover">
                   <Link2 className="mr-1 inline size-3" />
                   {u.replace(/^https?:\/\//, '')}
                 </button>
@@ -347,7 +347,7 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
             className={clsx('-mb-px flex h-9 items-center gap-1.5 border-b-2 px-2.5 text-[12.5px] font-medium transition-colors', tab === t.id ? 'border-accent text-fg' : 'border-transparent text-fg-3 hover:text-fg-2')}
           >
             {t.label}
-            {t.badge !== undefined && <span className="tabular rounded-[5px] bg-sunken px-1.5 text-[11px] text-fg-2">{t.badge}</span>}
+            {t.badge !== undefined && <span className="tabular rounded-full bg-sunken px-1.5 text-[12px] text-fg-2">{t.badge}</span>}
           </button>
         ))}
       </div>
@@ -392,11 +392,11 @@ export function TaskOutputSheet({ host, task, onClose }: { host: string; task: B
   }, [host, task?.id, task?.status])
   return (
     <Sheet open={!!task} onClose={onClose} wide title={task?.description ?? ''} icon={<SquareTerminal className="size-4 text-fg-3" />}>
-      {task?.command && <pre className="mb-3 overflow-x-auto rounded-[10px] border border-line bg-code px-3 py-2 font-mono text-[12px]"><span className="text-accent-text">$ </span>{task.command}</pre>}
-      <pre ref={pre} className="max-h-[60dvh] overflow-auto whitespace-pre-wrap rounded-[10px] border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">
+      {task?.command && <pre className="mb-3 overflow-x-auto rounded-xl border border-line bg-code px-3 py-2 font-mono text-[12px]"><span className="text-accent-text">$ </span>{task.command}</pre>}
+      <pre ref={pre} className="max-h-[60dvh] overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">
         {out ?? 'Loading…'}
       </pre>
-      <div className="mt-2 text-[11.5px] text-fg-3">{task?.status === 'running' ? 'Live · refreshes every 2 seconds' : task?.summary ?? task?.status}</div>
+      <div className="mt-2 text-[12px] text-fg-3">{task?.status === 'running' ? 'Live · refreshes every 2 seconds' : task?.summary ?? task?.status}</div>
     </Sheet>
   )
 }
@@ -435,7 +435,7 @@ export function SubagentSheet({ s, sub, onClose }: { s: SessionModel; sub: Subag
         {sub?.type ?? 'Subagent'} · {sub?.status === 'running' ? 'running · live' : sub?.status}
       </div>
       {err ? (
-        <div className="rounded-[10px] bg-sunken px-3 py-2.5 text-[13px] text-fg-2">{err}</div>
+        <div className="rounded-xl bg-sunken px-3 py-2.5 text-[13px] text-fg-2">{err}</div>
       ) : !items ? (
         <div className="flex justify-center py-10"><Spinner /></div>
       ) : (

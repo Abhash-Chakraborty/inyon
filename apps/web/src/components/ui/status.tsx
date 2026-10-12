@@ -32,13 +32,14 @@ export const shownState = (a: { state: AgentState; background?: string }, host?:
 export const backgroundText = (bg: string) => `${bg.replace(/\bbackground /, '')} running in the background`
 
 const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }> = {
-  // one fixed colour for "working" across every agent skin, with a ring that reads at a glance
-  working: { label: 'Working', dot: 'bg-info live-ring', pill: 'text-info bg-info/12' },
-  background: { label: 'Background', dot: 'bg-info pulse-soft', pill: 'text-info bg-info/10' },
-  waiting: { label: 'Needs you', dot: 'bg-warn', pill: 'bg-warn-soft text-warn' },
-  idle: { label: 'Idle', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
-  unknown: { label: 'Running', dot: 'bg-fg-3', pill: 'bg-sunken text-fg-2' },
-  offline: { label: 'Offline', dot: 'bg-fg-3/50', pill: 'bg-sunken text-fg-3' },
+  // chips stay neutral and the dot carries the state: ink with a ring while working, colour only
+  // when something needs you
+  working: { label: 'Working', dot: 'bg-fg live-ring', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03] text-fg' },
+  background: { label: 'Background', dot: 'bg-fg-3 pulse-soft', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
+  waiting: { label: 'Needs you', dot: 'bg-warn', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03] text-fg' },
+  idle: { label: 'Idle', dot: 'bg-fg-3', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
+  unknown: { label: 'Running', dot: 'bg-fg-3', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
+  offline: { label: 'Offline', dot: 'bg-fg-3/50', pill: 'border-line text-fg-3' },
 }
 
 /** An SSH server's address, and the paired computer it's reached through if it isn't the phone. */
@@ -66,7 +67,7 @@ function ago(ms: number) {
 export function StatePill({ state, title, className }: { state: ShownState; title?: string; className?: string }) {
   const m = stateMeta[state]
   return (
-    <span title={title} className={clsx('inline-flex h-[22px] shrink-0 items-center gap-1.5 rounded-[6px] px-2 text-[11.5px] font-medium', m.pill, className)}>
+    <span title={title} className={clsx('inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-mono text-[12px]', m.pill, className)}>
       <span className={clsx('size-1.5 rounded-full', m.dot)} />
       {m.label}
     </span>

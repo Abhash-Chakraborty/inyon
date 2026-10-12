@@ -20,7 +20,7 @@ function PhoneFailed() {
     <div className="flex min-h-dvh items-center justify-center px-6">
       <div className="w-full max-w-[360px]">
         <Logo className="size-12 rounded-2xl" />
-        <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">Inyon couldn't start</h1>
+        <h1 className="mt-6 text-[32px] leading-[0.95] font-semibold tracking-[-0.04em]">Inyon couldn't start</h1>
         <p className="mt-1.5 text-[15px] text-fg-2">{error || 'Starting…'}</p>
         <Button variant="primary" size="lg" className="mt-6 w-full" onClick={() => window.location.reload()}>
           Try again
@@ -66,7 +66,7 @@ function SignIn() {
     <div className="flex min-h-dvh items-center justify-center px-6">
       <form onSubmit={submit} className="animate-slide-up w-full max-w-[360px]">
         <Logo className="size-12 rounded-2xl" />
-        <h1 className="mt-6 font-serif text-[30px] leading-tight tracking-tight">{setup ? 'Create your password' : 'Welcome back'}</h1>
+        <h1 className="mt-6 text-[32px] leading-[0.95] font-semibold tracking-[-0.04em]">{setup ? 'Create your password' : 'Welcome back'}</h1>
         <p className="mt-1.5 text-[15px] text-fg-2">
           {setup ? "This hub is new. Pick the password you'll use to sign in from your browsers." : 'Sign in to reach your machines and coding agents.'}
         </p>

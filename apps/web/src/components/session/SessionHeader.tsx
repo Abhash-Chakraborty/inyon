@@ -20,12 +20,11 @@ function ContextRing({ pct, warn }: { pct?: number; warn?: boolean }) {
   const c = 2 * Math.PI * r
   const color = warn || v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--accent)'
   return (
-    <span className="relative flex size-[22px] shrink-0 items-center justify-center" aria-hidden>
+    <span className="relative flex size-[18px] shrink-0 items-center justify-center" aria-hidden>
       <svg viewBox="0 0 20 20" className="absolute inset-0 -rotate-90">
         <circle cx="10" cy="10" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.2" />
         <circle cx="10" cy="10" r={r} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeDasharray={`${(v / 100) * c} ${c}`} />
       </svg>
-      <span className="tabular text-[7.5px] font-bold">{pct !== undefined ? Math.round(v) : ''}</span>
     </span>
   )
 }
@@ -45,14 +44,14 @@ function UsageChip({ s, onOpen }: { s: SessionModel; onOpen: () => void }) {
         type="button"
         onClick={onOpen}
         aria-label="Usage and limits"
-        className="flex h-8 items-center gap-2 rounded-[9px] px-1.5 text-[12px] text-fg-2 hover:bg-hover md:px-2"
+        className="flex h-8 items-center gap-2 rounded-full px-1.5 font-mono text-[12px] text-fg-2 hover:bg-hover md:px-2.5"
       >
         <ContextRing pct={ctx.pct} warn={stopped} />
-        <span className="tabular hidden md:inline">{ctx.pct !== undefined ? `${Math.round(ctx.pct)}%` : tokens(ctx.used)}</span>
+        <span className="tabular hidden sm:inline">{ctx.pct !== undefined ? `${Math.round(ctx.pct)}%` : tokens(ctx.used)}</span>
         {five && <span className="tabular hidden text-fg-3 lg:inline">· 5h {Math.round(five.pct)}%</span>}
       </button>
       <div className="pointer-events-none invisible absolute right-0 top-full z-30 w-[290px] pt-2 opacity-0 transition-opacity duration-150 group-hover/usage:pointer-events-auto group-hover/usage:visible group-hover/usage:opacity-100 group-focus-within/usage:visible group-focus-within/usage:opacity-100 max-md:hidden">
-        <div className="rounded-[14px] border border-line bg-elev p-3.5 shadow-float">
+        <div className="rounded-3xl border border-line bg-elev p-4 shadow-float">
           <UsageSummary status={status} info={info} agentInfo={s.ref?.pane.agent} />
         </div>
       </div>
@@ -88,20 +87,20 @@ export function SessionHeader({
 
   return (
     <header className="pt-safe z-10 shrink-0 border-b border-line bg-bg">
-      <div className="flex h-[54px] items-center gap-1.5 px-2 sm:px-4">
+      <div className="flex h-[60px] items-center gap-1.5 px-2 sm:px-5">
         <Link to="/" aria-label="Back" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-2 hover:bg-hover md:hidden">
           <ChevronLeft className="size-5" />
         </Link>
         <AgentLogo kind={agent} size={26} active={s.screen?.working ?? ref?.pane.agent?.state === 'working'} />
         <div className="min-w-0 flex-1 pl-1">
-          <h1 className="flex items-center gap-1.5 text-[14.5px] font-semibold leading-tight tracking-tight">
+          <h1 className="flex items-center gap-1.5 text-[16px] font-semibold leading-tight tracking-[-0.03em]">
             {ref?.pane.agent && <StateDot state={shownState(ref.pane.agent, ref.host)} className="sm:hidden" />}
             <button type="button" onClick={() => ref && setRenaming(true)} title="Rename" className="group/title flex min-w-0 items-center gap-1.5 text-left">
               <span className="truncate">{title}</span>
               <Pencil className="size-3 shrink-0 text-fg-3 opacity-0 transition-opacity group-hover/title:opacity-100 max-md:hidden" />
             </button>
           </h1>
-          <p className="truncate text-[11.5px] text-fg-3">{subtitle}</p>
+          <p className="mt-0.5 truncate font-mono text-[12px] text-fg-3">{subtitle}</p>
         </div>
         {ref?.pane.agent && (
           <span className="hidden sm:block">
@@ -119,20 +118,20 @@ export function SessionHeader({
               { key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.rc(false) },
             ]}
             trigger={({ toggle, ref: r, open }) => (
-              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-[9px] text-ok hover:bg-ok-soft', open && 'bg-ok-soft')}>
+              <button ref={r} type="button" onClick={toggle} title="Remote Control is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-ok hover:bg-ok-soft', open && 'bg-ok-soft')}>
                 <RadioTower className="size-4" />
               </button>
             )}
           />
         )}
-        <div role="group" aria-label="View" className="flex shrink-0 rounded-[9px] border border-line bg-sunken p-0.5">
+        <div role="group" aria-label="View" className="flex shrink-0 rounded-full border border-line bg-sunken p-0.5">
           {(['chat', 'terminal'] as const).map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => setView(v)}
               aria-label={v === 'chat' ? 'Chat' : 'Terminal'}
-              className={clsx('flex h-7 items-center gap-1.5 rounded-[7px] px-2 text-[12px] font-medium transition-colors', view === v ? 'bg-elev text-fg shadow-soft' : 'text-fg-3 hover:text-fg-2')}
+              className={clsx('flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12.5px] font-medium transition-colors', view === v ? 'bg-elev text-fg shadow-card ring-1 ring-line' : 'text-fg-3 hover:text-fg-2')}
             >
               {v === 'chat' ? <MessageSquare className="size-3.5" /> : <SquareTerminal className="size-3.5" />}
               <span className="hidden lg:inline">{v === 'chat' ? 'Chat' : 'Terminal'}</span>
@@ -144,7 +143,7 @@ export function SessionHeader({
             <IconButton label="Running tasks, subagents and changes" onClick={() => openSheet('activity')}>
               <span className="relative">
                 <Layers className="size-[17px]" />
-                {busy > 0 && <span className="absolute -top-1 -right-1.5 flex size-3.5 items-center justify-center rounded-full bg-info text-[9px] font-bold text-white">{busy}</span>}
+                {busy > 0 && <span className="absolute -top-1 -right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-fg px-1 text-[12px] leading-none font-semibold text-bg">{busy}</span>}
               </span>
             </IconButton>
           </span>
@@ -179,7 +178,7 @@ export function SessionHeader({
               { key: 'exit', label: `Exit ${def.name}`, icon: <LogOut className="size-4" />, danger: true, onSelect: actions.exit },
             ].filter((it: any) => it && (!s.screen?.prompt || it.key === 'rename' || it.key === 'copy')) as any}
             trigger={({ toggle, ref: r }) => (
-              <button ref={r} type="button" onClick={toggle} aria-label="More" className="hidden size-8 shrink-0 items-center justify-center rounded-[9px] text-fg-2 hover:bg-hover md:flex">
+              <button ref={r} type="button" onClick={toggle} aria-label="More" className="hidden size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover md:flex">
                 <MoreHorizontal className="size-4" />
               </button>
             )}

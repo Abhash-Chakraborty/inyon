@@ -463,8 +463,8 @@ export function Composer({
       }}
     >
       {pop && suggestions.length > 0 && (
-        <div className="animate-pop absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-[14px] border border-line bg-elev shadow-float">
-          <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-[11.5px] text-fg-3">
+        <div className="animate-pop absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-3xl border border-line bg-elev shadow-float">
+          <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-[12px] text-fg-3">
             {pop.kind === 'slash' ? (agent === 'codex' ? 'Commands' : 'Commands and skills') : pop.kind === 'skill' ? 'Skills' : `Files in ${paths ? 'this folder' : '…'}`}
             <span className="ml-auto hidden font-mono sm:inline">↑↓ · ⏎ · esc</span>
           </div>
@@ -478,14 +478,14 @@ export function Composer({
                 onMouseEnter={() => setActive(i)}
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => pick(i)}
-                className={clsx('flex w-full items-center gap-3 rounded-[9px] px-2.5 py-2 text-left', i === active && 'bg-hover')}
+                className={clsx('flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left', i === active && 'bg-hover')}
               >
                 {pop.kind === 'mention' &&
                   (s.tag === 'folder' ? <Folder className="size-4 shrink-0 text-fg-3" /> : <FileText className="size-4 shrink-0 text-fg-3" />)}
                 <span className={clsx('font-mono text-[13px]', pop.kind === 'slash' ? 'shrink-0' : 'min-w-0 truncate', pop.kind === 'skill' && 'max-w-[70%]')}>{s.label}</span>
                 {s.hint && <span className="min-w-0 flex-1 truncate text-[12.5px] text-fg-3">{s.hint}</span>}
                 {s.tag && pop.kind !== 'mention' && (
-                  <span className="ml-auto shrink-0 rounded-[5px] border border-line px-1.5 py-px text-[10.5px] text-fg-3">{s.tag}</span>
+                  <span className="ml-auto shrink-0 rounded-full border border-line px-2 py-px font-mono text-[12px] text-fg-3">{s.tag}</span>
                 )}
               </button>
             ))}
@@ -495,7 +495,7 @@ export function Composer({
 
       <div
         className={clsx(
-          'rounded-[18px] border bg-elev transition-colors',
+          'rounded-3xl border bg-elev shadow-card transition-colors',
           dragging ? 'border-accent' : 'border-line focus-within:border-line-strong',
           disabled && 'opacity-60',
         )}
@@ -505,7 +505,7 @@ export function Composer({
             {files.map((f) => (
               <div key={f.id} className="group/att relative shrink-0">
                 {f.preview ? (
-                  <div className="relative size-14 overflow-hidden rounded-[10px] border border-line bg-sunken">
+                  <div className="relative size-14 overflow-hidden rounded-xl border border-line bg-sunken">
                     <img src={f.preview} alt={f.name} className="size-full object-cover" />
                     {f.status === 'error' && (
                       <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-white">
@@ -522,11 +522,11 @@ export function Composer({
                     )}
                   </div>
                 ) : (
-                  <div className="flex h-14 max-w-[220px] items-center gap-2.5 rounded-[10px] border border-line bg-sunken px-3">
+                  <div className="flex h-14 max-w-[220px] items-center gap-2.5 rounded-xl border border-line bg-sunken px-3">
                     {f.status === 'error' ? <RotateCw className="size-4 shrink-0 text-danger" /> : <FileText className="size-4 shrink-0 text-fg-2" />}
                     <div className="min-w-0">
                       <div className="truncate text-[12.5px] font-medium">{f.pastedLines ? 'Pasted text' : f.name}</div>
-                      <div className="truncate text-[11px] text-fg-3">
+                      <div className="truncate text-[12px] text-fg-3">
                         {f.status === 'uploading' ? `${Math.round(f.progress * 100)}%` : f.status === 'error' ? f.error : f.pastedLines ? `${f.pastedLines} lines` : bytes(f.size)}
                       </div>
                     </div>
@@ -539,7 +539,7 @@ export function Composer({
                     title={`${f.error ?? "Couldn't upload"} · tap to try again`}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => retryFile(f)}
-                    className="absolute inset-0 rounded-[10px] ring-2 ring-danger"
+                    className="absolute inset-0 rounded-xl ring-2 ring-danger"
                   />
                 )}
                 <button
@@ -554,7 +554,7 @@ export function Composer({
             ))}
           </div>
         )}
-        {shellMode && <div className="px-1 pb-1 text-[11px] text-fg-3">Shell command · runs in this session’s folder</div>}
+        {shellMode && <div className="px-1 pb-1 text-[12px] text-fg-3">Shell command · runs in this session’s folder</div>}
         <textarea
           ref={ta}
           rows={1}
@@ -618,7 +618,7 @@ export function Composer({
             </ToolbarButton>
           )}
           {controls && <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">{controls}</div>}
-          <span className={clsx('truncate pr-1 text-[11.5px] text-fg-3', !controls && 'ml-auto')}>
+          <span className={clsx('truncate pr-1 text-[12px] text-fg-3', !controls && 'ml-auto')}>
             {uploading ? 'Uploading…' : failed ? 'Upload failed' : text && origin === 'terminal' ? 'From the terminal' : ''}
           </span>
           {showStop ? (
@@ -627,7 +627,7 @@ export function Composer({
               onClick={stop}
               onMouseDown={(e) => e.preventDefault()}
               disabled={stopping}
-              className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-fg text-bg transition-opacity hover:opacity-85 disabled:opacity-50"
+              className="press flex size-9 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition-opacity hover:opacity-85 disabled:opacity-50"
               aria-label="Stop"
               title="Stop (Esc in the terminal)"
             >
@@ -640,7 +640,7 @@ export function Composer({
               onMouseDown={(e) => e.preventDefault()}
               disabled={!canSend}
               className={clsx(
-                'flex size-8 shrink-0 items-center justify-center rounded-[10px] transition-[background,opacity]',
+                'press flex size-9 shrink-0 items-center justify-center rounded-full',
                 canSend ? 'bg-accent text-accent-fg hover:opacity-90' : 'bg-sunken text-fg-3',
               )}
               aria-label={shellMode ? 'Run command' : working ? 'Queue follow-up' : 'Send'}
@@ -675,7 +675,7 @@ function ToolbarButton({ label, onClick, children }: { label: string; onClick: (
       title={label}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
-      className="flex size-8 items-center justify-center rounded-[9px] text-fg-3 transition-colors hover:bg-hover hover:text-fg"
+      className="flex size-8 items-center justify-center rounded-full text-fg-3 transition-colors hover:bg-hover hover:text-fg"
     >
       {children}
     </button>

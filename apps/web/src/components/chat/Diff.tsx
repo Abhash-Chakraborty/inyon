@@ -35,7 +35,7 @@ export function Diff({ hunks, maxLines = 400 }: { hunks: Hunk[]; maxLines?: numb
             if (hi > 0) {
               rows.push(
                 <tr key={`gap${hi}`}>
-                  <td colSpan={3} className="select-none bg-sunken/60 px-3 py-0.5 text-center text-[11px] text-fg-3">
+                  <td colSpan={3} className="select-none bg-sunken/60 px-3 py-0.5 text-center text-[12px] text-fg-3">
                     ⋯
                   </td>
                 </tr>,

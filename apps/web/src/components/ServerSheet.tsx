@@ -174,7 +174,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
         </div>
 
         {computer ? (
-          <p className="rounded-[12px] border border-line bg-code p-3 text-[12.5px] leading-relaxed text-fg-2">
+          <p className="rounded-2xl border border-line bg-code p-3 text-[12.5px] leading-relaxed text-fg-2">
             {computer.config.name} runs <code className="font-mono">ssh</code> for every command, with its own keys, <code className="font-mono">~/.ssh/config</code> and known hosts. It has to get in without a password prompt: check that <code className="whitespace-nowrap font-mono">ssh {target.trim() || 'work-db'}</code> works there first.
           </p>
         ) : (
@@ -186,7 +186,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
               <p className="text-[12.5px] leading-relaxed text-fg-3">For servers that let you in without a key or password, like Tailscale SSH or an account with no password.</p>
             )}
             {auth === 'phone-key' && (
-              <div className="rounded-[12px] border border-line bg-code p-3">
+              <div className="rounded-2xl border border-line bg-code p-3">
                 <p className="text-[12.5px] leading-relaxed text-fg-2">Run this once on the server to let this phone in. The private half of the key never leaves the phone.</p>
                 {phoneKey ? (
                   <Button size="sm" className="mt-2.5" onClick={() => copyText(authorizeCommand(phoneKey)).then((ok) => ok && toast({ title: 'Command copied', tone: 'success' }))}>
@@ -210,7 +210,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
             {auth === 'key' && (
               <>
                 <textarea
-                  className={clsx(inputClass, 'h-28 py-2 font-mono text-[11.5px] leading-snug')}
+                  className={clsx(inputClass, 'h-28 py-2 font-mono text-[12px] leading-snug')}
                   value={privateKey}
                   onChange={(e) => setPrivateKey(e.target.value)}
                   placeholder={keptSecret ? 'Leave empty to keep the saved key' : '-----BEGIN OPENSSH PRIVATE KEY-----'}
@@ -225,7 +225,7 @@ export function ServerSheet({ open, onClose, edit, onLaptop }: { open: boolean; 
         )}
 
         {asking && found && (
-          <div ref={fingerprint} className={clsx('flex scroll-mb-4 gap-3 rounded-[12px] px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-ok-soft/60 text-fg-2')}>
+          <div ref={fingerprint} className={clsx('flex scroll-mb-4 gap-3 rounded-2xl px-3.5 py-3 text-[13px] leading-relaxed', changed ? 'bg-danger-soft text-danger' : 'bg-ok-soft/60 text-fg-2')}>
             {changed ? <ShieldAlert className="mt-0.5 size-4 shrink-0" /> : <ShieldCheck className="mt-0.5 size-4 shrink-0 text-ok" />}
             <span className="min-w-0">
               {changed ? "The server's key is different from the one you trusted before. Only continue if you reinstalled it or changed its keys." : 'The server says its key is:'}

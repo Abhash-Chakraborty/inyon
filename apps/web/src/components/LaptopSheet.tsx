@@ -181,12 +181,12 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
         <p className="text-[13px] leading-relaxed text-fg-2">
           A laptop, desktop or server. The phone connects to it directly from any network, end to end encrypted. No VPN or open ports.
         </p>
-        <div className="rounded-[12px] border border-line bg-code p-3">
+        <div className="rounded-2xl border border-line bg-code p-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[12.5px] font-medium text-fg">1. On the computer</p>
-            <div role="tablist" aria-label="Operating system" className="flex rounded-[8px] border border-line p-0.5">
+            <div role="tablist" aria-label="Operating system" className="flex rounded-full border border-line p-0.5">
               {(Object.keys(SETUP_COMMANDS) as (keyof typeof SETUP_COMMANDS)[]).map((k) => (
-                <button key={k} type="button" role="tab" aria-selected={os === k} onClick={() => setOs(k)} className={clsx('press rounded-[6px] px-2 py-0.5 text-[12px]', os === k ? 'bg-elev text-fg shadow-sm' : 'text-fg-3 hover:text-fg')}>
+                <button key={k} type="button" role="tab" aria-selected={os === k} onClick={() => setOs(k)} className={clsx('press rounded-full px-2 py-0.5 text-[12px]', os === k ? 'bg-elev text-fg shadow-sm' : 'text-fg-3 hover:text-fg')}>
                   {SETUP_COMMANDS[k].label}
                 </button>
               ))}
@@ -271,9 +271,9 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
           <button
             type="button"
             onClick={onServer}
-            className="press flex w-full items-center gap-3 rounded-[12px] border border-line px-3.5 py-3 text-left hover:bg-sunken"
+            className="press flex w-full items-center gap-3 rounded-2xl border border-line px-3.5 py-3 text-left hover:bg-sunken"
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[9px] bg-sunken text-fg-2">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sunken text-fg-2">
               <SquareTerminal className="size-4" />
             </span>
             <span className="min-w-0 flex-1">

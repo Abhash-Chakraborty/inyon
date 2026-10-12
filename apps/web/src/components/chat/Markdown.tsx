@@ -38,8 +38,8 @@ const components: Components = {
     const lang = cls.match(/language-([\w+#-]+)/)?.[1]
     const code = textOf(child?.props?.children).replace(/\n$/, '')
     return (
-      <div className="group/code my-3 overflow-hidden rounded-[10px] border border-line bg-code">
-        <div className="flex h-8 items-center justify-between border-b border-line pl-3.5 pr-1.5 font-sans text-[11.5px] text-fg-3">
+      <div className="group/code my-3 overflow-hidden rounded-xl border border-line bg-code">
+        <div className="flex h-8 items-center justify-between border-b border-line pl-3.5 pr-1.5 font-sans text-[12px] text-fg-3">
           <span>{lang ?? 'text'}</span>
           <CopyButton text={code} />
         </div>
@@ -65,7 +65,7 @@ const components: Components = {
   img({ src, alt }) {
     const url = typeof src === 'string' ? src : ''
     // a path on this site, but not "//host/…", which is another site
-    if (/^(data:image\/|blob:|\/(?![/\\]))/.test(url)) return <img src={url} alt={alt ?? ''} className="max-w-full rounded-[8px]" />
+    if (/^(data:image\/|blob:|\/(?![/\\]))/.test(url)) return <img src={url} alt={alt ?? ''} className="max-w-full rounded-xl" />
     return /^https?:\/\//.test(url) ? (
       <a href={url} target="_blank" rel="noreferrer noopener">{alt || url}</a>
     ) : (

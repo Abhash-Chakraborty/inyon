@@ -13,13 +13,13 @@ import { copyText } from '../lib/clipboard.ts'
 
 function CopyLine({ cmd }: { cmd: string }) {
   return (
-    <div className="mt-2 flex items-center gap-2 rounded-[10px] border border-line bg-code px-3 py-2">
+    <div className="mt-2 flex items-center gap-2 rounded-xl border border-line bg-code px-3 py-2">
       <code className="min-w-0 flex-1 truncate font-mono text-[12px]">{cmd}</code>
       <button
         type="button"
         aria-label="Copy command"
         onClick={() => copyText(cmd).then((ok) => toast(ok ? { title: 'Command copied', tone: 'success' } : { title: 'Could not copy', body: 'Select the command and copy it by hand.', tone: 'error' }))}
-        className="flex size-7 shrink-0 items-center justify-center rounded-[7px] text-fg-3 hover:bg-hover hover:text-fg"
+        className="flex size-7 shrink-0 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg"
       >
         <Copy className="size-3.5" />
       </button>
@@ -66,12 +66,12 @@ export function SetupPanel({ host }: { host: HostState }) {
         {report.os}
         {report.pkg && ` · ${report.pkg}`}
         {report.sudo ? ' · sudo available' : ' · no passwordless sudo'}
-        <button type="button" onClick={load} className="ml-auto flex items-center gap-1 rounded-[7px] px-2 py-1 hover:bg-hover hover:text-fg">
+        <button type="button" onClick={load} className="ml-auto flex items-center gap-1 rounded-full px-2 py-1 hover:bg-hover hover:text-fg">
           <RefreshCw className="size-3.5" /> Re-check
         </button>
       </div>
 
-      <section className="divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+      <section className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
         {report.checks.map((c) => (
           <div key={c.id} className="px-4 py-3.5">
             <div className="flex items-center gap-3">
@@ -107,7 +107,7 @@ export function SetupPanel({ host }: { host: HostState }) {
 
       <section>
         <h3 className="mb-2.5 text-[13px] font-semibold">Agents</h3>
-        <div className="divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+        <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
           {report.agents.map((a) => {
             const def = AGENTS[a.kind]
             return (
@@ -130,7 +130,7 @@ export function SetupPanel({ host }: { host: HostState }) {
                       <LogIn className="size-3.5" /> Sign in
                     </Button>
                   )}
-                  <a href={def.install.docs} target="_blank" rel="noreferrer" className="inline-flex size-8 items-center justify-center rounded-[9px] text-fg-3 hover:bg-hover hover:text-fg" aria-label={`${def.name} docs`}>
+                  <a href={def.install.docs} target="_blank" rel="noreferrer" className="inline-flex size-8 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg" aria-label={`${def.name} docs`}>
                     <ExternalLink className="size-3.5" />
                   </a>
                 </div>
@@ -142,7 +142,7 @@ export function SetupPanel({ host }: { host: HostState }) {
       </section>
 
       <SignInSheet hostId={id} hostName={host.config.name} agent={signIn} onClose={() => (setSignIn(null), load())} />
-      {log && <pre className="max-h-64 overflow-auto rounded-[12px] border border-line bg-code px-3 py-2.5 font-mono text-[11.5px] leading-relaxed text-fg-2">{log}</pre>}
+      {log && <pre className="max-h-64 overflow-auto rounded-2xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{log}</pre>}
     </div>
   )
 }

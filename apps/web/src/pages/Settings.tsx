@@ -45,7 +45,7 @@ function Background() {
       </Row>
       {unrestricted === false && (
         <Row label="Battery limits" hint="Android is limiting Inyon in the background, so it loses its connection once the screen has been off a while. Allow it to run in the background to keep alerts coming.">
-          <button type="button" onClick={() => allowBackground().then((ok) => ok !== undefined && setUnrestricted(ok))} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+          <button type="button" onClick={() => allowBackground().then((ok) => ok !== undefined && setUnrestricted(ok))} className="h-8 rounded-full border border-line bg-elev px-3.5 shadow-card text-[13px] font-medium hover:bg-hover">
             Allow
           </button>
         </Row>
@@ -234,7 +234,7 @@ function Section({ id, title, desc, children }: { id?: string; title: string; de
     <section id={id} className="scroll-mt-20">
       <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
       {desc && <p className="mt-0.5 text-[13px] text-fg-3">{desc}</p>}
-      <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">{children}</div>
+      <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">{children}</div>
     </section>
   )
 }
@@ -324,7 +324,7 @@ export function Settings() {
       <div className="mx-auto flex max-w-[1040px] gap-10 px-4 py-7 lg:px-7">
         <nav className="sticky top-[76px] hidden h-fit w-[190px] shrink-0 space-y-0.5 lg:block">
           {NAV.map(([id, label]) => (
-            <a key={id} href={`#${id}`} className="block rounded-[8px] px-2.5 py-1.5 text-[13px] text-fg-2 hover:bg-hover hover:text-fg">
+            <a key={id} href={`#${id}`} className="block rounded-full px-2.5 py-1.5 text-[13px] text-fg-2 hover:bg-hover hover:text-fg">
               {label}
             </a>
           ))}
@@ -378,8 +378,8 @@ export function Settings() {
                 }
               >
                 <div className="flex items-center gap-3 text-[12px] text-fg-3">
-                  <code className="rounded-[7px] border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch}</code>
-                  <span className={clsx('shrink-0 whitespace-nowrap rounded-[6px] px-2 py-0.5 text-[11.5px]', a.chat ? 'bg-ok-soft text-ok' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
+                  <code className="rounded-full border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch}</code>
+                  <span className={clsx('shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[12px]', a.chat ? 'border border-line text-fg' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
                 </div>
               </Row>
             ))}
@@ -390,7 +390,7 @@ export function Settings() {
             <p className="mt-0.5 text-[13px] text-fg-3">
               Plan limits come from each machine's signed-in Claude account, the same numbers as /usage, so they follow account switches by themselves.
             </p>
-            <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+            <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
               {!hub ? (
                 <div className="flex justify-center py-6"><Spinner /></div>
               ) : (
@@ -404,7 +404,7 @@ export function Settings() {
           <section id="uploads" className="scroll-mt-20">
             <h2 className="text-[15px] font-semibold tracking-tight">Uploads and clipboard</h2>
             <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.inyon/uploads on the session's machine, and the agent gets their paths.</p>
-            <div className="mt-3 divide-y divide-line overflow-hidden rounded-[14px] border border-line bg-elev">
+            <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
               {!hub ? (
                 <div className="flex justify-center py-6"><Spinner /></div>
               ) : (
@@ -431,12 +431,12 @@ export function Settings() {
             </Row>
             <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'granted' ? 'On for this device' : perm === 'denied' ? 'Turned off in your phone\'s settings for Inyon' : 'Alerts while Inyon is in the background'}>
               {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
-                <button type="button" onClick={allow} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+                <button type="button" onClick={allow} className="h-8 rounded-full border border-line bg-elev px-3.5 shadow-card text-[13px] font-medium hover:bg-hover">
                   Allow
                 </button>
               )}
               {perm === 'granted' && (
-                <button type="button" onClick={testNotification} className="h-8 rounded-[9px] border border-line-strong px-3 text-[13px] font-medium hover:bg-hover">
+                <button type="button" onClick={testNotification} className="h-8 rounded-full border border-line bg-elev px-3.5 shadow-card text-[13px] font-medium hover:bg-hover">
                   Send a test
                 </button>
               )}
@@ -553,7 +553,7 @@ function PhoneKey() {
           <Spinner />
         ) : (
           <>
-            <p className="break-all rounded-[10px] bg-sunken px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{key}</p>
+            <p className="break-all rounded-xl bg-sunken px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{key}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button size="sm" onClick={() => copy(key, 'Key copied')}>
                 <Copy className="size-3.5" /> Copy key
@@ -584,7 +584,7 @@ function OtherDevices() {
         <button
           type="button"
           onClick={() => copyText(address).then((ok) => ok && toast({ title: 'Address copied', tone: 'success' }))}
-          className="flex max-w-full items-center gap-2 rounded-[9px] border border-line-strong px-3 py-1.5 font-mono text-[12.5px] hover:bg-hover"
+          className="flex max-w-full items-center gap-2 rounded-full border border-line bg-elev px-3.5 shadow-card py-1.5 font-mono text-[12.5px] hover:bg-hover"
         >
           <span className="truncate">{address}</span>
           <Copy className="size-3.5 shrink-0 text-fg-3" />

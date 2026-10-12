@@ -70,7 +70,7 @@ function ToastCard({ t }: { t: Toast }) {
         touchAction: 'pan-y',
       }}
       className={clsx(
-        'animate-toast-in pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-[14px] border border-line bg-elev px-3.5 py-3 shadow-float select-none',
+        'animate-toast-in pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-line bg-elev px-3.5 py-3 shadow-float select-none',
         t.href && 'cursor-pointer',
       )}
     >

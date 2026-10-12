@@ -19,7 +19,7 @@ export function UpdatePrompt() {
   if (!shown) return null
   return (
     <div className="pt-safe pointer-events-none fixed inset-x-0 top-0 z-[55] flex justify-center px-3 pt-3 sm:inset-x-auto sm:top-auto sm:right-5 sm:bottom-5 sm:px-0 sm:pt-0">
-      <div role="status" className="animate-toast-in pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-[14px] border border-line bg-elev py-2.5 pr-2.5 pl-3.5 shadow-float">
+      <div role="status" className="animate-toast-in pointer-events-auto flex w-full max-w-sm items-center gap-3 rounded-2xl border border-line bg-elev py-2.5 pr-2.5 pl-3.5 shadow-float">
         <RotateCw className="size-4 shrink-0 text-fg-3" />
         <div className="min-w-0 flex-1">
           <p className="text-[13.5px] font-medium">Inyon was updated</p>

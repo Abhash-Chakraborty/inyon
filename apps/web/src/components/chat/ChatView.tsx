@@ -327,7 +327,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                     {!working && !prompt && screen?.background && (
                       <div className="flex items-center gap-3 py-1 text-[13px] text-fg-3">
                         <div className="flex size-6 shrink-0 items-center justify-center">
-                          <span className="size-1.5 rounded-full bg-info pulse-soft" />
+                          <span className="size-1.5 rounded-full bg-fg-3 pulse-soft" />
                         </div>
                         {backgroundText(screen.background)}
                       </div>
@@ -407,7 +407,7 @@ function NotRunning({
     }
   }
   return (
-    <div className={compact ? 'rounded-[16px] border border-line bg-elev p-5 text-center' : 'py-12 text-center'}>
+    <div className={compact ? 'rounded-3xl border border-line bg-elev shadow-card p-5 text-center' : 'py-12 text-center'}>
       <p className="text-[15px] font-semibold">No agent is running in this pane</p>
       <p className="mx-auto mt-1 max-w-sm text-[13.5px] text-fg-2">The session ended or the pane is at a shell prompt.</p>
       <div className="mt-5 flex flex-wrap justify-center gap-2">

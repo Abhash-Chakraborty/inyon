@@ -35,7 +35,7 @@ function useJob(call: ToolCall): Job | undefined {
 }
 
 const JOB_STATE: Record<string, { label: string; className: string; dot?: string }> = {
-  running: { label: 'Running', className: 'text-info bg-info/12', dot: 'bg-info live-ring' },
+  running: { label: 'Running', className: 'text-fg bg-sunken', dot: 'bg-fg live-ring' },
   completed: { label: 'Finished', className: 'text-fg-3 bg-sunken' },
   done: { label: 'Finished', className: 'text-fg-3 bg-sunken' },
   failed: { label: 'Failed', className: 'text-danger bg-danger-soft' },
@@ -67,7 +67,7 @@ function JobBadge({ call, job, live }: { call: ToolCall; job: Job; live: boolean
           open()
         }
       }}
-      className={clsx('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[11px] font-medium', st?.className ?? 'bg-sunken text-fg-3', open && 'hover:brightness-110')}
+      className={clsx('inline-flex h-5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[12px] font-medium', st?.className ?? 'bg-sunken text-fg-3', open && 'hover:brightness-110')}
     >
       {st?.dot && <span className={clsx('size-1.5 rounded-full', st.dot)} />}
       Background{st ? ` · ${st.label}` : ''}
@@ -87,7 +87,7 @@ function Output({ text, label }: { text: string; label?: string }) {
   if (!text.trim()) return null
   return (
     <div className="relative">
-      {label && <div className="px-3 pt-2 font-sans text-[11px] font-medium uppercase tracking-wide text-fg-3">{label}</div>}
+      {label && <div className="px-3 pt-2 font-sans text-[12.5px] font-medium text-fg-3">{label}</div>}
       <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[12.5px] leading-[1.55] text-fg-2">{text}</pre>
     </div>
   )
@@ -152,7 +152,7 @@ function Details({ call }: { call: ToolCall }) {
       if (hunks.length) {
         return (
           <>
-            <div className="border-b border-line/70 px-3 py-1.5 font-mono text-[11.5px] text-fg-3">{shortPath(i.file_path, 80)}</div>
+            <div className="border-b border-line/70 px-3 py-1.5 font-mono text-[12px] text-fg-3">{shortPath(i.file_path, 80)}</div>
             <Diff hunks={hunks} />
             {r?.isError && <Output text={r.text} />}
           </>
@@ -168,7 +168,7 @@ function Details({ call }: { call: ToolCall }) {
           <button
             type="button"
             onClick={() => actions.openSubagent(call.id)}
-            className="inline-flex h-7 items-center gap-1.5 rounded-[8px] border border-line-strong px-2.5 text-[12px] font-medium hover:bg-hover"
+            className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line-strong px-2.5 text-[12px] font-medium hover:bg-hover"
           >
             <ExternalLink className="size-3.5" /> Open subagent transcript
           </button>
@@ -201,12 +201,12 @@ export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
   // the command itself, under its description
   const command = detail && (call.name === 'Bash' || call.name === 'Monitor') && call.input?.description && typeof call.input.command === 'string' ? call.input.command.split('\n')[0] : undefined
   return (
-    <div className={clsx('rounded-[10px] transition-colors', open && 'border border-line bg-elev')}>
+    <div className={clsx('rounded-xl transition-colors', open && 'border border-line bg-elev')}>
       <button
         type="button"
         onClick={() => setOpen(!open)}
         className={clsx(
-          'group flex w-full min-w-0 items-center gap-2.5 rounded-[10px] px-2 py-[6px] text-left text-[13.5px] transition-colors',
+          'group flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2 py-[6px] text-left text-[13.5px] transition-colors',
           !open && 'hover:bg-hover',
         )}
       >
@@ -218,7 +218,7 @@ export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
               <span className={clsx('min-w-0 truncate text-fg-3', s.mono && 'font-mono text-[12.5px]')}>{s.target}</span>
             )}
           </span>
-          {command && <span className="min-w-0 truncate font-mono text-[11.5px] text-fg-3/80">$ {command}</span>}
+          {command && <span className="min-w-0 truncate font-mono text-[12px] text-fg-3/80">$ {command}</span>}
         </span>
         {s.stats && (s.stats.add > 0 || s.stats.del > 0) && (
           <span className="shrink-0 font-mono text-xs">
@@ -227,7 +227,7 @@ export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
         )}
         <span className={clsx('ml-auto flex shrink-0 items-center gap-1.5 pl-1', command && 'self-start')}>
           {detail && job && <JobBadge call={call} job={job} live={live} />}
-          {time && <span className="tabular text-[11px] text-fg-3">{time}</span>}
+          {time && <span className="tabular text-[12px] text-fg-3">{time}</span>}
           {!(detail && job && call.result && !call.result.isError) && <Status call={call} live={live} detail={detail} />}
           <ChevronRight className={clsx('size-3.5 text-fg-3 transition-transform', open && 'rotate-90')} />
         </span>
@@ -269,7 +269,7 @@ export function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean })
 
 function Card({ icon, title, children, tone = 'default' }: { icon: React.ReactNode; title: string; children: React.ReactNode; tone?: 'default' | 'accent' }) {
   return (
-    <div className={clsx('my-3 overflow-hidden rounded-[14px] border bg-elev', tone === 'accent' ? 'border-accent/40' : 'border-line')}>
+    <div className={clsx('my-3 overflow-hidden rounded-2xl border bg-elev', tone === 'accent' ? 'border-accent/40' : 'border-line')}>
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[13px] font-semibold text-fg-2">
         {icon}
         {title}
@@ -351,8 +351,8 @@ function PlanBody({ text }: { text: string }) {
         <Markdown text={text} className="text-[15px]" />
       </div>
       {long && !full && (
-        <div className="absolute inset-x-0 bottom-0 flex justify-center bg-gradient-to-t from-elev via-elev/90 to-transparent pt-16 pb-1">
-          <button type="button" onClick={() => setFull(true)} className="rounded-full border border-line bg-elev px-4 py-1.5 text-sm font-medium shadow-soft hover:bg-hover">
+        <div className="absolute inset-x-0 bottom-0 flex justify-center border-t border-line bg-elev py-2">
+          <button type="button" onClick={() => setFull(true)} className="press rounded-full border border-line bg-elev px-4 py-1.5 text-sm font-medium shadow-card hover:border-line-strong">
             Show full plan
           </button>
         </div>

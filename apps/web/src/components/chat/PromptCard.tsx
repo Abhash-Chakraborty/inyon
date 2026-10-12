@@ -83,7 +83,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
     // never taller than the space it has, so a long permission list can't push the answers off a
     // phone's screen: the question shrinks and scrolls well before the choices do (shrink-[1000]),
     // and Cancel stays put
-    <div className="animate-slide-up flex min-h-0 flex-col overflow-hidden rounded-[18px] border border-line-strong bg-elev shadow-float">
+    <div className="animate-slide-up flex min-h-0 flex-col overflow-hidden rounded-3xl border border-line-strong bg-elev shadow-float">
       {prompt.tabs && prompt.tabs.length > 1 && (
         <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-line px-4 py-2.5">
           {prompt.tabs.map((t) => (
@@ -127,10 +127,10 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         {prompt.links && prompt.links.length > 0 && (
           <div className="space-y-2 px-3 pb-2 sm:px-4">
             {prompt.links.map((u) => (
-              <div key={u} className="rounded-[12px] border border-line bg-bg p-2.5">
-                <div className="line-clamp-2 break-all font-mono text-[11.5px] leading-relaxed text-fg-2">{u}</div>
+              <div key={u} className="rounded-2xl border border-line bg-bg p-2.5">
+                <div className="line-clamp-2 break-all font-mono text-[12px] leading-relaxed text-fg-2">{u}</div>
                 <div className="mt-2 flex gap-1.5">
-                  <a href={u} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-[9px] bg-fg px-3 text-[12.5px] font-medium text-bg">
+                  <a href={u} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-full bg-fg px-3 text-[12.5px] font-medium text-bg">
                     <ExternalLink className="size-3.5" /> Open
                   </a>
                   <button
@@ -139,7 +139,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
                       await copyText(u)
                       toast({ title: 'Link copied', tone: 'success' })
                     }}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-[9px] border border-line-strong px-3 text-[12.5px] font-medium hover:bg-hover"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-elev px-3.5 shadow-card text-[12.5px] font-medium hover:bg-hover"
                   >
                     <Copy className="size-3.5" /> Copy link
                   </button>
@@ -161,9 +161,9 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
         >
           <label className="min-w-0 flex-1">
             <span className="mb-1 block text-[12px] text-fg-3">{prompt.input.label}</span>
-            <input name="answer" autoComplete="off" autoCapitalize="off" spellCheck={false} className="h-11 w-full rounded-[11px] border border-line bg-bg px-3 font-mono text-[14px]" placeholder="Paste here" />
+            <input name="answer" autoComplete="off" autoCapitalize="off" spellCheck={false} className="h-11 w-full rounded-xl border border-line bg-bg px-3 font-mono text-[14px]" placeholder="Paste here" />
           </label>
-          <button type="submit" disabled={busy !== null} className="flex size-11 shrink-0 items-center justify-center rounded-[11px] bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
+          <button type="submit" disabled={busy !== null} className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
             <Send className="size-4" />
           </button>
         </form>
@@ -201,7 +201,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
               disabled={busy !== null}
               onClick={() => pick(o.n)}
               className={clsx(
-                'flex w-full items-start gap-3 rounded-[12px] border px-3.5 py-3 text-left transition-[background,border,transform] active:scale-[0.99] disabled:opacity-60',
+                'flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition-[background,border,transform] active:scale-[0.99] disabled:opacity-60',
                 o.selected ? 'border-accent/50 bg-accent-soft' : 'border-line bg-bg hover:bg-hover',
                 busy === o.n && 'border-accent bg-accent-soft',
               )}

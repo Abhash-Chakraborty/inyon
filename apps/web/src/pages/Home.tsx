@@ -42,13 +42,12 @@ export function Home() {
 
   return (
     <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
-      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg/90 backdrop-blur-md">
-        <div className="flex h-[52px] items-center gap-3 px-4 lg:px-7">
+      <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
+        <div className="flex h-[52px] items-center gap-3 px-4 lg:px-8">
           <span className="md:hidden">
             <Logo />
           </span>
-          <h1 className="text-[15px] font-semibold tracking-tight">Overview</h1>
-          <span className="hidden text-[12.5px] text-fg-3 sm:inline">
+          <span className="font-mono text-[12px] text-fg-3 max-md:hidden">
             {hosts.length} {isPhone() ? 'computer' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}
           </span>
           {!connected && (
@@ -67,16 +66,16 @@ export function Home() {
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-[1280px] flex-wrap items-start gap-7 px-4 pt-6 pb-16 lg:px-7">
-        <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-7">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-wrap items-start gap-8 px-4 pt-4 pb-16 md:pt-8 lg:px-8 lg:pt-12">
+        <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5 md:gap-9">
           {!loaded ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {[0, 1, 2, 3].map((i) => (
-                <div key={i} className="skeleton h-[150px] rounded-[16px]" />
+                <div key={i} className="skeleton h-[170px] rounded-3xl" />
               ))}
             </div>
           ) : !hosts.length ? (
-            <div className="rounded-[16px] border border-dashed border-line-strong">
+            <div className="rounded-3xl border border-dashed border-line-strong">
               <Empty
                 icon={isPhone() ? <Laptop className="size-5" /> : <Server className="size-5" />}
                 title={isPhone() ? 'Connect your computer' : 'No machines yet'}
@@ -93,7 +92,9 @@ export function Home() {
             </div>
           ) : (
             <>
-              <p className="text-[14px] text-fg-2">
+              <div>
+              <h1 className="text-[1.75rem] leading-[0.95] font-semibold tracking-[-0.04em] md:text-[44px] md:tracking-[-0.045em]">Overview</h1>
+              <p className="mt-1.5 truncate text-[14px] text-fg-2 md:mt-3 md:text-[15px]">
                 {waiting.length
                   ? `${waiting.length} session${waiting.length > 1 ? 's need' : ' needs'} you.`
                   : working
@@ -102,9 +103,10 @@ export function Home() {
                       ? 'All quiet. Every session is idle.'
                       : 'No agents are running right now.'}
               </p>
+              </div>
 
               {needsIntegration.map((h) => (
-                <div key={h.config.id} className="flex items-center gap-3 rounded-[14px] border border-line bg-elev px-4 py-3">
+                <div key={h.config.id} className="flex items-center gap-3 rounded-3xl border border-line bg-elev px-5 py-3.5 shadow-card">
                   <Plug className="size-4 shrink-0 text-fg-3" />
                   <p className="min-w-0 flex-1 text-[13px] text-fg-2">
                     <span className="font-medium text-fg">{h.config.name}:</span>{' '}
@@ -151,13 +153,13 @@ export function Home() {
                   Agent sessions
                 </SectionLabel>
                 {rest.length ? (
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(280px,1fr))]">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
                     {rest.map((r) => (
                       <SessionCard key={r.host.config.id + r.pane.id} r={r} />
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-[16px] border border-dashed border-line-strong">
+                  <div className="rounded-3xl border border-dashed border-line-strong">
                     <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
                       {panes.length ? 'Try another filter.' : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
                     </Empty>
@@ -166,14 +168,14 @@ export function Home() {
               </section>
 
               <section>
-                <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[12px] text-fg-2 hover:text-fg">Manage</Link>}>{isPhone() ? 'Computers' : 'Machines'}</SectionLabel>
+                <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[13px] text-fg-2 hover:text-fg">Manage →</Link>}>{isPhone() ? 'Computers' : 'Machines'}</SectionLabel>
                 <MachinesTable hosts={hosts} />
               </section>
             </>
           )}
         </div>
         <MachineSheet open={adding} onClose={() => setAdding(false)} />
-        <aside className="flex w-full flex-[1_1_280px] flex-col gap-4 lg:max-w-[340px]">
+        <aside className="flex w-full flex-[1_1_280px] flex-col gap-4 lg:max-w-[340px] lg:pt-[92px]">
           <LimitsCard hosts={hosts} />
           <ActivityFeed />
         </aside>

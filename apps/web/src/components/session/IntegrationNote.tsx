@@ -28,7 +28,7 @@ export function IntegrationNote({ host, agent = 'claude' }: { host: HostState; a
     }
   }
   return (
-    <div className="flex items-start gap-3 rounded-[14px] border border-line bg-elev p-3.5">
+    <div className="flex items-start gap-3 rounded-3xl border border-line bg-elev shadow-card p-3.5">
       <Plug className="mt-0.5 size-4 shrink-0 text-warn" />
       <p className="min-w-0 flex-1 text-[12.5px] leading-relaxed text-fg-2">{isAgy ? 'Turn on the Antigravity integration for live context and plan limits. Restart this CLI session afterward to enable it.' : INTEGRATION_TEXT[state] ?? INTEGRATION_TEXT.missing}</p>
       <Button size="sm" variant="primary" onClick={enable} loading={busy}>

@@ -18,14 +18,14 @@ import { copyText } from '../../lib/clipboard.ts'
 import { readClipboard } from '../../lib/native.ts'
 
 const LIGHT: ITheme = {
-  background: '#faf9f5', foreground: '#1f1e1d', cursor: '#c96442', cursorAccent: '#faf9f5',
-  selectionBackground: '#c9644240',
+  background: '#e9e8e4', foreground: '#1d1c1a', cursor: '#1d1c1a', cursorAccent: '#e9e8e4',
+  selectionBackground: '#1d1c1a30',
   black: '#1f1e1d', red: '#b5453b', green: '#4f7a3a', yellow: '#9a6a13', blue: '#2f5f9e', magenta: '#8a4b9e', cyan: '#2d7a7a', white: '#d9d5c9',
   brightBlack: '#8f8d86', brightRed: '#c96442', brightGreen: '#5f8f48', brightYellow: '#b7791f', brightBlue: '#4a78b8', brightMagenta: '#a060b5', brightCyan: '#3b9090', brightWhite: '#f0eee6',
 }
 const DARK: ITheme = {
-  background: '#262624', foreground: '#f4f3ee', cursor: '#d97757', cursorAccent: '#262624',
-  selectionBackground: '#d9775750',
+  background: '#1b1a18', foreground: '#f1f0ec', cursor: '#f1f0ec', cursorAccent: '#1b1a18',
+  selectionBackground: '#f1f0ec38',
   black: '#1f1e1d', red: '#ec7a6f', green: '#a5c98a', yellow: '#e3b46b', blue: '#8fb6e8', magenta: '#c5a3e3', cyan: '#7cc4c4', white: '#c3c1b8',
   brightBlack: '#6e6c66', brightRed: '#f09a8f', brightGreen: '#bddba6', brightYellow: '#f0cb8d', brightBlue: '#aecbf0', brightMagenta: '#d7bdf0', brightCyan: '#9ed8d8', brightWhite: '#f4f3ee',
 }
@@ -198,9 +198,9 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     <div className="flex min-h-0 flex-1 flex-col bg-bg">
       {!agent && installed.length > 0 && (
         <div className="no-scrollbar flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-line px-3 py-1.5">
-          <span className="shrink-0 pr-1 text-[11.5px] text-fg-3">Start here:</span>
+          <span className="shrink-0 pr-1 text-[12px] text-fg-3">Start here:</span>
           {installed.map((k) => (
-            <button key={k} type="button" onClick={() => start(k)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-[8px] border border-line px-2 text-[12px] font-medium hover:bg-hover">
+            <button key={k} type="button" onClick={() => start(k)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-line px-2 text-[12px] font-medium hover:bg-hover">
               <AgentLogo kind={k} size={15} /> {AGENTS[k].name}
             </button>
           ))}

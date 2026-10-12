@@ -20,14 +20,14 @@ export const Button = forwardRef<
       type={type}
       disabled={disabled || loading}
       className={clsx(
-        'press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] font-medium disabled:opacity-45',
-        size === 'xs' && 'h-7 px-2.5 text-[12px]',
-        size === 'sm' && 'h-8 px-3 text-[13px]',
-        size === 'md' && 'h-9 px-3.5 text-[13.5px]',
+        'press inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium disabled:opacity-45',
+        size === 'xs' && 'h-7 px-3 text-[12px]',
+        size === 'sm' && 'h-8 px-3.5 text-[13px]',
+        size === 'md' && 'h-9 px-4 text-[13.5px]',
         size === 'lg' && 'h-11 px-5 text-[15px]',
         variant === 'primary' && 'btn-accent',
         variant === 'accent' && 'btn-accent',
-        variant === 'secondary' && 'border border-line-strong bg-transparent text-fg hover:bg-hover',
+        variant === 'secondary' && 'border border-line bg-elev text-fg shadow-card hover:border-line-strong',
         variant === 'ghost' && 'text-fg-2 hover:bg-hover hover:text-fg',
         variant === 'danger' && 'border border-line-strong text-danger hover:bg-danger-soft',
         className,
@@ -75,7 +75,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 }
 
 export const inputClass =
-  'h-10 w-full rounded-[10px] border border-line bg-elev px-3 text-[14px] text-fg placeholder:text-fg-3 transition-colors focus:border-line-strong focus:bg-elev'
+  'h-10 w-full rounded-xl border border-line bg-elev px-3 text-[14px] text-fg placeholder:text-fg-3 transition-colors focus:border-line-strong focus:bg-elev'
 
 export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
@@ -85,9 +85,9 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       aria-checked={on}
       aria-label={label}
       onClick={() => onChange(!on)}
-      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-ok' : 'bg-line-strong')}
+      className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-line-strong')}
     >
-      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full bg-white shadow-sm transition-transform duration-500 ease-spring', on ? 'translate-x-[19px]' : 'translate-x-[3px]')} />
+      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-500 ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
     </button>
   )
 }
@@ -124,10 +124,10 @@ export function Segmented<T extends string>({
     if (pill) moved.current = true
   }, [pill?.left])
   return (
-    <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-[10px] border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
+    <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
       <span
         aria-hidden
-        className={clsx('absolute top-0.5 bottom-0.5 rounded-[8px] bg-elev shadow-soft', moved.current && 'transition-[left,width] duration-500 ease-out-soft', !pill && 'hidden')}
+        className={clsx('absolute top-0.5 bottom-0.5 rounded-full bg-elev shadow-card ring-1 ring-line', moved.current && 'transition-[left,width] duration-500 ease-out-soft', !pill && 'hidden')}
         style={pill ?? undefined}
       />
       {options.map((o) => (
@@ -139,7 +139,7 @@ export function Segmented<T extends string>({
           title={o.title}
           onClick={() => onChange(o.v)}
           className={clsx(
-            'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[8px] font-medium',
+            'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium',
             size === 'sm' ? 'h-7 px-2.5 text-[12px]' : 'h-8 px-3 text-[13px]',
             full && 'flex-1',
             value === o.v ? 'text-fg' : 'text-fg-3 hover:text-fg-2',
@@ -242,7 +242,7 @@ export function Sheet({
         ref={panel}
         tabIndex={-1}
         className={clsx(
-          'relative flex max-h-[92dvh] w-full flex-col rounded-t-[22px] border border-line bg-elev text-fg shadow-float outline-none sm:rounded-[18px]',
+          'relative flex max-h-[92dvh] w-full flex-col rounded-t-3xl border border-line bg-elev text-fg shadow-float outline-none sm:rounded-3xl',
           wide ? 'sm:max-w-3xl' : 'sm:max-w-lg',
           // phones: slides up on the spring; desktop: settles in from just above
           open ? 'animate-sheet-in sm:animate-pop' : 'animate-sheet-out sm:animate-fade-out',
@@ -385,10 +385,10 @@ export function Menu({
             <div
               ref={menu}
               role="menu"
-              className="animate-pop fixed z-[71] overflow-y-auto rounded-[14px] border border-line bg-elev p-1 text-fg shadow-float"
+              className="animate-pop fixed z-[71] overflow-y-auto rounded-2xl border border-line bg-elev p-1 text-fg shadow-float"
               style={pos}
             >
-              {header && <div className="px-2.5 pt-1.5 pb-1 text-[11.5px] font-medium text-fg-3">{header}</div>}
+              {header && <div className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">{header}</div>}
               {items.map((it, i) => (
                 <button
                   key={it.key}
@@ -401,7 +401,7 @@ export function Menu({
                     setOpen(false)
                   }}
                   className={clsx(
-                    'flex w-full items-center gap-2.5 rounded-[9px] px-2.5 py-2 text-left text-[13.5px] disabled:opacity-40',
+                    'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13.5px] disabled:opacity-40',
                     i === active && 'bg-hover',
                     it.danger ? 'text-danger' : 'text-fg',
                   )}
@@ -429,7 +429,7 @@ export function Spinner({ className }: { className?: string }) {
 export function Empty({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center px-6 py-14 text-center">
-      {icon && <div className="mb-4 flex size-11 items-center justify-center rounded-[12px] border border-line bg-sunken text-fg-3">{icon}</div>}
+      {icon && <div className="mb-4 flex size-11 items-center justify-center rounded-2xl border border-line bg-sunken text-fg-3">{icon}</div>}
       <p className="text-[15px] font-semibold">{title}</p>
       {children && <div className="mt-1.5 max-w-sm text-[13.5px] leading-relaxed text-fg-2">{children}</div>}
       {action && <div className="mt-5">{action}</div>}
@@ -439,8 +439,8 @@ export function Empty({ icon, title, children, action }: { icon?: ReactNode; tit
 
 export function SectionLabel({ children, right }: { children: ReactNode; right?: ReactNode }) {
   return (
-    <div className="mb-2.5 flex items-center gap-2 px-0.5">
-      <h2 className="text-[11.5px] font-medium tracking-[0.06em] text-fg-3 uppercase">{children}</h2>
+    <div className="mb-2.5 flex items-center gap-2 px-0.5 md:mb-3">
+      <h2 className="text-[16px] font-semibold tracking-[-0.025em] text-fg">{children}</h2>
       {right && <div className="ml-auto">{right}</div>}
     </div>
   )
@@ -448,7 +448,7 @@ export function SectionLabel({ children, right }: { children: ReactNode; right?:
 
 export function Meter({ value, tone = 'fg', className }: { value: number; tone?: 'fg' | 'accent' | 'auto'; className?: string }) {
   const v = Math.max(0, Math.min(100, value))
-  const color = tone === 'accent' ? 'var(--accent)' : tone === 'auto' ? (v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--ok)') : 'var(--fg)'
+  const color = tone === 'accent' ? 'var(--accent)' : tone === 'auto' ? (v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--fg)') : 'var(--fg)'
   return (
     <div className={clsx('h-1.5 overflow-hidden rounded-full bg-line', className)}>
       <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${v}%`, background: color }} />
