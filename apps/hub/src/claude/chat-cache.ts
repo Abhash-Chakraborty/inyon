@@ -9,6 +9,11 @@ import type { SavedMeta } from './transcript.ts'
  * that dropped off (NetBird or Tailscale down, laptop asleep) can still be read meanwhile.
  */
 export const KEEP = 300
+/**
+ * Bumped when reading a transcript changes how the summary is built (tasks, queue, subagents), so
+ * a chat saved by an older reader is read again from the start instead of carrying its mistakes on
+ */
+export const READER = 2
 const storeKey = (key: string) => `chats/${keyPart(key)}`
 
 export interface CachedChat {
@@ -21,7 +26,7 @@ export interface CachedChat {
   savedAt: number
   /** where reading the transcript stopped, with the summary built up to there */
   /** `older`: the file offset of the line the first saved message came from (0: nothing before it) */
-  at?: { offset: number; seq: number; codex: boolean; agent?: AgentKind; meta: SavedMeta; older?: number }
+  at?: { offset: number; seq: number; codex: boolean; agent?: AgentKind; meta: SavedMeta; older?: number; reader?: number }
 }
 
 export function loadChat(key: string): CachedChat | undefined {

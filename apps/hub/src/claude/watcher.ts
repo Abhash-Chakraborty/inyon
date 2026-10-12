@@ -17,7 +17,7 @@ import { loadMeta, newMeta, normalize, saveMeta, type TranscriptMeta } from './t
 import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
-import { KEEP as CACHE_KEEP, loadChat, saveChat } from './chat-cache.ts'
+import { KEEP as CACHE_KEEP, READER, loadChat, saveChat } from './chat-cache.ts'
 import { metaCommand, parseSize, rangeCommand, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
 
 const DEBUG = typeof process !== 'undefined' && !!process.env?.TETHER_DEBUG
@@ -158,7 +158,7 @@ class ChatWatcher {
     const at = cached.at
     // a Claude chat saved before long conversations opened on their last stretch doesn't say where
     // its first message is in the file; reading it afresh is quick now, scrolling up from it isn't
-    const outdated = at && !at.codex && at.agent !== 'copilot' && at.older === undefined
+    const outdated = (at && !at.codex && at.agent !== 'copilot' && at.older === undefined) || at?.reader !== READER
     if (at && !outdated && cached.transcript && cached.items.length && (!agent?.transcriptPath || agent.transcriptPath === cached.transcript)) {
       try {
         const meta = loadMeta(at.meta)
@@ -219,7 +219,7 @@ class ChatWatcher {
       older = first < this.items.length ? line(first) : undefined
       if (older === undefined) first = Math.max(0, this.items.length - CACHE_KEEP)
     }
-    const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta), older } : undefined
+    const at = this.reader && this.transcript ? { offset: this.reader.offset, seq: this.seq, codex: this.codex, agent: this.agent, meta: saveMeta(this.meta), older, reader: READER } : undefined
     if (!at && !this.onRemoteHost()) return
     saveChat(this.key, { sessionId: this.info.sessionId, transcript: this.transcript, proc: this.proc, info: this.info, items: this.items.slice(first), at })
   }
