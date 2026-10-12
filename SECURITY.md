@@ -14,10 +14,10 @@ agents run as. Treat the hub like an SSH jump host.
 - **Only its own names.** The hub doesn't answer browsers that reach it under a public domain it
   wasn't told about (`INYON_ALLOWED_HOSTS`), so a web page can't point its own domain at your
   hub (DNS rebinding) and use it from your browser.
-- **Laptops connect out, not in.** Machines paired with `tether-node` open an outbound connection
+- **Laptops connect out, not in.** Machines running `inyon` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
-  revokes it. A token no machine has used stops working after a day. `tether-node` refuses to send its token over plain HTTP unless the hub is on a
+  revokes it. A token no machine has used stops working after a day. `inyon` refuses to send its token over plain HTTP unless the hub is on a
   private address.
 - **Servers can use SSH.** The hub uses your existing `ssh` config, keys and known hosts. It never
   stores SSH keys.
@@ -34,12 +34,12 @@ with a terminal app that has your keys.
 - **Nothing in between.** The app connects straight to each server over SSH. No relay or hub sees
   the traffic.
 
-## Laptops paired with `tether-node pair`
+## Laptops paired with `inyon pair`
 
-A paired phone gets a shell on the laptop as the user running `tether-node`, the same as SSH.
+A paired phone gets a shell on the laptop as the user running `inyon`, the same as SSH.
 
 - **The pairing code is the secret.** It holds a one-time code that works for 10 minutes and for
-  one phone. Don't share a screenshot of it. Pairing again or `tether-node forget` revokes a phone.
+  one phone. Don't share a screenshot of it. Pairing again or `inyon forget` revokes a phone.
 - **End-to-end encrypted.** Phone and laptop run Noise IK (X25519, ChaCha20-Poly1305, SHA-256).
   The phone already knows the laptop's key from the code, so a tunnel, relay or network in between
   can't read or change the traffic, or stand in for the laptop. The laptop only lets in phone keys
@@ -49,7 +49,7 @@ A paired phone gets a shell on the laptop as the user running `tether-node`, the
   until the handshake proves a paired phone. `--lan` also listens on the local network.
 - **Addresses are signed.** The laptop publishes where it can be reached as a pkarr record signed
   by its own key. The record names addresses only; it says nothing about you or your sessions.
-- **Keys on the laptop** live in `~/.tether-node/` (`identity.json`, `phones.json`), readable only
+- **Keys on the laptop** live in `~/.inyon/node/` (`identity.json`, `phones.json`), readable only
   by you. The phone derives its link key from its own ed25519 key in the Android Keystore.
 
 ## What Inyon changes on a machine

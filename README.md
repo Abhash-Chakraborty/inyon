@@ -46,7 +46,7 @@ A small hub runs on one machine you trust. It talks to each machine in one of th
 | Machine | How the hub reaches it |
 |---|---|
 | The hub's own machine | Directly |
-| A laptop or desktop | It runs `tether-node`, which connects **out** to the hub. No open ports. |
+| A laptop or desktop | It runs `inyon`, which connects **out** to the hub. No open ports. |
 | A server | SSH, using your existing `~/.ssh/config`, keys and jump hosts |
 
 The Android app works without a hub. It runs the same core on the phone and connects to your
@@ -77,7 +77,16 @@ Agents never know Inyon is there. If you close Inyon, nothing breaks.
 
 ## Quick start
 
-You need [Bun](https://bun.sh) 1.3+, pnpm and tmux on the hub machine.
+On Linux or macOS, this installs the hub as one program and keeps it running as a user service:
+
+```sh
+curl -fsSL https://github.com/Abhash-Chakraborty/inyon-releases/releases/latest/download/get.sh | sh -s -- --hub
+```
+
+It prints the address to open and the setup code. Settings like `PORT`, `BIND` or `TLS_CERT` go
+in `~/.inyon/hub.env`, one `NAME=value` per line.
+
+To run it from source instead, you need [Bun](https://bun.sh) 1.3+, pnpm and tmux:
 
 ```sh
 git clone https://github.com/Abhash-Chakraborty/inyon.git
@@ -98,7 +107,10 @@ put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add tha
 ## Updating
 
 Nothing updates by itself. When a new release is out, Settings shows *Update available* under
-Updates. Tap *Update*, or run this in the folder you cloned:
+Updates. A hub installed with `get.sh --hub` updates with *Update* or `inyon update`: it
+downloads the release, checks it against SHA256SUMS, swaps it in and restarts, and goes back to
+the old one if the new one doesn't start. A hub installed from source updates with *Update* too, or
+run this in the folder you cloned:
 
 ```sh
 pnpm hub:update
@@ -135,8 +147,8 @@ on your other devices.
 ## Adding machines
 
 **Laptops and desktops:** *Add a machine → This device connects to Inyon.* Copy the one-line
-command onto that machine. It installs a small user service (and Bun, if missing). No sudo and no
-open ports.
+command onto that machine. It downloads the `inyon` program from the hub, checks it, and runs it as
+a small user service. No sudo and no open ports.
 
 **Servers:** *Add a machine → Connect over SSH* with `user@host` or an alias from the hub's
 `~/.ssh/config`. The machine only needs tmux.
@@ -181,7 +193,7 @@ sign-in and the terminal work as they do on Linux. psmux runs each session in it
 the terminal there is drawn from the pane's screen instead of a second tmux client. It shows what
 is on screen now; the laptop's own scrollback stays on the laptop.
 
-It downloads `tether-node`, checks it against the release's SHA256SUMS and prints a QR code. In
+It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In
 the app, tap *Add a computer*, then *Scan the code*. The computer stays paired until you remove it.
 
 Can't scan it, say because the SSH session is on the same phone? The terminal also prints a
@@ -190,23 +202,28 @@ and the computer publishes a record under it naming its real key and addresses, 
 it without a VPN. The code travels inside the encrypted channel, works once for 10 minutes, and
 five wrong tries cancel it.
 
-Setup also installs `tether-node` as a background service, so it comes back after a restart: a
-systemd user unit on Linux, launchd on macOS and a logon task on Windows. A box without systemd
-user services gets a background process and an `@reboot` cron line instead. `tether-node
-uninstall` removes the service and leaves your pairings alone.
+Setup also installs `inyon` as a background service, so it comes back after a restart: a systemd
+user unit on Linux, launchd on macOS and a logon task on Windows. A box without systemd user
+services gets a background process and an `@reboot` cron line instead. `inyon uninstall` removes
+the service and leaves your pairings alone.
 
-To update, run `tether-node update`. It downloads the newest release, checks it against
-SHA256SUMS, swaps it in and restarts the background service. If the new version doesn't start,
-the old one comes back. When a computer's tether-node is behind, its page in the app shows
-*Update*, which runs the same command; nothing updates without that tap. A version from before
-`tether-node update` existed updates by running the setup command once more.
+To update, run `inyon update`. It downloads the newest release, checks it against SHA256SUMS,
+swaps it in and restarts the background service. If the new version doesn't start, the old one
+comes back. When a computer's inyon is behind, its page in the app shows *Update*, which runs the
+same command; nothing updates without that tap.
+
+Before 0.7.0 the program was called `tether-node`. A computer set up then updates the same way. A
+few minutes after the new version starts, it moves its service to inyon's name and its files from
+`~/.tether-node` to `~/.inyon/node`. A version from before `tether-node update` existed updates by
+running the setup command once more.
 
 A machine paired with a hub updates from that hub instead, with the same command or the *Update*
 button on its page under *Machines*. The button works for any version, even one without the
 command: the hub sends a short script that checks the download against the hub's checksum before
-it replaces anything.
+it replaces anything. A Linux or macOS machine added with tether-node before 0.7.0 ran it as a Bun
+script; run the *Add a machine* command there once more instead.
 
-`tether-node` opens a free Cloudflare quick tunnel, so the phone reaches the computer from any
+`inyon` opens a free Cloudflare quick tunnel, so the phone reaches the computer from any
 network without an account or an open port. Phone and computer talk over Noise (the IK pattern,
 X25519 and ChaCha20-Poly1305), so the tunnel only ever carries ciphertext. The tunnel's address
 changes when it restarts, so the computer publishes its current addresses under its own key with
@@ -215,8 +232,8 @@ the signature check. `--lan` also answers on the local network, which is faster 
 
 The binaries for Linux, macOS and Windows are built by `.github/workflows/node.yml` and published
 to [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases). From a checkout,
-`bun apps/node/tether-node.ts pair` does the same. `tether-node phones` lists paired phones and
-`tether-node forget <name>` unpairs one.
+`bun apps/node/inyon.ts pair` does the same. `inyon phones` lists paired phones and
+`inyon forget <name>` unpairs one.
 
 ### A server over SSH
 
@@ -244,7 +261,7 @@ GitHub Actions builds it (`.github/workflows/android.yml`). Every push to `main`
 attached. On the phone, open the release, download the APK and install it. Later builds install
 over it and keep your servers. Each release's APK also goes to
 [inyon-releases](https://github.com/Abhash-Chakraborty/inyon-releases) as `inyon-X.Y.Z.apk`
-(uploaded by hand, like `tether-node`), which is where the app looks for updates.
+(uploaded by hand), which is where the app looks for updates.
 
 Builds are signed with your own key: the secrets `ANDROID_KEYSTORE_BASE64` (the keystore, base64)
 and `ANDROID_KEYSTORE_PASSWORD`, plus `ANDROID_KEY_PASSWORD` for a JKS with a separate key
@@ -306,7 +323,7 @@ cd apps/hub && bun test
 apps/hub           Bun server: machines, tmux, agent readers, API, WebSocket
                    (src/phone runs the same core inside the Android app)
 apps/web           React + Vite app (also served by the hub)
-apps/node          tether-node, the outbound connector for laptops
+apps/node          the inyon program: the phone link, the hub connection, and the hub itself
 apps/mobile        Capacitor shell for the Android and iOS apps
 packages/protocol  types and the agent registry shared by hub and app
 ```
