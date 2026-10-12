@@ -18,3 +18,13 @@ test('names you configure are allowed, and * turns the check off', () => {
   expect(allowedHosts({ INYON_ALLOWED_HOSTS: '*' })('evil.example')).toBe(true)
   expect(allowedHosts({}, 'hub.example.org')('hub.example.org:4777')).toBe(true)
 })
+
+test("this machine's own name on a private network with its own domain", () => {
+  const found = new Set<string>()
+  const ok = allowedHosts({}, '127.0.0.1', found)
+  expect(ok('laptop.hs.example.com')).toBe(false)
+  // found as the hub starts, after the check was made
+  found.add('laptop.hs.example.com')
+  expect(ok('laptop.hs.example.com:4777')).toBe(true)
+  expect(ok('other.hs.example.com')).toBe(false)
+})

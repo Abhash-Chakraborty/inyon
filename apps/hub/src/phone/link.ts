@@ -33,6 +33,16 @@ interface Conn {
   lastError?: string
 }
 
+/**
+ * The addresses this page can open. A web page served over https can't open plain ws:// (the
+ * LAN and private network addresses), and newer Chrome asks about "devices on your local network"
+ * before it refuses, so a browser skips them. The Android app allows them, and so does the hub.
+ */
+export function usable(urls: string[], page: { protocol?: string; native?: boolean } = here()) {
+  return page.protocol === 'https:' && !page.native ? urls.filter((u) => !u.startsWith('ws://')) : urls
+}
+const here = () => ({ protocol: (globalThis as { location?: { protocol: string } }).location?.protocol, native: !!(globalThis as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.() })
+
 /** Opens a channel through the first address that answers; LAN and tunnel race, relays come last. */
 async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: string[]; hello: object }) {
   const machineKey = noiseKeyOf(o.id)
@@ -75,12 +85,12 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
   const tried = new Set<string>()
   try {
     o.urls.forEach((u) => tried.add(u))
-    return { ...(await firstOf(o.urls, DIRECT_MS)), urls: o.urls }
+    return { ...(await firstOf(usable(o.urls), DIRECT_MS)), urls: o.urls }
   } catch (err) {
     if (err instanceof LinkError && err.code !== 'TIMEOUT' && err.code !== 'CLOSED') throw err
   }
   const found = await resolve(o.id).catch(() => undefined)
-  const fresh = (found?.urls ?? []).filter((u) => !tried.has(u))
+  const fresh = usable((found?.urls ?? []).filter((u) => !tried.has(u)))
   const relays = [...new Set([...(found?.relays ?? []), ...o.relays])]
   if (fresh.length) {
     try {

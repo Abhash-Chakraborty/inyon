@@ -6,7 +6,7 @@ import { generateKeyPair, parsePairLink } from '@inyon/link'
 import type { HostConfig } from '@inyon/protocol'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { nodeLinks } from '../hosts/node-link.ts'
-import { linkConnector } from './link.ts'
+import { linkConnector, usable } from './link.ts'
 
 // the phone's connector against the real inyon, in a throwaway home on a LAN address
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-phone-link-'))
@@ -69,3 +69,11 @@ test('pairs from the code, runs commands, and reconnects after the laptop restar
   expect(await until(() => /isn't paired/.test(nodeLinks.why('laptop2') ?? ''))).toBe(true)
   links.forget('laptop2')
 }, 40_000)
+
+test('a browser page on https skips plain ws:// addresses; the Android app and the hub keep them', () => {
+  const urls = ['wss://abc.trycloudflare.com/link', 'ws://100.71.4.20:4780/link', 'ws://192.168.1.20:4780/link']
+  expect(usable(urls, { protocol: 'https:' })).toEqual(['wss://abc.trycloudflare.com/link'])
+  expect(usable(urls, { protocol: 'https:', native: true })).toEqual(urls)
+  expect(usable(urls, { protocol: 'http:' })).toEqual(urls)
+  expect(usable(urls, {})).toEqual(urls)
+})

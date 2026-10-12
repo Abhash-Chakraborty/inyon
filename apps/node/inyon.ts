@@ -6,7 +6,9 @@
  *   inyon pair                     show a code to pair the phone app with this machine
  *   inyon link [options]           run the phone link (pair starts it too):
  *       --lan / --no-lan           also answer on this machine's LAN addresses
+ *       --vpn / --no-vpn           also answer on Tailscale, NetBird, ZeroTier, WireGuard (on)
  *       --tunnel / --no-tunnel     open a free Cloudflare tunnel so any network works (on)
+ *       --url <wss://…>            publish an address of your own, like tailscale serve's (repeatable)
  *       --relay <url>              keep a connection to an Inyon relay (repeatable)
  *       --port <n>                 local port (4780)
  *   inyon phones                   list paired phones
@@ -26,6 +28,7 @@ import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { WEB_URL } from '@inyon/protocol'
+import { detectNetworks, LABEL } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { nodeDir, savedEnv } from './paths.ts'
@@ -219,6 +222,14 @@ function linkOptions(args: string[]): LinkConfig {
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!
     if (a === '--lan' || a === '--no-lan') c.lan = a === '--lan'
+    else if (a === '--vpn' || a === '--no-vpn') c.vpn = a === '--vpn'
+    else if (a === '--url' && args[i + 1]) {
+      const u = args[++i]!
+      if (!/^wss?:\/\/[^/]+\/link$/.test(u)) fail(`--url needs a WebSocket address ending in /link, like wss://laptop.tail1234.ts.net:8443/link, not ${u}`)
+      if (!given.has('url')) c.urls = []
+      given.add('url')
+      c.urls.push(u)
+    } else if (a === '--no-url') c.urls = []
     else if (a === '--tunnel' || a === '--no-tunnel') c.tunnel = a === '--tunnel'
     else if (a === '--port' && /^\d+$/.test(args[i + 1] ?? '')) c.port = Number(args[++i])
     else if (a === '--relay' && args[i + 1]) {
@@ -248,11 +259,13 @@ async function pair(args: string[]) {
   const service = running()
   if (!service) startLink(config)
   const { secret, short } = newPairing()
-  // wait for an address the phone can use (the tunnel takes a few seconds to come up)
-  const wanted = config.tunnel || config.lan || config.relays.length
+  // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
+  // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
+  const wanted = config.tunnel || config.lan || config.vpn || config.urls.length || config.relays.length
+  const enough = (s: { urls: string[]; relays: string[] }) => s.relays.length > 0 || (config.tunnel ? s.urls.some((u) => u.startsWith('wss://')) : s.urls.length > 0)
   for (let i = 0; wanted && i < 60; i++) {
     const s = currentState()
-    if (s && (s.urls.length || s.relays.length) && (service || s.pid === process.pid)) break
+    if (s && enough(s) && (service || s.pid === process.pid)) break
     await Bun.sleep(500)
   }
   const s = currentState()
@@ -300,6 +313,7 @@ async function setup() {
   } else console.log(`! Couldn't set up a background service (${svc.how}). Keep this window open instead.`)
   if (mux) console.log(`! ${mux}`)
   else console.log(WIN ? '✓ psmux (tmux for Windows) is installed' : '✓ tmux is installed')
+  if (loadConfig().vpn) for (const n of await detectNetworks()) console.log(`✓ ${LABEL[n.kind]}: the Android app on the same network connects straight to ${n.ip}`)
   await pair([])
   if (svc.ok) {
     console.log('Paired phones connect by themselves from now on. To pair another phone later, run `inyon pair`.')
@@ -339,7 +353,9 @@ const USAGE = `inyon ${VERSION}
   inyon pair                        show a code to pair the phone app with this machine
   inyon link [options]              run the phone link (pair starts it too)
     --lan / --no-lan                also answer on this machine's LAN addresses
+    --vpn / --no-vpn                also answer on Tailscale, NetBird, ZeroTier, WireGuard (on)
     --tunnel / --no-tunnel          open a free Cloudflare tunnel so any network works (on)
+    --url <wss://…> / --no-url      publish an address of your own (repeatable)
     --relay <url> / --no-relay      keep a connection to an Inyon relay (repeatable)
     --port <n>                      local port (4780)
   inyon phones                      list paired phones

@@ -2,6 +2,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { PRODUCT } from '@inyon/protocol'
+import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { VERSION } from './link.ts'
 import { nodeDir, readEnvFile } from './paths.ts'
 import { installService, uninstallService } from './service.ts'
@@ -69,5 +70,27 @@ async function install() {
     await Bun.sleep(250)
   }
   console.log(`\nOpen ${where} in a browser${code ? ` and enter the setup code ${code} to choose a password` : ' and sign in'}.`)
-  if (bind === '127.0.0.1') console.log('It answers on this machine only. To reach it from your phone, put it behind HTTPS (Tailscale Serve, Caddy) or set BIND in ' + hubEnvFile() + '.')
+  if (bind === '127.0.0.1' && !tls) console.log('\n' + reachAdvice(await detectNetworks(), Number(env.PORT || 4777), hubEnvFile()).join('\n'))
+}
+
+/**
+ * How to open a hub that answers on this machine only from a phone, for the private networks this
+ * machine is on: Tailscale's own HTTPS where it has it, the network address otherwise, and
+ * NetBird's reverse proxy for a public address.
+ */
+export function reachAdvice(nets: Network[], port: number, envFile: string): string[] {
+  if (!nets.length) return [`It answers on this machine only. To open it from your phone, put it behind HTTPS (Caddy, a tunnel) or set BIND in ${envFile}.`]
+  const lines = ['To open it from your phone:']
+  let plain = false
+  for (const n of nets) {
+    if (n.https) lines.push(`  ${LABEL[n.kind]}: run \`tailscale serve --bg ${port}\`, then open https://${n.https}`)
+    else {
+      plain = true
+      lines.push(`  ${LABEL[n.kind]}: add BIND=${n.ip} and INYON_ALLOW_HTTP=1 to ${envFile}, run \`inyon hub install\` again, then open http://${n.name ?? n.ip}:${port}`)
+    }
+    if (n.expose) lines.push(`  ${LABEL[n.kind]}, public HTTPS: run \`netbird expose ${port}\` and add the address it prints to INYON_ALLOWED_HOSTS in ${envFile}`)
+  }
+  // the network encrypts it either way; browsers still treat plain http as unsafe
+  if (plain) lines.push('Over plain http the browser won\'t install the app or show notifications; HTTPS lets it.')
+  return lines
 }

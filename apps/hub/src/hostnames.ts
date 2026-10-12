@@ -11,6 +11,8 @@ import os from 'node:os'
  *  - private DNS suffixes: Tailscale (.ts.net), NetBird (.netbird.cloud, .netbird.selfhosted),
  *    mDNS and home networks (.local, .lan, .internal, .home.arpa, .localhost)
  *  - this machine's hostname, the BIND address, and the hosts in INYON_ALLOWED_ORIGINS
+ *  - this machine's own name on its private networks (a Headscale or NetBird server with its own
+ *    domain), found as the hub starts (see networks.ts)
  *  - anything listed in INYON_ALLOWED_HOSTS (comma-separated, like `inyon.example.com`).
  *    Behind a reverse proxy on a public domain, add that domain here. `*` turns the check off.
  */
@@ -29,7 +31,7 @@ export function hostnameOf(host: string): string | undefined {
   }
 }
 
-export function allowedHosts(env: Record<string, string | undefined> = process.env, bind = env.BIND ?? '') {
+export function allowedHosts(env: Record<string, string | undefined> = process.env, bind = env.BIND ?? '', found: Set<string> = new Set()) {
   const names = new Set([...list(env.INYON_ALLOWED_HOSTS), os.hostname().toLowerCase(), bind.toLowerCase()].filter(Boolean))
   for (const origin of list(env.INYON_ALLOWED_ORIGINS)) {
     try {
@@ -43,6 +45,6 @@ export function allowedHosts(env: Record<string, string | undefined> = process.e
     if (!name) return false
     if (/^\d{1,3}(\.\d{1,3}){3}$/.test(name) || name.startsWith('[')) return true
     if (name === 'localhost' || !name.includes('.') || PRIVATE_SUFFIX.test(name)) return true
-    return names.has(name)
+    return names.has(name) || found.has(name)
   }
 }

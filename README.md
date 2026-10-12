@@ -117,9 +117,11 @@ The hub listens on `127.0.0.1:4777`. The first visit asks you to create a passwo
 setup code the hub prints when it starts (also in `~/.inyon/setup-code`). Change it later in
 Settings, or reset a forgotten one with `bun apps/hub/src/cli/set-password.ts`.
 
-Reach it from your phone over a private network (Tailscale, NetBird, WireGuard or your LAN), or
-put it behind an HTTPS reverse proxy. Behind a proxy on a public domain, add that domain to
-`INYON_ALLOWED_HOSTS`. `deploy/inyon-hub.service` keeps a source install running.
+Reach it from your phone over a private network (Tailscale, Headscale, NetBird, ZeroTier,
+WireGuard or your LAN), or put it behind an HTTPS reverse proxy. `inyon hub install` looks for
+these networks and prints what to run for each: `tailscale serve` where the tailnet has HTTPS,
+`netbird expose` for a public HTTPS address through NetBird's proxy, and otherwise `BIND` on the
+network's address. Behind a proxy on a public domain, add that domain to `INYON_ALLOWED_HOSTS`. `deploy/inyon-hub.service` keeps a source install running.
 
 ## Where everything runs
 
@@ -206,6 +208,20 @@ without an account or an open port. Phone and computer talk over Noise (IK, X255
 ChaCha20-Poly1305), so the tunnel only carries ciphertext. The computer publishes its current
 addresses under its own key with [pkarr](https://pkarr.org), and a forged record fails the
 signature check. `--lan` also answers on the local network, which is faster at home.
+
+On Tailscale, Headscale, NetBird, ZeroTier or WireGuard, `inyon` also answers on that network's
+address, and setup says which. The Android app on the same network connects straight to it, with
+no tunnel in between. Browsers only open `wss://` from a web page, so the web app keeps using the
+tunnel, or an HTTPS address you publish with `--url`. With Tailscale, for example:
+
+```sh
+tailscale serve --bg --https=8443 http://127.0.0.1:4780
+inyon pair --url wss://laptop.tail1234.ts.net:8443/link
+inyon install    # restarts the link with the new address
+```
+
+`--no-vpn` turns the private network address off. It starts off on Windows, where the firewall
+would ask about it.
 
 Setup installs `inyon` as a background service: a systemd user unit on Linux, launchd on macOS, a
 logon task on Windows, or a background process with an `@reboot` cron line where there's no

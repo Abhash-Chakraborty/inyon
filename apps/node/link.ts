@@ -6,6 +6,7 @@ import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
+import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
 import { binDir, nodeDir } from './paths.ts'
 
@@ -13,8 +14,9 @@ import { binDir, nodeDir } from './paths.ts'
  * Lets the Inyon phone app reach this machine directly, with no hub. The phone pairs once by
  * scanning a code (`inyon pair`), then connects over an end-to-end encrypted link (Noise)
  * through whichever way works: a free Cloudflare quick tunnel this machine opens by itself (so
- * it works from any network), this machine's LAN address, or a relay you run. The tunnel and the
- * relay only ever carry ciphertext. The tunnel's address changes when it restarts, so the
+ * it works from any network), its address on a private network (Tailscale, NetBird, ZeroTier,
+ * WireGuard), its LAN address, an address you publish yourself, or a relay you run. The tunnel and
+ * the relay only ever carry ciphertext. The tunnel's address changes when it restarts, so the
  * machine publishes its current addresses under its own key (pkarr) and the phone looks them up.
  */
 
@@ -29,10 +31,18 @@ export interface LinkConfig {
   tunnel: boolean
   /** also listen on this machine's LAN addresses (otherwise only the tunnel and relays reach it) */
   lan: boolean
+  /**
+   * also listen on its private network addresses (Tailscale, NetBird, ZeroTier, WireGuard). Only
+   * devices the network lets in reach them. Off on Windows, where listening there asks the
+   * firewall each time.
+   */
+  vpn: boolean
+  /** addresses of your own to publish, like wss://laptop.tail1234.ts.net:8443/link */
+  urls: string[]
   port: number
 }
 
-export const DEFAULT_CONFIG: LinkConfig = { relays: [], tunnel: true, lan: false, port: 4780 }
+export const DEFAULT_CONFIG: LinkConfig = { relays: [], tunnel: true, lan: false, vpn: process.platform !== 'win32', urls: [], port: 4780 }
 
 interface Phone {
   name: string
@@ -215,13 +225,13 @@ async function session(id: Identity, wire: Wire, via: string) {
   }
 }
 
-// ---------- the local listener (behind the tunnel, and on the LAN if asked) ----------
+// ---------- the local listener (behind the tunnel, on private networks, on the LAN if asked) ----------
 
-function listen(id: Identity, config: LinkConfig) {
+function listen(id: Identity, hostname: string, port: number) {
   type Data = { wire: Wire }
   const server = Bun.serve<Data>({
-    hostname: config.lan ? '0.0.0.0' : '127.0.0.1',
-    port: config.port,
+    hostname,
+    port,
     fetch(req, srv) {
       const url = new URL(req.url)
       if (url.pathname === '/link') {
@@ -434,12 +444,21 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
 
 export function startLink(config: LinkConfig) {
   const id = identity()
-  listen(id, config)
+  listen(id, config.lan ? '0.0.0.0' : '127.0.0.1', config.port)
   let tunnelUrl: string | undefined
   let lastPublished = ''
+  // private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
+  const vpn = new Map<string, { stop(): void }>()
 
   const update = () => {
-    const urls = [...(tunnelUrl ? [tunnelUrl] : []), ...(config.lan ? lanUrls(config.port) : [])]
+    const urls = [
+      ...new Set([
+        ...(tunnelUrl ? [tunnelUrl] : []),
+        ...config.urls,
+        ...[...vpn.keys()].map((ip) => `ws://${ip}:${config.port}/link`),
+        ...(config.lan ? lanUrls(config.port) : []),
+      ]),
+    ]
     const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION }
     writeJson('state.json', state)
     const key = JSON.stringify({ urls, relays: config.relays })
@@ -461,6 +480,34 @@ export function startLink(config: LinkConfig) {
     })
   }
   for (const r of config.relays) relay(id, r, () => update())
+
+  // networks come and go (NetBird often connects after this starts), so look again now and then
+  const networks = async () => {
+    const nets = await detectNetworks().catch(() => [] as Network[])
+    const ips = new Set(nets.map((n) => n.ip))
+    let changed = false
+    for (const [ip, server] of vpn) {
+      if (ips.has(ip)) continue
+      server.stop()
+      vpn.delete(ip)
+      changed = true
+    }
+    for (const n of nets) {
+      if (vpn.has(n.ip)) continue
+      try {
+        vpn.set(n.ip, config.lan ? { stop() {} } : listen(id, n.ip, config.port))
+        console.log(`${LABEL[n.kind]}: answering on ${n.ip}`)
+        changed = true
+      } catch (err) {
+        console.error(`${LABEL[n.kind]}: can't listen on ${n.ip}:${config.port}: ${(err as Error).message}`)
+      }
+    }
+    if (changed) update()
+  }
+  if (config.vpn) {
+    void networks()
+    setInterval(() => void networks(), 2 * 60_000)
+  }
   update()
   // pkarr records age out of the DHT after a few hours
   setInterval(() => {

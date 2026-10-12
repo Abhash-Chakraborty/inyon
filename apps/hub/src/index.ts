@@ -7,6 +7,7 @@ import { checkPassword, hasPassword, passwordProblem, setPassword } from './pass
 import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
+import { detectNetworks } from './networks.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
@@ -52,7 +53,9 @@ function sameOrigin(req: Request) {
  * Sent to a name the hub answers to (see hostnames.ts), including the one a local proxy forwards.
  * A signed-in browser passes under any name: its cookie can only have been set by the hub itself.
  */
-const knownHost = allowedHosts(process.env, BIND)
+const networkNames = new Set<string>()
+void detectNetworks().then((nets) => nets.forEach((n) => n.name && networkNames.add(n.name)), () => {})
+const knownHost = allowedHosts(process.env, BIND, networkNames)
 const refusedHosts = new Set<string>()
 function rightHost(req: Request) {
   if (isAuthed(req)) return true
