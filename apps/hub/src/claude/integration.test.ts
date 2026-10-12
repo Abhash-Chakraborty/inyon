@@ -155,10 +155,34 @@ describe('installIntegration', () => {
       clearTimeout(timer)
       expect((await new Response(p.stdout).text()).trim()).toBe('drawn')
     }
-    // and healing the integration forgets it
+    // healing the integration puts back the status line from before Inyon, or none
+    const backup = join(home, '.claude/settings.json.inyon-backup')
+    writeFileSync(backup, JSON.stringify({ statusLine: { type: 'command', command: 'bash ~/.claude/statusline.sh' } }))
     writeFileSync(join(home, '.inyon/statusline.orig'), '~/.inyon/statusline.sh\n')
     await installIntegration(sandboxHost)
+    expect(readFileSync(join(home, '.inyon/statusline.orig'), 'utf8')).toBe('bash ~/.claude/statusline.sh\n')
+    writeFileSync(backup, JSON.stringify({ statusLine: { type: 'command', command: 'node C:/Users/me/.claude/statusline.js' } }))
+    writeFileSync(join(home, '.inyon/statusline.orig'), '~/.tether/statusline.sh\n')
+    await installIntegration(sandboxHost)
     expect(readFileSync(join(home, '.inyon/statusline.orig'), 'utf8')).toBe('')
+    rmSync(backup)
+  })
+
+  test('installing again, or upgrading from Tether, keeps your own status line', async () => {
+    const { installIntegration } = await import('./integration.ts')
+    const settingsFile = join(home, '.claude/settings.json')
+    const orig = join(home, '.inyon/statusline.orig')
+    for (const wrapper of ['~/.inyon/statusline.sh', '~/.tether/statusline.sh']) {
+      writeFileSync(settingsFile, JSON.stringify({ statusLine: { type: 'command', command: wrapper, padding: 0 } }))
+      writeFileSync(orig, 'bash ~/.claude/statusline.sh\n')
+      await installIntegration(sandboxHost)
+      expect(readFileSync(orig, 'utf8')).toBe('bash ~/.claude/statusline.sh\n')
+      expect(JSON.parse(readFileSync(settingsFile, 'utf8')).statusLine).toEqual({ type: 'command', command: '~/.inyon/statusline.sh', padding: 0 })
+    }
+    // and it is what the wrapper draws
+    writeFileSync(orig, 'echo my bar\n')
+    const r = Bun.spawnSync(['sh', join(home, '.inyon/statusline.sh')], { stdin: Buffer.from(payload('s1')), env: { HOME: home, PATH: process.env.PATH!, TMUX_PANE: '%9' } })
+    expect(r.stdout.toString().trim()).toBe('my bar')
   })
 })
 

@@ -117,6 +117,20 @@ async function writeFile(host: Host, path: string, content: string, mode = '600'
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not write ~/${path}`)
 }
 
+/** The status line command in the settings backup made when Inyon was first installed, if it can run here. */
+async function statusBeforeInyon(host: Host): Promise<string> {
+  for (const f of ['settings.json.inyon-backup', 'settings.json.tether-backup']) {
+    const r = await host.exec(`cat "$HOME/.claude/${f}" 2>/dev/null`)
+    if (!r.stdout.trim()) continue
+    try {
+      const sl = JSON.parse(r.stdout).statusLine
+      const cmd = sl?.type === 'command' && typeof sl.command === 'string' ? sl.command.trim() : ''
+      return cmd && !isOurStatus(cmd) && !windowsPath(cmd) ? cmd : ''
+    } catch {}
+  }
+  return ''
+}
+
 const windowsPath = (cmd: string) => /(^|[\s"'])[A-Za-z]:[\\/]/.test(cmd)
 
 export async function installIntegration(host: Host) {
@@ -134,9 +148,13 @@ export async function installIntegration(host: Host) {
     settings.statusLine = { ...(sl ?? { padding: 0 }), type: 'command', command: STATUS_CMD }
   } else {
     if (sl.command !== STATUS_CMD) settings.statusLine = { ...sl, command: STATUS_CMD }
-    // a saved "own" status line that is this wrapper again would start itself forever
+    // a saved "own" status line that is this wrapper again would start itself forever: use the one
+    // from before Inyon was installed instead, if there was one
     const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
-    if (isOurStatus(prev)) await writeFile(host, '.inyon/statusline.orig', '')
+    if (isOurStatus(prev)) {
+      const before = await statusBeforeInyon(host)
+      await writeFile(host, '.inyon/statusline.orig', before ? `${before}\n` : '')
+    }
   }
   settings.hooks ??= {}
   for (const ev of EVENTS) {
