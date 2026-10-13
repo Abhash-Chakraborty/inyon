@@ -20,6 +20,8 @@ export function AnimatedList({ items, className }: { items: Keyed[]; className?:
   const seen = useRef<Set<string>>(new Set())
   /** where each item was last time, by key */
   const rects = useRef<Map<string, DOMRect>>(new Map())
+  /** the list's own width last time: when it changes (the window settling at launch, a tablet turning) items reflow, they didn't move */
+  const width = useRef<number | undefined>(undefined)
   /** the content each item had last time, so a leaving one fades out looking as it did */
   const last = useRef<Map<string, ReactNode>>(new Map())
   const [leaving, setLeaving] = useState<Keyed[]>([])
@@ -50,13 +52,16 @@ export function AnimatedList({ items, className }: { items: Keyed[]; className?:
   useLayoutEffect(() => {
     const el = box.current
     if (!el) return
+    const w = el.getBoundingClientRect().width
+    const resized = width.current !== undefined && Math.abs(w - width.current) > 0.5
+    width.current = w
     const next = new Map<string, DOMRect>()
     for (const child of Array.from(el.children) as HTMLElement[]) {
       const key = child.dataset.key!
       const r = child.getBoundingClientRect()
       next.set(key, r)
       const was = rects.current.get(key)
-      if (!was || child.dataset.leaving) continue
+      if (!was || resized || child.dataset.leaving) continue
       const dx = was.left - r.left
       const dy = was.top - r.top
       if (!dx && !dy) continue
