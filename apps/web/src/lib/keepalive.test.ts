@@ -30,7 +30,7 @@ afterEach(() => {
 
 // the launch ask waits a moment in the app; not here
 timing.askAfterMs = 0
-const settle = () => new Promise((r) => setTimeout(r, 0))
+const settle = () => new Promise((r) => setTimeout(r, 10))
 
 test('stays connected unless turned off, asking for the notification permission first', async () => {
   const calls: string[] = []
