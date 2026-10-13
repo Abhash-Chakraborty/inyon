@@ -249,7 +249,7 @@ function HubUpdateRow() {
   )
 }
 
-/** The Android app: its version, the newest APK on GitHub, and Download. */
+/** The Android app: its version, the newest APK on the website, and Download. */
 function AppUpdateRow() {
   const [u, setU] = useState<AppUpdate | undefined>()
   const [failed, setFailed] = useState(false)

@@ -17,9 +17,15 @@ export const INSTALL_URL = 'https://inyon.abhashchakraborty.tech'
 /** The Android application id */
 export const APP_ID = 'tech.abhashchakraborty.inyon'
 
-/** The repository the app and the inyon program are downloaded from. */
+/** The repository every release is published on. */
 export const RELEASES_REPO = SOURCE_REPO
-export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`
+/**
+ * The website's copy of the newest release, where the app and the inyon program are downloaded
+ * from. Older releases stay on GitHub only.
+ */
+export const DOWNLOAD_URL = `${INSTALL_URL}/download`
+/** What that copy is: {"version":"0.14.0","tag":"v0.14.0","date":…,"files":[{name,size,sha256}…]} */
+export const LATEST_URL = `${DOWNLOAD_URL}/latest.json`
 
 /**
  * The files a release attaches for one system ("linux-x64", "windows-x64"). Release 0.13 depends
@@ -57,6 +63,36 @@ export function newerRelease(next: string, current: string): boolean {
   if (!a || !b) return false
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]
   return false
+}
+
+/** One file of the newest release, as latest.json lists it. */
+export interface ReleaseFile {
+  name: string
+  size?: number
+  sha256?: string
+}
+
+/**
+ * The newest release, from latest.json on the website: its version ("0.14.0") and its files,
+ * each downloaded from `${DOWNLOAD_URL}/<name>`. Throws when the site can't be reached or doesn't
+ * name a plain release number, so a prerelease or a broken file never counts as an update.
+ * latest.json isn't signed: it only says what is newest. What gets installed is checked on its
+ * own, by `inyon update` against the release's signed SHA256SUMS and by Android against the
+ * app's signing key.
+ */
+export async function fetchLatestRelease(get: typeof fetch = fetch): Promise<{ version: string; files: ReleaseFile[] }> {
+  const res = await get(LATEST_URL, { headers: { accept: 'application/json' } })
+  const host = new URL(LATEST_URL).host
+  if (!res.ok) throw new Error(`${host} answered ${res.status}`)
+  const body = (await res.json().catch(() => undefined)) as { version?: unknown; files?: unknown } | undefined
+  const version = typeof body?.version === 'string' ? body.version.trim().replace(/^v/, '') : ''
+  if (!parseRelease(version)) throw new Error(`${host} didn't name a release`)
+  const files: ReleaseFile[] = []
+  for (const f of Array.isArray(body?.files) ? body.files : []) {
+    if (typeof f?.name !== 'string' || !f.name) continue
+    files.push({ name: f.name, ...(typeof f.size === 'number' ? { size: f.size } : {}), ...(typeof f.sha256 === 'string' ? { sha256: f.sha256 } : {}) })
+  }
+  return { version, files }
 }
 
 /** The newest release among `versions` that is newer than `current`, if any. */

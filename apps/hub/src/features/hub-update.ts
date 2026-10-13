@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn as spawnChild } from 'node:child_process'
-import { RELEASES_API, VERSION, newerRelease, newestRelease } from '@inyon/protocol'
+import { VERSION, fetchLatestRelease, newerRelease, newestRelease } from '@inyon/protocol'
 import { inyonCommand, nodeDir } from '../../../node/paths.ts'
 
 /**
@@ -238,13 +238,12 @@ export function hubUpdater(o: HubUpdateOptions) {
     }
   }
 
-  /** the newest release, from the releases repo's API */
+  /** the newest release, from latest.json on the website */
   async function checkRelease() {
     let latest: string | undefined
     try {
-      const r = await get(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } })
-      const tag = r.ok ? String(((await r.json()) as { tag_name?: string })?.tag_name ?? '').replace(/^v/, '') : ''
-      if (newerRelease(tag, version)) latest = tag
+      const { version: newest } = await fetchLatestRelease(get)
+      if (newerRelease(newest, version)) latest = newest
     } catch {}
     return { current: version, latest, canUpdate: true, checkedAt: now() }
   }

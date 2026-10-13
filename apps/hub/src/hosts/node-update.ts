@@ -1,4 +1,4 @@
-import { newerRelease, RELEASES_API, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@inyon/protocol'
+import { fetchLatestRelease, newerRelease, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@inyon/protocol'
 import type { Host } from './host.ts'
 import { nodeLinks } from './node-link.ts'
 
@@ -66,7 +66,7 @@ export class NodeUpdates {
   private listeners = new Set<() => void>()
   /** the hub's script for an old Windows machine (platform and arch as it reports them), checksum filled in */
   private script?: (platform: string, arch: string) => Promise<string>
-  /** the newest release on GitHub, for phone-paired laptops */
+  /** the newest release on the website, for phone-paired laptops */
   latestRelease?: string
 
   constructor(private o = { pollMs: 3000, timeoutMs: 15 * 60_000, keepMs: 60_000, failedMs: 30 * 60_000 }) {}
@@ -174,10 +174,8 @@ export class NodeUpdates {
   watchReleases(get: typeof fetch = fetch, everyMs = 6 * 3600_000) {
     const check = async () => {
       try {
-        const r = await get(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } })
-        const tag = r.ok ? String(((await r.json()) as { tag_name?: string })?.tag_name ?? '') : ''
-        const version = tag.replace(/^v/, '')
-        if (/^\d+(\.\d+)*/.test(version) && version !== this.latestRelease) {
+        const { version } = await fetchLatestRelease(get)
+        if (version !== this.latestRelease) {
           this.latestRelease = version
           this.changed()
         }
