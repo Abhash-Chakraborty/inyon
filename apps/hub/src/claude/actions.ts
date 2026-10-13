@@ -1010,16 +1010,29 @@ export async function exitAgent(hostId: string, paneId: string, o: { end?: boole
     }
     registry.refresh(hostId, 300)
   }
+  // an agent that leaves the moment it is asked takes its pane with it, and the keystroke being
+  // checked on screen then finds no pane: that is the exit, not a failure
+  const left = async (err: unknown) => /can't find pane|no such pane/i.test(String((err as Error)?.message ?? err)) && !(await alive())
   const cmd = EXIT_COMMAND[a.kind]
   if (cmd && !(await currentScreen(hostId, paneId)).prompt) {
-    await sendKeys(host, paneId, ['C-u'])
-    await typeText(host, paneId, cmd, true)
+    try {
+      await sendKeys(host, paneId, ['C-u'])
+      await typeText(host, paneId, cmd, true)
+    } catch (err) {
+      if (!(await left(err))) throw err
+      return done()
+    }
     if (await waitGone(5000)) return done()
   }
   for (let i = 0; i < 2; i++) {
-    await sendKeys(host, paneId, ['C-c'])
-    await sleep(300)
-    await sendKeys(host, paneId, ['C-c'])
+    try {
+      await sendKeys(host, paneId, ['C-c'])
+      await sleep(300)
+      await sendKeys(host, paneId, ['C-c'])
+    } catch (err) {
+      if (!(await left(err))) throw err
+      return done()
+    }
     if (await waitGone(2500)) return done()
   }
   w?.draftSent()
