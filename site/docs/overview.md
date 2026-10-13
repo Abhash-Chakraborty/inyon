@@ -35,7 +35,7 @@ A session's title is, in order: the name you gave it, the agent's own title for 
 
 ## Starting a session
 
-Tap **+** (or press `N` on a keyboard) for a new session:
+Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 
 1. Pick the agent from those installed, or **Terminal** for a plain shell.
 2. Pick the machine.

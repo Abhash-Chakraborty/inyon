@@ -69,7 +69,8 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | Keys | Does |
 |---|---|
 | `Ctrl K` / `⌘ K` | Search and jump to a session |
-| `N` | New session |
+| `Alt N` / `⌥ N` | New session, even while typing a message (from 0.16; not in the terminal) |
+| `N` | New session, when you aren't typing |
 | `Enter` / `Shift Enter` | Send / new line |
 | `Esc` | Stop the agent (with an empty message box), close a sheet or menu |
 | `↑` `↓`, `Enter`, `Tab` | Move through and pick from menus, `/` and `@` lists |

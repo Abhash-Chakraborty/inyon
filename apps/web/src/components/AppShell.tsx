@@ -9,6 +9,7 @@ import { SessionTree } from './SessionTree.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
+import { keyLabel, shortcut } from '../lib/keys.ts'
 import { Waiting } from './ui/primitives.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
@@ -126,11 +127,11 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
         <button type="button" onClick={onSearch} className="mb-2 flex h-9 w-full items-center gap-2 rounded-full border border-line bg-elev px-3 text-[13px] text-fg-3 shadow-card hover:border-line-strong">
           <Search className="size-3.5" />
           Search or jump to…
-          <kbd className="ml-auto rounded-full border border-line px-2 font-mono text-[12px]">⌘K</kbd>
+          <kbd className="ml-auto rounded-full border border-line px-2 font-mono text-[12px]">{keyLabel('cmd', 'K')}</kbd>
         </button>
         <button type="button" onClick={onNew} className={item(false)}>
           <Plus className="size-4" /> New session
-          <kbd className="ml-auto font-mono text-[12px] text-fg-3">N</kbd>
+          <kbd className="ml-auto font-mono text-[12px] text-fg-3">{keyLabel('alt', 'N')}</kbd>
         </button>
         <NavLink to="/" end className={({ isActive }) => item(isActive)}>
           <LayoutGrid className="size-4" /> Overview
@@ -199,13 +200,11 @@ export function AppShell() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement)?.tagName) || (e.target as HTMLElement)?.isContentEditable || (e.target as HTMLElement)?.closest?.('.xterm')
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault()
-        setSearch(true)
-      } else if (!typing && !e.metaKey && !e.ctrlKey && e.key.toLowerCase() === 'n') {
-        setNewOpen(true)
-      }
+      const what = shortcut(e)
+      if (!what) return
+      e.preventDefault()
+      if (what === 'search') setSearch(true)
+      else setNewOpen(true)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
