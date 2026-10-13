@@ -208,7 +208,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     <Sheet
       open={open}
       onClose={onClose}
-      title="Add a computer"
+      title={hub || scannedHub ? 'Connect to a hub' : 'Add a computer'}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>

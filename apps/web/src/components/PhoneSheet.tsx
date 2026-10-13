@@ -91,7 +91,8 @@ export function PhoneSheet({ open, onClose }: { open: boolean; onClose: () => vo
           <p className="text-[13px] leading-relaxed text-fg-2">
             In the Inyon app, tap <span className="font-medium text-fg">Add</span>, then <span className="font-medium text-fg">Connect to a hub</span>, and scan this. The phone then reaches this hub and its machines itself, with no browser in between.
           </p>
-          <div className="mx-auto w-fit rounded-2xl border border-line bg-white p-3" dangerouslySetInnerHTML={{ __html: qr! }} aria-label="Pairing code" role="img" />
+          {/* the SVG comes with a viewBox only; the box gives it its size */}
+          <div className="mx-auto size-[220px] rounded-2xl border border-line bg-white p-2.5 [&>svg]:size-full" dangerouslySetInnerHTML={{ __html: qr! }} aria-label="Pairing code" role="img" />
           <div className="rounded-2xl border border-line bg-sunken px-4 py-3">
             <p className="text-[12.5px] text-fg-3">Can't scan it? In the app, type the hub's address and this code.</p>
             <div className="mt-2 grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 font-mono text-[14px]">
