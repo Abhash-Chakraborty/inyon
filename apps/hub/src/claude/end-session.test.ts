@@ -105,6 +105,22 @@ test('an agent is asked to exit first, then its pane closes', async () => {
   expect(await layout()).toEqual({ 'work:0': [a] })
 }, 20_000)
 
+test('an agent whose process the hub never saw is gone as soon as its pane is', async () => {
+  const log = `${dir}/agent.log`
+  const agent = `sh -c 'while read l; do [ "$l" = /exit ] && echo exited > ${log} && exit 0; done'`
+  const a = await start('new-session -d -s work -x 80 -y 20')
+  const b = await start('split-window -t work:0', agent)
+  current = await found(b, { kind: 'claude' })
+  // no process to ask kill -0 about: only tmux can say the pane is gone, and tmux display answers
+  // with nothing, and success, for a pane that no longer exists
+  spyOn(registry, 'agentProc').mockImplementation(() => undefined as any)
+  const t0 = Date.now()
+  expect(await endSession('end', b)).toEqual({ closed: 'pane' })
+  expect(Date.now() - t0).toBeLessThan(3000)
+  expect(readFileSync(log, 'utf8').trim()).toBe('exited')
+  expect(await layout()).toEqual({ 'work:0': [a] })
+}, 20_000)
+
 test("an agent that won't exit goes with its pane", async () => {
   const a = await start('new-session -d -s work -x 80 -y 20')
   // ignores /exit and Ctrl+C

@@ -90,7 +90,7 @@ async function ownPane(hostId: string, pane: string) {
   if (!session.startsWith(LOGIN_PREFIX)) throw new HttpError(404, 'That sign-in has ended')
   // the session is named inyon-login-<agent>-<random>
   const kind = AGENT_KINDS.find((k) => session.startsWith(`${LOGIN_PREFIX}${k}-`))
-  return { host, signInKind: kind }
+  return { host, signInKind: kind, session }
 }
 
 /** OpenCode's Clack provider/auth prompts have radio bullets, not numbered choices.
@@ -203,8 +203,9 @@ export async function answerSignIn(hostId: string, pane: string, b: { text?: str
 
 export async function stopSignIn(hostId: string, pane: string) {
   watched.delete(`${hostId} ${pane}`)
-  const owned = await ownPane(hostId, pane)
-  const { host } = owned
-  await host.exec(`tmux kill-session -t "$(tmux display-message -p -t ${shq(pane)} '#{session_name}')"`)
+  const { host, session } = await ownPane(hostId, pane)
+  // the session checked above, by its exact name: asking tmux again could come back empty if the
+  // pane has just gone, and kill-session with an empty target ends the most recent session instead
+  await host.exec(`tmux kill-session -t ${shq(`=${session}`)} 2>/dev/null; true`)
   registry.refresh(hostId, 0)
 }

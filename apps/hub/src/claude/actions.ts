@@ -950,7 +950,9 @@ export const respawnShell = (win: boolean, p: string, cwd?: string) =>
 /** tmux marks a pane dead a moment after its process is gone, and refuses to respawn it before that. */
 async function paneDead(host: { exec: (cmd: string) => Promise<{ stdout: string }> }, p: string) {
   for (let i = 0; i < 20; i++) {
-    if ((await host.exec(`tmux display -p -t ${p} '#{pane_dead}'`)).stdout.trim() === '1') return
+    // display answers even for a pane that's gone, with nothing: that's as done as dead
+    const [id, dead] = (await host.exec(`tmux display -p -t ${p} '#{pane_id} #{pane_dead}' 2>/dev/null`)).stdout.trim().split(' ')
+    if (!id || dead === '1') return
     await sleep(100)
   }
 }
@@ -975,9 +977,11 @@ export async function exitAgent(hostId: string, paneId: string, o: { end?: boole
   }
   const proc = registry.agentProc(hostId, paneId)
   // an agent that was its pane's own command takes the pane with it, and kill -0 can still answer
-  // for its pid a while after (a process not yet reaped), so a pane that's gone counts as gone too
+  // for its pid a while after (a process not yet reaped), so a pane that's gone counts as gone too.
+  // tmux display exits 0 for a pane that no longer exists and prints nothing, so the id it prints
+  // is what says the pane is there
   const alive = async () =>
-    (await host.exec(`tmux display -p -t ${p} '#{pane_id}' >/dev/null 2>&1${proc ? ` && kill -0 ${proc.pid} 2>/dev/null` : ''} && echo alive`)).stdout.includes('alive')
+    (await host.exec(`[ "$(tmux display -p -t ${p} '#{pane_id}' 2>/dev/null)" = ${p} ]${proc ? ` && kill -0 ${proc.pid} 2>/dev/null` : ''} && echo alive`)).stdout.includes('alive')
   const waitGone = async (ms: number) => {
     for (let t = 0; t < ms; t += 250) {
       await sleep(250)

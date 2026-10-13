@@ -1,6 +1,11 @@
-import { parseOpenCodeAuthMenu, parseOpenCodeAuthInput } from './signin.ts'
-import { expect, test } from 'bun:test'
+import { parseOpenCodeAuthMenu, parseOpenCodeAuthInput, stopSignIn } from './signin.ts'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { parseSignIn } from './signin.ts'
+import { registry } from '../hosts/registry.ts'
+import { LOGIN_PREFIX } from '../tmux/tmux.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 test('OpenCode API key prompt exposes a secret input without a login URL', () => {
   expect(parseOpenCodeAuthInput(['◇ Login method', '│ Manually enter API Key', '◆ Enter your API key', '│ _'])).toEqual({ label: 'Enter your API key', secret: true })
@@ -65,4 +70,24 @@ test('OpenCode next login-method prompt replaces the completed provider choice',
   expect(menu?.options.find((o) => o.selected)?.n).toBe(2)
   expect(parseOpenCodeAuthMenu(['◇ Login method', '│ API Key', '◆ Enter API Key', '│ _'])).toBeUndefined()
   expect(parseOpenCodeAuthMenu(['◇ Finished', '│ ○ Earlier option'])).toBeUndefined()
+})
+
+test('stopping a sign-in ends that session by its exact name, even if its pane has just gone', async () => {
+  const name = `${LOGIN_PREFIX}claude-k7q4`
+  const ran: string[] = []
+  const host = {
+    exec: async (cmd: string) => {
+      ran.push(cmd)
+      // the pane is there for the ownership check, and gone by the time anything asks again
+      const first = ran.filter((c) => c.includes('display')).length === 1
+      return { code: 0, stdout: cmd.includes('display') && first ? `${name}\n` : '', stderr: '' }
+    },
+  }
+  spyOn(registry, 'host').mockReturnValue(host as any)
+  spyOn(registry, 'refresh').mockImplementation(() => {})
+  await stopSignIn('h', '%7')
+  const kill = ran.find((c) => c.includes('kill-session'))!
+  expect(kill).toContain(`'=${name}'`)
+  // never an empty target, which tmux reads as the most recent session
+  expect(kill).not.toContain('$(')
 })
