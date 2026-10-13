@@ -92,8 +92,14 @@ test('machines that share a name are told apart by their hub', () => {
   localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h2', name: 'abhash-arm', url: 'http://100.97.188.112:47321', token: 't', pairedAt: 1 }]))
   const m = (id: string, name: string) => ({ config: { id, name } })
   expect(tellApart([m('local', 'abhash-arm'), m(hubHostId('h2', 'local'), 'abhash-arm'), m('db', 'db')]).map((h) => h.config.name)).toEqual(['abhash-arm', 'abhash-arm · 100.97.188.112:47321', 'db'])
-  // on a phone both come through hubs: the first keeps its name
-  expect(tellApart([m(hubHostId('h1', 'local'), 'abhash-arm'), m(hubHostId('h2', 'local'), 'abhash-arm')]).map((h) => h.config.name)).toEqual(['abhash-arm', 'abhash-arm · 100.97.188.112:47321'])
+  // on a phone both come through hubs, in whichever order they answer: the one paired first keeps its name
+  localStorage.setItem('inyon.hubs.v1', JSON.stringify([
+    { id: 'h1', name: 'abhash-arm', url: 'https://abhash-arm', token: 't', pairedAt: 1 },
+    { id: 'h2', name: 'abhash-arm', url: 'http://100.97.188.112:47321', token: 't', pairedAt: 2 },
+  ]))
+  const both = [m(hubHostId('h1', 'local'), 'abhash-arm'), m(hubHostId('h2', 'local'), 'abhash-arm')]
+  expect(tellApart(both).map((h) => h.config.name)).toEqual(['abhash-arm', 'abhash-arm · 100.97.188.112:47321'])
+  expect(tellApart(both.reverse()).map((h) => h.config.name)).toEqual(['abhash-arm · 100.97.188.112:47321', 'abhash-arm'])
   // a name nobody shares stays as it is
   expect(tellApart([m(hubHostId('h2', 'local'), 'abhash-arm')])[0]!.config.name).toBe('abhash-arm')
 })

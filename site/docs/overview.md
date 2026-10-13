@@ -27,7 +27,7 @@ Long-press a session card (or use its **⋯** menu) for **Open**, **Open termina
 
 - **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result.
 - **The sidebar** (tablet and desktop) shows every session in a tree: machine, then tmux session, then pane. Folding a branch is remembered, and a folded branch shows a dot when something inside it needs you. With more than eight panes, a filter box appears above the tree.
-- **Two machines with the same name**, such as two servers both called `ubuntu`, would look alike. From 0.15 the second one, if it comes through a paired hub, shows that hub's address after its name.
+- **Two machines with the same name**, such as two servers both called `ubuntu`, would look alike. From 0.15 the one you've had longer keeps its name, and the other, if it comes through a paired hub, shows that hub's address after it.
 
 ## Titles
 

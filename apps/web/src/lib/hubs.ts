@@ -60,13 +60,19 @@ export const isHubHost = (id: string) => id.startsWith(PREFIX)
 
 /**
  * Two machines with the same name (two hubs on one box, or two servers both called "ubuntu") look
- * the same in every list. A hub's machine named like one listed before it gets its hub's address after it.
+ * the same in every list. A hub's machine named like one you've had longer gets its hub's address after it.
  */
 export function tellApart<H extends { config: { id: string; name: string } }>(hosts: H[]): H[] {
-  const seen = new Set<string>()
+  // the machine had longest keeps its name: this hub's own, else the first paired hub's (on a
+  // phone every machine comes through a hub, and they answer in any order)
+  const since = (h: H) => splitHostId(h.config.id).hub?.pairedAt ?? 0
+  const keeps = new Map<string, H>()
+  for (const h of hosts) {
+    const k = keeps.get(h.config.name)
+    if (!k || since(h) < since(k)) keeps.set(h.config.name, h)
+  }
   return hosts.map((h) => {
-    // the first keeps its name: on a phone every machine comes through a hub
-    if (!seen.has(h.config.name)) return seen.add(h.config.name), h
+    if (keeps.get(h.config.name) === h) return h
     const hub = splitHostId(h.config.id).hub
     if (!hub) return h
     const where = hub.url.replace(/^https?:\/\//, '')
