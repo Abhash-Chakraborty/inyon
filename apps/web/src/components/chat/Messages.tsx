@@ -2,7 +2,7 @@ import { createContext, memo, useContext, useState } from 'react'
 import clsx from 'clsx'
 import {
   Clock3,
-  AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, Image as ImageIcon, Info, Layers, Lightbulb,
+  AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, File as FileIcon, Image as ImageIcon, Info, Layers, Lightbulb,
   Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
@@ -80,6 +80,10 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
   )
 })
 
+const IMAGE = /\.(png|jpe?g|gif|webp|heic|heif|avif|bmp|svg)$/i
+/** an upload's name as the person picked it: the hub adds <time>-<id>- in front (features.ts uploadPath) */
+export const uploadName = (path: string) => path.split('/').pop()!.replace(/^\d{6}-(?:[0-9a-f]{6}-)?/, '')
+
 /** Uploaded files show as chips instead of long paths. */
 function LinkedPaths({ text }: { text: string }) {
   const parts = text.split(/(@?\/[^\s]*\/\.inyon\/uploads\/[^\s]+)/g)
@@ -88,8 +92,8 @@ function LinkedPaths({ text }: { text: string }) {
       {parts.map((p, i) =>
         /\.inyon\/uploads\//.test(p) ? (
           <span key={i} className="mx-0.5 inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-elev/70 px-1.5 py-px align-baseline font-mono text-[12px] text-fg-2">
-            <ImageIcon className="size-3 shrink-0" />
-            <span className="truncate">{p.split('/').pop()!.replace(/^\d{6}-/, '')}</span>
+            {IMAGE.test(p) ? <ImageIcon className="size-3 shrink-0" /> : <FileIcon className="size-3 shrink-0" />}
+            <span className="truncate">{uploadName(p)}</span>
           </span>
         ) : (
           <span key={i}>{p}</span>
