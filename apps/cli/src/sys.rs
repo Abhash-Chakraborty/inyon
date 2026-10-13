@@ -46,10 +46,11 @@ pub enum Libc {
 }
 
 impl Libc {
-    /// Alpine says so in /etc/alpine-release; otherwise ldd names its C library, and musl's
-    /// dynamic loader has a name of its own. Anything else, and any other OS, counts as glibc.
+    /// Alpine says so in /etc/alpine-release. Elsewhere glibc's own loader decides: a glibc system
+    /// with the musl package installed has musl's loader too, and must still get the glibc engine.
+    /// Without either, ldd names its C library. Anything else, and any other OS, counts as glibc.
     pub fn current() -> Libc {
-        if cfg!(target_os = "linux") && is_musl() {
+        if cfg!(target_os = "linux") && is_musl(Path::new("/")) {
             Libc::Musl
         } else {
             Libc::Glibc
@@ -57,18 +58,26 @@ impl Libc {
     }
 }
 
-fn is_musl() -> bool {
-    if Path::new("/etc/alpine-release").exists() {
+/// The glibc dynamic loaders, by the paths distributions put them at.
+const GLIBC_LOADERS: &[&str] = &[
+    "lib64/ld-linux-x86-64.so.2",
+    "lib/ld-linux-aarch64.so.1",
+    "lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+    "lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+    "usr/lib64/ld-linux-x86-64.so.2",
+    "usr/lib/ld-linux-aarch64.so.1",
+];
+
+/// `root` is "/" except in tests.
+fn is_musl(root: &Path) -> bool {
+    if root.join("etc/alpine-release").exists() {
         return true;
+    }
+    if GLIBC_LOADERS.iter().any(|l| root.join(l).exists()) {
+        return false;
     }
     // musl's ldd says so on stderr and exits 1; run keeps both
-    if run(&["ldd", "--version"]).out.contains("musl") {
-        return true;
-    }
-    fs::read_dir("/lib").into_iter().flatten().flatten().any(|e| {
-        let name = e.file_name().to_string_lossy().into_owned();
-        name.starts_with("ld-musl-") && name.ends_with(".so.1")
-    })
+    root == Path::new("/") && run(&["ldd", "--version"]).out.contains("musl")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -302,6 +311,28 @@ mod tests {
         assert!(!r.ok);
         assert!(r.out.contains("isn't available here"));
         assert!(run(&["true"]).ok || cfg!(windows));
+    }
+
+    #[test]
+    fn alpine_is_musl_and_glibc_with_the_musl_package_is_still_glibc() {
+        let root = std::env::temp_dir().join(format!("inyon-libc-{}", std::process::id()));
+        let put = |rel: &str| {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, "").unwrap();
+        };
+        // Ubuntu with musl-tools: both loaders are there
+        put("lib/ld-musl-x86_64.so.1");
+        put("lib64/ld-linux-x86-64.so.2");
+        assert!(!is_musl(&root));
+        // Alpine says so whatever else is installed
+        put("etc/alpine-release");
+        assert!(is_musl(&root));
+        fs::remove_dir_all(&root).unwrap();
+        // nothing to go on, away from the real root: glibc
+        put("etc/hostname");
+        assert!(!is_musl(&root));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
