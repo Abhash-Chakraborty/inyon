@@ -2,9 +2,9 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { socket } from '../lib/socket.ts'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
-import { AGENTS, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
+import { AGENTS, chatKey, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
 import { paneFromSlug } from '../lib/api.ts'
-import { useStore } from '../lib/store.ts'
+import { hydrateChat, useStore } from '../lib/store.ts'
 import { paneTitle } from '../lib/overview.ts'
 import { SkinScope } from '../lib/skin.tsx'
 import { ChatActionsContext } from '../lib/chatActions.ts'
@@ -53,7 +53,10 @@ export function PanePage() {
   const s = useSession(host, pane)
   // asked for at once, whichever view shows: a reopened app has the chat's saved copy (and so
   // knows the agent) before the machine has answered with its panes
-  useEffect(() => socket.subscribeChat(host, pane), [host, pane])
+  useEffect(() => {
+    hydrateChat(chatKey(host, pane))
+    return socket.subscribeChat(host, pane)
+  }, [host, pane])
   const { ref, info, agent } = s
   const view = (search.get('view') as 'chat' | 'terminal' | null) ?? (agent ? 'chat' : 'terminal')
   const wide = useWide()

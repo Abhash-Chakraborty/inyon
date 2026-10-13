@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, CircleX, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
@@ -15,8 +15,12 @@ import { useLongPress } from '../lib/longPress.ts'
 import { endSession } from '../lib/end.ts'
 import { tmuxTarget } from '../lib/groups.ts'
 
+/** The parts of a pane ref a card draws; the rest of the machine changing shouldn't redraw it. */
+const samePane = (a: { r: PaneRef; showHost?: boolean }, b: { r: PaneRef; showHost?: boolean }) =>
+  a.r.pane === b.r.pane && a.r.window === b.r.window && a.r.host.config === b.r.host.config && a.r.host.status === b.r.host.status && a.r.host.hostname === b.r.host.hostname && a.showHost === b.showHost
+
 /** A session waiting on you, with its answers as buttons. */
-export function NeedsYouCard({ r }: { r: PaneRef }) {
+export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
   const a = r.pane.agent!
   const nav = useNavigate()
   const [busy, setBusy] = useState<number | null>(null)
@@ -77,13 +81,13 @@ export function NeedsYouCard({ r }: { r: PaneRef }) {
       </div>
     </div>
   )
-}
+}, samePane)
 
 /**
  * An agent session as a card. The whole card opens it; ⋯ (shown on hover with a mouse, always on a
  * touch screen) and a long-press offer the actions that don't need the session open.
  */
-export function SessionCard({ r, showHost = true }: { r: PaneRef; showHost?: boolean }) {
+export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r: PaneRef; showHost?: boolean }) {
   const a = r.pane.agent!
   const st = a.status
   const pct = st?.contextPct
@@ -146,7 +150,7 @@ export function SessionCard({ r, showHost = true }: { r: PaneRef; showHost?: boo
       </div>
     </div>
   )
-}
+}, samePane)
 
 /** Plan limits per machine, from the freshest agent status reported there. */
 export function LimitsCard({ hosts }: { hosts: HostState[] }) {

@@ -23,6 +23,8 @@ const list = (v: string | undefined) => (v ?? '').split(',').map((s) => s.trim()
 
 /** "Example.com:4777" or "[::1]:4777" → "example.com" / "[::1]"; undefined if it isn't a host. */
 export function hostnameOf(host: string): string | undefined {
+  // some clients send an IPv6 address without its brackets
+  if (!host.startsWith('[') && (host.match(/:/g)?.length ?? 0) >= 2) host = `[${host}]`
   try {
     const u = new URL(`http://${host}`)
     return u.host === host.toLowerCase() || u.host === host.toLowerCase().replace(/:80$/, '') ? u.hostname : undefined

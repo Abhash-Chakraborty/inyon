@@ -25,6 +25,7 @@ import { installKeepAlive } from './lib/keepalive.ts'
 import { installNative, isNative, nativeTheme, takePairFragment } from './lib/native.ts'
 import { watchInstall } from './lib/install.ts'
 import { appHref, BASE, isHosted, publicFile } from './lib/base.ts'
+import { flushSnapshots } from './lib/snapshot.ts'
 
 function useTheme() {
   const theme = useStore((s) => s.settings.theme)
@@ -93,6 +94,8 @@ function App() {
 
 installTapHaptics()
 installNative()
+// a page going away writes what it was about to keep
+window.addEventListener('pagehide', flushSnapshots)
 // fetch the other pages once the first screen is up, so opening one doesn't wait on the network
 setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx')]).catch(() => {}), 1500)
 installKeepAlive()

@@ -1,6 +1,6 @@
 import { describe, expect, jest, setSystemTime, test, afterEach } from 'bun:test'
 import type { ChatItem } from '@inyon/protocol'
-import { notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
+import { hydrateChat, notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
 import { closeChat, emit } from '../test/fakes.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
@@ -294,5 +294,32 @@ describe('notify', () => {
       ;(globalThis as any).Notification = was
       Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
     }
+  })
+})
+
+describe('fewer renders and a first paint from the device', () => {
+  test('an overview keeps the objects of what did not change', () => {
+    emit({ t: 'overview', hosts: [host('a', { panes: [agentPane('%1', 'claude')] }), host('b')] })
+    const before = useStore.getState().hosts
+    emit({ t: 'overview', hosts: [host('a', { panes: [agentPane('%1', 'claude', { title: 'new' })] }), host('b')] })
+    const after = useStore.getState().hosts
+    expect(after).not.toBe(before)
+    expect(after[1]).toBe(before[1])
+    expect(after[0]!.config).toBe(before[0]!.config)
+    expect(after[0]!.sessions[0]!.windows[0]!.panes[0]!.title).toBe('new')
+    expect(useStore.getState().hostsStale).toBe(false)
+  })
+
+  test('a chat page kept on the device shows until the hub sends the real one', async () => {
+    const { flushSnapshots } = await import('./snapshot.ts')
+    reset('kept', [item.user('a'), item.text('b')])
+    flushSnapshots()
+    useStore.setState({ chats: {} })
+    hydrateChat('kept')
+    expect(chat('kept')).toMatchObject({ loaded: true, stale: true })
+    expect(seqs(chat('kept')!.items)).toHaveLength(2)
+    reset('kept', [item.user('c')])
+    expect(chat('kept')!.stale).toBeUndefined()
+    expect(seqs(chat('kept')!.items)).toHaveLength(1)
   })
 })

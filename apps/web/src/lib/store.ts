@@ -6,6 +6,8 @@ import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
 import { appHref, publicFile, routeOf } from './base.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
+import { reuse } from './reuse.ts'
+import { clearSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
 
 export interface ChatState {
@@ -22,6 +24,8 @@ export interface ChatState {
   pending: PendingMessage[]
   /** the unsent message, shared with other devices and the terminal's input box */
   draft?: { text: string; source: 'app' | 'terminal'; at: number }
+  /** drawn from the copy kept on this device; the hub's first page replaces it */
+  stale?: boolean
 }
 
 export interface Toast {
@@ -84,6 +88,8 @@ interface Store {
   connected: boolean
   hosts: HostState[]
   hostsLoaded: boolean
+  /** the overview is the copy kept on this device, not yet confirmed by the hub */
+  hostsStale: boolean
   chats: Record<string, ChatState>
   toasts: Toast[]
   settings: Settings
@@ -96,12 +102,16 @@ interface Store {
 
 let toastId = 0
 
+// the last overview this device saw paints first; the hub's replaces it in place
+const remembered = loadOverview()
+
 export const useStore = create<Store>((set, get) => ({
   activity: [],
   authed: null,
   connected: false,
-  hosts: [],
-  hostsLoaded: false,
+  hosts: remembered ?? [],
+  hostsLoaded: !!remembered,
+  hostsStale: !!remembered,
   chats: {},
   toasts: [],
   settings: loadSettings(),
@@ -148,6 +158,14 @@ export function patchChat(key: string, fn: (c: ChatState) => Partial<ChatState>)
     else sessionStorage.removeItem(pendingStorageKey(key))
   } catch {}
   useStore.setState({ chats: { ...chats, [key]: next } })
+  if (next.loaded && !next.stale && next.items.length) saveChat(key, next)
+}
+
+/** Shows the page of this chat kept on the device, until the hub sends the real one. */
+export function hydrateChat(key: string) {
+  if (useStore.getState().chats[key]?.loaded) return
+  const kept = loadChat(key)
+  if (kept) patchChat(key, () => ({ ...kept, loaded: true, stale: true }))
 }
 
 
@@ -183,7 +201,9 @@ export function hidePane(host: string, pane: string, hide = true) {
 function onMessage(m: ServerMsg) {
   switch (m.t) {
     case 'overview':
-      useStore.setState({ hosts: withoutEnded(m.hosts), hostsLoaded: true })
+      // a card whose pane didn't change keeps its objects, so only the changed ones render again
+      useStore.setState((s) => ({ hosts: reuse(s.hosts, withoutEnded(m.hosts)), hostsLoaded: true, hostsStale: false }))
+      saveOverview(m.hosts)
       clearAnswered(m.hosts)
       break
     case 'chat.reset':
@@ -193,7 +213,7 @@ function onMessage(m: ServerMsg) {
         const head = m.items[0]
         const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
         const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
-        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends) }
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends) }
       })
       break
     case 'chat.progress':
@@ -315,3 +335,8 @@ socket.onChatClosed((key) => {
   }, 60_000))
 })
 socket.onStatus((connected) => useStore.setState({ connected }))
+// signing out takes the device's copies with it
+window.addEventListener('inyon:signed-out', () => {
+  clearSnapshots()
+  useStore.setState({ hosts: [], hostsLoaded: false, hostsStale: false, chats: {} })
+})

@@ -1,3 +1,4 @@
+import { coalesce } from './coalesce.ts'
 import { opencodeLive } from '../agents/opencode-controls.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
 import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@inyon/protocol'
@@ -163,8 +164,13 @@ class Registry {
   }
 
   private emit(e: RegistryEvent) {
+    if (e.type === 'overview') return this.overviewSoon()
     for (const fn of this.listeners) fn(e)
   }
+  // several machines and panes change within the same moment; the apps hear one overview for it
+  private overviewSoon = coalesce(() => {
+    for (const fn of this.listeners) fn({ type: 'overview' })
+  }, 100)
 
   configs(): HostConfig[] {
     return [...this.hosts.values()].map((r) => r.host.config)

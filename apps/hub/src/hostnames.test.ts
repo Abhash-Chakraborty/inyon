@@ -28,3 +28,10 @@ test("this machine's own name on a private network with its own domain", () => {
   expect(ok('laptop.hs.example.com:4777')).toBe(true)
   expect(ok('other.hs.example.com')).toBe(false)
 })
+
+test('an IPv6 address, with or without its brackets', () => {
+  const ok = allowedHosts({}, '127.0.0.1')
+  expect(ok('[fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402]')).toBe(true)
+  expect(ok('[fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402]:4777')).toBe(true)
+  expect(ok('fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402')).toBe(true)
+})
