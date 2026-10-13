@@ -9,7 +9,8 @@ on:
     branches: [main]
     paths: ['site/**', 'docs/*.webp', 'apps/web/public/icon.svg', '.github/workflows/pages.yml']
   # after a release is built, so the short installer URLs serve that release's scripts, and again
-  # after the Android job adds the APK and signs the checksum list anew
+  # after the Android job adds the APK and signs the checksum list anew (build.ts serves a release
+  # only once its list names the APK, and keeps the one before until then)
   workflow_run:
     workflows: [inyon, Android]
     types: [completed]

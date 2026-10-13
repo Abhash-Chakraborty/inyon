@@ -169,9 +169,34 @@ const MIRROR_BUDGET = 900 * 1024 * 1024;
 // Files the site serves from /download. The old tether-node copies stay on GitHub only.
 const mirrored = (name: string) => !name.startsWith("tether-node");
 
+/**
+ * Whether a release is whole: the Android build attaches the APK and lists it in SHA256SUMS
+ * (re-signing the list) a few minutes after the programs are out, and the inyon command refuses a
+ * list without that line. Until then the site keeps serving the release before it.
+ */
+async function complete(r: GhRelease): Promise<boolean> {
+  const apk = `inyon-${r.tag_name.replace(/^v/, "")}.apk`;
+  const sums = r.assets.find((a) => a.name === "SHA256SUMS");
+  if (!sums || !r.assets.some((a) => a.name === apk)) return false;
+  const res = await fetch(sums.browser_download_url, { redirect: "follow" });
+  if (!res.ok) throw new Error(`SHA256SUMS of ${r.tag_name}: ${res.status}`);
+  return (await res.text()).split("\n").some((l) => l.trim().replace(/\s+\*?/, " ").split(" ")[1] === apk);
+}
+
 async function latestRelease(): Promise<{ release: Release; raw: GhRelease } | null> {
   if (OFFLINE) return null;
-  const raw = (await gh("/releases/latest")) as GhRelease;
+  const list = ((await gh("/releases?per_page=10")) as GhRelease[]).filter(
+    (r) => !r.draft && !r.prerelease && /^v\d+\.\d+\.\d+$/.test(r.tag_name),
+  );
+  let raw: GhRelease | undefined;
+  for (const r of list) {
+    if (await complete(r)) {
+      raw = r;
+      break;
+    }
+    console.log(`  ${r.tag_name} isn't complete yet (no APK in its SHA256SUMS), so it waits`);
+  }
+  if (!raw) throw new Error("none of the last 10 releases is complete");
   let assets = raw.assets.filter((a) => mirrored(a.name)).map((a) => ({ name: a.name, size: a.size }));
   // GitHub Pages publishes at most 1 GB. Every installer and updater takes a program's .gz copy
   // when there is one, so the plain copies are the ones to leave on GitHub if a release outgrows it
