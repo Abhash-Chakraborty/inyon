@@ -38,12 +38,15 @@ export async function setKeepAlive(on: boolean) {
 export function installKeepAlive() {
   if (!keepAliveSupported()) return
   if (keepAliveWanted()) {
-    // alerts need the permission anyway; Android asks at most twice, then answers by itself
+    // alerts need the permission anyway; Android asks at most twice, then answers by itself. A
+    // moment after the first paint: asked at once, the activity hasn't registered the dialog yet
     const d = device()!
-    Promise.resolve(d.requestNotificationPermission?.())
-      .catch(() => {})
-      .then(() => d.startKeepAlive(NOTICE))
-      .catch(() => {})
+    setTimeout(() => {
+      Promise.resolve(d.requestNotificationPermission?.())
+        .catch(() => {})
+        .then(() => d.startKeepAlive(NOTICE))
+        .catch(() => {})
+    }, 1500)
   }
   // once there's a machine to stay connected to, ask Android not to put Inyon to sleep
   const off = useStore.subscribe((s) => {

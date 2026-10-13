@@ -275,7 +275,13 @@ class InyonDevicePlugin : Plugin() {
         if (Build.VERSION.SDK_INT < 33 || getPermissionState(NOTIFICATIONS) == PermissionState.GRANTED) {
             notificationPermissionResult(call)
         } else {
-            requestPermissionForAlias(NOTIFICATIONS, call, "notificationPermissionResult")
+            try {
+                requestPermissionForAlias(NOTIFICATIONS, call, "notificationPermissionResult")
+            } catch (e: IllegalStateException) {
+                // asked before the activity registered its launchers (a fast first paint): answer
+                // with what is known now; the app asks again later
+                notificationPermissionResult(call)
+            }
         }
     }
 
