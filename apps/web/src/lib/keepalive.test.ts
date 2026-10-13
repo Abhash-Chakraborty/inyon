@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { installKeepAlive, keepAliveWanted } from './keepalive.ts'
+import { installKeepAlive, keepAliveWanted, timing } from './keepalive.ts'
 import { useStore } from './store.ts'
 import { host } from '../test/fixtures.ts'
 
@@ -28,6 +28,8 @@ afterEach(() => {
   useStore.setState({ toasts: [], hosts: [] })
 })
 
+// the launch ask waits a moment in the app; not here
+timing.askAfterMs = 0
 const settle = () => new Promise((r) => setTimeout(r, 0))
 
 test('stays connected unless turned off, asking for the notification permission first', async () => {

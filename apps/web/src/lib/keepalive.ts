@@ -34,6 +34,9 @@ export async function setKeepAlive(on: boolean) {
   await d.startKeepAlive(NOTICE)
 }
 
+/** How long after the first paint to ask; tests set it to 0. */
+export const timing = { askAfterMs: 1500 }
+
 /** At launch (the app is in the foreground, which Android requires to start the service). */
 export function installKeepAlive() {
   if (!keepAliveSupported()) return
@@ -46,7 +49,7 @@ export function installKeepAlive() {
         .catch(() => {})
         .then(() => d.startKeepAlive(NOTICE))
         .catch(() => {})
-    }, 1500)
+    }, timing.askAfterMs)
   }
   // once there's a machine to stay connected to, ask Android not to put Inyon to sleep
   const off = useStore.subscribe((s) => {
