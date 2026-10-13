@@ -8,9 +8,10 @@ on:
   push:
     branches: [main]
     paths: ['site/**', 'docs/*.webp', 'apps/web/public/icon.svg', '.github/workflows/pages.yml']
-  # after a release is built, so the short installer URLs serve that release's scripts
+  # after a release is built, so the short installer URLs serve that release's scripts, and again
+  # after the Android job adds the APK and signs the checksum list anew
   workflow_run:
-    workflows: [inyon]
+    workflows: [inyon, Android]
     types: [completed]
   workflow_dispatch:
 
