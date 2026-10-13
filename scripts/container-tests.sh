@@ -20,7 +20,7 @@ case "$(uname -m)" in
 esac
 cli="inyon-linux-$arch"
 engine="inyon-engine-linux-$arch"
-version=${INYON_TEST_VERSION:-0.13.1}
+version=${INYON_TEST_VERSION:-0.13.2}
 old=0.12.0
 work=$(mktemp -d "${TMPDIR:-/tmp}/inyon-containers.XXXXXX")
 cache=${INYON_TEST_CACHE:-$HOME/.cache/inyon-tests}
