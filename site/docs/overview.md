@@ -1,0 +1,49 @@
+---
+title: The overview
+nav: Overview
+description: Every agent session on every machine in one place, with the ones that need you on top.
+---
+
+The overview is the first screen. It lists every agent running in tmux on every machine you've added, sorted so whatever needs you is at the top.
+
+![Three phones: the overview with a Codex prompt waiting for an answer, a Claude Code session as a chat with its to-do list, and the Machines page with four machines, one offline](../../docs/phones-light.webp)
+
+## What's on it
+
+- **The status line.** How many machines, agent sessions and tmux panes there are, and what's happening: *2 sessions need you*, *1 working*, or *All quiet. Every session is idle.*
+- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on.
+- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now, the model and effort, the cost so far and how full its context is. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one.
+- **Plan limits.** Each machine's 5-hour and weekly limits per agent, with when they reset.
+- **Recent activity.** The last few times an agent needed you or finished.
+- **Machines.** Each machine with its agents, tmux state and latency. **Manage →** opens the list.
+
+Sessions waiting on you come first, then working ones, then idle ones, newest activity first within each. Online machines come before offline ones.
+
+## Card menus
+
+Long-press a session card (or use its **⋯** menu) for **Open**, **Open terminal** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
+
+## Finding a session
+
+- **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result.
+- **The sidebar** (tablet and desktop) shows every session in a tree: machine, then tmux session, then pane. Folding a branch is remembered, and a folded branch shows a dot when something inside it needs you. With more than eight panes, a filter box appears above the tree.
+
+## Titles
+
+A session's title is, in order: the name you gave it, the agent's own title for the conversation, or the agent's name. Rename a session from its header; see [Sessions](sessions.md#renaming).
+
+## Starting a session
+
+Tap **+** (or press `N` on a keyboard) for a new session:
+
+1. Pick the agent from those installed, or **Terminal** for a plain shell.
+2. Pick the machine.
+3. Pick the folder; recent folders are offered as chips. It starts in `~`.
+4. Optionally choose the model, the permission mode (Claude Code and Antigravity) and a first message.
+5. Choose whether to start a new tmux session or a new window in an existing one, and its name.
+
+**Start** opens the new session. If no machine is online, **+** offers to add one instead.
+
+## Refreshing
+
+The overview updates live. To check right now, pull down on a phone or press the refresh button on a desktop. When the connection drops, a **Reconnecting** marker shows until it's back.

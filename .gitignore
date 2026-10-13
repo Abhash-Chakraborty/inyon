@@ -17,3 +17,6 @@ AGENTS.md
 coverage
 test-results
 playwright-report
+
+# the built site
+site/out
