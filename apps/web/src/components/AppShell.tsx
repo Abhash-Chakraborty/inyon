@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import clsx from 'clsx'
 import { LayoutGrid, Monitor, Plus, Search, Settings, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
+import type { HostState } from '@inyon/protocol'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
 import { SessionTree } from './SessionTree.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -30,8 +31,10 @@ export function Logo({ className }: { className?: string }) {
 const SQUIRCLE = 'M25 0H39C60 0 64 4 64 25V39C64 60 60 64 39 64H25C4 64 0 60 0 39V25C0 4 4 0 25 0Z'
 
 /** Quick switcher: type to jump to any session, terminal or machine. */
+const NO_HOSTS: HostState[] = []
 function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const hosts = useStore((s) => s.hosts)
+  // closed, it has nothing to do with an overview update
+  const hosts = useStore((s) => (open ? s.hosts : NO_HOSTS))
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)

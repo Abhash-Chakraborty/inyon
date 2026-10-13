@@ -1,9 +1,9 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, SquareTerminal } from 'lucide-react'
 import type { HostState } from '@inyon/protocol'
-import { paneHref, paneTitle, terminalName } from '../lib/overview.ts'
+import { paneHref, paneTitle, terminalName, type PaneRef } from '../lib/overview.ts'
 import { groupPanes, loadFolded, saveFolded, tmuxTarget } from '../lib/groups.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { StateDot, shownState } from './ui/status.tsx'
@@ -55,28 +55,9 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
             count={s.panes.length}
             waiting={s.waiting}
           >
-            {s.panes.map((r) => {
-              const href = paneHref(r.host.config.id, r.pane.id)
-              return (
-                <Link
-                  key={r.pane.id}
-                  to={href}
-                  title={`${r.host.config.name} · ${tmuxTarget(r)}`}
-                  className={clsx(
-                    'relative flex h-8 items-center gap-2 rounded-full pr-3 text-[13px] transition-colors',
-                    oneHost ? 'pl-7' : 'pl-10',
-                    loc.pathname === href ? 'bg-elev font-medium text-fg shadow-card ring-1 ring-line' : 'text-fg-2 hover:bg-hover/70 hover:text-fg',
-                  )}
-                >
-                  {r.pane.agent ? <AgentLogo kind={r.pane.agent.kind} size={16} active={r.pane.agent.state === 'working'} /> : <SquareTerminal className="size-4 shrink-0 text-fg-3" />}
-                  <span className="min-w-0 flex-1 truncate">
-                    {r.pane.agent ? paneTitle(r) : (terminalName(r) ?? r.pane.command)}
-                  </span>
-                  <span className="shrink-0 font-mono text-[12px] text-fg-3">:{r.window.index}</span>
-                  {r.pane.agent && <StateDot state={shownState(r.pane.agent, r.host)} />}
-                </Link>
-              )
-            })}
+            {s.panes.map((r) => (
+              <TreeRow key={r.pane.id} r={r} oneHost={oneHost} active={loc.pathname === paneHref(r.host.config.id, r.pane.id)} />
+            ))}
           </Group>
         ))
         if (oneHost) return sessions
@@ -103,6 +84,32 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
     </div>
   )
 }
+
+/** One pane in the tree. Memoised on its pane, so an update elsewhere leaves it alone. */
+const TreeRow = memo(
+  function TreeRow({ r, oneHost, active }: { r: PaneRef; oneHost: boolean; active: boolean }) {
+    const href = paneHref(r.host.config.id, r.pane.id)
+    return (
+      <Link
+        to={href}
+        title={`${r.host.config.name} · ${tmuxTarget(r)}`}
+        className={clsx(
+          'relative flex h-8 items-center gap-2 rounded-full pr-3 text-[13px] transition-colors',
+          oneHost ? 'pl-7' : 'pl-10',
+          active ? 'bg-elev font-medium text-fg shadow-card ring-1 ring-line' : 'text-fg-2 hover:bg-hover/70 hover:text-fg',
+        )}
+      >
+        {r.pane.agent ? <AgentLogo kind={r.pane.agent.kind} size={16} active={r.pane.agent.state === 'working'} /> : <SquareTerminal className="size-4 shrink-0 text-fg-3" />}
+        <span className="min-w-0 flex-1 truncate">{r.pane.agent ? paneTitle(r) : (terminalName(r) ?? r.pane.command)}</span>
+        <span className="shrink-0 font-mono text-[12px] text-fg-3">:{r.window.index}</span>
+        {r.pane.agent && <StateDot state={shownState(r.pane.agent, r.host)} />}
+      </Link>
+    )
+  },
+  (a, b) =>
+    a.active === b.active && a.oneHost === b.oneHost && a.r.pane === b.r.pane && a.r.window === b.r.window && a.r.session === b.r.session &&
+    a.r.host.config === b.r.host.config && a.r.host.status === b.r.host.status && a.r.host.hostname === b.r.host.hostname,
+)
 
 /** A foldable heading and what's under it. Folded, it still shows that something waits on you. */
 function Group({ open, onToggle, depth, label, count, waiting, children }: { open: boolean; onToggle: () => void; depth: 0 | 1; label: ReactNode; count: number; waiting: number; children: ReactNode }) {
