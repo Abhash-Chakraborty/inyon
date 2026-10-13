@@ -1,16 +1,20 @@
 #!/bin/sh
 # Installs inyon in fresh Linux containers from a mock of this release, and upgrades a real 0.12.0
-# install to it. Needs docker; nothing is installed on this machine.
+# install to it. Needs docker and minisign (apt-get install minisign / brew install minisign);
+# nothing else is installed on this machine.
 #
 #   scripts/container-tests.sh                 builds the command (cargo, static musl) and the
-#                                              engine (bun) for this machine's processor first
+#                                              engine (bun) for this machine's processor first,
+#                                              against glibc and against musl for Alpine
 #   INYON_DIST=<dir> scripts/container-tests.sh  takes inyon-linux-<arch>[.gz] and
-#                                              inyon-engine-linux-<arch>[.gz] from <dir> (CI)
+#                                              inyon-engine-linux-<arch>[-musl][.gz] from <dir> (CI)
 #   INYON_TEST_SYSTEMS="alpine upgrade" …       runs only those (ubuntu debian alpine fedora upgrade)
 #
 # The release is served from a container on a network with no way out, so a test that reached
 # GitHub would fail. The one download from GitHub is the 0.12.0 program for the upgrade test,
-# kept in ~/.cache/inyon-tests.
+# kept in ~/.cache/inyon-tests. The mock's SHA256SUMS is signed with apps/cli/tests/keys/test.key,
+# and the containers get that key's public half as INYON_SIGNING_KEY, which get.sh and the
+# command take instead of the release key when downloads come from somewhere else.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 case "$(uname -m)" in
@@ -18,8 +22,12 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   *) echo "no inyon build for $(uname -m)" >&2; exit 1 ;;
 esac
+command -v minisign >/dev/null 2>&1 || { echo "minisign is needed to sign the mock release: apt-get install minisign, or brew install minisign" >&2; exit 1; }
 cli="inyon-linux-$arch"
 engine="inyon-engine-linux-$arch"
+engine_musl="inyon-engine-linux-$arch-musl"
+keys="$root/apps/cli/tests/keys"
+pubkey=$(sed -n 2p "$keys/test.pub")
 version=${INYON_TEST_VERSION:-0.13.3}
 old=0.12.0
 work=$(mktemp -d "${TMPDIR:-/tmp}/inyon-containers.XXXXXX")
@@ -40,14 +48,14 @@ trap cleanup EXIT
 dist="$work/dist"
 mkdir -p "$dist"
 if [ -n "${INYON_DIST:-}" ]; then
-  for f in "$cli" "$engine"; do
+  for f in "$cli" "$engine" "$engine_musl"; do
     if [ -f "$INYON_DIST/$f" ]; then cp "$INYON_DIST/$f" "$dist/"
     elif [ -f "$INYON_DIST/$f.gz" ]; then gzip -dc "$INYON_DIST/$f.gz" > "$dist/$f"
     else echo "$INYON_DIST has no $f" >&2; exit 1
     fi
   done
 else
-  say "building the command and the engine for linux-$arch"
+  say "building the command and the engines for linux-$arch"
   target="$(uname -m)-unknown-linux-musl"
   rustup target add "$target" >/dev/null
   # the TLS library has C in it; without a musl cross compiler the host one does, for the same processor
@@ -56,12 +64,15 @@ else
   (cd "$root/apps/cli" && env "$cc_var=$cc" cargo build --release --target "$target" --quiet)
   cp "$root/apps/cli/target/$target/release/inyon" "$dist/$cli"
   [ -f "$root/apps/web/dist/index.html" ] || (cd "$root" && bun run build >/dev/null)
-  bun "$root/apps/node/build.ts" "$work/engine" "linux-$arch" >/dev/null
-  cp "$work/engine/$engine" "$dist/$engine"
+  bun "$root/apps/node/build.ts" "$work/engine" "linux-$arch" "linux-$arch-musl" >/dev/null
+  cp "$work/engine/$engine" "$work/engine/$engine_musl" "$dist/"
 fi
-chmod +x "$dist/$cli" "$dist/$engine"
+chmod +x "$dist/$cli" "$dist/$engine" "$dist/$engine_musl"
 cp "$root/apps/node/get.sh" "$dist/"
-(cd "$dist" && gzip -9 -k "$cli" "$engine" && sha256sum "$cli" "$cli.gz" "$engine" "$engine.gz" > SHA256SUMS)
+(cd "$dist" && gzip -9 -k "$cli" "$engine" "$engine_musl" && sha256sum "$cli" "$cli.gz" "$engine" "$engine.gz" "$engine_musl" "$engine_musl.gz" > SHA256SUMS)
+# signed as a release is, with the test key (no password; minisign still reads one from stdin)
+minisign -S -s "$keys/test.key" -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" < /dev/null
+minisign -V -q -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" -P "$pubkey"
 say "the mock release $version"
 cat "$dist/SHA256SUMS"
 
@@ -77,7 +88,9 @@ image() {
   case "$1" in
     ubuntu) from=ubuntu:24.04; add='RUN apt-get update -q && apt-get install -y -q --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*' ;;
     debian) from=debian:bookworm-slim; add='RUN apt-get update -q && apt-get install -y -q --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*' ;;
-    alpine) from=alpine:3.20; add='RUN apk add --no-cache curl' ;;
+    # the musl engine needs libstdc++ and libgcc; get.sh would apk add them as root, but the
+    # test network has no way out, so the image brings them
+    alpine) from=alpine:3.20; add='RUN apk add --no-cache curl libstdc++ libgcc' ;;
     fedora) from=fedora:40; add='RUN dnf install -y -q curl && dnf clean all' ;;
   esac
   mkdir -p "$work/ctx"
@@ -95,25 +108,13 @@ test -x ~/.inyon/bin/inyon-engine
 ~/.inyon/bin/inyon status --plain
 ~/.inyon/bin/inyon status --plain | grep -q "^link: running" || { echo "the link is not running"; cat ~/.inyon/node/link.log 2>/dev/null; exit 1; }
 ~/.inyon/bin/inyon-engine version'
-# The engine is built against glibc and Bun has no musl build in the release, so on Alpine only
-# the command runs: it installs, fetches the engine and answers, but the link can't start yet
-fresh_alpine='set -e
-curl -fsSL http://release:8000/get.sh | sh || echo "(setup ended early: the engine needs a musl build to run on Alpine)"
-echo "--- after setup"
-ls -l ~/.inyon/bin
-test -x ~/.inyon/bin/inyon-engine
-~/.inyon/bin/inyon version
-~/.inyon/bin/inyon status --plain
-~/.inyon/bin/inyon doctor || true'
 systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora upgrade}
 has() { case " $systems " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 for sys in ubuntu debian alpine fedora; do
   has "$sys" || continue
   say "fresh install on $sys"
   img=$(image "$sys")
-  script=$fresh
-  [ "$sys" = alpine ] && script=$fresh_alpine
-  if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" "$img" sh -c "$script"; then
+  if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" -e "INYON_SIGNING_KEY=$pubkey" "$img" sh -c "$fresh"; then
     echo "== $sys: ok"
   else
     echo "== $sys: FAILED"
@@ -157,7 +158,7 @@ test "$before" = "$(sha256sum ~/.inyon/node/phones.json)" || { echo "phones.json
 # the old program keeps its copy aside (inyon.old-<time>) while nothing restarted on the new
 # one; the next start removes it. No download may be left behind
 test -z "$(ls ~/.inyon/bin | grep download)" || { echo "a download was left in bin"; exit 1; }'
-if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" -v "$work/old:/old:ro" "$(image ubuntu)" sh -c "$upgrade"; then
+if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" -e "INYON_SIGNING_KEY=$pubkey" -v "$work/old:/old:ro" "$(image ubuntu)" sh -c "$upgrade"; then
   echo "== upgrade: ok"
 else
   echo "== upgrade: FAILED"

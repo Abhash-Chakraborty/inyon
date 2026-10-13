@@ -80,6 +80,28 @@ Nothing updates by itself. When a release is out, Settings shows *Update availab
   local changes or a branch that can't fast-forward; otherwise it pulls, installs, builds and
   restarts the `inyon-hub` user unit.
 
+## Checking a download
+
+Every file in a release is listed in `SHA256SUMS`, and from 0.14 that list is signed with
+[minisign](https://jedisct1.github.io/minisign/) by this key:
+
+```
+RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+```
+
+The `inyon` command checks the signature itself before it updates or fetches the engine, and
+`get.sh` does when minisign is installed. To check a download by hand, get `SHA256SUMS` and
+`SHA256SUMS.minisig` from the release, then:
+
+```sh
+minisign -Vm SHA256SUMS -P RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+sha256sum -c --ignore-missing SHA256SUMS
+```
+
+On Linux the engine comes built against glibc and, for Alpine, against musl. The musl build needs
+`apk add libstdc++ libgcc`, which `get.sh` runs when it can. Windows on ARM gets its own `inyon`
+command and runs the x64 engine under it.
+
 ## Configuration
 
 | Variable | Default | |

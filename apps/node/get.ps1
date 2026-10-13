@@ -15,6 +15,24 @@ $tmp = "$exe.download"
 $sums = "$exe.sums"
 
 Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile $sums
+# the list is signed with minisign; checked when minisign is on PATH (scoop or the zip from
+# jedisct1/minisign), else trusted as it comes, as before 0.14
+$key = 'RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6'
+# a mock release for tests signs with a key of its own; it only counts with downloads pointed elsewhere
+if (($env:INYON_DOWNLOAD -or $env:TETHER_DOWNLOAD) -and $env:INYON_SIGNING_KEY) { $key = $env:INYON_SIGNING_KEY }
+if (Get-Command minisign -ErrorAction SilentlyContinue) {
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.minisig" -OutFile "$sums.minisig"
+    & minisign -V -q -m $sums -x "$sums.minisig" -P $key | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'bad signature' }
+  } catch {
+    Remove-Item -Force $sums, "$sums.minisig" -ErrorAction SilentlyContinue
+    throw "The release's checksum list isn't signed by Inyon's release key, so nothing was installed."
+  }
+  Remove-Item -Force "$sums.minisig"
+} else {
+  Write-Host "(minisign isn't installed, so the checksums weren't signature-checked)"
+}
 $lines = Get-Content $sums
 Remove-Item -Force $sums
 function Sum-For($file) { ($lines | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($file))$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1 }

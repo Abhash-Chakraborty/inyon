@@ -1,11 +1,11 @@
 name: inyon
 
 # Builds everything a release attaches: the inyon command (apps/cli, through cli.yml, one file per
-# system, about 2 MB) as inyon-<system>, the engine behind it (Bun, the hub and the web app
-# inside, so a machine needs nothing else) as inyon-engine-<system>, and the engine again as
-# tether-node-<system>, the name the updater from before the rename to Inyon asks for and needs a
-# whole program under. inyon-web.tar.gz is the web app as static files, for anyone who wants to
-# serve it themselves. One SHA256SUMS lists them all.
+# system, about 2 MB) as inyon-<system>, and the engine behind it (Bun, the hub and the web app
+# inside, so a machine needs nothing else) as inyon-engine-<system>, on Linux both against glibc
+# and against musl for Alpine. inyon-web.tar.gz is the web app as static files, for anyone who
+# wants to serve it themselves. One SHA256SUMS lists them all, signed with minisign as
+# SHA256SUMS.minisig, which the installers and `inyon update` check before trusting the list.
 #   push to main  -> refreshes the "node-latest" pre-release
 #   tag v1.2.3    -> attached to that release, which the one-line installers fetch from
 on:
@@ -35,6 +35,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      # get.sh's tests check a signed mock release when minisign is on the machine
+      - run: sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null
       - run: bun test
         working-directory: apps/node
 
@@ -46,7 +48,7 @@ jobs:
           bun apps/node/build.ts "$out"
           "$out/inyon-engine-linux-x64" --version
           # each inyon-engine-* file gzipped too, under half the size, which the installers and
-          # the updater take first; the tether-node-* copies stay plain, as their updater expects
+          # the updater take first
           for f in "$out"/inyon-engine-*; do gzip -9 -k "$f"; done
           # the web app for GitHub Pages
           bun run --filter @inyon/web build:hosted
@@ -74,17 +76,34 @@ jobs:
           path: ${{ runner.temp }}/dist
 
       - name: Checksums and installers
+        env:
+          # a password-less minisign secret key; forks and runs without it get an unsigned list
+          KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           cd "$RUNNER_TEMP/dist"
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
           cp "$GITHUB_WORKSPACE/apps/node/get.sh" "$GITHUB_WORKSPACE/apps/node/get.ps1" .
-          # one list for every file, the installers left out of it
-          ls | grep -v -e '^get\.' -e '^SHA256SUMS$' | xargs sha256sum > SHA256SUMS
+          # one list for every file, the installers and the list's own signature left out of it
+          ls | grep -v -e '^get\.' -e '^SHA256SUMS' | xargs sha256sum > SHA256SUMS
           cat SHA256SUMS
           # the layout the installers and updaters count on
-          for want in inyon-linux-x64 inyon-linux-x64.gz inyon-engine-linux-x64 inyon-engine-linux-x64.gz tether-node-linux-x64 inyon-windows-arm64.exe inyon-web.tar.gz; do
-            grep -q " $want\$" SHA256SUMS || { echo "::error::$want is missing from the release"; exit 1; }
+          want="inyon-linux-x64 inyon-linux-x64.gz inyon-engine-linux-x64 inyon-engine-linux-x64.gz inyon-engine-linux-x64-musl inyon-engine-linux-x64-musl.gz inyon-windows-arm64.exe inyon-web.tar.gz"
+          for f in $want; do
+            grep -q " $f\$" SHA256SUMS || { echo "::error::$f is missing from the release"; exit 1; }
           done
+          # the signature get.sh and `inyon update` check the list against (the key file lives
+          # outside the upload and is gone again before the step ends)
+          if [ -n "$KEY" ]; then
+            sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null
+            keyfile="$RUNNER_TEMP/minisign.key"
+            # minisign wants the key file whole, a comment line above the key
+            (umask 077 && { case "$KEY" in "untrusted comment:"*) ;; *) echo "untrusted comment: minisign secret key" ;; esac; printf '%s\n' "$KEY"; } > "$keyfile")
+            minisign -S -s "$keyfile" -m SHA256SUMS -x SHA256SUMS.minisig < /dev/null
+            rm -f "$keyfile"
+            minisign -V -m SHA256SUMS -x SHA256SUMS.minisig -P RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+          else
+            echo "::notice::MINISIGN_SECRET_KEY isn't set, so SHA256SUMS is not signed"
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -128,6 +147,8 @@ jobs:
         with:
           path: ~/.cache/inyon-tests
           key: inyon-0.12.0-linux-x64
+      # the mock release signs its checksums with the test key, as a real one is signed
+      - run: sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null
       - run: scripts/container-tests.sh
         env:
           INYON_DIST: ${{ runner.temp }}/dist

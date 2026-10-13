@@ -24,7 +24,8 @@ On Windows, in PowerShell:
 irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
 ```
 
-It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In the app,
+It downloads `inyon`, checks it against the release's signed SHA256SUMS (see [Checking a
+download](hub.md#checking-a-download)) and prints a QR code. In the app,
 tap *Add a computer*, then *Scan the code*. Scanned with the phone's camera instead, the code opens
 the download page, which offers to copy the link for the app. If the SSH session is on the same
 phone, use the one-time ID and 6-digit code it also prints. The code works once, for 10 minutes,

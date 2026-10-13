@@ -4,7 +4,9 @@
 Serves a folder the way the installers and updaters read a release: each file under
 /releases/latest/download/<name>, and /releases/latest answering with the redirect to
 /releases/tag/v<version> that `inyon update` reads the newest version from. get.sh is served at
-the root too, as the download page does.
+the root too, as the download page does. The folder carries SHA256SUMS.minisig next to SHA256SUMS
+(container-tests.sh signs it with apps/cli/tests/keys/test.key), since from 0.14 the installers
+and `inyon update` check the signature before trusting the list.
 
     mock-release.py --dir <folder> --version 0.13.0 --port 8000
 """

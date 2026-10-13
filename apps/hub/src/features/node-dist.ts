@@ -7,7 +7,7 @@ import { compressed, RELEASES_REPO, VERSION } from '@inyon/protocol'
 import INSTALL_SH from '../../../node/install.sh' with { type: 'text' }
 import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
 import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
-import { CLI_TARGETS, cliFile, engineFile, TARGETS, type CliTarget, type Target } from '../../../node/targets.ts'
+import { CLI_TARGETS, cliFile, engineFile, HUB_TARGETS, type CliTarget, type HubTarget, type Target } from '../../../node/targets.ts'
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
@@ -27,8 +27,12 @@ export const NODE_DIR = path.resolve(import.meta.dir, '../../../node')
 const OUT = path.join(DATA_DIR, 'node-dist')
 const FROM_SOURCE = !Bun.isStandaloneExecutable
 const CLI_DIST = process.env.INYON_CLI_DIST || path.resolve(NODE_DIR, '../cli/dist')
-/** what install.sh can ask for; their checksums go into the "Add a machine" command */
-const UNIX = TARGETS.filter((t) => !t.startsWith('windows'))
+/**
+ * What install.sh can ask for; their checksums go into the "Add a machine" command. The hub hands
+ * out the glibc engines only (HUB_TARGETS, not the release's musl ones), so a checkout builds
+ * five, as before.
+ */
+const UNIX = HUB_TARGETS.filter((t) => !t.startsWith('windows'))
 
 /** busybox-w32 FRP-6075, checked against frippery.org/files/busybox/SHA256SUM */
 const BUSYBOX: Record<string, { file: string; sha256: string }> = {
@@ -47,7 +51,7 @@ export function targetOf(url: URL): Target {
   const os = url.searchParams.get('os') ?? 'windows'
   if (os === 'windows') return 'windows-x64'
   const t = `${os}-${archOf(url)}` as Target
-  if (!TARGETS.includes(t)) throw new HttpError(400, 'os must be linux, darwin or windows')
+  if (!(HUB_TARGETS as readonly Target[]).includes(t)) throw new HttpError(400, 'os must be linux, darwin or windows')
   return t
 }
 
@@ -141,7 +145,7 @@ export async function command(t: CliTarget): Promise<string> {
 }
 
 /** Whether this hub hands out the engine as a file of its own (a checkout without a built command doesn't). */
-const splitRelease = (t: Target) => !FROM_SOURCE || !!builtCommand(t)
+const splitRelease = (t: HubTarget) => !FROM_SOURCE || !!builtCommand(t)
 
 /** Where the hub finds the release of its own version (INYON_DOWNLOAD for a mirror). */
 const releaseBase = () => (process.env.INYON_DOWNLOAD || `https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`).replace(/\/+$/, '')

@@ -2,12 +2,16 @@
 # Gets inyon for this computer and sets it up for the Inyon phone app:
 #   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
 # It downloads the inyon command for this system into ~/.inyon/bin, checks it against the release's
-# checksums, and runs its setup, which fetches the engine behind it, starts it in the background at
-# login, and shows a code to scan with the app. With --hub it sets up an Inyon hub instead (the
-# server the app signs in to):
+# checksums (and their signature, when minisign is installed), and runs its setup, which fetches
+# the engine behind it, starts it in the background at login, and shows a code to scan with the
+# app. With --hub it sets up an Inyon hub instead (the server the app signs in to):
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
 BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/inyon/releases/latest/download}}"
+# the minisign key a release's SHA256SUMS is signed with (the inyon command carries the same one)
+KEY=RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+# a mock release for tests signs with a key of its own; it only counts with downloads pointed elsewhere
+if [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && [ -n "${INYON_SIGNING_KEY:-}" ]; then KEY="$INYON_SIGNING_KEY"; fi
 ROLE=setup
 for a in "$@"; do
   case "$a" in
@@ -30,12 +34,31 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   *) echo "There's no inyon build for $(uname -m) yet." >&2; exit 1 ;;
 esac
+# Alpine and other musl systems run the engine built against musl; the command is static and the same
+libc=""
+if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then libc=-musl; fi
 
 name="inyon-$os-$arch"
+engine="inyon-engine-$os-$arch$libc"
 dir="$HOME/.inyon/bin"
 mkdir -p "$dir"
 tmp="$dir/inyon.download"
-sums="$(curl -fsSL "$BASE/SHA256SUMS")" || sums=""
+list="$dir/SHA256SUMS.download"
+curl -fsSL "$BASE/SHA256SUMS" -o "$list" || { echo "Couldn't get $BASE/SHA256SUMS. Check the connection and run the command again." >&2; exit 1; }
+# the list is signed; without minisign it's trusted as it comes, as before 0.14
+if command -v minisign >/dev/null 2>&1; then
+  if curl -fsSL "$BASE/SHA256SUMS.minisig" -o "$list.minisig" && minisign -V -q -m "$list" -x "$list.minisig" -P "$KEY" >/dev/null 2>&1; then
+    rm -f "$list.minisig"
+  else
+    rm -f "$list" "$list.minisig"
+    echo "The release's checksum list isn't signed by Inyon's release key, so nothing was installed." >&2
+    exit 1
+  fi
+else
+  echo "(minisign isn't installed, so the checksums weren't signature-checked)"
+fi
+sums="$(cat "$list")"
+rm -f "$list"
 sum_for() { printf '%s\n' "$sums" | awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }'; }
 sum_of() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
 mismatch() {
@@ -62,9 +85,16 @@ mv -f "$tmp" "$dir/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
 [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$dir/inyon" >/dev/null 2>&1 || true
 
+# the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default
+if [ -n "$libc" ] && [ ! -e /usr/lib/libstdc++.so.6 ]; then
+  if [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add -q libstdc++ libgcc >/dev/null 2>&1; then :
+  else echo "The engine needs libstdc++ and libgcc on Alpine: apk add libstdc++ libgcc" >&2
+  fi
+fi
+
 # from 0.13 a release is two files: this one is the inyon command, and its setup gets the engine
-# (inyon-engine-$os-$arch) that runs behind it. Before that, this one file was the whole program
-if [ -n "$(sum_for "inyon-engine-$os-$arch")" ]; then
+# ($engine) that runs behind it. Before that, this one file was the whole program
+if [ -n "$(sum_for "$engine")" ]; then
   if [ "$ROLE" = hub ]; then exec "$dir/inyon" setup --role hub; fi
   exec "$dir/inyon" setup
 fi

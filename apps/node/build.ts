@@ -1,7 +1,7 @@
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
 import { engineFile, TARGETS, type Target } from './targets.ts'
 
@@ -12,14 +12,15 @@ import { engineFile, TARGETS, type Target } from './targets.ts'
  *
  * builds the release files (all targets unless some are named) with the hub and the web app in
  * them, plus SHA256SUMS. Each is attached as inyon-engine-<system>, which the inyon command
- * (apps/cli) runs, and again as tether-node-<system>: the updater from before the rename to
- * Inyon asks for that name and needs a whole program under it. Build the web app first (bun run
- * build). A hub run from a git checkout calls buildInyon itself for the machines it adds,
- * leaving the hub out.
+ * (apps/cli) runs. Build the web app first (bun run build). A hub run from a git checkout calls
+ * buildInyon itself for the machines it adds, leaving the hub out.
  */
 
 const ENTRY = path.join(import.meta.dir, 'inyon.ts')
 const WEB_DIST = path.resolve(import.meta.dir, '../web/dist')
+
+/** Bun's name for a target: the same as ours, except that it spells arm64 on musl as aarch64. */
+const bunTarget = (t: Target) => `bun-${t === 'linux-arm64-musl' ? 'linux-aarch64-musl' : t}` as Bun.Build.CompileTarget
 
 export interface BuildOptions {
   target: Target
@@ -47,7 +48,7 @@ export async function buildInyon(o: BuildOptions) {
       minify: true,
       define: o.hub ? { 'process.env.INYON_BUILD_COMMIT': JSON.stringify(o.commit ?? '') } : { 'process.env.INYON_NODE_ONLY': '"1"' },
       compile: {
-        target: `bun-${o.target}` as Bun.Build.CompileTarget,
+        target: bunTarget(o.target),
         outfile: o.outfile,
         ...(stage ? { assets: [path.join(stage, 'inyon-web')] } : {}),
         ...(o.hideConsole && o.target.startsWith('windows') ? { windows: { hideConsole: true } } : {}),
@@ -79,12 +80,7 @@ if (import.meta.main) {
   for (const t of targets) {
     if (!TARGETS.includes(t)) throw new Error(`${t} isn't one of ${TARGETS.join(', ')}`)
     const file = await buildInyon({ target: t, outfile: path.join(out, engineFile(t)), hub: true, commit })
-    // the name tether-node's own updater looks for, so a machine set up before the rename to
-    // Inyon updates to this program and moves itself over
-    const old = path.join(out, engineFile(t).replace(/^inyon-engine-/, 'tether-node-'))
-    copyFileSync(file, old)
-    const sum = await sha256File(file)
-    sums.push(`${sum}  ${path.basename(file)}`, `${sum}  ${path.basename(old)}`)
+    sums.push(`${await sha256File(file)}  ${path.basename(file)}`)
     console.log(`built ${path.basename(file)}`)
   }
   writeFileSync(path.join(out, 'SHA256SUMS'), `${sums.join('\n')}\n`)
