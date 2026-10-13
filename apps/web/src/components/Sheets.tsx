@@ -6,8 +6,8 @@ import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
-import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react'
+import { Button, Field, Pulse, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
+import { Check, Copy, ShieldCheck } from 'lucide-react'
 import { copyText } from '../lib/clipboard.ts'
 import { isPhone } from '../lib/phone.ts'
 import { Select } from './ui/Select.tsx'
@@ -80,7 +80,7 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
         </Button>
       </div>
       <div className="flex items-center gap-2.5 text-[13px]">
-        {online ? <Check className="size-4 text-fg" /> : <Loader2 className="size-4 animate-spin text-fg-3" />}
+        {online ? <Check className="size-4 text-fg" /> : <span className="flex size-4 items-center justify-center"><Pulse /></span>}
         {online ? `${host!.config.name} is connected.` : 'Waiting for the machine to connect…'}
       </div>
       <p className="text-[12px] leading-relaxed text-fg-3">

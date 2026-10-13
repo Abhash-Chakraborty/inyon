@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { AlertCircle, ArrowUpCircle, CheckCircle2, Loader2 } from 'lucide-react'
+import { AlertCircle, ArrowUpCircle, CheckCircle2 } from 'lucide-react'
 import type { HostState } from '@inyon/protocol'
 import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
-import { Button } from './ui/primitives.tsx'
+import { Button, Pulse } from './ui/primitives.tsx'
 
 /**
  * A machine whose inyon is behind: what's available and an Update button (only ever on a
@@ -39,7 +39,7 @@ export function NodeUpdate({ host }: { host: HostState }) {
   const online = host.status === 'online'
   const failed = u.state === 'failed' || !!refused
   const icon =
-    u.state === 'updating' ? <Loader2 className="size-4 animate-spin text-fg-2" />
+    u.state === 'updating' ? <span className="flex size-4 items-center justify-center"><Pulse /></span>
     : u.state === 'updated' ? <CheckCircle2 className="size-4 text-fg" />
     : failed ? <AlertCircle className="size-4 text-danger" />
     : <ArrowUpCircle className="size-4 text-fg-2" />

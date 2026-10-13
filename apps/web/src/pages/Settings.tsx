@@ -7,7 +7,7 @@ import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Segmented, Spinner, Toggle, inputClass } from '../components/ui/primitives.tsx'
+import { Button, Pulse, Segmented, Toggle, Waiting, inputClass } from '../components/ui/primitives.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { isHosted, publicFile } from '../lib/base.ts'
@@ -136,11 +136,9 @@ function WebUpdateRow() {
   }
   return (
     <Row label="Up to date" hint={`This web app is version ${VERSION}.`}>
-      {checking ? <Spinner /> : (
-        <Button size="sm" variant="ghost" onClick={() => (setChecking(true), void checkHub().finally(() => setChecking(false)))}>
-          Check now
-        </Button>
-      )}
+      <Button size="sm" variant="ghost" loading={checking} disabled={checking} onClick={() => (setChecking(true), void checkHub().finally(() => setChecking(false)))}>
+        Check now
+      </Button>
     </Row>
   )
 }
@@ -200,18 +198,19 @@ function HubUpdateRow() {
     }
   }
 
-  if (!info) {
+  if (failed && !info) {
     return (
-      <Row label="This hub" hint={failed ? `Couldn't check for updates: ${failed}` : undefined}>
-        {failed ? <Button size="sm" onClick={() => load(true)}>Try again</Button> : <Spinner />}
+      <Row label="This hub" hint={`Couldn't check for updates: ${failed}`}>
+        <Button size="sm" onClick={() => load(true)}>Try again</Button>
       </Row>
     )
   }
+  if (!info) return <Waiting shape="rows" count={1} label="Checking the hub for updates" className="px-4 py-3.5" />
   const available = !!info.latest || !!info.behind
   if (updating) {
     return (
       <Row label="Updating the hub…" hint="It restarts when it's done, and Inyon reconnects by itself. This takes a minute or two.">
-        <Spinner />
+        <Pulse className="mx-1" />
       </Row>
     )
   }
@@ -270,11 +269,9 @@ function AppUpdateRow() {
   }
   return (
     <Row label={failed ? "Couldn't check for updates" : checking && !u ? 'Checking for updates…' : 'Up to date'} hint={u ? `This app is version ${u.current}.` : failed ? 'Check your connection and try again.' : undefined}>
-      {checking ? <Spinner /> : (
-        <Button size="sm" variant="ghost" onClick={check}>
-          {failed ? 'Try again' : 'Check now'}
-        </Button>
-      )}
+      <Button size="sm" variant="ghost" loading={checking} disabled={checking} onClick={check}>
+        {failed ? 'Try again' : 'Check now'}
+      </Button>
     </Row>
   )
 }
@@ -451,7 +448,7 @@ export function Settings() {
             </p>
             <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
               {!hub ? (
-                <div className="flex justify-center py-6"><Spinner /></div>
+                <Waiting shape="rows" count={1} label="Loading hub settings" className="px-4 py-3.5" />
               ) : (
                 <Row label="Restart sessions that stop reporting" hint="When a session's settings are swapped under it, its cost and effort stop updating. If on, Inyon resumes it once it's idle, with nothing typed and no background shells.">
                   <Toggle on={!!hub.autoResume} onChange={(v) => saveHub({}, { autoResume: v })} label="Restart sessions that stop reporting" />
@@ -465,7 +462,7 @@ export function Settings() {
             <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.inyon/uploads on the session's machine, and the agent gets their paths.</p>
             <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
               {!hub ? (
-                <div className="flex justify-center py-6"><Spinner /></div>
+                <Waiting shape="rows" count={2} label="Loading upload settings" className="px-4 py-3.5" />
               ) : (
                 <>
                   <Row label="Delete uploads after" hint="Checked every few hours on every connected machine.">
@@ -609,7 +606,7 @@ function PhoneKey() {
         {error ? (
           <p className="text-[13px] text-danger">{error}</p>
         ) : !key ? (
-          <Spinner />
+          <Waiting shape="panel" label="Reading this phone's key" />
         ) : (
           <>
             <p className="break-all rounded-xl bg-sunken px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{key}</p>

@@ -8,7 +8,7 @@ import { hydrateChat, useStore } from '../lib/store.ts'
 import { paneTitle } from '../lib/overview.ts'
 import { SkinScope } from '../lib/skin.tsx'
 import { ChatActionsContext } from '../lib/chatActions.ts'
-import { Button, Empty, Spinner } from '../components/ui/primitives.tsx'
+import { Button, Empty, Waiting } from '../components/ui/primitives.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { useSession } from '../components/session/useSession.ts'
 import { SessionHeader } from '../components/session/SessionHeader.tsx'
@@ -25,9 +25,10 @@ import { ActivitySheet, ControlsSheet } from '../components/session/MobileSheets
 const ChatView = lazy(() => import('../components/chat/ChatView.tsx').then((m) => ({ default: m.ChatView })))
 const TerminalView = lazy(() => import('../components/terminal/TerminalView.tsx').then((m) => ({ default: m.TerminalView })))
 
-const Loading = () => (
-  <div className="flex flex-1 items-center justify-center">
-    <Spinner className="size-5" />
+// the chat column's shape, whether the chat or the terminal is what opens
+const Loading = ({ machine }: { machine?: string }) => (
+  <div className="mx-auto w-full max-w-[760px] flex-1 px-4 pt-5 sm:px-6">
+    <Waiting shape="lines" count={4} label={machine ? `Opening the session on ${machine}` : 'Opening the session'} />
   </div>
 )
 
@@ -121,7 +122,7 @@ export function PanePage() {
         {ref && <SignInSheet hostId={ref.host.config.id} hostName={ref.host.config.name} agent={signIn && agent ? agent : null} onClose={() => setSignIn(false)} />}
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
-            <Suspense fallback={<Loading />}>
+            <Suspense fallback={<Loading machine={ref?.host.config.name} />}>
               {!ref && !info ? (
                 <Loading />
               ) : view === 'chat' ? (

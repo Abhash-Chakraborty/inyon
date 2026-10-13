@@ -7,7 +7,7 @@ import { api, type SetupReport } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Spinner, Toggle } from './ui/primitives.tsx'
+import { Button, Toggle, Waiting } from './ui/primitives.tsx'
 import { SignInSheet } from './SignInSheet.tsx'
 import { copyText } from '../lib/clipboard.ts'
 
@@ -58,7 +58,7 @@ export function SetupPanel({ host }: { host: HostState }) {
   }
 
   if (host.status !== 'online') return <p className="text-[13px] text-fg-3">Setup checks run once the machine is connected.</p>
-  if (!report) return <div className="flex justify-center py-10"><Spinner /></div>
+  if (!report) return <Waiting shape="rows" label={`Checking ${host.config.name}`} className="max-w-3xl" />
 
   return (
     <div className="max-w-3xl space-y-6">
