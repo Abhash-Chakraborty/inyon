@@ -317,12 +317,14 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
 /// Leaves the hub: the connection stops and the saved address and token go.
 pub fn disconnect(sys: &Sys) -> Outcome {
     let hub = saved_hub();
-    let r = service::uninstall_service(sys, Role::Node);
+    // the hub is forgotten first: run by a node the hub removed, stopping the service last may
+    // stop this process with it
     let dir = node_dir();
     for name in ["env", ".env"] {
         let _ = fs::remove_file(dir.join(name));
     }
     let _ = fs::remove_file(dir.join("node.json"));
+    let r = service::uninstall_service(sys, Role::Node);
     let what = hub.as_deref().map(http::host_of).unwrap_or_else(|| "the hub".into());
     if !r.ok {
         return Err(format!("Left {what}, but couldn't remove everything: {}.", r.how));

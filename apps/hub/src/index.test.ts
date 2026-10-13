@@ -240,3 +240,17 @@ test('removing a phone closes its connection and ends its token', async () => {
   expect(((await json(await get('/api/phones', { cookie: true }))) as PairedPhone[]).map((p) => p.name)).not.toContain('Old phone')
   expect((await del(`/api/phones/${me.id}`, { cookie: true })).status).toBe(404)
 })
+
+test('a removed machine is told so when it calls again; a token the hub never knew is not', async () => {
+  const r = await post('/api/hosts/pair', { name: 'Old box' }, { cookie: true })
+  expect(r.status).toBe(200)
+  const { id, token } = await json(r)
+  const call = (t: string) => fetch(`${base}/node`, { headers: { authorization: `Bearer ${t}` } })
+  // a known token gets as far as the WebSocket upgrade
+  expect((await call(token)).status).toBe(400)
+  expect((await del(`/api/hosts/${id}`, { cookie: true })).status).toBe(200)
+  // it was off when it was removed: it comes back and is told to stop
+  expect((await call(token)).status).toBe(410)
+  // a hub that lost its data doesn't make every machine uninstall itself
+  expect((await call(crypto.randomBytes(32).toString('base64url'))).status).toBe(403)
+})

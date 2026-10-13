@@ -457,16 +457,19 @@ pub fn uninstall_service(sys: &Sys, role: Role) -> Installed {
     match sys.platform {
         Platform::Linux => {
             let unit = format!("{}.service", s.unit);
-            run(&["systemctl", "--user", "disable", "--now", &unit]);
+            // stopped last: run from inside the service (a node the hub removed takes itself
+            // down), the stop ends this process too, and everything else must be done by then
+            run(&["systemctl", "--user", "disable", &unit]);
             let _ = fs::remove_file(unit_file(s.unit));
             run(&["systemctl", "--user", "daemon-reload"]);
             let mut problems = Vec::new();
-            if let Err(note) = stop_background(sys, role) {
-                problems.push(note);
-            }
             if let Some(note) = drop_cron(&cron_mark(role)) {
                 problems.push(note);
             }
+            if let Err(note) = stop_background(sys, role) {
+                problems.push(note);
+            }
+            run(&["systemctl", "--user", "stop", &unit]);
             if !problems.is_empty() {
                 return failed(problems.join("; "));
             }
@@ -483,7 +486,8 @@ pub fn uninstall_service(sys: &Sys, role: Role) -> Installed {
                 return failed("nothing to remove");
             };
             ps(&format!(
-                "Stop-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
+                // unregistered before and after the stop: run from the task itself, the stop may end this
+                "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue; Stop-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
                 t = psq(task),
                 shortcut = startup_shortcut(&format!("{task}.lnk")),
                 stop = stop_copies(sys, Some(role))

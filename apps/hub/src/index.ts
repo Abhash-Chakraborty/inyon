@@ -10,6 +10,7 @@ import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { detectNetworks } from './networks.ts'
 import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
+import { wasRemoved } from './hosts/removed-nodes.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
 import { VERSION } from '@inyon/protocol'
@@ -369,6 +370,8 @@ const server = Bun.serve<SocketData>({
       const cfg = hash && registry.configs().find((c) => c.kind === 'node' && c.tokenHash && crypto.timingSafeEqual(Buffer.from(c.tokenHash), Buffer.from(hash)))
       if (!cfg || tokenExpired(cfg)) {
         await Bun.sleep(500)
+        // 410: the machine was removed here and should stop calling; it takes its service down
+        if (!cfg && wasRemoved(hash)) return new Response('This machine was removed from the hub', { status: 410 })
         return new Response(cfg ? 'This pairing command expired; get a new one from the hub' : 'Unknown token', { status: 403 })
       }
       if (srv.upgrade(req, { data: { kind: 'node', hostId: cfg.id } })) return registry.markPaired(cfg.id)

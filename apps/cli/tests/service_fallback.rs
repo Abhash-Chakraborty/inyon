@@ -120,3 +120,32 @@ fn a_program_that_is_not_installed_is_a_failed_step_not_a_crash() {
     assert!(!r.ok);
     assert!(r.out.contains("isn't available here"));
 }
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn a_node_the_hub_removed_can_take_down_its_own_unit_because_the_stop_comes_last() {
+    let _g = lock();
+    let (home, program) = setup();
+    // a stop sent from inside the unit ends the process that sent it: whatever is still on disk
+    // at that moment stays for ever
+    std::fs::write(
+        home.fakes.join("systemctl"),
+        "#!/bin/sh\nPATH=/usr/bin:/bin\nprintf '%s\\n' \"$*\" >> \"$HOME/systemctl.log\"\nif [ \"$2\" = stop ]; then for f in .config/systemd/user/inyon-node.service .inyon/node/env; do [ -e \"$HOME/$f\" ] && echo \"$f\" >> \"$HOME/left-at-stop\"; done; fi\nexit 0\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(home.fakes.join("systemctl"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    home.unit("inyon-node", "/home/me/.inyon/bin/inyon connect");
+    home.put(".inyon/node/env", "INYON_HUB=http://hub.lan:4777\nINYON_TOKEN=t\n");
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, &program);
+    assert!(inyon_cli::commands::disconnect(&sys).is_ok());
+    let log = home.read("systemctl.log");
+    assert_eq!(log.lines().last(), Some("--user stop inyon-node.service"), "{log}");
+    assert!(!log.contains("--now"), "{log}");
+    assert_eq!(home.read("left-at-stop"), "");
+    assert!(!home.exists(".config/systemd/user/inyon-node.service"));
+    assert!(!home.exists(".inyon/node/env"));
+}

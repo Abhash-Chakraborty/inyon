@@ -13,6 +13,7 @@ import { installIntegration, uninstallIntegration } from './claude/integration.t
 import { openTerminal } from './terminal/terminal.ts'
 import type { PtyHandle } from './hosts/host.ts'
 import { nodeLinks } from './hosts/node-link.ts'
+import { rememberRemoved } from './hosts/removed-nodes.ts'
 import { nodeUpdates } from './hosts/node-update.ts'
 import { listModels } from './features/models.ts'
 import { sendOnce } from './claude/send-receipts.ts'
@@ -278,6 +279,7 @@ export const coreRoutes: Routes = {
     }),
     DELETE: api((req) => {
       if (req.params.id === 'local') throw new HttpError(400, 'This machine cannot be removed')
+      rememberRemoved(registry.get(req.params.id)?.host.config.tokenHash)
       nodeLinks.disconnect(req.params.id)
       registry.remove(req.params.id)
       return ok()

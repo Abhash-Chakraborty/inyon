@@ -23,6 +23,7 @@
  */
 import os from 'node:os'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
@@ -82,12 +83,21 @@ function connectMode(hubArg?: string, tokenArg?: string) {
     writeFileSync(runningFile('node'), JSON.stringify({ pid: process.pid, version: VERSION }))
   } catch {}
 
+  /** A hub answers 410 to a machine removed while it was off (a token it never knew gets 403). */
+  const removedThere = () =>
+    fetch(`${url.protocol}//${url.host}/node`, { headers: { authorization: `Bearer ${token}` } }).then(
+      (r) => r.status === 410,
+      () => false,
+    )
+
   function connect(attempt = 0) {
     const ws = new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` } } as any)
     const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     const ops = serveOps(send)
+    let opened = false
 
     ws.onopen = () => {
+      opened = true
       attempt = 0
       console.log(`connected to ${url.host}`)
       send({ type: 'hello', version: VERSION, os: `${os.platform()} ${os.arch()}`, hostname: os.hostname(), platform: os.platform(), mux: WIN ? 'psmux' : 'tmux' })
@@ -103,12 +113,9 @@ function connectMode(hubArg?: string, tokenArg?: string) {
       ops.message(m)
     }
 
-    ws.onclose = (e) => {
+    ws.onclose = async (e) => {
       ops.close()
-      if (e.code === 4001) {
-        console.log('This machine was removed from Inyon. Exiting.')
-        process.exit(0)
-      }
+      if (e.code === 4001 || (!opened && (await removedThere()))) return leave(`This machine was removed from ${url.host}.`)
       if (e.code === 4003) {
         console.error('The hub rejected the token. Pair this machine again from the hub.')
         process.exit(1)
@@ -121,6 +128,23 @@ function connectMode(hubArg?: string, tokenArg?: string) {
   }
 
   connect()
+}
+
+/**
+ * The hub removed this machine. `inyon disconnect` takes the background service down and forgets
+ * the hub, so nothing starts this again and calls the hub for ever. It runs in a session of its
+ * own: stopping the service may stop everything started from this process.
+ */
+function leave(why: string) {
+  const cli = process.env.INYON_CLI
+  console.log(`${why} Removing the background service.`)
+  if (!cli) {
+    for (const name of ['env', '.env']) rmSync(path.join(nodeDir(), name), { force: true })
+    process.exit(0)
+  }
+  const p = spawn(cli, ['disconnect'], { detached: true, stdio: 'inherit' })
+  p.on('exit', () => process.exit(0))
+  p.on('error', () => process.exit(0))
 }
 
 /** Checks a hub address; refuses to send a token over plain http to a public address. */
