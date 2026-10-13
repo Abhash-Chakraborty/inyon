@@ -1,5 +1,6 @@
-import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, type CSSProperties, type ReactNode } from 'react'
 import clsx from 'clsx'
+import { loadSerifFont } from './serif.ts'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { useStore } from './store.ts'
 import { publicFile } from './base.ts'
@@ -101,6 +102,10 @@ export function AgentLogo({ kind, size = 20, className, active }: { kind?: Agent
 /** Reply font for an agent, unless the user overrides it. */
 export function useReplyFont(kind?: AgentKind): 'serif' | 'sans' | 'mono' {
   const override = useStore((s) => s.settings.replyFont)
-  if (override !== 'auto') return override
-  return kind ? AGENTS[kind].replyFont : 'sans'
+  const font = override !== 'auto' ? override : kind ? AGENTS[kind].replyFont : 'sans'
+  // the serif face isn't in the first load; the first session that reads in it fetches it
+  useEffect(() => {
+    if (font === 'serif') loadSerifFont()
+  }, [font])
+  return font
 }
