@@ -4,7 +4,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
-import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, recentSignIn, refreshCookie, revokeSession, tryLogin } from './auth.ts'
+import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, issueTicket, listPhones, newPairCode, phoneFor, redeemTicket, revokePhone } from './phones.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { detectNetworks } from './networks.ts'
@@ -12,7 +13,8 @@ import { nodeLinks, type NodeSocketData } from './hosts/node-link.ts'
 import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
 import { VERSION } from '@inyon/protocol'
-import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
+import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, ok, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
+import type { PhoneClaim } from '@inyon/protocol'
 import { pushAll, startHubPush } from './push/hub-push.ts'
 import { pushRoutes, TEST_PAYLOAD } from './push/routes.ts'
 
@@ -72,15 +74,52 @@ function rightHost(req: Request) {
 }
 const WRONG_HOST = "This hub doesn't answer to that address. If it's yours, add it to INYON_ALLOWED_HOSTS on the hub."
 
-/** An API handler behind sign-in and the same-origin check. */
+/**
+ * The phone app runs on an origin of its own and signs in with a bearer token, so its requests
+ * are cross-origin and need CORS answers. That is safe where no cookie is read: a request with a
+ * bearer is judged by the bearer alone (see isAuthed), and these two routes never look at one.
+ */
+const CORS_PATHS = new Set(['/api/phones/claim', '/api/phones/ticket'])
+const phoneRequest = (req: Request) => hasBearer(req) || CORS_PATHS.has(new URL(req.url).pathname)
+function allowOrigin(res: Response, origin: string) {
+  res.headers.set('Access-Control-Allow-Origin', origin)
+  res.headers.set('Vary', 'Origin')
+  res.headers.set('Access-Control-Allow-Headers', 'authorization, content-type')
+  res.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE')
+  return res
+}
+function cors(req: Request, res: Response) {
+  const origin = req.headers.get('origin')
+  return origin && phoneRequest(req) ? allowOrigin(res, origin) : res
+}
+/** A preflight carries no token yet; the one for a bearer request names the header it will send. */
+function preflight(req: Request) {
+  if (req.method !== 'OPTIONS') return
+  const url = new URL(req.url)
+  const forBearer = /\bauthorization\b/i.test(req.headers.get('access-control-request-headers') ?? '')
+  if (!url.pathname.startsWith('/api/') || !(forBearer || CORS_PATHS.has(url.pathname))) return
+  if (!rightHost(req)) return json({ error: WRONG_HOST }, { status: 421 })
+  const res = new Response(null, { status: 204, headers: { 'Access-Control-Max-Age': '600' } })
+  const origin = req.headers.get('origin')
+  return origin ? allowOrigin(res, origin) : res
+}
+
+/**
+ * An API handler behind sign-in and the same-origin check. `open`: no sign-in needed. `owner`:
+ * the hub's own account is the browser's to manage, so a paired phone is refused.
+ */
 const api =
-  (fn: Handler, open = false): Handler => {
+  (fn: Handler, { open = false, owner = false } = {}): Handler => {
     const run = handled(fn)
     return async (req) => {
+      const pre = preflight(req)
+      if (pre) return pre
       if (!rightHost(req)) return json({ error: WRONG_HOST }, { status: 421 })
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
-      if (!open && !isAuthed(req)) return json({ error: 'Not signed in' }, { status: 401 })
-      return run(req)
+      if (owner && hasBearer(req)) return cors(req, json({ error: 'Not from a phone. Do this in the browser.' }, { status: 403 }))
+      // a bearer request carries no ambient credential, so CSRF doesn't apply to it
+      if (req.method !== 'GET' && req.method !== 'HEAD' && !phoneRequest(req) && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
+      if (!open && !isAuthed(req)) return cors(req, json({ error: 'Not signed in' }, { status: 401 }))
+      return cors(req, await run(req))
     }
   }
 
@@ -93,8 +132,8 @@ const guarded = (routes: Routes) =>
     ]),
   )
 
-/** an app's connection, with the request it opened with until it's tied to that sign-in */
-type AppSocket = Client & { req?: Request; release?: () => void }
+/** an app's connection, with the request it opened with until it's tied to that sign-in (or to its phone) */
+type AppSocket = Client & { req?: Request; phone?: string; release?: () => void }
 type SocketData = AppSocket | (NodeSocketData & { kind: 'node' })
 
 // ---------- static files (production build of apps/web) ----------
@@ -163,7 +202,7 @@ const server = Bun.serve<SocketData>({
       // sliding sign-in: a session in use keeps going, one left alone for 30 days ends
       const cookie = authed ? refreshCookie(req, secureRequest(req)) : undefined
       return json({ authed, setup: !hasPassword(), setupCode: !!setupCode && !hasPassword(), ...(authed ? { version: VERSION, commit: HUB_COMMIT } : {}) }, cookie ? { headers: { 'Set-Cookie': cookie } } : {})
-    }, true),
+    }, { open: true }),
     '/api/setup': {
       POST: api(async (req) => {
         if (hasPassword()) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
@@ -186,7 +225,7 @@ const server = Bun.serve<SocketData>({
         setPassword(password)
         fs.rmSync(SETUP_CODE_FILE, { force: true })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
-      }, true),
+      }, { open: true, owner: true }),
     },
     '/api/password': {
       POST: api(async (req) => {
@@ -202,7 +241,7 @@ const server = Bun.serve<SocketData>({
         // connections opened with the old password end too (this browser reconnects signed in)
         closeSockets()
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
-      }),
+      }, { owner: true }),
     },
     '/api/login': {
       POST: api(async (req) => {
@@ -212,13 +251,51 @@ const server = Bun.serve<SocketData>({
         const r = await tryLogin(client, String(password ?? ''))
         if (!r.ok) return json({ error: r.error }, { status: 401 })
         return json({ ok: true }, { headers: { 'Set-Cookie': issueCookie(secureRequest(req)) } })
-      }, true),
+      }, { open: true, owner: true }),
     },
     '/api/logout': {
       POST: api((req) => {
         revokeSession(req)
         return json({ ok: true }, { headers: { 'Set-Cookie': clearCookie() } })
-      }, true),
+      }, { open: true }),
+    },
+    // ---------- phones: the app pairs by scanning a code this hub's web app shows ----------
+    '/api/phones': {
+      GET: api((req) => json(listPhones(req))),
+    },
+    '/api/phones/pair': {
+      POST: api(async (req) => {
+        // a code hands out a token that outlives this session, so the password must be fresh
+        if (!recentSignIn(req, CODE_TTL)) throw new HttpError(403, 'Sign in again to pair a phone.')
+        const b = await body<{ origin?: string; name?: string }>(req, 8 * 1024)
+        return json(newPairCode(b.origin))
+      }, { owner: true }),
+    },
+    '/api/phones/claim': {
+      POST: api(async (req) => {
+        const b = await body<Partial<PhoneClaim>>(req, 8 * 1024)
+        const client = clientAddress(server.requestIP(req)?.address ?? '?', req.headers.get('x-forwarded-for'))
+        try {
+          return json(claimPhone(client, b))
+        } catch (err) {
+          // wrong digits cost a moment, as a wrong setup code does
+          if (err instanceof HttpError && err.status === 401) await Bun.sleep(400)
+          throw err
+        }
+      }, { open: true }),
+    },
+    '/api/phones/ticket': {
+      POST: api((req) => {
+        const phone = phoneFor(req)
+        if (!phone) throw new HttpError(403, 'Only a paired phone connects with a ticket.')
+        return json({ ticket: issueTicket(phone.id) })
+      }),
+    },
+    '/api/phones/:id': {
+      DELETE: api((req) => {
+        if (!revokePhone(req.params.id)) throw new HttpError(404, 'Unknown phone')
+        return ok()
+      }, { owner: true }),
     },
     '/api/hosts/pair': {
       POST: api(async (req) => {
@@ -267,12 +344,21 @@ const server = Bun.serve<SocketData>({
       return new Response('Upgrade failed', { status: 400 })
     }
     if (url.pathname === '/ws') {
-      if (!sameOrigin(req)) return new Response('Cross-site connection refused', { status: 403 })
-      if (!isAuthed(req)) return new Response('Not signed in', { status: 401 })
-      const data: AppSocket = Object.assign(newClient(), { req })
+      // a phone connects with a ticket (a page can't set a header on a WebSocket) or its bearer;
+      // either one is judged alone, never a cookie sent along with it
+      const ticket = url.searchParams.get('ticket')
+      const asPhone = ticket !== null || hasBearer(req)
+      const phone = ticket !== null ? redeemTicket(ticket) : asPhone ? phoneFor(req) : undefined
+      if (asPhone && !phone) return new Response('Not signed in', { status: 401 })
+      if (!asPhone && !sameOrigin(req)) return new Response('Cross-site connection refused', { status: 403 })
+      if (!asPhone && !isAuthed(req)) return new Response('Not signed in', { status: 401 })
+      const data: AppSocket = Object.assign(newClient(), { req, phone: phone?.id })
       if (srv.upgrade(req, { data })) return
       return new Response('Upgrade failed', { status: 400 })
     }
+    // a route that only lists some methods leaves OPTIONS to land here
+    const pre = preflight(req)
+    if (pre) return pre
     if (url.pathname.startsWith('/api/')) return json({ error: 'Not found' }, { status: 404 })
     if (!rightHost(req)) return new Response(`${WRONG_HOST}\n`, { status: 421, headers: PAGE_HEADERS })
     return serveStatic(url.pathname)
@@ -290,7 +376,7 @@ const server = Bun.serve<SocketData>({
       c.send = (msg) => {
         ws.send(JSON.stringify(msg))
       }
-      c.release = holdSocket(c.req!, ws)
+      c.release = c.phone ? holdPhoneSocket(c.phone, ws) : holdSocket(c.req!, ws)
       c.req = undefined
       clients.add(c)
     },

@@ -256,6 +256,8 @@ nodeUpdates.useScripts(updateScript)
  * program only fetches the release's checksums now, and each build the first time it's asked for.
  */
 export function prebuildNode() {
+  // hubs started by tests never hand out the program, and building it fetches Bun for four systems
+  if (process.env.NODE_ENV === 'test') return
   ;(async () => {
     if (!FROM_SOURCE) return void (await releaseSums())
     for (const t of [...UNIX, 'windows-x64'] as Target[]) await program(t).then((f) => Promise.all([sha256(f), gzipped(f)]))

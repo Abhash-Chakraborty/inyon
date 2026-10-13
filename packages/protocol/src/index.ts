@@ -385,6 +385,43 @@ export interface ScreenState {
   width: number
 }
 
+// ---------- Phones paired with a hub ----------
+
+/** A one-time code the hub's web app shows (as a QR, and as text to type) for a phone to pair with. */
+export interface PhonePairCode {
+  /** 8 characters of Crockford base32, shown as "K7Q4-MX2T" (formatShortId in @inyon/link) */
+  id: string
+  /** 6 digits */
+  code: string
+  /** what the QR holds: inyon://hub?u=<hub origin>&c=<id:code>&n=<hub name> */
+  link: string
+  /** unix ms; ten minutes after the code was made */
+  expiresAt: number
+}
+
+/** POST /api/phones/claim: the phone hands in the code and says what to call it. */
+export interface PhoneClaim {
+  /** "ID:DIGITS", the id in any case */
+  code: string
+  name: string
+}
+
+export interface PhoneClaimResult {
+  /** sent as `Authorization: Bearer` from then on; the hub keeps only its hash */
+  token: string
+  hub: { id: string; name: string; version: string }
+}
+
+/** GET /api/phones: a phone that paired, as the hub lists it. */
+export interface PairedPhone {
+  id: string
+  name: string
+  pairedAt: number
+  lastSeen: number
+  /** set on the phone that asked */
+  thisPhone?: true
+}
+
 // ---------- WebSocket protocol ----------
 
 export type ClientMsg =

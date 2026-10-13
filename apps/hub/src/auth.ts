@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import { checkPassword, sessionSecret } from './password.ts'
 import { kv } from './platform/store.ts'
+import { hasBearer, phoneFor } from './phones.ts'
 
 export const COOKIE = 'inyon_session'
 /** the cookie's name before the rename to Inyon: still signs you in, and is swapped for the new one */
@@ -16,6 +17,8 @@ interface Session {
   n: string
   /** when this cookie was issued */
   iat?: number
+  /** when the password was typed; a refresh keeps it (cookies from before this field have only `iat`) */
+  at?: number
 }
 
 // signed-out sessions, by nonce, until they would have expired anyway
@@ -32,7 +35,7 @@ function cookieFor(session: Session, secure: boolean) {
 }
 
 export function issueCookie(secure: boolean) {
-  return cookieFor({ exp: Date.now() + MAX_AGE * 1000, n: crypto.randomUUID(), iat: Date.now() }, secure)
+  return cookieFor({ exp: Date.now() + MAX_AGE * 1000, n: crypto.randomUUID(), iat: Date.now(), at: Date.now() }, secure)
 }
 
 export const clearCookie = () => `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
@@ -56,7 +59,19 @@ function session(req: Request): Session | undefined {
   }
 }
 
-export const isAuthed = (req: Request) => !!session(req)
+/**
+ * A browser with a session cookie, or a paired phone with its token. A request that carries a
+ * bearer is judged by the bearer alone: it skips the same-origin check, so a cookie sent along
+ * with a bad bearer must not sign it in.
+ */
+export const isAuthed = (req: Request) => (hasBearer(req) ? !!phoneFor(req) : !!session(req))
+
+/** The password was typed within `ms`: pairing a phone asks for that, not a session left from weeks ago. */
+export function recentSignIn(req: Request, ms: number) {
+  const s = session(req)
+  const at = s?.at ?? s?.iat
+  return at !== undefined && Date.now() - at <= ms
+}
 
 // open connections, by the session they signed in with: a cookie is only checked when a
 // connection opens, so ending a session has to close the ones it already has
