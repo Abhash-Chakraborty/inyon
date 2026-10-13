@@ -1,6 +1,7 @@
 import { mock } from 'bun:test'
 import type { ServerMsg } from '@inyon/protocol'
 import * as realModule from '../lib/api.ts'
+import * as realSocket from '../lib/socket.ts'
 
 /**
  * Stand-ins for the network: `api` and `socket` replace the real ones in every test (see
@@ -8,6 +9,8 @@ import * as realModule from '../lib/api.ts'
  */
 export const realApi = { ...realModule.api }
 export const realApiModule = { ...realModule }
+/** The real socket module, for socket.test.ts (everything else gets the fake `socket` below). */
+export const realSocketModule = { ...realSocket }
 
 type Api = typeof realModule.api
 type Fake<T> = { [K in keyof T]: T[K] extends (...a: infer A) => infer R ? ReturnType<typeof mock<(...a: A) => R>> : T[K] }

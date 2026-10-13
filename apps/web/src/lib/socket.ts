@@ -226,7 +226,7 @@ export const socket = new Socket()
  * everything out has them renamed back. A hub that is out of reach shows its machines as
  * connecting until it answers again; one that has forgotten this phone is forgotten here too.
  */
-class HubConn {
+export class HubConn {
   private ws?: WebSocket
   private retry = 0
   private timer?: ReturnType<typeof setTimeout>
@@ -235,6 +235,7 @@ class HubConn {
   private terms = new Set<string>()
   private heard = 0
   private pingTimer?: ReturnType<typeof setInterval>
+  private attempts = 0
 
   constructor(
     readonly hub: PairedHub,
@@ -253,14 +254,19 @@ class HubConn {
   async connect() {
     if (this.stopped) return
     clearTimeout(this.timer)
+    // a newer call (a resume while the ticket was on its way) wins; this one stops where it is
+    const attempt = ++this.attempts
     let ticket: string
     try {
       ticket = await hubTicket(this.hub)
     } catch (err) {
+      if (attempt !== this.attempts) return
       if (err instanceof HubRevoked) return this.revoked()
       return this.later()
     }
-    if (this.stopped) return
+    if (this.stopped || attempt !== this.attempts) return
+    // one connection at a time: one left open would keep the hub sending to it, unheard
+    this.drop()
     const ws = new WebSocket(hubWsUrl(this.hub, ticket))
     this.ws = ws
     ws.onopen = () => {
@@ -330,6 +336,11 @@ class HubConn {
     this.stopped = true
     clearTimeout(this.timer)
     clearInterval(this.pingTimer)
+    this.drop()
+  }
+
+  /** Closes the current connection without reacting to its close. */
+  private drop() {
     const ws = this.ws
     this.ws = undefined
     if (ws) {
@@ -349,26 +360,34 @@ class HubConn {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
   }
 
-  /** A message from this hub, with its machines renamed to carry the hub's id. */
+  /**
+   * A message from this hub, with its machines renamed to carry the hub's id. Only the machine list
+   * is tagged with where it came from: a draft has a `source` of its own (the app or the terminal).
+   */
   private inbound(m: ServerMsg): Tagged {
     const name = (id: string) => hubHostId(this.hub.id, id)
+    // every chat message carries `key`, the machine and pane joined by a colon
+    const key = (k: string) => k.replace(/^([^:]+):/, (_, host: string) => `${name(host)}:`)
     switch (m.t) {
       case 'overview': {
-        const hosts = m.hosts.map((h) => ({ ...h, config: { ...h.config, id: name(h.config.id) } }))
+        // a server reached through one of the hub's computers names that computer
+        const hosts = m.hosts.map((h) => ({ ...h, config: { ...h.config, id: name(h.config.id), ...(h.config.via ? { via: name(h.config.via) } : {}) } }))
         this.last = hosts
         return { ...m, hosts, source: this.source }
       }
       case 'notify':
-        return { ...m, host: name(m.host), source: this.source }
-      case 'term.data':
+        return { ...m, host: name(m.host) }
       case 'term.exit':
-        if (m.t === 'term.exit') this.terms.delete(m.id)
-        return { ...m, source: this.source }
+        this.terms.delete(m.id)
+        return m
+      case 'term.data':
       case 'pong':
-        return { ...m, source: this.source }
+        return m
+      case 'chat.reset':
+      case 'chat.info':
+        return { ...m, key: key(m.key), info: { ...m.info, hostId: name(m.info.hostId) } }
       default:
-        // every chat message carries `key`, the machine and pane joined by a colon
-        return { ...m, key: m.key.replace(/^([^:]+):/, (_, host: string) => `${name(host)}:`), source: this.source } as Tagged
+        return { ...m, key: key(m.key) }
     }
   }
 }
