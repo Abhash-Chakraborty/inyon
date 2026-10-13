@@ -42,6 +42,20 @@ cd apps/web && bun run build && bun run e2e   # layout at phone widths, needs Pl
 The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the
 agents' terminal apps. If you change it, add a capture to `screen.test.ts` that shows the case.
 
+## Where things live
+
+```
+apps/hub           Bun server: machines, tmux, agent readers, API, WebSocket
+                   (src/phone runs the same core inside the Android app)
+apps/web           React + Vite app, also served by the hub
+apps/node          the inyon program: the phone link, the hub connection and the hub itself
+apps/mobile        Capacitor shell for Android and iOS; scripts/icons.ts renders every icon
+packages/protocol  types and the agent registry shared by hub and app
+```
+
+The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
+`apps/web`, then `bun scripts/readme/shots.ts` makes them again.
+
 ## Adding an agent
 
 Most of what Inyon knows about an agent lives in one place: `packages/protocol/src/agents.ts`
