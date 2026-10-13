@@ -93,7 +93,7 @@ function SignIn() {
         )}
         {setup?.code && (
           <div className="mt-4">
-            <Field label="Setup code" hint="The hub printed it when it started. It's also in ~/.inyon/setup-code on the hub machine.">
+            <Field label="Setup code" hint="The hub printed it when it started. On the hub machine, `inyon hub code` shows it again.">
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}

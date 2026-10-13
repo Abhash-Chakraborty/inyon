@@ -154,8 +154,8 @@ bun start
 ```
 
 The hub listens on `127.0.0.1:4777`. The first visit asks you to create a password, using the
-setup code the hub prints when it starts (also in `~/.inyon/setup-code`). Change it later in
-Settings, or reset a forgotten one with `bun apps/hub/src/cli/set-password.ts`.
+setup code the hub prints when it starts; `inyon hub code` shows it again. Change the password
+later in Settings, or choose a new one for a forgotten one with `inyon hub reset-password`.
 
 Reach it from your phone over a private network (Tailscale, Headscale, NetBird, ZeroTier,
 WireGuard or your LAN), or put it behind an HTTPS reverse proxy. `inyon hub install` looks for

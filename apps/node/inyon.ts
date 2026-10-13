@@ -18,6 +18,8 @@
  *                                  runs this), with the token in INYON_TOKEN
  *   inyon connect                  run the connection to that hub
  *   inyon hub                      run the hub (`inyon hub install` keeps it running)
+ *   inyon hub code                 show the setup code a new hub asks for
+ *   inyon hub reset-password       choose a new password for a forgotten one
  *   inyon update                   get the newest version and restart what runs in the background
  *
  * The phone link is end-to-end encrypted; tunnels and relays only carry ciphertext. For a hub,
@@ -365,6 +367,8 @@ const USAGE = `inyon ${VERSION}
   inyon join <hub-url>              add this machine to an Inyon hub, with the token in INYON_TOKEN
   inyon connect                     run the connection to that hub
   inyon hub                         run the hub
+  inyon hub code                    show the setup code a new hub asks for
+  inyon hub reset-password          choose a new password for a forgotten one
   inyon install [link|node|hub]     start running in the background (at login)
   inyon uninstall [link|node|hub]   stop running in the background
   inyon update                      get the newest version and restart what runs in the background`
