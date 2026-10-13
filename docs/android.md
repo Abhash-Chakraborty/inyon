@@ -5,6 +5,7 @@ Inyon's core in the app (`apps/hub/src/phone`) and reaches your computers itself
 server in between and no password.
 
 - [Any computer, from anywhere](#any-computer-from-anywhere)
+- [A hub](#a-hub)
 - [Your own copy in a browser](#your-own-copy-in-a-browser)
 - [A server over SSH](#a-server-over-ssh)
 - [Getting and building it](#getting-and-building-it)
@@ -57,6 +58,19 @@ and `inyon forget <name>` unpairs one.
 On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for
 Windows, and setup installs it with winget. Everything works as on Linux, except that the terminal
 is drawn from the pane's screen, so it shows what's on screen now without the scrollback.
+
+## A hub
+
+If you run a [hub](hub.md), the app can pair with it too: on the hub's web app open *Open on
+your phone*, then in the app tap *Add → Connect to a hub* and scan the code, or type the hub's
+address and the code it shows. The hub's machines then show in the app next to the computers
+it reaches directly, and everything about them goes to the hub with the phone's own token. A
+hub out of reach shows its machines as connecting until it answers; one that forgot the phone
+(Settings on the hub) drops out with a word. Settings in the app lists the hubs, each with
+*Forget*.
+
+Three ways to connect, then: a server over SSH with nothing installed, a computer running
+`inyon` that the phone reaches itself, or a hub that other machines joined.
 
 ## Your own copy in a browser
 

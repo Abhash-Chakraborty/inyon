@@ -49,9 +49,25 @@ a public domain, add that domain to `INYON_ALLOWED_HOSTS`.
   alerts reach a closed tab or installed app, for every agent and for machines going offline.
 - Other machines host nothing. They run tmux and your agents, and join the hub as described in
   [Adding machines](machines.md).
+- The Android app can pair with the hub and reach it itself, with no browser in between. See
+  [Pair the app with the hub](#pair-the-app-with-the-hub).
 
 Don't open port 4777 to the internet without HTTPS. The hub can run commands on every machine you
 add, so anyone who reaches it gets to try your password.
+
+## Pair the app with the hub
+
+Once you're signed in, *Open on your phone* (on the overview until a phone is paired, under
+Machines, and in Settings) shows a QR code and a typed code. In the app, tap *Add*, then *Connect
+to a hub*, and scan it, or type the hub's address and the code. The phone then talks to the hub
+with a token of its own, and the hub's machines show next to the computers the phone pairs with
+directly.
+
+The hub hands a code only to someone who signed in within the last ten minutes, so an old tab
+asks for the password again first. A code works once, for ten minutes, and five wrong tries
+cancel it. Settings on the hub lists the paired phones; *Forget* cuts one off at once. The phone
+needs to reach the hub's address, so the same rules as a browser apply: a private network, or
+HTTPS.
 
 ## Updating
 
