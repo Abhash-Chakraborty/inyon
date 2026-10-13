@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
-import { RELEASES_REPO, VERSION } from '@inyon/protocol'
+import { compressed, RELEASES_REPO, VERSION } from '@inyon/protocol'
 import INSTALL_SH from '../../../node/install.sh' with { type: 'text' }
 import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
 import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
@@ -92,14 +92,7 @@ export async function program(t: Target) {
       })
       fs.renameSync(built, file)
     } else {
-      const base = releaseBase()
-      const want = sumFor(await releaseSums(), fileName(t))
-      if (!want) throw new HttpError(502, `Inyon ${VERSION} has no ${fileName(t)} on ${RELEASES_REPO}`)
-      const r = await fetch(`${base}/${fileName(t)}`)
-      if (!r.ok) throw new HttpError(502, `Could not download ${fileName(t)} (${r.status})`)
-      const data = Buffer.from(await r.arrayBuffer())
-      if (crypto.createHash('sha256').update(data).digest('hex') !== want) throw new HttpError(502, `${fileName(t)} did not match its release checksum`)
-      fs.writeFileSync(`${file}.tmp`, data)
+      fs.writeFileSync(`${file}.tmp`, await releaseFile(fileName(t), await releaseSums(), releaseBase()))
       fs.renameSync(`${file}.tmp`, file)
     }
     pruneOld(tag)
@@ -121,6 +114,28 @@ function releaseSums() {
 }
 
 const sumFor = (sums: string, name: string) => sums.split(/\r?\n/).map((l) => l.trim().split(/\s+\*?/)).find(([, n]) => n === name)?.[0]?.toLowerCase()
+const digest = (data: Uint8Array) => crypto.createHash('sha256').update(data).digest('hex')
+
+/**
+ * Release file `name`, checked against the release's SHA256SUMS. The gzipped copy is taken when
+ * the release lists one (under half the size) and checked before it's unpacked; machines get the
+ * plain bytes either way.
+ */
+export async function releaseFile(name: string, sums: string, base: string, get: typeof fetch = fetch): Promise<Buffer> {
+  const want = sumFor(sums, name)
+  if (!want) throw new HttpError(502, `Inyon ${VERSION} has no ${name} on ${RELEASES_REPO}`)
+  const gz = sumFor(sums, compressed(name))
+  const asset = gz ? compressed(name) : name
+  const r = await get(`${base}/${asset}`)
+  if (!r.ok) throw new HttpError(502, `Could not download ${asset} (${r.status})`)
+  let data = Buffer.from(await r.arrayBuffer())
+  if (gz) {
+    if (digest(data) !== gz) throw new HttpError(502, `${asset} did not match its release checksum`)
+    data = zlib.gunzipSync(data)
+  }
+  if (digest(data) !== want) throw new HttpError(502, `${name} did not match its release checksum`)
+  return data
+}
 
 /**
  * The checksums of the Linux and macOS builds, which install.sh checks its download against. The
@@ -172,7 +187,7 @@ async function busybox(arch: string) {
     const r = await fetch(`https://frippery.org/files/busybox/${file}`)
     if (!r.ok) throw new HttpError(502, `Could not download busybox-w32 (${r.status})`)
     const buf = Buffer.from(await r.arrayBuffer())
-    if (crypto.createHash('sha256').update(buf).digest('hex') !== sha256) throw new HttpError(502, 'busybox-w32 download did not match its pinned checksum')
+    if (digest(buf) !== sha256) throw new HttpError(502, 'busybox-w32 download did not match its pinned checksum')
     fs.writeFileSync(out, buf)
     return out
   })

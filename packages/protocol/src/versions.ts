@@ -22,6 +22,23 @@ export const RELEASES_REPO = SOURCE_REPO
 export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`
 
 /**
+ * The files a release attaches for one system ("linux-x64", "windows-x64"). Release 0.13 depends
+ * on these names: from then on `cli` is a small command-line program and today's program ships as
+ * `engine`. Every updater from 0.11 on looks for the engine's name in SHA256SUMS and installs both
+ * files when it's there, so a machine crosses over by itself. Change the names only with that in
+ * mind. Each file is also attached gzipped, as its name plus .gz (see compressed); the plain file
+ * stays for installs from before 0.11.
+ */
+export function releaseFiles(system: string) {
+  const exe = system.startsWith('windows') ? '.exe' : ''
+  return { cli: `inyon-${system}${exe}`, engine: `inyon-engine-${system}${exe}` }
+}
+/** The gzipped copy of a release file, under half the size; taken first when SHA256SUMS lists it. */
+export const compressed = (file: string) => `${file}.gz`
+/** The engine's name once installed, next to `inyon` in ~/.inyon/bin (plus .exe on Windows). */
+export const ENGINE = 'inyon-engine'
+
+/**
  * A release number as [major, minor, patch]: "0.6.10" and "v0.6.10" both work. A prerelease
  * ("0.7.0-rc.1") or anything else gives undefined, so it never counts as an update.
  */

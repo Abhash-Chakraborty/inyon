@@ -4,7 +4,7 @@ import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { appendFileSync, chmodSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
-import { RELEASES_REPO } from '@inyon/protocol'
+import { compressed, ENGINE, INSTALL_URL, RELEASES_REPO, releaseFiles } from '@inyon/protocol'
 import { nodeDir, readEnvFile, savedHub } from './paths.ts'
 import type { Role } from './service.ts'
 
@@ -15,8 +15,9 @@ export { readEnvFile, savedHub }
  * runs as (the phone link, the hub connection, the hub). A machine added to a hub takes the build
  * that hub serves, checked against the sha256 the hub publishes, so it always matches its hub;
  * anything else updates from the GitHub releases, checked against the release's SHA256SUMS like get.sh
- * does. Nothing is replaced until the download matches, and the old copy comes back if the new one
- * doesn't start.
+ * does (the gzipped copy of each file first, since 0.11). Nothing is replaced until the download
+ * matches, and the old copy comes back if the new one doesn't start. A release that comes as an
+ * engine and a command-line program (0.13 and on, see releaseFiles) is installed as both.
  */
 
 export const RELEASES = `https://github.com/${RELEASES_REPO}/releases/latest/download`
@@ -55,11 +56,16 @@ export function target(platform: string = process.platform, arch: string = os.ar
   return { os: o, arch: a }
 }
 
-/** The release file for this computer, as get.sh and get.ps1 pick it. */
-export function binaryName(platform: string = process.platform, arch: string = os.arch()) {
+/** The release files for this computer (see releaseFiles); `cli` is what get.sh and get.ps1 pick. */
+export function releaseNames(platform: string = process.platform, arch: string = os.arch()) {
   const t = target(platform, arch)
-  return `inyon-${t.os}-${t.arch}${t.os === 'windows' ? '.exe' : ''}`
+  return releaseFiles(`${t.os}-${t.arch}`)
 }
+export const binaryName = (platform?: string, arch?: string) => releaseNames(platform, arch).cli
+
+/** The one line that installs the newest version from scratch. */
+export const reinstallCommand = (platform: string = process.platform) =>
+  platform === 'win32' ? `irm ${INSTALL_URL}/get.ps1 | iex` : `curl -fsSL ${INSTALL_URL}/get.sh | sh`
 
 /** The checksum SHA256SUMS lists for `name` (sha256sum writes "<hex>  name" or "<hex> *name"). */
 export function sumFor(sums: string, name: string) {
@@ -95,7 +101,7 @@ export async function sha256File(file: string) {
   return h.digest('hex')
 }
 
-async function download(url: string, to: string, get: typeof fetch, gunzip = false) {
+async function download(url: string, get: typeof fetch) {
   let res: Response
   try {
     res = await get(url)
@@ -103,8 +109,32 @@ async function download(url: string, to: string, get: typeof fetch, gunzip = fal
     throw new UpdateError(`Couldn't download ${url} (${(err as Error).message}).`)
   }
   if (!res.ok || !res.body) throw new UpdateError(`Couldn't download ${url} (${res.status}).`)
-  const data = new Uint8Array(await res.arrayBuffer())
-  writeFileSync(to, gunzip ? zlib.gunzipSync(data) : data)
+  return new Uint8Array(await res.arrayBuffer())
+}
+
+const sha256 = (data: Uint8Array) => crypto.createHash('sha256').update(data).digest('hex')
+
+/**
+ * Downloads release file `name` to `to`, checked against the release's SHA256SUMS. The gzipped
+ * copy is taken when the release lists one (under half the size), and checked before it's
+ * unpacked; the unpacked file is checked like a plain download.
+ */
+export async function fetchRelease(base: string, name: string, sums: string, to: string, get: typeof fetch) {
+  const want = sumFor(sums, name)
+  if (!want) throw new UpdateError(`The release doesn't list ${name} in SHA256SUMS, so nothing was changed.`)
+  const mismatch = new UpdateError("The download didn't match the release's checksum, so nothing was changed. Try again.")
+  const gz = sumFor(sums, compressed(name))
+  let data = await download(`${base}/${gz ? compressed(name) : name}`, get)
+  if (gz) {
+    if (sha256(data) !== gz) throw mismatch
+    try {
+      data = zlib.gunzipSync(data)
+    } catch (err) {
+      throw new UpdateError(`Couldn't unpack ${compressed(name)} (${(err as Error).message}).`)
+    }
+  }
+  if (sha256(data) !== want) throw mismatch
+  writeFileSync(to, data)
 }
 
 async function text(url: string, get: typeof fetch) {
@@ -217,11 +247,12 @@ export async function update(install: Install, deps: Deps): Promise<Result> {
       const base = (process.env.INYON_DOWNLOAD || RELEASES).replace(/\/+$/, '')
       version = await latestVersion(base, deps.fetch)
       if (!isNewer(version, deps.version)) return { changed: false, message: `inyon ${deps.version} is up to date.`, version: deps.version }
-      const name = binaryName(platform, deps.arch)
-      deps.log(`Downloading inyon ${version} (${name})…`)
-      await download(`${base}/${name}`, tmp, deps.fetch)
-      const want = sumFor(await text(`${base}/SHA256SUMS`, deps.fetch), name)
-      if (!want || want !== (await sha256File(tmp))) throw new UpdateError("The download didn't match the release's checksum, so nothing was changed. Try again.")
+      const names = releaseNames(platform, deps.arch)
+      const sums = await text(`${base}/SHA256SUMS`, deps.fetch)
+      // from 0.13 a release is two files (see releaseFiles)
+      if (sumFor(sums, names.engine)) return await crossOver(install, { base, sums, version, names }, platform, deps)
+      deps.log(`Downloading inyon ${version} (${names.cli})…`)
+      await fetchRelease(base, names.cli, sums, tmp, deps.fetch)
     } else {
       const t = target(platform, deps.arch)
       const q = `?os=${t.os}&arch=${t.arch}`
@@ -230,23 +261,60 @@ export async function update(install: Install, deps: Deps): Promise<Result> {
       if (existsSync(install.file) && (await sha256File(install.file)) === want) return { changed: false, message: `inyon ${deps.version} is the same as the hub's.`, version: deps.version }
       deps.log(`Downloading inyon from ${install.hub}…`)
       // it comes gzipped (about half the size), which matters over a VPN
-      await download(`${install.hub}/node/inyon.gz${q}`, tmp, deps.fetch, true)
-      if ((await sha256File(tmp)) !== want) throw new UpdateError("The download didn't match the hub's checksum, so nothing was changed. Try again.")
+      const data = zlib.gunzipSync(await download(`${install.hub}/node/inyon.gz${q}`, deps.fetch))
+      if (sha256(data) !== want) throw new UpdateError("The download didn't match the hub's checksum, so nothing was changed. Try again.")
+      writeFileSync(tmp, data)
     }
   } catch (err) {
     files.remove(tmp)
     throw err
   }
-  if (platform !== 'win32') chmodSync(tmp, 0o755)
-  // Apple Silicon only runs signed programs; a local signature is enough (as get.sh does)
-  if (platform === 'darwin') Bun.spawnSync(['codesign', '--force', '--sign', '-', tmp], { stdout: 'ignore', stderr: 'ignore' })
-  return put(install, tmp, version, deps)
+  runnable(tmp, platform)
+  return put(install, [{ file: install.file, tmp }], version, deps)
 }
 
-/** Swaps the checked download in, restarts each job, and goes back if the new copy won't run. */
-async function put(install: Install, tmp: string, version: string | undefined, deps: Deps): Promise<Result> {
+/** Makes a checked download a program this system will start. */
+function runnable(file: string, platform: string) {
+  if (platform !== 'win32') chmodSync(file, 0o755)
+  // Apple Silicon only runs signed programs; a local signature is enough (as get.sh does)
+  if (platform === 'darwin') Bun.spawnSync(['codesign', '--force', '--sign', '-', file], { stdout: 'ignore', stderr: 'ignore' })
+}
+
+/**
+ * The update to a release of two files (0.13 and on): the engine goes in next to `inyon`, then the
+ * command-line program that starts it takes `inyon`'s place. Both are checked before either moves,
+ * and both go back if the new version doesn't start. This version's updater can't try again on
+ * its own, so a machine that gets stuck halfway is told the one line that installs the new
+ * version from scratch.
+ */
+async function crossOver(install: Install, release: { base: string; sums: string; version: string; names: { cli: string; engine: string } }, platform: string, deps: Deps): Promise<Result> {
+  const engine = path.join(path.dirname(install.file), ENGINE + path.extname(install.file))
+  const swaps = [
+    { file: engine, tmp: `${engine}.download`, name: release.names.engine },
+    { file: install.file, tmp: `${install.file}.download`, name: release.names.cli },
+  ]
+  try {
+    for (const s of swaps) {
+      deps.log(`Downloading inyon ${release.version} (${s.name})…`)
+      await fetchRelease(release.base, s.name, release.sums, s.tmp, deps.fetch)
+      runnable(s.tmp, platform)
+    }
+    return await put(install, swaps, release.version, deps)
+  } catch (err) {
+    for (const s of swaps) files.remove(s.tmp)
+    if (!(err instanceof UpdateError)) throw err
+    throw new UpdateError(`${err.message} Inyon ${release.version} comes as two files, and this copy couldn't put both in place. Install it with:\n  ${reinstallCommand(platform)}`)
+  }
+}
+
+/**
+ * Swaps the checked downloads in (the program that's restarted last), restarts each job, and
+ * puts everything back if the new copy won't run.
+ */
+async function put(install: Install, swaps: { file: string; tmp: string }[], version: string | undefined, deps: Deps): Promise<Result> {
   const roles = deps.roles()
-  const old = swapIn(install.file, tmp)
+  const done = swaps.map((s) => ({ ...s, old: swapIn(s.file, s.tmp) }))
+  const program = done[done.length - 1]!
   const label = version ? `inyon ${version}` : 'The new inyon'
   const before = new Map(roles.map((r) => [r, readRunning(r)?.pid]))
   const restarted = roles.filter((r) => deps.restart(r, install.cmd).ok)
@@ -256,15 +324,24 @@ async function put(install: Install, tmp: string, version: string | undefined, d
   }
   const up = await Promise.all(restarted.map((r) => deps.started(r, version, before.get(r))))
   if (up.every(Boolean)) {
-    if (old) {
+    for (const s of done) {
+      if (!s.old) continue
       try {
-        files.remove(old)
+        files.remove(s.old)
       } catch {}
     }
     return { changed: true, version, message: `${label} is installed and running.` }
   }
-  if (!old) throw new UpdateError(`${label} didn't start.`)
-  swapBack(install.file, old)
+  if (!program.old) throw new UpdateError(`${label} didn't start.`)
+  // the program first, so the restart runs the old one; a file that had no old copy just goes
+  for (const s of [...done].reverse()) {
+    if (s.old) swapBack(s.file, s.old)
+    else {
+      try {
+        files.remove(s.file)
+      } catch {}
+    }
+  }
   for (const r of restarted) deps.restart(r, install.cmd)
   throw new UpdateError(`${label} didn't start, so the previous version is running again.`)
 }
