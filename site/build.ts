@@ -339,13 +339,37 @@ function layout(opts: {
 ${opts.body}
 <footer class="foot">
   <div class="foot-in">
-    <span>Inyon is open source under the MIT licence.</span>
-    <nav aria-label="Footer">
-      <a href="${GITHUB}" class="ext" rel="noopener">GitHub</a>
-      <a href="${GITHUB}/issues" class="ext" rel="noopener">Issues</a>
-      <a href="${GITHUB}/blob/main/SECURITY.md" class="ext" rel="noopener">Security</a>
-      <a href="https://abhashchakraborty.tech" class="ext" rel="noopener">Made by Abhash Chakraborty</a>
+    <div class="foot-about">
+      <a class="brand" href="/"><span class="mark" aria-hidden="true">${ICON}</span>Inyon</a>
+      <p>Watch, answer and steer the coding agents running on your computers, from your phone or any browser.</p>
+      <p>This site is downloads and docs only. Inyon runs on your own machines, and nothing here connects to them.</p>
+    </div>
+    <nav class="foot-cols" aria-label="Footer">
+      <div><p class="side-title">Start</p><ul>
+        <li><a href="/docs/quick-start/">Quick start</a></li>
+        <li><a href="/docs/setups/">Choose a setup</a></li>
+        <li><a href="/docs/install/">Install</a></li>
+        <li><a href="/docs/android/">Android app</a></li>
+      </ul></div>
+      <div><p class="side-title">Reference</p><ul>
+        <li><a href="/docs/hub/">Running a hub</a></li>
+        <li><a href="/docs/cli/">The inyon command</a></li>
+        <li><a href="/docs/agents/">Agents</a></li>
+        <li><a href="/docs/troubleshooting/">Troubleshooting</a></li>
+      </ul></div>
+      <div><p class="side-title">Project</p><ul>
+        <li><a href="/download/">Download</a></li>
+        <li><a href="/docs/changelog/">Changelog</a></li>
+        <li><a href="${GITHUB}" class="ext" rel="noopener">GitHub</a></li>
+        <li><a href="${GITHUB}/issues" class="ext" rel="noopener">Report an issue</a></li>
+      </ul></div>
     </nav>
+  </div>
+  <div class="foot-base">
+    <div class="foot-base-in">
+      <span>MIT licence${opts.version ? ` · Inyon ${esc(opts.version)}` : ""} · <a href="/docs/security/">Security</a></span>
+      <span>Made by <a href="https://abhashchakraborty.tech" rel="noopener">Abhash Chakraborty</a></span>
+    </div>
   </div>
 </footer>
 <div class="search" data-search-dialog hidden>

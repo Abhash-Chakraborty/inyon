@@ -28,7 +28,7 @@
   let side = $('[data-side]')
   if (!side && menu) {
     side = document.createElement('aside')
-    side.className = 'side'
+    side.className = 'side side-menu'
     side.dataset.side = ''
     side.innerHTML = `<div class="side-group"><ul>${$$('.top-nav a')
       .map((a) => `<li><a href="${a.getAttribute('href')}">${a.textContent}</a></li>`)
