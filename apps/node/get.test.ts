@@ -6,8 +6,8 @@ import zlib from 'node:zlib'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { releaseFiles } from '@inyon/protocol'
 
-// get.sh run for real, against a local server standing in for the GitHub releases, with HOME in a
-// throwaway folder. The "program" it installs is a script that records how it was started. The
+// get.sh run for real, against a local server standing in for the website's copy of the release,
+// with HOME in a throwaway folder. The "program" it installs is a script that records how it was started. The
 // release's SHA256SUMS is signed with the test key (apps/cli/tests/keys) when minisign is on this
 // machine, as get.sh checks it then; without minisign it only says so and trusts the list.
 const sha = (b: string | Uint8Array) => crypto.createHash('sha256').update(b).digest('hex')
@@ -22,8 +22,9 @@ const TEST_KEY = readFileSync(path.join(KEYS, 'test.pub'), 'utf8').split('\n')[1
 const SIGNED = !!Bun.which('minisign')
 /** what get.sh asks for before the program itself */
 const LIST = SIGNED ? ['SHA256SUMS', 'SHA256SUMS.minisig'] : ['SHA256SUMS']
-/** `split`: a release from 0.13 on, which lists the engine as a file of its own */
-let release = { gz: true, sums: '', split: false }
+/** `split`: a release from 0.13 on, which lists the engine as a file of its own; `apk`: the
+ * version whose inyon-<version>.apk the list names, as a real release's does */
+let release = { gz: true, sums: '', split: false, apk: '' }
 /** the signature served for the list: a good one, one made over other text, or none at all */
 let signature: 'good' | 'bad' | 'none' = 'good'
 let requests: string[] = []
@@ -49,7 +50,8 @@ const server = Bun.serve({
     requests.push(name)
     const sums = () => {
       const engine = release.split ? `${sha('engine')}  ${ENGINE_NAME}\n${sha(zlib.gzipSync('engine'))}  ${ENGINE_NAME}.gz\n${sha('musl')}  ${ENGINE_NAME}-musl\n` : ''
-      return release.sums || `${sha(PROGRAM)}  ${NAME}\n${release.gz ? `${sha(zlib.gzipSync(PROGRAM))}  ${NAME}.gz\n` : ''}${engine}`
+      const apk = release.apk ? `${sha('the app')}  inyon-${release.apk}.apk\n` : ''
+      return release.sums || `${sha(PROGRAM)}  ${NAME}\n${release.gz ? `${sha(zlib.gzipSync(PROGRAM))}  ${NAME}.gz\n` : ''}${engine}${apk}`
     }
     if (name === 'SHA256SUMS') return new Response(sums())
     if (name === 'SHA256SUMS.minisig' && signature !== 'none') return new Response(await sign(signature === 'bad' ? `${sums()}tampered\n` : sums()))
@@ -63,7 +65,7 @@ afterAll(() => server.stop(true))
 let home: string
 beforeEach(() => {
   home = mkdtempSync(path.join(os.tmpdir(), 'inyon-get-'))
-  release = { gz: true, sums: '', split: false }
+  release = { gz: true, sums: '', split: false, apk: '' }
   signature = 'good'
   requests = []
 })
@@ -162,11 +164,89 @@ test.skipIf(!SIGNED)('with minisign the list must carry a good signature, from t
   await refused()
   signature = 'none'
   await refused()
-  // the test key only stands in because downloads are pointed away from GitHub; the release key
-  // is the default, and this list isn't signed with it
+  // the test key only stands in because downloads are pointed away from the website; the release
+  // key is the default, and this list isn't signed with it
   signature = 'good'
   await refused({ INYON_SIGNING_KEY: '' })
   expect((await run()).code).toBe(0)
+})
+
+const SITE = 'https://inyon.abhashchakraborty.tech/download/'
+const GITHUB = 'https://github.com/Abhash-Chakraborty/inyon/releases/'
+
+/**
+ * A curl in front of the real one (put first on `PATH`, or into `bin`): it notes each address on
+ * the website or GitHub and fetches that file from the local server instead, so nothing leaves
+ * this machine. Returns the addresses noted so far.
+ */
+function realAddresses(bin = tools([])) {
+  const asked = path.join(home, 'asked')
+  rmSync(path.join(bin, 'curl'), { force: true })
+  writeFileSync(
+    path.join(bin, 'curl'),
+    `#!/bin/sh
+n=$#
+for a in "$@"; do
+  case "$a" in ${SITE}* | ${GITHUB}*) echo "$a" >> "${asked}"; a="http://127.0.0.1:${server.port}/\${a##*/}" ;; esac
+  set -- "$@" "$a"
+done
+shift $n
+exec ${Bun.which('curl')} "$@"
+`,
+    { mode: 0o755 },
+  )
+  return { bin, asked: () => (existsSync(asked) ? readFileSync(asked, 'utf8').trim().split('\n') : []) }
+}
+
+test('by default the release comes from the website', async () => {
+  const curl = realAddresses()
+  const r = await run({ PATH: `${curl.bin}:${process.env.PATH}`, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '', INYON_SIGNING_KEY: '' })
+  // the test key signed this list, and the release key is the one that counts here
+  if (SIGNED) {
+    expect(r.code).toBe(1)
+    expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}SHA256SUMS.minisig`])
+  } else {
+    expect(r.code).toBe(0)
+    expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}${NAME}.gz`])
+  }
+})
+
+test.skipIf(!SIGNED)('a signing key from the environment is ignored for the website and GitHub, named or not', async () => {
+  const curl = realAddresses()
+  const PATH = `${curl.bin}:${process.env.PATH}`
+  // INYON_SIGNING_KEY names the test key, which signed this list, every time
+  for (const INYON_DOWNLOAD of ['', SITE, SITE.slice(0, -1), `${GITHUB}latest/download`, `${GITHUB}download/v0.14.0`]) {
+    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("isn't signed by Inyon's release key, so nothing was installed")
+    expect(existsSync(installed())).toBe(false)
+  }
+  // TETHER_DOWNLOAD, the name from before the rename, is no different
+  expect((await run({ PATH, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: SITE })).code).toBe(1)
+  // somewhere else, it counts (run() points INYON_DOWNLOAD at the local server)
+  expect((await run()).code).toBe(0)
+})
+
+test("without gzip, the website's release takes the plain file from GitHub, checked against the same list", async () => {
+  release.apk = '0.14.0'
+  const curl = realAddresses(tools(TOOLS))
+  const r = await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })
+  expect(r.code).toBe(0)
+  expect(readFileSync(installed(), 'utf8')).toBe(PROGRAM)
+  expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${GITHUB}download/v0.14.0/${NAME}`])
+  // a list without the APK doesn't say which tag: the plain file is asked of the website
+  release.apk = ''
+  rmSync(path.join(home, 'asked'))
+  expect((await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })).code).toBe(0)
+  expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}${NAME}`])
+  // the plain file from GitHub must match the list like any other
+  release.apk = '0.14.0'
+  release.sums = `${sha('tampered')}  ${NAME}\n${sha('the app')}  inyon-0.14.0.apk\n`
+  rmSync(installed())
+  const bad = await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })
+  expect(bad.code).toBe(1)
+  expect(bad.out).toContain("didn't match the release's checksum")
+  expect(existsSync(installed())).toBe(false)
 })
 
 test('on musl (Alpine) the engine is the musl build, and setup is told what it needs', async () => {
