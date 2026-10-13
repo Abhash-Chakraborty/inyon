@@ -88,6 +88,7 @@ class ScannerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(Color.TRANSPARENT), SystemBarStyle.dark(Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
+        Orientation.apply(this)
         setContentView(R.layout.activity_scanner)
         hapticsOn = intent.getBooleanExtra(EXTRA_HAPTICS, true)
 

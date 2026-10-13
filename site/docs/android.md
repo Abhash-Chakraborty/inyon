@@ -75,6 +75,7 @@ A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-
 
 ## Phone conveniences
 
+- From 0.15, a phone stays upright. A tablet, or a foldable when it's open, turns with the device and gets the wide layout: a sidebar with every session, and on a large tablet in landscape a side panel next to the chat.
 - The back button closes the top sheet first, then goes back a page.
 - Pasting an image from the keyboard attaches it, as on a computer.
 - Long-press a session card for its menu.
