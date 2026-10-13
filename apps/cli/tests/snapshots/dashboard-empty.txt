@@ -1,0 +1,16 @@
+  ◆
+   ╰─●   inyon 0.13.0
+────────────────────────────────────────────────────────────────────────────────
+Not set up yet: run `inyon setup`             No phones paired yet
+
+○ nothing runs in the background
+
+! The engine isn't installed yet: run `inyon setup`.
+
+
+
+
+
+
+
+q quit · r refresh · s setup · p pair

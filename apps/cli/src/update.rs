@@ -1,0 +1,780 @@
+//! `inyon update`: replaces the installed programs with the newest release and restarts each job
+//! they run as (the phone link, the hub connection, the hub). A release is two files, the engine
+//! and this program, checked against the release's SHA256SUMS like get.sh does (the gzipped copy
+//! of each first). Nothing is replaced until both downloads match, and the old copies come back
+//! if the new version doesn't start. A machine added to a hub takes the engine that hub serves,
+//! checked against the sha256 the hub publishes, so it always matches its hub.
+
+use std::fmt;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use crate::http;
+use crate::paths::{node_dir, ENGINE};
+use crate::service::{Installed, Role};
+use crate::sys::{Platform, Proc};
+
+pub const RELEASES_REPO: &str = "Abhash-Chakraborty/inyon";
+pub const RELEASES: &str = "https://github.com/Abhash-Chakraborty/inyon/releases/latest/download";
+pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
+
+/// What the app reads to follow an update it started: running, done <version>, current, failed: …
+pub fn status_file() -> PathBuf {
+    node_dir().join("update-status")
+}
+
+#[derive(Debug)]
+pub enum Error {
+    /// something the update itself worked out, said in full
+    Update(String),
+    /// anything else (a file that couldn't be moved, say)
+    Other(String),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Update(m) => f.write_str(m),
+            Error::Other(m) => write!(f, "The update failed: {m}"),
+        }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        Error::Other(e.to_string())
+    }
+}
+
+fn err(m: impl Into<String>) -> Error {
+    Error::Update(m.into())
+}
+
+fn parse_version(v: &str) -> Option<(Vec<u64>, Option<String>)> {
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    let end = v.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(v.len());
+    let nums: Vec<u64> = v[..end].split('.').map(|p| p.parse::<u64>().ok()).collect::<Option<Vec<_>>>()?;
+    if nums.is_empty() {
+        return None;
+    }
+    let rest = &v[end..];
+    let pre = rest.strip_prefix('-').map(|p| p.chars().take_while(|c| c.is_alphanumeric() || *c == '.' || *c == '-').collect::<String>());
+    Some((nums, pre))
+}
+
+/// Compares two prerelease tags the way `localeCompare` with numeric collation does.
+fn compare_pre(a: &str, b: &str) -> std::cmp::Ordering {
+    let chunks = |s: &str| -> Vec<(bool, String)> {
+        let mut out: Vec<(bool, String)> = Vec::new();
+        for c in s.chars() {
+            let digit = c.is_ascii_digit();
+            match out.last_mut() {
+                Some((d, s)) if *d == digit => s.push(c),
+                _ => out.push((digit, c.to_string())),
+            }
+        }
+        out
+    };
+    let (x, y) = (chunks(a), chunks(b));
+    for (p, q) in x.iter().zip(y.iter()) {
+        let o = if p.0 && q.0 { p.1.parse::<u64>().unwrap_or(0).cmp(&q.1.parse::<u64>().unwrap_or(0)) } else { p.1.cmp(&q.1) };
+        if o != std::cmp::Ordering::Equal {
+            return o;
+        }
+    }
+    x.len().cmp(&y.len())
+}
+
+/// 1 when `a` is newer than `b`, -1 when older, 0 when the same ("v0.6.3", "0.10.0", "0.7.0-rc.1").
+pub fn compare_versions(a: &str, b: &str) -> i32 {
+    let (Some(x), Some(y)) = (parse_version(a), parse_version(b)) else {
+        return 0;
+    };
+    for i in 0..x.0.len().max(y.0.len()) {
+        let d = x.0.get(i).copied().unwrap_or(0) as i64 - y.0.get(i).copied().unwrap_or(0) as i64;
+        if d != 0 {
+            return d.signum() as i32;
+        }
+    }
+    // a release is newer than its own pre-releases
+    match (&x.1, &y.1) {
+        (None, None) => 0,
+        (None, Some(_)) => 1,
+        (Some(_), None) => -1,
+        (Some(p), Some(q)) if p == q => 0,
+        (Some(p), Some(q)) => {
+            if compare_pre(p, q) == std::cmp::Ordering::Greater {
+                1
+            } else {
+                -1
+            }
+        }
+    }
+}
+
+pub fn is_newer(a: &str, b: &str) -> bool {
+    compare_versions(a, b) > 0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arch {
+    X64,
+    Arm64,
+    Other,
+}
+
+impl Arch {
+    pub fn current() -> Arch {
+        if cfg!(target_arch = "x86_64") {
+            Arch::X64
+        } else if cfg!(target_arch = "aarch64") {
+            Arch::Arm64
+        } else {
+            Arch::Other
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Arch::X64 => "x64",
+            Arch::Arm64 => "arm64",
+            Arch::Other => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Target {
+    pub os: &'static str,
+    pub arch: &'static str,
+}
+
+/// The build for this computer as the releases and the hub name it. Windows on ARM takes the
+/// x64 build until arm64 ships for it, as every installer so far does.
+pub fn target(platform: Platform, arch: Arch) -> Result<Target, Error> {
+    if platform == Platform::Windows {
+        return Ok(Target { os: "windows", arch: "x64" });
+    }
+    let os = match platform {
+        Platform::Darwin => "darwin",
+        Platform::Linux => "linux",
+        _ => return Err(err(format!("There's no Inyon build for {} {}.", platform.name(), arch.name()))),
+    };
+    let a = match arch {
+        Arch::X64 => "x64",
+        Arch::Arm64 => "arm64",
+        Arch::Other => return Err(err(format!("There's no Inyon build for {} {}.", platform.name(), arch.name()))),
+    };
+    Ok(Target { os, arch: a })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Names {
+    pub cli: String,
+    pub engine: String,
+}
+
+/// The files a release attaches for one system ("linux-x64", "windows-x64"): `cli` is this
+/// program, `engine` the program that runs the link, the hub connection and the hub.
+pub fn release_files(system: &str) -> Names {
+    let exe = if system.starts_with("windows") { ".exe" } else { "" };
+    Names { cli: format!("inyon-{system}{exe}"), engine: format!("inyon-engine-{system}{exe}") }
+}
+
+pub fn release_names(platform: Platform, arch: Arch) -> Result<Names, Error> {
+    let t = target(platform, arch)?;
+    Ok(release_files(&format!("{}-{}", t.os, t.arch)))
+}
+
+/// The gzipped copy of a release file, under half the size; taken first when SHA256SUMS lists it.
+pub fn compressed(file: &str) -> String {
+    format!("{file}.gz")
+}
+
+/// The one line that installs the newest version from scratch.
+pub fn reinstall_command(platform: Platform) -> String {
+    if platform == Platform::Windows {
+        format!("irm {INSTALL_URL}/get.ps1 | iex")
+    } else {
+        format!("curl -fsSL {INSTALL_URL}/get.sh | sh")
+    }
+}
+
+/// The checksum SHA256SUMS lists for `name` (sha256sum writes "<hex>  name" or "<hex> *name").
+pub fn sum_for(sums: &str, name: &str) -> Option<String> {
+    for line in sums.lines() {
+        let line = line.trim();
+        let (hash, rest) = line.split_once(char::is_whitespace)?;
+        if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            continue;
+        }
+        let file = rest.trim_start().trim_start_matches('*');
+        if file == name {
+            return Some(hash.to_lowercase());
+        }
+    }
+    None
+}
+
+/// The newest release's version. `…/releases/latest` redirects to `…/releases/tag/v1.2.3`, so one
+/// request without following it says which; a base pinned to a tag (…/download/v1.2.3) says so itself.
+pub fn latest_version(base: &str) -> Result<String, Error> {
+    let base = base.trim_end_matches('/');
+    if let Some(rest) = base.rsplit_once("/releases/download/").map(|(_, r)| r) {
+        if !rest.is_empty() && !rest.contains('/') {
+            return Ok(rest.trim_start_matches('v').to_string());
+        }
+    }
+    let page = base.strip_suffix("/download").unwrap_or(base);
+    let res = http::get_no_redirect(page).map_err(|e| err(format!("Couldn't reach {} to look for a new version ({e}).", http::host_of(page))))?;
+    let location = res.location.unwrap_or_default();
+    let tag = location.split("/tag/").nth(1).map(|t| t.split(['/', '?', '#']).next().unwrap_or("")).filter(|t| !t.is_empty());
+    match tag {
+        Some(t) => Ok(percent_decode(t.trim_start_matches('v'))),
+        None => Err(err(format!("Couldn't tell the newest version from {page} ({}).", res.status))),
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+pub fn sha256(data: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(data);
+    hex(&h.finalize())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+pub fn sha256_file(file: &Path) -> io::Result<String> {
+    use std::io::Read;
+    let mut f = fs::File::open(file)?;
+    let mut h = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(hex(&h.finalize()))
+}
+
+fn download(url: &str, log: &dyn Fn(&str)) -> Result<Vec<u8>, Error> {
+    let progress = |done: u64, total: Option<u64>| {
+        if let Some(t) = total.filter(|t| *t > 4 << 20) {
+            log(&format!("\r  {} of {} MB", done >> 20, t >> 20));
+        }
+    };
+    let res = http::get_with_progress(url, &progress).map_err(|e| err(format!("Couldn't download {url} ({e}).")))?;
+    if !res.ok() {
+        return Err(err(format!("Couldn't download {url} ({}).", res.status)));
+    }
+    Ok(res.body)
+}
+
+fn gunzip(data: &[u8]) -> io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(data).read_to_end(&mut out)?;
+    Ok(out)
+}
+
+/// Downloads release file `name` to `to`, checked against the release's SHA256SUMS. The gzipped
+/// copy is taken when the release lists one (under half the size), and checked before it's
+/// unpacked; the unpacked file is checked like a plain download.
+pub fn fetch_release(base: &str, name: &str, sums: &str, to: &Path, log: &dyn Fn(&str)) -> Result<(), Error> {
+    let want = sum_for(sums, name).ok_or_else(|| err(format!("The release doesn't list {name} in SHA256SUMS, so nothing was changed.")))?;
+    let mismatch = || err("The download didn't match the release's checksum, so nothing was changed. Try again.");
+    let gz = sum_for(sums, &compressed(name));
+    let file = if gz.is_some() { compressed(name) } else { name.to_string() };
+    let mut data = download(&format!("{base}/{file}"), log)?;
+    if let Some(gz) = gz {
+        if sha256(&data) != gz {
+            return Err(mismatch());
+        }
+        data = gunzip(&data).map_err(|e| err(format!("Couldn't unpack {} ({e}).", compressed(name))))?;
+    }
+    if sha256(&data) != want {
+        return Err(mismatch());
+    }
+    fs::write(to, data)?;
+    Ok(())
+}
+
+fn text(url: &str) -> Result<String, Error> {
+    let res = http::get(url).map_err(|e| err(format!("Couldn't reach {url} ({e}).")))?;
+    if !res.ok() {
+        return Err(err(format!("{url} answered {}.", res.status)));
+    }
+    Ok(String::from_utf8_lossy(&res.body).trim().to_string())
+}
+
+/// The file system calls the swap makes, so tests can act like Windows (a running .exe is locked).
+pub trait Files {
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+    /// removes `f`; a file that isn't there is fine
+    fn remove(&self, f: &Path) -> io::Result<()>;
+    fn exists(&self, f: &Path) -> bool;
+    fn list(&self, dir: &Path) -> io::Result<Vec<String>>;
+}
+
+pub struct RealFiles;
+
+impl Files for RealFiles {
+    fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
+    }
+    fn remove(&self, f: &Path) -> io::Result<()> {
+        match fs::remove_file(f) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    }
+    fn exists(&self, f: &Path) -> bool {
+        f.exists()
+    }
+    fn list(&self, dir: &Path) -> io::Result<Vec<String>> {
+        Ok(fs::read_dir(dir)?.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect())
+    }
+}
+
+fn with_suffix(p: &Path, suffix: &str) -> PathBuf {
+    PathBuf::from(format!("{}{suffix}", p.to_string_lossy()))
+}
+
+/// A free name to rename `target` aside to (two in the same millisecond don't collide).
+fn aside(files: &dyn Files, target: &Path, now: u64) -> PathBuf {
+    let mut n = now;
+    while files.exists(&with_suffix(target, &format!(".old-{n}"))) {
+        n += 1;
+    }
+    with_suffix(target, &format!(".old-{n}"))
+}
+
+/// Puts `fresh` in place of `target` and returns where the old copy went. Windows can't
+/// overwrite or delete a running .exe, but it can rename one, so the old copy is always renamed
+/// aside first (target.old-<time>); it's removed once the new version runs, or by a later start.
+pub fn swap_in(files: &dyn Files, target: &Path, fresh: &Path, now: u64) -> io::Result<Option<PathBuf>> {
+    let old = aside(files, target, now);
+    let had = files.exists(target);
+    if had {
+        files.rename(target, &old)?;
+    }
+    if let Err(e) = files.rename(fresh, target) {
+        if had {
+            files.rename(&old, target)?;
+        }
+        return Err(e);
+    }
+    Ok(if had { Some(old) } else { None })
+}
+
+/// Puts the old copy back; the new one is renamed aside too, in case it's still running.
+pub fn swap_back(files: &dyn Files, target: &Path, old: &Path, now: u64) -> io::Result<()> {
+    if files.exists(target) {
+        let away = aside(files, target, now);
+        files.rename(target, &away)?;
+    }
+    files.rename(old, target)
+}
+
+/// Removes copies renamed aside by earlier updates. Only ones older than ten minutes: a copy
+/// from the update running right now may still be needed to go back to.
+pub fn cleanup_old(files: &dyn Files, target: &Path, now: u64) {
+    let base = format!("{}.old-", target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    let dir = target.parent().unwrap_or(Path::new("."));
+    let Ok(names) = files.list(dir) else {
+        return;
+    };
+    for name in names {
+        let Some(stamp) = name.strip_prefix(&base).and_then(|s| s.parse::<u64>().ok()) else {
+            continue;
+        };
+        if now.saturating_sub(stamp) < 10 * 60_000 {
+            continue;
+        }
+        let _ = files.remove(&dir.join(name));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind {
+    /// from the GitHub releases (get.sh, get.ps1)
+    Binary,
+    /// from the hub this machine was added to
+    Hub(String),
+}
+
+/// Which install this program is: `file` is the installed command-line program.
+#[derive(Debug, Clone)]
+pub struct Install {
+    pub kind: Kind,
+    pub file: PathBuf,
+}
+
+pub fn find_install(file: &Path, hub: Option<String>) -> Install {
+    Install { kind: hub.map(Kind::Hub).unwrap_or(Kind::Binary), file: file.to_path_buf() }
+}
+
+/// The engine next to the installed program.
+pub fn engine_beside(file: &Path) -> PathBuf {
+    let ext = file.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    file.with_file_name(format!("{ENGINE}{ext}"))
+}
+
+/// What the update needs from the machine: which jobs run and how to restart them. Tests fake it.
+pub trait Host {
+    fn version(&self) -> String;
+    /// the jobs this machine runs inyon as in the background, each restarted after the swap
+    fn roles(&self) -> Vec<Role>;
+    /// restarts a job's background service so the new file runs
+    fn restart(&self, role: Role, cmd: &[String]) -> Installed;
+    /// waits for the restarted copy to come up (not the copy `before`); true once it runs and stays up
+    fn started(&self, role: Role, version: Option<&str>, before: Option<u32>) -> bool;
+    fn log(&self, line: &str);
+    fn platform(&self) -> Platform {
+        Platform::current()
+    }
+    fn arch(&self) -> Arch {
+        Arch::current()
+    }
+    /// where releases come from (INYON_DOWNLOAD points it elsewhere)
+    fn download_base(&self) -> String {
+        crate::paths::env_var("INYON_DOWNLOAD").unwrap_or_else(|| RELEASES.to_string()).trim_end_matches('/').to_string()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    pub changed: bool,
+    pub message: String,
+    pub version: Option<String>,
+}
+
+struct Swap {
+    file: PathBuf,
+    tmp: PathBuf,
+    name: String,
+}
+
+/// Updates the install this program belongs to. The error says what went wrong.
+pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<Outcome, Error> {
+    let platform = host.platform();
+    let engine = engine_beside(&install.file);
+    match &install.kind {
+        Kind::Binary => {
+            let base = host.download_base();
+            let version = latest_version(&base)?;
+            let mine = host.version();
+            if !is_newer(&version, &mine) {
+                return Ok(Outcome { changed: false, message: format!("inyon {mine} is up to date."), version: Some(mine) });
+            }
+            let names = release_names(platform, host.arch())?;
+            let sums = text(&format!("{base}/SHA256SUMS"))?;
+            // a release from before 0.13 has no engine: there is nothing this program can install
+            if sum_for(&sums, &names.engine).is_none() {
+                return Ok(Outcome {
+                    changed: false,
+                    message: format!("Release {version} has no {} in it (it's from before the engine and inyon were split), so nothing was changed.", names.engine),
+                    version: Some(mine),
+                });
+            }
+            let swaps = [
+                Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() },
+                Swap { file: install.file.clone(), tmp: with_suffix(&install.file, ".download"), name: names.cli.clone() },
+            ];
+            let fetched: Result<(), Error> = (|| {
+                for s in &swaps {
+                    files.remove(&s.tmp)?;
+                    host.log(&format!("Downloading inyon {version} ({})…", s.name));
+                    fetch_release(&base, &s.name, &sums, &s.tmp, &|l| host.log(l))?;
+                    runnable(&s.tmp, platform);
+                }
+                Ok(())
+            })();
+            if let Err(e) = fetched {
+                for s in &swaps {
+                    let _ = files.remove(&s.tmp);
+                }
+                return Err(match e {
+                    Error::Update(m) => {
+                        err(format!("{m} Inyon {version} comes as two files, and this copy couldn't put both in place. Install it with:\n  {}", reinstall_command(platform)))
+                    }
+                    other => other,
+                });
+            }
+            put(install, host, files, &swaps, Some(&version)).map_err(|e| match e {
+                Error::Update(m) if m.contains("didn't start") => err(format!("{m} Install the new version with:\n  {}", reinstall_command(platform))),
+                other => other,
+            })
+        }
+        Kind::Hub(hub) => {
+            let t = target(platform, host.arch())?;
+            let q = format!("?os={}&arch={}", t.os, t.arch);
+            let want = text(&format!("{hub}/node/inyon.sha256{q}"))?.to_lowercase();
+            if want.len() != 64 || !want.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")));
+            }
+            let mine = host.version();
+            if engine.exists() && sha256_file(&engine)? == want {
+                return Ok(Outcome { changed: false, message: format!("inyon {mine} is the same as the hub's."), version: Some(mine) });
+            }
+            host.log(&format!("Downloading inyon from {hub}…"));
+            let tmp = with_suffix(&engine, ".download");
+            files.remove(&tmp)?;
+            // it comes gzipped (about half the size), which matters over a VPN
+            let fetched: Result<(), Error> = (|| {
+                let data = gunzip(&download(&format!("{hub}/node/inyon.gz{q}"), &|l| host.log(l))?).map_err(|e| err(format!("Couldn't unpack the hub's download ({e}).")))?;
+                if sha256(&data) != want {
+                    return Err(err("The download didn't match the hub's checksum, so nothing was changed. Try again."));
+                }
+                fs::write(&tmp, data)?;
+                Ok(())
+            })();
+            if let Err(e) = fetched {
+                let _ = files.remove(&tmp);
+                return Err(e);
+            }
+            runnable(&tmp, platform);
+            let swaps = [Swap { file: engine, tmp, name: "the hub's engine".into() }];
+            put(install, host, files, &swaps, None)
+        }
+    }
+}
+
+/// Makes a checked download a program this system will start.
+fn runnable(file: &Path, platform: Platform) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o755));
+    }
+    // Apple Silicon only runs signed programs; a local signature is enough (as get.sh does)
+    if platform == Platform::Darwin {
+        crate::sys::run(&["codesign", "--force", "--sign", "-", &file.to_string_lossy()]);
+    }
+}
+
+fn now_ms() -> u64 {
+    crate::state::now_ms() as u64
+}
+
+/// Swaps the checked downloads in (the program that's restarted last), restarts each job, and
+/// puts everything back if the new copy won't run.
+fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], version: Option<&str>) -> Result<Outcome, Error> {
+    let roles = host.roles();
+    let mut done: Vec<(&Swap, Option<PathBuf>)> = Vec::new();
+    for s in swaps {
+        match swap_in(files, &s.file, &s.tmp, now_ms()) {
+            Ok(old) => done.push((s, old)),
+            Err(e) => {
+                // what went in before this one comes back out
+                for (d, old) in done.iter().rev() {
+                    match old {
+                        Some(o) => {
+                            let _ = swap_back(files, &d.file, o, now_ms());
+                        }
+                        None => {
+                            let _ = files.remove(&d.file);
+                        }
+                    }
+                }
+                return Err(Error::Other(format!("couldn't put {} in place ({e})", s.file.display())));
+            }
+        }
+    }
+    let program_old = done.last().and_then(|(_, old)| old.clone());
+    let label = version.map(|v| format!("inyon {v}")).unwrap_or_else(|| "The new inyon".to_string());
+    let cmd = vec![install.file.to_string_lossy().into_owned()];
+    let before: Vec<(Role, Option<u32>)> = roles.iter().map(|r| (*r, read_running(*r).and_then(|s| s.pid))).collect();
+    let restarted: Vec<Role> = roles.iter().copied().filter(|r| host.restart(*r, &cmd).ok).collect();
+    if restarted.is_empty() {
+        // nothing runs it in the background: the new file is in place for the next start
+        return Ok(Outcome {
+            changed: true,
+            version: version.map(String::from),
+            message: format!("{label} is installed. It isn't running as a background service, so start it again to use it."),
+        });
+    }
+    let up = restarted.iter().all(|r| {
+        let b = before.iter().find(|(role, _)| role == r).and_then(|(_, pid)| *pid);
+        host.started(*r, version, b)
+    });
+    if up {
+        for (_, old) in &done {
+            if let Some(o) = old {
+                let _ = files.remove(o);
+            }
+        }
+        return Ok(Outcome { changed: true, version: version.map(String::from), message: format!("{label} is installed and running.") });
+    }
+    if program_old.is_none() {
+        return Err(err(format!("{label} didn't start.")));
+    }
+    // the program first, so the restart runs the old one; a file that had no old copy just goes
+    for (s, old) in done.iter().rev() {
+        match old {
+            Some(o) => {
+                let _ = swap_back(files, &s.file, o, now_ms());
+            }
+            None => {
+                let _ = files.remove(&s.file);
+            }
+        }
+    }
+    for r in &restarted {
+        host.restart(*r, &cmd);
+    }
+    Err(err(format!("{label} didn't start, so the previous version is running again.")))
+}
+
+/// What a started copy writes with its pid and version: state.json (the link), node.json, hub.json.
+pub fn running_file(role: Role) -> PathBuf {
+    node_dir().join(match role {
+        Role::Link => "state.json".to_string(),
+        r => format!("{r}.json"),
+    })
+}
+
+pub fn read_running(role: Role) -> Option<crate::state::Running> {
+    let text = fs::read_to_string(running_file(role)).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Whether a copy doing `role` has started and still runs.
+pub fn is_running(proc: &dyn Proc, role: Role) -> bool {
+    read_running(role).and_then(|r| r.pid).is_some_and(|pid| proc.alive(pid))
+}
+
+pub struct WaitOptions {
+    pub tries: u32,
+    pub every_ms: u64,
+    pub settle_ms: u64,
+}
+
+impl Default for WaitOptions {
+    fn default() -> Self {
+        WaitOptions { tries: 60, every_ms: 500, settle_ms: 4000 }
+    }
+}
+
+/// Waits for the restarted copy: it writes its pid and version when it starts (a pid other than
+/// the copy before it), and must still be running a few seconds later.
+pub fn wait_started(proc: &dyn Proc, role: Role, version: Option<&str>, before: Option<u32>, o: &WaitOptions) -> bool {
+    for _ in 0..o.tries {
+        if let Some(s) = read_running(role) {
+            let fresh = s.pid.is_some() && s.pid != before && s.pid.is_some_and(|p| proc.alive(p));
+            let right = version.is_none() || s.version.as_deref() == version;
+            if fresh && right {
+                proc.sleep_ms(o.settle_ms);
+                return s.pid.is_some_and(|p| proc.alive(p));
+            }
+        }
+        proc.sleep_ms(o.every_ms);
+    }
+    false
+}
+
+/// Records how the update went, for the app (and appends to update.log).
+pub fn set_status(line: &str) {
+    let dir = node_dir();
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(status_file(), format!("{line}\n"));
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir.join("update.log")) {
+        use std::io::Write;
+        let _ = writeln!(f, "{} {line}", crate::state::format_time(crate::state::now_ms()));
+    }
+}
+
+/// The link from before this version doesn't write its version into state.json: running setup
+/// again restarts such a link, so re-running the installer is an update too.
+pub fn stale_link(state: Option<&crate::state::LinkState>, version: &str) -> bool {
+    state.is_some_and(|s| s.version.as_deref() != Some(version))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_by_number_and_a_release_beats_its_prereleases() {
+        assert_eq!(compare_versions("0.6.3", "0.3.0"), 1);
+        assert_eq!(compare_versions("0.3.0", "0.6.3"), -1);
+        assert_eq!(compare_versions("0.10.0", "0.9.9"), 1);
+        assert_eq!(compare_versions("v0.7.0", "0.7.0"), 0);
+        assert_eq!(compare_versions("0.7", "0.7.0"), 0);
+        assert_eq!(compare_versions("0.7.0", "0.7.0-rc.1"), 1);
+        assert_eq!(compare_versions("0.7.0-rc.10", "0.7.0-rc.2"), 1);
+        assert!(!is_newer("nonsense", "0.1.0"));
+        assert!(!is_newer("0.6.3", "0.6.3"));
+    }
+
+    #[test]
+    fn sha256sums_lines_match_the_exact_file_name_in_either_format() {
+        let sums = format!("{}  inyon-linux-x64\n{} *inyon-windows-x64.exe\n", "a".repeat(64), "b".repeat(64));
+        assert_eq!(sum_for(&sums, "inyon-linux-x64").unwrap(), "a".repeat(64));
+        assert_eq!(sum_for(&sums, "inyon-windows-x64.exe").unwrap(), "b".repeat(64));
+        assert_eq!(sum_for(&sums, "inyon-linux"), None);
+    }
+
+    #[test]
+    fn the_release_files_for_each_system() {
+        assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().cli, "inyon-linux-arm64");
+        assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().engine, "inyon-engine-linux-arm64");
+        assert_eq!(release_names(Platform::Darwin, Arch::X64).unwrap().cli, "inyon-darwin-x64");
+        // Windows on ARM runs the x64 build
+        assert_eq!(release_names(Platform::Windows, Arch::Arm64).unwrap().cli, "inyon-windows-x64.exe");
+        assert!(release_names(Platform::Other, Arch::X64).is_err());
+        assert_eq!(compressed("inyon-linux-x64"), "inyon-linux-x64.gz");
+    }
+
+    #[test]
+    fn a_pinned_tag_names_its_version_without_a_request() {
+        assert_eq!(latest_version("https://example.invalid/x/releases/download/v0.6.9").unwrap(), "0.6.9");
+        assert_eq!(latest_version("https://example.invalid/x/releases/download/0.6.9/").unwrap(), "0.6.9");
+    }
+
+    #[test]
+    fn reinstall_lines() {
+        assert_eq!(reinstall_command(Platform::Darwin), "curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh");
+        assert_eq!(reinstall_command(Platform::Windows), "irm https://inyon.abhashchakraborty.tech/get.ps1 | iex");
+    }
+
+    #[test]
+    fn a_link_from_before_versions_were_recorded_counts_as_stale() {
+        use crate::state::LinkState;
+        let with = |v: Option<&str>| LinkState { version: v.map(String::from), ..Default::default() };
+        assert!(stale_link(Some(&with(None)), "0.6.4"));
+        assert!(stale_link(Some(&with(Some("0.6.3"))), "0.6.4"));
+        assert!(!stale_link(Some(&with(Some("0.6.4"))), "0.6.4"));
+        assert!(!stale_link(None, "0.6.4"));
+    }
+
+    #[test]
+    fn the_engine_sits_next_to_the_program() {
+        assert_eq!(engine_beside(Path::new("/h/.inyon/bin/inyon")), PathBuf::from("/h/.inyon/bin/inyon-engine"));
+        assert_eq!(engine_beside(Path::new("C:/u/.inyon/bin/inyon.exe")), PathBuf::from("C:/u/.inyon/bin/inyon-engine.exe"));
+    }
+}

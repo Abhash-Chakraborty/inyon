@@ -1,0 +1,85 @@
+name: inyon cli
+
+# Builds and tests the inyon command (apps/cli, Rust) on each system it ships for, and keeps the
+# binaries as artifacts named like the release files (inyon-<os>-<arch>, plus the gzipped copy).
+# Only rustup and cargo as the runners ship them; Windows on ARM is cross-built on the x64 runner.
+# Publishing them in a release is wired up separately.
+on:
+  push:
+    branches: [main]
+    paths: ['apps/cli/**', '.github/workflows/cli.yml']
+  pull_request:
+    paths: ['apps/cli/**', '.github/workflows/cli.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/cli
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add clippy rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: inyon-linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: inyon-linux-arm64 }
+          - { runner: macos-14, target: aarch64-apple-darwin, name: inyon-darwin-arm64 }
+          - { runner: macos-13, target: x86_64-apple-darwin, name: inyon-darwin-x64 }
+          - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: inyon-windows-x64.exe }
+          # cross-built on the x64 runner; its tests can't run there
+          - { runner: windows-latest, target: aarch64-pc-windows-msvc, name: inyon-windows-arm64.exe, cross: true }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup target add ${{ matrix.target }}
+      - name: Test
+        if: ${{ !matrix.cross }}
+        run: cargo test --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: Name the binary
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          src="target/${{ matrix.target }}/release/inyon"
+          [[ "${{ matrix.target }}" == *windows* ]] && src="$src.exe"
+          cp "$src" "$RUNNER_TEMP/out/${{ matrix.name }}"
+          ls -l "$RUNNER_TEMP/out"
+      - name: Gzip it
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
+        run: gzip -9 -k "$RUNNER_TEMP/out/${{ matrix.name }}"
+      - name: Gzip it (Windows)
+        if: ${{ startsWith(matrix.runner, 'windows') }}
+        shell: pwsh
+        run: |
+          $f = Join-Path $env:RUNNER_TEMP "out/${{ matrix.name }}"
+          $src = [IO.File]::OpenRead($f)
+          $dst = [IO.File]::Create("$f.gz")
+          $gz = New-Object IO.Compression.GZipStream($dst, [IO.Compression.CompressionLevel]::Optimal)
+          try { $src.CopyTo($gz) } finally { $gz.Dispose(); $dst.Dispose(); $src.Dispose() }
+      - name: Version
+        if: ${{ !matrix.cross }}
+        shell: bash
+        run: '"$RUNNER_TEMP/out/${{ matrix.name }}" version'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ runner.temp }}/out/${{ matrix.name }}*
+          if-no-files-found: error

@@ -1,0 +1,20 @@
+  ◆
+   ╰─●   inyon 0.13.0
+────────────────────────────────────────────────────────────────────────────────
+Hub: the server phones sign in to             No phones paired yet
+machine k7m2p9x4w1q8z3v6
+                                              Machines on this hub (2)
+● hub  running · 0.13.0                         laptop
+                                                build-box
+
+
+
+
+
+
+
+
+
+
+
+q quit · r refresh · s setup · p pair

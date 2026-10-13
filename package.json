@@ -14,7 +14,8 @@
     "build": "bun run --cwd apps/web build",
     "start": "bun run --cwd apps/hub start",
     "hub:update": "bun apps/hub/src/cli/update.ts",
-    "typecheck": "bun --filter \"*\" typecheck"
+    "typecheck": "bun --filter \"*\" typecheck",
+    "cli:test": "cargo test --manifest-path apps/cli/Cargo.toml"
   },
   "license": "MIT",
   "author": "Abhash Chakraborty",
