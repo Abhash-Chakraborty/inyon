@@ -45,6 +45,26 @@ grep -qE 'InyonDevice *: ready' <<< "$mine" || problems+=("InyonDevice did not l
 grep -qE 'InyonSsh *: ready' <<< "$mine" || problems+=("InyonSsh did not load")
 grep -qE 'InyonDevice *: web app started' <<< "$mine" || problems+=("the web app did not start")
 
+# A hub on a private network is plain http, which Android lets an app call only when its manifest
+# says so: ask the running app to fetch from a server on the runner (10.0.2.2 from the emulator).
+if [ -n "$pid" ]; then
+  www=$(mktemp -d)
+  echo ok > "$www/ok"
+  (cd "$www" && python3 -m http.server 4777 --bind 0.0.0.0 > /dev/null 2>&1) &
+  www_pid=$!
+  sleep 2
+  here=$(cd "$(dirname "$0")" && pwd)
+  adb forward tcp:9333 localabstract:webview_devtools_remote_$pid > /dev/null 2>&1
+  wsurl=$(curl -s http://127.0.0.1:9333/json | grep -o '"webSocketDebuggerUrl": *"[^"]*"' | head -1 | sed 's/.*"\(ws[^"]*\)"/\1/')
+  if [ -n "$wsurl" ]; then
+    http=$(bun "$here/webview-eval.ts" "$wsurl" 'fetch("http://10.0.2.2:4777/ok", { cache: "no-store" }).then((r) => "http " + r.status).catch((e) => "http failed: " + e.message)' 2>&1)
+    echo "plain http from the app: $http"
+    [[ "$http" == *"http 200"* ]] || problems+=("the app cannot call a plain-http hub: $http")
+  else
+    echo "no DevTools socket, so plain http from the app was not checked"
+  fi
+  kill "$www_pid" 2> /dev/null || true
+fi
 echo "---- app log (pid ${pid:-none}) ----"
 grep -E 'AndroidRuntime|Inyon|Capacitor|chromium|System.err|Exception|Error' <<< "$mine" | tail -80 || true
 grep -A30 'FATAL EXCEPTION' "$log" | head -60 || true
