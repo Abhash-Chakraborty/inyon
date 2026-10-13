@@ -44,3 +44,16 @@ jobs:
         working-directory: apps/web
       - run: bun run e2e
         working-directory: apps/web
+      # how fast the built app opens and how smooth it stays under updates, in the job summary. A
+      # shared runner's numbers wobble, so this reports and never fails the build
+      - name: Speed report
+        continue-on-error: true
+        working-directory: apps/web
+        run: |
+          {
+            echo '### Speed (phone profile, 10 Mbit, this runner)'
+            echo '```'
+            bun scripts/perf/cold.ts | grep -v fetched
+            bun scripts/perf/updates.ts
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

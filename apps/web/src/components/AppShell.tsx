@@ -9,7 +9,7 @@ import { SessionTree } from './SessionTree.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
-import { Spinner } from './ui/primitives.tsx'
+import { Waiting } from './ui/primitives.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
@@ -218,7 +218,7 @@ export function AppShell() {
       <main className="flex min-w-0 flex-1 flex-col">
         {/* each page settles in: a short fade and an 8px rise */}
         <div key={pageKey(loc.pathname)} className="animate-page flex min-h-0 flex-1 flex-col">
-          <Suspense fallback={<div className="flex flex-1 items-center justify-center"><Spinner className="size-5" /></div>}>
+          <Suspense fallback={<Waiting label="Opening" shape="lines" className="mx-auto w-full max-w-[760px] p-5" />}>
             <Outlet />
           </Suspense>
         </div>

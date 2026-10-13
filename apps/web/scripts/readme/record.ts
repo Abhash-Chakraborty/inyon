@@ -144,6 +144,27 @@ export class Take {
     }
   }
 
+  /** a real finger drag (touch events, not a wheel), for things that listen to touches like pull to refresh */
+  async drag(from: Pt, to: Pt, ms = 900, hold = 150) {
+    const cdp = (this.cdp ??= await this.page.context().newCDPSession(this.page))
+    const t0 = this.now()
+    this.presses.push({ t: t0, at: from, up: t0 + ms + hold })
+    this.moves.push({ t0, t1: t0 + ms, from, to })
+    this.pos = to
+    const steps = Math.round(ms / 30)
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', p?: Pt) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: p ? [{ x: p.x, y: p.y }] : [] })
+    await touch('touchStart', from)
+    for (let i = 1; i <= steps; i++) {
+      const k = i / steps
+      const e = 1 - (1 - k) * (1 - k)
+      await touch('touchMove', { x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e })
+      await sleep(ms / steps)
+    }
+    await sleep(hold)
+    await touch('touchEnd')
+  }
+  private cdp?: Awaited<ReturnType<ReturnType<Page['context']>['newCDPSession']>>
+
   /** points the camera at a part of the page (zoom 1 shows the whole device) */
   async look(to: View, ms = 900, wait = true) {
     const t0 = this.now()
