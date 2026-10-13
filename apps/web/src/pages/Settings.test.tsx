@@ -195,8 +195,8 @@ describe('Updates', () => {
     const opened: string[] = []
     window.open = ((url: string) => (opened.push(url), null)) as typeof window.open
     ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: { App: { getInfo: async () => ({ version: '0.6.3', build: '7' }) } } }
-    const url = 'https://github.com/Abhash-Chakraborty/inyon-releases/releases/download/v0.6.4/inyon-0.6.4.apk'
-    globalThis.fetch = (async () => Response.json({ tag_name: 'v0.6.4', assets: [{ name: 'inyon-0.6.4.apk', browser_download_url: url }] })) as unknown as typeof fetch
+    const url = 'https://inyon.abhashchakraborty.tech/download/inyon-0.6.4.apk'
+    globalThis.fetch = (async () => Response.json({ version: '0.6.4', tag: 'v0.6.4', files: [{ name: 'inyon.apk' }, { name: 'inyon-0.6.4.apk' }] })) as unknown as typeof fetch
     try {
       await render(page())
       await flush()

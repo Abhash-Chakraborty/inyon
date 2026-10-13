@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { LATEST_URL } from '@inyon/protocol'
 import { CHECK_EVERY, exec, hubUpdater, REPO, updateHub, type Exec } from './hub-update.ts'
 
 // Every update here runs against throwaway repositories in the temp dir, with fake bun and
@@ -246,17 +247,32 @@ describe('the hub checks for updates and starts one', () => {
 })
 
 describe('a hub run as the inyon program', () => {
-  const releases = (tag: string) => (async () => Response.json({ tag_name: tag })) as unknown as typeof fetch
+  /** latest.json on the website naming `version`; the addresses asked are noted in `urls` */
+  const urls: string[] = []
+  const releases = (version: unknown, status = 200) =>
+    (async (url: string) => (urls.push(String(url)), Response.json({ version, tag: `v${version}`, files: [] }, { status }))) as unknown as typeof fetch
 
-  test('looks for a new release on GitHub, not in a checkout', async () => {
+  test('looks for a new release on the website, not in a checkout', async () => {
     const asked: string[][] = []
     const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
     const dataDir = path.join(root, 'bin1')
-    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    urls.length = 0
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('0.7.2') })
     expect(await u.status()).toMatchObject({ current: '0.7.0', latest: '0.7.2', canUpdate: true })
     expect(asked).toEqual([])
-    const same = hubUpdater({ dataDir, version: '0.7.2', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    expect(urls).toEqual([LATEST_URL])
+    const same = hubUpdater({ dataDir, version: '0.7.2', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('0.7.2') })
     expect((await same.status()).latest).toBeUndefined()
+  })
+
+  test('a website that is down, or names no release, means no update rather than an error', async () => {
+    const dataDir = path.join(root, 'bin1b')
+    const statusFile = path.join(dataDir, 'update-status')
+    const run: Exec = async () => ({ code: 0, out: '' })
+    const answers: (typeof fetch)[] = [releases('0.9.0', 503), releases('0.9.0-rc.1'), releases(undefined), (async () => new Response('<html>')) as unknown as typeof fetch]
+    for (const get of answers) {
+      expect(await hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, fetch: get }).status()).toMatchObject({ current: '0.7.0', latest: undefined, canUpdate: true })
+    }
   })
 
   test("POST runs the program's own update on its own, and its status file says how it went", async () => {
@@ -265,7 +281,7 @@ describe('a hub run as the inyon program', () => {
     fs.mkdirSync(path.dirname(statusFile), { recursive: true })
     const asked: string[][] = []
     const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
-    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, program: '/home/me/.inyon/bin/inyon', fetch: releases('v0.7.2') })
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, program: '/home/me/.inyon/bin/inyon', fetch: releases('0.7.2') })
     const post = u.routes['/api/hub/update'].POST as () => Promise<Response>
     expect((await post()).status).toBe(202)
     expect(asked).toEqual([['/home/me/.inyon/bin/inyon', 'update', '--background']])
@@ -279,7 +295,7 @@ describe('a hub run as the inyon program', () => {
   test("an update that can't start says why", async () => {
     const dataDir = path.join(root, 'bin3')
     const run: Exec = async () => ({ code: 1, out: 'systemd-run: not found' })
-    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('v0.7.2') })
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile: path.join(dataDir, 'update-status'), fetch: releases('0.7.2') })
     const res = await (u.routes['/api/hub/update'].POST as () => Promise<Response>)()
     expect(res.status).toBe(500)
     expect(((await res.json()) as { error: string }).error).toBe('systemd-run: not found')

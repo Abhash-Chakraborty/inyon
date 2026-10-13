@@ -1,13 +1,14 @@
-import { newerRelease, parseRelease, RELEASES_API } from '@inyon/protocol'
+import { DOWNLOAD_URL, fetchLatestRelease, LATEST_URL, newerRelease } from '@inyon/protocol'
 import { isNative, plugin } from './native.ts'
 import { toast } from './store.ts'
 
 /**
- * The Android app checks the GitHub releases for a newer APK: at most once a day on its own, and
- * whenever Settings opens. It never installs anything. Download opens the APK in the browser and
- * Android asks before installing it.
+ * The Android app checks the website's copy of the newest release for a newer APK: at most once a
+ * day on its own, and whenever Settings opens. It never installs anything. Download opens the APK
+ * in the browser and Android asks before installing it (and refuses one not signed with this
+ * app's key).
  */
-export { RELEASES_API }
+export { LATEST_URL }
 
 const CHECKED = 'inyon.app-update'
 const TOLD = 'inyon.app-update-told'
@@ -46,23 +47,21 @@ async function appVersion(): Promise<string | undefined> {
 }
 
 /**
- * The newest release that has an APK. Releases carry the inyon program too, so a release
- * without an APK doesn't count.
+ * The newest release that has an APK, and where to download it. Releases carry the inyon program
+ * too, so a release without an APK doesn't count. The website also keeps the APK as inyon.apk,
+ * which says nothing about its version, so the versioned name comes first.
  */
 export async function latestApk(): Promise<{ version: string; url: string } | undefined> {
-  const res = await fetch(RELEASES_API, { headers: { accept: 'application/vnd.github+json' } })
-  if (!res.ok) throw new Error(`GitHub answered ${res.status}`)
-  const r = (await res.json()) as { tag_name?: string; prerelease?: boolean; draft?: boolean; assets?: { name?: string; browser_download_url?: string }[] }
-  const version = String(r.tag_name ?? '').replace(/^v/, '')
-  if (r.prerelease || r.draft || !parseRelease(version)) return undefined
-  const apks = (r.assets ?? []).filter((a) => /\.apk$/i.test(a.name ?? '') && /^https:\/\//.test(a.browser_download_url ?? ''))
-  const apk = apks.find((a) => a.name === `inyon-${version}.apk`) ?? apks[0]
-  return apk ? { version, url: apk.browser_download_url! } : undefined
+  const { version, files } = await fetchLatestRelease()
+  const apks = files.filter((f) => /\.apk$/i.test(f.name))
+  const apk = apks.find((f) => f.name === `inyon-${version}.apk`) ?? apks.find((f) => f.name !== 'inyon.apk') ?? apks[0]
+  return apk ? { version, url: `${DOWNLOAD_URL}/${encodeURIComponent(apk.name)}` } : undefined
 }
 
 /**
- * This app's version and, when there is one, the newer release and its APK. `force` asks GitHub
- * now (Settings opening); otherwise the last answer is used for a day. Undefined outside the app.
+ * This app's version and, when there is one, the newer release and its APK. `force` asks the
+ * website now (Settings opening); otherwise the last answer is used for a day. Undefined outside
+ * the app.
  */
 export function checkAppUpdate(force = false, now = Date.now()): Promise<AppUpdate | undefined> {
   // a start and a return to the app at the same moment share one request

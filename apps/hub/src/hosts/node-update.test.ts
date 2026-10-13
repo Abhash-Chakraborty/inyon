@@ -161,13 +161,26 @@ test('from 0.7.0 a machine runs its own inyon update, detached, and its status i
   expect(m.calls[1]!.cmd).toBe('cat "$HOME/.inyon/node/update-status" 2>/dev/null || cat "$HOME/.tether-node/update-status" 2>/dev/null; true')
 })
 
-test('the phone learns the newest release from the GitHub API', async () => {
+test('the phone learns the newest release from latest.json on the website', async () => {
   const u = new NodeUpdates(fast)
   const urls: string[] = []
-  const get = (async (url: string) => (urls.push(url), Response.json({ tag_name: 'v0.7.2' }))) as unknown as typeof fetch
+  const get = (async (url: string) => (urls.push(url), Response.json({ version: '0.7.2', tag: 'v0.7.2', files: [] }))) as unknown as typeof fetch
   clearInterval(u.watchReleases(get))
   await until(() => u.latestRelease === '0.7.2')
-  expect(urls).toEqual(['https://api.github.com/repos/Abhash-Chakraborty/inyon/releases/latest'])
+  expect(urls).toEqual(['https://inyon.abhashchakraborty.tech/download/latest.json'])
+})
+
+test('a latest.json that fails or names no release leaves the last known version alone', async () => {
+  for (const answer of [() => new Response('gone', { status: 404 }), () => Response.json({ version: '0.8.0-rc.1' }), () => Response.json({ tag: 'v0.8.0' }), () => new Response('<html>')]) {
+    const u = new NodeUpdates(fast)
+    u.latestRelease = '0.7.2'
+    let asked = 0
+    const get = (async () => (asked++, answer())) as unknown as typeof fetch
+    clearInterval(u.watchReleases(get))
+    await until(() => asked === 1)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(u.latestRelease).toBe('0.7.2')
+  }
 })
 
 test('the API refuses machines it cannot update, with a clear 409', async () => {
