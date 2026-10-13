@@ -1,11 +1,16 @@
 name: Site
 
-# Publishes inyon.abhashchakraborty.tech: the download and docs page in site/, static files only.
+# Publishes inyon.abhashchakraborty.tech: the download and docs page in site/, static files only,
+# plus the latest release's get.sh and get.ps1 so the one-line installers can be typed short.
 # The app itself is never hosted here; it runs on your own computers, phone and hub.
 on:
   push:
     branches: [main]
     paths: ['site/**', 'apps/web/public/icon.svg', '.github/workflows/pages.yml']
+  # after a release is built, so the short installer URLs serve that release's scripts
+  workflow_run:
+    workflows: [inyon]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -19,6 +24,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -31,6 +37,11 @@ jobs:
           cp -r site/. out/
           cp apps/web/public/icon.svg out/icon.svg
           touch out/.nojekyll
+          # the installers from the latest release, not main, so they always match the binaries
+          # they download
+          for f in get.sh get.ps1; do
+            curl -fsSL --retry 3 -o "out/$f" "https://github.com/${{ github.repository }}/releases/latest/download/$f"
+          done
           # the site's own domain
           echo inyon.abhashchakraborty.tech > out/CNAME
       - uses: actions/upload-pages-artifact@v3

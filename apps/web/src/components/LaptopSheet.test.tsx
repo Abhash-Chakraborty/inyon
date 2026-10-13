@@ -32,8 +32,8 @@ test('says how to get the helper onto a laptop or server, for Mac/Linux and for 
   await user.click(screen.getByRole('tab', { name: 'Windows' }))
   expect(screen.getByText(SETUP_COMMANDS.windows.command)).toBeTruthy()
   expect(screen.getByText(/In PowerShell, run/)).toBeTruthy()
-  expect(SETUP_COMMANDS.unix.command).toMatch(/^curl -fsSL https:\/\/github\.com\/.+\/releases\/latest\/download\/get\.sh \| sh$/)
-  expect(SETUP_COMMANDS.windows.command).toMatch(/^irm https:\/\/github\.com\/.+\/releases\/latest\/download\/get\.ps1 \| iex$/)
+  expect(SETUP_COMMANDS.unix.command).toBe('curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh')
+  expect(SETUP_COMMANDS.windows.command).toBe('irm https://inyon.abhashchakraborty.tech/get.ps1 | iex')
 })
 
 test('typing the ID and code pairs as soon as the last digit is in', async () => {

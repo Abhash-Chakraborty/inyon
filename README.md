@@ -137,7 +137,7 @@ For a browser, or one place that reaches all your machines, run a hub on a machi
 On Linux or macOS, this installs it and keeps it running as a user service:
 
 ```sh
-curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh -s -- --hub
+curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
 ```
 
 It prints the address to open and a setup code. Settings like `PORT`, `BIND` or `TLS_CERT` go in
@@ -231,13 +231,13 @@ server in between and no password.
 On a Mac or Linux machine, run this in a terminal (on a server, in your SSH session):
 
 ```sh
-curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh
+curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.ps1 | iex
+irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
 ```
 
 It downloads `inyon`, checks it against the release's SHA256SUMS and prints a QR code. In the app,

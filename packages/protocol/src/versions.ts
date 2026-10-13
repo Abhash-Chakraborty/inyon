@@ -8,16 +8,17 @@ export const SLUG = 'inyon'
 export const OLD_SLUG = 'tether'
 export const SOURCE_REPO = 'Abhash-Chakraborty/inyon'
 /**
- * The web app (a static PWA on GitHub Pages, at its own domain). A computer's
- * QR code opens it when scanned with a phone's camera.
+ * The download page (static, on GitHub Pages at its own domain). A computer's QR code opens it
+ * when scanned with a phone's camera, and it offers to copy the pairing link for the app.
  */
 export const WEB_URL = 'https://inyon.abhashchakraborty.tech/'
+/** The short address the one-line installers are typed with: …/get.sh and …/get.ps1 */
+export const INSTALL_URL = 'https://inyon.abhashchakraborty.tech'
 /** The Android application id */
 export const APP_ID = 'tech.abhashchakraborty.inyon'
 
 /** The repository the app and the inyon program are downloaded from. */
 export const RELEASES_REPO = SOURCE_REPO
-export const RELEASES_DOWNLOAD = `https://github.com/${RELEASES_REPO}/releases/latest/download`
 export const RELEASES_API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`
 
 /**

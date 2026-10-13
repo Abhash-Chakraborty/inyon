@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gets inyon for this computer and sets it up for the Inyon phone app:
-#   curl -fsSL https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.sh | sh
+#   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
 # It downloads the right build into ~/.inyon/bin, checks it against the release's checksums, starts
 # it in the background at login, and shows a code to scan with the app. With --hub it sets up an
 # Inyon hub instead (the server the app signs in to):
@@ -19,7 +19,9 @@ case "$(uname -s)" in
   Linux) os=linux ;;
   Darwin) os=darwin ;;
   *) echo "This is for macOS and Linux. On Windows, run this in PowerShell instead:" >&2
-     echo "  irm $BASE/get.ps1 | iex" >&2
+     # the short address unless downloads come from somewhere else
+     [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && ps1="$BASE/get.ps1" || ps1=https://inyon.abhashchakraborty.tech/get.ps1
+     echo "  irm $ps1 | iex" >&2
      exit 1 ;;
 esac
 case "$(uname -m)" in

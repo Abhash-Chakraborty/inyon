@@ -1,5 +1,5 @@
 # Gets inyon for this PC and sets it up for the Inyon phone app. In PowerShell:
-#   irm https://github.com/Abhash-Chakraborty/inyon/releases/latest/download/get.ps1 | iex
+#   irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
 # It downloads inyon into %USERPROFILE%\.inyon\bin, checks it against the release's checksums,
 # starts it in the background when you sign in, and shows a code to scan with the app.
 # No admin rights needed.

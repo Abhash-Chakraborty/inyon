@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ChevronRight, ClipboardPaste, Copy, ScanLine, SquareTerminal } from 'lucide-react'
-import { RELEASES_DOWNLOAD, type HostConfig } from '@inyon/protocol'
+import { INSTALL_URL, type HostConfig } from '@inyon/protocol'
 import { api } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
@@ -13,11 +13,10 @@ import { isHosted } from '../lib/base.ts'
 import { keepData } from '../lib/install.ts'
 
 const PAIR_COMMAND = 'inyon pair'
-const DOWNLOADS = RELEASES_DOWNLOAD
 /** One line that downloads inyon, starts it in the background and shows the code. */
 export const SETUP_COMMANDS = {
-  unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${DOWNLOADS}/get.sh | sh` },
-  windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${DOWNLOADS}/get.ps1 | iex` },
+  unix: { label: 'Mac or Linux', where: 'In a terminal (on a server, your SSH session), run:', command: `curl -fsSL ${INSTALL_URL}/get.sh | sh` },
+  windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${INSTALL_URL}/get.ps1 | iex` },
 } as const
 // tether:// is how a laptop from before the rename to Inyon prints its code
 /** The computer's name in a pairing link, if it says. */
