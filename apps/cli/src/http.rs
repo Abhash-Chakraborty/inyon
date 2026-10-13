@@ -1,5 +1,5 @@
 //! The few HTTP requests the program makes: the release's SHA256SUMS and files, the newest
-//! version (a redirect it doesn't follow), and the hub next door.
+//! version (latest.json, or on GitHub a redirect it doesn't follow), and the hub next door.
 
 use std::time::Duration;
 

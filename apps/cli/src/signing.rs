@@ -6,8 +6,9 @@ use std::fmt;
 
 use minisign_verify::{PublicKey, Signature};
 
+use crate::http::host_of;
 use crate::paths::env_var;
-use crate::update::RELEASES;
+use crate::update::{INSTALL_URL, RELEASES_REPO};
 
 /// Inyon's release key (minisign key 0F27F489FF0BBD53).
 pub const RELEASE_KEY: &str = "RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6";
@@ -47,12 +48,22 @@ pub fn key_line(text: &str) -> Option<String> {
     text.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.starts_with("untrusted comment:")).map(String::from)
 }
 
+/// Whether `base` is where real releases come from: anything on the website, or the releases on
+/// GitHub (the newest, or one pinned to a tag).
+fn official(base: &str) -> bool {
+    let base = base.trim().to_ascii_lowercase();
+    let host = host_of(&base);
+    let host = host.rsplit('@').next().unwrap_or(&host).split(':').next().unwrap_or("");
+    let path = base.split_once("://").map_or(base.as_str(), |(_, rest)| rest).split_once('/').map_or("", |(_, p)| p);
+    host == host_of(INSTALL_URL) || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+}
+
 /// The key releases from `base` must be signed with. Tests and the container runs point
 /// INYON_DOWNLOAD at a mock release and INYON_SIGNING_KEY at the key that signed it; with the real
-/// releases the variable is ignored, so an environment variable alone can't point an install at
-/// another key.
+/// releases (the website's copy or GitHub's) the variable is ignored, so an environment variable
+/// alone can't point an install at another key.
 pub fn signing_key(base: &str) -> String {
-    if base.trim_end_matches('/') != RELEASES {
+    if !official(base) {
         if let Some(k) = env_var("INYON_SIGNING_KEY").and_then(|t| key_line(&t)) {
             return k;
         }
@@ -81,6 +92,29 @@ mod tests {
         assert_eq!(verify_sums(SUMS, SUMS_SIG, RELEASE_KEY), Err(Error::Mismatch));
         assert_eq!(verify_sums(SUMS, "not a signature", TEST_KEY), Err(Error::Signature));
         assert_eq!(verify_sums(SUMS, SUMS_SIG, "not a key"), Err(Error::Key));
+    }
+
+    #[test]
+    fn the_website_and_the_github_releases_are_official_and_nothing_else_is() {
+        for base in [
+            "https://inyon.abhashchakraborty.tech/download",
+            "https://inyon.abhashchakraborty.tech/download/",
+            "HTTPS://Inyon.AbhashChakraborty.tech/download",
+            "http://inyon.abhashchakraborty.tech:443/somewhere",
+            "https://github.com/Abhash-Chakraborty/inyon/releases/latest/download",
+            "https://github.com/abhash-chakraborty/inyon/releases/download/v0.13.3",
+        ] {
+            assert!(official(base), "{base}");
+        }
+        for base in [
+            "http://127.0.0.1:8000/download",
+            "http://release:8000/releases/latest/download",
+            "https://inyon.abhashchakraborty.tech.example.com/download",
+            "https://github.com/someone-else/inyon/releases/latest/download",
+            "https://example.com/github.com/Abhash-Chakraborty/inyon/releases/latest/download",
+        ] {
+            assert!(!official(base), "{base}");
+        }
     }
 
     #[test]

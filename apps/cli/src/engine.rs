@@ -40,7 +40,8 @@ pub fn ensure(say: &dyn Fn(&str)) -> Result<PathBuf, String> {
 }
 
 /// Where the engine comes from: INYON_DOWNLOAD (a mirror of the releases), the hub this machine
-/// was added to (so a machine without GitHub still works), or the newest release.
+/// was added to (so a machine that can only reach its hub still works), or the newest release on
+/// the website.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     Release(String),

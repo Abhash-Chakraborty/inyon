@@ -46,6 +46,9 @@ impl Home {
         std::env::remove_var("INYON_HUB");
         std::env::remove_var("INYON_DOWNLOAD");
         std::env::remove_var("INYON_SIGNING_KEY");
+        // and the names from before the rename, which the program reads as well
+        std::env::remove_var("TETHER_DOWNLOAD");
+        std::env::remove_var("TETHER_SIGNING_KEY");
         h
     }
 

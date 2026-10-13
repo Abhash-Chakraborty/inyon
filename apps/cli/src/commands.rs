@@ -296,7 +296,7 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
             service::move_old_service(sys, role);
         }
     }
-    // the engine comes from the hub just saved, so a machine without GitHub still works
+    // the engine comes from the hub just saved, so a machine that can only reach its hub still works
     engine::ensure(&|l| eprintln!("{l}"))?;
     let mut notes = Vec::new();
     if let Some(m) = service::missing_mux(sys.platform) {
