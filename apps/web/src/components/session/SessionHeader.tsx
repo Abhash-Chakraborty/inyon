@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX,
+  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History,
 } from 'lucide-react'
 import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
+import { ConversationsSheet } from './ConversationsSheet.tsx'
 import { contextOf, UsageSummary, useTick } from './Usage.tsx'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { liveWindow, openLink, shortPath, tokens } from '../../lib/format.ts'
@@ -79,6 +80,20 @@ export function SessionHeader({
   useTick(15_000)
   const { ref, def, info, agent, actions } = s
   const [renaming, setRenaming] = useState(false)
+  const [convos, setConvos] = useState(false)
+  // Inyon lists this agent's conversations itself; "/resume" typed in the composer opens them too
+  const switchable = !!def?.conversations?.length
+  useEffect(() => {
+    if (!switchable) return
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== 'conversations') return
+      e.preventDefault()
+      // after the key that asked for it, or that same Enter would reach the sheet
+      setTimeout(() => setConvos(true))
+    }
+    window.addEventListener('inyon:open-menu', onOpen)
+    return () => window.removeEventListener('inyon:open-menu', onOpen)
+  }, [switchable])
   const title = ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
   const busy = (info?.tasks.filter((t) => t.status === 'running').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
 
@@ -174,12 +189,13 @@ export function SessionHeader({
               def.set.rc && !info?.rc && { key: 'rc', label: 'Turn on Remote Control', icon: <RadioTower className="size-4" />, onSelect: () => actions.rc(true) },
               def.set.compact && { key: 'compact', label: 'Compact context', icon: <Shrink className="size-4" />, onSelect: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { key: 'rewind', label: agent === 'opencode' ? 'Undo last message…' : 'Rewind…', icon: <RotateCcw className="size-4" />, onSelect: actions.rewind },
+              switchable && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => setConvos(true) },
               { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, onSelect: () => setRenaming(true) },
               { key: 'copy', label: 'Copy session ID', icon: <Copy className="size-4" />, onSelect: actions.copyId },
               def.set.clear && { key: 'clear', label: 'Clear conversation', icon: <Trash2 className="size-4" />, danger: true, onSelect: actions.clear },
               { key: 'exit', label: 'Exit to shell', icon: <LogOut className="size-4" />, onSelect: actions.exit },
               { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, onSelect: () => actions.end(() => nav('/')) },
-            ].filter((it: any) => it && (!s.screen?.prompt || it.key === 'rename' || it.key === 'copy' || it.key === 'end')) as any}
+            ].filter((it: any) => it && (!s.screen?.prompt || it.key === 'conversations' || it.key === 'rename' || it.key === 'copy' || it.key === 'end')) as any}
             trigger={({ toggle, ref: r }) => (
               <button ref={r} type="button" onClick={toggle} aria-label="More" className="hidden size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover md:flex">
                 <MoreHorizontal className="size-4" />
@@ -197,6 +213,16 @@ export function SessionHeader({
           agent={!!ref.pane.agent}
           open={renaming}
           onClose={() => setRenaming(false)}
+        />
+      )}
+      {ref && agent && switchable && (
+        <ConversationsSheet
+          host={ref.host.config.id}
+          pane={ref.pane.id}
+          agent={agent}
+          working={!!(s.screen?.working ?? ref.pane.agent?.state === 'working')}
+          open={convos}
+          onClose={() => setConvos(false)}
         />
       )}
     </header>

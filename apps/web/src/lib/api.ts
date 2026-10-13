@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, PastConversation, SlashCommand } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -202,6 +202,11 @@ export const api = {
   input: (host: string, pane: string, text: string) => request('POST', `${panePath(host, pane)}/input`, { text }),
   stopTask: (host: string, task: { id: string; path?: string }) => request<{ stopped: boolean; detail: string }>('POST', `${h(host)}/tasks/stop`, { id: task.id, path: task.path }),
   start: (host: string, pane: string, agent: AgentKind, resume?: string) => request('POST', `${panePath(host, pane)}/start`, { agent, resume }),
+  /** the agent's past conversations in the pane's folder; `agent` says whose when none is running */
+  conversations: (host: string, pane: string, agent?: AgentKind) =>
+    request<{ agent: AgentKind; cwd: string; conversations: PastConversation[] }>('GET', `${panePath(host, pane)}/conversations${agent ? qs({ agent }) : ''}`, undefined, 45_000),
+  /** the agent exits (the pane stays) and starts again on conversation `id` */
+  switchConversation: (host: string, pane: string, agent: AgentKind, id: string) => request<{ switched: boolean }>('POST', `${panePath(host, pane)}/switch`, { agent, id }, 120_000),
   refresh: () => request<{ ok: true }>('POST', '/api/refresh', undefined, 15_000),
   commands: (host: string, pane: string) => request<SlashCommand[]>('GET', `${panePath(host, pane)}/commands`),
   models: (host: string, pane: string) => request<AgentCatalog>('GET', `${panePath(host, pane)}/models`, undefined, 25_000),

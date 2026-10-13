@@ -56,7 +56,7 @@ While the agent is working, sending queues the message instead: the box says *Qu
 
 Type `/` for the agent's commands, skills and plugins, fetched from the machine each time, with where each comes from (project, user, plugin). Keep typing to filter, then `↑` `↓` and `Enter` or `Tab` to pick.
 
-A few commands open Inyon's own controls instead of being typed: `/model`, `/models`, `/effort` and, for OpenCode, `/agents`. Commands that only change a setting (model, effort, mode, goal…) don't clutter the chat. In Codex, `$` lists skills.
+A few commands open Inyon's own controls instead of being typed: `/model`, `/models`, `/effort`, for OpenCode `/agents`, and the agent's resume command, which opens [Past conversations](#past-conversations). Commands that only change a setting (model, effort, mode, goal…) don't clutter the chat. In Codex, `$` lists skills.
 
 ### Files with @
 
@@ -86,9 +86,31 @@ A message shows **Sending**, then **Sent** once the agent has it. If it can't be
 
 Click or tap the title in the header to rename a session (up to 80 characters), or choose **Use automatic name** to go back. The name stays with the conversation, even if you resume it later. Renaming a plain terminal renames its tmux window.
 
+## Past conversations
+
+From 0.15, Inyon lists an agent's past conversations itself, since its own resume picker only works in the terminal. Open the list with **Past conversations…** in the header's **⋯** menu, with **History** in the controls sheet on a phone, or by sending the agent's resume command from the message box:
+
+| Agent | Command |
+|---|---|
+| Claude Code, Codex | `/resume` |
+| GitHub Copilot, Antigravity CLI | `/resume` or `/switch` |
+| OpenCode | `/sessions` |
+
+The list holds the conversations the agent saved in the session's folder, newest first, up to 50. Each shows its title and when it was last active: the agent's own title, a name you gave it, or else your first message. The one open now is marked *Open now*.
+
+Tap one to switch to it. The agent exits the way `/exit` would, so the current conversation is saved and can be resumed later, then starts again on the one you picked, in the same pane. The chat loads it once the agent is back. If the agent is working, Inyon asks first.
+
+A switch stops with a message instead when:
+
+- shells or monitors are running in the background, since exiting would stop them;
+- the agent doesn't exit (close it from the terminal);
+- another switch in the same session is still under way.
+
+The list works for every machine, whether you reach it through your hub, a paired hub or straight from the phone. A paired hub needs to be up to date. Gemini CLI isn't supported: resume its conversations in the terminal.
+
 ## When nothing is running
 
-If the agent has exited, the session offers **Resume conversation**, **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.
+If the agent has exited, the session offers **Resume conversation**, **Past conversations** (to pick another one), **Start** for each installed agent, or **Terminal**. A pane that has closed says *This pane is gone*.
 
 ## Signing in
 

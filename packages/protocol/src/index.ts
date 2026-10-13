@@ -293,6 +293,18 @@ export interface SendState {
   setting?: boolean
 }
 
+/** A conversation the agent saved in a pane's folder, which it can be started again with. */
+export interface PastConversation {
+  /** what the agent's command line takes to resume it */
+  id: string
+  /** the agent's own title for it, a name given in Inyon, or else the first thing you asked */
+  title: string
+  /** last activity, ms since the epoch */
+  at: number
+  /** the conversation open in the pane now */
+  current?: boolean
+}
+
 export interface ChatInfo {
   /** Live metrics from transcript/API adapters. */
   status?: AgentStatus

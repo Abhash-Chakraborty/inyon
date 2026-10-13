@@ -17,6 +17,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Goal | Yes | Yes | No | No | No | Set only |
 | Compact | Yes | Yes | Yes | Yes | Yes | No |
 | Rewind | Yes | Per message | No | Undo | No | Yes |
+| [Past conversations](sessions.md#past-conversations) | Yes | Yes | No | Yes | Yes | Yes |
 | `!` shell commands | Yes | Yes | No | Yes | Yes | No |
 | Remote Control | Yes | No | No | No | No | Yes |
 | Cost | Yes | No | No | Yes | No | No |
@@ -45,7 +46,7 @@ Read from its session files in `~/.codex/sessions`. Model and effort go through 
 
 ## Gemini CLI (beta)
 
-The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. Inyon can't change Gemini's model yet. `/compress` compacts.
+The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. Inyon can't change Gemini's model yet, and doesn't list its past conversations: resume those in the terminal. `/compress` compacts.
 
 ## OpenCode (beta)
 

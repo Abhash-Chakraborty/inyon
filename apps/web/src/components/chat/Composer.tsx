@@ -13,6 +13,14 @@ import { openMenu } from '../ui/primitives.tsx'
 /** commands that open a picker in the agent's terminal; the composer's own menus do the job */
 const MENU_COMMANDS: Record<string, string> = { '/model': 'model', '/models': 'model', '/effort': 'effort', '/agents': 'mode', '/agent': 'mode' }
 
+/** The app's own sheet for a command typed bare, if it has one: a menu above, or past conversations (/resume). */
+function menuFor(command: string, agent?: AgentKind) {
+  const c = command.toLowerCase()
+  const menu = MENU_COMMANDS[c]
+  if (menu) return menu !== 'mode' || agent === 'opencode' ? menu : undefined
+  return agent && AGENTS[agent].conversations?.includes(c) ? 'conversations' : undefined
+}
+
 interface Attachment {
   id: string
   name: string
@@ -238,8 +246,8 @@ export function Composer({
     if (!s || !pop) return
     if (pop.kind === 'slash') {
       const c = s.item as SlashCommand
-      const menu = MENU_COMMANDS[c.name]
-      if (menu && !text.slice(pop.end).trim() && (menu !== 'mode' || agent === 'opencode') && openMenu(menu)) {
+      const menu = menuFor(c.name, agent)
+      if (menu && !text.slice(pop.end).trim() && openMenu(menu)) {
         setText('')
         setPop(null)
         return
@@ -395,9 +403,9 @@ export function Composer({
   const send = async (value = text) => {
     let msg = value.trim()
     if (uploading) return
-    // a bare "/model" would open the agent's terminal menu; the app has its own
-    const menu = !ready.length && MENU_COMMANDS[msg.toLowerCase()]
-    if (menu && (menu !== 'mode' || agent === 'opencode') && openMenu(menu)) {
+    // a bare "/model" or "/resume" would open the agent's terminal menu; the app has its own
+    const menu = !ready.length && menuFor(msg, agent)
+    if (menu && openMenu(menu)) {
       setText('')
       setPop(null)
       return

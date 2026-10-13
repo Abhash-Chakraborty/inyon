@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { CircleX, Copy, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { CircleX, Copy, History, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
-import { Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
+import { openMenu, Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'
 import { ActivityTab, ChangesTab, PreviewTab } from './Panels.tsx'
 import { GoalSheet, modeMatches } from './ComposerControls.tsx'
@@ -107,6 +107,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
             {[
               def.set.compact && { label: 'Compact', icon: Shrink, on: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { label: agent === 'opencode' ? 'Undo' : 'Rewind', icon: RotateCcw, on: actions.rewind },
+              def.conversations?.length && { label: 'History', icon: History, on: () => (onClose(), openMenu('conversations')) },
               { label: 'Copy ID', icon: Copy, on: actions.copyId },
               def.set.clear && { label: 'Clear', icon: Trash2, on: async () => (await confirmAction({ title: 'Start a fresh conversation?', body: 'The current one is saved and can be resumed later.', yes: 'Clear' })) && actions.clear() },
               { label: 'To shell', icon: LogOut, on: actions.exit },

@@ -47,6 +47,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 - **Exit to shell** quits the agent and leaves the pane at a shell prompt, after asking.
 - **End session…** closes the pane, its window or the whole tmux session. The confirmation says exactly which, and the session disappears at once.
 - **Copy session ID** copies the agent's conversation ID, for resuming it elsewhere.
+- **Past conversations…** (**History** on a phone) lists the agent's earlier conversations in this folder and switches to one. See [Past conversations](sessions.md#past-conversations).
 
 ## Background work
 

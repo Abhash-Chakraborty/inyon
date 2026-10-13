@@ -161,6 +161,14 @@ test('unknown routes and methods are refused', async () => {
   expect((await call('DELETE', '/api/settings')).status).toBe(405)
 })
 
+// the phone runs the same API in the app, so a directly paired computer gets past conversations too
+test("the phone answers for a session's past conversations and switching between them", async () => {
+  const list = await call('GET', '/api/hosts/nowhere/panes/3/conversations?agent=claude')
+  expect(list).toEqual({ status: 404, data: { error: 'Pane not found' } })
+  const sw = await call('POST', '/api/hosts/nowhere/panes/3/switch', { agent: 'claude', id: '00000000-0000-4000-8000-000000000001' })
+  expect(sw).toEqual({ status: 404, data: { error: 'Pane not found' } })
+})
+
 test('a connected screen gets the overview', async () => {
   const got: ServerMsg[] = []
   const c = phone.connect((m) => got.push(m))

@@ -8,7 +8,7 @@ import { othersSends, settle as settleSends } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { api, isTransient, withRetries } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
-import { Button, Empty, Pulse, Waiting } from '../ui/primitives.tsx'
+import { Button, Empty, openMenu, Pulse, Waiting } from '../ui/primitives.tsx'
 import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
 import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
@@ -412,6 +412,11 @@ function NotRunning({
         {sessionId && agent && (
           <Button variant="accent" onClick={() => start(agent, sessionId)} loading={busy === 'resume'}>
             <History className="size-4" /> Resume conversation
+          </Button>
+        )}
+        {!!agent && !!AGENTS[agent].conversations?.length && (
+          <Button variant="ghost" onClick={() => openMenu('conversations')}>
+            <History className="size-4" /> Past conversations
           </Button>
         )}
         {kinds.map((k) => (

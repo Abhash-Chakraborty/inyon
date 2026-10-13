@@ -780,8 +780,17 @@ export async function startAgent(hostId: string, paneId: string, agent: AgentKin
   // both end up typed into a shell
   if (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent)) throw new HttpError(400, 'Unknown agent')
   if (!isSessionId(resume, agent)) throw new HttpError(400, 'Bad session id')
-  const { host, found } = agentPane(hostId, paneId)
+  const { found } = agentPane(hostId, paneId)
   if (found.pane.agent) throw new HttpError(409, 'An agent is already running here')
+  await typeStart(hostId, paneId, agent, resume)
+}
+
+/**
+ * Types the command that starts the agent (resuming `resume`, if given) at the pane's shell
+ * prompt. The caller has checked the agent and the id, and that the pane is at its shell.
+ */
+export async function typeStart(hostId: string, paneId: string, agent: AgentKind, resume?: string | null) {
+  const { host } = agentPane(hostId, paneId)
   const def = AGENTS[agent]
   const cmd = !resume ? def.launch
     : agent === 'codex' ? `codex resume ${resume}`

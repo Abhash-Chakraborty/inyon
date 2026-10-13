@@ -19,6 +19,7 @@ import { sendOnce } from './claude/send-receipts.ts'
 import { pruneChats } from './claude/chat-cache.ts'
 import { lastReply } from './claude/last-reply.ts'
 import { saveDrafts } from './claude/drafts.ts'
+import { paneConversations, switchConversation } from './features/conversations.ts'
 
 /**
  * Inyon's API and live updates, independent of how they are served: the hub puts them behind
@@ -518,6 +519,17 @@ export const coreRoutes: Routes = {
       const b = await body<{ agent?: string; resume?: string }>(req)
       await startAgent(req.params.id, paneParam(req.params.pane), (b.agent as any) ?? 'claude', b.resume)
       return ok()
+    }),
+  },
+  // the agent's past conversations in the pane's folder; `agent` says whose when none is running
+  '/api/hosts/:id/panes/:pane/conversations': {
+    GET: api(async (req) => json(await paneConversations(req.params.id, paneParam(req.params.pane), q(req, 'agent') || undefined))),
+  },
+  // exits the running agent (the pane stays) and reopens it on another of its conversations
+  '/api/hosts/:id/panes/:pane/switch': {
+    POST: api(async (req) => {
+      const b = await body<{ agent?: string; id?: string }>(req)
+      return json(await switchConversation(req.params.id, paneParam(req.params.pane), b.agent || undefined, b.id))
     }),
   },
 }

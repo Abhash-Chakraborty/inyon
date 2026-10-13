@@ -404,6 +404,9 @@ export async function sendKeys(host: Host, pane: string, keys: string[]) {
   if (r.code !== 0) throw new Error(r.stderr.trim() || 'send-keys failed')
 }
 
+/** The folder under ~/.claude/projects where Claude keeps a working folder's transcripts. */
+export const claudeSlug = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-')
+
 /**
  * Best guess at a Claude process's transcript without hooks: the session it was resumed with, or
  * the newest transcript in its project folder written since the process started. A brand-new
@@ -415,7 +418,7 @@ export async function guessTranscript(
   proc: { cwd?: string; startedAt: number; resume?: string },
 ): Promise<string | undefined> {
   if (!proc.cwd) return undefined
-  const dir = `${home}/.claude/projects/${proc.cwd.replace(/[^a-zA-Z0-9]/g, '-')}`
+  const dir = `${home}/.claude/projects/${claudeSlug(proc.cwd)}`
   const cmd = `cd ${shq(dir)} 2>/dev/null && for f in $(ls -t *.jsonl 2>/dev/null | head -5); do echo "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $f"; done`
   const r = await host.exec(cmd)
   const files = r.stdout.trim().split('\n').filter(Boolean).map((l) => {

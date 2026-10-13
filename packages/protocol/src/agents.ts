@@ -79,6 +79,11 @@ export interface AgentDef {
   efforts: string[]
   modes: { id: string; label: string }[]
   commands: SlashCommand[]
+  /**
+   * The commands that open the agent's own list of past conversations in its terminal. Inyon
+   * lists and switches them itself for these agents; none means it can't for this one.
+   */
+  conversations?: string[]
   configFiles: { path: string; label: string; format: 'json' | 'toml' | 'md' }[]
   /** how to set things from the outside */
   set: {
@@ -322,6 +327,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       { id: 'bypassPermissions', label: 'Bypass' },
     ],
     commands: cmds(CLAUDE_COMMANDS),
+    conversations: ['/resume'],
     configFiles: [
       { path: '~/.claude/settings.json', label: 'User settings', format: 'json' },
       { path: '~/.claude/CLAUDE.md', label: 'User memory', format: 'md' },
@@ -386,6 +392,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       { id: 'plan', label: 'Plan' },
     ],
     commands: cmds(CODEX_COMMANDS),
+    conversations: ['/resume'],
     configFiles: [
       { path: '~/.codex/config.toml', label: 'Config', format: 'toml' },
       { path: '~/.codex/AGENTS.md', label: 'Global instructions', format: 'md' },
@@ -435,6 +442,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       { id: 'plan', label: 'Plan' },
     ],
     commands: cmds(OPENCODE_COMMANDS),
+    conversations: ['/sessions'],
     configFiles: [
       { path: '~/.config/opencode/opencode.json', label: 'Config', format: 'json' },
       { path: '{cwd}/opencode.json', label: 'Project config', format: 'json' },
@@ -473,6 +481,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     efforts: [],
     modes: [{ id: 'default', label: 'Manual approval' }, { id: 'allow-all', label: 'Full access' }],
     commands: cmds([['/model', 'Choose a model', true], ['/permissions', 'Change permissions', true], ['/plan', 'Plan before implementing', true], ['/autopilot', 'Run autonomously', true], ['/usage', 'Show usage', true], ['/context', 'Show context', true], ['/compact', 'Compact conversation', true], ['/login', 'Sign in', true], ['/clear', 'Clear conversation', true], ['/agent', 'Choose an agent', true], ['/skills', 'Manage skills', true], ['/mcp', 'Manage MCP servers', true], ['/plugin', 'Manage plugins', true], ['/tasks', 'View tasks', true], ['/diff', 'View changes', true], ['/review', 'Review changes'], ['/security-review', 'Review security'], ['/lsp', 'Manage language servers', true], ['/sandbox', 'Manage sandbox', true], ['/add-dir', 'Add a workspace directory'], ['/list-dirs', 'List workspace directories', true], ['/cwd', 'Change working directory'], ['/resume', 'Resume a session', true], ['/rename', 'Rename this session'], ['/fork', 'Fork this session'], ['/copy', 'Copy a response', true], ['/rewind', 'Rewind conversation', true], ['/help', 'Show help', true], ['/version', 'Show version', true], ['/memory', 'Manage memory', true], ['/instructions', 'Show instructions', true], ['/limits', 'Show limits', true], ['/user', 'Show account', true], ['/new', 'Start a session', true], ['/settings', 'Manage settings', true], ['/subagents', 'Manage subagents', true]]),
+    conversations: ['/resume', '/switch'],
     configFiles: [{ path: '{cwd}/AGENTS.md', label: 'Project instructions', format: 'md' }],
     set: { model: (id) => `/model ${id}`, compact: '/compact', clear: '/clear' },
   },
@@ -559,6 +568,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       { id: 'plan', label: 'Plan' },
     ],
     commands: cmds(ANTIGRAVITY_COMMANDS),
+    conversations: ['/resume', '/switch'],
     configFiles: [
       { path: '~/.gemini/antigravity-cli/settings.json', label: 'Settings', format: 'json' },
       { path: '~/.gemini/config/mcp_config.json', label: 'MCP servers', format: 'json' },
