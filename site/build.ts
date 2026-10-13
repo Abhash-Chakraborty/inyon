@@ -48,6 +48,8 @@ interface Release {
   tag: string;
   date: string;
   assets: Asset[];
+  /** true when the uncompressed programs were left out to stay inside the Pages size limit */
+  gzOnly?: boolean;
 }
 
 // ---------- helpers ----------
@@ -161,13 +163,25 @@ interface GhRelease {
   assets: { name: string; size: number; browser_download_url: string }[];
 }
 
+/** What /download may take up, leaving room for the pages and pictures under Pages' 1 GB. */
+const MIRROR_BUDGET = 900 * 1024 * 1024;
+
 // Files the site serves from /download. The old tether-node copies stay on GitHub only.
 const mirrored = (name: string) => !name.startsWith("tether-node");
 
 async function latestRelease(): Promise<{ release: Release; raw: GhRelease } | null> {
   if (OFFLINE) return null;
   const raw = (await gh("/releases/latest")) as GhRelease;
-  const assets = raw.assets.filter((a) => mirrored(a.name)).map((a) => ({ name: a.name, size: a.size }));
+  let assets = raw.assets.filter((a) => mirrored(a.name)).map((a) => ({ name: a.name, size: a.size }));
+  // GitHub Pages publishes at most 1 GB. Every installer and updater takes a program's .gz copy
+  // when there is one, so the plain copies are the ones to leave on GitHub if a release outgrows it
+  const total = assets.reduce((n, a) => n + a.size, 0);
+  const names = new Set(assets.map((a) => a.name));
+  const gzOnly = total > MIRROR_BUDGET;
+  if (gzOnly) {
+    assets = assets.filter((a) => !names.has(`${a.name}.gz`));
+    console.log(`  ${mb(total)} is over the ${mb(MIRROR_BUDGET)} budget: serving the .gz copies only`);
+  }
   return {
     raw,
     release: {
@@ -175,6 +189,7 @@ async function latestRelease(): Promise<{ release: Release; raw: GhRelease } | n
       tag: raw.tag_name,
       date: raw.published_at.slice(0, 10),
       assets,
+      gzOnly,
     },
   };
 }
@@ -565,7 +580,7 @@ function downloadTable(r?: Release): string {
   const programs = new Set(r.assets.filter((a) => PLATFORMS.some((p) => p.match.test(a.name))).map((a) => a.name));
   const extra = r.assets.filter((a) => !programs.has(a.name) && !programs.has(`${a.name}.gz`));
   return `<div class="table"><table class="files"><thead><tr><th>System</th><th>Files (gzip)</th></tr></thead><tbody>${rows}</tbody></table></div>
-<p class="note">Each file is also served uncompressed, without the <code>.gz</code>. The installers pick the right ones for you.</p>
+<p class="note">${r.gzOnly ? `The uncompressed copies of this release are on <a class="ext" href="${GITHUB}/releases/tag/${esc(r.tag)}">GitHub</a>.` : "Each file is also served uncompressed, without the <code>.gz</code>."} The installers pick the right ones for you.</p>
 <h2 id="everything-else">Everything else</h2>
 <div class="table"><table class="files"><tbody>${extra.map((a) => `<tr><td>${link(a)}</td></tr>`).join("")}</tbody></table></div>`;
 }
