@@ -58,6 +58,22 @@ export function splitHostId(id: string): { hub?: PairedHub; id: string } {
 }
 export const isHubHost = (id: string) => id.startsWith(PREFIX)
 
+/**
+ * Two machines with the same name (two hubs on one box, or two servers both called "ubuntu") look
+ * the same in every list. A hub's machine named like one listed before it gets its hub's address after it.
+ */
+export function tellApart<H extends { config: { id: string; name: string } }>(hosts: H[]): H[] {
+  const seen = new Set<string>()
+  return hosts.map((h) => {
+    // the first keeps its name: on a phone every machine comes through a hub
+    if (!seen.has(h.config.name)) return seen.add(h.config.name), h
+    const hub = splitHostId(h.config.id).hub
+    if (!hub) return h
+    const where = hub.url.replace(/^https?:\/\//, '')
+    return { ...h, config: { ...h.config, name: `${h.config.name} · ${where}` } }
+  })
+}
+
 /** The link a hub shows in its QR code: inyon://hub?u=<origin>&c=<id:code>&n=<name>, or the download page with it after the #. */
 export function parseHubLink(text: string): { url: string; code: string; name?: string } | undefined {
   const t = text.trim()

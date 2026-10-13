@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { forgetHub, hubHostId, hubOriginOf, hubTicket, listHubs, normalizeHubCode, parseHubLink, splitHostId, unreachable } from './hubs.ts'
+import { forgetHub, hubHostId, hubOriginOf, hubTicket, listHubs, tellApart, normalizeHubCode, parseHubLink, splitHostId, unreachable } from './hubs.ts'
 
 afterEach(() => localStorage.removeItem('inyon.hubs.v1'))
 
@@ -86,4 +86,14 @@ test("each connection refreshes the hub's name and version, which were only read
   } finally {
     globalThis.fetch = real
   }
+})
+
+test('machines that share a name are told apart by their hub', () => {
+  localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h2', name: 'abhash-arm', url: 'http://100.97.188.112:47321', token: 't', pairedAt: 1 }]))
+  const m = (id: string, name: string) => ({ config: { id, name } })
+  expect(tellApart([m('local', 'abhash-arm'), m(hubHostId('h2', 'local'), 'abhash-arm'), m('db', 'db')]).map((h) => h.config.name)).toEqual(['abhash-arm', 'abhash-arm · 100.97.188.112:47321', 'db'])
+  // on a phone both come through hubs: the first keeps its name
+  expect(tellApart([m(hubHostId('h1', 'local'), 'abhash-arm'), m(hubHostId('h2', 'local'), 'abhash-arm')]).map((h) => h.config.name)).toEqual(['abhash-arm', 'abhash-arm · 100.97.188.112:47321'])
+  // a name nobody shares stays as it is
+  expect(tellApart([m(hubHostId('h2', 'local'), 'abhash-arm')])[0]!.config.name).toBe('abhash-arm')
 })

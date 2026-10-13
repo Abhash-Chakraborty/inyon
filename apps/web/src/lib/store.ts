@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@inyon/protocol'
 import { socket, type Tagged } from './socket.ts'
+import { tellApart } from './hubs.ts'
 import { haptic } from './haptics.ts'
 import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
 import { appHref, publicFile, routeOf } from './base.ts'
@@ -205,7 +206,7 @@ export function hidePane(host: string, pane: string, hide = true) {
  * core), then each paired hub in the order they were paired. One list for the screens.
  */
 const sources = new Map<string, HostState[]>()
-const allHosts = () => [...sources.values()].flat()
+const allHosts = () => tellApart([...sources.values()].flat())
 
 function onMessage(m: Tagged) {
   switch (m.t) {
