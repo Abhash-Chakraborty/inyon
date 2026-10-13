@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'bun:test'
-import { forgetHub, hubHostId, hubOriginOf, listHubs, normalizeHubCode, parseHubLink, splitHostId, unreachable } from './hubs.ts'
+import { forgetHub, hubHostId, hubOriginOf, hubTicket, listHubs, normalizeHubCode, parseHubLink, splitHostId, unreachable } from './hubs.ts'
 
 afterEach(() => localStorage.removeItem('inyon.hubs.v1'))
 
@@ -69,4 +69,21 @@ test('when nothing comes back from the hub the message says what to check', () =
   expect(unreachable('https://hub.example', failed)).toContain("Couldn't reach https://hub.example")
   const slow = Object.assign(new Error('timed out'), { name: 'TimeoutError' })
   expect(unreachable('http://abhash-arm', slow)).toContain("didn't answer in time")
+})
+
+test("each connection refreshes the hub's name and version, which were only read at pairing", async () => {
+  const hub = { id: 'h1', name: 'abhash-arm', url: 'http://box:4777', token: 't', version: '0.13.3', pairedAt: 1 }
+  localStorage.setItem('inyon.hubs.v1', JSON.stringify([hub]))
+  const real = globalThis.fetch
+  globalThis.fetch = (async () => Response.json({ ticket: 'tk', hub: { id: 'h1', name: 'studio', version: '0.14.1' } })) as unknown as typeof fetch
+  try {
+    expect(await hubTicket(hub)).toBe('tk')
+    expect(listHubs()[0]).toMatchObject({ id: 'h1', name: 'studio', version: '0.14.1', token: 't' })
+    // another hub's answer (a stale address now pointing elsewhere) changes nothing
+    globalThis.fetch = (async () => Response.json({ ticket: 'tk', hub: { id: 'other', name: 'x', version: '9.9.9' } })) as unknown as typeof fetch
+    await hubTicket(listHubs()[0]!)
+    expect(listHubs()[0]).toMatchObject({ name: 'studio', version: '0.14.1' })
+  } finally {
+    globalThis.fetch = real
+  }
 })

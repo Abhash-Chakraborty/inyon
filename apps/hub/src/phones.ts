@@ -110,8 +110,11 @@ export function claimPhone(ip: string, claim: Partial<PhoneClaim>, now = Date.no
   const name = String(claim.name ?? '').trim().slice(0, 60) || 'Phone'
   phones.push({ id: crypto.randomBytes(6).toString('hex'), name, tokenHash: sha256(token), pairedAt: now, lastSeen: now })
   savePhones()
-  return { token, hub: { id: hubId(), name: hubName(), version: VERSION } }
+  return { token, hub: hubAbout() }
 }
+
+/** What a phone shows for this hub; sent again with every ticket, so a renamed or updated hub shows as it is now. */
+export const hubAbout = () => ({ id: hubId(), name: hubName(), version: VERSION })
 
 // ---------- signed-in phones ----------
 

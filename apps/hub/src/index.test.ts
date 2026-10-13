@@ -154,8 +154,10 @@ test('a phone claims the code once, then talks to the hub with its token', async
   expect(theirs).toEqual([{ ...mine[0]!, thisPhone: undefined }])
 
   // the WebSocket opens with a ticket, once
-  const { ticket } = await json(await post('/api/phones/ticket', {}, { token: phone.token }))
+  const { ticket, hub } = await json(await post('/api/phones/ticket', {}, { token: phone.token }))
   expect(ticket).toHaveLength(43)
+  // and says what the hub is now, so the phone's copy of its name and version stays current
+  expect(hub).toEqual(phone.hub)
   const live = await connect(`${ws}/ws?ticket=${ticket}`)
   await live.pong()
   live.socket.close()

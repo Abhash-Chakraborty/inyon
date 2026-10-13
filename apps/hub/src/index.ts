@@ -5,7 +5,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
 import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, recentSignIn, refreshCookie, revokeSession, tryLogin } from './auth.ts'
-import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, issueTicket, listPhones, newPairCode, phoneFor, redeemTicket, revokePhone } from './phones.ts'
+import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, hubAbout, issueTicket, listPhones, newPairCode, phoneFor, redeemTicket, revokePhone } from './phones.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { detectNetworks } from './networks.ts'
@@ -317,7 +317,7 @@ const server = Bun.serve<SocketData>({
       POST: api((req) => {
         const phone = phoneFor(req)
         if (!phone) throw new HttpError(403, 'Only a paired phone connects with a ticket.')
-        return json({ ticket: issueTicket(phone.id) })
+        return json({ ticket: issueTicket(phone.id), hub: hubAbout() })
       }),
     },
     '/api/phones/:id': {

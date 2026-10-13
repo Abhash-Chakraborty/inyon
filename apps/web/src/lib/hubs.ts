@@ -141,7 +141,11 @@ export async function hubTicket(hub: PairedHub): Promise<string> {
   })
   if (res.status === 401 || res.status === 403) throw new HubRevoked(hub)
   if (!res.ok) throw new Error(`The hub answered ${res.status}`)
-  const { ticket } = (await res.json()) as { ticket: string }
+  const { ticket, hub: about } = (await res.json()) as { ticket: string; hub?: PhoneClaimResult['hub'] }
+  // the hub says what it is now: keep its name and version current (they were only read at pairing)
+  if (about?.id === hub.id && (about.version !== hub.version || about.name !== hub.name)) {
+    save(listHubs().map((h) => (h.id === hub.id ? { ...h, name: about.name || h.name, version: about.version } : h)))
+  }
   return ticket
 }
 
