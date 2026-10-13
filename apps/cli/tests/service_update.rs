@@ -1,6 +1,7 @@
 //! How `inyon update` restarts each job, and how tether-node's services move to inyon's.
 //! Nothing runs: every command goes to a fake that records it, the process table is a fake, and
-//! home is a throwaway folder.
+//! home is a throwaway folder. The fakes are shell scripts, so the tests that run one are skipped
+//! on Windows; the PowerShell each step would run is checked as text, on the other systems.
 
 mod common;
 
@@ -19,6 +20,7 @@ fn setup(fakes: &[&str]) -> Home {
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn linux_systemctl_restarts_the_jobs_own_unit_or_tether_nodes_while_it_has_not_moved() {
     let _g = lock();
     let home = setup(&["systemctl", "launchctl", "loginctl", "sh", "powershell.exe"]);
@@ -39,6 +41,7 @@ fn linux_systemctl_restarts_the_jobs_own_unit_or_tether_nodes_while_it_has_not_m
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn macos_launchd_restarts_the_job_under_its_own_label_or_the_old_one() {
     let _g = lock();
     let home = setup(&["systemctl", "launchctl", "sh"]);
@@ -59,6 +62,7 @@ fn macos_launchd_restarts_the_job_under_its_own_label_or_the_old_one() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn windows_the_logon_task_is_stopped_and_started_and_the_old_copy_stopped_never_the_updater_itself() {
     let _g = lock();
     let home = setup(&["powershell.exe"]);
@@ -85,6 +89,7 @@ fn windows_the_logon_task_is_stopped_and_started_and_the_old_copy_stopped_never_
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn no_service_manager_the_node_named_in_node_json_is_stopped_and_the_new_one_started_with_nohup() {
     let _g = lock();
     let home = setup(&["sh"]);
@@ -113,6 +118,7 @@ fn a_pid_in_node_json_that_now_belongs_to_another_program_is_left_alone() {
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn the_app_starts_the_update_on_its_own_a_transient_unit_on_linux_with_systemd() {
     let _g = lock();
     let home = setup(&["systemd-run", "systemctl"]);
@@ -126,6 +132,7 @@ fn the_app_starts_the_update_on_its_own_a_transient_unit_on_linux_with_systemd()
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn without_systemd_the_update_runs_detached_in_a_session_of_its_own_logging_to_a_file() {
     let _g = lock();
     let home = setup(&["inyon"]);
@@ -148,6 +155,7 @@ fn without_systemd_the_update_runs_detached_in_a_session_of_its_own_logging_to_a
 }
 
 #[test]
+#[cfg_attr(windows, ignore)]
 fn on_windows_the_update_becomes_a_one_off_task_outside_the_task_it_was_asked_from() {
     let _g = lock();
     let home = setup(&["powershell.exe"]);
