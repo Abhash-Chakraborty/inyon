@@ -382,7 +382,8 @@ fn a_release_where_either_file_is_bad_changes_nothing_and_says_how_to_install_in
     f.server.release(|r| r.missing = vec![cli_gz]);
     let host = FakeHost::new(&f.server, &[Role::Link]);
     let err = f.run(&host).unwrap_err().to_string();
-    assert!(err.ends_with("\n  curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh"), "{err}");
+    // the line for this machine, whichever system the tests run on
+    assert!(err.ends_with(&format!("\n  {}", reinstall_command(Platform::current()))), "{err}");
     assert!(err.contains("Couldn't download"), "{err}");
     assert_eq!(f.read(&f.installed()), "old build");
     assert_eq!(f.bin_names(), vec!["inyon"]);
