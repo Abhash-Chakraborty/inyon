@@ -18,7 +18,7 @@
 <p align="center">
   <a href="https://inyon.abhashchakraborty.tech/">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="#docs">Docs</a> ·
+  <a href="https://inyon.abhashchakraborty.tech/docs/">Docs</a> ·
   <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases</a>
 </p>
 
@@ -98,7 +98,7 @@ encrypted with Noise, so nothing needs an open port or an account.
 | OpenCode | Beta | Context, cost | Through its API |
 | GitHub Copilot | Beta | Context and activity | Native CLI prompts |
 
-[How Inyon reads each agent](docs/agents.md) has the details.
+[Agents](https://inyon.abhashchakraborty.tech/docs/agents/) in the docs has the details for each.
 
 ## Quick start
 
@@ -126,16 +126,20 @@ this release.
 curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
 ```
 
-The hub listens only on localhost until you choose a network. [Running a hub](docs/hub.md) covers
+The hub listens only on localhost until you choose a network. [Running a hub](https://inyon.abhashchakraborty.tech/docs/hub/) covers
 the rest, and [SECURITY.md](SECURITY.md) explains why it matters.
 
 ## Docs
 
-- [Android app](docs/android.md): pairing, private networks, servers over SSH, building the APK
-- [Running a hub](docs/hub.md): install, sign-in, reaching it from a phone, updates, configuration
-- [Adding machines](docs/machines.md): laptops, servers and what happens when one goes offline
-- [How Inyon reads each agent](docs/agents.md)
-- [Security](SECURITY.md): the threat model and what Inyon changes on a machine
+The full documentation is at **[inyon.abhashchakraborty.tech/docs](https://inyon.abhashchakraborty.tech/docs/)**, with search. A few
+places to start:
+
+- [Quick start](https://inyon.abhashchakraborty.tech/docs/quick-start/) and [choosing a setup](https://inyon.abhashchakraborty.tech/docs/setups/)
+- [Android app](https://inyon.abhashchakraborty.tech/docs/android/): pairing, private networks, servers over SSH
+- [Running a hub](https://inyon.abhashchakraborty.tech/docs/hub/) and [adding machines](https://inyon.abhashchakraborty.tech/docs/machines/)
+- [The inyon command](https://inyon.abhashchakraborty.tech/docs/cli/): every command and flag
+- [Troubleshooting](https://inyon.abhashchakraborty.tech/docs/troubleshooting/)
+- [Security](https://inyon.abhashchakraborty.tech/docs/security/) ([SECURITY.md](SECURITY.md) for reporting a vulnerability)
 - [Contributing](CONTRIBUTING.md): development setup, tests, adding an agent
 
 ## Status
