@@ -8,7 +8,7 @@ import { othersSends, settle as settleSends } from '../../lib/pending.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { api, isTransient, withRetries } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
-import { Button, Empty, Spinner } from '../ui/primitives.tsx'
+import { Button, Empty, Pulse, Waiting } from '../ui/primitives.tsx'
 import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
 import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
@@ -265,12 +265,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
           <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
             <div className="mx-auto w-full max-w-[760px] px-4 pt-5 pb-6 sm:px-6">
               {!chat?.loaded ? (
-                <div className="space-y-4 pt-4">
-                  {[60, 90, 75].map((w, i) => (
-                    <div key={i} className="skeleton h-4 rounded" style={{ width: `${w}%` }} />
-                  ))}
-                  {chat?.catchingUp !== undefined && <Reading label="Loading the conversation" done={chat.catchingUp} />}
-                </div>
+                <Waiting shape="lines" className="pt-4" label={chat?.catchingUp !== undefined ? `Loading the conversation · ${Math.round(chat.catchingUp * 100)}%` : 'Loading the conversation'} />
               ) : !running && !rows.length ? (
                 <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
               ) : !chatCapable ? (
@@ -280,15 +275,16 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
               ) : (
                 <>
                   {chat.hasMore && (
-                    <div className="mb-4 flex h-8 justify-center">
+                    <div className="mb-4 min-h-8">
                       {loadingMore ? (
-                        <span role="status" className="animate-fade-in flex items-center gap-2 text-[12.5px] text-fg-3">
-                          <Spinner className="size-3.5" /> Loading earlier messages…
-                        </span>
+                        // taller than the button it replaces: settle() keeps the reading position as the top grows
+                        <Waiting shape="lines" count={2} label="Loading earlier messages" className="pb-2" />
                       ) : (
-                        <Button size="sm" variant="ghost" onClick={loadMore}>
-                          <History className="size-4" /> Earlier messages
-                        </Button>
+                        <div className="flex justify-center">
+                          <Button size="sm" variant="ghost" onClick={loadMore}>
+                            <History className="size-4" /> Earlier messages
+                          </Button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -434,7 +430,7 @@ function NotRunning({
 function Reading({ label, done }: { label: string; done: number }) {
   return (
     <div className="flex items-center gap-3 py-1 text-[13px] text-fg-3" role="status">
-      <Spinner className="size-3.5" />
+      <Pulse className="mx-[3px]" />
       <span>{label}…</span>
       <span className="tabular-nums">{Math.round(done * 100)}%</span>
     </div>

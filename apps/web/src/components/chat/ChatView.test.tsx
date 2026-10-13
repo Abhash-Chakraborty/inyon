@@ -126,13 +126,16 @@ describe('ChatView', () => {
     expect(sent.mock.calls.some(([m]) => m.t === 'chat.more')).toBe(false)
     scrollTo(300)
     expect(sent.mock.calls.filter(([m]) => m.t === 'chat.more')).toHaveLength(1)
-    expect(screen.getByText('Loading earlier messages…')).toBeTruthy()
+    // a skeleton of lines where the older messages land, not a spinner
+    expect(screen.getByText('Loading earlier messages')).toBeTruthy()
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0)
+    expect(container.querySelector('.animate-spin')).toBeNull()
     // only one request at a time, and an empty answer still ends the wait
     scrollTo(100)
     expect(sent.mock.calls.filter(([m]) => m.t === 'chat.more')).toHaveLength(1)
     act(() => emit({ t: 'chat.more', key: 'box:%1', items: [], hasMore: true }))
     await flush()
-    expect(screen.queryByText('Loading earlier messages…')).toBeNull()
+    expect(screen.queryByText('Loading earlier messages')).toBeNull()
     expect(screen.getByText('Earlier messages')).toBeTruthy()
     sent.mockRestore()
   })
@@ -172,6 +175,20 @@ describe('ChatView', () => {
     expect(screen.getByText('New conversation')).toBeTruthy()
     load([], chatInfo({ running: false }))
     expect(screen.getByText('No agent is running in this pane')).toBeTruthy()
+  })
+
+  test('before the conversation arrives: lines in its shape, and the catch-up percentage on the label', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    const { container } = render(view())
+    expect(screen.getByRole('status').textContent).toBe('Loading the conversation')
+    expect(container.querySelectorAll('.skeleton')).toHaveLength(3)
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    act(() => emit({ t: 'chat.progress', key: 'box:%1', done: 40, total: 100 }))
+    expect(screen.getByRole('status').textContent).toBe('Loading the conversation · 40%')
+    load([item.user('hello')])
+    await flush()
+    expect(screen.queryByText(/Loading the conversation/)).toBeNull()
+    expect(screen.getByText('hello')).toBeTruthy()
   })
 
   test('catching up shows a quiet progress line, and the result lands in one go', async () => {

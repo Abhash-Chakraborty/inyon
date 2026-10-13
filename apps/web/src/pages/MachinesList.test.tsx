@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import type { HostState, MachineKind } from '@inyon/protocol'
-import { MachinesPage, metaLine } from './Machines.tsx'
+import { MachinePage, MachinesPage, metaLine } from './Machines.tsx'
 import { useStore } from '../lib/store.ts'
+import { api } from '../test/fakes.ts'
 import { host } from '../test/fixtures.ts'
 import { renderSettled as render } from '../test/render.tsx'
 
@@ -45,5 +46,32 @@ describe('the machines list', () => {
     // the only ordinary spaces left are the ones after each dot, and inside the address
     expect(line.split(' ')).toEqual(['build', 'box\u00a0·', '2\u00a0sessions\u00a0·', '1\u00a0agent\u00a0·', '38\u00a0ms'])
     expect(metaLine('studio', 1, 0)).toBe('studio\u00a0· 1\u00a0session')
+  })
+})
+
+describe('a machine page while things load', () => {
+  const machine = () => render(
+    <MemoryRouter initialEntries={['/machines/studio']}>
+      <Routes>
+        <Route path="/machines/:host" element={<MachinePage />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  test('before the machines arrive: rows in its shape, and no spinner', async () => {
+    const { container } = await machine()
+    expect(screen.getByText('Loading this machine')).toBeTruthy()
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0)
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  test('the config tab names the machine it is looking on', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [host('studio', { config: { id: 'studio', name: 'Studio', kind: 'node' } })] })
+    api.configs.mockReturnValue(new Promise(() => {}))
+    const { container } = await machine()
+    await user.click(screen.getByRole('radio', { name: 'Config' }))
+    expect(screen.getByText('Looking for config files on Studio')).toBeTruthy()
+    expect(container.querySelector('.animate-spin')).toBeNull()
   })
 })

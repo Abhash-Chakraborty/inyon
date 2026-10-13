@@ -5,7 +5,7 @@ import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { api, type SignInScreen } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Sheet, Spinner, inputClass } from './ui/primitives.tsx'
+import { Button, Pulse, Sheet, Spinner, Waiting, inputClass } from './ui/primitives.tsx'
 import { copyText } from '../lib/clipboard.ts'
 
 const copy = (text: string, what: string) => copyText(text).then((ok) => ok && toast({ title: `${what} copied`, tone: 'success' }))
@@ -132,14 +132,8 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
       </div>
     )
   }
-  if (!screen) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-10 text-[13px] text-fg-3">
-        <Spinner />
-        Starting {name}'s sign-in{hostName ? ` on ${hostName}` : ''}…
-      </div>
-    )
-  }
+  // the sign-in shows as steps or a menu: a couple of rows
+  if (!screen) return <Waiting shape="rows" count={2} label={`Starting ${name}'s sign-in${hostName ? ` on ${hostName}` : ''}`} />
 
   const [link, ...more] = screen.links
   const menu = !done ? screen.menu : undefined
@@ -154,7 +148,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
         )
       ) : menu ? null : sent ? (
         <div className="flex items-center gap-2.5 text-[13.5px] text-fg-2">
-          <Spinner /> Checking the code with {name}…
+          <Pulse /> Checking the code with {name}…
         </div>
       ) : (
         <Steps code={!!screen.code} link={!!link} name={name} />
@@ -260,7 +254,7 @@ function Steps({ code, link, name }: { code: boolean; link: boolean; name: strin
     : link
       ? ['Open the sign-in page and sign in', 'Copy the code the page shows you', 'Paste it below']
       : [`Waiting for ${name}…`]
-  if (!link) return <div className="flex items-center gap-2.5 text-[13.5px] text-fg-2"><Spinner /> {steps[0]}</div>
+  if (!link) return <div className="flex items-center gap-2.5 text-[13.5px] text-fg-2"><Pulse /> {steps[0]}</div>
   return (
     <ol className="space-y-1.5">
       {steps.map((t, i) => (

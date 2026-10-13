@@ -10,7 +10,7 @@ import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
-import { Empty, Sheet, Spinner, inputClass } from '../ui/primitives.tsx'
+import { Empty, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
@@ -146,7 +146,7 @@ const taskIcon = (t: BackgroundTask) => (t.type === 'monitor' ? Timer : t.type =
 
 export function ActivityTab({ s, onTask, onSubagent }: { s: SessionModel; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
   const info = s.info
-  if (!info) return <div className="flex justify-center py-10"><Spinner /></div>
+  if (!info) return <Waiting shape="rows" label="Reading the session" />
   const tasks = [...info.tasks].reverse()
   const shells = tasks.filter((t) => t.type !== 'monitor')
   const monitors = tasks.filter((t) => t.type === 'monitor')
@@ -437,7 +437,7 @@ export function SubagentSheet({ s, sub, onClose }: { s: SessionModel; sub: Subag
       {err ? (
         <div className="rounded-xl bg-sunken px-3 py-2.5 text-[13px] text-fg-2">{err}</div>
       ) : !items ? (
-        <div className="flex justify-center py-10"><Spinner /></div>
+        <Waiting shape="lines" label="Loading the subagent's conversation" />
       ) : (
         <div className="space-y-4">
           {rows.map((r) =>

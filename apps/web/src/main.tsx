@@ -12,7 +12,7 @@ import { AppShell } from './components/AppShell.tsx'
 import { Toasts } from './components/Toasts.tsx'
 import { ConfirmHost } from './components/Confirm.tsx'
 import { UpdatePrompt } from './components/UpdatePrompt.tsx'
-import { Spinner } from './components/ui/primitives.tsx'
+import { Waiting } from './components/ui/primitives.tsx'
 import { Home } from './pages/Home.tsx'
 import { Login } from './pages/Login.tsx'
 // the overview shows first; the other pages load when opened (and right after start, in the background)
@@ -63,10 +63,11 @@ function App() {
     return () => socket.stop()
   }, [authed])
 
+  // the overview's shape, where the overview lands once the session check answers
   if (authed === null) {
     return (
-      <div className="flex h-dvh items-center justify-center">
-        <Spinner className="size-5" />
+      <div className="mx-auto w-full max-w-[1280px] px-4 pt-20 lg:px-8 lg:pt-28">
+        <Waiting shape="cards" label="Opening Inyon" />
       </div>
     )
   }

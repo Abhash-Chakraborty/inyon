@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Loader2, Pencil, Plug, Plus, RotateCcw, Save, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -9,7 +9,7 @@ import { paneHref, paneTitle } from '../lib/overview.ts'
 import { bytes, shortPath, timeAgo } from '../lib/format.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Empty, SectionLabel, Segmented, Spinner } from '../components/ui/primitives.tsx'
+import { Button, Empty, Pulse, SectionLabel, Segmented, Waiting } from '../components/ui/primitives.tsx'
 import { HostDot, StateDot, hostLine, shownState, sshAddress } from '../components/ui/status.tsx'
 import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets.tsx'
 import { Logo } from '../components/AppShell.tsx'
@@ -143,7 +143,8 @@ export function MachinePage() {
   const [repair, setRepair] = useState(false)
   const [newOpen, setNewOpen] = useState(false)
   const nav = useNavigate()
-  if (!host) return <div className="flex flex-1 items-center justify-center"><Spinner /></div>
+  // the machines haven't arrived yet (or this one is gone): the page's shape, sessions as rows
+  if (!host) return <div className="mx-auto w-full max-w-[1100px] flex-1 px-4 py-5 lg:px-7"><Waiting shape="rows" label="Loading this machine" /></div>
   const remove = async () => {
     if (!(await confirmAction({ title: `Remove ${host.config.name}?`, body: 'Its tmux sessions keep running on the computer.', yes: 'Remove', danger: true }))) return
     try {
@@ -186,7 +187,7 @@ export function MachinePage() {
         <NodeUpdate host={host} />
         {host.error && host.status !== 'online' && (
           <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
-            {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin" />}
+            {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center"><Pulse /></span>}
             <span className="min-w-0 flex-1 break-words">{host.error}</span>
             {/* unpaired on the computer: scanning a fresh code fixes it, in place */}
             {host.config.kind === 'link' && /paired/i.test(host.error) && (
@@ -307,7 +308,7 @@ function ConfigTab({ host }: { host: HostState }) {
     }
   }
 
-  if (!files) return <div className="flex justify-center py-10"><Spinner /></div>
+  if (!files) return <Waiting shape="rows" label={`Looking for config files on ${host.config.name}`} />
   if (!files.length) return <Empty icon={<FileCode2 className="size-5" />} title="No agent config files">Install an agent on this machine and its config files show up here.</Empty>
   const groups = [...new Set(files.map((f) => f.agent))]
   return (
@@ -339,7 +340,7 @@ function ConfigTab({ host }: { host: HostState }) {
             {cur?.mtime && <span className="hidden shrink-0 text-[12px] text-fg-3 sm:inline">changed {timeAgo(cur.mtime * 1000)}</span>}
           </div>
           {loading ? (
-            <div className="flex justify-center py-16"><Spinner /></div>
+            <Waiting shape="lines" count={8} label={`Reading ${cur?.label ?? 'the file'}`} className="bg-code px-3.5 py-4" />
           ) : (
             <textarea
               value={text}

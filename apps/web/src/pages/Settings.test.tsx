@@ -92,9 +92,27 @@ describe('About', () => {
   })
 })
 
+describe('while the hub answers', () => {
+  test("hub settings show as the rows they'll become, each saying what it loads", async () => {
+    api.settings.mockReturnValue(new Promise(() => {}))
+    const { container } = await render(page())
+    expect(screen.getByText('Loading hub settings')).toBeTruthy()
+    expect(screen.getByText('Loading upload settings')).toBeTruthy()
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThanOrEqual(3)
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+})
+
 describe('Updates', () => {
   const status = (o: Partial<import('../lib/api.ts').HubUpdate> = {}) => ({ current: '0.6.3', canUpdate: true, checkedAt: Date.now(), behind: 0, ...o })
   beforeEach(() => forgetHub())
+
+  test('checking shows a row-shaped skeleton that says so', async () => {
+    api.hubUpdate.mockReturnValue(new Promise(() => {}))
+    const { container } = await render(page())
+    expect(screen.getByText('Checking the hub for updates')).toBeTruthy()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+  })
 
   test('an up-to-date hub says so and can check again', async () => {
     const user = userEvent.setup()
@@ -120,6 +138,8 @@ describe('Updates', () => {
     await flush()
     expect(api.startHubUpdate).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Updating the hub…')).toBeTruthy()
+    expect(document.querySelector('.pulse-soft')).toBeTruthy()
+    expect(document.querySelector('.animate-spin')).toBeNull()
     // the hub restarts on the new code
     api.session.mockResolvedValue({ authed: true, version: '0.6.10', commit: 'bbb2222' })
     api.hubUpdate.mockResolvedValue(status({ current: '0.6.10' }))

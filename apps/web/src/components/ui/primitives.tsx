@@ -431,8 +431,50 @@ export function Menu({
   )
 }
 
+/** For a button that is busy. Content that is still coming gets a `Waiting` instead. */
 export function Spinner({ className }: { className?: string }) {
   return <Loader2 className={clsx('animate-spin text-fg-3', className ?? 'size-4')} />
+}
+
+/** A dot that pulses next to a sentence about work in progress ("Updating…"). */
+export function Pulse({ className }: { className?: string }) {
+  return <span aria-hidden className={clsx('pulse-soft inline-block size-2 shrink-0 rounded-full bg-fg-2', className)} />
+}
+
+export type WaitingShape = 'lines' | 'cards' | 'rows' | 'panel'
+
+// the line widths of a paragraph, so stacked lines don't look like a table
+const LINE_WIDTHS = [60, 90, 75, 85, 55, 95, 70, 80]
+
+/**
+ * Skeleton blocks in the shape of what is about to appear, and one line saying what it waits for.
+ * `.skeleton` shimmers and stands still under reduced motion.
+ */
+export function Waiting({ label, shape = 'lines', count, className }: { label: string; shape?: WaitingShape; count?: number; className?: string }) {
+  const n = count ?? (shape === 'cards' ? 4 : shape === 'panel' ? 1 : 3)
+  const blocks = Array.from({ length: n }, (_, i) => i)
+  return (
+    <div role="status" className={clsx('animate-fade-in', className)}>
+      {shape === 'cards' ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {blocks.map((i) => <div key={i} className="skeleton h-[170px] rounded-3xl" />)}
+        </div>
+      ) : shape === 'rows' ? (
+        <div className="space-y-2">
+          {blocks.map((i) => <div key={i} className="skeleton h-12 rounded-2xl" />)}
+        </div>
+      ) : shape === 'panel' ? (
+        <div className="space-y-3">
+          {blocks.map((i) => <div key={i} className="skeleton h-28 rounded-2xl" />)}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {blocks.map((i) => <div key={i} className="skeleton h-4 rounded" style={{ width: `${LINE_WIDTHS[i % LINE_WIDTHS.length]}%` }} />)}
+        </div>
+      )}
+      <p className="mt-3 text-[12.5px] text-fg-3">{label}</p>
+    </div>
+  )
 }
 
 export function Empty({ icon, title, children, action }: { icon?: ReactNode; title: string; children?: ReactNode; action?: ReactNode }) {

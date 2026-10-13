@@ -27,11 +27,13 @@ describe('a machine whose inyon is behind', () => {
     expect(api.nodeUpdate.mock.calls).toEqual([['laptop']])
   })
 
-  test('says it is updating in a sentence, without a button', async () => {
-    await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true, state: 'updating' })} />)
+  test('says it is updating in a sentence with a pulsing dot, without a button', async () => {
+    const { container } = await render(<NodeUpdate host={laptop({ latest: '0.6.3', supported: true, state: 'updating' })} />)
     expect(screen.getByText('Updating inyon…')).toBeTruthy()
     expect(screen.getByText('It restarts and reconnects by itself, usually within a minute.')).toBeTruthy()
     expect(update()).toBeNull()
+    expect(container.querySelector('.pulse-soft')).toBeTruthy()
+    expect(container.querySelector('.animate-spin')).toBeNull()
   })
 
   test('says when it worked', async () => {

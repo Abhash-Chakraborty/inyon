@@ -81,6 +81,20 @@ describe('PairMachine', () => {
     await user.type(field('My laptop'), 'top 2')
     expect(field('My laptop').value).toBe('Laptop 2')
   })
+
+  test('with the command shown, a pulsing dot waits for the machine, and a tick says when it came', async () => {
+    const user = userEvent.setup()
+    api.pair.mockResolvedValue({ id: 'lap', token: 't', command: 'curl -fsSL https://hub/pair | sh' })
+    const { container } = await render(<PairMachine />)
+    await user.click(screen.getByRole('button', { name: 'Create pairing command' }))
+    await flush()
+    expect(screen.getByText('Waiting for the machine to connect…')).toBeTruthy()
+    expect(container.querySelector('.pulse-soft')).toBeTruthy()
+    expect(container.querySelector('.animate-spin')).toBeNull()
+    act(() => emit({ t: 'overview', hosts: fresh([host('lap', { config: { id: 'lap', name: 'Laptop', kind: 'node' } })]) }))
+    expect(screen.getByText('Laptop is connected.')).toBeTruthy()
+    expect(container.querySelector('.pulse-soft')).toBeNull()
+  })
 })
 
 describe('NewSessionSheet', () => {
