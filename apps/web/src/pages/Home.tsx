@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Laptop, Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
+import { ChevronRight, Plug, Plus, Search, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes } from '../lib/overview.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, NeedsYouCard, SessionCard } from '../components/Overview.tsx'
@@ -123,7 +123,7 @@ export function Home() {
           ) : !hosts.length ? (
             <div className="rounded-3xl border border-dashed border-line-strong">
               <Empty
-                icon={isPhone() ? <Laptop className="size-5" /> : <Server className="size-5" />}
+                icon={<Logo className="size-7 mark-drawn" />}
                 title={isPhone() ? 'Connect your computer' : 'No machines yet'}
                 action={
                   <Button variant="primary" onClick={() => setAdding(true)}>

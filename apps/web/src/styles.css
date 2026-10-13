@@ -224,13 +224,19 @@ select:focus-visible {
 }
 .live-ring { animation: live-ring 1.4s ease-out infinite; }
 /* with reduced motion the 1ms rule below would make looping animations flicker: stop them instead */
-@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .mark-connecting .mark-line, .turn-once { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .turn-once { animation: none; } }
 /* the mark's line draws itself while the hub is out of reach (Logo in AppShell.tsx) */
 @keyframes mark-draw {
   from { stroke-dashoffset: 40; }
   to { stroke-dashoffset: -40; }
 }
 .mark-connecting .mark-line { stroke-dasharray: 20 20; animation: mark-draw 1.6s linear infinite; }
+/* the same line, drawn once: an empty list waiting for its first machine */
+.mark-drawn .mark-line { stroke-dasharray: 40 40; animation: mark-draw-once var(--dur-sheet) var(--ease-out-soft) 1 both; }
+@keyframes mark-draw-once {
+  from { stroke-dashoffset: 40; }
+  to { stroke-dashoffset: 0; }
+}
 /* pull to refresh: the mark turns once while the page reloads */
 @keyframes turn-once {
   to { transform: rotate(360deg); }
