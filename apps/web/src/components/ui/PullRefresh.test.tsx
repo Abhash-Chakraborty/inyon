@@ -49,3 +49,26 @@ test("a short pull, or one that starts scrolled down, doesn't", () => {
   drag(page, 200, 300)
   expect(onRefresh).not.toHaveBeenCalled()
 })
+
+test("the mark doesn't turn: its line pays out as you pull, then reels while it refreshes", async () => {
+  const { page, done } = setup()
+  const mark = () => document.querySelector('.mark-pull, .mark-reeling') as HTMLElement
+  const touch = (y: number) => ({ clientY: y, identifier: 0, target: page }) as unknown as Touch
+  const fire = (type: string, y?: number) => page.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches: y === undefined ? [] : [touch(y)] }))
+  act(() => {
+    fire('touchstart', 100)
+    fire('touchmove', 164) // 32px after damping: half way
+  })
+  expect(mark().className).toContain('mark-pull')
+  expect(mark().style.getPropertyValue('--pull')).toBe('0.5')
+  expect(mark().style.transform).toBe('')
+  act(() => {
+    fire('touchmove', 260)
+    fire('touchend')
+  })
+  expect(mark().className).toContain('mark-reeling')
+  await act(async () => {
+    done()
+    await new Promise((r) => setTimeout(r, 650))
+  })
+})

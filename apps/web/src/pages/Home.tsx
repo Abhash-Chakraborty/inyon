@@ -89,7 +89,7 @@ export function Home() {
               <WifiOff className="size-3.5" /> Reconnecting
             </span>
           )}
-          {/* with a mouse there is no pull to refresh: the mark turns once here instead */}
+          {/* with a mouse there is no pull to refresh: the mark's line reels here instead */}
           <button
             type="button"
             onClick={reload}
@@ -97,7 +97,7 @@ export function Home() {
             title="Refresh"
             className={clsx('flex size-8 items-center justify-center rounded-full text-fg-2 hover:bg-hover max-md:hidden', connected && 'ml-auto')}
           >
-            <span className={clsx('flex', reloading && 'turn-once')}>
+            <span className={clsx('flex', reloading && 'mark-reeling')}>
               <Logo className="size-[18px]" />
             </span>
           </button>

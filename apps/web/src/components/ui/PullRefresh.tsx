@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import clsx from 'clsx'
 import { haptic } from '../../lib/haptics.ts'
 import { Logo } from '../AppShell.tsx'
@@ -9,8 +9,8 @@ const MAX = 96
 
 /**
  * A scrolling page that refreshes when you pull down from the top on a touch screen. The mark
- * follows the finger, tilting as it comes, ticks once when far enough, and turns once while
- * `onRefresh` settles.
+ * follows the finger and its line pays out as it comes, ticks once when the line is all out, and
+ * reels in and out while `onRefresh` settles.
  */
 export function PullRefresh({ onRefresh, className, children }: { onRefresh: () => Promise<unknown>; className?: string; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null)
@@ -84,7 +84,7 @@ export function PullRefresh({ onRefresh, className, children }: { onRefresh: () 
           transform: `translate(-50%, ${pull - 40}px)`,
         }}
       >
-        <span className={clsx('flex', busy && 'turn-once')} style={busy ? undefined : { transform: `rotate(${Math.round((pull / MAX) * 180)}deg)` }}>
+        <span className={clsx('flex', busy ? 'mark-reeling' : 'mark-pull')} style={busy ? undefined : ({ '--pull': Math.min(1, pull / PULL_TRIGGER) } as CSSProperties)}>
           <Logo className="size-5" />
         </span>
       </div>

@@ -224,7 +224,7 @@ select:focus-visible {
 }
 .live-ring { animation: live-ring 1.4s ease-out infinite; }
 /* with reduced motion the 1ms rule below would make looping animations flicker: stop them instead */
-@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .turn-once { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
 /* the mark's line draws itself while the hub is out of reach (Logo in AppShell.tsx) */
 @keyframes mark-draw {
   from { stroke-dashoffset: 40; }
@@ -237,11 +237,14 @@ select:focus-visible {
   from { stroke-dashoffset: 40; }
   to { stroke-dashoffset: 0; }
 }
-/* pull to refresh: the mark turns once while the page reloads */
-@keyframes turn-once {
-  to { transform: rotate(360deg); }
+/* refreshing: pulled down, the line pays out from the node to the kite (--pull, 0 to 1); while
+   the page reloads it reels in and out. The line is 26 units long */
+.mark-pull .mark-line { stroke-dasharray: 26 26; stroke-dashoffset: calc(-26 * (1 - var(--pull, 1))); }
+.mark-reeling .mark-line { stroke-dasharray: 26 26; animation: mark-reel 0.6s var(--ease-out-soft) infinite alternate; }
+@keyframes mark-reel {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: -18; }
 }
-.turn-once { animation: turn-once 0.6s var(--ease-out-soft) infinite; }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .skeleton {
