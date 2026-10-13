@@ -71,6 +71,7 @@ For Claude Code, the numbers come from the integration. Turn it on, or **Update*
 ## Updates
 
 - `inyon update` says nothing changed but you expected a new version: it compares against the latest release; check the [changelog](changelog.md).
+- **"The release's signed checksum list isn't the one for Inyon …"**: the site was between two releases. Nothing was changed; try again in a few minutes.
 - A machine joined to a hub updates to the hub's version, so update the hub first.
 - `cat ~/.inyon/node/update-status` shows the last background update's result, and `~/.inyon/node/update.log` its log.
 
