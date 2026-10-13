@@ -107,7 +107,9 @@ const remembered = loadOverview()
 
 export const useStore = create<Store>((set, get) => ({
   activity: [],
-  authed: null,
+  // with a picture to show, the app draws it before the hub confirms the sign-in; a session that
+  // ran out turns into the sign-in page a moment later
+  authed: remembered ? true : null,
   connected: false,
   hosts: remembered ?? [],
   hostsLoaded: !!remembered,

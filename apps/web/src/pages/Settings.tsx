@@ -19,6 +19,7 @@ import { authorizeCommand, canSsh, isPhone } from '../lib/phone.ts'
 import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { COMMIT, VERSION } from '../lib/version.ts'
+import { getRenderer } from '../lib/renderer.ts'
 import { checkHub, hubBuild, sameBuild, useHubBuild, watchHub, type Build } from '../lib/updates.ts'
 import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
 import { openLink } from '../lib/format.ts'
@@ -77,6 +78,9 @@ function About() {
           <span className="font-mono text-[13px] text-fg-2">{app.version}</span>
         </Row>
       )}
+      <Row label="Terminal drawing" hint="WebGL draws on the graphics chip; a device without it uses the page.">
+        <span className="font-mono text-[13px] text-fg-2">{getRenderer() === 'webgl' ? 'WebGL' : 'Page'}</span>
+      </Row>
       <button
         type="button"
         onClick={() => copyText(summary).then((ok) => ok && toast({ title: 'Version copied', tone: 'success' }))}
