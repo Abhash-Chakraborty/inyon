@@ -25,7 +25,7 @@ test('an old sign-in asks for the password, then shows the code', async () => {
   api.phonePair.mockImplementationOnce(async () => {
     throw new ApiError(403, 'Sign in again to pair a phone.')
   })
-  api.login.mockImplementation(async () => ({}))
+  api.login.mockImplementation(async () => ({ ok: true }))
   await render(<PhoneSheet open onClose={() => {}} />)
   await flush()
   expect(screen.queryByText('K7Q4-MX2T')).toBeNull()

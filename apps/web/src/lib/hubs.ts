@@ -1,8 +1,4 @@
-/** What the hub answers a claim with (packages/protocol has the hub's copy). */
-interface PhoneClaimResult {
-  token: string
-  hub: { id: string; name: string; version?: string }
-}
+import type { PhoneClaimResult } from '@inyon/protocol'
 
 /**
  * Hubs the phone app has paired with. The phone keeps reaching its own computers itself; a hub
@@ -84,7 +80,8 @@ export function normalizeHubCode(typed: string): string | undefined {
 export function hubOriginOf(typed: string): string | undefined {
   let t = typed.trim()
   if (!t) return
-  if (!/^https?:\/\//.test(t)) t = `${/^(localhost|127\.|\[::1\]|[^.:]+)(:\d+)?$/.test(t) ? 'http' : 'https'}://${t}`
+  // a bare name or an IP is a hub on a private network, reached over http; a domain name is https
+  if (!/^https?:\/\//.test(t)) t = `${/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:]+\]|[^.:/]+)(:\d+)?$/i.test(t) ? 'http' : 'https'}://${t}`
   try {
     const u = new URL(t)
     if (u.pathname !== '/' && u.pathname !== '') return
