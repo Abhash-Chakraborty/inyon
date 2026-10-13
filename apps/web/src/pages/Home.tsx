@@ -79,7 +79,7 @@ export function Home() {
       <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
         <div className="flex h-[52px] items-center gap-3 px-4 lg:px-8">
           <span className="md:hidden">
-            <Logo />
+            <Logo target />
           </span>
           <span className="font-mono text-[12px] text-fg-3 max-md:hidden">
             {hosts.length} {isPhone() ? 'computer' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}

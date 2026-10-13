@@ -372,6 +372,32 @@ select:focus-visible {
   }
 }
 
+/* ---------- the cold-start intro (components/Intro.tsx): concept A, "Cast" ---------- */
+/* the header's mark stays hidden until the intro's mark has landed on it */
+html.intro-running [data-intro-target] { opacity: 0; }
+.intro-mark { width: 160px; height: 160px; transform-origin: center; transition: transform var(--dur-move) var(--ease-spring), opacity var(--dur-exit) ease-in; }
+/* the page fades in behind as the mark flies; the overlay no longer takes touches */
+.intro { transition: background-color var(--dur-small) ease-out; }
+.intro-off { background-color: transparent; pointer-events: none; }
+.intro-glyph { fill: var(--fg); stroke: var(--fg); transition: fill 160ms ease, stroke 160ms ease; }
+/* once the tile is in, the glyph turns to the tile's paper so the mark reads as the app icon */
+.intro-off .intro-glyph { fill: #f1f0ec; stroke: #f1f0ec; }
+.intro-tile { opacity: 0; animation: fade-in 160ms 760ms ease forwards; }
+.intro-node { transform-origin: 15.5px 51px; transform: translateY(-40px) scale(0.9); opacity: 0; animation: intro-drop 360ms var(--ease-out-soft) forwards; }
+.intro-line { stroke-dasharray: 46; stroke-dashoffset: 46; animation: intro-draw 420ms 300ms var(--ease-out-soft) forwards; }
+.intro-light { opacity: 0; offset-path: path('M17.5 49.5C25 42 35 48 38.5 36.5'); offset-distance: 0%; animation: intro-travel 420ms 300ms var(--ease-out-soft) forwards; }
+.intro-kite { transform-origin: 41px 23px; opacity: 0; transform: scale(0.6) rotate(-12deg); animation: intro-land 300ms 640ms var(--ease-out-soft) forwards; }
+@keyframes intro-drop { 40% { opacity: 1; } to { opacity: 1; transform: none; } }
+@keyframes intro-draw { to { stroke-dashoffset: 0; } }
+@keyframes intro-travel { 10% { opacity: 1; } to { offset-distance: 100%; opacity: 0; } }
+@keyframes intro-land { to { opacity: 1; transform: scale(1) rotate(-12deg); } }
+/* reduced motion: the finished mark, then the fade; nothing travels */
+.intro-still .intro-tile, .intro-still .intro-node, .intro-still .intro-line, .intro-still .intro-kite { animation: none; opacity: 1; transform: none; stroke-dashoffset: 0; }
+.intro-still .intro-kite { transform: rotate(-12deg); }
+.intro-still .intro-light { animation: none; }
+.intro-still .intro-mark { transition: opacity var(--dur-exit) ease-in; }
+.intro-still.intro-off .intro-mark { opacity: 0; }
+
 /* ---------- micro-interactions ---------- */
 
 /* a press sinks a little and springs back */

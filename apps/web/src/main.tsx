@@ -26,6 +26,7 @@ import { installNative, isNative, nativeTheme, takePairFragment } from './lib/na
 import { watchInstall } from './lib/install.ts'
 import { appHref, BASE, isHosted, publicFile } from './lib/base.ts'
 import { flushSnapshots } from './lib/snapshot.ts'
+import { Intro, introDue } from './components/Intro.tsx'
 
 function useTheme() {
   const theme = useStore((s) => s.settings.theme)
@@ -107,10 +108,13 @@ if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m
 takePairFragment()
 if (isHosted()) watchInstall()
 
+// the intro once per app session, over the page as it loads; the mark lands on the header's
+const intro = introDue()
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter basename={appHref('') || undefined}>
       <App />
+      {intro && <Intro />}
     </BrowserRouter>
   </StrictMode>,
 )

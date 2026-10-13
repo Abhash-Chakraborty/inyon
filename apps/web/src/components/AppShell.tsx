@@ -15,11 +15,12 @@ import { Waiting } from './ui/primitives.tsx'
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
 
 /** Inyon's mark: a Korean shield kite on its line (same art as public/icon.svg). The tile lifts a step on graphite. */
-export function Logo({ className }: { className?: string }) {
+export function Logo({ className, target }: { className?: string; target?: boolean }) {
   // while the hub is out of reach the line draws itself, over and over, until it is back
   const connecting = useStore((s) => s.authed === true && !s.connected)
+  // the intro's mark flies onto a target and the target stays hidden until it lands
   return (
-    <svg viewBox="0 0 64 64" className={clsx('shrink-0', connecting && 'mark-connecting', className ?? 'size-[26px]')} aria-hidden>
+    <svg viewBox="0 0 64 64" className={clsx('shrink-0', connecting && 'mark-connecting', className ?? 'size-[26px]')} data-intro-target={target || undefined} aria-hidden>
       <path d={SQUIRCLE} fill="var(--logo-tile)" />
       <path d={SQUIRCLE} transform="translate(.5 .5) scale(.984)" fill="none" stroke="#fff" strokeOpacity=".08" />
       <g fill="#F1F0EC">
@@ -117,7 +118,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
   return (
     <aside className="hidden w-[240px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[264px]">
       <div className="flex h-[60px] items-center gap-2.5 px-5">
-        <Logo />
+        <Logo target />
         <span className="text-[17px] font-semibold tracking-[-0.04em]">Inyon</span>
         {!connected && <WifiOff className="ml-auto size-4 text-warn" aria-label="Reconnecting" />}
       </div>
