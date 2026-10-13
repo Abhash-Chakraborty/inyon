@@ -1,5 +1,5 @@
   ◆
-   ╰─●   inyon 0.13.0
+   ╰─●   inyon x.y.z
 ────────────────────────────────────────────────────────────────────────────────
 Hub: the server phones sign in to             No phones paired yet
 machine k7m2p9x4w1q8z3v6

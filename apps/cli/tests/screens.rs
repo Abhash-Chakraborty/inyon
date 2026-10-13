@@ -9,11 +9,14 @@ use inyon_cli::networks::{Kind, Network};
 use inyon_cli::sys::Platform;
 use inyon_cli::ui::dashboard::{buffer_text, render, Job, PairedPhone, Status};
 use inyon_cli::ui::setup::{Action, Plan, RoleChoice, Step, Wizard};
-use inyon_cli::ui::Theme;
+use inyon_cli::ui::{Theme, VERSION};
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
 fn check(name: &str, text: &str) {
+    // the header names the running version; the snapshots carry a placeholder so a release bump
+    // doesn't change every one of them
+    let text = &text.replace(&format!("inyon {VERSION}"), "inyon x.y.z");
     let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("snapshots").join(format!("{name}.txt"));
     if std::env::var_os("UPDATE_SNAPSHOTS").is_some() || !file.exists() {
         fs::create_dir_all(file.parent().unwrap()).unwrap();

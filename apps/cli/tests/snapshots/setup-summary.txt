@@ -1,5 +1,5 @@
   ◆
-   ╰─●   inyon 0.13.0
+   ╰─●   inyon x.y.z
 1 Role  ·  2 Network  ·  3 Background  ·  4 Summary
 Ready
 

@@ -1,4 +1,4 @@
-◆╰─● inyon 0.13.0
+◆╰─● inyon x.y.z
 step 4 of 5
 Signing in
 
