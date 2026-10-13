@@ -10,6 +10,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { keyLabel, shortcut } from '../lib/keys.ts'
+import { ContextMenuHost } from './ui/ContextMenu.tsx'
+import { ActionSheets } from './menus.tsx'
 import { Waiting } from './ui/primitives.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
@@ -227,6 +229,8 @@ export function AppShell() {
       {/* nothing to start a session on yet: + adds a machine instead of an empty form */}
       {online ? <NewSessionSheet open={newOpen} onClose={() => setNewOpen(false)} /> : <MachineSheet open={newOpen} onClose={() => setNewOpen(false)} />}
       <QuickSwitch open={search} onClose={() => setSearch(false)} />
+      <ActionSheets />
+      <ContextMenuHost />
     </div>
   )
 }

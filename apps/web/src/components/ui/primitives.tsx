@@ -281,6 +281,8 @@ export interface MenuItem {
   selected?: boolean
   danger?: boolean
   disabled?: boolean
+  /** a hairline above it, starting a new group */
+  separated?: boolean
   onSelect: () => void
 }
 
@@ -318,29 +320,58 @@ export function Menu({
     return () => window.removeEventListener('inyon:open-menu', onOpen)
   }, [name])
   const ref = useRef<HTMLButtonElement | null>(null)
+  return (
+    <>
+      {trigger({ open, toggle: () => setOpen((o) => !o), ref })}
+      {open && <MenuPopup anchor={() => ref.current?.getBoundingClientRect()} items={items} header={header} align={align} width={width} gap={6} onClose={() => setOpen(false)} />}
+    </>
+  )
+}
+
+/**
+ * The open menu: placed next to `anchor` (a button, or the point that was right-clicked) on
+ * whichever side has room, shrunk to fit when neither does (a phone on its side, or with the
+ * keyboard up), and placed again whenever the viewport changes under it.
+ */
+export function MenuPopup({
+  anchor,
+  items,
+  header,
+  align = 'start',
+  width = 260,
+  gap = 6,
+  onClose,
+  onOutsideContextMenu,
+}: {
+  anchor: () => DOMRect | undefined
+  items: MenuItem[]
+  header?: ReactNode
+  align?: 'start' | 'end'
+  width?: number
+  gap?: number
+  onClose: () => void
+  /** a right-click outside: closes it, and whatever was clicked may open its own */
+  onOutsideContextMenu?: (e: React.MouseEvent) => void
+}) {
   const menu = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ left: 0, width, maxHeight: 420 })
-  const [active, setActive] = useState(0)
+  const [active, setActive] = useState(() => Math.max(0, items.findIndex((i) => i.selected)))
 
   useLayoutEffect(() => {
-    if (!open) return
-    setActive(Math.max(0, items.findIndex((i) => i.selected)))
-    // opens on whichever side has room for it, and shrinks to fit when neither does (a phone on
-    // its side, or with the keyboard up); again whenever the viewport changes under it
     const place = () => {
-      if (!ref.current) return
-      const r = ref.current.getBoundingClientRect()
+      const r = anchor()
+      if (!r) return
       const vv = window.visualViewport
       const top = (vv?.offsetTop ?? 0) + 8
       const bottom = (vv ? vv.offsetTop + vv.height : window.innerHeight) - 8
-      const below = Math.max(0, bottom - r.bottom - 6)
-      const above = Math.max(0, r.top - 6 - top)
+      const below = Math.max(0, bottom - r.bottom - gap)
+      const above = Math.max(0, r.top - gap - top)
       const wanted = Math.min(420, menu.current?.scrollHeight ?? 0)
       const up = below < wanted && above > below
       const w = Math.min(width, window.innerWidth - 16)
       const left = align === 'end' ? r.right - w : r.left
       setPos({
-        ...(up ? { bottom: window.innerHeight - Math.max(top, r.top - 6) } : { top: Math.min(r.bottom + 6, bottom) }),
+        ...(up ? { bottom: window.innerHeight - Math.max(top, r.top - gap) } : { top: Math.min(r.bottom + gap, bottom) }),
         left: Math.max(8, Math.min(left, window.innerWidth - w - 8)),
         width: w,
         maxHeight: Math.min(420, up ? above : below),
@@ -355,79 +386,79 @@ export function Menu({
       window.visualViewport?.removeEventListener('resize', place)
       window.visualViewport?.removeEventListener('scroll', place)
     }
-  }, [open])
+  }, [])
+
+  const pick = (it: MenuItem | undefined) => {
+    if (!it || it.disabled) return
+    onClose()
+    it.onSelect()
+  }
 
   useEffect(() => {
-    if (!open) return
     // the menu owns these keys while it's open: caught before they reach the focused field, or
     // the Enter that picks a model would also send the message in the composer
     const onKey = (e: KeyboardEvent) => {
       if (!['Escape', 'ArrowDown', 'ArrowUp', 'Enter'].includes(e.key)) return
       e.preventDefault()
       e.stopImmediatePropagation()
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') onClose()
       else if (e.key === 'ArrowDown') setActive((a) => Math.min(items.length - 1, a + 1))
       else if (e.key === 'ArrowUp') setActive((a) => Math.max(0, a - 1))
-      else {
-        const it = items[active]
-        if (it && !it.disabled) {
-          it.onSelect()
-          setOpen(false)
-        }
-      }
+      else pick(items[active])
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [open, active, items])
+  }, [active, items])
 
   useEffect(() => {
-    if (open) menu.current?.querySelectorAll('[role=menuitem]')[active]?.scrollIntoView({ block: 'nearest' })
-  }, [open, active])
+    menu.current?.querySelectorAll('[role=menuitem]')[active]?.scrollIntoView({ block: 'nearest' })
+  }, [active])
 
-  return (
+  return createPortal(
     <>
-      {trigger({ open, toggle: () => setOpen((o) => !o), ref })}
-      {open &&
-        createPortal(
-          <>
-            <div className="fixed inset-0 z-[70]" onClick={() => setOpen(false)} />
-            <div
-              ref={menu}
-              role="menu"
-              className="animate-pop fixed z-[71] overflow-y-auto rounded-2xl border border-line bg-elev p-1 text-fg shadow-float"
-              style={pos}
+      <div
+        className="fixed inset-0 z-[70]"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          if (onOutsideContextMenu) onOutsideContextMenu(e)
+          else onClose()
+        }}
+      />
+      <div
+        ref={menu}
+        role="menu"
+        className="animate-pop fixed z-[71] overflow-y-auto rounded-2xl border border-line bg-elev p-1 text-fg shadow-float"
+        style={pos}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {header && <div className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">{header}</div>}
+        {items.map((it, i) => (
+          <div key={it.key} className={clsx(it.separated && i > 0 && 'mt-1 border-t border-line pt-1')}>
+            <button
+              type="button"
+              role="menuitem"
+              disabled={it.disabled}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => pick(it)}
+              className={clsx(
+                'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13.5px] disabled:opacity-40',
+                i === active && 'bg-hover',
+                it.danger ? 'text-danger' : 'text-fg',
+              )}
             >
-              {header && <div className="px-2.5 pt-1.5 pb-1 text-[12px] font-medium text-fg-3">{header}</div>}
-              {items.map((it, i) => (
-                <button
-                  key={it.key}
-                  type="button"
-                  role="menuitem"
-                  disabled={it.disabled}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => {
-                    it.onSelect()
-                    setOpen(false)
-                  }}
-                  className={clsx(
-                    'flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-[13.5px] disabled:opacity-40',
-                    i === active && 'bg-hover',
-                    it.danger ? 'text-danger' : 'text-fg',
-                  )}
-                >
-                  {it.icon && <span className="flex size-4 shrink-0 items-center justify-center text-fg-2">{it.icon}</span>}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{it.label}</span>
-                    {it.hint && <span className="block truncate text-[12px] text-fg-3">{it.hint}</span>}
-                  </span>
-                  {it.selected && <Check className="size-4 shrink-0 text-fg-2" />}
-                </button>
-              ))}
-            </div>
-          </>,
-          document.body,
-        )}
-    </>
+              {it.icon && <span className="flex size-4 shrink-0 items-center justify-center text-fg-2">{it.icon}</span>}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{it.label}</span>
+                {it.hint && <span className="block truncate text-[12px] text-fg-3">{it.hint}</span>}
+              </span>
+              {it.selected && <Check className="size-4 shrink-0 text-fg-2" />}
+            </button>
+          </div>
+        ))}
+      </div>
+    </>,
+    document.body,
   )
 }
 

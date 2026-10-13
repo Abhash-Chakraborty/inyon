@@ -19,9 +19,22 @@ The overview is the first screen. It lists every agent running in tmux on every 
 
 Sessions waiting on you come first, then working ones, then idle ones, newest activity first within each. Online machines come before offline ones.
 
-## Card menus
+## Right-click menus
 
-Long-press a session card (or use its **⋯** menu) for **Open**, **Open terminal** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
+Right-click a session card, long-press it on a phone, or use its **⋯** menu for **Open**, **Open terminal**, **Open in new tab**, **Rename…**, **Past conversations…**, **Copy session ID** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
+
+From 0.16 most things have a right-click menu, with the same actions wherever they're listed:
+
+| Right-click | For |
+|---|---|
+| A session, in a card, the sidebar or a machine's page | The actions above |
+| A machine, in the sidebar, the overview or Machines | **Open**, **New session**, **Rename…** (**Edit…** for an SSH server), **Update to inyon …** when one is ready, **Remove…** |
+| Your message | **Copy message**, and **Rewind to here…** where the agent can |
+| The agent's reply | **Copy reply**, and **Copy code** inside a code block |
+| The terminal | **Copy**, **Paste**, **Select all** |
+| A past conversation | **Switch to it**, **Copy conversation ID** |
+
+With text selected, **Copy** comes first. Text boxes and links to other sites keep the browser's own menu, and so does anything with `Shift` held. On a phone, long-press the sidebar's, a machine's and a past conversation's rows for the same menu.
 
 ## Finding a session
 

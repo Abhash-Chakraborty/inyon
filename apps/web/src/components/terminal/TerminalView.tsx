@@ -5,7 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, Keyboard, Minus, Plus, RotateCw } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, Keyboard, Minus, Plus, RotateCw, TextSelect } from 'lucide-react'
 import type { AgentKind } from '@inyon/protocol'
 import { socket } from '../../lib/socket.ts'
 import { useStore } from '../../lib/store.ts'
@@ -18,6 +18,7 @@ import { copyText } from '../../lib/clipboard.ts'
 import { readClipboard } from '../../lib/native.ts'
 import { touchScroll } from './touchScroll.ts'
 import { attachWebgl } from './webgl.ts'
+import { contextMenu } from '../ui/ContextMenu.tsx'
 
 const LIGHT: ITheme = {
   background: '#e9e8e4', foreground: '#1d1c1a', cursor: '#1d1c1a', cursorAccent: '#e9e8e4',
@@ -215,7 +216,19 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
         </div>
       )}
       <div className="relative min-h-0 flex-1">
-        <div ref={el} className="absolute inset-0" onClick={() => termRef.current?.focus()} />
+        <div
+          ref={el}
+          className="absolute inset-0"
+          onClick={() => termRef.current?.focus()}
+          {...contextMenu(
+            () => [
+              !!termRef.current?.hasSelection() && { key: 'copy', label: 'Copy', icon: <Copy className="size-4" />, onSelect: () => void copySelection() },
+              { key: 'paste', label: 'Paste', icon: <ClipboardPaste className="size-4" />, onSelect: () => void paste() },
+              { key: 'all', label: 'Select all', icon: <TextSelect className="size-4" />, separated: true, onSelect: () => termRef.current?.selectAll() },
+            ],
+            { ownsTextBox: true },
+          )}
+        />
         {exited && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg">
             <p className="text-sm text-fg-2">{exited === 'Detached' ? 'Terminal closed' : exited}</p>

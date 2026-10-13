@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import {
   Clock3,
   AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, File as FileIcon, Image as ImageIcon, Info, Layers, Lightbulb,
-  Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
+  Code as CodeIcon, Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { Part, Row } from '../../lib/chat.ts'
@@ -12,6 +12,7 @@ import { clock, duration } from '../../lib/format.ts'
 import { AgentSpinner } from '../ui/status.tsx'
 import { AntigravityMark, CodexMark, TileMark } from '../ui/AgentMarks.tsx'
 import { CopyButton, Markdown } from './Markdown.tsx'
+import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
 import { SpecialTool, ToolGroup } from './Tools.tsx'
 
 /** Which agent is speaking (for avatars and spinners). */
@@ -28,16 +29,21 @@ export const UserMessage = memo(function UserMessage({ row }: { row: Extract<Row
     return (
       <div className="flex justify-end">
         {/* commands keep their lines, and a long path wraps instead of running out of the bubble */}
-        <div className="max-w-[88%] min-w-0 whitespace-pre-wrap rounded-3xl bg-bubble px-4 py-2.5 font-mono text-[13px] [overflow-wrap:anywhere]">
+        <div {...contextMenu(() => [copyItem('copy', 'Copy command', item.text, 'Command')])} className="max-w-[88%] min-w-0 whitespace-pre-wrap rounded-3xl bg-bubble px-4 py-2.5 font-mono text-[13px] [overflow-wrap:anywhere]">
           <span className="mr-2 text-accent-text">!</span>
           {item.text}
         </div>
       </div>
     )
   }
+  const menu = contextMenu(() => [
+    copyItem('copy', 'Copy message', item.text, 'Message'),
+    rewind && { key: 'rewind', label: 'Rewind to here…', icon: <RotateCcw className="size-4" />, onSelect: () => rewind(item.text) },
+  ])
   return (
     <div className="group flex flex-col items-end">
       <div
+        {...menu}
         className={clsx(
           'relative max-w-[88%] whitespace-pre-wrap break-words rounded-3xl bg-bubble px-4 py-2.5 text-[15px] leading-[1.55] sm:max-w-[78%]',
           long && !expanded && 'max-h-80 overflow-hidden',
@@ -106,7 +112,14 @@ function LinkedPaths({ text }: { text: string }) {
 export function PendingBubble({ p, onRetry, onDismiss }: { p: PendingMessage; onRetry: () => void; onDismiss: () => void }) {
   return (
     <div className="flex flex-col items-end">
-      <div className={clsx('max-w-[88%] whitespace-pre-wrap break-words rounded-3xl bg-bubble px-4.5 py-3 text-[15px] leading-[1.55] sm:max-w-[78%]', p.status !== 'failed' && 'opacity-70')}>
+      <div
+        {...contextMenu(() => [
+          copyItem('copy', 'Copy message', p.text, 'Message'),
+          p.status === 'failed' && { key: 'retry', label: 'Retry', icon: <RotateCcw className="size-4" />, onSelect: onRetry },
+          p.status === 'failed' && { key: 'dismiss', label: 'Dismiss', icon: <X className="size-4" />, separated: true, onSelect: onDismiss },
+        ])}
+        className={clsx('max-w-[88%] whitespace-pre-wrap break-words rounded-3xl bg-bubble px-4.5 py-3 text-[15px] leading-[1.55] sm:max-w-[78%]', p.status !== 'failed' && 'opacity-70')}
+      >
         <LinkedPaths text={p.text} />
       </div>
       <div className="mt-1 flex h-6 items-center gap-1.5 px-1 text-[12px] text-fg-3">
@@ -203,12 +216,16 @@ export function AgentMark({ active }: { active?: boolean }) {
 
 export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: Extract<Row, { type: 'assistant' }>; live: boolean }) {
   const text = row.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n\n')
+  const menu = contextMenu((e) => {
+    const code = (e.target as Element).closest?.('pre')?.textContent
+    return [code && copyItem('copy-code', 'Copy code', code, 'Code', <CodeIcon className="size-4" />), !row.open && !!text && copyItem('copy', 'Copy reply', text, 'Reply')]
+  })
   return (
     <div className="group flex gap-3">
       <div className="mt-[2px] hidden size-6 shrink-0 items-center justify-center sm:flex">
         <AgentMark />
       </div>
-      <div className="min-w-0 flex-1">
+      <div {...menu} className="min-w-0 flex-1">
         {row.parts.map((p) => (
           <PartView key={p.key} part={p} live={live && row.open} />
         ))}

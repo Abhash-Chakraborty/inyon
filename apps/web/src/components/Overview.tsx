@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronRight, ArrowRight, Check, CircleX, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
+import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
 import { AGENTS, type HostState } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { liveWindow, money, resetsIn, shortPath, timeAgo, tokens } from '../lib/format.ts'
@@ -12,7 +12,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
 import { Menu, Meter, openMenu } from './ui/primitives.tsx'
 import { useLongPress } from '../lib/longPress.ts'
-import { endSession } from '../lib/end.ts'
+import { contextMenu } from './ui/ContextMenu.tsx'
+import { machineMenu, paneMenu } from './menus.tsx'
 import { tmuxTarget } from '../lib/groups.ts'
 
 /** The parts of a pane ref a card draws; the rest of the machine changing shouldn't redraw it. */
@@ -102,8 +103,15 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
   const href = paneHref(r.host.config.id, r.pane.id)
   const menu = `card:${r.host.config.id}:${r.pane.id}`
   const press = useLongPress(() => openMenu(menu))
+  const context = contextMenu(() => paneMenu(r, nav))
   return (
-    <div {...press} className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors [-webkit-touch-callout:none] hover:border-line-strong sm:gap-4 sm:p-5">
+    <div
+      {...press}
+      onContextMenu={(e) => {
+        press.onContextMenu(e)
+        context.onContextMenu(e)
+      }}
+      className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors [-webkit-touch-callout:none] hover:border-line-strong sm:gap-4 sm:p-5">
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={a.state === 'working'} />
@@ -114,11 +122,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
             name={menu}
             align="end"
             width={220}
-            items={[
-              { key: 'open', label: 'Open', icon: <ArrowRight className="size-4" />, onSelect: () => nav(href) },
-              { key: 'terminal', label: 'Open terminal', icon: <SquareTerminal className="size-4" />, onSelect: () => nav(paneHref(r.host.config.id, r.pane.id, 'terminal')) },
-              { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, onSelect: () => void endSession(r) },
-            ]}
+            items={paneMenu(r, nav)}
             trigger={({ toggle, ref, open }) => (
               <button
                 ref={ref}
@@ -232,6 +236,7 @@ export function AgentBadges({ host, size = 18 }: { host: HostState; size?: numbe
 }
 
 export function MachinesTable({ hosts }: { hosts: HostState[] }) {
+  const nav = useNavigate()
   // the table needs about 560px; the list takes over whenever the column is narrower than that
   // (a phone, or a tablet held upright with the sidebar open), so nothing scrolls sideways
   return (
@@ -240,7 +245,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
       {hosts.map((h) => {
         const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
         return (
-          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className={clsx('flex items-center gap-3 px-4 py-3 transition-opacity duration-200 active:bg-hover', h.status !== 'online' && 'opacity-60')}>
+          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className={clsx('flex items-center gap-3 px-4 py-3 transition-opacity duration-200 active:bg-hover', h.status !== 'online' && 'opacity-60')}>
             <HostDot status={h.status} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -271,7 +276,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
             {hosts.map((h) => {
               const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
               return (
-                <tr key={h.config.id} className={clsx('transition-opacity duration-200 hover:bg-hover/50', h.status !== 'online' && 'opacity-60')}>
+                <tr key={h.config.id} {...contextMenu(() => machineMenu(h, nav))} className={clsx('transition-opacity duration-200 hover:bg-hover/50', h.status !== 'online' && 'opacity-60')}>
                   <td className="border-b border-line/60 px-5 py-3.5">
                     <Link to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-2.5">
                       <HostDot status={h.status} />

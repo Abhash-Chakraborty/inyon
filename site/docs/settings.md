@@ -77,4 +77,4 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | Any key | Focus the message box (on a computer) |
 | `Ctrl V` / `⌘ V` | Paste into the terminal |
 
-On Android, the back button closes the top sheet first, then goes back a page. A long press on a card opens its menu.
+On Android, the back button closes the top sheet first, then goes back a page. A long press on a card opens its menu. On a computer, right-click for the same menus; see [Right-click menus](overview.md#right-click-menus).

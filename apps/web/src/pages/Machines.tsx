@@ -26,6 +26,8 @@ import { FilterInput } from '../components/ui/FilterInput.tsx'
 import { matchesQuery } from '../lib/groups.ts'
 import { confirmAction } from '../components/Confirm.tsx'
 import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
+import { contextMenu } from '../components/ui/ContextMenu.tsx'
+import { machineMenu, paneMenu, removeMachine } from '../components/menus.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
@@ -64,10 +66,11 @@ export function metaLine(where: string, sessions: number, agents: number, ms?: n
 
 /** One machine in the list: what it is, whether it answers, and what runs there. */
 function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: number }) {
+  const nav = useNavigate()
   const where = h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Paired' : sshAddress(h.config, hosts)
   const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.filter((p) => p.agent).length, 0), 0)
   return (
-    <Link style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
+    <Link style={{ '--i': i } as React.CSSProperties} to={`/machines/${encodeURIComponent(h.config.id)}`} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
       <span className={clsx('relative flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-sunken', h.status === 'online' ? 'text-fg-2' : 'text-fg-3')}>
         <MachineIcon kind={machineKindOf(h)} size={18} />
         <span className="absolute -right-0.5 -bottom-0.5 flex size-[11px] items-center justify-center rounded-full bg-elev">
@@ -161,15 +164,7 @@ export function MachinePage() {
   const nav = useNavigate()
   // the machines haven't arrived yet (or this one is gone): the page's shape, sessions as rows
   if (!host) return <div className="mx-auto w-full max-w-[1100px] flex-1 px-4 py-5 lg:px-7"><Waiting shape="rows" label="Loading this machine" /></div>
-  const remove = async () => {
-    if (!(await confirmAction({ title: `Remove ${host.config.name}?`, body: 'Its tmux sessions keep running on the computer.', yes: 'Remove', danger: true }))) return
-    try {
-      await api.removeHost(host.config.id)
-      nav('/machines')
-    } catch (e) {
-      toast({ title: 'Could not remove', body: (e as Error).message, tone: 'error' })
-    }
-  }
+  const remove = () => removeMachine(host, () => nav('/machines'))
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <PageHeader
@@ -238,6 +233,7 @@ export function MachinePage() {
 }
 
 function SessionsTab({ host }: { host: HostState }) {
+  const nav = useNavigate()
   if (host.status !== 'online') return <Empty title="Not connected">Sessions appear once the machine is reachable.</Empty>
   if (!host.sessions.length) return <Empty icon={<SquareTerminal className="size-5" />} title="No tmux sessions">Start one with New session.</Empty>
   return (
@@ -253,7 +249,7 @@ function SessionsTab({ host }: { host: HostState }) {
             w.panes.map((p) => {
               const r = { host, session: s, window: w, pane: p }
               return (
-                <Link key={p.id} to={paneHref(host.config.id, p.id)} className="flex items-center gap-3 border-b border-line/60 px-4 py-2.5 last:border-0 hover:bg-hover/50">
+                <Link key={p.id} to={paneHref(host.config.id, p.id)} {...contextMenu(() => paneMenu(r, nav), { touch: true })} className="flex items-center gap-3 border-b border-line/60 px-4 py-2.5 last:border-0 hover:bg-hover/50">
                   {p.agent ? <AgentLogo kind={p.agent.kind} size={20} /> : <SquareTerminal className="size-4 text-fg-3" />}
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13.5px] font-medium">

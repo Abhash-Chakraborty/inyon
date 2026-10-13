@@ -1,5 +1,5 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, SquareTerminal } from 'lucide-react'
 import type { HostState } from '@inyon/protocol'
@@ -9,6 +9,8 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { StateDot, shownState } from './ui/status.tsx'
 import { MachineIcon, machineKindOf } from './ui/MachineIcon.tsx'
 import { FilterInput } from './ui/FilterInput.tsx'
+import { contextMenu, type MenuItems } from './ui/ContextMenu.tsx'
+import { machineMenu, paneMenu } from './menus.tsx'
 
 /** Past this many panes the tree gets a search box. */
 export const TREE_SEARCH_FROM = 8
@@ -20,6 +22,7 @@ export const TREE_SEARCH_FROM = 8
  */
 export function SessionTree({ hosts }: { hosts: HostState[] }) {
   const loc = useLocation()
+  const nav = useNavigate()
   const [q, setQ] = useState('')
   const [folded, setFolded] = useState(loadFolded)
   const all = useMemo(() => groupPanes(hosts), [hosts])
@@ -67,6 +70,7 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
             open={open(`h:${g.key}`)}
             onToggle={() => toggle(`h:${g.key}`)}
             depth={0}
+            menu={() => machineMenu(g.host, nav)}
             label={
               <>
                 <MachineIcon kind={machineKindOf(g.host)} size={15} className={clsx('shrink-0', g.host.status === 'online' ? 'text-fg-2' : 'text-fg-3')} />
@@ -89,9 +93,11 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
 const TreeRow = memo(
   function TreeRow({ r, oneHost, active }: { r: PaneRef; oneHost: boolean; active: boolean }) {
     const href = paneHref(r.host.config.id, r.pane.id)
+    const nav = useNavigate()
     return (
       <Link
         to={href}
+        {...contextMenu(() => paneMenu(r, nav), { touch: true })}
         title={`${r.host.config.name} · ${tmuxTarget(r)}`}
         className={clsx(
           'relative flex h-8 items-center gap-2 rounded-full pr-3 text-[13px] transition-colors',
@@ -112,12 +118,13 @@ const TreeRow = memo(
 )
 
 /** A foldable heading and what's under it. Folded, it still shows that something waits on you. */
-function Group({ open, onToggle, depth, label, count, waiting, children }: { open: boolean; onToggle: () => void; depth: 0 | 1; label: ReactNode; count: number; waiting: number; children: ReactNode }) {
+function Group({ open, onToggle, depth, label, count, waiting, menu, children }: { open: boolean; onToggle: () => void; depth: 0 | 1; label: ReactNode; count: number; waiting: number; menu?: () => MenuItems; children: ReactNode }) {
   return (
     <div>
       <button
         type="button"
         onClick={onToggle}
+        {...(menu && contextMenu(menu, { touch: true }))}
         aria-expanded={open}
         className={clsx('flex h-8 w-full items-center gap-1.5 rounded-full pr-3 text-left text-[13px] text-fg-2 hover:bg-hover/70 hover:text-fg', depth ? 'pl-5' : 'pl-2')}
       >

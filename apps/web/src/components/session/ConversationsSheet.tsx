@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import clsx from 'clsx'
-import { History } from 'lucide-react'
+import { ArrowRight, History } from 'lucide-react'
 import { AGENTS, type AgentKind, type PastConversation } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
@@ -8,6 +8,7 @@ import { shortPath, timeAgo } from '../../lib/format.ts'
 import { useOpened } from '../../lib/useOpened.ts'
 import { confirmAction } from '../Confirm.tsx'
 import { Button, Empty, Pulse, Sheet, Spinner, Waiting } from '../ui/primitives.tsx'
+import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
 
 type Loaded = { state: 'loading' } | { state: 'error'; error: string } | { state: 'ready'; cwd: string; list: PastConversation[] }
 
@@ -92,6 +93,13 @@ export function ConversationsSheet({ host, pane, agent, working, open, onClose }
                 aria-current={c.current || undefined}
                 disabled={!!switching && switching !== c.id}
                 onClick={() => pick(c)}
+                {...contextMenu(
+                  () => [
+                    !c.current && !switching && { key: 'open', label: 'Switch to it', icon: <ArrowRight className="size-4" />, onSelect: () => void pick(c) },
+                    copyItem('copy', 'Copy conversation ID', c.id, 'Conversation ID'),
+                  ],
+                  { touch: true },
+                )}
                 style={{ '--i': Math.min(i, 8) } as React.CSSProperties}
                 className={clsx(
                   'press flex min-h-12 w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left disabled:opacity-50',
