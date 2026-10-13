@@ -1,13 +1,14 @@
 # Gets inyon for this PC and sets it up for the Inyon phone app. In PowerShell:
 #   irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
-# It downloads the inyon command into %USERPROFILE%\.inyon\bin, checks it against the release's
-# checksums, and runs its setup, which fetches the engine behind it, starts it in the background
-# when you sign in, and shows a code to scan with the app. No admin rights needed.
+# It downloads the inyon command into %USERPROFILE%\.inyon\bin from the website's copy of the
+# newest release, checks it against the release's checksums, and runs its setup, which fetches
+# the engine behind it, starts it in the background when you sign in, and shows a code to scan
+# with the app. No admin rights needed.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-$base = if ($env:INYON_DOWNLOAD) { $env:INYON_DOWNLOAD } elseif ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://github.com/Abhash-Chakraborty/inyon/releases/latest/download' }
+$base = if ($env:INYON_DOWNLOAD) { $env:INYON_DOWNLOAD } elseif ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://inyon.abhashchakraborty.tech/download' }
 $dir = Join-Path $env:USERPROFILE '.inyon\bin'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $exe = Join-Path $dir 'inyon.exe'
@@ -18,8 +19,10 @@ Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile $sums
 # the list is signed with minisign; checked when minisign is on PATH (scoop or the zip from
 # jedisct1/minisign), else trusted as it comes, as before 0.14
 $key = 'RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6'
-# a mock release for tests signs with a key of its own; it only counts with downloads pointed elsewhere
-if (($env:INYON_DOWNLOAD -or $env:TETHER_DOWNLOAD) -and $env:INYON_SIGNING_KEY) { $key = $env:INYON_SIGNING_KEY }
+# a mock release for tests signs with a key of its own; it only counts with downloads pointed
+# somewhere other than the website or GitHub (-match ignores case)
+$official = $base -match '^https?://inyon\.abhashchakraborty\.tech(/|$)|^https://github\.com/Abhash-Chakraborty/inyon/releases/'
+if (($env:INYON_DOWNLOAD -or $env:TETHER_DOWNLOAD) -and $env:INYON_SIGNING_KEY -and -not $official) { $key = $env:INYON_SIGNING_KEY }
 if (Get-Command minisign -ErrorAction SilentlyContinue) {
   try {
     Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS.minisig" -OutFile "$sums.minisig"
