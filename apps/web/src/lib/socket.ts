@@ -1,8 +1,11 @@
-import type { ClientMsg, ServerMsg } from '@inyon/protocol'
+import type { ClientMsg, HostState, ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
+import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, splitHostId, type PairedHub } from './hubs.ts'
 
-type Listener = (msg: ServerMsg) => void
+/** A hub message as this app sees it: the hub's machines carry the hub's id, and the message says where it came from. */
+export type Tagged = ServerMsg & { source?: string }
+type Listener = (msg: Tagged) => void
 
 /**
  * One WebSocket to the hub, shared by the whole app. Reconnects with backoff and replays
@@ -26,6 +29,7 @@ class Socket {
     if (this.started) return
     this.started = true
     this.connect()
+    this.startHubs()
     // once, however often it's stopped and started again
     if (this.listening) return
     this.listening = true
@@ -37,7 +41,9 @@ class Socket {
   // NetBird to Tailscale): reconnect right away on return instead of waiting for the backoff
   private listening = false
   private revive = () => {
-    if (!this.started || document.visibilityState !== 'visible' || this.ws?.readyState === WebSocket.CONNECTING) return
+    if (!this.started || document.visibilityState !== 'visible') return
+    for (const h of this.hubs.values()) h.revive()
+    if (this.ws?.readyState === WebSocket.CONNECTING) return
     // the phone's core runs in this page and can't have dropped: rebuilding it would close open
     // terminals and resend every chat, so only check on it
     if (this.up && (isPhone() || Date.now() - this.heard < 30000)) return this.raw({ t: 'ping' })
@@ -58,6 +64,44 @@ class Socket {
     this.started = false
     clearTimeout(this.timer)
     this.ws?.close()
+    for (const h of this.hubs.values()) h.stop()
+    this.hubs.clear()
+  }
+
+  // ---------- paired hubs (the phone app) ----------
+
+  private hubs = new Map<string, HubConn>()
+  private following = false
+  /** One connection per paired hub, following the list as hubs are added and forgotten. */
+  private startHubs() {
+    const sync = (hubs: PairedHub[]) => {
+      if (!this.started) return
+      for (const [id, h] of this.hubs) if (!hubs.some((x) => x.id === id)) {
+        h.stop()
+        this.hubs.delete(id)
+        // its machines leave the lists
+        for (const l of this.listeners) l({ t: 'overview', hosts: [], source: `hub:${id}` })
+      }
+      for (const hub of hubs) if (!this.hubs.has(hub.id)) {
+        const conn = new HubConn(hub, (m) => { for (const l of this.listeners) l(m) }, () => this.overview, () => [...this.chats.values()])
+        this.hubs.set(hub.id, conn)
+        conn.connect()
+      }
+    }
+    sync(listHubs())
+    if (!this.following) {
+      this.following = true
+      onHubs(sync)
+    }
+  }
+  /** The hub a message is about, by its host or by the terminal it opened. */
+  private hubFor(msg: ClientMsg): HubConn | undefined {
+    if ('host' in msg && isHubHost(msg.host)) {
+      const { hub } = splitHostId(msg.host)
+      return hub && this.hubs.get(hub.id)
+    }
+    if ('id' in msg && msg.t.startsWith('term.')) for (const h of this.hubs.values()) if (h.owns(msg.id)) return h
+    return undefined
   }
 
   private connect() {
@@ -118,6 +162,9 @@ class Socket {
   }
 
   private raw(msg: ClientMsg) {
+    const hub = this.hubFor(msg)
+    if (hub) return hub.send(msg)
+    if (msg.t === 'sub.overview') for (const h of this.hubs.values()) h.send(msg)
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
   }
 
@@ -173,3 +220,155 @@ class Socket {
 }
 
 export const socket = new Socket()
+
+/**
+ * One paired hub's WebSocket. Everything in has the hub's machines renamed to carry the hub's id;
+ * everything out has them renamed back. A hub that is out of reach shows its machines as
+ * connecting until it answers again; one that has forgotten this phone is forgotten here too.
+ */
+class HubConn {
+  private ws?: WebSocket
+  private retry = 0
+  private timer?: ReturnType<typeof setTimeout>
+  private stopped = false
+  private last: HostState[] = []
+  private terms = new Set<string>()
+  private heard = 0
+  private pingTimer?: ReturnType<typeof setInterval>
+
+  constructor(
+    readonly hub: PairedHub,
+    private emit: (m: Tagged) => void,
+    private wantOverview: () => boolean,
+    private chats: () => { host: string; pane: string }[],
+  ) {}
+
+  get source() {
+    return `hub:${this.hub.id}`
+  }
+  owns(termId: string) {
+    return this.terms.has(termId)
+  }
+
+  async connect() {
+    if (this.stopped) return
+    clearTimeout(this.timer)
+    let ticket: string
+    try {
+      ticket = await hubTicket(this.hub)
+    } catch (err) {
+      if (err instanceof HubRevoked) return this.revoked()
+      return this.later()
+    }
+    if (this.stopped) return
+    const ws = new WebSocket(hubWsUrl(this.hub, ticket))
+    this.ws = ws
+    ws.onopen = () => {
+      if (this.ws !== ws) return
+      this.retry = 0
+      this.heard = Date.now()
+      if (this.wantOverview()) this.sendRaw({ t: 'sub.overview' })
+      for (const c of this.chats()) {
+        const { hub, id } = splitHostId(c.host)
+        if (hub?.id === this.hub.id) this.sendRaw({ t: 'sub.chat', host: id, pane: c.pane })
+      }
+      clearInterval(this.pingTimer)
+      this.pingTimer = setInterval(() => {
+        if (Date.now() - this.heard > 55000) return this.connect()
+        this.sendRaw({ t: 'ping' })
+      }, 25000)
+    }
+    ws.onmessage = (e) => {
+      if (this.ws !== ws) return
+      this.heard = Date.now()
+      let msg: ServerMsg
+      try {
+        msg = JSON.parse(e.data)
+      } catch {
+        return
+      }
+      this.emit(this.inbound(msg))
+    }
+    ws.onclose = (e) => {
+      if (this.ws !== ws) return
+      clearInterval(this.pingTimer)
+      if (e.code === 4001) return this.revoked()
+      this.offline()
+      this.later()
+    }
+    ws.onerror = () => {}
+  }
+
+  private later() {
+    if (this.stopped) return
+    const delay = Math.min(30000, 1000 * 2 ** this.retry++)
+    this.timer = setTimeout(() => this.connect(), delay)
+  }
+
+  revive() {
+    if (this.stopped || this.ws?.readyState === WebSocket.CONNECTING) return
+    if (this.ws?.readyState === WebSocket.OPEN && Date.now() - this.heard < 30000) return this.sendRaw({ t: 'ping' })
+    clearTimeout(this.timer)
+    this.retry = 0
+    this.connect()
+  }
+
+  /** The hub's machines, as last seen, shown as connecting while the hub itself is out of reach. */
+  private offline() {
+    if (!this.last.length) return
+    this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error: `Reconnecting to ${this.hub.name}` })), source: this.source })
+  }
+
+  private revoked() {
+    this.stop()
+    this.emit({ t: 'overview', hosts: [], source: this.source })
+    forgetHub(this.hub.id)
+    window.dispatchEvent(new CustomEvent('inyon:hub-forgot', { detail: this.hub }))
+  }
+
+  stop() {
+    this.stopped = true
+    clearTimeout(this.timer)
+    clearInterval(this.pingTimer)
+    const ws = this.ws
+    this.ws = undefined
+    if (ws) {
+      ws.onclose = ws.onmessage = ws.onopen = null
+      ws.close()
+    }
+  }
+
+  /** A message for this hub, with its machine ids as the hub knows them. */
+  send(msg: ClientMsg) {
+    if ('host' in msg) msg = { ...msg, host: splitHostId(msg.host).id }
+    if (msg.t === 'term.open') this.terms.add(msg.id)
+    if (msg.t === 'term.close') this.terms.delete(msg.id)
+    this.sendRaw(msg)
+  }
+  private sendRaw(msg: ClientMsg) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
+  }
+
+  /** A message from this hub, with its machines renamed to carry the hub's id. */
+  private inbound(m: ServerMsg): Tagged {
+    const name = (id: string) => hubHostId(this.hub.id, id)
+    switch (m.t) {
+      case 'overview': {
+        const hosts = m.hosts.map((h) => ({ ...h, config: { ...h.config, id: name(h.config.id) } }))
+        this.last = hosts
+        return { ...m, hosts, source: this.source }
+      }
+      case 'notify':
+        return { ...m, host: name(m.host), source: this.source }
+      case 'term.data':
+      case 'term.exit':
+        if (m.t === 'term.exit') this.terms.delete(m.id)
+        return { ...m, source: this.source }
+      case 'pong':
+        return { ...m, source: this.source }
+      default:
+        // every chat message carries `key`, the machine and pane joined by a colon
+        return { ...m, key: m.key.replace(/^([^:]+):/, (_, host: string) => `${name(host)}:`), source: this.source } as Tagged
+    }
+  }
+}

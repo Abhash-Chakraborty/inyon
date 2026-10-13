@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@inyon/protocol'
-import { socket } from './socket.ts'
+import { socket, type Tagged } from './socket.ts'
 import { haptic } from './haptics.ts'
 import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
 import { appHref, publicFile, routeOf } from './base.ts'
@@ -200,14 +200,24 @@ export function hidePane(host: string, pane: string, hide = true) {
   if (hide) useStore.setState((s) => ({ hosts: withoutEnded(s.hosts) }))
 }
 
-function onMessage(m: ServerMsg) {
+/**
+ * The machines by where they come from: the hub this page is served by (or the phone's own
+ * core), then each paired hub in the order they were paired. One list for the screens.
+ */
+const sources = new Map<string, HostState[]>()
+const allHosts = () => [...sources.values()].flat()
+
+function onMessage(m: Tagged) {
   switch (m.t) {
-    case 'overview':
+    case 'overview': {
+      sources.set(m.source ?? 'main', m.hosts)
+      const hosts = allHosts()
       // a card whose pane didn't change keeps its objects, so only the changed ones render again
-      useStore.setState((s) => ({ hosts: reuse(s.hosts, withoutEnded(m.hosts)), hostsLoaded: true, hostsStale: false }))
-      saveOverview(m.hosts)
-      clearAnswered(m.hosts)
+      useStore.setState((s) => ({ hosts: reuse(s.hosts, withoutEnded(hosts)), hostsLoaded: true, hostsStale: false }))
+      saveOverview(hosts)
+      clearAnswered(hosts)
       break
+    }
     case 'chat.reset':
       patchChat(m.key, (c) => {
         // Gemini, Antigravity and OpenCode resend their latest page on every step: keep the earlier
@@ -349,5 +359,11 @@ socket.onStatus((connected) => useStore.setState({ connected }))
 // signing out takes the device's copies with it
 window.addEventListener('inyon:signed-out', () => {
   clearSnapshots()
+  sources.clear()
   useStore.setState({ hosts: [], hostsLoaded: false, hostsStale: false, chats: {} })
+})
+// a hub that forgot this phone: its machines are gone from the lists, and the person should know
+window.addEventListener('inyon:hub-forgot', (e) => {
+  const hub = (e as CustomEvent<{ name: string }>).detail
+  toast({ title: `${hub.name} forgot this phone`, body: 'Pair it again from the hub to see its machines here.', tone: 'warn' })
 })

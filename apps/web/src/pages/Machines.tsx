@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
-import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, Smartphone, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -12,6 +12,7 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Empty, Pulse, SectionLabel, Segmented, Waiting } from '../components/ui/primitives.tsx'
 import { HostDot, StateDot, hostLine, shownState, sshAddress } from '../components/ui/status.tsx'
 import { MachineSheet, NewSessionSheet, PairMachine } from '../components/Sheets.tsx'
+import { PhoneSheet } from '../components/PhoneSheet.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
@@ -98,8 +99,10 @@ export function MachinesPage() {
   const shown = useMemo(() => onlineFirst(hosts).filter((h) => !q || matchesQuery(`${h.config.name} ${h.hostname ?? ''} ${h.machineKind ?? ''} ${h.os ?? ''} ${h.agents.join(' ')}`, q)), [hosts, q])
   // a pairing link opened from outside (a QR code scanned with the camera) lands here
   const [params, setParams] = useSearchParams()
-  const pairLink = params.get('pair') ?? pairFragment()
+  // a hub's code goes the same way; the sheet tells the two apart
+  const pairLink = params.get('pair') ?? params.get('hub') ?? pairFragment()
   const [sheet, setSheet] = useState(!!pairLink)
+  const [phone, setPhone] = useState(false)
   // a code scanned while this page is already open
   useEffect(() => {
     if (pairLink) setSheet(true)
@@ -107,11 +110,23 @@ export function MachinesPage() {
   const close = () => {
     setSheet(false)
     forgetPairFragment()
-    if (params.get('pair')) setParams({}, { replace: true })
+    if (params.get('pair') || params.get('hub')) setParams({}, { replace: true })
   }
   return (
     <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
-      <PageHeader title={isPhone() ? 'Computers' : 'Machines'} right={<Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>} />
+      <PageHeader
+        title={isPhone() ? 'Computers' : 'Machines'}
+        right={
+          <span className="flex items-center gap-2">
+            {!isPhone() && (
+              <Button size="sm" variant="ghost" onClick={() => setPhone(true)}>
+                <Smartphone className="size-3.5" /> Phone
+              </Button>
+            )}
+            <Button size="sm" variant="primary" onClick={() => setSheet(true)}><Plus className="size-3.5" /> {isPhone() ? 'Add' : 'Add machine'}</Button>
+          </span>
+        }
+      />
       <div className="mx-auto max-w-[880px] px-4 py-6 lg:px-7">
         {hosts.length > SEARCH_FROM && <FilterInput value={q} onChange={setQ} placeholder={`Search ${hosts.length} ${isPhone() ? 'computers' : 'machines'}`} className="mb-3" />}
         {shown.length > 0 && (
@@ -124,6 +139,7 @@ export function MachinesPage() {
         {q && !shown.length && <p className="px-1 py-6 text-center text-[13px] text-fg-3">No {isPhone() ? 'computer' : 'machine'} matches “{q}”</p>}
       </div>
       <MachineSheet open={sheet} onClose={close} link={pairLink} />
+      {!isPhone() && <PhoneSheet open={phone} onClose={() => setPhone(false)} />}
     </PullRefresh>
   )
 }

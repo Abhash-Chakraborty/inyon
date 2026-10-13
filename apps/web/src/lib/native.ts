@@ -24,6 +24,8 @@ const go = (href: string) => {
 // how a laptop from before the rename to Inyon prints it
 const openUrl = (url: string | undefined) => {
   if (url && /^(inyon|tether):\/\/pair\?/.test(url)) go(`/machines?pair=${encodeURIComponent(url)}`)
+  // a hub's code, scanned with the camera: pair this phone with the hub
+  else if (url && /^inyon:\/\/hub\?/.test(url)) go(`/machines?hub=${encodeURIComponent(url)}`)
 }
 
 let fragmentLink: string | undefined
@@ -34,8 +36,9 @@ let fragmentLink: string | undefined
  * it isn't left in history or sent anywhere on a reload. The pairing sheet then offers it.
  */
 export function takePairFragment() {
-  if (!location.hash.startsWith('#pair?')) return
-  fragmentLink = `inyon://pair?${location.hash.slice('#pair?'.length)}`
+  const kind = location.hash.startsWith('#pair?') ? 'pair' : location.hash.startsWith('#hub?') ? 'hub' : undefined
+  if (!kind) return
+  fragmentLink = `inyon://${kind}?${location.hash.slice(kind.length + 2)}`
   window.history.replaceState(null, '', appHref('/machines'))
 }
 export const pairFragment = () => fragmentLink

@@ -11,6 +11,8 @@ import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 import { isHosted } from '../lib/base.ts'
 import { keepData } from '../lib/install.ts'
+import { claimHub, hubOriginOf, looksLikeHubLink, normalizeHubCode, parseHubLink } from '../lib/hubs.ts'
+import { Logo } from './AppShell.tsx'
 
 const PAIR_COMMAND = 'inyon pair'
 /** One line that downloads inyon, starts it in the background and shows the code. */
@@ -27,7 +29,7 @@ const pairName = (link: string) => {
     return 'this computer'
   }
 }
-const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
+const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim()) || looksLikeHubLink(s)
 /** inyon prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
 const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
 const cleanId = (s: string) => s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(ID_CHARS, '').slice(0, 8)
@@ -46,6 +48,10 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   const [busy, setBusy] = useState(false)
   const [os, setOs] = useState<keyof typeof SETUP_COMMANDS>('unix')
   const [how, setHow] = useState<'type' | 'paste'>('type')
+  // a hub rather than a computer: its address and the code its web app shows
+  const [hub, setHub] = useState(false)
+  const [hubAddress, setHubAddress] = useState('')
+  const [hubCode, setHubCode] = useState('')
   const [shortId, setShortId] = useState('')
   const [code, setCode] = useState('')
   const codeBox = useRef<HTMLInputElement>(null)
@@ -66,12 +72,34 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     setHow(given ? 'paste' : 'type')
     setShortId('')
     setCode('')
+    setHub(!!given && looksLikeHubLink(given))
+    setHubAddress('')
+    setHubCode('')
   })
   const scanner = plugin('InyonDevice')?.scanQr
-  // opened from a scanned code: the computer's name, to confirm with one tap
-  const scanned = given && link === given ? pairName(given) : undefined
+  // opened from a scanned code: the computer's (or hub's) name, to confirm with one tap
+  const scannedHub = given && link === given ? parseHubLink(given) : undefined
+  const scanned = given && link === given && !scannedHub ? pairName(given) : undefined
+
+  /** This phone's name as the hub will list it. */
+  const phoneName = () => (navigator.userAgent.match(/Android[^;]*;\s*([^)]+?)(?:\s+Build|\))/)?.[1]?.trim() || (isHosted() ? 'Browser' : 'Phone'))
+
+  const pairHub = async (url: string, code: string) => {
+    setBusy(true)
+    try {
+      const h = await claimHub(url, code, phoneName())
+      toast({ title: `Paired with ${h.name}`, body: 'Its machines show here now. Forget it any time in Settings.', tone: 'success' })
+      onClose()
+    } catch (err) {
+      toast({ title: "Couldn't pair with the hub", body: (err as Error).message, tone: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const pair = async (text: string) => {
+    const asHub = parseHubLink(text)
+    if (asHub) return pairHub(asHub.url, asHub.code)
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
     try {
@@ -184,14 +212,45 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={how === 'type' ? !typed : !looksLikeLink(link)}>
+          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={scannedHub ? false : hub ? !hubOriginOf(hubAddress) || !normalizeHubCode(hubCode) : how === 'type' ? !typed : !looksLikeLink(link)}>
             {busy ? 'Connecting…' : 'Pair'}
           </Button>
         </div>
       }
     >
-      <form id="laptop-form" onSubmit={(e) => (e.preventDefault(), pair(how === 'type' ? typed ?? '' : link))} className="space-y-4">
-        {scanned ? (
+      <form
+        id="laptop-form"
+        onSubmit={(e) => (e.preventDefault(), scannedHub ? pairHub(scannedHub.url, scannedHub.code) : hub ? pairHub(hubOriginOf(hubAddress)!, normalizeHubCode(hubCode)!) : pair(how === 'type' ? typed ?? '' : link))}
+        className="space-y-4"
+      >
+        {scannedHub ? (
+          <p className="text-[14px] leading-relaxed text-fg-2">
+            Pair with the hub <span className="font-medium text-fg">{scannedHub.name ?? scannedHub.url.replace(/^https?:\/\//, '')}</span>? {isHosted() ? 'This browser' : 'The phone'} then reaches it and its machines itself.
+            <button type="button" onClick={() => setLink('')} className="mt-2 block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+              Use a different code
+            </button>
+          </p>
+        ) : hub ? (
+          <div key="hub" className="animate-fade-in space-y-4">
+            <p className="text-[13px] leading-relaxed text-fg-2">
+              A hub you run on one of your machines. On the hub's web app open <span className="font-medium text-fg">Open on your phone</span>, then scan its code or type what it shows.
+            </p>
+            {scanner && (
+              <Button type="button" size="lg" variant="accent" className="w-full" onClick={scan} disabled={busy}>
+                <ScanLine className="size-4" /> Scan the hub's code
+              </Button>
+            )}
+            <Field label="Hub address">
+              <input className={clsx(inputClass, 'font-mono text-[13px]')} value={hubAddress} onChange={(e) => setHubAddress(e.target.value)} placeholder="box:4777 or hub.example.com" aria-label="Hub address" autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="url" />
+            </Field>
+            <Field label="ID and code">
+              <input className={clsx(inputClass, 'font-mono text-[15px] tracking-[0.08em]')} value={hubCode} onChange={(e) => setHubCode(e.target.value)} placeholder="K7Q4-MX2T 493812" aria-label="Hub code" autoCapitalize="characters" autoCorrect="off" autoComplete="one-time-code" spellCheck={false} />
+            </Field>
+            <button type="button" onClick={() => setHub(false)} className="py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+              Add a computer instead
+            </button>
+          </div>
+        ) : scanned ? (
           <p className="text-[14px] leading-relaxed text-fg-2">
             Pair with <span className="font-medium text-fg">{scanned}</span>? {isHosted() ? 'This browser' : 'The phone'} connects to it directly from any network, end to end encrypted.
             <button type="button" onClick={() => (setLink(''), setHow('type'))} className="mt-2 block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
@@ -289,6 +348,20 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
             </div>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => setHub(true)}
+          className="press flex w-full items-center gap-3 rounded-2xl border border-line px-3.5 py-3 text-left hover:bg-sunken"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-sunken text-fg-2">
+            <Logo className="size-[18px]" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13.5px] font-medium text-fg">Connect to a hub</span>
+            <span className="block text-[12px] leading-snug text-fg-3">One hub, other machines joined to it. Its machines show here next to your own.</span>
+          </span>
+          <ChevronRight className="size-4 shrink-0 text-fg-3" />
+        </button>
         {onServer && (
           <button
             type="button"

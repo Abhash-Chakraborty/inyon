@@ -306,9 +306,9 @@ class ScannerActivity : ComponentActivity() {
     }
 }
 
-// the same links the web app's paste field takes
-// tether:// is how a laptop from before the rename to Inyon prints its code
-private val PAIR_LINK = Regex("""^((?:inyon|tether)://pair\?|https://\S+[?&]m=)""")
+// the same links the web app's paste field takes: a computer's code, or a hub's (inyon://hub?…,
+// or the download page with it after the #). tether:// is how a laptop from before the rename prints its code
+private val PAIR_LINK = Regex("""^((?:inyon|tether)://pair\?|inyon://hub\?|https://\S+[?&]m=|https://\S+#hub\?)""")
 
-/** Whether a scanned code is a tether-node pairing link rather than some other QR code. */
+/** Whether a scanned code is an Inyon pairing link rather than some other QR code. */
 internal fun isPairLink(text: String?) = text != null && PAIR_LINK.containsMatchIn(text.trim())

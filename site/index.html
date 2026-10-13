@@ -80,8 +80,8 @@
 
   <div class="card pair" id="pair">
     <div class="label">Pairing code</div>
-    <h2>Open this in the Inyon app</h2>
-    <p>This link pairs a computer with your phone. In the app, tap <b>Add a computer</b> and scan the code again, or copy this link and paste it there. It never leaves this page.</p>
+    <h2 id="pair-title">Open this in the Inyon app</h2>
+    <p id="pair-text">This link pairs a computer with your phone. In the app, tap <b>Add a computer</b> and scan the code again, or copy this link and paste it there. It never leaves this page.</p>
     <button class="btn" id="copy-pair" type="button">Copy the link</button>
     <a class="btn quiet" href="#get" id="no-app">Get the app</a>
   </div>
@@ -146,9 +146,13 @@
 <script>
   // a computer's pairing QR opens this page with its code after the #, which browsers never send
   // to a server; offer to copy it for the app, then take it out of the address bar
-  const link = location.hash.startsWith('#pair?') ? location.href : ''
+  const link = location.hash.startsWith('#pair?') || location.hash.startsWith('#hub?') ? location.href : ''
   if (link) {
     document.getElementById('pair').classList.add('on')
+    if (location.hash.startsWith('#hub?')) {
+      document.getElementById('pair-title').textContent = 'Pair your phone with this hub'
+      document.getElementById('pair-text').innerHTML = 'This link pairs the Inyon app with a hub. In the app, tap <b>Add</b>, then <b>Connect to a hub</b> and scan the code again, or copy this link and paste it there. It never leaves this page.'
+    }
     history.replaceState(null, '', location.pathname)
     document.getElementById('copy-pair').onclick = async (e) => {
       try { await navigator.clipboard.writeText(link); e.target.textContent = 'Copied' } catch { e.target.textContent = 'Copy failed' }

@@ -1,6 +1,7 @@
 import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
+import { splitHostId } from './hubs.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -8,8 +9,22 @@ export class ApiError extends Error {
   }
 }
 
-/** The hub over HTTP in a browser; the core running inside the phone app. */
+/** A request about one of a paired hub's machines goes to that hub, with the phone's token. */
+function viaHub(req: Request): Request | undefined {
+  const url = new URL(req.url)
+  const m = url.pathname.match(/^\/api\/hosts\/([^/]+)(.*)$/)
+  if (!m) return
+  const { hub, id } = splitHostId(decodeURIComponent(m[1]!))
+  if (!hub) return
+  const headers = new Headers(req.headers)
+  headers.set('authorization', `Bearer ${hub.token}`)
+  return new Request(`${hub.url}/api/hosts/${encodeURIComponent(id)}${m[2]}${url.search}`, { method: req.method, headers, body: req.body, credentials: 'omit', signal: req.signal, duplex: 'half' } as RequestInit)
+}
+
+/** The hub over HTTP in a browser; the core running inside the phone app; a paired hub for its machines. */
 async function send(req: Request): Promise<Response> {
+  const hub = viaHub(req)
+  if (hub) return fetch(hub)
   if (!isPhone()) return fetch(req)
   const rt = await phone()
   // an in-process call can't be cut off, but the caller's timeout still applies
@@ -29,7 +44,7 @@ async function request<T>(method: string, url: string, body?: unknown, timeoutMs
   }))
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    if (res.status === 401 && !url.endsWith('/login')) window.dispatchEvent(new Event('inyon:signed-out'))
+    if (res.status === 401 && !url.endsWith('/login') && !viaHub(new Request(new URL(url, location.href)))) window.dispatchEvent(new Event('inyon:signed-out'))
     throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`)
   }
   return data as T
@@ -198,6 +213,12 @@ export const api = {
     request<{ agentId: string; toolUseId?: string; type?: string; description?: string; path: string }[]>('GET', `${h(id)}/subagents${qs({ transcript })}`),
   transcript: (id: string, path: string) => request<ChatItem[]>('GET', `${h(id)}/transcript${qs({ path })}`),
   taskOutput: (id: string, task: { id: string; path?: string }) => request<{ path: string; output: string }>('GET', `${h(id)}/task-output${qs({ path: task.path ?? '', id: task.id })}`),
+
+  // ---- phones paired with this hub (the hub's web app shows the code; the app claims it) ----
+  /** A one-time code for a phone to pair with this hub; needs a recent sign-in. */
+  phonePair: (origin: string) => request<{ id: string; code: string; link: string; expiresAt: number }>('POST', '/api/phones/pair', { origin }),
+  phones: () => request<{ id: string; name: string; pairedAt: number; lastSeen?: number; thisPhone?: boolean }[]>('GET', '/api/phones'),
+  forgetPhone: (id: string) => request<unknown>('DELETE', `/api/phones/${encodeURIComponent(id)}`),
 
   /** Uploads with progress (fetch can't report upload progress). */
   upload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {

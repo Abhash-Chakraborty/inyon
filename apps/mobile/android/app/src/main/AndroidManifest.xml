@@ -29,6 +29,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="inyon" android:host="pair" />
+                <!-- a hub's code (inyon://hub?...) pairs the phone with that hub -->
+                <data android:scheme="inyon" android:host="hub" />
                 <!-- the scheme a laptop from before the rename to Inyon prints -->
                 <data android:scheme="tether" android:host="pair" />
             </intent-filter>

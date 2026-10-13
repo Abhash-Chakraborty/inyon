@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
 import { ChevronRight, Laptop, Plug, Plus, Search, Server, WifiOff } from 'lucide-react'
@@ -20,6 +20,8 @@ import { refreshAll } from '../lib/refresh.ts'
 import { groupPanes, loadFolded, saveFolded } from '../lib/groups.ts'
 import { FilterInput } from '../components/ui/FilterInput.tsx'
 import { AnimatedList } from '../components/ui/AnimatedList.tsx'
+import { PhoneSheet } from '../components/PhoneSheet.tsx'
+import { Smartphone } from 'lucide-react'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 
 /** Past this many agent sessions the overview gets a search box. */
@@ -152,6 +154,8 @@ export function Home() {
               </p>
               </div>
 
+              {!isPhone() && hosts.length > 0 && <PhoneCard />}
+
               {needsIntegration.map((h) => (
                 <div key={h.config.id} className="flex items-center gap-3 rounded-3xl border border-line bg-elev px-5 py-3.5 shadow-card">
                   <Plug className="size-4 shrink-0 text-fg-3" />
@@ -251,5 +255,39 @@ export function Home() {
         </aside>
       </div>
     </PullRefresh>
+  )
+}
+
+const PHONE_CARD_KEY = 'inyon.phoneCard.dismissed'
+
+/** Until a phone is paired (or this is dismissed): the hub's one-line invitation to open it on a phone. */
+function PhoneCard() {
+  const [show, setShow] = useState(false)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(PHONE_CARD_KEY)) return
+    } catch {}
+    api.phones().then((phones) => setShow(Array.isArray(phones) && !phones.length), () => {})
+  }, [])
+  const dismiss = () => {
+    try {
+      localStorage.setItem(PHONE_CARD_KEY, '1')
+    } catch {}
+    setShow(false)
+  }
+  if (!show) return null
+  return (
+    <>
+      <div className="flex items-center gap-3 rounded-3xl border border-line bg-elev px-5 py-3.5 shadow-card">
+        <Smartphone className="size-4 shrink-0 text-fg-3" />
+        <p className="min-w-0 flex-1 text-[13px] text-fg-2">
+          <span className="font-medium text-fg">Open this hub on your phone.</span> The Inyon app scans a code and reaches every machine here itself.
+        </p>
+        <Button size="sm" variant="ghost" onClick={dismiss}>Later</Button>
+        <Button size="sm" variant="primary" onClick={() => setOpen(true)}>Show the code</Button>
+      </div>
+      <PhoneSheet open={open} onClose={() => (setOpen(false), api.phones().then((p) => Array.isArray(p) && p.length && dismiss(), () => {}))} />
+    </>
   )
 }

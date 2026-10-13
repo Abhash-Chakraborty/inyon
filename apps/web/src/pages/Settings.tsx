@@ -20,6 +20,8 @@ import { UploadsCard } from './Machines.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { COMMIT, VERSION } from '../lib/version.ts'
 import { getRenderer } from '../lib/renderer.ts'
+import { PhoneSheet } from '../components/PhoneSheet.tsx'
+import { forgetHub, listHubs, onHubs } from '../lib/hubs.ts'
 import { checkHub, hubBuild, sameBuild, useHubBuild, watchHub, type Build } from '../lib/updates.ts'
 import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
 import { openLink } from '../lib/format.ts'
@@ -305,7 +307,7 @@ const NAV = [
   ['notifications', 'Notifications'],
   ['machines', isPhone() ? 'Computers' : 'Machines'],
   ...(isPhone()
-    ? canSsh() ? ([['phone-key', "This phone's key"]] as const) : []
+    ? ([['hubs', 'Hubs'], ...(canSsh() ? ([['phone-key', "This phone's key"]] as const) : [])] as const)
     : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
   ['updates', 'Updates'],
   ['about', 'About'],
@@ -515,7 +517,10 @@ export function Settings() {
           </Section>
 
           {isPhone() ? (
-            canSsh() && <PhoneKey />
+            <>
+              <Hubs />
+              {canSsh() && <PhoneKey />}
+            </>
           ) : (
             <>
           <OtherDevices />
@@ -647,14 +652,73 @@ function OtherDevices() {
         </button>
       </Row>
       <Row
-        label={<span className="flex items-center gap-2"><Smartphone className="size-4 text-fg-3" /> On your phone</span>}
+        label={<span className="flex items-center gap-2"><Smartphone className="size-4 text-fg-3" /> In a phone's browser</span>}
         hint={
           <>
-            Open the address in the phone's browser while it's on the same Tailscale or NetBird network. The Android app doesn't need this hub: it pairs with your computers directly (one command and a code), or reaches servers over SSH.
+            Open the address while the phone is on the same Tailscale or NetBird network.
             {!https && ' Adding it to the home screen as an app, with notifications, needs the hub on HTTPS.'}
           </>
         }
       />
+      <PairedPhones />
+    </Section>
+  )
+}
+
+/** The Inyon apps paired with this hub, each one revocable, and the code for the next. */
+function PairedPhones() {
+  const [phones, setPhones] = useState<{ id: string; name: string; pairedAt: number; lastSeen?: number }[]>()
+  const [code, setCode] = useState(false)
+  const load = () => api.phones().then((p) => setPhones(Array.isArray(p) ? p : []), () => setPhones([]))
+  useEffect(() => void load(), [])
+  const forget = async (p: { id: string; name: string }) => {
+    try {
+      await api.forgetPhone(p.id)
+      toast({ title: `${p.name} forgotten`, body: 'It can pair again with a new code.', tone: 'success' })
+      void load()
+    } catch (e) {
+      toast({ title: "Couldn't forget it", body: (e as Error).message, tone: 'error' })
+    }
+  }
+  return (
+    <>
+      <Row label="Inyon app" hint="The app pairs with this hub by scanning a code, then reaches its machines itself, from any network.">
+        <Button size="sm" variant="primary" onClick={() => setCode(true)}>Show the code</Button>
+      </Row>
+      {phones?.map((p) => (
+        <div key={p.id} className="flex items-center gap-3 px-4 py-3 text-[14px]">
+          <Smartphone className="size-4 shrink-0 text-fg-3" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{p.name}</span>
+            <span className="block truncate font-mono text-[12px] text-fg-3">paired {new Date(p.pairedAt).toLocaleDateString()}{p.lastSeen ? ` · seen ${new Date(p.lastSeen).toLocaleString()}` : ''}</span>
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => forget(p)}>Forget</Button>
+        </div>
+      ))}
+      <PhoneSheet open={code} onClose={() => (setCode(false), void load())} />
+    </>
+  )
+}
+
+/** The hubs this phone is paired with; forgetting one takes its machines out of the lists. */
+function Hubs() {
+  const [hubs, setHubs] = useState(listHubs)
+  useEffect(() => onHubs(setHubs), [])
+  return (
+    <Section id="hubs" title="Hubs" desc="A hub brings its machines into this app. Pair with one from Add, with the code its web app shows.">
+      {!hubs.length && <p className="px-4 py-3.5 text-[13px] text-fg-3">No hubs paired.</p>}
+      {hubs.map((h) => (
+        <div key={h.id} className="flex items-center gap-3 px-4 py-3 text-[14px]">
+          <Logo className="size-[18px]" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{h.name}</span>
+            <span className="block truncate font-mono text-[12px] text-fg-3">{h.url.replace(/^https?:\/\//, '')}{h.version ? ` · ${h.version}` : ''}</span>
+          </span>
+          <Button size="sm" variant="ghost" onClick={() => (forgetHub(h.id), toast({ title: `${h.name} forgotten`, body: 'Its machines are gone from this app. The hub still lists this phone until you forget it there too.', tone: 'success' }))}>
+            Forget
+          </Button>
+        </div>
+      ))}
     </Section>
   )
 }
