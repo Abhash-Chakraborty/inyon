@@ -29,6 +29,8 @@ interface Attachment {
 }
 
 const DRAFTS = new Map<string, string>()
+/** per pane, the draft both sides last agreed on when the composer went away (the terminal view, another chat) */
+const SYNCED = new Map<string, string>()
 
 /**
  * Attachments per session, outside the component like the text drafts: leaving the page (or an
@@ -109,8 +111,13 @@ export function Composer({
   const shellMode = !!agent && AGENTS[agent].shell && text.trimStart().startsWith('!')
   const [focused, setFocused] = useState(false)
   const [origin, setOrigin] = useState<'app' | 'terminal' | null>(null)
-  /** the text both sides last agreed on, so we can tell who changed what */
-  const synced = useRef(serverDraft?.text ?? text)
+  /**
+   * the text both sides last agreed on, so we can tell who changed what. Coming back to a chat it
+   * starts from what was agreed when the composer went away: a draft the terminal sent meanwhile
+   * then reads as new and replaces the old copy, instead of looking already seen.
+   */
+  const synced = useRef(SYNCED.get(key) ?? serverDraft?.text ?? text)
+  useEffect(() => () => void SYNCED.set(key, synced.current), [key])
   const pushTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const pending = useRef<(() => void) | undefined>(undefined)
   /** the message just sent, and when, so a keyboard putting it back isn't taken for typing */

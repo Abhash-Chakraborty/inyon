@@ -53,6 +53,29 @@ describe('Composer keeps what you type while live data flows', () => {
     expect(screen.getByText('From the terminal')).toBeTruthy()
   })
 
+  test("a newer terminal draft replaces the old one after you come back from the terminal view", async () => {
+    const pane = nextPane()
+    const first = await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    draft(pane, 'second desk draft', 1)
+    expect(box().value).toBe('second desk draft')
+    // the terminal view replaces the chat; meanwhile the desk keeps typing
+    first.unmount()
+    draft(pane, 'third draft from the terminal tab', 2)
+    await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    expect(box().value).toBe('third draft from the terminal tab')
+    expect(screen.getByText('From the terminal')).toBeTruthy()
+  })
+
+  test("what you typed on the phone survives leaving the chat when nothing newer came in", async () => {
+    const user = userEvent.setup()
+    const pane = nextPane()
+    const first = await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    await user.type(box(), 'my own words')
+    first.unmount()
+    await render(<Composer host="box" pane={pane} agent="claude" working={false} />)
+    expect(box().value).toBe('my own words')
+  })
+
   test('typing is shared with the hub after a pause, once', async () => {
     const user = userEvent.setup()
     const pane = nextPane()
