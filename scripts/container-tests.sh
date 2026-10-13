@@ -11,7 +11,9 @@
 #   INYON_TEST_SYSTEMS="alpine upgrade" …       runs only those (ubuntu debian alpine fedora upgrade)
 #
 # The release is served from a container on a network with no way out, so a test that reached
-# GitHub would fail. The one download from GitHub is the 0.12.0 program for the upgrade test,
+# the website or GitHub would fail. Fresh installs read it the way the website serves it (/download,
+# with latest.json); the 0.12.0 program in the upgrade test reads it the way GitHub does, as
+# installs from before the website still do. The one download from GitHub is that program,
 # kept in ~/.cache/inyon-tests. The mock's SHA256SUMS is signed with apps/cli/tests/keys/test.key,
 # and the containers get that key's public half as INYON_SIGNING_KEY, which get.sh and the
 # command take instead of the release key when downloads come from somewhere else.
@@ -69,7 +71,11 @@ else
 fi
 chmod +x "$dist/$cli" "$dist/$engine" "$dist/$engine_musl"
 cp "$root/apps/node/get.sh" "$dist/"
-(cd "$dist" && gzip -9 -k "$cli" "$engine" "$engine_musl" && sha256sum "$cli" "$cli.gz" "$engine" "$engine.gz" "$engine_musl" "$engine_musl.gz" > SHA256SUMS)
+# a release lists its APK, whose name carries the version: `inyon update` checks the signed list
+# against the version latest.json names that way, and get.sh finds the release's tag by it
+apk="inyon-$version.apk"
+printf 'not an app\n' > "$dist/$apk"
+(cd "$dist" && gzip -9 -k "$cli" "$engine" "$engine_musl" && sha256sum "$cli" "$cli.gz" "$engine" "$engine.gz" "$engine_musl" "$engine_musl.gz" "$apk" > SHA256SUMS)
 # signed as a release is, with the test key (no password; minisign still reads one from stdin)
 minisign -S -s "$keys/test.key" -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" < /dev/null
 minisign -V -q -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" -P "$pubkey"
@@ -80,7 +86,8 @@ docker network create --internal "$net" >/dev/null
 docker run -d --rm --name "release-$id" --network "$net" --network-alias release \
   -v "$dist:/dist:ro" -v "$root/scripts/mock-release.py:/srv/mock-release.py:ro" \
   python:3.12-alpine python3 -I /srv/mock-release.py --dir /dist --version "$version" --port 8000 >/dev/null
-base="http://release:8000/releases/latest/download"
+site="http://release:8000/download"
+github="http://release:8000/releases/latest/download"
 
 # ---------- the images: each base with curl, which get.sh needs ----------
 image() {
@@ -107,14 +114,17 @@ test -x ~/.inyon/bin/inyon-engine
 ~/.inyon/bin/inyon version
 ~/.inyon/bin/inyon status --plain
 ~/.inyon/bin/inyon status --plain | grep -q "^link: running" || { echo "the link is not running"; cat ~/.inyon/node/link.log 2>/dev/null; exit 1; }
-~/.inyon/bin/inyon-engine version'
+~/.inyon/bin/inyon-engine version
+echo "--- the newest version, from latest.json"
+~/.inyon/bin/inyon update | tee /tmp/update.out
+grep -q "is up to date" /tmp/update.out || { echo "inyon update did not find itself up to date"; exit 1; }'
 systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora upgrade}
 has() { case " $systems " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 for sys in ubuntu debian alpine fedora; do
   has "$sys" || continue
   say "fresh install on $sys"
   img=$(image "$sys")
-  if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" -e "INYON_SIGNING_KEY=$pubkey" "$img" sh -c "$fresh"; then
+  if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$site" -e "INYON_SIGNING_KEY=$pubkey" "$img" sh -c "$fresh"; then
     echo "== $sys: ok"
   else
     echo "== $sys: FAILED"
@@ -158,7 +168,7 @@ test "$before" = "$(sha256sum ~/.inyon/node/phones.json)" || { echo "phones.json
 # the old program keeps its copy aside (inyon.old-<time>) while nothing restarted on the new
 # one; the next start removes it. No download may be left behind
 test -z "$(ls ~/.inyon/bin | grep download)" || { echo "a download was left in bin"; exit 1; }'
-if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$base" -e "INYON_SIGNING_KEY=$pubkey" -v "$work/old:/old:ro" "$(image ubuntu)" sh -c "$upgrade"; then
+if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$github" -e "INYON_SIGNING_KEY=$pubkey" -v "$work/old:/old:ro" "$(image ubuntu)" sh -c "$upgrade"; then
   echo "== upgrade: ok"
 else
   echo "== upgrade: FAILED"
