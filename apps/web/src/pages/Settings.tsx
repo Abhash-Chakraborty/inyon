@@ -433,7 +433,7 @@ export function Settings() {
                 }
               >
                 <div className="flex items-center gap-3 text-[12px] text-fg-3">
-                  <code className="rounded-full border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch}</code>
+                  <code className="rounded-full border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2">{a.launch.split(' ')[0]}</code>
                   <span className={clsx('shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[12px]', a.chat ? 'border border-line text-fg' : 'bg-sunken text-fg-3')}>{a.chat ? 'Chat view' : 'Terminal'}</span>
                 </div>
               </Row>
