@@ -421,8 +421,8 @@ export function Composer({
     try {
       // the same id on every try: the hub submits it once however many times it arrives
       await withRetries(() => api.send(host, pane, msg, id))
+      // the tap on Send was the tick; the agent's reply is the confirmation
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sent' } : p)) }))
-      haptic('success')
     } catch (e) {
       haptic('error')
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message, retryable: isTransient(e) } : p)) }))

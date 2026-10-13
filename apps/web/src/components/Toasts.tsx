@@ -32,7 +32,7 @@ function ToastCard({ t }: { t: Toast }) {
   const [leaving, setLeaving] = useState<{ x: number; y: number } | null>(null)
   const go = (x: number, y: number) => {
     setLeaving({ x, y })
-    setTimeout(() => dismiss(t.id), 160)
+    setTimeout(() => dismiss(t.id), 120)
   }
   const offset = leaving ?? drag
   return (
@@ -66,7 +66,7 @@ function ToastCard({ t }: { t: Toast }) {
       style={{
         transform: offset.x || offset.y ? `translate(${offset.x}px, ${offset.y}px)` : undefined,
         opacity: leaving ? 0 : 1 - Math.min(0.6, Math.abs(offset.x) / 300),
-        transition: start.current ? 'none' : leaving ? 'transform 0.16s ease-in, opacity 0.16s ease-in' : 'transform 0.4s var(--ease-spring), opacity 0.3s',
+        transition: start.current ? 'none' : leaving ? 'transform 0.12s ease-in, opacity 0.12s ease-in' : 'transform 0.32s var(--ease-spring), opacity 0.2s',
         touchAction: 'pan-y',
       }}
       className={clsx(
@@ -74,7 +74,7 @@ function ToastCard({ t }: { t: Toast }) {
         t.href && 'cursor-pointer',
       )}
     >
-      {t.agent ? <AgentLogo kind={t.agent as any} size={22} /> : <Icon className={clsx('mt-0.5 size-[18px] shrink-0', tones[t.tone], t.tone !== 'info' && 'animate-pop-in')} />}
+      {t.agent ? <AgentLogo kind={t.agent as any} size={22} /> : <Icon className={clsx('mt-0.5 size-[18px] shrink-0', tones[t.tone])} />}
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{t.title}</p>
         {t.body && <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-fg-2">{t.body}</p>}

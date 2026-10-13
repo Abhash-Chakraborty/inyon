@@ -34,9 +34,10 @@ internal class Haptics(private val context: Context) {
 
         if (Build.VERSION.SDK_INT < 26) return legacy(v, kind)
         val effect = when (kind) {
-            "tap" -> predefined(VibrationEffect.EFFECT_CLICK) ?: oneShot(v, 12, 150)
+            // every touch is one light tick; only a confirmed outcome gets more
+            "tap" -> predefined(VibrationEffect.EFFECT_TICK) ?: oneShot(v, 8, 90)
             "select" -> predefined(VibrationEffect.EFFECT_TICK) ?: oneShot(v, 8, 90)
-            "long" -> oneShot(v, 45, 200)
+            "long" -> predefined(VibrationEffect.EFFECT_HEAVY_CLICK) ?: oneShot(v, 40, 200)
             "success" -> {
                 clicks(v, 0.7f, 1f) ?: run {
                     // CONFIRM is tuned per device, better than a waveform on motors without primitives

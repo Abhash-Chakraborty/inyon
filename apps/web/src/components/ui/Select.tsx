@@ -115,7 +115,7 @@ export function Select<T extends string>({
         )}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
-        <ChevronDown className={clsx('size-4 shrink-0 text-fg-3 transition-transform duration-500 ease-out-soft', open && 'rotate-180')} />
+        <ChevronDown className={clsx('size-4 shrink-0 text-fg-3 transition-transform duration-200 ease-out-soft', open && 'rotate-180')} />
       </button>
       {open &&
         (sheet ? (
@@ -160,7 +160,7 @@ function Options<T extends string>({ id, options, value, active, onPick, listRef
             <span className="block truncate">{o.label}</span>
             {o.hint && <span className="block truncate text-[12px] text-fg-3">{o.hint}</span>}
           </span>
-          <Check className={clsx('size-4 shrink-0 transition-[opacity,transform] duration-200 ease-out-back', o.value === value ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
+          <Check className={clsx('size-4 shrink-0 transition-[opacity,transform] duration-200 ease-out-soft', o.value === value ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
         </button>
       ))}
     </div>

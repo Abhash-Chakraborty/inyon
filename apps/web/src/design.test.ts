@@ -46,3 +46,24 @@ test('with reduced motion, sheets fade for about 120ms instead of sliding', () =
   expect(block).toMatch(/\.animate-sheet-in[^{]*\{[^}]*animation-name: fade-in !important;[^}]*animation-duration: 120ms !important/)
   expect(block).toMatch(/\.animate-sheet-out[^{]*\{[^}]*animation-name: fade-out !important;[^}]*animation-duration: 120ms !important/)
 })
+
+// the motion rules from the 0.11.1 pass: nothing overshoots, nothing but a sheet takes longer
+// than 480ms, and no transition is left to transition-all
+test('no ease overshoots', () => {
+  for (const m of css.matchAll(/cubic-bezier\(([^)]+)\)/g)) {
+    const [, y1, , y2] = m[1]!.split(',').map(Number)
+    expect(y1! <= 1 && y2! <= 1, m[0]).toBe(true)
+  }
+  expect(offenders(/ease-out-back|ease-\[cubic-bezier\([^)]*1\.[1-9]/)).toEqual([])
+})
+
+test('nothing but a sheet or a loop animates longer than 480ms', () => {
+  const long = [...css.matchAll(/animation:\s*([\w-]+)\s+([\d.]+)s[^;}]*/g)].filter((m) => Number(m[2]) > 0.48 && !/infinite/.test(m[0]) && !/sheet/.test(m[1]!))
+  expect(long.map((m) => m[0])).toEqual([])
+  expect(offenders(/duration-(5\d\d|[6-9]\d\d|1000)\b/)).toEqual([])
+})
+
+test('no transition-all', () => {
+  expect(offenders(/transition-all/)).toEqual([])
+  expect(css).not.toMatch(/transition:\s*all\b/)
+})

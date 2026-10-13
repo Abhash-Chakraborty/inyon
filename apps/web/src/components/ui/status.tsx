@@ -75,14 +75,14 @@ export function StatePill({ state, title, className }: { state: ShownState; titl
 }
 
 export function StateDot({ state, className }: { state: ShownState; className?: string }) {
-  return <span className={clsx('inline-block size-[7px] shrink-0 rounded-full', stateMeta[state].dot, className)} />
+  return <span className={clsx('inline-block size-[7px] shrink-0 rounded-full transition-colors duration-200', stateMeta[state].dot, className)} />
 }
 
 export function HostDot({ status }: { status: HostStatus }) {
   return (
     <span
       className={clsx(
-        'inline-block size-[7px] shrink-0 rounded-full',
+        'inline-block size-[7px] shrink-0 rounded-full transition-colors duration-200',
         status === 'online' && 'bg-fg',
         status === 'connecting' && 'bg-fg-3 pulse-soft',
         status === 'error' && 'bg-danger',

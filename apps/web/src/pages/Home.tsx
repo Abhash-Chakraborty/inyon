@@ -19,6 +19,7 @@ import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 import { groupPanes, loadFolded, saveFolded } from '../lib/groups.ts'
 import { FilterInput } from '../components/ui/FilterInput.tsx'
+import { AnimatedList } from '../components/ui/AnimatedList.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 
 /** Past this many agent sessions the overview gets a search box. */
@@ -33,6 +34,12 @@ export function Home() {
   const connected = useStore((s) => s.connected)
   const [filter, setFilter] = useState<'all' | 'working' | 'idle'>('all')
   const [adding, setAdding] = useState(false)
+  const [reloading, setReloading] = useState(false)
+  const reload = () => {
+    setReloading(true)
+    // long enough to see the turn, however fast the hub answers
+    Promise.allSettled([refreshAll(), new Promise((r) => setTimeout(r, 600))]).then(() => setReloading(false))
+  }
   const panes = agentPanes(hosts)
   const waiting = panes.filter((r) => r.pane.agent!.state === 'waiting')
   const [q, setQ] = useState('')
@@ -80,6 +87,18 @@ export function Home() {
               <WifiOff className="size-3.5" /> Reconnecting
             </span>
           )}
+          {/* with a mouse there is no pull to refresh: the mark turns once here instead */}
+          <button
+            type="button"
+            onClick={reload}
+            aria-label="Refresh"
+            title="Refresh"
+            className={clsx('flex size-8 items-center justify-center rounded-full text-fg-2 hover:bg-hover max-md:hidden', connected && 'ml-auto')}
+          >
+            <span className={clsx('flex', reloading && 'turn-once')}>
+              <Logo className="size-[18px]" />
+            </span>
+          </button>
           <button
             type="button"
             onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
@@ -153,11 +172,7 @@ export function Home() {
                       <span className="size-1.5 rounded-full bg-warn" /> Needs you
                     </span>
                   </SectionLabel>
-                  <div className="grid grid-cols-1 gap-3">
-                    {waiting.map((r) => (
-                      <NeedsYouCard key={r.host.config.id + r.pane.id} r={r} />
-                    ))}
-                  </div>
+                  <AnimatedList className="grid grid-cols-1 gap-3" items={waiting.map((r) => ({ key: r.host.config.id + r.pane.id, node: <NeedsYouCard r={r} /> }))} />
                 </section>
               )}
 
@@ -197,11 +212,10 @@ export function Home() {
                             </button>
                             <div className="expand" data-open={open}>
                               <div inert={!open}>
-                                <div className="grid grid-cols-1 gap-3 pt-2 pb-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
-                                  {g.sessions.flatMap((sg) => sg.panes).map((r) => (
-                                    <SessionCard key={r.host.config.id + r.pane.id} r={r} showHost={false} />
-                                  ))}
-                                </div>
+                                <AnimatedList
+                                  className="grid grid-cols-1 gap-3 pt-2 pb-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4"
+                                  items={g.sessions.flatMap((sg) => sg.panes).map((r) => ({ key: r.host.config.id + r.pane.id, node: <SessionCard r={r} showHost={false} /> }))}
+                                />
                               </div>
                             </div>
                           </div>
@@ -209,11 +223,10 @@ export function Home() {
                       })}
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4">
-                      {groups.flatMap((g) => g.sessions.flatMap((sg) => sg.panes)).map((r) => (
-                        <SessionCard key={r.host.config.id + r.pane.id} r={r} />
-                      ))}
-                    </div>
+                    <AnimatedList
+                      className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4"
+                      items={groups.flatMap((g) => g.sessions.flatMap((sg) => sg.panes)).map((r) => ({ key: r.host.config.id + r.pane.id, node: <SessionCard r={r} /> }))}
+                    />
                   )
                 ) : (
                   <div className="rounded-3xl border border-dashed border-line-strong">

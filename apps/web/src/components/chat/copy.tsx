@@ -22,10 +22,10 @@ export function CopyButton({ text, className, label = 'Copy' }: { text: string; 
           return
         }
         setDone(true)
-        setTimeout(() => setDone(false), 1400)
+        setTimeout(() => setDone(false), 1200)
       }}
     >
-      {done ? <Check className="size-3.5 text-fg" /> : <Copy className="size-3.5" />}
+      {done ? <Check className="animate-fade-in size-3.5 text-fg" /> : <Copy className="size-3.5" />}
     </button>
   )
 }

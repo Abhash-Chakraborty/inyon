@@ -276,6 +276,16 @@ function clearAnswered(hosts: HostState[]) {
   }
 }
 
+/** The same prompt reported again within a few seconds doesn't buzz twice. */
+const buzzed = new Map<string, number>()
+function buzzOnce(tag: string, kind: string) {
+  const k = `${tag}:${kind}`
+  const now = Date.now()
+  if ((buzzed.get(k) ?? 0) > now - 10_000) return false
+  buzzed.set(k, now)
+  return true
+}
+
 /** One notification per session (or machine): the next one replaces it, opening it clears it. */
 export const notifyTag = (host: string, pane?: string) => (pane ? `${host}:${pane}` : `machine:${host}`)
 
@@ -291,13 +301,12 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   // don't toast about the conversation you're looking at
   const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
   if (!here) toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
-  // two pulses when an agent needs you or finishes, even on its own screen; a buzz for a lost machine
+  const tag = notifyTag(m.host, machine ? undefined : m.pane)
+  // two short pulses when an agent needs you or finishes, once per prompt; a buzz for a lost machine
   if (document.visibilityState === 'visible') {
-    if (m.kind === 'waiting' || (m.kind === 'done' && !here)) haptic('event')
-    else if (m.kind === 'done') haptic('success')
+    if ((m.kind === 'waiting' || m.kind === 'done') && buzzOnce(tag, m.kind)) haptic('success')
     else if (m.kind === 'offline' && !here) haptic('warning')
   }
-  const tag = notifyTag(m.host, machine ? undefined : m.pane)
   if (document.visibilityState === 'hidden' && isNative()) {
     if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
     else asking.delete(tag)

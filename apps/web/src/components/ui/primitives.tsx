@@ -87,7 +87,7 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       onClick={() => onChange(!on)}
       className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-field')}
     >
-      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-500 ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
+      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-300 ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
     </button>
   )
 }
@@ -126,7 +126,7 @@ export function Segmented<T extends string>({
     if (pill) moved.current = true
   }, [pill?.left])
   const r = pill ? pill.height / 2 : 0
-  const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-[transform] duration-500 ease-out-soft')
+  const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-[transform] duration-300 ease-out-soft')
   return (
     <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
       <span aria-hidden className={clsx('pointer-events-none absolute inset-x-0 top-0.5 bottom-0.5', !pill && 'hidden')}>
@@ -460,7 +460,7 @@ export function Meter({ value, tone = 'fg', className }: { value: number; tone?:
   const color = tone === 'accent' ? 'var(--accent)' : tone === 'auto' ? (v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--fg)') : 'var(--fg)'
   return (
     <div className={clsx('h-1.5 overflow-hidden rounded-full bg-line', className)}>
-      <div className="h-full origin-left rounded-full transition-transform duration-500" style={{ transform: `scaleX(${v / 100})`, background: color }} />
+      <div className="h-full origin-left rounded-full transition-transform duration-300" style={{ transform: `scaleX(${v / 100})`, background: color }} />
     </div>
   )
 }

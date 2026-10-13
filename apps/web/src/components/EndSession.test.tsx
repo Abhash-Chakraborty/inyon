@@ -11,6 +11,7 @@ import { allPanes } from '../lib/overview.ts'
 import { api, emit } from '../test/fakes.ts'
 import { agentPane, fresh, host, pane } from '../test/fixtures.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
+import { LEAVE_MS } from './ui/AnimatedList.tsx'
 
 /** One machine: "api" holds the login session and a shell, split in one window; "docs" has one window. */
 function box(): HostState {
@@ -46,7 +47,10 @@ describe('ending a session', () => {
     expect(within(sheet).getByText('api:1.0')).toBeTruthy()
     expect(within(sheet).getByText(/Claude Code exits, then its tmux pane closes\. Your other windows stay/)).toBeTruthy()
     await user.click(within(sheet).getByRole('button', { name: 'End session' }))
-    // gone before the machine has even answered
+    // on its way out before the machine has even answered: fading, and gone a moment later
+    expect(card('Fix the login test')!.closest('[data-leaving]')).toBeTruthy()
+    await new Promise((r) => setTimeout(r, LEAVE_MS + 30))
+    await flush()
     expect(card('Fix the login test')).toBeNull()
     expect(card('Write the docs')).toBeTruthy()
     expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Session ended'])

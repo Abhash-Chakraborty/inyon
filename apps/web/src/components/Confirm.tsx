@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { haptic } from '../lib/haptics.ts'
 import { Button, Sheet } from './ui/primitives.tsx'
 
 interface Ask {
@@ -20,7 +19,6 @@ const useAsk = create<{ ask?: Ask; open: boolean }>(() => ({ open: false }))
  */
 export function confirmAction(o: { title: string; body?: string; details?: [string, string][]; yes: string; danger?: boolean }): Promise<boolean> {
   useAsk.getState().ask?.answer(false)
-  if (o.danger) haptic('warning')
   return new Promise((resolve) => useAsk.setState({ open: true, ask: { ...o, answer: resolve } }))
 }
 

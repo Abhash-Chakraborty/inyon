@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
-import { ArrowDown, Loader2 } from 'lucide-react'
 import { haptic } from '../../lib/haptics.ts'
+import { Logo } from '../AppShell.tsx'
 
 /** how far to pull (px, after damping) before letting go refreshes */
 export const PULL_TRIGGER = 64
@@ -9,7 +9,8 @@ const MAX = 96
 
 /**
  * A scrolling page that refreshes when you pull down from the top on a touch screen. The mark
- * follows the finger, ticks once when far enough, and spins until `onRefresh` settles.
+ * follows the finger, tilting as it comes, ticks once when far enough, and turns once while
+ * `onRefresh` settles.
  */
 export function PullRefresh({ onRefresh, className, children }: { onRefresh: () => Promise<unknown>; className?: string; children: ReactNode }) {
   const box = useRef<HTMLDivElement>(null)
@@ -83,11 +84,9 @@ export function PullRefresh({ onRefresh, className, children }: { onRefresh: () 
           transform: `translate(-50%, ${pull - 40}px)`,
         }}
       >
-        {busy ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <ArrowDown className={clsx('size-4 transition-transform duration-200', pull >= PULL_TRIGGER && 'rotate-180')} />
-        )}
+        <span className={clsx('flex', busy && 'turn-once')} style={busy ? undefined : { transform: `rotate(${Math.round((pull / MAX) * 180)}deg)` }}>
+          <Logo className="size-5" />
+        </span>
       </div>
       <div ref={box} className={clsx('overscroll-y-contain', className)}>
         {children}

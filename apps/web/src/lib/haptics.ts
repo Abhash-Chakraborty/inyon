@@ -3,10 +3,11 @@ import { plugin } from './native.ts'
 
 export type HapticKind = 'tap' | 'select' | 'long' | 'success' | 'warning' | 'error' | 'event'
 
+// one light tick per touch; two pulses only for a confirmed outcome, three for an error
 const PATTERNS: Record<HapticKind, number | number[]> = {
   tap: 8,
-  select: 12,
-  long: 45,
+  select: 8,
+  long: 40,
   success: [10, 40, 14],
   warning: [18, 60, 18],
   error: [28, 50, 28, 50, 28],

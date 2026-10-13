@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, CircleX, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
@@ -25,11 +25,18 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
   const nav = useNavigate()
   const [busy, setBusy] = useState<number | null>(null)
   const [done, setDone] = useState(false)
+  // pressed, then sent, then the agent took it: the card leaves, with two short pulses, once
+  const sent = useRef(false)
+  useEffect(() => {
+    if (!sent.current || a.state === 'waiting') return
+    sent.current = false
+    haptic('success')
+  }, [a.state])
   const answer = async (n: number) => {
     setBusy(n)
     try {
       await api.answer(r.host.config.id, r.pane.id, n)
-      haptic('success')
+      sent.current = true
       setDone(true)
       // a card still here after a moment means the agent is still asking: show the choices again
       setTimeout(() => setDone(false), 4000)
@@ -41,7 +48,7 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
   }
   const opts = a.options ?? []
   return (
-    <div className="animate-fade-in rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
+    <div className="rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
       <div className="flex items-center gap-3">
         <AgentLogo kind={a.kind} size={30} />
         <div className="min-w-0 flex-1">
@@ -57,7 +64,7 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
       {a.waitingFor && <div className="mt-4 rounded-2xl border border-line bg-sunken px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed break-words text-fg">{a.waitingFor}</div>}
       <div className="mt-3 flex flex-wrap gap-1.5">
         {done ? (
-          <span className="flex h-8 items-center gap-1.5 text-[13px] text-fg-2"><Check className="size-4" /> Answered</span>
+          <span className="animate-fade-in flex h-8 items-center gap-1.5 text-[13px] text-fg-2"><Check className="size-4" /> Sent</span>
         ) : opts.length ? (
           opts.map((o, i) => (
             <button
@@ -70,7 +77,7 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
                 i === 0 ? 'bg-fg text-bg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
               )}
             >
-              {o.label}
+              {busy === o.n ? 'Sending…' : o.label}
             </button>
           ))
         ) : (
@@ -231,7 +238,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
       {hosts.map((h) => {
         const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
         return (
-          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3 active:bg-hover">
+          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className={clsx('flex items-center gap-3 px-4 py-3 transition-opacity duration-200 active:bg-hover', h.status !== 'online' && 'opacity-60')}>
             <HostDot status={h.status} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -262,7 +269,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
             {hosts.map((h) => {
               const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
               return (
-                <tr key={h.config.id} className="hover:bg-hover/50">
+                <tr key={h.config.id} className={clsx('transition-opacity duration-200 hover:bg-hover/50', h.status !== 'online' && 'opacity-60')}>
                   <td className="border-b border-line/60 px-5 py-3.5">
                     <Link to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-2.5">
                       <HostDot status={h.status} />

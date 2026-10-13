@@ -16,13 +16,15 @@ const machinesLabel = isPhone() ? 'Computers' : 'Machines'
 
 /** Inyon's mark: a Korean shield kite on its line (same art as public/icon.svg). The tile lifts a step on graphite. */
 export function Logo({ className }: { className?: string }) {
+  // while the hub is out of reach the line draws itself, over and over, until it is back
+  const connecting = useStore((s) => s.authed === true && !s.connected)
   return (
-    <svg viewBox="0 0 64 64" className={clsx('shrink-0', className ?? 'size-[26px]')} aria-hidden>
+    <svg viewBox="0 0 64 64" className={clsx('shrink-0', connecting && 'mark-connecting', className ?? 'size-[26px]')} aria-hidden>
       <path d={SQUIRCLE} fill="var(--logo-tile)" />
       <path d={SQUIRCLE} transform="translate(.5 .5) scale(.984)" fill="none" stroke="#fff" strokeOpacity=".08" />
       <g fill="#F1F0EC">
         <path transform="rotate(-12 41 23)" fillRule="evenodd" d="M33.5 9H48.5A3.5 3.5 0 0 1 52 12.5V33.5A3.5 3.5 0 0 1 48.5 37H33.5A3.5 3.5 0 0 1 30 33.5V12.5A3.5 3.5 0 0 1 33.5 9ZM41 18.4A4.6 4.6 0 1 0 41 27.6A4.6 4.6 0 1 0 41 18.4Z" />
-        <path d="M38.5 36.5C35 48 25 42 17.5 49.5" fill="none" stroke="#F1F0EC" strokeWidth="3.8" strokeLinecap="round" />
+        <path className="mark-line" d="M38.5 36.5C35 48 25 42 17.5 49.5" fill="none" stroke="#F1F0EC" strokeWidth="3.8" strokeLinecap="round" />
         <circle cx="15.5" cy="51" r="4" />
       </g>
     </svg>
