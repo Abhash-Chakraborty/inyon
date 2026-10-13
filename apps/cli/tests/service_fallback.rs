@@ -133,6 +133,7 @@ fn a_node_the_hub_removed_can_take_down_its_own_unit_because_the_stop_comes_last
         "#!/bin/sh\nPATH=/usr/bin:/bin\nprintf '%s\\n' \"$*\" >> \"$HOME/systemctl.log\"\nif [ \"$2\" = stop ]; then for f in .config/systemd/user/inyon-node.service .inyon/node/env; do [ -e \"$HOME/$f\" ] && echo \"$f\" >> \"$HOME/left-at-stop\"; done; fi\nexit 0\n",
     )
     .unwrap();
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(home.fakes.join("systemctl"), std::fs::Permissions::from_mode(0o755)).unwrap();
