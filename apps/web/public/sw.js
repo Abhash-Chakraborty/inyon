@@ -1,17 +1,41 @@
-// Inyon service worker: caches the app shell so the installed app opens instantly.
-// API calls and the WebSocket always go to the network. Paths are under the worker's scope: `/` on
-// a hub and for the web app at inyon.abhashchakraborty.tech; a copy hosted under a folder works too.
-const CACHE = 'inyon-v2'
+// Inyon service worker: caches the app shell and every file of the build, so the installed app
+// opens instantly and a second open needs no network for the app itself. API calls and the
+// WebSocket always go to the network. Paths are under the worker's scope: `/` on a hub and for the
+// web app at inyon.abhashchakraborty.tech; a copy hosted under a folder works too.
+const CACHE = 'inyon-v3'
 const BASE = new URL(self.registration.scope).pathname
+const SHELL = [BASE, BASE + 'manifest.webmanifest', BASE + 'icon-192.png', BASE + 'badge-96.png']
+// the hashed files of this build; empty in the source, filled in by the build (vite.config.ts)
+const ASSETS = []
+const assetPaths = () => ASSETS.map((a) => BASE + a)
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll([BASE, BASE + 'manifest.webmanifest', BASE + 'icon-192.png'])))
+  e.waitUntil(
+    caches.open(CACHE).then(async (c) => {
+      await c.addAll(SHELL)
+      // hashed files never change, so only what this build added is fetched
+      const have = new Set((await c.keys()).map((r) => new URL(r.url).pathname))
+      await c.addAll(assetPaths().filter((p) => !have.has(p)))
+    }),
+  )
   self.skipWaiting()
 })
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))))
-  self.clients.claim()
+  e.waitUntil(
+    (async () => {
+      const keys = await caches.keys()
+      await Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      // files of earlier builds, which no page asks for any more
+      const keep = new Set(assetPaths())
+      const c = await caches.open(CACHE)
+      for (const r of await c.keys()) {
+        const p = new URL(r.url).pathname
+        if (p.startsWith(BASE + 'assets/') && !keep.has(p)) await c.delete(r)
+      }
+      await self.clients.claim()
+    })(),
+  )
 })
 
 self.addEventListener('fetch', (e) => {

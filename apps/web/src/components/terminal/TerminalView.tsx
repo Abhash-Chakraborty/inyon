@@ -17,6 +17,7 @@ import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { readClipboard } from '../../lib/native.ts'
 import { touchScroll } from './touchScroll.ts'
+import { attachWebgl } from './webgl.ts'
 
 const LIGHT: ITheme = {
   background: '#e9e8e4', foreground: '#1d1c1a', cursor: '#1d1c1a', cursorAccent: '#e9e8e4',
@@ -80,6 +81,8 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     term.open(el.current)
     termRef.current = term
     fit.fit()
+    // WebGL when the browser has it, the default renderer otherwise (and after a lost context)
+    const webgl = attachWebgl(term)
 
     // Agents ask the terminal for its colours (OSC 4/10/11/12). If this browser terminal answers,
     // the reply goes back through tmux as keystrokes and lands in the agent's input box as junk
@@ -149,6 +152,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
       ro.disconnect()
       off()
       socket.send({ t: 'term.close', id })
+      webgl.dispose()
       term.dispose()
       termRef.current = null
     }

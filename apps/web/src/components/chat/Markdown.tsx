@@ -1,25 +1,8 @@
-import { memo, useContext, type ReactNode } from 'react'
+import { memo, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import rehypeHighlight from 'rehype-highlight'
-import bash from 'highlight.js/lib/languages/bash'
-import css from 'highlight.js/lib/languages/css'
-import diff from 'highlight.js/lib/languages/diff'
-import go from 'highlight.js/lib/languages/go'
-import java from 'highlight.js/lib/languages/java'
-import javascript from 'highlight.js/lib/languages/javascript'
-import json from 'highlight.js/lib/languages/json'
-import kotlin from 'highlight.js/lib/languages/kotlin'
-import markdown from 'highlight.js/lib/languages/markdown'
-import python from 'highlight.js/lib/languages/python'
-import rust from 'highlight.js/lib/languages/rust'
-import shell from 'highlight.js/lib/languages/shell'
-import sql from 'highlight.js/lib/languages/sql'
-import swift from 'highlight.js/lib/languages/swift'
-import typescript from 'highlight.js/lib/languages/typescript'
-import xml from 'highlight.js/lib/languages/xml'
-import yaml from 'highlight.js/lib/languages/yaml'
 import clsx from 'clsx'
+import { highlight, isLoaded, languageOf, loadLanguage } from './highlight.ts'
 
 export { CopyButton, ReplyFont } from './copy.tsx'
 import { CopyButton, ReplyFont } from './copy.tsx'
@@ -31,7 +14,30 @@ function textOf(node: ReactNode): string {
   return ''
 }
 
+/** True once the block's language can be highlighted; fetches it the first time and re-renders then. */
+function useLanguage(lang: string | undefined) {
+  const [, arrived] = useState(0)
+  const loaded = !!lang && isLoaded(lang)
+  useEffect(() => {
+    if (!lang || loaded) return
+    let on = true
+    loadLanguage(lang).then((ok) => { if (on && ok) arrived((n) => n + 1) })
+    return () => { on = false }
+  }, [lang, loaded])
+  return loaded
+}
+
 const components: Components = {
+  // the same markup rehype-highlight made (`code.hljs.language-x` with `hljs-*` spans), so the
+  // stylesheet applies; the language's grammar arrives on demand instead of shipping with the chat
+  code({ children, className, node: _node, ...rest }) {
+    const lang = languageOf(className)
+    const loaded = useLanguage(lang)
+    const text = textOf(children)
+    const html = useMemo(() => (loaded && lang ? highlight(lang, text) : ''), [loaded, lang, text])
+    if (!loaded) return <code className={className} {...rest}>{children}</code>
+    return <code className={clsx('hljs', className)} {...rest} dangerouslySetInnerHTML={{ __html: html }} />
+  },
   pre({ children }) {
     const child: any = Array.isArray(children) ? children[0] : children
     const cls: string = child?.props?.className ?? ''
@@ -74,15 +80,11 @@ const components: Components = {
   },
 }
 
-/** The languages agents print most; the full set roughly doubles this chunk. Others show plain. */
-const LANGUAGES = { bash, css, diff, go, java, javascript, json, kotlin, markdown, python, rust, shell, sql, swift, typescript, xml, yaml }
-const HIGHLIGHT = [[rehypeHighlight, { detect: false, ignoreMissing: true, languages: LANGUAGES, aliases: { bash: ['sh', 'zsh'], javascript: ['js', 'jsx', 'mjs'], typescript: ['ts', 'tsx'], xml: ['html', 'svg'], yaml: ['yml'], python: ['py'], shell: ['console'] } }]] as any
-
 export const Markdown = memo(function Markdown({ text, className, sans }: { text: string; className?: string; sans?: boolean }) {
   const font = useContext(ReplyFont)
   return (
     <div className={clsx('prose-reply', !sans && font !== 'sans' && `reply-${font}`, className)}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={HIGHLIGHT} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
       </ReactMarkdown>
     </div>
