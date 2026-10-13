@@ -48,11 +48,12 @@ grep -qE 'InyonDevice *: web app started' <<< "$mine" || problems+=("the web app
 # A hub on a private network is plain http, which Android lets an app call only when its manifest
 # says so: ask the running app to fetch from a server on the runner (10.0.2.2 from the emulator).
 if [ -n "$pid" ]; then
-  www=$(mktemp -d)
-  echo ok > "$www/ok"
-  (cd "$www" && python3 -m http.server 4777 --bind 0.0.0.0 > /dev/null 2>&1) &
+  # the server answers with CORS headers, as the hub does; without them the app's cross-origin
+  # fetch fails the same way whether or not the request went out
+  bun -e 'Bun.serve({ port: 4777, hostname: "0.0.0.0", fetch: () => new Response("ok", { headers: { "access-control-allow-origin": "*" } }) })' > /dev/null 2>&1 &
   www_pid=$!
   sleep 2
+  curl -s -o /dev/null -w "the test server answers on the runner: %{http_code}\n" http://127.0.0.1:4777/ok
   here=$(cd "$(dirname "$0")" && pwd)
   adb forward tcp:9333 localabstract:webview_devtools_remote_$pid > /dev/null 2>&1
   wsurl=$(curl -s http://127.0.0.1:9333/json | grep -o '"webSocketDebuggerUrl": *"[^"]*"' | head -1 | sed 's/.*"\(ws[^"]*\)"/\1/')
