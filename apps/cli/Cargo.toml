@@ -1,6 +1,6 @@
 [package]
 name = "inyon-cli"
-version = "0.13.3"
+version = "0.14.0"
 edition = "2021"
 description = "The inyon command: setup, status and services for the Inyon phone app"
 license = "MIT"
