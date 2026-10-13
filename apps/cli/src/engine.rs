@@ -10,7 +10,8 @@ use std::process::{Command, ExitStatus, Stdio};
 use serde_json::Value;
 
 use crate::paths::{env_var, installed_engine, saved_hub, ENGINE};
-use crate::sys::{quiet, Platform};
+use crate::signing;
+use crate::sys::{quiet, Libc, Platform};
 use crate::update::{self, Arch};
 
 /// Where the engine is: INYON_ENGINE, next to this program, or in ~/.inyon/bin.
@@ -57,9 +58,10 @@ pub fn source() -> Source {
 }
 
 /// Fetches the engine for this platform into `to`, checked like an update is (gz first, both
-/// checksums from a release; the hub's own checksum from a hub), with a progress line through `say`.
+/// checksums from a release's signed list; the hub's own checksum from a hub), with a progress
+/// line through `say`.
 pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
-    let names = update::release_names(Platform::current(), Arch::current()).map_err(|e| e.to_string())?;
+    let names = update::release_names(Platform::current(), Arch::current(), Libc::current()).map_err(|e| e.to_string())?;
     if let Some(dir) = to.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -68,12 +70,7 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
     let progress = |l: &str| say(l.trim_start_matches('\r').trim());
     match source() {
         Source::Release(base) => {
-            let url = format!("{base}/SHA256SUMS");
-            let res = crate::http::get(&url).map_err(|e| format!("Couldn't reach {url} ({e})."))?;
-            if !res.ok() {
-                return Err(format!("{url} answered {}.", res.status));
-            }
-            let sums = String::from_utf8_lossy(&res.body).into_owned();
+            let sums = update::release_sums(&base, &signing::signing_key(&base), Platform::current()).map_err(|e| e.to_string())?;
             if update::sum_for(&sums, &names.engine).is_none() {
                 return Err(format!("The newest release has no {} in it. Install with:\n  {}", names.engine, update::reinstall_command(Platform::current())));
             }
@@ -194,7 +191,12 @@ fn answer(v: Option<Value>, status: ExitStatus, stderr: &str, what: &str) -> Res
         Some(v) => Ok(v),
         None => {
             let said = stderr.trim();
-            Err(if said.is_empty() { format!("{ENGINE} {what} ended with {} and said nothing.", status.code().unwrap_or(1)) } else { said.to_string() })
+            let mut m = if said.is_empty() { format!("{ENGINE} {what} ended with {} and said nothing.", status.code().unwrap_or(1)) } else { said.to_string() };
+            // on a fresh Alpine the engine stops before it says anything: its loader wants libstdc++
+            if let Some(hint) = update::alpine_hint(Libc::current(), &update::RealFiles) {
+                m = format!("{m} {hint}");
+            }
+            Err(m)
         }
     }
 }

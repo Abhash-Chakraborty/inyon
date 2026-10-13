@@ -8,6 +8,7 @@ pub mod networks;
 pub mod paths;
 pub mod qr;
 pub mod service;
+pub mod signing;
 pub mod state;
 pub mod sys;
 pub mod ui;

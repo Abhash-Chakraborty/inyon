@@ -1,9 +1,10 @@
 //! `inyon update`: replaces the installed programs with the newest release and restarts each job
 //! they run as (the phone link, the hub connection, the hub). A release is two files, the engine
 //! and this program, checked against the release's SHA256SUMS like get.sh does (the gzipped copy
-//! of each first). Nothing is replaced until both downloads match, and the old copies come back
-//! if the new version doesn't start. A machine added to a hub takes the engine that hub serves,
-//! checked against the sha256 the hub publishes, so it always matches its hub.
+//! of each first); the list itself must carry a signature by Inyon's release key. Nothing is
+//! replaced until both downloads match, and the old copies come back if the new version doesn't
+//! start. A machine added to a hub takes the engine that hub serves, checked against the sha256
+//! the hub publishes, so it always matches its hub.
 
 use std::fmt;
 use std::fs;
@@ -15,7 +16,8 @@ use sha2::{Digest, Sha256};
 use crate::http;
 use crate::paths::{node_dir, ENGINE};
 use crate::service::{Installed, Role};
-use crate::sys::{Platform, Proc};
+use crate::signing;
+use crate::sys::{Libc, Platform, Proc};
 
 pub const RELEASES_REPO: &str = "Abhash-Chakraborty/inyon";
 pub const RELEASES: &str = "https://github.com/Abhash-Chakraborty/inyon/releases/latest/download";
@@ -183,11 +185,13 @@ pub fn release_files(system: &str) -> Names {
 
 /// The release files for this computer. Windows on ARM gets the arm64 command but the x64
 /// engine: Bun has no Windows on ARM build, and the x64 one runs there under Windows' own
-/// emulation.
-pub fn release_names(platform: Platform, arch: Arch) -> Result<Names, Error> {
+/// emulation. Alpine gets the engine built against musl (inyon-engine-linux-x64-musl); the
+/// command is static and has no such variant.
+pub fn release_names(platform: Platform, arch: Arch, libc: Libc) -> Result<Names, Error> {
     let t = target(platform, arch)?;
     let engine_arch = if t.os == "windows" { "x64" } else { t.arch };
-    Ok(Names { cli: release_files(&format!("{}-{}", t.os, t.arch)).cli, engine: release_files(&format!("{}-{}", t.os, engine_arch)).engine })
+    let musl = if t.os == "linux" && libc == Libc::Musl { "-musl" } else { "" };
+    Ok(Names { cli: release_files(&format!("{}-{}", t.os, t.arch)).cli, engine: release_files(&format!("{}-{engine_arch}{musl}", t.os)).engine })
 }
 
 /// The gzipped copy of a release file, under half the size; taken first when SHA256SUMS lists it.
@@ -333,7 +337,33 @@ fn text(url: &str) -> Result<String, Error> {
     if !res.ok() {
         return Err(err(format!("{url} answered {}.", res.status)));
     }
-    Ok(String::from_utf8_lossy(&res.body).trim().to_string())
+    Ok(String::from_utf8_lossy(&res.body).into_owned())
+}
+
+pub const UNSIGNED: &str = "The release's checksum list isn't signed by Inyon's key, so nothing was changed.";
+
+/// The release's SHA256SUMS, once SHA256SUMS.minisig next to it checks out against `key`. A
+/// release without the signature (one from before 0.14, or a copy from somewhere else) is
+/// refused before anything is downloaded.
+pub fn release_sums(base: &str, key: &str, platform: Platform) -> Result<String, Error> {
+    let sums = text(&format!("{base}/SHA256SUMS"))?;
+    let refused = || err(format!("{UNSIGNED} Install the new version with:\n  {}", reinstall_command(platform)));
+    let url = format!("{base}/SHA256SUMS.minisig");
+    let res = http::get(&url).map_err(|e| err(format!("Couldn't reach {url} ({e}).")))?;
+    // a release from before 0.14 has no signature file, and neither has a copy made elsewhere
+    if !res.ok() {
+        return Err(refused());
+    }
+    signing::verify_sums(&sums, &String::from_utf8_lossy(&res.body), key).map_err(|_| refused())?;
+    Ok(sums.trim().to_string())
+}
+
+pub const ALPINE_HINT: &str = "The engine needs libstdc++ and libgcc on Alpine: run `apk add libstdc++ libgcc` and try again.";
+
+/// Why the engine won't start on Alpine: Bun's musl build loads libstdc++, which a fresh Alpine
+/// doesn't have.
+pub fn alpine_hint(libc: Libc, files: &dyn Files) -> Option<&'static str> {
+    (libc == Libc::Musl && !files.exists(Path::new("/usr/lib/libstdc++.so.6"))).then_some(ALPINE_HINT)
 }
 
 /// The file system calls the swap makes, so tests can act like Windows (a running .exe is locked).
@@ -469,6 +499,14 @@ pub trait Host {
     fn download_base(&self) -> String {
         crate::paths::env_var("INYON_DOWNLOAD").unwrap_or_else(|| RELEASES.to_string()).trim_end_matches('/').to_string()
     }
+    /// the key the release's checksum list must be signed with
+    fn signing_key(&self) -> String {
+        signing::signing_key(&self.download_base())
+    }
+    /// the C library this system's engine is built against
+    fn libc(&self) -> Libc {
+        Libc::current()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -496,8 +534,9 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
             if !is_newer(&version, &mine) {
                 return Ok(Outcome { changed: false, message: format!("inyon {mine} is up to date."), version: Some(mine) });
             }
-            let names = release_names(platform, host.arch())?;
-            let sums = text(&format!("{base}/SHA256SUMS"))?;
+            let names = release_names(platform, host.arch(), host.libc())?;
+            // the signature first: a list that isn't Inyon's says nothing about what the release has
+            let sums = release_sums(&base, &host.signing_key(), platform)?;
             // a release from before 0.13 has no engine: there is nothing this program can install
             if sum_for(&sums, &names.engine).is_none() {
                 return Ok(Outcome {
@@ -531,7 +570,8 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
                 });
             }
             put(install, host, files, &swaps, Some(&version)).map_err(|e| match e {
-                Error::Update(m) if m.contains("didn't start") => err(format!("{m} Install the new version with:\n  {}", reinstall_command(platform))),
+                // when the engine wants a library Alpine doesn't have, installing again won't help
+                Error::Update(m) if m.contains("didn't start") && !m.contains(ALPINE_HINT) => err(format!("{m} Install the new version with:\n  {}", reinstall_command(platform))),
                 other => other,
             })
         }
@@ -671,8 +711,9 @@ fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], ve
         }
         return Ok(Outcome { changed: true, version: version.map(String::from), message: format!("{label} is installed and running.") });
     }
+    let hint = alpine_hint(host.libc(), files).map(|h| format!(" {h}")).unwrap_or_default();
     if program_old.is_none() {
-        return Err(err(format!("{label} didn't start.")));
+        return Err(err(format!("{label} didn't start.{hint}")));
     }
     // the program first, so the restart runs the old one; a file that had no old copy just goes
     for (s, old) in done.iter().rev() {
@@ -688,7 +729,7 @@ fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], ve
     for r in &restarted {
         host.restart(*r, &cmd);
     }
-    Err(err(format!("{label} didn't start, so the previous version is running again.")))
+    Err(err(format!("{label} didn't start, so the previous version is running again.{hint}")))
 }
 
 /// What a started copy writes with its pid and version: state.json (the link), node.json, hub.json.
@@ -782,17 +823,30 @@ mod tests {
 
     #[test]
     fn the_release_files_for_each_system() {
-        assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().cli, "inyon-linux-arm64");
-        assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().engine, "inyon-engine-linux-arm64");
-        assert_eq!(release_names(Platform::Darwin, Arch::X64).unwrap().cli, "inyon-darwin-x64");
+        let names = |p, a| release_names(p, a, Libc::Glibc).unwrap();
+        assert_eq!(names(Platform::Linux, Arch::Arm64).cli, "inyon-linux-arm64");
+        assert_eq!(names(Platform::Linux, Arch::Arm64).engine, "inyon-engine-linux-arm64");
+        assert_eq!(names(Platform::Darwin, Arch::X64).cli, "inyon-darwin-x64");
         // Windows on ARM gets its own command but the x64 engine, since Bun has no arm64 build for it
-        let win_arm = release_names(Platform::Windows, Arch::Arm64).unwrap();
+        let win_arm = names(Platform::Windows, Arch::Arm64);
         assert_eq!(win_arm.cli, "inyon-windows-arm64.exe");
         assert_eq!(win_arm.engine, "inyon-engine-windows-x64.exe");
-        assert_eq!(release_names(Platform::Windows, Arch::X64).unwrap().engine, "inyon-engine-windows-x64.exe");
+        assert_eq!(names(Platform::Windows, Arch::X64).engine, "inyon-engine-windows-x64.exe");
         assert_eq!(target(Platform::Windows, Arch::Arm64).unwrap(), Target { os: "windows", arch: "arm64" });
-        assert!(release_names(Platform::Other, Arch::X64).is_err());
+        assert!(release_names(Platform::Other, Arch::X64, Libc::Glibc).is_err());
         assert_eq!(compressed("inyon-linux-x64"), "inyon-linux-x64.gz");
+    }
+
+    #[test]
+    fn alpine_gets_the_musl_engine_and_the_same_command() {
+        let alpine = release_names(Platform::Linux, Arch::X64, Libc::Musl).unwrap();
+        assert_eq!(alpine, Names { cli: "inyon-linux-x64".into(), engine: "inyon-engine-linux-x64-musl".into() });
+        assert_eq!(release_names(Platform::Linux, Arch::Arm64, Libc::Musl).unwrap().engine, "inyon-engine-linux-arm64-musl");
+        // musl only means something on Linux
+        assert_eq!(release_names(Platform::Darwin, Arch::Arm64, Libc::Musl).unwrap().engine, "inyon-engine-darwin-arm64");
+        assert_eq!(release_names(Platform::Windows, Arch::X64, Libc::Musl).unwrap().engine, "inyon-engine-windows-x64.exe");
+        // the generic helper names a system's files as given; the protocol package does the same
+        assert_eq!(release_files("linux-x64-musl").engine, "inyon-engine-linux-x64-musl");
     }
 
     #[test]

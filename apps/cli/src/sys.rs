@@ -37,6 +37,40 @@ impl Platform {
     }
 }
 
+/// The C library a Linux system's programs are built against. The engine comes in a glibc and a
+/// musl build (Alpine); the command is static and the same everywhere.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Libc {
+    Glibc,
+    Musl,
+}
+
+impl Libc {
+    /// Alpine says so in /etc/alpine-release; otherwise ldd names its C library, and musl's
+    /// dynamic loader has a name of its own. Anything else, and any other OS, counts as glibc.
+    pub fn current() -> Libc {
+        if cfg!(target_os = "linux") && is_musl() {
+            Libc::Musl
+        } else {
+            Libc::Glibc
+        }
+    }
+}
+
+fn is_musl() -> bool {
+    if Path::new("/etc/alpine-release").exists() {
+        return true;
+    }
+    // musl's ldd says so on stderr and exits 1; run keeps both
+    if run(&["ldd", "--version"]).out.contains("musl") {
+        return true;
+    }
+    fs::read_dir("/lib").into_iter().flatten().flatten().any(|e| {
+        let name = e.file_name().to_string_lossy().into_owned();
+        name.starts_with("ld-musl-") && name.ends_with(".so.1")
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Signal {
     Term,

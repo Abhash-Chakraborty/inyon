@@ -13,13 +13,34 @@ use std::sync::{Arc, Mutex};
 
 use common::{lock, Home};
 use inyon_cli::service::{Installed, Role};
-use inyon_cli::sys::{Platform, RealProc};
+use inyon_cli::signing;
+use inyon_cli::sys::{Libc, Platform, RealProc};
 use inyon_cli::update::{
     self, cleanup_old, find_install, latest_version, reinstall_command, release_names, swap_back, swap_in, wait_started, Arch, Error, Files, Host, Kind, RealFiles, WaitOptions,
 };
 
 fn sha(b: &[u8]) -> String {
     update::sha256(b)
+}
+
+/// The key the mock releases are signed with (tests/keys, no password), as its .key file text.
+fn test_key() -> String {
+    include_str!("keys/test.key").to_string()
+}
+
+fn test_pub() -> String {
+    signing::key_line(include_str!("keys/test.pub")).unwrap()
+}
+
+/// A key that isn't the test key, in the same form.
+fn other_key() -> String {
+    minisign::KeyPair::generate_unencrypted_keypair().unwrap().sk.to_box(None).unwrap().into_string()
+}
+
+/// What `minisign -S` writes: the hashed kind of signature, which is the only kind accepted.
+fn sign(key_text: &str, data: &[u8]) -> String {
+    let sk = minisign::SecretKeyBox::from_string(key_text).unwrap().into_unencrypted_secret_key().unwrap();
+    minisign::sign(None, &sk, data, Some("file:SHA256SUMS\thashed"), None).unwrap().into_string()
 }
 
 fn gzip(b: &[u8]) -> Vec<u8> {
@@ -29,7 +50,9 @@ fn gzip(b: &[u8]) -> Vec<u8> {
 }
 
 /// A release: each file is attached plain and gzipped too, and SHA256SUMS lists both (or whatever
-/// `sums` says). Files in `missing` are listed but not there to download.
+/// `sums` says). Files in `missing` are listed but not there to download. SHA256SUMS.minisig is
+/// signed with `signer` (the test key unless a test says otherwise; none means no signature file)
+/// over the list served, or over `signed_text` when a test wants the signature not to match.
 #[derive(Clone)]
 struct Release {
     version: String,
@@ -37,9 +60,15 @@ struct Release {
     gz: bool,
     sums: String,
     missing: Vec<String>,
+    signer: Option<String>,
+    signed_text: Option<String>,
 }
 
 impl Release {
+    fn signature(&self) -> Option<Vec<u8>> {
+        let over = self.signed_text.clone().unwrap_or_else(|| self.sums());
+        self.signer.as_deref().map(|k| sign(k, over.as_bytes()).into_bytes())
+    }
     fn assets(&self) -> BTreeMap<String, Vec<u8>> {
         let mut a = BTreeMap::new();
         for (name, body) in &self.files {
@@ -85,7 +114,15 @@ impl Server {
     fn start() -> Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let release = Arc::new(Mutex::new(Release { version: "9.9.9".into(), files: BTreeMap::new(), gz: true, sums: String::new(), missing: Vec::new() }));
+        let release = Arc::new(Mutex::new(Release {
+            version: "9.9.9".into(),
+            files: BTreeMap::new(),
+            gz: true,
+            sums: String::new(),
+            missing: Vec::new(),
+            signer: Some(test_key()),
+            signed_text: None,
+        }));
         let hub = Arc::new(Mutex::new(HubBuilds {
             engines: [("linux-x64", "new linux build"), ("windows-x64", "new exe")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             commands: [("linux-x64", "new linux cli"), ("windows-x64", "new cli exe"), ("windows-arm64", "new arm cli exe")]
@@ -120,6 +157,11 @@ impl Server {
                         ("302 Found", format!("Location: https://github.com/x/y/releases/tag/v{}\r\n", rel.version), Vec::new())
                     } else if path == "/releases/latest/download/SHA256SUMS" {
                         ("200 OK", String::new(), rel.sums().into_bytes())
+                    } else if path == "/releases/latest/download/SHA256SUMS.minisig" {
+                        match rel.signature() {
+                            Some(sig) => ("200 OK", String::new(), sig),
+                            None => ("404 Not Found", String::new(), b"not found".to_vec()),
+                        }
                     } else if let Some(asset) = path.strip_prefix("/releases/latest/download/") {
                         match (!rel.missing.iter().any(|m| m == asset)).then(|| rel.assets().get(asset).cloned()).flatten() {
                             Some(b) => ("200 OK", String::new(), b),
@@ -162,7 +204,11 @@ impl Server {
     }
 
     fn downloads(&self) -> Vec<String> {
-        self.requests().iter().filter(|r| r.starts_with("/releases/latest/download/") && !r.ends_with("SHA256SUMS")).map(|r| r.rsplit('/').next().unwrap().to_string()).collect()
+        self.requests()
+            .iter()
+            .filter(|r| r.starts_with("/releases/latest/download/") && !r.ends_with("SHA256SUMS") && !r.ends_with("SHA256SUMS.minisig"))
+            .map(|r| r.rsplit('/').next().unwrap().to_string())
+            .collect()
     }
 }
 
@@ -175,6 +221,7 @@ struct FakeHost {
     started_ok: Cell<bool>,
     platform: Platform,
     arch: Arch,
+    libc: Libc,
 }
 
 impl FakeHost {
@@ -188,6 +235,7 @@ impl FakeHost {
             started_ok: Cell::new(true),
             platform: Platform::current(),
             arch: Arch::current(),
+            libc: Libc::Glibc,
         }
     }
     fn restarted_roles(&self) -> Vec<Role> {
@@ -220,6 +268,12 @@ impl Host for FakeHost {
     fn download_base(&self) -> String {
         self.base.clone()
     }
+    fn signing_key(&self) -> String {
+        test_pub()
+    }
+    fn libc(&self) -> Libc {
+        self.libc
+    }
 }
 
 struct Fixture {
@@ -233,7 +287,8 @@ impl Fixture {
     fn new() -> Fixture {
         let home = Home::new(&[]);
         let server = Server::start();
-        let names = release_names(Platform::current(), Arch::current()).unwrap();
+        // the fake host says glibc whatever this machine runs, so the release carries those names
+        let names = release_names(Platform::current(), Arch::current(), Libc::Glibc).unwrap();
         fs::create_dir_all(home.dir.join(".inyon/bin")).unwrap();
         fs::write(home.dir.join(".inyon/bin/inyon"), "old build").unwrap();
         let (cli, engine) = (names.cli.clone(), names.engine.clone());
@@ -372,6 +427,128 @@ fn a_file_missing_from_sha256sums_is_refused_too() {
     assert!(err.contains("doesn't list"), "{err}");
     assert_eq!(f.read(&f.installed()), "old build");
     assert_eq!(f.bin_names(), vec!["inyon"]);
+}
+
+#[test]
+fn a_checksum_list_that_is_unsigned_signed_by_another_key_or_changed_after_signing_is_refused() {
+    let _g = lock();
+    let f = Fixture::new();
+    let host = FakeHost::new(&f.server, &[Role::Link]);
+    let refused = |err: String| {
+        assert!(err.starts_with("The release's checksum list isn't signed by Inyon's key, so nothing was changed."), "{err}");
+        assert!(err.ends_with(&format!("\n  {}", reinstall_command(Platform::current()))), "{err}");
+        assert_eq!(f.read(&f.installed()), "old build");
+        assert_eq!(f.bin_names(), vec!["inyon"]);
+        assert!(f.server.downloads().is_empty());
+        assert!(host.restarts.borrow().is_empty());
+    };
+    // no SHA256SUMS.minisig at all: a release from before 0.14, or a copy made elsewhere
+    f.server.release(|r| r.signer = None);
+    refused(f.run(&host).unwrap_err().to_string());
+    // signed, but not with Inyon's key
+    f.server.release(|r| r.signer = Some(other_key()));
+    refused(f.run(&host).unwrap_err().to_string());
+    // Inyon's signature over the list as it was, and a list changed since
+    let (cli, engine) = (f.cli_name.clone(), f.engine_name.clone());
+    f.server.release(|r| {
+        r.signer = Some(test_key());
+        let as_signed = r.sums();
+        r.signed_text = Some(as_signed);
+        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"tampered"), sha(b"cli build"));
+    });
+    refused(f.run(&host).unwrap_err().to_string());
+    // the list as signed: the update goes through
+    f.server.release(|r| {
+        r.signed_text = None;
+        r.sums.clear();
+    });
+    assert!(f.run(&host).unwrap().changed);
+    assert_eq!(f.read(&f.installed()), "cli build");
+    assert_eq!(f.read(&f.engine()), "engine build");
+}
+
+#[test]
+fn the_signing_key_from_the_environment_only_counts_for_releases_from_elsewhere() {
+    let _g = lock();
+    let _home = Home::new(&[]);
+    let mirror = "http://127.0.0.1:1/releases/latest/download";
+    assert_eq!(signing::signing_key(update::RELEASES), signing::RELEASE_KEY);
+    assert_eq!(signing::signing_key(mirror), signing::RELEASE_KEY);
+    // the whole .pub file or its base64 line alone
+    std::env::set_var("INYON_SIGNING_KEY", include_str!("keys/test.pub"));
+    assert_eq!(signing::signing_key(mirror), test_pub());
+    std::env::set_var("INYON_SIGNING_KEY", test_pub());
+    assert_eq!(signing::signing_key(mirror), test_pub());
+    // never for the real releases, so a variable alone can't point an install at another key
+    assert_eq!(signing::signing_key(update::RELEASES), signing::RELEASE_KEY);
+    assert_eq!(signing::signing_key(&format!("{}/", update::RELEASES)), signing::RELEASE_KEY);
+    std::env::remove_var("INYON_SIGNING_KEY");
+}
+
+#[test]
+fn alpine_takes_the_musl_engine_and_the_same_command() {
+    let _g = lock();
+    let f = Fixture::new();
+    f.server.release(|r| {
+        r.files.insert("inyon-linux-x64".into(), "cli build".into());
+        r.files.insert("inyon-engine-linux-x64-musl".into(), "musl engine".into());
+    });
+    let mut alpine = FakeHost::new(&f.server, &[Role::Link]);
+    alpine.platform = Platform::Linux;
+    alpine.arch = Arch::X64;
+    alpine.libc = Libc::Musl;
+    assert!(f.run(&alpine).unwrap().changed);
+    assert_eq!(f.read(&f.engine()), "musl engine");
+    assert_eq!(f.read(&f.installed()), "cli build");
+    assert_eq!(f.server.downloads(), vec!["inyon-engine-linux-x64-musl.gz", "inyon-linux-x64.gz"]);
+}
+
+/// This machine's files, with Alpine's libstdc++ there or not as the test says.
+struct Libstdcpp(bool);
+
+impl Files for Libstdcpp {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        RealFiles.rename(from, to)
+    }
+    fn remove(&self, f: &Path) -> std::io::Result<()> {
+        RealFiles.remove(f)
+    }
+    fn exists(&self, f: &Path) -> bool {
+        if f == Path::new("/usr/lib/libstdc++.so.6") {
+            return self.0;
+        }
+        f.exists()
+    }
+    fn list(&self, dir: &Path) -> std::io::Result<Vec<String>> {
+        RealFiles.list(dir)
+    }
+}
+
+#[test]
+fn on_alpine_without_libstdcpp_an_engine_that_does_not_start_says_what_to_install() {
+    let _g = lock();
+    let f = Fixture::new();
+    let musl = release_names(Platform::current(), Arch::current(), Libc::Musl).unwrap();
+    f.server.release(|r| {
+        r.files.insert(musl.engine.clone(), "engine build".into());
+    });
+    let mut alpine = FakeHost::new(&f.server, &[Role::Link]);
+    alpine.libc = Libc::Musl;
+    alpine.started_ok.set(false);
+    let install = find_install(&f.installed(), None);
+    let err = update::update(&install, &alpine, &Libstdcpp(false)).unwrap_err().to_string();
+    assert!(err.contains("the previous version is running again"), "{err}");
+    assert!(err.ends_with(" The engine needs libstdc++ and libgcc on Alpine: run `apk add libstdc++ libgcc` and try again."), "{err}");
+    // installing again wouldn't help, so that line isn't offered
+    assert!(!err.contains("Install the new version"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
+    // with the library there, it's whatever else went wrong
+    let err = update::update(&install, &alpine, &Libstdcpp(true)).unwrap_err().to_string();
+    assert!(!err.contains("libstdc++"), "{err}");
+    assert!(err.ends_with(&reinstall_command(Platform::current())), "{err}");
+    // and never on glibc
+    assert_eq!(update::alpine_hint(Libc::Glibc, &Libstdcpp(false)), None);
+    assert_eq!(update::alpine_hint(Libc::Musl, &Libstdcpp(false)), Some(update::ALPINE_HINT));
 }
 
 #[test]
@@ -541,9 +718,14 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     let said = RefCell::new(Vec::new());
     let say = |l: &str| said.borrow_mut().push(l.to_string());
 
-    // a release (INYON_DOWNLOAD stands in for GitHub): checked against its SHA256SUMS
+    // a release (INYON_DOWNLOAD stands in for GitHub): checked against its signed SHA256SUMS,
+    // which the test key signs, so without INYON_SIGNING_KEY naming it the list is refused
     std::env::set_var("INYON_DOWNLOAD", format!("{}/releases/latest/download", f.server.base));
     assert_eq!(source(), Source::Release(format!("{}/releases/latest/download", f.server.base)));
+    let err = download_to(&to, &say).unwrap_err();
+    assert!(err.starts_with(update::UNSIGNED), "{err}");
+    assert!(!to.exists());
+    std::env::set_var("INYON_SIGNING_KEY", include_str!("keys/test.pub"));
     download_to(&to, &say).unwrap();
     assert_eq!(f.read(&to), "engine build");
     assert!(said.borrow()[0].starts_with("Getting the Inyon engine ("), "{:?}", said.borrow());
@@ -571,6 +753,7 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     let err = download_to(&to, &say).unwrap_err();
     assert!(err.contains("Update the hub first"), "{err}");
     std::env::remove_var("INYON_HUB");
+    std::env::remove_var("INYON_SIGNING_KEY");
 }
 
 #[test]
