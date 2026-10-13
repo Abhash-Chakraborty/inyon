@@ -224,20 +224,22 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   }
   more.current = loadMore
 
-  const retry = async (id: string, text: string) => {
+  /** `auto`: the resend when the connection is back, which is a retry already: one go, and if it fails too the message waits for a tap */
+  const retry = async (id: string, text: string, auto = false) => {
     patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sending', at: Date.now(), retryable: false } : p)) }))
     try {
-      await withRetries(() => api.send(host, pane, text, id))
+      await (auto ? api.send(host, pane, text, id) : withRetries(() => api.send(host, pane, text, id)))
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sent' } : p)) }))
     } catch (e) {
-      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message, retryable: isTransient(e) } : p)) }))
+      patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'failed', error: (e as Error).message, retryable: !auto && isTransient(e) } : p)) }))
     }
   }
 
-  // messages that failed only because the connection dropped go out by themselves once it's back
+  // messages that failed only because the connection dropped go out by themselves once it's back,
+  // once: a failure that only looks like a dropped connection would otherwise resend on every reconnect
   useEffect(() => {
     if (!connected) return
-    for (const p of useStore.getState().chats[key]?.pending ?? []) if (p.status === 'failed' && p.retryable && !p.remote) void retry(p.id, p.text)
+    for (const p of useStore.getState().chats[key]?.pending ?? []) if (p.status === 'failed' && p.retryable && !p.remote) void retry(p.id, p.text, true)
   }, [connected, key])
 
   const rewind = useCallback(async (text: string) => {

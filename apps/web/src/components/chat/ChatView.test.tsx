@@ -92,6 +92,25 @@ describe('ChatView', () => {
     send.mockRestore()
   })
 
+  test('a message whose resend fails again waits for a tap instead of going round on every reconnect', async () => {
+    // a request the browser refuses outright looks like a dropped connection (a TypeError) too
+    useStore.setState({ connected: false, hosts: [host('box')] })
+    const send = spyOn(api, 'send').mockRejectedValue(new TypeError('Failed to fetch'))
+    render(view())
+    load(longConversation(1))
+    act(() => patchChat('box:%1', () => ({ pending: [{ id: 'lost', text: 'run the tests', status: 'failed', at: Date.now(), error: 'Network error', retryable: true }] })))
+    for (let i = 0; i < 3; i++) {
+      act(() => useStore.setState({ connected: true }))
+      await flush()
+      act(() => useStore.setState({ connected: false }))
+      await flush()
+    }
+    expect(send).toHaveBeenCalledTimes(1)
+    const p = useStore.getState().chats['box:%1'].pending[0]!
+    expect(p).toMatchObject({ status: 'failed', error: 'Failed to fetch', retryable: false })
+    send.mockRestore()
+  })
+
   test('renders a long conversation without throwing', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     render(view())
