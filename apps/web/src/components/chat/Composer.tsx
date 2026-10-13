@@ -622,7 +622,8 @@ export function Composer({
           aria-label={`Message ${agentName}`}
           className={clsx('block max-h-[40vh] w-full resize-none bg-transparent px-4 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3', shellMode ? 'pt-1' : 'pt-3')}
         />
-        <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+        {/* a container: next to the side panel the box is narrower than the screen, and its labels fold to icons by its own width */}
+        <div className="@container flex items-center gap-0.5 px-1.5 pb-1.5">
           <ToolbarButton label="Attach files" onClick={() => fileInput.current?.click()}>
             <Paperclip className="size-[17px]" />
           </ToolbarButton>

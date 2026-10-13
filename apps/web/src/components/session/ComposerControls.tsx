@@ -94,7 +94,7 @@ export function ComposerControls({ s }: { s: SessionModel }) {
           trigger={({ toggle, ref, open }) => (
             <Chip innerRef={ref} onClick={toggle} open={open} title={`${agent === 'opencode' ? 'Agent mode' : 'Permission mode'}: ${modeLabel(mode, agent)}`}>
               <Shield className="size-3.5 shrink-0" />
-              <span className="hidden truncate sm:inline">{modeLabel(mode, agent)}</span>
+              <span className="hidden truncate @[460px]:inline">{modeLabel(mode, agent)}</span>
             </Chip>
           )}
         />
@@ -102,7 +102,7 @@ export function ComposerControls({ s }: { s: SessionModel }) {
       {def.set.goal && (
         <Chip tone={goalOn ? 'goal' : undefined} onClick={() => setGoalOpen(true)} title={goalOn ? `Goal: ${goal!.condition}` : 'Set a goal'}>
           <Target className="size-3.5 shrink-0" />
-          {goalOn ? <span className="max-w-[140px] truncate">{goal!.condition}</span> : <span className="hidden sm:inline">Goal</span>}
+          {goalOn ? <span className="max-w-[140px] truncate">{goal!.condition}</span> : <span className="hidden @[460px]:inline">Goal</span>}
         </Chip>
       )}
       <GoalSheet key={String(goalOpen)} s={s} open={goalOpen} onClose={() => setGoalOpen(false)} />

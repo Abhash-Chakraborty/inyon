@@ -232,9 +232,11 @@ export function AgentBadges({ host, size = 18 }: { host: HostState; size?: numbe
 }
 
 export function MachinesTable({ hosts }: { hosts: HostState[] }) {
+  // the table needs about 560px; the list takes over whenever the column is narrower than that
+  // (a phone, or a tablet held upright with the sidebar open), so nothing scrolls sideways
   return (
-    <>
-    <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card sm:hidden">
+    <div className="@container">
+    <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card @[600px]:hidden">
       {hosts.map((h) => {
         const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
         return (
@@ -254,7 +256,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
         )
       })}
     </div>
-    <div className="hidden overflow-hidden rounded-3xl border border-line bg-elev shadow-card sm:block">
+    <div className="hidden overflow-hidden rounded-3xl border border-line bg-elev shadow-card @[600px]:block">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] border-collapse text-[13px]">
           <thead>
@@ -297,7 +299,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
         </table>
       </div>
     </div>
-    </>
+    </div>
   )
 }
 
