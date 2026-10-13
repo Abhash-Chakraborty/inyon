@@ -16,15 +16,35 @@ $exe = Join-Path $dir 'inyon.exe'
 $tmp = "$exe.download"
 $sums = "$exe.sums"
 
-Write-Host "Downloading $name..."
-Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $tmp
 Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS" -OutFile $sums
-$want = (Get-Content $sums | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($name))$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1
+$lines = Get-Content $sums
 Remove-Item -Force $sums
-if (-not $want -or (Get-FileHash -Algorithm SHA256 $tmp).Hash.ToLower() -ne $want) {
-  Remove-Item -Force $tmp
+function Sum-For($file) { ($lines | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($file))$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1 }
+function Sum-Of($file) { (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower() }
+function Mismatch {
+  Remove-Item -Force $tmp, "$tmp.gz" -ErrorAction SilentlyContinue
   throw "The download didn't match the release's checksum. Run the command again."
 }
+$want = Sum-For $name
+$wantGz = Sum-For "$name.gz"
+# the gzipped copy is under half the size; releases before 0.11 have none
+if ($wantGz) {
+  Write-Host "Downloading $name.gz..."
+  Invoke-WebRequest -UseBasicParsing -Uri "$base/$name.gz" -OutFile "$tmp.gz"
+  if ((Sum-Of "$tmp.gz") -ne $wantGz) { Mismatch }
+  # GZipStream is in System.dll, so this works on PowerShell 5.1 without anything else
+  $src = [IO.File]::OpenRead("$tmp.gz")
+  try {
+    $gz = New-Object IO.Compression.GZipStream($src, [IO.Compression.CompressionMode]::Decompress)
+    $dst = [IO.File]::Create($tmp)
+    try { $gz.CopyTo($dst) } finally { $dst.Dispose(); $gz.Dispose() }
+  } finally { $src.Dispose() }
+  Remove-Item -Force "$tmp.gz"
+} else {
+  Write-Host "Downloading $name..."
+  Invoke-WebRequest -UseBasicParsing -Uri "$base/$name" -OutFile $tmp
+}
+if (-not $want -or (Sum-Of $tmp) -ne $want) { Mismatch }
 
 # a running copy can't be replaced, but it can be renamed; setup restarts the background one
 if (Test-Path $exe) {

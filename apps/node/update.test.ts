@@ -5,8 +5,8 @@ import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import {
-  binaryName, cleanupOld, compareVersions, files, findInstall, isNewer, latestVersion, staleLink, sumFor, swapBack, swapIn,
-  update, UpdateError, waitStarted, type Deps,
+  binaryName, cleanupOld, compareVersions, files, findInstall, isNewer, latestVersion, reinstallCommand, releaseNames, staleLink, sumFor,
+  swapBack, swapIn, update, UpdateError, waitStarted, type Deps,
 } from './update.ts'
 
 // Nothing real is touched: home is a throwaway folder, a local server stands in for the GitHub releases
@@ -15,7 +15,21 @@ afterAll(() => mock.restore())
 
 const sha = (b: string | Uint8Array) => crypto.createHash('sha256').update(b).digest('hex')
 const NAME = binaryName()
-let release = { version: '9.9.9', body: 'new build', sums: '' }
+const ENGINE_NAME = releaseNames().engine
+/**
+ * A release: each file is attached plain and, since 0.11, gzipped too, and SHA256SUMS lists both
+ * (or whatever `sums` says). Files in `missing` are listed but not there to download.
+ */
+let release = { version: '9.9.9', files: {} as Record<string, string>, gz: true, sums: '', missing: [] as string[] }
+const assets = () => {
+  const a = new Map<string, Uint8Array>()
+  for (const [name, body] of Object.entries(release.files)) {
+    a.set(name, new TextEncoder().encode(body))
+    if (release.gz) a.set(`${name}.gz`, zlib.gzipSync(body))
+  }
+  return a
+}
+const sumsOf = () => release.sums || [...assets()].map(([name, body]) => `${sha(body)}  ${name}\n`).join('')
 let hub = { builds: { 'linux-x64': 'new linux build', 'windows-x64': 'new exe' } as Record<string, string>, sumOverride: '' }
 let requests: string[] = []
 const server = Bun.serve({
@@ -25,8 +39,10 @@ const server = Bun.serve({
     const u = new URL(req.url)
     requests.push(u.pathname + u.search)
     if (u.pathname === '/releases/latest') return new Response(null, { status: 302, headers: { location: `https://github.com/x/y/releases/tag/v${release.version}` } })
-    if (u.pathname === `/releases/latest/download/${NAME}`) return new Response(release.body)
-    if (u.pathname === '/releases/latest/download/SHA256SUMS') return new Response(release.sums || `${sha(release.body)}  ${NAME}\n${sha('other')}  inyon-other\n`)
+    if (u.pathname === '/releases/latest/download/SHA256SUMS') return new Response(sumsOf())
+    const asset = u.pathname.match(/^\/releases\/latest\/download\/(.+)$/)?.[1]
+    const body = asset && !release.missing.includes(asset) ? assets().get(asset) : undefined
+    if (body) return new Response(new Uint8Array(body))
     const build = hub.builds[`${u.searchParams.get('os')}-${u.searchParams.get('arch')}`]
     if (u.pathname === '/node/inyon.sha256' && build) return new Response(hub.sumOverride || sha(build))
     if (u.pathname === '/node/inyon.gz' && build) return new Response(zlib.gzipSync(build))
@@ -51,6 +67,8 @@ const deps = (more: Partial<Deps> = {}): Deps => ({
 })
 const binDir = () => path.join(home, '.inyon', 'bin')
 const installed = () => path.join(binDir(), process.platform === 'win32' ? 'inyon.exe' : 'inyon')
+const engine = () => path.join(binDir(), process.platform === 'win32' ? 'inyon-engine.exe' : 'inyon-engine')
+const downloads = () => requests.filter((r) => r.startsWith('/releases/latest/download/') && !r.endsWith('SHA256SUMS')).map((r) => r.split('/').pop())
 
 beforeAll(() => {
   process.env.INYON_DOWNLOAD = `${BASE}/releases/latest/download`
@@ -63,7 +81,7 @@ beforeEach(() => {
   spyOn(os, 'homedir').mockReturnValue(home)
   mkdirSync(binDir(), { recursive: true })
   writeFileSync(installed(), 'old build')
-  release = { version: '9.9.9', body: 'new build', sums: '' }
+  release = { version: '9.9.9', files: { [NAME]: 'new build', 'inyon-other': 'other' }, gz: true, sums: '', missing: [] }
   hub = { builds: { 'linux-x64': 'new linux build', 'windows-x64': 'new exe' }, sumOverride: '' }
   requests = []
   restarts = []
@@ -117,9 +135,19 @@ test('a release install downloads the newer build, checks it, swaps it in and re
   expect(waited).toEqual(['link', 'hub'])
   // the old copy is gone once the new one runs, and no download is left behind
   expect(readdirSync(binDir())).toEqual([path.basename(installed())])
+  // the gzipped copy, since the release lists one
+  expect(downloads()).toEqual([`${NAME}.gz`])
+})
+
+test('a release without gzipped files (before 0.11) is downloaded plain', async () => {
+  release.gz = false
+  expect(await update(findInstall([installed()], undefined), deps())).toMatchObject({ changed: true })
+  expect(readFileSync(installed(), 'utf8')).toBe('new build')
+  expect(downloads()).toEqual([NAME])
 })
 
 test("a download that doesn't match SHA256SUMS changes nothing", async () => {
+  release.gz = false
   release.sums = `${sha('something else')}  ${NAME}\n`
   await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow("didn't match the release's checksum")
   expect(readFileSync(installed(), 'utf8')).toBe('old build')
@@ -127,10 +155,78 @@ test("a download that doesn't match SHA256SUMS changes nothing", async () => {
   expect(restarts).toEqual([])
 })
 
+test('the gzipped file is checked before it is unpacked, and the unpacked file after', async () => {
+  const plain = sha('new build')
+  const gz = sha(zlib.gzipSync('new build'))
+  // a .gz that isn't the one listed
+  release.sums = `${plain}  ${NAME}\n${sha('tampered')}  ${NAME}.gz\n`
+  await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow("didn't match the release's checksum")
+  expect(readFileSync(installed(), 'utf8')).toBe('old build')
+  // the right .gz, but it unpacks to something other than the plain file listed
+  release.sums = `${sha('tampered')}  ${NAME}\n${gz}  ${NAME}.gz\n`
+  await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow("didn't match the release's checksum")
+  expect(readFileSync(installed(), 'utf8')).toBe('old build')
+  expect(downloads()).toEqual([`${NAME}.gz`, `${NAME}.gz`])
+  expect(readdirSync(binDir())).toEqual([path.basename(installed())])
+})
+
 test('a build missing from SHA256SUMS is refused too', async () => {
-  release.sums = `${sha(release.body)}  inyon-some-other-build\n`
+  release.sums = `${sha('new build')}  inyon-some-other-build\n`
   await expect(update(findInstall([installed()], undefined), deps())).rejects.toThrow(UpdateError)
   expect(readFileSync(installed(), 'utf8')).toBe('old build')
+})
+
+test('a release that lists an engine (0.13 and on) installs it next to inyon, then the new inyon', async () => {
+  release.files[ENGINE_NAME] = 'engine build'
+  release.files[NAME] = 'cli build'
+  const r = await update(findInstall([installed()], undefined), deps({ roles: () => ['link'] }))
+  expect(r).toMatchObject({ changed: true, version: '9.9.9' })
+  expect(readFileSync(installed(), 'utf8')).toBe('cli build')
+  expect(readFileSync(engine(), 'utf8')).toBe('engine build')
+  expect(downloads()).toEqual([`${ENGINE_NAME}.gz`, `${NAME}.gz`])
+  expect(restarts).toEqual([['link', [installed()]]])
+  expect(readdirSync(binDir()).sort()).toEqual([path.basename(installed()), path.basename(engine())])
+})
+
+test('an engine release where either file is bad changes nothing and says how to install instead', async () => {
+  release.files[ENGINE_NAME] = 'engine build'
+  release.missing = [`${NAME}.gz`]
+  let err = await update(findInstall([installed()], undefined), deps()).catch((e) => e as Error)
+  expect(err).toBeInstanceOf(UpdateError)
+  expect(err.message).toEndWith('\n  curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh')
+  expect(err.message).toContain("Couldn't download")
+  expect(readFileSync(installed(), 'utf8')).toBe('old build')
+  expect(readdirSync(binDir())).toEqual([path.basename(installed())])
+  expect(restarts).toEqual([])
+
+  // the engine doesn't match: nothing is downloaded after it
+  release.missing = []
+  release.sums = `${sha('wrong')}  ${ENGINE_NAME}\n${sha('new build')}  ${NAME}\n`
+  requests = []
+  err = await update(findInstall([installed()], undefined), deps()).catch((e) => e as Error)
+  expect(err.message).toContain("didn't match the release's checksum")
+  expect(downloads()).toEqual([ENGINE_NAME])
+  expect(readdirSync(binDir())).toEqual([path.basename(installed())])
+
+  // on Windows the line is the PowerShell one
+  release.sums = ''
+  release.missing = ['inyon-windows-x64.exe.gz']
+  release.files = { 'inyon-windows-x64.exe': 'cli', 'inyon-engine-windows-x64.exe': 'engine' }
+  err = await update(findInstall([installed()], undefined), deps({ platform: 'win32', arch: 'x64' })).catch((e) => e as Error)
+  expect(err.message).toEndWith('\n  irm https://inyon.abhashchakraborty.tech/get.ps1 | iex')
+  expect(reinstallCommand('darwin')).toBe('curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh')
+})
+
+test("an engine release that doesn't start goes back to the old inyon alone, and says how to install", async () => {
+  release.files[ENGINE_NAME] = 'engine build'
+  startedOk = false
+  const err = await update(findInstall([installed()], undefined), deps({ roles: () => ['link'] })).catch((e) => e as Error)
+  expect(err.message).toContain('the previous version is running again')
+  expect(err.message).toEndWith(reinstallCommand())
+  expect(readFileSync(installed(), 'utf8')).toBe('old build')
+  expect(restarts.map(([r]) => r)).toEqual(['link', 'link'])
+  // the engine went too, since nothing of the old version starts it
+  expect(existsSync(engine())).toBe(false)
 })
 
 test('already on the newest version: says so and downloads nothing', async () => {

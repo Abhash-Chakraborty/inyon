@@ -39,6 +39,11 @@ jobs:
           out="$RUNNER_TEMP/dist"
           bun apps/node/build.ts "$out"
           "$out/inyon-linux-x64" --version
+          # each inyon-* file gzipped too, under half the size, which the installers and the
+          # updater take first; the plain files stay for installs from before 0.11, and the
+          # tether-node-* copies stay as they are
+          for f in "$out"/inyon-*; do gzip -9 -k "$f"; done
+          (cd "$out" && sha256sum inyon-*.gz >> SHA256SUMS)
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
           cp apps/node/get.sh apps/node/get.ps1 "$out/"
           # the web app for GitHub Pages, listed in SHA256SUMS like the rest

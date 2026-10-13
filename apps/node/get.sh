@@ -34,15 +34,28 @@ name="inyon-$os-$arch"
 dir="$HOME/.inyon/bin"
 mkdir -p "$dir"
 tmp="$dir/inyon.download"
-echo "Downloading $name…"
-curl -fL --progress-bar "$BASE/$name" -o "$tmp"
-want="$(curl -fsSL "$BASE/SHA256SUMS" | awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }')"
-have="$( (sha256sum "$tmp" 2>/dev/null || shasum -a 256 "$tmp") | cut -d' ' -f1)"
-if [ -z "$want" ] || [ "$want" != "$have" ]; then
-  rm -f "$tmp"
+sums="$(curl -fsSL "$BASE/SHA256SUMS")" || sums=""
+sum_for() { printf '%s\n' "$sums" | awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }'; }
+sum_of() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
+mismatch() {
+  rm -f "$tmp" "$tmp.gz"
   echo "The download didn't match the release's checksum. Run the command again." >&2
   exit 1
+}
+want="$(sum_for "$name")"
+want_gz="$(sum_for "$name.gz")"
+# the gzipped copy is under half the size; releases before 0.11 have none
+if [ -n "$want_gz" ] && command -v gzip >/dev/null 2>&1; then
+  echo "Downloading $name.gz…"
+  curl -fL --progress-bar "$BASE/$name.gz" -o "$tmp.gz"
+  [ "$(sum_of "$tmp.gz")" = "$want_gz" ] || mismatch
+  gzip -dc "$tmp.gz" > "$tmp"
+  rm -f "$tmp.gz"
+else
+  echo "Downloading $name…"
+  curl -fL --progress-bar "$BASE/$name" -o "$tmp"
 fi
+[ -n "$want" ] && [ "$want" = "$(sum_of "$tmp")" ] || mismatch
 chmod +x "$tmp"
 mv -f "$tmp" "$dir/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
