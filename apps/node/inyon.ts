@@ -34,14 +34,16 @@ import { WEB_URL } from '@inyon/protocol'
 import { detectNetworks, LABEL } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
 import { currentState, forgetPhone, identity, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
+import { inyonCommand } from './ops.ts'
+import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
 import { nodeDir, savedEnv } from './paths.ts'
 import { detach, detachUpdate, ensureShell, forgetUpdateTask, hasService, installService, logFile, missingMux, moveOldService, oldServices, restartService, ROLES, self, uninstallService, type Role } from './service.ts'
 import { cleanupOld, exited, findInstall, isRunning, runningFile, setStatus, staleLink, update, UpdateError, waitStarted } from './update.ts'
 
 // run in the background (a service, a hidden task) there's no console to print to: log to a file.
 // Commands people run (setup, pair…) always print, even from a script, so the pairing code shows.
-const INTERACTIVE = new Set(['setup', 'pair', 'join', 'install', 'uninstall', 'phones', 'forget', 'update', 'version', '--version', 'help', '--help', '-h'])
-const firstArg = process.argv[2]
+const INTERACTIVE = new Set(['setup', 'pair', 'join', 'install', 'uninstall', 'phones', 'forget', 'push', 'update', 'version', '--version', 'help', '--help', '-h'])
+const firstArg = argv[0]
 if (WIN && !process.stdout.isTTY && !(firstArg && INTERACTIVE.has(firstArg))) {
   const log = firstArg === 'link' ? logFile('link') : firstArg === 'migrate' ? path.join(nodeDir(), 'update.log') : logFile('node')
   const write = (...a: unknown[]) => {
@@ -248,14 +250,10 @@ function linkOptions(args: string[]): LinkConfig {
   return c
 }
 
-function fail(message: string): never {
-  console.error(message)
-  process.exit(2)
-}
-
 /**
  * Shows the pairing code; starts the link here first if it isn't running yet. True when the link
- * runs elsewhere, so this process has nothing left to do.
+ * runs elsewhere, so this process has nothing left to do. With --json the code's parts go to
+ * stdout as one line (the inyon command draws them) and the text below to stderr.
  */
 async function pair(args: string[]) {
   const config = linkOptions(args)
@@ -280,13 +278,14 @@ async function pair(args: string[]) {
   const qr = pairLink(info, process.env.INYON_WEB_URL || WEB_URL)
   // the typed-in code needs the relays to know this ID; without them there's still the QR code
   const typed = await Promise.race([publishShortCode(short, { machine: identity().id, name: os.hostname(), ...where }).then(() => true, () => false), new Promise<false>((r) => setTimeout(r, 8000, false).unref())])
-  console.log(`\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
-  console.log(renderUnicodeCompact(qr, { border: 2 }))
-  if (typed) console.log(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
-  console.log(`\nOr paste this link into the app:\n${link}\n`)
-  if (!s?.urls.length && !s?.relays.length) console.log('No address yet: the phone will look this machine up once its tunnel is up.\n')
+  say(`\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
+  say(renderUnicodeCompact(qr, { border: 2 }))
+  if (typed) say(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
+  say(`\nOr paste this link into the app:\n${link}\n`)
+  if (!s?.urls.length && !s?.relays.length) say('No address yet: the phone will look this machine up once its tunnel is up.\n')
+  emit(pairResult({ link, qr, short, typed, ...where, service }))
   if (service) return true
-  console.log('Keep this running so the phone can connect, or run `inyon install` to keep it running in the background.')
+  say('Keep this running so the phone can connect, or run `inyon install` to keep it running in the background.')
 }
 
 /**
@@ -335,19 +334,19 @@ async function pause() {
 
 function phones() {
   const all = Object.entries(listPhones())
-  if (!all.length) return console.log('No phones paired yet. Run `inyon pair`.')
-  for (const [key, p] of all) {
-    const seen = p.lastSeen ? new Date(p.lastSeen).toLocaleString() : 'never'
-    console.log(`${p.name.padEnd(24)} ${key.slice(0, 12)}  paired ${new Date(p.pairedAt).toLocaleDateString()}, last seen ${seen}`)
-  }
+  const list = all.map(([key, p]) => ({ key, name: p.name, pairedAt: p.pairedAt, lastSeen: p.lastSeen }))
+  if (!all.length) return emit({ phones: list }, 'No phones paired yet. Run `inyon pair`.')
+  const lines = all.map(([key, p]) => `${p.name.padEnd(24)} ${key.slice(0, 12)}  paired ${new Date(p.pairedAt).toLocaleDateString()}, last seen ${p.lastSeen ? new Date(p.lastSeen).toLocaleString() : 'never'}`)
+  emit({ phones: list }, lines.join('\n'))
 }
 
 function forget(which?: string) {
   if (!which) fail('usage: inyon forget <name|key>')
   const matches = Object.entries(listPhones()).filter(([key, p]) => key.startsWith(which.toLowerCase()) || p.name === which)
   if (matches.length !== 1) fail(matches.length ? `"${which}" matches ${matches.length} phones; use more of the key` : `No paired phone matches "${which}"`)
-  forgetPhone(matches[0]![0])
-  console.log(`Forgot ${matches[0]![1].name}. It can't connect until it pairs again.`)
+  const [key, phone] = matches[0]!
+  forgetPhone(key)
+  emit({ forgotten: { key, name: phone.name } }, `Forgot ${phone.name}. It can't connect until it pairs again.`)
 }
 
 const USAGE = `inyon ${VERSION}
@@ -378,6 +377,12 @@ const USAGE = `inyon ${VERSION}
  * (how the app asks for it) the update runs on its own, since the restart ends the process that asked.
  */
 async function updateCommand(args: string[]) {
+  // run as the engine, the inyon command next to it owns updates: it replaces both files
+  const cli = inyonCommand()
+  if (cli) {
+    const p = Bun.spawnSync([cli, 'update', ...args, ...(JSON_OUT ? ['--json'] : [])], { stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
+    process.exit(p.exitCode ?? 1)
+  }
   const cmd = self()
   setStatus('running')
   if (args.includes('--background')) {
@@ -417,9 +422,10 @@ function roleArg(arg: string | undefined, installing: boolean): Role {
   return 'link'
 }
 
-const [cmd, ...rest] = process.argv.slice(2)
+const [cmd, ...rest] = argv
 // copies an earlier update renamed aside (a running .exe can't be deleted until it has stopped)
 cleanupOld(self().at(-1)!)
+cleanupOld(process.execPath)
 const joined = !!(process.env.INYON_HUB || savedEnv().INYON_HUB)
 if (cmd === 'pair') {
   await ensureShell()
@@ -465,7 +471,7 @@ else if (cmd === 'migrate') migrate()
 else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])
 else if (cmd === 'push') await (await import('./push.ts')).pushCommand(rest)
-else if (cmd === 'version' || cmd === '--version') console.log(VERSION)
+else if (cmd === 'version' || cmd === '--version') emit({ version: VERSION, engine: true }, VERSION)
 else if (cmd === 'help' || cmd === '--help' || cmd === '-h') console.log(USAGE)
 // the form tether-node's installers used: a hub address, with the token in the environment
 else if (/^https?:\/\//.test(cmd)) connectMode(cmd, rest[0])

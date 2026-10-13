@@ -87,7 +87,7 @@ test('Windows: the logon task is stopped and started, and the old copy stopped, 
   expect(ran[0]!.slice(0, 1)).toEqual(['powershell.exe'])
   expect(ps).toContain(`$exe = 'C:\\Users\\me\\.tether-node\\tether-node.exe'`)
   expect(ps).toContain(`'Inyon node', 'Tether node' | ForEach-Object`)
-  expect(ps).toContain(`Get-Process -Name 'inyon', 'tether-node'`)
+  expect(ps).toContain(`Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'`)
   expect(ps).toContain(`$_.Id -ne ${process.pid}`)
   expect(ps.indexOf('Stop-ScheduledTask')).toBeLessThan(ps.indexOf('Start-ScheduledTask'))
   // install.ps1's Startup-folder fallback has no task: start it the way that does

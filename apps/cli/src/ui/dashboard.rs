@@ -115,8 +115,7 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
 fn hub_nodes() -> Option<Vec<String>> {
     let token = fs::read_to_string(crate::paths::data_dir().join("local-token")).ok()?.trim().to_string();
     let env = crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env"));
-    let port = env.get("PORT").cloned().unwrap_or_else(|| "4777".into());
-    let res = crate::http::get_local(&format!("http://127.0.0.1:{port}/api/local/nodes?token={token}")).ok()?;
+    let res = crate::http::get_local(&format!("{}/api/local/nodes?token={token}", crate::commands::hub_local_url(&env))).ok()?;
     if !res.ok() {
         return None;
     }

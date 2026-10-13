@@ -58,9 +58,20 @@ impl Release {
     }
 }
 
+/// What a hub hands out: the engine and the inyon command for each system (keyed os-arch; a
+/// Windows engine is always the x64 one). A hub from before 0.13 (`split` off) serves one
+/// program, the engine, under /node/inyon and nothing under /node/inyon-engine.
 struct HubBuilds {
-    builds: BTreeMap<String, String>,
+    engines: BTreeMap<String, String>,
+    commands: BTreeMap<String, String>,
     sum_override: String,
+    split: bool,
+}
+
+impl HubBuilds {
+    fn engine_for(&self, os: &str, arch: &str) -> Option<String> {
+        self.engines.get(&format!("{os}-{}", if os == "windows" { "x64" } else { arch })).cloned()
+    }
 }
 
 struct Server {
@@ -76,8 +87,13 @@ impl Server {
         let port = listener.local_addr().unwrap().port();
         let release = Arc::new(Mutex::new(Release { version: "9.9.9".into(), files: BTreeMap::new(), gz: true, sums: String::new(), missing: Vec::new() }));
         let hub = Arc::new(Mutex::new(HubBuilds {
-            builds: [("linux-x64", "new linux build"), ("windows-x64", "new exe")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            engines: [("linux-x64", "new linux build"), ("windows-x64", "new exe")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            commands: [("linux-x64", "new linux cli"), ("windows-x64", "new cli exe"), ("windows-arm64", "new arm cli exe")]
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             sum_override: String::new(),
+            split: true,
         }));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let (r, h, q) = (release.clone(), hub.clone(), requests.clone());
@@ -110,12 +126,17 @@ impl Server {
                             None => ("404 Not Found", String::new(), b"not found".to_vec()),
                         }
                     } else {
-                        let build = hb.builds.get(&format!("{}-{}", param("os"), param("arch"))).cloned();
-                        match (path.as_str(), build) {
-                            ("/node/inyon.sha256", Some(b)) => {
-                                ("200 OK", String::new(), if hb.sum_override.is_empty() { sha(b.as_bytes()) } else { hb.sum_override.clone() }.into_bytes())
+                        let (os, arch) = (param("os"), param("arch"));
+                        let engine = hb.engine_for(&os, &arch);
+                        let command = if hb.split { hb.commands.get(&format!("{os}-{arch}")).cloned() } else { engine.clone() };
+                        let engine_sum = engine.as_ref().map(|b| if hb.sum_override.is_empty() { sha(b.as_bytes()) } else { hb.sum_override.clone() });
+                        match (path.as_str(), hb.split) {
+                            ("/node/inyon-engine.sha256", true) if engine.is_some() => ("200 OK", String::new(), engine_sum.unwrap().into_bytes()),
+                            ("/node/inyon-engine.gz", true) if engine.is_some() => ("200 OK", String::new(), gzip(engine.unwrap().as_bytes())),
+                            ("/node/inyon.sha256", split) if command.is_some() => {
+                                ("200 OK", String::new(), if split { sha(command.unwrap().as_bytes()) } else { engine_sum.unwrap() }.into_bytes())
                             }
-                            ("/node/inyon.gz", Some(b)) => ("200 OK", String::new(), gzip(b.as_bytes())),
+                            ("/node/inyon.gz", _) if command.is_some() => ("200 OK", String::new(), gzip(command.unwrap().as_bytes())),
                             _ => ("404 Not Found", String::new(), b"not found".to_vec()),
                         }
                     }
@@ -455,13 +476,14 @@ fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_
     linux.platform = Platform::Linux;
     linux.arch = Arch::X64;
     assert!(update::update(&install, &linux, &RealFiles).unwrap().changed);
-    // the hub serves the engine; this program stays as it is
+    // the hub serves both files: the engine first, then this program
     assert_eq!(f.read(&f.engine()), "new linux build");
-    assert_eq!(f.read(&f.installed()), "old build");
+    assert_eq!(f.read(&f.installed()), "new linux cli");
     assert_eq!(*linux.restarts.borrow(), vec![(Role::Node, vec![f.installed().to_string_lossy().into_owned()])]);
-    assert!(f.server.requests().contains(&"/node/inyon.gz?os=linux&arch=x64".to_string()));
+    let hub_downloads: Vec<String> = f.server.requests().into_iter().filter(|r| r.ends_with(".gz?os=linux&arch=x64")).collect();
+    assert_eq!(hub_downloads, vec!["/node/inyon-engine.gz?os=linux&arch=x64", "/node/inyon.gz?os=linux&arch=x64"]);
 
-    // the same file as the hub's: nothing to do
+    // the same files as the hub's: nothing to do
     linux.restarts.borrow_mut().clear();
     assert!(!update::update(&install, &linux, &RealFiles).unwrap().changed);
     assert!(linux.restarts.borrow().is_empty());
@@ -469,16 +491,33 @@ fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_
     // a checksum that doesn't match leaves the running copy alone
     {
         let mut hub = f.server.hub.lock().unwrap();
-        hub.builds.insert("linux-x64".into(), "tampered".into());
+        hub.engines.insert("linux-x64".into(), "tampered".into());
         hub.sum_override = sha(b"what the hub meant");
     }
     let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
     assert!(err.contains("didn't match the hub's checksum"), "{err}");
     assert_eq!(f.read(&f.engine()), "new linux build");
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
 }
 
 #[test]
-fn a_windows_machine_asks_its_hub_for_the_windows_build_whatever_its_processor() {
+fn a_hub_from_before_the_split_hands_out_one_program_so_nothing_is_changed_and_it_says_so() {
+    let _g = lock();
+    let f = Fixture::new();
+    f.server.hub.lock().unwrap().split = false;
+    let install = find_install(&f.installed(), Some(f.server.base.clone()));
+    let mut linux = FakeHost::new(&f.server, &[Role::Node]);
+    linux.platform = Platform::Linux;
+    linux.arch = Arch::X64;
+    let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
+    assert!(err.contains("Update the hub first"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
+    assert!(linux.restarts.borrow().is_empty());
+    assert_eq!(f.bin_names(), vec!["inyon"]);
+}
+
+#[test]
+fn a_windows_machine_asks_its_hub_for_its_own_command_and_the_x64_engine() {
     let _g = lock();
     let f = Fixture::new();
     let install = find_install(&f.installed(), Some(f.server.base.clone()));
@@ -487,7 +526,50 @@ fn a_windows_machine_asks_its_hub_for_the_windows_build_whatever_its_processor()
     win.arch = Arch::Arm64;
     assert!(update::update(&install, &win, &RealFiles).unwrap().changed);
     assert_eq!(f.read(&f.engine()), "new exe");
-    assert!(f.server.requests().contains(&"/node/inyon.gz?os=windows&arch=x64".to_string()));
+    assert_eq!(f.read(&f.installed()), "new arm cli exe");
+    assert!(f.server.requests().contains(&"/node/inyon-engine.gz?os=windows&arch=arm64".to_string()));
+    assert!(f.server.requests().contains(&"/node/inyon.gz?os=windows&arch=arm64".to_string()));
+}
+
+#[test]
+fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added_to() {
+    use inyon_cli::engine::{download_to, source, Source};
+    let _g = lock();
+    let f = Fixture::new();
+    let to = f.engine();
+    let said = RefCell::new(Vec::new());
+    let say = |l: &str| said.borrow_mut().push(l.to_string());
+
+    // a release (INYON_DOWNLOAD stands in for GitHub): checked against its SHA256SUMS
+    std::env::set_var("INYON_DOWNLOAD", format!("{}/releases/latest/download", f.server.base));
+    assert_eq!(source(), Source::Release(format!("{}/releases/latest/download", f.server.base)));
+    download_to(&to, &say).unwrap();
+    assert_eq!(f.read(&to), "engine build");
+    assert!(said.borrow()[0].starts_with("Getting the Inyon engine ("), "{:?}", said.borrow());
+    assert!(f.server.downloads().contains(&format!("{}.gz", f.engine_name)));
+
+    // added to a hub, with no mirror set: the hub's engine for this system, never GitHub
+    std::env::remove_var("INYON_DOWNLOAD");
+    std::env::set_var("INYON_HUB", &f.server.base);
+    assert_eq!(source(), Source::Hub(f.server.base.clone()));
+    let t = update::target(Platform::current(), Arch::current()).unwrap();
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.engines.insert(format!("{}-{}", t.os, t.arch), "the hub's engine".into());
+    }
+    fs::remove_file(&to).unwrap();
+    f.server.clear_requests();
+    download_to(&to, &say).unwrap();
+    assert_eq!(f.read(&to), "the hub's engine");
+    assert!(f.server.requests().iter().all(|r| r.starts_with("/node/")), "{:?}", f.server.requests());
+    assert!(!f.bin_names().iter().any(|n| n.ends_with(".download")));
+
+    // a hub from before the split can't hand the engine out apart
+    f.server.hub.lock().unwrap().split = false;
+    fs::remove_file(&to).unwrap();
+    let err = download_to(&to, &say).unwrap_err();
+    assert!(err.contains("Update the hub first"), "{err}");
+    std::env::remove_var("INYON_HUB");
 }
 
 #[test]

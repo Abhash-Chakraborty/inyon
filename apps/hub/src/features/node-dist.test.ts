@@ -1,19 +1,29 @@
 import { afterAll, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
 import zlib from 'node:zlib'
-import { nodeRoutes, releaseFile, targetOf, updateScript } from './node-dist.ts'
+import { cliTargetOf, nodeRoutes, releaseFile, targetOf, updateScript } from './node-dist.ts'
 
 const url = (q: string) => new URL(`http://hub/node/inyon?${q}`)
 const get = (route: keyof typeof nodeRoutes) => nodeRoutes[route](new Request(`http://hub${route}`))
 
-test('a download names its system; Windows on ARM gets the x64 build', () => {
+test('a download names its system; Windows on ARM gets its own command but the x64 engine', () => {
   expect(targetOf(url('os=linux&arch=arm64'))).toBe('linux-arm64')
   expect(targetOf(url('os=darwin&arch=x64'))).toBe('darwin-x64')
   expect(targetOf(url('os=windows&arch=arm64'))).toBe('windows-x64')
+  expect(cliTargetOf(url('os=windows&arch=arm64'))).toBe('windows-arm64')
+  expect(cliTargetOf(url('os=linux&arch=x64'))).toBe('linux-x64')
   // what tether-node's Windows installer asked with: no os at all
   expect(targetOf(url('arch=x64'))).toBe('windows-x64')
+  expect(cliTargetOf(url('arch=x64'))).toBe('windows-x64')
   expect(() => targetOf(url('os=plan9&arch=x64'))).toThrow('os must be')
+  expect(() => cliTargetOf(url('os=plan9&arch=x64'))).toThrow('os must be')
   expect(() => targetOf(url('os=linux&arch=x86'))).toThrow('arch must be')
+})
+
+test('the hub hands out the command and the engine under their own routes', () => {
+  for (const r of ['/node/inyon', '/node/inyon.gz', '/node/inyon.sha256', '/node/inyon-engine', '/node/inyon-engine.gz', '/node/inyon-engine.sha256']) {
+    expect(Object.keys(nodeRoutes)).toContain(r)
+  }
 })
 
 test('tether-node as a Bun script is told to run "Add a machine" again', async () => {

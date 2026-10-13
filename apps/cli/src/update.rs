@@ -152,16 +152,13 @@ pub struct Target {
     pub arch: &'static str,
 }
 
-/// The build for this computer as the releases and the hub name it. Windows on ARM takes the
-/// x64 build until arm64 ships for it, as every installer so far does.
+/// This computer as the releases and the hub name it: linux, darwin or windows, x64 or arm64.
 pub fn target(platform: Platform, arch: Arch) -> Result<Target, Error> {
-    if platform == Platform::Windows {
-        return Ok(Target { os: "windows", arch: "x64" });
-    }
     let os = match platform {
         Platform::Darwin => "darwin",
         Platform::Linux => "linux",
-        _ => return Err(err(format!("There's no Inyon build for {} {}.", platform.name(), arch.name()))),
+        Platform::Windows => "windows",
+        Platform::Other => return Err(err(format!("There's no Inyon build for {} {}.", platform.name(), arch.name()))),
     };
     let a = match arch {
         Arch::X64 => "x64",
@@ -184,9 +181,13 @@ pub fn release_files(system: &str) -> Names {
     Names { cli: format!("inyon-{system}{exe}"), engine: format!("inyon-engine-{system}{exe}") }
 }
 
+/// The release files for this computer. Windows on ARM gets the arm64 command but the x64
+/// engine: Bun has no Windows on ARM build, and the x64 one runs there under Windows' own
+/// emulation.
 pub fn release_names(platform: Platform, arch: Arch) -> Result<Names, Error> {
     let t = target(platform, arch)?;
-    Ok(release_files(&format!("{}-{}", t.os, t.arch)))
+    let engine_arch = if t.os == "windows" { "x64" } else { t.arch };
+    Ok(Names { cli: release_files(&format!("{}-{}", t.os, t.arch)).cli, engine: release_files(&format!("{}-{}", t.os, engine_arch)).engine })
 }
 
 /// The gzipped copy of a release file, under half the size; taken first when SHA256SUMS lists it.
@@ -282,9 +283,13 @@ pub fn sha256_file(file: &Path) -> io::Result<String> {
 }
 
 fn download(url: &str, log: &dyn Fn(&str)) -> Result<Vec<u8>, Error> {
+    // one line per megabyte, not per packet: the line is redrawn on a terminal and kept in a log
+    let last = std::cell::Cell::new(u64::MAX);
     let progress = |done: u64, total: Option<u64>| {
         if let Some(t) = total.filter(|t| *t > 4 << 20) {
-            log(&format!("\r  {} of {} MB", done >> 20, t >> 20));
+            if last.replace(done >> 20) != done >> 20 {
+                log(&format!("\r  {} of {} MB", done >> 20, t >> 20));
+            }
         }
     };
     let res = http::get_with_progress(url, &progress).map_err(|e| err(format!("Couldn't download {url} ({e}).")))?;
@@ -533,35 +538,71 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
         Kind::Hub(hub) => {
             let t = target(platform, host.arch())?;
             let q = format!("?os={}&arch={}", t.os, t.arch);
-            let want = text(&format!("{hub}/node/inyon.sha256{q}"))?.to_lowercase();
-            if want.len() != 64 || !want.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")));
-            }
+            // a hub from before 0.13 hands out one program under /node/inyon, which this
+            // program can't run as its engine
+            let engine_sum = hub_sum(hub, "inyon-engine", &q)?
+                .ok_or_else(|| err(format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first, then this machine.")))?;
+            let cli_sum = hub_sum(hub, "inyon", &q)?.ok_or_else(|| err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")))?;
             let mine = host.version();
-            if engine.exists() && sha256_file(&engine)? == want {
+            let same = |file: &Path, want: &str| -> Result<bool, Error> { Ok(files.exists(file) && sha256_file(file)? == want) };
+            let mut wanted: Vec<(Swap, &str, String)> = Vec::new();
+            if !same(&engine, &engine_sum)? {
+                wanted.push((Swap { tmp: with_suffix(&engine, ".download"), file: engine.clone(), name: "the hub's engine".into() }, "inyon-engine", engine_sum));
+            }
+            if !same(&install.file, &cli_sum)? {
+                wanted.push((Swap { tmp: with_suffix(&install.file, ".download"), file: install.file.clone(), name: "the hub's inyon".into() }, "inyon", cli_sum));
+            }
+            if wanted.is_empty() {
                 return Ok(Outcome { changed: false, message: format!("inyon {mine} is the same as the hub's."), version: Some(mine) });
             }
             host.log(&format!("Downloading inyon from {hub}…"));
-            let tmp = with_suffix(&engine, ".download");
-            files.remove(&tmp)?;
             // it comes gzipped (about half the size), which matters over a VPN
             let fetched: Result<(), Error> = (|| {
-                let data = gunzip(&download(&format!("{hub}/node/inyon.gz{q}"), &|l| host.log(l))?).map_err(|e| err(format!("Couldn't unpack the hub's download ({e}).")))?;
-                if sha256(&data) != want {
-                    return Err(err("The download didn't match the hub's checksum, so nothing was changed. Try again."));
+                for (s, route, want) in &wanted {
+                    files.remove(&s.tmp)?;
+                    fetch_hub_file(hub, route, &q, want, &s.tmp, &|l| host.log(l))?;
+                    runnable(&s.tmp, platform);
                 }
-                fs::write(&tmp, data)?;
                 Ok(())
             })();
             if let Err(e) = fetched {
-                let _ = files.remove(&tmp);
+                for (s, _, _) in &wanted {
+                    let _ = files.remove(&s.tmp);
+                }
                 return Err(e);
             }
-            runnable(&tmp, platform);
-            let swaps = [Swap { file: engine, tmp, name: "the hub's engine".into() }];
+            let swaps: Vec<Swap> = wanted.into_iter().map(|(s, _, _)| s).collect();
             put(install, host, files, &swaps, None)
         }
     }
+}
+
+/// The checksum a hub publishes for one of its files (`inyon`, `inyon-engine`); None when the
+/// hub doesn't serve that file.
+pub fn hub_sum(hub: &str, route: &str, q: &str) -> Result<Option<String>, Error> {
+    let url = format!("{hub}/node/{route}.sha256{q}");
+    let res = http::get(&url).map_err(|e| err(format!("Couldn't reach {url} ({e}).")))?;
+    if res.status == 404 {
+        return Ok(None);
+    }
+    if !res.ok() {
+        return Err(err(format!("{url} answered {}.", res.status)));
+    }
+    let want = String::from_utf8_lossy(&res.body).trim().to_lowercase();
+    if want.len() != 64 || !want.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(err(format!("{hub} didn't give a checksum for {route}. Update the hub first.")));
+    }
+    Ok(Some(want))
+}
+
+/// Downloads one of the hub's files (gzipped) to `to`, checked against `want`.
+pub fn fetch_hub_file(hub: &str, route: &str, q: &str, want: &str, to: &Path, log: &dyn Fn(&str)) -> Result<(), Error> {
+    let data = gunzip(&download(&format!("{hub}/node/{route}.gz{q}"), log)?).map_err(|e| err(format!("Couldn't unpack the hub's download ({e}).")))?;
+    if sha256(&data) != want {
+        return Err(err("The download didn't match the hub's checksum, so nothing was changed. Try again."));
+    }
+    fs::write(to, data)?;
+    Ok(())
 }
 
 /// Makes a checked download a program this system will start.
@@ -744,8 +785,12 @@ mod tests {
         assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().cli, "inyon-linux-arm64");
         assert_eq!(release_names(Platform::Linux, Arch::Arm64).unwrap().engine, "inyon-engine-linux-arm64");
         assert_eq!(release_names(Platform::Darwin, Arch::X64).unwrap().cli, "inyon-darwin-x64");
-        // Windows on ARM runs the x64 build
-        assert_eq!(release_names(Platform::Windows, Arch::Arm64).unwrap().cli, "inyon-windows-x64.exe");
+        // Windows on ARM gets its own command but the x64 engine, since Bun has no arm64 build for it
+        let win_arm = release_names(Platform::Windows, Arch::Arm64).unwrap();
+        assert_eq!(win_arm.cli, "inyon-windows-arm64.exe");
+        assert_eq!(win_arm.engine, "inyon-engine-windows-x64.exe");
+        assert_eq!(release_names(Platform::Windows, Arch::X64).unwrap().engine, "inyon-engine-windows-x64.exe");
+        assert_eq!(target(Platform::Windows, Arch::Arm64).unwrap(), Target { os: "windows", arch: "arm64" });
         assert!(release_names(Platform::Other, Arch::X64).is_err());
         assert_eq!(compressed("inyon-linux-x64"), "inyon-linux-x64.gz");
     }

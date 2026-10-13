@@ -47,19 +47,22 @@ export function compareVersions(a: string, b: string): number {
 }
 export const isNewer = (a: string, b: string) => compareVersions(a, b) > 0
 
-/** The build for this computer as the releases and the hub name it (Windows on ARM runs x64). */
+/** This computer as the releases and the hub name it: linux, darwin or windows, x64 or arm64. */
 export function target(platform: string = process.platform, arch: string = os.arch()) {
-  if (platform === 'win32') return { os: 'windows', arch: 'x64' }
-  const o = platform === 'darwin' ? 'darwin' : platform === 'linux' ? 'linux' : undefined
+  const o = platform === 'win32' ? 'windows' : platform === 'darwin' ? 'darwin' : platform === 'linux' ? 'linux' : undefined
   const a = arch === 'x64' ? 'x64' : arch === 'arm64' ? 'arm64' : undefined
   if (!o || !a) throw new UpdateError(`There's no Inyon build for ${platform} ${arch}.`)
   return { os: o, arch: a }
 }
 
-/** The release files for this computer (see releaseFiles); `cli` is what get.sh and get.ps1 pick. */
+/**
+ * The release files for this computer (see releaseFiles); `cli` is what get.sh and get.ps1 pick.
+ * Windows on ARM gets the arm64 command but the x64 engine: Bun has no Windows on ARM build,
+ * and the x64 one runs there under Windows' own emulation.
+ */
 export function releaseNames(platform: string = process.platform, arch: string = os.arch()) {
   const t = target(platform, arch)
-  return releaseFiles(`${t.os}-${t.arch}`)
+  return { cli: releaseFiles(`${t.os}-${t.arch}`).cli, engine: releaseFiles(`${t.os}-${t.os === 'windows' ? 'x64' : t.arch}`).engine }
 }
 export const binaryName = (platform?: string, arch?: string) => releaseNames(platform, arch).cli
 

@@ -1,16 +1,18 @@
 name: inyon
 
-# Builds the inyon program as single binaries (Bun, the hub and the web app inside), so a machine
-# needs nothing else installed. Each is also published as tether-node-<system>, the name the
-# updater from before the rename to Inyon asks for. inyon-web.tar.gz is the web app as static
-# files, for anyone who wants to serve it themselves.
+# Builds everything a release attaches: the inyon command (apps/cli, through cli.yml, one file per
+# system, about 2 MB) as inyon-<system>, the engine behind it (Bun, the hub and the web app
+# inside, so a machine needs nothing else) as inyon-engine-<system>, and the engine again as
+# tether-node-<system>, the name the updater from before the rename to Inyon asks for and needs a
+# whole program under. inyon-web.tar.gz is the web app as static files, for anyone who wants to
+# serve it themselves. One SHA256SUMS lists them all.
 #   push to main  -> refreshes the "node-latest" pre-release
 #   tag v1.2.3    -> attached to that release, which the one-line installers fetch from
 on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', '.github/workflows/node.yml']
+    paths: ['apps/cli/**', 'apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', 'scripts/**', '.github/workflows/node.yml', '.github/workflows/cli.yml']
   workflow_dispatch:
 
 permissions:
@@ -21,7 +23,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # the inyon command for each system, as artifacts named like the release files
+  cli:
+    uses: ./.github/workflows/cli.yml
+
+  engine:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,18 +44,47 @@ jobs:
         run: |
           out="$RUNNER_TEMP/dist"
           bun apps/node/build.ts "$out"
-          "$out/inyon-linux-x64" --version
-          # each inyon-* file gzipped too, under half the size, which the installers and the
-          # updater take first; the plain files stay for installs from before 0.11, and the
-          # tether-node-* copies stay as they are
-          for f in "$out"/inyon-*; do gzip -9 -k "$f"; done
-          (cd "$out" && sha256sum inyon-*.gz >> SHA256SUMS)
-          # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
-          cp apps/node/get.sh apps/node/get.ps1 "$out/"
-          # the web app for GitHub Pages, listed in SHA256SUMS like the rest
+          "$out/inyon-engine-linux-x64" --version
+          # each inyon-engine-* file gzipped too, under half the size, which the installers and
+          # the updater take first; the tether-node-* copies stay plain, as their updater expects
+          for f in "$out"/inyon-engine-*; do gzip -9 -k "$f"; done
+          # the web app for GitHub Pages
           bun run --filter @inyon/web build:hosted
           tar -czf "$out/inyon-web.tar.gz" -C apps/web/dist-hosted .
-          (cd "$out" && sha256sum inyon-web.tar.gz >> SHA256SUMS)
+          rm -f "$out/SHA256SUMS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine
+          path: ${{ runner.temp }}/dist
+
+  publish:
+    needs: [cli, engine]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine
+          path: ${{ runner.temp }}/dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: inyon-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/dist
+
+      - name: Checksums and installers
+        run: |
+          cd "$RUNNER_TEMP/dist"
+          # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
+          cp "$GITHUB_WORKSPACE/apps/node/get.sh" "$GITHUB_WORKSPACE/apps/node/get.ps1" .
+          # one list for every file, the installers left out of it
+          ls | grep -v -e '^get\.' -e '^SHA256SUMS$' | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          # the layout the installers and updaters count on
+          for want in inyon-linux-x64 inyon-linux-x64.gz inyon-engine-linux-x64 inyon-engine-linux-x64.gz tether-node-linux-x64 inyon-windows-arm64.exe inyon-web.tar.gz; do
+            grep -q " $want\$" SHA256SUMS || { echo "::error::$want is missing from the release"; exit 1; }
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,3 +106,28 @@ jobs:
               --title "Latest inyon build" \
               --notes "Built from $GITHUB_SHA on main. Run \`inyon pair\` on a laptop and scan the code with the Inyon app."
           fi
+
+  # a fresh install in four Linux containers from a mock of this release, and an upgrade from a
+  # real 0.12.0 install (see scripts/container-tests.sh)
+  containers:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [cli, engine]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine
+          path: ${{ runner.temp }}/dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: inyon-linux-x64
+          path: ${{ runner.temp }}/dist
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/inyon-tests
+          key: inyon-0.12.0-linux-x64
+      - run: scripts/container-tests.sh
+        env:
+          INYON_DIST: ${{ runner.temp }}/dist

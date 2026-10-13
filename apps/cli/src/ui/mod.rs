@@ -126,6 +126,51 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     lines.into_iter().map(|l| fit(&l, width)).collect()
 }
 
+/// One line of progress on stderr, redrawn in place.
+pub fn progress_line(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stderr();
+    let _ = write!(out, "\r\x1b[2K{text}");
+    let _ = out.flush();
+}
+
+/// Asks for a secret on the terminal without echoing it.
+pub fn ask_hidden(prompt: &str) -> Result<String, String> {
+    use std::io::{BufRead, Write};
+    let mut err = std::io::stderr();
+    let _ = write!(err, "{prompt}");
+    let _ = err.flush();
+    let raw = crossterm::terminal::enable_raw_mode().is_ok();
+    let mut text = String::new();
+    if raw {
+        use crossterm::event::{read, Event, KeyCode, KeyModifiers};
+        loop {
+            match read().map_err(|e| e.to_string())? {
+                Event::Key(k) if k.code == KeyCode::Enter => break,
+                Event::Key(k) if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    return Err("Stopped.".into());
+                }
+                Event::Key(k) if k.code == KeyCode::Backspace => {
+                    text.pop();
+                }
+                Event::Key(k) => {
+                    if let KeyCode::Char(c) = k.code {
+                        text.push(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let _ = crossterm::terminal::disable_raw_mode();
+    } else {
+        // no terminal (a pipe): the line as it comes
+        std::io::stdin().lock().read_line(&mut text).map_err(|e| e.to_string())?;
+    }
+    let _ = writeln!(err);
+    Ok(text.trim_end_matches(['\r', '\n']).to_string())
+}
+
 /// Prints `frames` one after another while `work` runs on another thread, then its result.
 pub fn with_motif<T: Send + 'static>(label: &str, theme: Theme, work: impl FnOnce() -> T + Send + 'static) -> T {
     use std::io::Write;

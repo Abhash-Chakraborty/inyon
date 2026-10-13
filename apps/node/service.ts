@@ -2,7 +2,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { APP_ID } from '@inyon/protocol'
+import { APP_ID, ENGINE } from '@inyon/protocol'
 import { childPath, selfCommand, WIN } from './ops.ts'
 import { binDir, installedBinary, NAME, nodeDir } from './paths.ts'
 
@@ -45,7 +45,10 @@ export const logFile = (role: Role) => path.join(nodeDir(), `${role}.log`)
 const pidFile = (role: Role) => path.join(nodeDir(), `${role}.pid`)
 const cronMark = (role: Role) => `# inyon ${role}`
 
-/** The command that runs this program: the compiled binary itself, or Bun with the script. */
+/**
+ * The command a service runs: the inyon command when this program is its engine, else the
+ * compiled binary itself, or Bun with the script.
+ */
 export const self = selfCommand
 
 /** A missing program (no systemctl in a container, say) is a failure like any other, not a crash. */
@@ -196,7 +199,7 @@ ${stopCopies(role)}
 function stopCopies(role?: Role) {
   const line = '(Get-CimInstance Win32_Process -Filter "ProcessId=$($_.Id)").CommandLine'
   const job = role === 'node' ? ` -and ${line} -notmatch '\\s"?(link|hub|migrate|update)"?(\\s|$)'` : role ? ` -and ${line} -match '\\s"?${SPEC[role].args[0]}"?\\s*$'` : ''
-  return `Get-Process -Name '${NAME}', 'tether-node' -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${process.pid}${job} } | Stop-Process -Force -ErrorAction SilentlyContinue`
+  return `Get-Process -Name '${NAME}', '${ENGINE}', 'tether-node' -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne ${process.pid}${job} } | Stop-Process -Force -ErrorAction SilentlyContinue`
 }
 
 /**

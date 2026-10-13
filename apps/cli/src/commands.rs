@@ -66,7 +66,7 @@ pub fn run_named(name: &str) {
             std::process::exit(code);
         }
         "pair" => {
-            let code = finish(pair(&[]), false);
+            let code = finish(pair(&[], false), false);
             std::process::exit(code);
         }
         _ => {}
@@ -107,20 +107,95 @@ fn through(args: Vec<String>) -> Outcome {
     }
 }
 
-pub fn pair(args: &[String]) -> Outcome {
-    let mut all = vec!["pair".to_string()];
-    all.extend(args.iter().cloned());
-    through(all)
+/// The pairing code as the terminal shows it: the engine's answer (`pair --json`) drawn here.
+pub fn render_pair(v: &Value) -> String {
+    let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let list = |k: &str| v.get(k).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+    let mut out = String::new();
+    out.push_str("\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n\n");
+    match crate::qr::render(&text("qr")) {
+        Ok(code) => out.push_str(&code),
+        Err(e) => out.push_str(&format!("(no QR code: {e})")),
+    }
+    out.push('\n');
+    if let Some(short) = v.get("short") {
+        let id = short.get("id").and_then(Value::as_str).unwrap_or("");
+        let code = short.get("code").and_then(Value::as_str).unwrap_or("");
+        let (a, b) = id.split_at(id.len().min(4));
+        let (c, d) = code.split_at(code.len().min(3));
+        out.push_str(&format!("\nCan't scan it? Choose \"Type a code\" in the app and enter\n\n    ID    {a}-{b}\n    Code  {c} {d}\n\n"));
+    }
+    out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
+    if list("urls") == 0 && list("relays") == 0 {
+        out.push_str("No address yet: the phone will look this machine up once its tunnel is up.\n\n");
+    }
+    if v.get("service").and_then(Value::as_bool) == Some(false) {
+        out.push_str("Keep this running so the phone can connect, or run `inyon service install` to keep it running in the background.\n");
+    }
+    out
+}
+
+/// `inyon pair`: the engine makes the secret and publishes it; the code is drawn here. With
+/// `json` the engine's answer is passed on as it is.
+pub fn pair(args: &[String], json: bool) -> Outcome {
+    let mut answer = None;
+    engine::pair(args, &mut |v| {
+        if json {
+            answer = Some(v.clone());
+        } else {
+            print!("{}", render_pair(v));
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+    })?;
+    Ok(answer.unwrap_or_else(|| json!({ "message": "" })))
 }
 
 pub fn forget(which: &str) -> Outcome {
-    through(vec!["forget".into(), which.into()])
+    let mut v = engine::ask(&["forget", which], &[])?;
+    let name = v.get("forgotten").and_then(|f| f.get("name")).and_then(Value::as_str).unwrap_or(which).to_string();
+    v["message"] = json!(format!("Forgot {name}. It can't connect until it pairs again."));
+    Ok(v)
 }
 
+/// `inyon push`: the list is drawn here; `set` and `test` carry the app's JSON on stdin, so they
+/// go straight through to the engine.
 pub fn push(args: &[String]) -> Outcome {
-    let mut all = vec!["push".to_string()];
-    all.extend(args.iter().cloned());
-    through(all)
+    if args.first().is_some_and(|a| a == "set" || a == "test") {
+        let mut all = vec!["push".to_string()];
+        all.extend(args.iter().cloned());
+        return through(all);
+    }
+    let mut v = engine::ask(&["push", "list"], &[])?;
+    let browsers: Vec<Value> = v.get("browsers").and_then(Value::as_array).cloned().unwrap_or_default();
+    let lines: Vec<String> = browsers
+        .iter()
+        .map(|b| {
+            let name = b.get("name").and_then(Value::as_str).unwrap_or("forgotten phone");
+            let done = b.get("done").and_then(Value::as_bool).unwrap_or(true);
+            format!("{:<24} {}{}", name, b.get("endpoint").and_then(Value::as_str).unwrap_or(""), if done { "" } else { " (needs-you only)" })
+        })
+        .collect();
+    v["message"] = json!(if lines.is_empty() { "No browser gets notifications from this machine yet.".to_string() } else { lines.join("\n") });
+    Ok(v)
+}
+
+/// `inyon hub code`: the setup code a new hub asks for, from the engine.
+pub fn hub_code() -> Outcome {
+    engine::ask(&["hub", "code"], &[])
+}
+
+/// `inyon hub reset-password [password]`: asked for here when not given, handed to the engine in
+/// its environment rather than on the process list.
+pub fn hub_reset_password(password: Option<&str>) -> Outcome {
+    let pw = match password {
+        Some(p) => p.to_string(),
+        None => ui::ask_hidden("New Inyon password: ")?,
+    };
+    if pw.is_empty() {
+        return Err("No password given.".into());
+    }
+    engine::ask(&["hub", "reset-password"], &[("INYON_NEW_PASSWORD", &pw)])
 }
 
 // ---------- join, disconnect ----------
@@ -209,6 +284,8 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
             service::move_old_service(sys, role);
         }
     }
+    // the engine comes from the hub just saved, so a machine without GitHub still works
+    engine::ensure(&|l| eprintln!("{l}"))?;
     let mut notes = Vec::new();
     if let Some(m) = service::missing_mux(sys.platform) {
         notes.push(format!("Note: {m}"));
@@ -316,7 +393,7 @@ fn hub_env() -> std::collections::BTreeMap<String, String> {
 }
 
 /// The hub's own address on this machine, for asking it questions.
-fn hub_local_url(env: &std::collections::BTreeMap<String, String>) -> String {
+pub fn hub_local_url(env: &std::collections::BTreeMap<String, String>) -> String {
     let tls = env.get("TLS_CERT").is_some_and(|v| !v.is_empty()) && env.get("TLS_KEY").is_some_and(|v| !v.is_empty());
     let bind = env.get("BIND").cloned().filter(|b| !b.is_empty()).unwrap_or_else(|| "127.0.0.1".into());
     let host = if bind == "0.0.0.0" || bind == "::" || bind == "127.0.0.1" { "127.0.0.1".to_string() } else { bind };
@@ -692,7 +769,8 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
     };
     let ask = interactive && !flags.is_some_and(|f| f.yes);
     let progress = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
-    // the engine comes down behind the screens, so it's here by the time it's needed
+    // the engine comes down behind the screens (or with a progress line, when there are none),
+    // so it's here by the time the pairing code is wanted
     let fetch = {
         let progress = progress.clone();
         std::thread::spawn(move || {
@@ -700,16 +778,22 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
                 return Ok(());
             }
             let say = |l: &str| {
-                if let Ok(mut p) = progress.lock() {
-                    *p = Some(l.to_string());
+                if ask {
+                    if let Ok(mut p) = progress.lock() {
+                        *p = Some(l.to_string());
+                    }
+                } else {
+                    ui::progress_line(l);
                 }
             };
             let r = engine::download_to(&paths::installed_engine(), &say);
-            if let Ok(mut p) = progress.lock() {
-                *p = Some(match &r {
-                    Ok(()) => "The engine is here.".into(),
-                    Err(e) => format!("! {e}"),
-                });
+            let last = match &r {
+                Ok(()) => "The engine is here.".to_string(),
+                Err(e) => format!("! {e}"),
+            };
+            say(&last);
+            if !ask {
+                eprintln!();
             }
             r
         })
@@ -812,9 +896,9 @@ pub fn apply(sys: &Sys, plan: &Plan) -> Outcome {
                 }
             }
             println!("{}", lines.join("\n"));
-            // the engine draws the code: it makes the secret and publishes it
-            let status = engine::run_through(&["pair".to_string()])?;
-            if plan.autostart && status.success() {
+            // the engine makes the secret and publishes it; the code is drawn here
+            pair(&[], false)?;
+            if plan.autostart {
                 println!("Paired phones connect by themselves from now on. To pair another phone later, run `inyon pair`.");
             }
             Ok(json!({ "role": "node", "message": "" }))
@@ -850,6 +934,24 @@ mod tests {
         assert!(check_hub_url("https://hub.example.com").is_ok());
         assert!(check_hub_url("http://hub.example.com").unwrap_err().contains("plain http"));
         assert!(check_hub_url("hub.example.com").unwrap_err().contains("isn't a web address"));
+    }
+
+    #[test]
+    fn the_pairing_code_is_drawn_from_the_engines_answer() {
+        let v = json!({ "link": "inyon://pair?m=abc&s=secret&n=box", "qr": "https://inyon.abhashchakraborty.tech/#pair?m=abc&s=secret&n=box", "short": { "id": "K7Q4MX2T", "code": "493812" }, "urls": ["wss://a.example/link"], "relays": [], "service": true });
+        let out = render_pair(&v);
+        assert!(out.contains("Scan this with your phone's camera"));
+        assert!(out.contains("    ID    K7Q4-MX2T\n    Code  493 812\n"));
+        assert!(out.contains("Or paste this link into the app:\ninyon://pair?m=abc&s=secret&n=box\n"));
+        assert!(out.contains('█') && out.contains('▄'));
+        assert!(!out.contains("No address yet"));
+        assert!(!out.contains("Keep this running"));
+        // no short code when the relays didn't take it; no address yet; the link runs here
+        let v = json!({ "link": "inyon://pair?m=abc", "qr": "https://x/#pair?m=abc", "urls": [], "relays": [], "service": false });
+        let out = render_pair(&v);
+        assert!(!out.contains("Type a code"));
+        assert!(out.contains("No address yet"));
+        assert!(out.ends_with("Keep this running so the phone can connect, or run `inyon service install` to keep it running in the background.\n"));
     }
 
     #[test]

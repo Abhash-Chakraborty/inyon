@@ -62,7 +62,7 @@ function Expand-Gzip([string]$In, [string]$Out) {
 # it was tether-node, started by the 'Tether node' task or a Startup shortcut. A phone link on this
 # machine keeps running.
 foreach ($t in $TaskName, 'Tether node') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_Process -Filter "Name='inyon.exe' or Name='tether-node.exe'" -ErrorAction SilentlyContinue |
+Get-CimInstance Win32_Process -Filter "Name='inyon.exe' or Name='inyon-engine.exe' or Name='tether-node.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -notmatch '\s"?(link|update|migrate)"?(\s|$)' } |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Start-Sleep -Milliseconds 500
@@ -81,27 +81,43 @@ if ($old -and -not ($old.Attributes -band [IO.FileAttributes]::ReparsePoint) -an
 }
 New-Item -ItemType Directory -Force -Path $Bin, $Dir | Out-Null
 
-# 1. inyon itself: one .exe with everything in it, so nothing else has to be installed here.
-# It comes gzipped (about half the size) and is checked against the hub's checksum.
-Write-Host 'Downloading inyon (about 40 MB)...'
-$exe = Join-Path $Bin 'inyon.exe'
-Remove-Item -Force "$exe.download", "$exe.new" -ErrorAction SilentlyContinue
-for ($try = 1; ; $try++) {
-  $want = ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/inyon.sha256?os=windows&arch=$arch")).Trim().ToLower()
-  Get-File "$Hub/node/inyon.gz?os=windows&arch=$arch" "$exe.gz"
-  Expand-Gzip "$exe.gz" "$exe.new"
-  Remove-Item -Force "$exe.gz"
-  if ((Get-FileHash -Algorithm SHA256 "$exe.new").Hash.ToLower() -eq $want) {
-    # a phone link may be running this same file: it can't be replaced, but it can be renamed
-    if (Test-Path $exe) {
-      try { Remove-Item -Force $exe } catch { Move-Item -Force $exe "$exe.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+# A program from the hub: it comes gzipped (the engine is about half the size that way) and is
+# checked against the hub's checksum before it goes in place.
+function Install-Program([string]$Name, [string]$Route, [string]$Want) {
+  $out = Join-Path $Bin $Name
+  Remove-Item -Force "$out.download", "$out.new" -ErrorAction SilentlyContinue
+  for ($try = 1; ; $try++) {
+    Get-File "$Hub/node/$Route.gz?os=windows&arch=$arch" "$out.gz"
+    Expand-Gzip "$out.gz" "$out.new"
+    Remove-Item -Force "$out.gz"
+    if ((Get-FileHash -Algorithm SHA256 "$out.new").Hash.ToLower() -eq $Want) {
+      # a phone link may be running this same file: it can't be replaced, but it can be renamed
+      if (Test-Path $out) {
+        try { Remove-Item -Force $out } catch { Move-Item -Force $out "$out.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+      }
+      Move-Item -Force "$out.new" $out
+      return
     }
-    Move-Item -Force "$exe.new" $exe
-    break
+    Remove-Item -Force "$out.new"
+    if ($try -ge 2) { throw "$Name did not arrive intact. Run the command again." }
+    Write-Host '  The file did not match its checksum; downloading it again...'
   }
-  Remove-Item -Force "$exe.new"
-  if ($try -ge 2) { throw 'inyon.exe did not arrive intact. Run the command again.' }
-  Write-Host '  The file did not match its checksum; downloading it again...'
+}
+function Hub-Sum([string]$Route) { ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/$Route.sha256?os=windows&arch=$arch")).Trim().ToLower() }
+
+# 1. inyon itself. From 0.13 the hub hands out two files: inyon.exe is the small command that
+#    services run, and the engine it starts (Bun inside, nothing else to install) comes apart as
+#    inyon-engine.exe. A hub from before lists one program, which is both.
+$exe = Join-Path $Bin 'inyon.exe'
+$engineSum = try { Hub-Sum 'inyon-engine' } catch { '' }
+if ($engineSum -match '^[0-9a-f]{64}$') {
+  Write-Host 'Downloading inyon...'
+  Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
+  Write-Host 'Downloading the Inyon engine (about 40 MB)...'
+  Install-Program 'inyon-engine.exe' 'inyon-engine' $engineSum
+} else {
+  Write-Host 'Downloading inyon (about 40 MB)...'
+  Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
 }
 
 # 2. A small POSIX shell (busybox-w32). The hub drives every machine with short sh scripts, and this

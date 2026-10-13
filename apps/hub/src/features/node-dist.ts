@@ -7,22 +7,26 @@ import { compressed, RELEASES_REPO, VERSION } from '@inyon/protocol'
 import INSTALL_SH from '../../../node/install.sh' with { type: 'text' }
 import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
 import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
-import { fileName, TARGETS, type Target } from '../../../node/targets.ts'
+import { CLI_TARGETS, cliFile, engineFile, TARGETS, type CliTarget, type Target } from '../../../node/targets.ts'
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
 import { unixPairCommand } from './pair-command.ts'
 
 /**
- * What a machine downloads from its hub to run Inyon: the inyon program for its system (Bun inside,
- * nothing else to install), and on Windows busybox-w32, the small sh the hub's commands run with.
- * A hub run from a git checkout builds the program from its own source, without the hub in it. The
- * inyon program (get.sh --hub) hands out the release of its own version from GitHub,
- * checked against that release's SHA256SUMS. Either way it's kept under ~/.inyon/node-dist.
+ * What a machine downloads from its hub to run Inyon: the inyon command for its system (/node/inyon,
+ * small, what services run) and the engine it runs (/node/inyon-engine, Bun inside, nothing else
+ * to install), and on Windows busybox-w32, the small sh the hub's commands run with. The hub
+ * program (get.sh --hub) hands out the release of its own version from GitHub, checked against
+ * that release's SHA256SUMS, so a machine never needs GitHub itself. A hub run from a git checkout
+ * builds the engine from its own source, without the hub in it, and serves a command built with
+ * cargo when one is in apps/cli/dist (INYON_CLI_DIST); without one the engine stands in for both,
+ * as every release before 0.13 was. Either way it's kept under ~/.inyon/node-dist.
  */
 export const NODE_DIR = path.resolve(import.meta.dir, '../../../node')
 const OUT = path.join(DATA_DIR, 'node-dist')
 const FROM_SOURCE = !Bun.isStandaloneExecutable
+const CLI_DIST = process.env.INYON_CLI_DIST || path.resolve(NODE_DIR, '../cli/dist')
 /** what install.sh can ask for; their checksums go into the "Add a machine" command */
 const UNIX = TARGETS.filter((t) => !t.startsWith('windows'))
 
@@ -38,7 +42,7 @@ const archOf = (url: URL) => {
   return arch
 }
 
-/** The build a request asks for (?os=linux&arch=arm64). Windows on ARM runs the x64 build. */
+/** The engine a request asks for (?os=linux&arch=arm64). Windows on ARM runs the x64 engine. */
 export function targetOf(url: URL): Target {
   const os = url.searchParams.get('os') ?? 'windows'
   if (os === 'windows') return 'windows-x64'
@@ -47,9 +51,17 @@ export function targetOf(url: URL): Target {
   return t
 }
 
+/** The inyon command a request asks for: the same systems, plus Windows on ARM as its own build. */
+export function cliTargetOf(url: URL): CliTarget {
+  const os = url.searchParams.get('os') ?? 'windows'
+  const t = `${os}-${archOf(url)}` as CliTarget
+  if (!CLI_TARGETS.includes(t)) throw new HttpError(400, 'os must be linux, darwin or windows')
+  return t
+}
+
 const SOURCES = [NODE_DIR, path.resolve(NODE_DIR, '../../packages/link/src'), path.resolve(NODE_DIR, '../../packages/protocol/src')]
 
-/** hash of what goes into a machine's copy (the node and the packages it uses), so any change gets rebuilt */
+/** hash of what goes into a machine's engine (the node and the packages it uses), so any change gets rebuilt */
 function sourceHash() {
   const h = crypto.createHash('sha256')
   for (const dir of SOURCES) {
@@ -77,10 +89,11 @@ function pruneOld(keep: string) {
   } catch {}
 }
 
-/** The inyon program for `t`, built or downloaded once. */
-export async function program(t: Target) {
-  const tag = FROM_SOURCE ? sourceHash() : `v${VERSION}`
-  const file = path.join(OUT, `inyon-${tag}-${fileName(t)}`)
+const tag = () => (FROM_SOURCE ? sourceHash() : `v${VERSION}`)
+
+/** The engine for `t`, built or downloaded once. */
+export async function engine(t: Target) {
+  const file = path.join(OUT, `${tag()}-${engineFile(t)}`)
   if (fs.existsSync(file)) return file
   return once(file, async () => {
     fs.mkdirSync(OUT, { recursive: true })
@@ -88,19 +101,49 @@ export async function program(t: Target) {
       const { buildInyon } = await import('../../../node/build.ts')
       // the first build for a system downloads Bun's runtime for it (about 35 MB)
       const built = await buildInyon({ target: t, outfile: `${file}.tmp`, hub: false, hideConsole: true }).catch((e) => {
-        throw new HttpError(500, `Could not build inyon for ${t}: ${(e as Error).message}`)
+        throw new HttpError(500, `Could not build the Inyon engine for ${t}: ${(e as Error).message}`)
       })
       fs.renameSync(built, file)
     } else {
-      fs.writeFileSync(`${file}.tmp`, await releaseFile(fileName(t), await releaseSums(), releaseBase()))
+      fs.writeFileSync(`${file}.tmp`, await releaseFile(engineFile(t), await releaseSums(), releaseBase()))
       fs.renameSync(`${file}.tmp`, file)
     }
-    pruneOld(tag)
+    pruneOld(tag())
     return file
   })
 }
 
-/** Where the inyon program finds the release of its own version (INYON_DOWNLOAD for a mirror). */
+/** The cargo-built command for `t` next to a checkout, if there is one. */
+const builtCommand = (t: CliTarget) => {
+  const f = path.join(CLI_DIST, cliFile(t))
+  return fs.existsSync(f) ? f : undefined
+}
+
+/**
+ * The inyon command for `t`, downloaded once from the release. A checkout serves what cargo
+ * built into apps/cli/dist, and without that the engine itself, which is a whole program too.
+ */
+export async function command(t: CliTarget): Promise<string> {
+  if (FROM_SOURCE) {
+    const built = builtCommand(t)
+    if (built) return built
+    if (t === 'windows-arm64') throw new HttpError(503, `This hub runs from a checkout and has no inyon command built for ${t} in ${CLI_DIST}.`)
+    return engine(t)
+  }
+  const file = path.join(OUT, `${tag()}-${cliFile(t)}`)
+  if (fs.existsSync(file)) return file
+  return once(file, async () => {
+    fs.mkdirSync(OUT, { recursive: true })
+    fs.writeFileSync(`${file}.tmp`, await releaseFile(cliFile(t), await releaseSums(), releaseBase()))
+    fs.renameSync(`${file}.tmp`, file)
+    return file
+  })
+}
+
+/** Whether this hub hands out the engine as a file of its own (a checkout without a built command doesn't). */
+const splitRelease = (t: Target) => !FROM_SOURCE || !!builtCommand(t)
+
+/** Where the hub finds the release of its own version (INYON_DOWNLOAD for a mirror). */
 const releaseBase = () => (process.env.INYON_DOWNLOAD || `https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`).replace(/\/+$/, '')
 
 let sumsText: Promise<string> | undefined
@@ -138,24 +181,28 @@ export async function releaseFile(name: string, sums: string, base: string, get:
 }
 
 /**
- * The checksums of the Linux and macOS builds, which install.sh checks its download against. The
- * "Add a machine" command carries the checksum of this list, so neither can be swapped on the way.
+ * The checksums of the Linux and macOS files, which install.sh checks its downloads against: the
+ * command under its release name, and the engine under its own when the hub hands it out apart.
+ * The "Add a machine" command carries the checksum of this list, so neither can be swapped on the way.
  */
 export async function unixSums() {
   const sums = FROM_SOURCE ? undefined : await releaseSums()
   const lines = await Promise.all(
-    UNIX.map(async (t) => {
-      const sum = sums ? sumFor(sums, fileName(t)) : await sha256(await program(t))
-      if (!sum) throw new HttpError(502, `Inyon ${VERSION} has no ${fileName(t)} on ${RELEASES_REPO}`)
-      return `${sum}  ${fileName(t)}`
+    UNIX.flatMap((t) => {
+      const names = splitRelease(t) ? [cliFile(t), engineFile(t)] : [cliFile(t)]
+      return names.map(async (name) => {
+        const sum = sums ? sumFor(sums, name) : await sha256(name === cliFile(t) ? await command(t) : await engine(t))
+        if (!sum) throw new HttpError(502, `Inyon ${VERSION} has no ${name} on ${RELEASES_REPO}`)
+        return `${sum}  ${name}`
+      })
     }),
   )
   return `${lines.join('\n')}\n`
 }
 
 /**
- * The program gzipped (about half the size), which matters over a VPN. Compressed on a worker
- * thread, once per build, so the hub keeps answering meanwhile.
+ * A file gzipped (the engine comes down to about half), which matters over a VPN. Compressed on a
+ * worker thread, once per build, so the hub keeps answering meanwhile.
  */
 async function gzipped(file: string) {
   const gz = `${file}.gz`
@@ -206,18 +253,24 @@ const route = (fn: (req: Request) => Promise<Response> | Response) => async (req
   }
 }
 
-const target = (req: Request) => targetOf(new URL(req.url))
-/** what tether-node's own installer and update script ask for: the Windows program */
-const windows = () => program('windows-x64')
+const engineOf = (req: Request) => targetOf(new URL(req.url))
+const commandOf = (req: Request) => cliTargetOf(new URL(req.url))
+/** what tether-node's own installer and update script ask for: the Windows program, whole */
+const windows = () => engine('windows-x64')
 const REPLACED = 'Inyon replaced tether-node with the inyon program. Copy the "Add a machine" command from the hub again and run it on this machine.\n'
 
 export const nodeRoutes = {
   '/node/install.sh': route(() => plain(INSTALL_SH)),
   '/node/install.ps1': route(() => plain(INSTALL_PS1)),
   '/node/SHA256SUMS': route(async () => plain(await unixSums())),
-  '/node/inyon': route(async (req) => binary(await program(target(req)), fileName(target(req)))),
-  '/node/inyon.gz': route(async (req) => binary(await gzipped(await program(target(req))), `${fileName(target(req))}.gz`)),
-  '/node/inyon.sha256': route(async (req) => plain(await sha256(await program(target(req))))),
+  // the inyon command: what install.sh, install.ps1 and `inyon update` on a machine take first
+  '/node/inyon': route(async (req) => binary(await command(commandOf(req)), cliFile(commandOf(req)))),
+  '/node/inyon.gz': route(async (req) => binary(await gzipped(await command(commandOf(req))), `${cliFile(commandOf(req))}.gz`)),
+  '/node/inyon.sha256': route(async (req) => plain(await sha256(await command(commandOf(req))))),
+  // the engine behind it, which the command fetches from here rather than from GitHub
+  '/node/inyon-engine': route(async (req) => binary(await engine(engineOf(req)), engineFile(engineOf(req)))),
+  '/node/inyon-engine.gz': route(async (req) => binary(await gzipped(await engine(engineOf(req))), `${engineFile(engineOf(req))}.gz`)),
+  '/node/inyon-engine.sha256': route(async (req) => plain(await sha256(await engine(engineOf(req))))),
   '/node/busybox.exe': route(async (req) => binary(await busybox(archOf(new URL(req.url))), 'busybox.exe')),
   // a Windows machine set up before the rename updates through these (see hub-update.ps1)
   '/node/tether-node.exe': route(async () => binary(await windows(), 'tether-node.exe')),
@@ -252,14 +305,14 @@ export async function updateScript(platform: string, arch: string) {
 nodeUpdates.useScripts(updateScript)
 
 /**
- * Builds what machines download in the background, so adding one doesn't wait for it. The inyon
- * program only fetches the release's checksums now, and each build the first time it's asked for.
+ * Builds what machines download in the background, so adding one doesn't wait for it. The hub
+ * program only fetches the release's checksums now, and each file the first time it's asked for.
  */
 export function prebuildNode() {
   // hubs started by tests never hand out the program, and building it fetches Bun for four systems
   if (process.env.NODE_ENV === 'test') return
   ;(async () => {
     if (!FROM_SOURCE) return void (await releaseSums())
-    for (const t of [...UNIX, 'windows-x64'] as Target[]) await program(t).then((f) => Promise.all([sha256(f), gzipped(f)]))
+    for (const t of [...UNIX, 'windows-x64'] as Target[]) await engine(t).then((f) => Promise.all([sha256(f), gzipped(f)]))
   })().catch((e) => console.error('inyon build for machines:', e?.message ?? e))
 }

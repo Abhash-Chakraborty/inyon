@@ -14,7 +14,7 @@ import { nodeRoutes, pairCommands, prebuildNode } from './features/node-dist.ts'
 import { headCommit, hubUpdater } from './features/hub-update.ts'
 import { VERSION } from '@inyon/protocol'
 import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, json, newClient, ok, saveEverything, startCore, type Client, type Handler, type Routes } from './core.ts'
-import type { PhoneClaim } from '@inyon/protocol'
+import type { HostState, PhoneClaim } from '@inyon/protocol'
 import { pushAll, startHubPush } from './push/hub-push.ts'
 import { pushRoutes, TEST_PAYLOAD } from './push/routes.ts'
 
@@ -182,6 +182,35 @@ const setupAttempts = { n: 0, reset: 0 }
 startCore()
 startHubPush()
 
+// The inyon command on this machine (`inyon`, its dashboard) reads the hub's machines over
+// loopback with a token the hub writes as it starts, readable only by this user. Whoever can read
+// that file can read the hub's records themselves, so it opens no new way in.
+const LOCAL_TOKEN_FILE = path.join(DATA_DIR, 'local-token')
+const localToken = crypto.randomBytes(24).toString('base64url')
+fs.rmSync(LOCAL_TOKEN_FILE, { force: true })
+fs.writeFileSync(LOCAL_TOKEN_FILE, localToken + '\n', { mode: 0o600 })
+const loopback = (ip: string) => /^(127\.|::1$|::ffff:127\.)/.test(ip)
+function fromThisMachine(req: Request) {
+  if (!loopback(server.requestIP(req)?.address ?? '')) return false
+  const given = new URL(req.url).searchParams.get('token') ?? (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+  return given.length === localToken.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(localToken))
+}
+const local = (fn: (req: Request) => Response | Promise<Response>) => async (req: Request) => (fromThisMachine(req) ? fn(req) : json({ error: 'Only the inyon command on this machine may ask' }, { status: 403 }))
+/** A machine as the command lists it: who it is, whether it's reachable, what it runs. */
+const localNode = (s: HostState) => ({
+  id: s.config.id,
+  name: s.config.name,
+  kind: s.config.kind,
+  status: s.status,
+  ...(s.hostname ? { hostname: s.hostname } : {}),
+  ...(s.os ? { os: s.os } : {}),
+  ...(s.nodeVersion ? { version: s.nodeVersion } : {}),
+  ...(s.lastSeen ? { lastSeen: s.lastSeen } : {}),
+  ...(s.error ? { error: s.error } : {}),
+  agents: s.agents,
+  sessions: s.sessions.length,
+})
+
 /** HTTPS directly, or behind a local HTTPS proxy (Tailscale Serve, Caddy…) where the hub only sees http. */
 function secureRequest(req: Request): boolean {
   const ip: string = server.requestIP(req)?.address ?? ''
@@ -324,6 +353,8 @@ const server = Bun.serve<SocketData>({
         return json({ id: req.params.id, token, command: commands.unix, commands })
       }),
     },
+    // ---------- the inyon command on this machine, over loopback with the local token ----------
+    '/api/local/nodes': local(() => json({ v: 1, ok: true, nodes: registry.overview().map(localNode) })),
     ...nodeRoutes,
     ...guarded(coreRoutes),
     ...guarded(pushRoutes((endpoint) => pushAll(TEST_PAYLOAD, undefined, endpoint))),

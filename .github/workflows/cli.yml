@@ -2,21 +2,21 @@ name: inyon cli
 
 # Builds and tests the inyon command (apps/cli, Rust) on each system it ships for, and keeps the
 # binaries as artifacts named like the release files (inyon-<os>-<arch>, plus the gzipped copy).
-# Only rustup and cargo as the runners ship them; Windows on ARM is cross-built on the x64 runner.
-# Publishing them in a release is wired up separately.
+# Only rustup and cargo as the runners ship them; the Linux builds are static (musl) so one file
+# runs on glibc and Alpine alike, and Windows on ARM is cross-built on the x64 runner. node.yml
+# calls this workflow, so a release tag builds the command and the engine in one run.
 on:
-  push:
-    branches: [main]
-    paths: ['apps/cli/**', '.github/workflows/cli.yml']
+  # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
     paths: ['apps/cli/**', '.github/workflows/cli.yml']
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
 concurrency:
-  group: cli-${{ github.ref }}
+  group: cli-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -38,8 +38,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { runner: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: inyon-linux-x64 }
-          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, name: inyon-linux-arm64 }
+          - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl, name: inyon-linux-x64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: inyon-linux-arm64 }
           - { runner: macos-14, target: aarch64-apple-darwin, name: inyon-darwin-arm64 }
           - { runner: macos-13, target: x86_64-apple-darwin, name: inyon-darwin-x64 }
           - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: inyon-windows-x64.exe }
@@ -50,6 +50,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup target add ${{ matrix.target }}
+      - name: musl toolchain
+        if: ${{ contains(matrix.target, 'musl') }}
+        # the TLS library has C in it, which needs a compiler that targets musl
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q musl-tools
+          echo "CC_$(echo '${{ matrix.target }}' | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
       - name: Test
         if: ${{ !matrix.cross }}
         run: cargo test --target ${{ matrix.target }}

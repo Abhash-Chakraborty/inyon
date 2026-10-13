@@ -115,8 +115,9 @@ test('SHA256SUMS lines match the exact file name, in either sha256sum format', (
 test('the release file for each system', () => {
   expect(binaryName('linux', 'arm64')).toBe('inyon-linux-arm64')
   expect(binaryName('darwin', 'x64')).toBe('inyon-darwin-x64')
-  // Windows on ARM runs the x64 build
-  expect(binaryName('win32', 'arm64')).toBe('inyon-windows-x64.exe')
+  // Windows on ARM gets its own command but the x64 engine, since Bun has no arm64 build for it
+  expect(releaseNames('win32', 'arm64')).toEqual({ cli: 'inyon-windows-arm64.exe', engine: 'inyon-engine-windows-x64.exe' })
+  expect(releaseNames('win32', 'x64')).toEqual({ cli: 'inyon-windows-x64.exe', engine: 'inyon-engine-windows-x64.exe' })
   expect(() => binaryName('freebsd', 'x64')).toThrow(UpdateError)
 })
 
@@ -271,11 +272,12 @@ test('a machine added to a hub takes the hub build when it differs, checked agai
   expect(readFileSync(installed(), 'utf8')).toBe('new linux build')
 })
 
-test('a Windows machine asks its hub for the Windows build, whatever its processor', async () => {
+test('a Windows machine asks its hub for the Windows build and names its processor', async () => {
   const install = findInstall([installed()], BASE)
+  hub.builds['windows-arm64'] = 'new exe'
   expect(await update(install, deps({ platform: 'win32', arch: 'arm64' }))).toMatchObject({ changed: true })
   expect(readFileSync(installed(), 'utf8')).toBe('new exe')
-  expect(requests).toContain('/node/inyon.gz?os=windows&arch=x64')
+  expect(requests).toContain('/node/inyon.gz?os=windows&arch=arm64')
 })
 
 test('which install is running', () => {

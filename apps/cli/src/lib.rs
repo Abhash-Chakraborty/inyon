@@ -6,6 +6,7 @@ pub mod engine;
 pub mod http;
 pub mod networks;
 pub mod paths;
+pub mod qr;
 pub mod service;
 pub mod state;
 pub mod sys;

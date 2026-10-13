@@ -207,6 +207,24 @@ test('preflights are answered for the phone; a cookie from another site is still
   expect(corsOf(csrf)).toEqual(NO_CORS)
 })
 
+test('the inyon command on this machine reads the machines over loopback with the local token', async () => {
+  const token = fs.readFileSync(path.join(dataDir, 'local-token'), 'utf8').trim()
+  expect(token.length).toBeGreaterThanOrEqual(32)
+  expect(fs.statSync(path.join(dataDir, 'local-token')).mode & 0o777).toBe(0o600)
+  // no token, a wrong one, or a signed-in browser's cookie: refused
+  expect((await get('/api/local/nodes')).status).toBe(403)
+  expect((await get(`/api/local/nodes?token=${'x'.repeat(token.length)}`)).status).toBe(403)
+  expect((await get('/api/local/nodes', { cookie: true })).status).toBe(403)
+  const r = await get(`/api/local/nodes?token=${token}`)
+  expect(r.status).toBe(200)
+  const body = await json(r)
+  expect(body.v).toBe(1)
+  expect(body.nodes.map((n: any) => [n.id, n.kind])).toContainEqual(['local', 'local'])
+  for (const n of body.nodes) expect(Object.keys(n)).not.toContain('config')
+  const bearer = await get('/api/local/nodes', { token })
+  expect(bearer.status).toBe(200)
+})
+
 test('removing a phone closes its connection and ends its token', async () => {
   const phone = await pairPhone('Old phone')
   const [me] = (await json(await get('/api/phones', { token: phone.token }))).filter((p: PairedPhone) => p.thisPhone)

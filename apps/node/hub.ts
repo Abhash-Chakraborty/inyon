@@ -5,6 +5,7 @@ import { PRODUCT } from '@inyon/protocol'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { VERSION } from './link.ts'
 import { nodeDir, readEnvFile } from './paths.ts'
+import { emit, fail } from './output.ts'
 import { hasService, installService, restartService, self, uninstallService } from './service.ts'
 import { runningFile } from './update.ts'
 
@@ -73,22 +74,26 @@ async function showSetupCode() {
   try {
     code = readFileSync(path.join(dataDir(), 'setup-code'), 'utf8').trim() || undefined
   } catch {}
-  console.log(setupCodeMessage(code, await askHub(url), url))
+  const session = await askHub(url)
+  const message = setupCodeMessage(code, session, url)
+  emit({ code: session && !session.setup ? undefined : code, url, running: !!session, hasPassword: session ? !session.setup : undefined, message }, message)
 }
 
-/** A new password for a forgotten one, written straight to the hub's records; the hub restarts to pick it up. */
+/**
+ * A new password for a forgotten one, written straight to the hub's records; the hub restarts to
+ * pick it up. The password comes as an argument, in INYON_NEW_PASSWORD (how the inyon command
+ * passes what it asked for, off the process list), or from a prompt.
+ */
 async function resetPassword(given?: string) {
   await import('../hub/src/env.ts')
   const { passwordProblem, setPassword } = await import('../hub/src/password.ts')
-  const pw = given ?? prompt('New Inyon password:') ?? ''
+  const pw = given ?? process.env.INYON_NEW_PASSWORD ?? prompt('New Inyon password:') ?? ''
   const problem = passwordProblem(pw)
-  if (problem) {
-    console.error(problem)
-    process.exit(1)
-  }
+  if (problem) fail(problem, 1)
   setPassword(pw)
   const r = hasService('hub') ? restartService('hub', self()) : undefined
-  console.log(`Password updated; everyone was signed out.${r?.ok ? ' The hub restarted.' : r ? ` Restart the hub to use it (${r.how}).` : ' Restart the hub to use it.'}`)
+  const message = `Password updated; everyone was signed out.${r?.ok ? ' The hub restarted.' : r ? ` Restart the hub to use it (${r.how}).` : ' Restart the hub to use it.'}`
+  emit({ restarted: !!r?.ok, message }, message)
 }
 
 /** Sets the hub up as a background service and prints where to open it, with the setup code. */

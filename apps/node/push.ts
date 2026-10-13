@@ -3,6 +3,7 @@ import path from 'node:path'
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { sendPush, type PushSubscriptionJSON, type Vapid } from '../hub/src/push/webpush.ts'
 import { listPhones } from './link.ts'
+import { emit } from './output.ts'
 import { nodeDir } from './paths.ts'
 
 /**
@@ -214,9 +215,9 @@ export async function pushCommand(args: string[]) {
   if (sub === 'list' || !sub) {
     const phones = listPhones()
     const all = readEntries()
-    if (!all.length) return console.log('No browser gets notifications from this machine yet.')
-    for (const e of all) console.log(`${(phones[e.phone]?.name ?? 'forgotten phone').padEnd(24)} ${new URL(e.subscription.endpoint).host}${e.done ? '' : ' (needs-you only)'}`)
-    return
+    const browsers = all.map((e) => ({ phone: e.phone, name: phones[e.phone]?.name, host: e.host, endpoint: new URL(e.subscription.endpoint).host, done: e.done }))
+    if (!all.length) return emit({ browsers }, 'No browser gets notifications from this machine yet.')
+    return emit({ browsers }, browsers.map((b) => `${(b.name ?? 'forgotten phone').padEnd(24)} ${b.endpoint}${b.done ? '' : ' (needs-you only)'}`).join('\n'))
   }
   console.error('usage: inyon push [list|set|test]')
   process.exit(2)

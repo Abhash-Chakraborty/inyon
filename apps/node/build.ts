@@ -3,16 +3,19 @@ import os from 'node:os'
 import path from 'node:path'
 import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { pipeline } from 'node:stream/promises'
-import { fileName, TARGETS, type Target } from './targets.ts'
+import { engineFile, TARGETS, type Target } from './targets.ts'
 
 /**
- * Builds the inyon program: one file per system with Bun inside, so a machine needs nothing else.
+ * Builds the engine: one file per system with Bun inside, so a machine needs nothing else.
  *
  *   bun apps/node/build.ts <out-dir> [target…]
  *
  * builds the release files (all targets unless some are named) with the hub and the web app in
- * them, plus SHA256SUMS. Build the web app first (bun run build). A hub run from
- * a git checkout calls buildInyon itself for the machines it adds, leaving the hub out.
+ * them, plus SHA256SUMS. Each is attached as inyon-engine-<system>, which the inyon command
+ * (apps/cli) runs, and again as tether-node-<system>: the updater from before the rename to
+ * Inyon asks for that name and needs a whole program under it. Build the web app first (bun run
+ * build). A hub run from a git checkout calls buildInyon itself for the machines it adds,
+ * leaving the hub out.
  */
 
 const ENTRY = path.join(import.meta.dir, 'inyon.ts')
@@ -75,10 +78,10 @@ if (import.meta.main) {
   const sums: string[] = []
   for (const t of targets) {
     if (!TARGETS.includes(t)) throw new Error(`${t} isn't one of ${TARGETS.join(', ')}`)
-    const file = await buildInyon({ target: t, outfile: path.join(out, fileName(t)), hub: true, commit })
+    const file = await buildInyon({ target: t, outfile: path.join(out, engineFile(t)), hub: true, commit })
     // the name tether-node's own updater looks for, so a machine set up before the rename to
     // Inyon updates to this program and moves itself over
-    const old = path.join(out, fileName(t).replace(/^inyon-/, 'tether-node-'))
+    const old = path.join(out, engineFile(t).replace(/^inyon-engine-/, 'tether-node-'))
     copyFileSync(file, old)
     const sum = await sha256File(file)
     sums.push(`${sum}  ${path.basename(file)}`, `${sum}  ${path.basename(old)}`)

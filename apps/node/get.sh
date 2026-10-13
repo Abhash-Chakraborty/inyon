@@ -1,9 +1,10 @@
 #!/bin/sh
 # Gets inyon for this computer and sets it up for the Inyon phone app:
 #   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
-# It downloads the right build into ~/.inyon/bin, checks it against the release's checksums, starts
-# it in the background at login, and shows a code to scan with the app. With --hub it sets up an
-# Inyon hub instead (the server the app signs in to):
+# It downloads the inyon command for this system into ~/.inyon/bin, checks it against the release's
+# checksums, and runs its setup, which fetches the engine behind it, starts it in the background at
+# login, and shows a code to scan with the app. With --hub it sets up an Inyon hub instead (the
+# server the app signs in to):
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
 BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://github.com/Abhash-Chakraborty/inyon/releases/latest/download}}"
@@ -61,5 +62,11 @@ mv -f "$tmp" "$dir/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
 [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$dir/inyon" >/dev/null 2>&1 || true
 
+# from 0.13 a release is two files: this one is the inyon command, and its setup gets the engine
+# (inyon-engine-$os-$arch) that runs behind it. Before that, this one file was the whole program
+if [ -n "$(sum_for "inyon-engine-$os-$arch")" ]; then
+  if [ "$ROLE" = hub ]; then exec "$dir/inyon" setup --role hub; fi
+  exec "$dir/inyon" setup
+fi
 if [ "$ROLE" = hub ]; then exec "$dir/inyon" hub install; fi
 exec "$dir/inyon" setup

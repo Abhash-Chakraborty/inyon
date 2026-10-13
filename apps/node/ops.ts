@@ -1,9 +1,10 @@
 import os from 'node:os'
 import path from 'node:path'
-import { rmSync, writeFileSync } from 'node:fs'
+import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { ENGINE } from '@inyon/protocol'
 import WIN_PRELUDE from './win-prelude.sh' with { type: 'text' }
 // before the commands' environment is made, so TETHER_* variables count as their INYON_* names
-import './paths.ts'
+import { NAME } from './paths.ts'
 
 /**
  * What a hub or a phone can ask a machine to do: run a shell command, stream one's output line by
@@ -20,7 +21,26 @@ type Proc = { kill(): void; write?(d: string): void; resize?(c: number, r: numbe
 export function selfCommand(): string[] {
   const script = process.argv[1]
   const compiled = !script || script.startsWith('/$bunfs/') || /^[A-Z]:\\~BUN\\/i.test(script) || /^(inyon|tether-node)/.test(path.basename(process.execPath))
-  return compiled ? [process.execPath] : [process.execPath, path.resolve(script)]
+  if (!compiled) return [process.execPath, path.resolve(script)]
+  // run as the engine (0.13 and on), the inyon command next to it is what services, the hub's
+  // update and the app's start: it forwards here, and it's the one file an update replaces
+  const cli = inyonCommand()
+  return cli ? [cli] : [process.execPath]
+}
+
+/**
+ * The inyon command this engine runs under, when it does: INYON_CLI (set by the command as it
+ * forwards), or `inyon` next to a program called inyon-engine. Nothing for an older install,
+ * where this program is `inyon` itself.
+ */
+export function inyonCommand(): string | undefined {
+  const given = process.env.INYON_CLI
+  if (given && existsSync(given)) return given
+  const exe = process.execPath
+  const ext = path.extname(exe)
+  if (!path.basename(exe, ext).startsWith(ENGINE)) return undefined
+  const beside = path.join(path.dirname(exe), `${NAME}${ext}`)
+  return existsSync(beside) ? beside : undefined
 }
 
 const shellFor = (cmd: string) => (WIN ? [process.env.INYON_SH || 'busybox.exe', 'sh', '-c', `${WIN_PRELUDE}\n${cmd}`] : ['/bin/sh', '-c', cmd])

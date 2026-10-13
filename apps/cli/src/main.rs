@@ -128,6 +128,12 @@ enum HubAction {
     /// Stop running it in the background (its records stay)
     Stop,
     Restart,
+    /// Show the setup code a new hub asks for
+    Code,
+    /// Choose a new password for a forgotten one
+    ResetPassword {
+        password: Option<String>,
+    },
     /// The same as start
     #[command(hide = true)]
     Install,
@@ -151,7 +157,7 @@ enum ServiceAction {
 
 /// What goes straight to the engine, before the arguments are read here.
 const FORWARDED: [&str; 2] = ["link", "connect"];
-const HUB_OWN: [&str; 5] = ["start", "stop", "restart", "install", "uninstall"];
+const HUB_OWN: [&str; 7] = ["start", "stop", "restart", "install", "uninstall", "code", "reset-password"];
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
@@ -211,7 +217,7 @@ fn main() {
             };
             commands::finish(commands::setup(&sys, theme, Some(&flags), tty), json)
         }
-        Some(Command::Pair { args }) => commands::finish(commands::pair(&args), json),
+        Some(Command::Pair { args }) => commands::finish(commands::pair(&args, json), json),
         Some(Command::Phones) => commands::finish(commands::phones(), json),
         Some(Command::Forget { phone }) => commands::finish(commands::forget(&phone), json),
         Some(Command::Join { hub, no_autostart }) => commands::finish(commands::join(&sys, &hub, &paths::env_var("INYON_TOKEN").unwrap_or_default(), !no_autostart), json),
@@ -222,6 +228,8 @@ fn main() {
                 HubAction::Start | HubAction::Install => commands::hub_start(&sys),
                 HubAction::Stop | HubAction::Uninstall => commands::hub_stop(&sys),
                 HubAction::Restart => commands::hub_restart(&sys),
+                HubAction::Code => commands::hub_code(),
+                HubAction::ResetPassword { password } => commands::hub_reset_password(password.as_deref()),
             },
             json,
         ),

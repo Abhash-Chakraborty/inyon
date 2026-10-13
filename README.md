@@ -114,6 +114,12 @@ encrypted with Noise, so nothing needs an open port or an account.
 
 3. In the app, tap *Add a computer* and scan it.
 
+Since 0.13 that line installs `inyon`, a 2 MB command, and its setup fetches the engine (about
+85 MB, with Bun inside) next to it as `inyon-engine`. The command draws the setup, the status
+screen and the pairing code; the engine runs the link and the hub. A 0.11 or 0.12 install crosses
+over on its next update, and an older one needs the line above again. The split is in beta for
+this release.
+
 **From a browser**, run a hub on a machine that stays on, then open the address it prints:
 
 ```sh

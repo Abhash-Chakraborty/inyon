@@ -11,8 +11,11 @@ const installSh = readFileSync(resolve(import.meta.dir, '../../../node/install.s
 const os = process.platform === 'darwin' ? 'darwin' : 'linux'
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
 let program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'
+const ENGINE = '#!/bin/sh\necho engine\n'
+/** a hub from 0.13 on lists the engine as a file of its own */
+let split = false
 const sha = (b: string | Buffer) => crypto.createHash('sha256').update(b).digest('hex')
-const sums = () => `${sha(program)}  inyon-${os}-${arch}\n${sha('another build')}  inyon-other-x64\n`
+const sums = () => `${sha(program)}  inyon-${os}-${arch}\n${sha('another build')}  inyon-other-x64\n${split ? `${sha(ENGINE)}  inyon-engine-${os}-${arch}\n` : ''}`
 /** a list the hub serves as it is, whatever the program has become */
 let fixedList: string | undefined
 const server = Bun.serve({
@@ -20,9 +23,11 @@ const server = Bun.serve({
   hostname: '127.0.0.1',
   fetch: (req) => {
     const u = new URL(req.url)
+    const mine = u.searchParams.get('os') === os && u.searchParams.get('arch') === arch
     if (u.pathname === '/node/install.sh') return new Response(installSh)
     if (u.pathname === '/node/SHA256SUMS') return new Response(fixedList ?? sums())
-    if (u.pathname === '/node/inyon' && u.searchParams.get('os') === os && u.searchParams.get('arch') === arch) return new Response(program)
+    if (u.pathname === '/node/inyon' && mine) return new Response(program)
+    if (u.pathname === '/node/inyon-engine' && mine && split) return new Response(ENGINE)
     return new Response('not found', { status: 404 })
   },
 })
@@ -71,4 +76,29 @@ test('a swapped install.sh, checksum list or program is refused, and nothing run
   expect(swappedProgram.err).toContain('inyon did not match its checksum')
   expect(swappedProgram.ran).toBeUndefined()
   expect(existsSync(join(swappedProgram.bin, 'inyon'))).toBe(false)
+})
+
+test('a hub from 0.13 on hands out the engine too, checked the same way, and the command joins', async () => {
+  split = true
+  fixedList = undefined
+  program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'
+  try {
+    const r = await run(unixPairCommand(hub, 'tok_456', sha(installSh), sha(sums())))
+    expect(r.err).not.toContain('checksum')
+    expect(r.code).toBe(0)
+    expect(readFileSync(join(r.bin, 'inyon'), 'utf8')).toBe(program)
+    expect(readFileSync(join(r.bin, 'inyon-engine'), 'utf8')).toBe(ENGINE)
+    expect(r.ran).toBe(`join ${hub}\ntok_456\n`)
+    expect(existsSync(join(r.bin, 'inyon.download'))).toBe(false)
+
+    // an engine swapped on the way is refused before anything joins
+    fixedList = sums().replace(sha(ENGINE), sha('other engine'))
+    const swapped = await run(unixPairCommand(hub, 'tok', sha(installSh), sha(fixedList)))
+    expect(swapped.code).not.toBe(0)
+    expect(swapped.err).toContain('engine did not match its checksum')
+    expect(swapped.ran).toBeUndefined()
+  } finally {
+    split = false
+    fixedList = undefined
+  }
 })
