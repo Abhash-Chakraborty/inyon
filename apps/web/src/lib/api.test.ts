@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { realApi as api, realApiModule } from '../test/fakes.ts'
 
 // The real request code (the rest of the suite gets a fake api), against a fake fetch.
-const { ApiError, paneSlug, paneFromSlug } = realApiModule
+const { ApiError, isTransient, paneSlug, paneFromSlug } = realApiModule
 const realFetch = globalThis.fetch
 let reply: () => Response
 const fetchMock = mock(async (_req: Request) => reply())
@@ -158,6 +158,90 @@ describe('upload', () => {
     expect(await api.upload('box', undefined, file()).catch((e) => e.message)).toBe('Upload failed (200)')
     FakeXHR.answer = { status: 0, body: '' }
     expect(await api.upload('box', undefined, file()).catch((e) => e.message)).toBe('Network error during upload')
+  })
+})
+
+describe("a paired hub's machines", () => {
+  const hub = { id: 'h1', name: 'studio', url: 'http://box:4777', token: 'tok', pairedAt: 1 }
+  const machine = 'hub:h1/local'
+  /** What reached the hub: Chromium's rules, where a body handed over as a stream only goes over HTTP/2. */
+  const calls: { url: string; method: string; headers: Headers; credentials?: string; body?: string }[] = []
+  const chromium = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = input instanceof Request ? input : undefined
+    const body = init?.body ?? req?.body
+    // a hub speaks HTTP/1.1: net::ERR_ALPN_NEGOTIATION_FAILED, which a page sees as a TypeError
+    if (body instanceof ReadableStream) throw new TypeError('Failed to fetch')
+    calls.push({
+      url: req?.url ?? String(input),
+      method: init?.method ?? req?.method ?? 'GET',
+      headers: new Headers(init?.headers ?? req?.headers),
+      credentials: init?.credentials ?? req?.credentials,
+      body: body === undefined || body === null ? undefined : new TextDecoder().decode(body as ArrayBuffer),
+    })
+    return reply()
+  }
+  beforeEach(() => {
+    calls.length = 0
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([hub]))
+    globalThis.fetch = mock(chromium) as any
+  })
+  afterEach(() => localStorage.removeItem('inyon.hubs.v1'))
+
+  test('every action on a session reaches the hub, under its own name for the machine, with the token', async () => {
+    const actions: [string, () => Promise<unknown>, string, unknown][] = [
+      ['send', () => api.send(machine, '%3', 'hello', 'r1'), 'POST /panes/3/send', { text: 'hello', requestId: 'r1' }],
+      ['goal', () => api.setting(machine, '%3', '/goal tests pass'), 'POST /panes/3/send', { text: '/goal tests pass', setting: true }],
+      ['model', () => api.setting(machine, '%3', '/model opus'), 'POST /panes/3/send', { text: '/model opus', setting: true }],
+      ['mode', () => api.mode(machine, '%3', 'plan'), 'POST /panes/3/mode', { mode: 'plan' }],
+      ['answer', () => api.answer(machine, '%3', 2, undefined, 'q1'), 'POST /panes/3/answer', { option: 2, question: 'q1' }],
+      ['typed answer', () => api.input(machine, '%3', 'abc'), 'POST /panes/3/input', { text: 'abc' }],
+      ['keys', () => api.keys(machine, '%3', ['Escape']), 'POST /panes/3/keys', { keys: ['Escape'] }],
+      ['rewind', () => api.rewind(machine, '%3', 'that one'), 'POST /panes/3/rewind', { text: 'that one' }],
+      ['remote control', () => api.rc(machine, '%3', true), 'POST /panes/3/rc', { on: true }],
+      ['rename', () => api.rename(machine, '%3', 'Login fix'), 'PUT /panes/3/name', { name: 'Login fix' }],
+      ['start', () => api.start(machine, '%3', 'claude'), 'POST /panes/3/start', { agent: 'claude' }],
+      ['stop a task', () => api.stopTask(machine, { id: 't1' }), 'POST /tasks/stop', { id: 't1' }],
+      ['new session', () => api.launch(machine, { agent: 'claude', cwd: '/w' }), 'POST /launch', { agent: 'claude', cwd: '/w' }],
+      ['stop', () => api.interrupt(machine, '%3'), 'POST /panes/3/interrupt', undefined],
+      ['end', () => api.end(machine, '%3'), 'POST /panes/3/end', undefined],
+      ['models', () => api.models(machine, '%3'), 'GET /panes/3/models', undefined],
+    ]
+    for (const [name, run, route, body] of actions) {
+      calls.length = 0
+      await run()
+      const c = calls[0]
+      if (!c) throw new Error(`${name} never reached the hub`)
+      const [method, rest] = route.split(' ')
+      expect([name, c.method, c.url]).toEqual([name, method, `http://box:4777/api/hosts/local${rest}`])
+      expect(c.headers.get('authorization')).toBe('Bearer tok')
+      expect(c.credentials).toBe('omit')
+      expect(c.body === undefined ? undefined : JSON.parse(c.body)).toEqual(body)
+    }
+  })
+
+  test('an attachment goes to the hub in pieces, with the token', async () => {
+    reply = () => new Response(JSON.stringify({ files: [{ name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' }] }))
+    expect((await api.upload(machine, '%4', new File(['hi'], 'a.txt', { type: 'text/plain' }))).path).toBe('/up/a.txt')
+    expect([calls[0]!.method, calls[0]!.url, calls[0]!.headers.get('authorization')]).toEqual(['POST', 'http://box:4777/api/hosts/local/uploads', 'Bearer tok'])
+    expect(calls[0]!.headers.get('content-type')).toStartWith('multipart/form-data; boundary=')
+    expect(calls[0]!.body).toContain('hi')
+  })
+
+  test("a hub that can't be reached is named; one that refuses the token doesn't sign the app out", async () => {
+    globalThis.fetch = mock(async () => Promise.reject(new TypeError('Failed to fetch'))) as any
+    const err = await failure(api.send(machine, '%3', 'hello'))
+    expect([err.status, err.message]).toEqual([0, "Couldn't reach studio. Check this phone's connection to it."])
+    expect(isTransient(err)).toBe(true)
+    globalThis.fetch = mock(chromium) as any
+    const out = mock(() => {})
+    window.addEventListener('inyon:signed-out', out)
+    try {
+      reply = () => new Response(JSON.stringify({ error: 'Not signed in' }), { status: 401 })
+      expect((await failure(api.send(machine, '%3', 'hello'))).message).toBe('Not signed in')
+      expect(out).not.toHaveBeenCalled()
+    } finally {
+      window.removeEventListener('inyon:signed-out', out)
+    }
   })
 })
 

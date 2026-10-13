@@ -1,7 +1,7 @@
 import type { AgentCatalog, AgentKind, ChatItem, SlashCommand } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
-import { splitHostId } from './hubs.ts'
+import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -9,22 +9,37 @@ export class ApiError extends Error {
   }
 }
 
-/** A request about one of a paired hub's machines goes to that hub, with the phone's token. */
-function viaHub(req: Request): Request | undefined {
-  const url = new URL(req.url)
+/** The paired hub a request about one of its machines belongs to, and its address there. */
+function hubTarget(url: URL): { hub: PairedHub; url: string } | undefined {
   const m = url.pathname.match(/^\/api\/hosts\/([^/]+)(.*)$/)
   if (!m) return
   const { hub, id } = splitHostId(decodeURIComponent(m[1]!))
   if (!hub) return
+  return { hub, url: `${hub.url}/api/hosts/${encodeURIComponent(id)}${m[2]}${url.search}` }
+}
+
+/**
+ * A request about one of a paired hub's machines goes to that hub, with the phone's token. The
+ * body goes as bytes read in advance: handed on as a stream, Chromium (and so the Android app)
+ * sends it only over HTTP/2 and fails it on a hub's HTTP/1.1 before it leaves the phone.
+ */
+async function toHub(req: Request, { hub, url }: { hub: PairedHub; url: string }): Promise<Response> {
   const headers = new Headers(req.headers)
   headers.set('authorization', `Bearer ${hub.token}`)
-  return new Request(`${hub.url}/api/hosts/${encodeURIComponent(id)}${m[2]}${url.search}`, { method: req.method, headers, body: req.body, credentials: 'omit', signal: req.signal, duplex: 'half' } as RequestInit)
+  const body = req.body ? await req.arrayBuffer() : undefined
+  try {
+    return await fetch(url, { method: req.method, headers, body, credentials: 'omit', signal: req.signal })
+  } catch {
+    // nothing came back: name the hub rather than say the browser's "Failed to fetch"
+    if (req.signal.aborted) throw new ApiError(0, `${hub.name} took too long to answer`)
+    throw new ApiError(0, `Couldn't reach ${hub.name}. Check this phone's connection to it.`)
+  }
 }
 
 /** The hub over HTTP in a browser; the core running inside the phone app; a paired hub for its machines. */
 async function send(req: Request): Promise<Response> {
-  const hub = viaHub(req)
-  if (hub) return fetch(hub)
+  const hub = hubTarget(new URL(req.url))
+  if (hub) return toHub(req, hub)
   if (!isPhone()) return fetch(req)
   const rt = await phone()
   // an in-process call can't be cut off, but the caller's timeout still applies
@@ -44,7 +59,8 @@ async function request<T>(method: string, url: string, body?: unknown, timeoutMs
   }))
   const data = await res.json().catch(() => ({}))
   if (!res.ok) {
-    if (res.status === 401 && !url.endsWith('/login') && !viaHub(new Request(new URL(url, location.href)))) window.dispatchEvent(new Event('inyon:signed-out'))
+    // a paired hub refusing the phone's token doesn't sign this app out
+    if (res.status === 401 && !url.endsWith('/login') && !hubTarget(new URL(url, location.href))) window.dispatchEvent(new Event('inyon:signed-out'))
     throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`)
   }
   return data as T
@@ -226,8 +242,9 @@ export const api = {
     form.append('files', file, file.name)
     if (pane) form.append('pane', paneSlug(pane))
     // in the phone app the file goes over SSH from here, a piece at a time: a whole video at once
-    // runs the app out of memory. A big file goes to the hub in pieces too, so it never holds it whole.
-    if (isPhone() || file.size > UPLOAD_PIECE) return uploadInPieces(host, pane, file, onProgress)
+    // runs the app out of memory. A big file goes to the hub in pieces too, so it never holds it whole,
+    // and so does any file for a paired hub's machine, since only a request through send() finds that hub.
+    if (isPhone() || file.size > UPLOAD_PIECE || isHubHost(host)) return uploadInPieces(host, pane, file, onProgress)
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `${h(host)}/uploads`)
