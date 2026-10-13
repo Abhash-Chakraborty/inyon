@@ -1,10 +1,10 @@
 import os from 'node:os'
 import path from 'node:path'
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
-import { ENGINE } from '@inyon/protocol'
+import crypto from 'node:crypto'
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import WIN_PRELUDE from './win-prelude.sh' with { type: 'text' }
 // before the commands' environment is made, so TETHER_* variables count as their INYON_* names
-import { NAME } from './paths.ts'
+import { binDir, inyonCommand, nodeDir } from './paths.ts'
 
 /**
  * What a hub or a phone can ask a machine to do: run a shell command, stream one's output line by
@@ -28,19 +28,29 @@ export function selfCommand(): string[] {
   return cli ? [cli] : [process.execPath]
 }
 
-/**
- * The inyon command this engine runs under, when it does: INYON_CLI (set by the command as it
- * forwards), or `inyon` next to a program called inyon-engine. Nothing for an older install,
- * where this program is `inyon` itself.
- */
-export function inyonCommand(): string | undefined {
-  const given = process.env.INYON_CLI
-  if (given && existsSync(given)) return given
-  const exe = process.execPath
-  const ext = path.extname(exe)
-  if (!path.basename(exe, ext).startsWith(ENGINE)) return undefined
-  const beside = path.join(path.dirname(exe), `${NAME}${ext}`)
-  return existsSync(beside) ? beside : undefined
+/** busybox-w32, the small sh Windows runs Inyon's commands with (pinned, as the hub's installer). */
+const BUSYBOX: Record<string, { file: string; sha256: string }> = {
+  x64: { file: 'busybox-w64u-FRP-6075-g169694ebd.exe', sha256: '6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c' },
+  arm64: { file: 'busybox-w64a-FRP-6075-g169694ebd.exe', sha256: 'e67f873d19d58c535cc9f0c4965ffd622e19b7bab87e3da89cb2185fb54464d7' },
+}
+
+/** On Windows, finds busybox (or fetches it once) and points INYON_SH at it. */
+export async function ensureShell() {
+  if (!WIN || (process.env.INYON_SH && existsSync(process.env.INYON_SH))) return
+  const local = path.join(binDir(), 'busybox.exe')
+  // install.ps1 put it in the node's folder before the rename
+  const found = Bun.which('busybox') ?? [local, path.join(nodeDir(), 'bin', 'busybox.exe')].find((f) => existsSync(f))
+  if (found) return void (process.env.INYON_SH = found)
+  const pick = BUSYBOX[os.arch() === 'arm64' ? 'arm64' : 'x64']!
+  console.log('downloading busybox-w32 (the shell Inyon runs commands with)…')
+  const res = await fetch(`https://frippery.org/files/busybox/${pick.file}`)
+  if (!res.ok) throw new Error(`couldn't download busybox-w32: ${res.status}`)
+  const data = new Uint8Array(await res.arrayBuffer())
+  if (crypto.createHash('sha256').update(data).digest('hex') !== pick.sha256) throw new Error("busybox-w32 didn't match its pinned checksum")
+  mkdirSync(binDir(), { recursive: true })
+  writeFileSync(`${local}.tmp`, data)
+  renameSync(`${local}.tmp`, local)
+  process.env.INYON_SH = local
 }
 
 const shellFor = (cmd: string) => (WIN ? [process.env.INYON_SH || 'busybox.exe', 'sh', '-c', `${WIN_PRELUDE}\n${cmd}`] : ['/bin/sh', '-c', cmd])

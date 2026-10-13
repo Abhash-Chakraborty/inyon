@@ -1,6 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, symlinkSync } from 'node:fs'
+import { ENGINE } from '@inyon/protocol'
 
 // This program was tether-node before the rename to Inyon. A TETHER_* variable set then (by an
 // installer, a service, a hub's command) counts as its INYON_* name wherever it's read.
@@ -17,6 +18,32 @@ export const NAME = 'inyon'
 export const binDir = () => path.join(os.homedir(), '.inyon', 'bin')
 /** the installed program */
 export const installedBinary = (win = process.platform === 'win32') => path.join(binDir(), win ? `${NAME}.exe` : NAME)
+
+/**
+ * The inyon command this engine runs under, when it does: INYON_CLI (set by the command as it
+ * starts the engine), or `inyon` next to a program called inyon-engine. Nothing for an older
+ * install, where this program is `inyon` itself. The command owns services and updates.
+ */
+export function inyonCommand(): string | undefined {
+  const given = process.env.INYON_CLI
+  if (given && existsSync(given)) return given
+  const exe = process.execPath
+  const ext = path.extname(exe)
+  if (!path.basename(exe, ext).startsWith(ENGINE)) return undefined
+  const beside = path.join(path.dirname(exe), `${NAME}${ext}`)
+  return existsSync(beside) ? beside : undefined
+}
+
+/** The three jobs this program runs: the phone link, the connection to a hub, the hub. */
+export type Role = 'link' | 'node' | 'hub'
+/**
+ * What a started job writes with its pid and version: state.json (the link), node.json, hub.json.
+ * The inyon command's update waits for it to name the new version, and stops the copy it names
+ * where there's no service manager.
+ */
+export const runningFile = (role: Role) => path.join(nodeDir(), role === 'link' ? 'state.json' : `${role}.json`)
+/** Where a job writes its log when nothing else keeps it (launchd, nohup). */
+export const logFile = (role: Role) => path.join(nodeDir(), `${role}.log`)
 
 /** The folder before the rename to Inyon, when this program was tether-node. */
 export const oldDir = () => path.join(os.homedir(), '.tether-node')

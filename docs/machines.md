@@ -21,6 +21,7 @@ back. You get a notification after a minute away and another when it reconnects.
 A machine paired with a hub updates from its page under *Machines*. That works for any version,
 because the hub sends a short script that checks the download first.
 
-Before 0.7.0 the machine program was called `tether-node`. It updates the same way, then moves its
-service and files (`~/.tether-node` to `~/.inyon/node`) to the new name a few minutes later. A
-Linux or macOS machine that ran it as a Bun script needs the *Add a machine* command once more.
+Before 0.7.0 the machine program was called `tether-node`. It updates the same way; its files move
+to `~/.inyon/node` the first time the new program runs, and the `inyon` command moves its service
+to the new name when it next updates or sets the machine up. A Linux or macOS machine that ran it
+as a Bun script needs the *Add a machine* command once more.

@@ -4,7 +4,7 @@ import os from 'node:os'
  * The private networks this machine is on: Tailscale (or a Headscale server), NetBird, ZeroTier
  * and plain WireGuard. Their addresses only reach devices on the same network, which the network
  * itself lets in and encrypts, so they're a direct way in that needs no tunnel. The phone link
- * answers on them, and `inyon hub install` says which address or command to use.
+ * answers on them, and `inyon hub start` says which address or command to use.
  *
  * The Tailscale and NetBird programs know the most (the machine's name on the network, whether
  * Tailscale can issue HTTPS certificates, whether NetBird can expose a port), so they're asked

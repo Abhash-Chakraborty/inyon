@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { spawn as spawnChild } from 'node:child_process'
 import { RELEASES_API, VERSION, newerRelease, newestRelease } from '@inyon/protocol'
-import { nodeDir } from '../../../node/paths.ts'
+import { inyonCommand, nodeDir } from '../../../node/paths.ts'
 
 /**
  * Updating the hub. Installed with git clone: pull, install, build the web app, restart; `bun
@@ -163,8 +163,10 @@ export interface HubUpdateOptions {
   alive?: (pid: number) => boolean
   /** run as the inyon program rather than from a checkout */
   binary?: boolean
-  /** the inyon program's update status file (see apps/node/update.ts) */
+  /** the inyon program's update status file (see apps/cli/src/update.rs) */
   statusFile?: string
+  /** the program whose `update --background` is run: the inyon command next to this engine */
+  program?: string
   fetch?: typeof fetch
 }
 
@@ -221,6 +223,8 @@ export function hubUpdater(o: HubUpdateOptions) {
   const jobFile = path.join(o.dataDir, 'hub-update.json')
   const binary = o.binary ?? Bun.isStandaloneExecutable
   const statusFile = o.statusFile ?? path.join(nodeDir(), 'update-status')
+  // the inyon command owns updates; an install without one gets told to reinstall by the engine
+  const program = o.program ?? inyonCommand() ?? process.execPath
   const logFile = binary ? path.join(path.dirname(statusFile), 'update.log') : path.join(o.dataDir, 'hub-update.log')
   const get = o.fetch ?? fetch
   let cache: Omit<HubUpdateStatus, 'running' | 'error' | 'log' | 'restartNeeded'> | undefined
@@ -300,8 +304,8 @@ export function hubUpdater(o: HubUpdateOptions) {
     if (binary) {
       fs.mkdirSync(o.dataDir, { recursive: true })
       fs.writeFileSync(jobFile, JSON.stringify({ started: now(), step: 'start' } satisfies Job), { mode: 0o600 })
-      // runs on its own (see detach in apps/node/service.ts), since it restarts this hub
-      const r = await run([process.execPath, 'update', '--background'], o.dataDir)
+      // runs on its own (see detach in apps/cli/src/service.rs), since it restarts this hub
+      const r = await run([program, 'update', '--background'], o.dataDir)
       if (r.code !== 0) {
         writeJob(jobFile, { error: r.out || "Couldn't start the update." })
         throw new UpdateRefused(500, r.out || "Couldn't start the update.")

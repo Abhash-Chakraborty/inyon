@@ -488,6 +488,14 @@ pub trait Host {
     fn restart(&self, role: Role, cmd: &[String]) -> Installed;
     /// waits for the restarted copy to come up (not the copy `before`); true once it runs and stays up
     fn started(&self, role: Role, version: Option<&str>, before: Option<u32>) -> bool;
+    /// the jobs still set up under their names from before the rename to Inyon
+    fn old_roles(&self) -> Vec<Role> {
+        Vec::new()
+    }
+    /// moves such a job to inyon's own service (see service::move_old_service)
+    fn move_old(&self, _role: Role) -> Installed {
+        Installed { ok: false, how: "nothing to move".into() }
+    }
     fn log(&self, line: &str);
     fn platform(&self) -> Platform {
         Platform::current()
@@ -709,7 +717,23 @@ fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], ve
                 let _ = files.remove(o);
             }
         }
-        return Ok(Outcome { changed: true, version: version.map(String::from), message: format!("{label} is installed and running.") });
+        // a job still under tether-node's name was restarted under it; now that the new version
+        // runs, it moves to inyon's own service (the engine did this a while after starting, before 0.14)
+        let mut notes = Vec::new();
+        for r in host.old_roles() {
+            let m = host.move_old(r);
+            notes.push(if m.ok {
+                format!("The {r} moved from its tether-node service to inyon's.")
+            } else {
+                format!("The {r} still runs as its tether-node service ({}); `inyon migrate` tries again.", m.how)
+            });
+        }
+        let mut message = format!("{label} is installed and running.");
+        for n in notes {
+            message.push(' ');
+            message.push_str(&n);
+        }
+        return Ok(Outcome { changed: true, version: version.map(String::from), message });
     }
     let hint = alpine_hint(host.libc(), files).map(|h| format!(" {h}")).unwrap_or_default();
     if program_old.is_none() {

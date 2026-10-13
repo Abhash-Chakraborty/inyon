@@ -186,8 +186,9 @@ pub fn hub_code() -> Outcome {
 }
 
 /// `inyon hub reset-password [password]`: asked for here when not given, handed to the engine in
-/// its environment rather than on the process list.
-pub fn hub_reset_password(password: Option<&str>) -> Outcome {
+/// its environment rather than on the process list. The engine writes it; a hub running in the
+/// background is restarted here to pick it up.
+pub fn hub_reset_password(sys: &Sys, password: Option<&str>) -> Outcome {
     let pw = match password {
         Some(p) => p.to_string(),
         None => ui::ask_hidden("New Inyon password: ")?,
@@ -195,7 +196,18 @@ pub fn hub_reset_password(password: Option<&str>) -> Outcome {
     if pw.is_empty() {
         return Err("No password given.".into());
     }
-    engine::ask(&["hub", "reset-password"], &[("INYON_NEW_PASSWORD", &pw)])
+    let mut v = engine::ask(&["hub", "reset-password"], &[("INYON_NEW_PASSWORD", &pw)])?;
+    if !service::has_service(sys, Role::Hub) {
+        return Ok(v);
+    }
+    let r = service::restart_service(sys, Role::Hub, &[paths::installed_binary().to_string_lossy().into_owned()]);
+    v["restarted"] = json!(r.ok);
+    v["message"] = json!(if r.ok {
+        "Password updated; everyone was signed out. The hub restarted.".to_string()
+    } else {
+        format!("Password updated; everyone was signed out. Restart the hub to use it ({}).", r.how)
+    });
+    Ok(v)
 }
 
 // ---------- join, disconnect ----------
@@ -611,6 +623,12 @@ impl update::Host for RealHost<'_> {
     }
     fn started(&self, role: Role, version: Option<&str>, before: Option<u32>) -> bool {
         update::wait_started(self.sys.proc, role, version, before, &update::WaitOptions::default())
+    }
+    fn old_roles(&self) -> Vec<Role> {
+        service::old_services(self.sys)
+    }
+    fn move_old(&self, role: Role) -> Installed {
+        service::move_old_service(self.sys, role)
     }
     fn log(&self, line: &str) {
         if !self.quiet {

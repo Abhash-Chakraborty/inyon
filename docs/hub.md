@@ -37,7 +37,7 @@ later in Settings, or choose a new one for a forgotten one with `inyon hub reset
 ## Reaching it from your phone
 
 Use a private network (Tailscale, Headscale, NetBird, ZeroTier, WireGuard or your LAN), or put it
-behind an HTTPS reverse proxy. `inyon hub install` looks for these networks and prints what to run
+behind an HTTPS reverse proxy. `inyon hub start` looks for these networks and prints what to run
 for each: `tailscale serve` where the tailnet has HTTPS, `netbird expose` for a public HTTPS
 address through NetBird's proxy, and otherwise `BIND` on the network's address. Behind a proxy on
 a public domain, add that domain to `INYON_ALLOWED_HOSTS`.

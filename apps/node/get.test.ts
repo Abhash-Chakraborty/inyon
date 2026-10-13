@@ -4,7 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { binaryName, releaseNames } from './update.ts'
+import { releaseFiles } from '@inyon/protocol'
 
 // get.sh run for real, against a local server standing in for the GitHub releases, with HOME in a
 // throwaway folder. The "program" it installs is a script that records how it was started. The
@@ -12,9 +12,11 @@ import { binaryName, releaseNames } from './update.ts'
 // machine, as get.sh checks it then; without minisign it only says so and trusts the list.
 const sha = (b: string | Uint8Array) => crypto.createHash('sha256').update(b).digest('hex')
 const GET = path.join(import.meta.dir, 'get.sh')
-const NAME = binaryName()
+/** this machine as the releases name it */
+const SYSTEM = `${process.platform === 'win32' ? 'windows' : process.platform}-${os.arch()}`
+const NAME = releaseFiles(SYSTEM).cli
 const PROGRAM = '#!/bin/sh\necho "started with $*" > "$HOME/started"\n'
-const ENGINE_NAME = releaseNames().engine
+const ENGINE_NAME = releaseFiles(SYSTEM).engine
 const KEYS = path.resolve(import.meta.dir, '../cli/tests/keys')
 const TEST_KEY = readFileSync(path.join(KEYS, 'test.pub'), 'utf8').split('\n')[1]!
 const SIGNED = !!Bun.which('minisign')

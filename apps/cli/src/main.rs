@@ -161,9 +161,12 @@ const HUB_OWN: [&str; 7] = ["start", "stop", "restart", "install", "uninstall", 
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
-    // copies an earlier update renamed aside (a running .exe can't be deleted until it has stopped)
+    // copies an earlier update renamed aside (a running .exe can't be deleted until it has
+    // stopped): this program's and the engine's, which no longer looks after its own
     if let Ok(me) = std::env::current_exe() {
-        update::cleanup_old(&update::RealFiles, &me, inyon_cli::state::now_ms() as u64);
+        let now = inyon_cli::state::now_ms() as u64;
+        update::cleanup_old(&update::RealFiles, &me, now);
+        update::cleanup_old(&update::RealFiles, &update::engine_beside(&me), now);
     }
     if let Some(first) = argv.get(1) {
         if FORWARDED.contains(&first.as_str()) || first.starts_with("http://") || first.starts_with("https://") {
@@ -229,7 +232,7 @@ fn main() {
                 HubAction::Stop | HubAction::Uninstall => commands::hub_stop(&sys),
                 HubAction::Restart => commands::hub_restart(&sys),
                 HubAction::Code => commands::hub_code(),
-                HubAction::ResetPassword { password } => commands::hub_reset_password(password.as_deref()),
+                HubAction::ResetPassword { password } => commands::hub_reset_password(&sys, password.as_deref()),
             },
             json,
         ),

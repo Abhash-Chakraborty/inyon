@@ -219,6 +219,10 @@ struct FakeHost {
     restarts: RefCell<Vec<(Role, Vec<String>)>>,
     waited: RefCell<Vec<Role>>,
     started_ok: Cell<bool>,
+    /// jobs still under tether-node's names, and what happened in which order
+    old: Vec<Role>,
+    moved: RefCell<Vec<Role>>,
+    order: RefCell<Vec<String>>,
     platform: Platform,
     arch: Arch,
     libc: Libc,
@@ -233,6 +237,9 @@ impl FakeHost {
             restarts: RefCell::new(Vec::new()),
             waited: RefCell::new(Vec::new()),
             started_ok: Cell::new(true),
+            old: Vec::new(),
+            moved: RefCell::new(Vec::new()),
+            order: RefCell::new(Vec::new()),
             platform: Platform::current(),
             arch: Arch::current(),
             libc: Libc::Glibc,
@@ -252,11 +259,21 @@ impl Host for FakeHost {
     }
     fn restart(&self, role: Role, cmd: &[String]) -> Installed {
         self.restarts.borrow_mut().push((role, cmd.to_vec()));
+        self.order.borrow_mut().push(format!("restart {role}"));
         Installed { ok: true, how: "fake".into() }
     }
     fn started(&self, role: Role, _version: Option<&str>, _before: Option<u32>) -> bool {
         self.waited.borrow_mut().push(role);
+        self.order.borrow_mut().push(format!("started {role}"));
         self.started_ok.get()
+    }
+    fn old_roles(&self) -> Vec<Role> {
+        self.old.clone()
+    }
+    fn move_old(&self, role: Role) -> Installed {
+        self.moved.borrow_mut().push(role);
+        self.order.borrow_mut().push(format!("move {role}"));
+        Installed { ok: true, how: "a user service".into() }
     }
     fn log(&self, _line: &str) {}
     fn platform(&self) -> Platform {
@@ -345,6 +362,44 @@ fn a_release_installs_the_engine_next_to_inyon_then_the_new_inyon_and_restarts_e
     assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
     // the gzipped copies, since the release lists them, the engine first
     assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.engine_name), format!("{}.gz", f.cli_name)]);
+}
+
+#[test]
+fn a_job_still_under_tether_nodes_name_moves_to_inyons_service_once_the_new_version_runs() {
+    let _g = lock();
+    let f = Fixture::new();
+    let mut host = FakeHost::new(&f.server, &[Role::Link]);
+    host.old = vec![Role::Link];
+    let r = f.run(&host).unwrap();
+    assert!(r.changed);
+    assert_eq!(r.message, "inyon 9.9.9 is installed and running. The link moved from its tether-node service to inyon's.");
+    // restarted under the old name first, checked, and only then moved: a move that fails would
+    // otherwise leave nothing to go back to
+    assert_eq!(*host.order.borrow(), vec!["restart link", "started link", "move link"]);
+    assert_eq!(*host.moved.borrow(), vec![Role::Link]);
+    // nothing moves when the new version didn't start: the old one is back
+    host.started_ok.set(false);
+    host.moved.borrow_mut().clear();
+    f.server.release(|r| r.version = "9.9.10".into());
+    assert!(f.run(&host).is_err());
+    assert!(host.moved.borrow().is_empty());
+}
+
+#[test]
+fn the_status_file_says_running_done_current_or_failed_as_the_hub_reads_it() {
+    let _g = lock();
+    let home = Home::new(&[]);
+    let status = home.dir.join(".inyon/node/update-status");
+    assert_eq!(update::status_file(), status);
+    for line in ["running", "done 9.9.9", "current 9.9.8", "failed: The download didn't match the release's checksum, so nothing was changed. Try again."] {
+        update::set_status(line);
+        assert_eq!(fs::read_to_string(&status).unwrap(), format!("{line}\n"));
+    }
+    // update.log keeps every line, each after when it was written
+    let log = fs::read_to_string(home.dir.join(".inyon/node/update.log")).unwrap();
+    let lines: Vec<&str> = log.lines().collect();
+    assert_eq!(lines.len(), 4);
+    assert!(lines[0].ends_with(" running") && lines[1].ends_with(" done 9.9.9") && lines[2].ends_with(" current 9.9.8") && lines[3].ends_with("Try again."), "{log}");
 }
 
 #[test]

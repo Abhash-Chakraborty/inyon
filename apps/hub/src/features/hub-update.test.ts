@@ -265,10 +265,10 @@ describe('a hub run as the inyon program', () => {
     fs.mkdirSync(path.dirname(statusFile), { recursive: true })
     const asked: string[][] = []
     const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
-    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, fetch: releases('v0.7.2') })
+    const u = hubUpdater({ dataDir, version: '0.7.0', run, binary: true, statusFile, program: '/home/me/.inyon/bin/inyon', fetch: releases('v0.7.2') })
     const post = u.routes['/api/hub/update'].POST as () => Promise<Response>
     expect((await post()).status).toBe(202)
-    expect(asked).toEqual([[process.execPath, 'update', '--background']])
+    expect(asked).toEqual([['/home/me/.inyon/bin/inyon', 'update', '--background']])
     fs.writeFileSync(statusFile, 'running\n')
     expect(await u.status()).toMatchObject({ running: true })
     expect((await post()).status).toBe(409)

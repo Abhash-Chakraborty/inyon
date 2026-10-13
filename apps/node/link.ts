@@ -111,6 +111,30 @@ export function newPairing() {
 
 export const currentState = () => readJson<State | undefined>('state.json', undefined)
 
+/**
+ * A process that has exited but wasn't collected yet (in a container whose first process doesn't
+ * collect them, say) still answers kill(pid, 0). Linux shows it as Z.
+ */
+export function exited(pid: number) {
+  try {
+    return /^\d+ \(.*\) Z/.test(readFileSync(`/proc/${pid}/stat`, 'utf8'))
+  } catch {
+    return false
+  }
+}
+
+/** Whether a link other than this process runs: the pid state.json names is still alive. */
+export function linkRunning() {
+  const pid = currentState()?.pid
+  if (!pid || pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+  return !exited(pid)
+}
+
 export function forgetPhone(key: string) {
   const all = phones()
   delete all[key]
