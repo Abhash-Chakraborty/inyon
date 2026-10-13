@@ -1,10 +1,11 @@
 //! `inyon update`: replaces the installed programs with the newest release and restarts each job
-//! they run as (the phone link, the hub connection, the hub). A release is two files, the engine
-//! and this program, checked against the release's SHA256SUMS like get.sh does (the gzipped copy
-//! of each first); the list itself must carry a signature by Inyon's release key. Nothing is
-//! replaced until both downloads match, and the old copies come back if the new version doesn't
-//! start. A machine added to a hub takes the engine that hub serves, checked against the sha256
-//! the hub publishes, so it always matches its hub.
+//! they run as (the phone link, the hub connection, the hub). The release comes from the website,
+//! which keeps a copy of the newest one (RELEASES; INYON_DOWNLOAD points elsewhere). It is two
+//! files, the engine and this program, checked against the release's SHA256SUMS like get.sh does
+//! (the gzipped copy of each first); the list itself must carry a signature by Inyon's release
+//! key. Nothing is replaced until both downloads match, and the old copies come back if the new
+//! version doesn't start. A machine added to a hub takes the engine that hub serves, checked
+//! against the sha256 the hub publishes, so it always matches its hub.
 
 use std::fmt;
 use std::fs;
@@ -19,9 +20,13 @@ use crate::service::{Installed, Role};
 use crate::signing;
 use crate::sys::{Libc, Platform, Proc};
 
+/// The GitHub repository the releases are published on. Every release stays there; the website
+/// keeps a copy of the newest one only.
 pub const RELEASES_REPO: &str = "Abhash-Chakraborty/inyon";
-pub const RELEASES: &str = "https://github.com/Abhash-Chakraborty/inyon/releases/latest/download";
 pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
+/// Where the newest release is downloaded from: the website's copy of it (INSTALL_URL/download),
+/// with latest.json naming its version next to the files.
+pub const RELEASES: &str = "https://inyon.abhashchakraborty.tech/download";
 
 /// What the app reads to follow an update it started: running, done <version>, current, failed: …
 pub fn status_file() -> PathBuf {
@@ -224,22 +229,69 @@ pub fn sum_for(sums: &str, name: &str) -> Option<String> {
     None
 }
 
-/// The newest release's version. `…/releases/latest` redirects to `…/releases/tag/v1.2.3`, so one
-/// request without following it says which; a base pinned to a tag (…/download/v1.2.3) says so itself.
+/// The newest release's version, by where `base` points:
+/// - a GitHub release pinned to a tag (…/releases/download/v1.2.3) says so itself;
+/// - GitHub's newest (…/releases/latest/download): `…/releases/latest` redirects to
+///   `…/releases/tag/v1.2.3`, so one request without following it says which;
+/// - anything else (the website's copy, or a mirror) names it in latest.json next to the files.
 pub fn latest_version(base: &str) -> Result<String, Error> {
     let base = base.trim_end_matches('/');
-    if let Some(rest) = base.rsplit_once("/releases/download/").map(|(_, r)| r) {
-        if !rest.is_empty() && !rest.contains('/') {
-            return Ok(rest.trim_start_matches('v').to_string());
-        }
+    if let Some(tag) = pinned_tag(base) {
+        return Ok(tag);
     }
-    let page = base.strip_suffix("/download").unwrap_or(base);
-    let res = http::get_no_redirect(page).map_err(|e| err(format!("Couldn't reach {} to look for a new version ({e}).", http::host_of(page))))?;
+    let Some(repo) = base.strip_suffix("/releases/latest/download") else {
+        return listed_version(base);
+    };
+    let page = format!("{repo}/releases/latest");
+    let res = http::get_no_redirect(&page).map_err(|e| err(format!("Couldn't reach {} to look for a new version ({e}).", http::host_of(&page))))?;
     let location = res.location.unwrap_or_default();
     let tag = location.split("/tag/").nth(1).map(|t| t.split(['/', '?', '#']).next().unwrap_or("")).filter(|t| !t.is_empty());
     match tag {
         Some(t) => Ok(percent_decode(t.trim_start_matches('v'))),
         None => Err(err(format!("Couldn't tell the newest version from {page} ({}).", res.status))),
+    }
+}
+
+/// The version a base pinned to a GitHub tag (…/releases/download/v1.2.3) stands for.
+fn pinned_tag(base: &str) -> Option<String> {
+    let rest = base.trim_end_matches('/').rsplit_once("/releases/download/")?.1;
+    (!rest.is_empty() && !rest.contains('/')).then(|| rest.trim_start_matches('v').to_string())
+}
+
+/// Whether the newest version at `base` comes from latest.json (the website or a mirror) rather
+/// than from GitHub's redirect or a pinned tag.
+pub fn from_listing(base: &str) -> bool {
+    let base = base.trim_end_matches('/');
+    pinned_tag(base).is_none() && !base.ends_with("/releases/latest/download")
+}
+
+/// latest.json isn't signed, so it only chooses which release to fetch; the signed SHA256SUMS has
+/// to agree. Each release lists its APK as inyon-<version>.apk, so a list without the one for
+/// `version` belongs to another release: an old copy, or the website caught mid-update.
+pub fn check_listed_version(sums: &str, version: &str) -> Result<(), Error> {
+    let apk = format!("inyon-{version}.apk");
+    if sum_for(sums, &apk).is_some() {
+        return Ok(());
+    }
+    Err(err(format!("The release's signed checksum list isn't the one for Inyon {version} (it doesn't list {apk}), so nothing was changed. Try again later.")))
+}
+
+/// The version latest.json at `base` names: {"version":"0.14.0","tag":"v0.14.0",…}. Anything
+/// that isn't a version number is refused rather than compared, since it ends up in messages and
+/// in the status file the app reads.
+fn listed_version(base: &str) -> Result<String, Error> {
+    let url = format!("{base}/latest.json");
+    let host = http::host_of(base);
+    let res = http::get(&url).map_err(|e| err(format!("Couldn't reach {host} to look for a new version ({e}).")))?;
+    if !res.ok() {
+        return Err(err(format!("Couldn't tell the newest version: {host} answered {} for {url}.", res.status)));
+    }
+    let listed: Option<String> = serde_json::from_slice::<serde_json::Value>(&res.body)
+        .ok()
+        .and_then(|v| v.get("version").and_then(serde_json::Value::as_str).map(|s| s.trim().trim_start_matches('v').to_string()));
+    match listed {
+        Some(v) if parse_version(&v).is_some() && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')) => Ok(v),
+        _ => Err(err(format!("Couldn't tell the newest version: {url} doesn't name one."))),
     }
 }
 
@@ -456,7 +508,7 @@ pub fn cleanup_old(files: &dyn Files, target: &Path, now: u64) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
-    /// from the GitHub releases (get.sh, get.ps1)
+    /// from the releases (get.sh, get.ps1), the website's copy unless INYON_DOWNLOAD says otherwise
     Binary,
     /// from the hub this machine was added to
     Hub(String),
@@ -545,6 +597,10 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
             let names = release_names(platform, host.arch(), host.libc())?;
             // the signature first: a list that isn't Inyon's says nothing about what the release has
             let sums = release_sums(&base, &host.signing_key(), platform)?;
+            // then that the signed list is the release latest.json named
+            if from_listing(&base) {
+                check_listed_version(&sums, &version)?;
+            }
             // a release from before 0.13 has no engine: there is nothing this program can install
             if sum_for(&sums, &names.engine).is_none() {
                 return Ok(Outcome {
@@ -877,6 +933,24 @@ mod tests {
     fn a_pinned_tag_names_its_version_without_a_request() {
         assert_eq!(latest_version("https://example.invalid/x/releases/download/v0.6.9").unwrap(), "0.6.9");
         assert_eq!(latest_version("https://example.invalid/x/releases/download/0.6.9/").unwrap(), "0.6.9");
+    }
+
+    #[test]
+    fn the_releases_are_the_websites_copy() {
+        assert_eq!(RELEASES, format!("{INSTALL_URL}/download"));
+        assert!(from_listing(RELEASES));
+        assert!(from_listing("http://127.0.0.1:8000/download/"));
+        assert!(!from_listing("https://github.com/Abhash-Chakraborty/inyon/releases/latest/download"));
+        assert!(!from_listing("https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.13.3/"));
+    }
+
+    #[test]
+    fn a_signed_list_belongs_to_the_release_whose_apk_it_names() {
+        let sums = format!("{}  inyon-linux-x64\n{} *inyon-0.14.0.apk\n", "a".repeat(64), "b".repeat(64));
+        assert!(check_listed_version(&sums, "0.14.0").is_ok());
+        let e = check_listed_version(&sums, "0.14.1").unwrap_err().to_string();
+        assert_eq!(e, "The release's signed checksum list isn't the one for Inyon 0.14.1 (it doesn't list inyon-0.14.1.apk), so nothing was changed. Try again later.");
+        assert!(check_listed_version(&format!("{}  inyon-linux-x64\n", "a".repeat(64)), "0.14.0").is_err());
     }
 
     #[test]

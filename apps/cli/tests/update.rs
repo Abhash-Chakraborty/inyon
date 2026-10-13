@@ -1,5 +1,6 @@
-//! Nothing real is touched: home is a throwaway folder, a local server stands in for the GitHub
-//! releases and the hub, and restarting the services is a fake that records what it was asked.
+//! Nothing real is touched: home is a throwaway folder, a local server stands in for the releases
+//! (the website's copy under /download, GitHub's under /releases) and the hub, and restarting the
+//! services is a fake that records what it was asked.
 
 mod common;
 
@@ -53,6 +54,9 @@ fn gzip(b: &[u8]) -> Vec<u8> {
 /// `sums` says). Files in `missing` are listed but not there to download. SHA256SUMS.minisig is
 /// signed with `signer` (the test key unless a test says otherwise; none means no signature file)
 /// over the list served, or over `signed_text` when a test wants the signature not to match.
+/// The website's latest.json names `version` and lists the files, unless `listed` is off (not
+/// there at all) or `listing` replaces it. Like a real release it carries inyon-<version>.apk, which
+/// SHA256SUMS lists (custom `sums` too) unless `apk` is off.
 #[derive(Clone)]
 struct Release {
     version: String,
@@ -62,6 +66,9 @@ struct Release {
     missing: Vec<String>,
     signer: Option<String>,
     signed_text: Option<String>,
+    listed: bool,
+    listing: Option<String>,
+    apk: bool,
 }
 
 impl Release {
@@ -69,8 +76,14 @@ impl Release {
         let over = self.signed_text.clone().unwrap_or_else(|| self.sums());
         self.signer.as_deref().map(|k| sign(k, over.as_bytes()).into_bytes())
     }
+    fn apk(&self) -> String {
+        format!("inyon-{}.apk", self.version)
+    }
     fn assets(&self) -> BTreeMap<String, Vec<u8>> {
         let mut a = BTreeMap::new();
+        if self.apk {
+            a.insert(self.apk(), b"the app".to_vec());
+        }
         for (name, body) in &self.files {
             a.insert(name.clone(), body.as_bytes().to_vec());
             if self.gz {
@@ -81,11 +94,24 @@ impl Release {
     }
     fn sums(&self) -> String {
         if !self.sums.is_empty() {
-            return self.sums.clone();
+            let apk = if self.apk { format!("{}  {}\n", sha(b"the app"), self.apk()) } else { String::new() };
+            return format!("{}{apk}", self.sums);
         }
         self.assets().iter().map(|(name, body)| format!("{}  {name}\n", sha(body))).collect()
     }
+    /// latest.json as the website's build writes it
+    fn listing(&self) -> String {
+        if let Some(l) = &self.listing {
+            return l.clone();
+        }
+        let files: Vec<serde_json::Value> = self.assets().iter().map(|(name, body)| serde_json::json!({ "name": name, "size": body.len(), "sha256": sha(body) })).collect();
+        serde_json::json!({ "version": self.version, "tag": format!("v{}", self.version), "date": "2026-10-13", "files": files }).to_string()
+    }
 }
+
+/// Where the mock serves a release: the website's copy, or GitHub's newest.
+const SITE: &str = "/download";
+const GITHUB: &str = "/releases/latest/download";
 
 /// What a hub hands out: the engine and the inyon command for each system (keyed os-arch; a
 /// Windows engine is always the x64 one). A hub from before 0.13 (`split` off) serves one
@@ -122,6 +148,9 @@ impl Server {
             missing: Vec::new(),
             signer: Some(test_key()),
             signed_text: None,
+            listed: true,
+            listing: None,
+            apk: true,
         }));
         let hub = Arc::new(Mutex::new(HubBuilds {
             engines: [("linux-x64", "new linux build"), ("windows-x64", "new exe")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
@@ -153,19 +182,27 @@ impl Server {
                 let (status, extra, body): (&str, String, Vec<u8>) = {
                     let rel = r.lock().unwrap();
                     let hb = h.lock().unwrap();
+                    let asset = path.strip_prefix(&format!("{SITE}/")).or_else(|| path.strip_prefix(&format!("{GITHUB}/")));
+                    let not_found = ("404 Not Found", String::new(), b"not found".to_vec());
                     if path == "/releases/latest" {
                         ("302 Found", format!("Location: https://github.com/x/y/releases/tag/v{}\r\n", rel.version), Vec::new())
-                    } else if path == "/releases/latest/download/SHA256SUMS" {
+                    } else if path == format!("{SITE}/latest.json") {
+                        if rel.listed {
+                            ("200 OK", String::new(), rel.listing().into_bytes())
+                        } else {
+                            not_found
+                        }
+                    } else if asset == Some("SHA256SUMS") {
                         ("200 OK", String::new(), rel.sums().into_bytes())
-                    } else if path == "/releases/latest/download/SHA256SUMS.minisig" {
+                    } else if asset == Some("SHA256SUMS.minisig") {
                         match rel.signature() {
                             Some(sig) => ("200 OK", String::new(), sig),
-                            None => ("404 Not Found", String::new(), b"not found".to_vec()),
+                            None => not_found,
                         }
-                    } else if let Some(asset) = path.strip_prefix("/releases/latest/download/") {
+                    } else if let Some(asset) = asset {
                         match (!rel.missing.iter().any(|m| m == asset)).then(|| rel.assets().get(asset).cloned()).flatten() {
                             Some(b) => ("200 OK", String::new(), b),
-                            None => ("404 Not Found", String::new(), b"not found".to_vec()),
+                            None => not_found,
                         }
                     } else {
                         let (os, arch) = (param("os"), param("arch"));
@@ -203,11 +240,12 @@ impl Server {
         self.requests.lock().unwrap().clear();
     }
 
+    /// the release files fetched, from either place, leaving out the list, its signature and latest.json
     fn downloads(&self) -> Vec<String> {
         self.requests()
             .iter()
-            .filter(|r| r.starts_with("/releases/latest/download/") && !r.ends_with("SHA256SUMS") && !r.ends_with("SHA256SUMS.minisig"))
-            .map(|r| r.rsplit('/').next().unwrap().to_string())
+            .filter_map(|r| r.strip_prefix(&format!("{SITE}/")).or_else(|| r.strip_prefix(&format!("{GITHUB}/"))).map(String::from))
+            .filter(|n| !["SHA256SUMS", "SHA256SUMS.minisig", "latest.json"].contains(&n.as_str()))
             .collect()
     }
 }
@@ -231,7 +269,7 @@ struct FakeHost {
 impl FakeHost {
     fn new(server: &Server, roles: &[Role]) -> FakeHost {
         FakeHost {
-            base: format!("{}/releases/latest/download", server.base),
+            base: format!("{}{SITE}", server.base),
             version: "0.6.3".into(),
             roles: roles.to_vec(),
             restarts: RefCell::new(Vec::new()),
@@ -336,13 +374,97 @@ impl Fixture {
 }
 
 #[test]
-fn the_newest_version_comes_from_where_releases_latest_redirects_or_from_a_pinned_tag() {
+fn the_newest_version_comes_from_latest_json_where_github_redirects_or_from_a_pinned_tag() {
     let _g = lock();
     let f = Fixture::new();
     f.server.release(|r| r.version = "0.7.1".into());
-    assert_eq!(latest_version(&format!("{}/releases/latest/download", f.server.base)).unwrap(), "0.7.1");
+    // the website (and any mirror) lists it in latest.json
+    assert_eq!(latest_version(&format!("{}{SITE}", f.server.base)).unwrap(), "0.7.1");
+    assert_eq!(latest_version(&format!("{}{SITE}/", f.server.base)).unwrap(), "0.7.1");
+    assert_eq!(f.server.requests(), vec!["/download/latest.json", "/download/latest.json"]);
+    // GitHub's newest says so in its redirect, and a pinned tag without a request
+    f.server.clear_requests();
+    assert_eq!(latest_version(&format!("{}{GITHUB}", f.server.base)).unwrap(), "0.7.1");
+    assert_eq!(f.server.requests(), vec!["/releases/latest"]);
     assert_eq!(latest_version("https://example.invalid/x/releases/download/v0.6.9").unwrap(), "0.6.9");
+    // somewhere without latest.json
     assert!(matches!(latest_version(&format!("{}/nothing-here/download", f.server.base)), Err(Error::Update(_))));
+    // a "v" in front is fine, as in the tag
+    f.server.release(|r| r.listing = Some(r#"{"version":"v0.7.2","files":[]}"#.into()));
+    assert_eq!(latest_version(&format!("{}{SITE}", f.server.base)).unwrap(), "0.7.2");
+}
+
+#[test]
+fn a_missing_or_unreadable_latest_json_is_an_error_that_names_the_host_and_changes_nothing() {
+    let _g = lock();
+    let f = Fixture::new();
+    let host = f.server.base.trim_start_matches("http://").to_string();
+    let site = format!("{}{SITE}", f.server.base);
+    f.server.release(|r| r.listed = false);
+    let e = latest_version(&site).unwrap_err().to_string();
+    assert_eq!(e, format!("Couldn't tell the newest version: {host} answered 404 for {site}/latest.json."));
+    for bad in ["not json", "{}", r#"{"tag":"v1.0.0"}"#, r#"{"version":""}"#, r#"{"version":10}"#, r#"{"version":"1.0.0 <b>"}"#, r#"{"version":"latest"}"#] {
+        f.server.release(|r| {
+            r.listed = true;
+            r.listing = Some(bad.into());
+        });
+        let e = latest_version(&site).unwrap_err().to_string();
+        assert_eq!(e, format!("Couldn't tell the newest version: {site}/latest.json doesn't name one."), "{bad}");
+    }
+    // nothing answers at all
+    let e = latest_version("http://127.0.0.1:1/download").unwrap_err().to_string();
+    assert!(e.starts_with("Couldn't reach 127.0.0.1:1 to look for a new version ("), "{e}");
+    // and an update stops there, before anything is downloaded
+    f.server.clear_requests();
+    let host = FakeHost::new(&f.server, &[Role::Link]);
+    assert!(f.run(&host).unwrap_err().to_string().contains("doesn't name one"));
+    assert_eq!(f.server.requests(), vec!["/download/latest.json"]);
+    assert_eq!(f.read(&f.installed()), "old build");
+    assert!(host.restarts.borrow().is_empty());
+}
+
+#[test]
+fn a_signed_list_that_is_not_the_release_latest_json_names_is_refused() {
+    let _g = lock();
+    let f = Fixture::new();
+    let host = FakeHost::new(&f.server, &[Role::Link]);
+    let refused = |err: String, version: &str| {
+        assert_eq!(
+            err,
+            format!("The release's signed checksum list isn't the one for Inyon {version} (it doesn't list inyon-{version}.apk), so nothing was changed. Try again later.")
+        );
+        assert_eq!(f.read(&f.installed()), "old build");
+        assert_eq!(f.bin_names(), vec!["inyon"]);
+        assert!(f.server.downloads().is_empty());
+        assert!(host.restarts.borrow().is_empty());
+    };
+    // latest.json names a newer version than the release whose signed list is served (9.9.9's)
+    f.server.release(|r| r.listing = Some(r#"{"version":"9.9.10","files":[]}"#.into()));
+    refused(f.run(&host).unwrap_err().to_string(), "9.9.10");
+    // the right version, but a signed list that names no APK
+    f.server.release(|r| {
+        r.listing = None;
+        r.apk = false;
+    });
+    refused(f.run(&host).unwrap_err().to_string(), "9.9.9");
+    // the list the release signed, with its APK: the update goes through
+    f.server.release(|r| r.apk = true);
+    assert!(f.run(&host).unwrap().changed);
+}
+
+#[test]
+fn a_release_from_github_still_updates_through_its_redirect() {
+    let _g = lock();
+    let f = Fixture::new();
+    let mut host = FakeHost::new(&f.server, &[Role::Link]);
+    host.base = format!("{}{GITHUB}", f.server.base);
+    // GitHub has no latest.json, and it isn't asked for
+    f.server.release(|r| r.listed = false);
+    assert!(f.run(&host).unwrap().changed);
+    assert_eq!(f.read(&f.installed()), "cli build");
+    assert_eq!(f.read(&f.engine()), "engine build");
+    assert!(f.server.requests().iter().all(|r| !r.starts_with(SITE)), "{:?}", f.server.requests());
+    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.engine_name), format!("{}.gz", f.cli_name)]);
 }
 
 #[test]
@@ -526,18 +648,50 @@ fn a_checksum_list_that_is_unsigned_signed_by_another_key_or_changed_after_signi
 fn the_signing_key_from_the_environment_only_counts_for_releases_from_elsewhere() {
     let _g = lock();
     let _home = Home::new(&[]);
-    let mirror = "http://127.0.0.1:1/releases/latest/download";
+    let mirrors = ["http://127.0.0.1:1/download", "http://127.0.0.1:1/releases/latest/download"];
     assert_eq!(signing::signing_key(update::RELEASES), signing::RELEASE_KEY);
-    assert_eq!(signing::signing_key(mirror), signing::RELEASE_KEY);
+    assert_eq!(signing::signing_key(mirrors[0]), signing::RELEASE_KEY);
     // the whole .pub file or its base64 line alone
     std::env::set_var("INYON_SIGNING_KEY", include_str!("keys/test.pub"));
-    assert_eq!(signing::signing_key(mirror), test_pub());
+    for m in mirrors {
+        assert_eq!(signing::signing_key(m), test_pub(), "{m}");
+    }
     std::env::set_var("INYON_SIGNING_KEY", test_pub());
-    assert_eq!(signing::signing_key(mirror), test_pub());
-    // never for the real releases, so a variable alone can't point an install at another key
-    assert_eq!(signing::signing_key(update::RELEASES), signing::RELEASE_KEY);
-    assert_eq!(signing::signing_key(&format!("{}/", update::RELEASES)), signing::RELEASE_KEY);
+    assert_eq!(signing::signing_key(mirrors[0]), test_pub());
+    // the name from before the rename counts too
     std::env::remove_var("INYON_SIGNING_KEY");
+    std::env::set_var("TETHER_SIGNING_KEY", test_pub());
+    assert_eq!(signing::signing_key(mirrors[0]), test_pub());
+    std::env::remove_var("TETHER_SIGNING_KEY");
+}
+
+/// With INYON_SIGNING_KEY (or TETHER_SIGNING_KEY) naming the test key, `base` still takes the
+/// release key: a variable alone can't point an install at another key.
+fn ignores_the_key_from_the_environment(base: &str) {
+    let _g = lock();
+    let _home = Home::new(&[]);
+    for var in ["INYON_SIGNING_KEY", "TETHER_SIGNING_KEY"] {
+        std::env::set_var(var, test_pub());
+        assert_eq!(signing::signing_key(base), signing::RELEASE_KEY, "{var} {base}");
+        assert_eq!(signing::signing_key(&format!("{base}/")), signing::RELEASE_KEY, "{var} {base}/");
+        std::env::remove_var(var);
+    }
+}
+
+#[test]
+fn the_websites_copy_ignores_a_signing_key_from_the_environment() {
+    assert_eq!(update::RELEASES, "https://inyon.abhashchakraborty.tech/download");
+    ignores_the_key_from_the_environment(update::RELEASES);
+}
+
+#[test]
+fn githubs_newest_release_ignores_a_signing_key_from_the_environment() {
+    ignores_the_key_from_the_environment(&format!("https://github.com/{}/releases/latest/download", update::RELEASES_REPO));
+}
+
+#[test]
+fn a_release_pinned_on_github_ignores_a_signing_key_from_the_environment() {
+    ignores_the_key_from_the_environment(&format!("https://github.com/{}/releases/download/v0.13.3", update::RELEASES_REPO));
 }
 
 #[test]
@@ -670,7 +824,7 @@ fn already_on_the_newest_version_says_so_and_downloads_nothing() {
     let host = FakeHost::new(&f.server, &[Role::Link]);
     let r = f.run(&host).unwrap();
     assert_eq!(r, update::Outcome { changed: false, message: "inyon 0.6.3 is up to date.".into(), version: Some("0.6.3".into()) });
-    assert_eq!(f.server.requests(), vec!["/releases/latest"]);
+    assert_eq!(f.server.requests(), vec!["/download/latest.json"]);
     assert!(host.restarts.borrow().is_empty());
 }
 
@@ -773,10 +927,13 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     let said = RefCell::new(Vec::new());
     let say = |l: &str| said.borrow_mut().push(l.to_string());
 
-    // a release (INYON_DOWNLOAD stands in for GitHub): checked against its signed SHA256SUMS,
-    // which the test key signs, so without INYON_SIGNING_KEY naming it the list is refused
-    std::env::set_var("INYON_DOWNLOAD", format!("{}/releases/latest/download", f.server.base));
-    assert_eq!(source(), Source::Release(format!("{}/releases/latest/download", f.server.base)));
+    // nothing set: the newest release on the website
+    assert_eq!(source(), Source::Release(update::RELEASES.to_string()));
+
+    // a release (INYON_DOWNLOAD stands in for the website): checked against its signed
+    // SHA256SUMS, which the test key signs, so without INYON_SIGNING_KEY naming it the list is refused
+    std::env::set_var("INYON_DOWNLOAD", format!("{}{SITE}/", f.server.base));
+    assert_eq!(source(), Source::Release(format!("{}{SITE}", f.server.base)));
     let err = download_to(&to, &say).unwrap_err();
     assert!(err.starts_with(update::UNSIGNED), "{err}");
     assert!(!to.exists());
@@ -786,7 +943,7 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     assert!(said.borrow()[0].starts_with("Getting the Inyon engine ("), "{:?}", said.borrow());
     assert!(f.server.downloads().contains(&format!("{}.gz", f.engine_name)));
 
-    // added to a hub, with no mirror set: the hub's engine for this system, never GitHub
+    // added to a hub, with no mirror set: the hub's engine for this system, never the website
     std::env::remove_var("INYON_DOWNLOAD");
     std::env::set_var("INYON_HUB", &f.server.base);
     assert_eq!(source(), Source::Hub(f.server.base.clone()));
