@@ -41,7 +41,9 @@ jobs:
           - { runner: ubuntu-latest, target: x86_64-unknown-linux-musl, name: inyon-linux-x64 }
           - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: inyon-linux-arm64 }
           - { runner: macos-14, target: aarch64-apple-darwin, name: inyon-darwin-arm64 }
-          - { runner: macos-13, target: x86_64-apple-darwin, name: inyon-darwin-x64 }
+          # GitHub has no Intel Mac runners left in the queue; the Apple silicon one builds the
+          # Intel file and runs its tests under Rosetta
+          - { runner: macos-14, target: x86_64-apple-darwin, name: inyon-darwin-x64, rosetta: true }
           - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: inyon-windows-x64.exe }
           # cross-built on the x64 runner; its tests can't run there
           - { runner: windows-latest, target: aarch64-pc-windows-msvc, name: inyon-windows-arm64.exe, cross: true }
@@ -57,6 +59,9 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q musl-tools
           echo "CC_$(echo '${{ matrix.target }}' | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
+      - name: Rosetta
+        if: ${{ matrix.rosetta }}
+        run: sudo softwareupdate --install-rosetta --agree-to-license
       - name: Test
         if: ${{ !matrix.cross }}
         run: cargo test --target ${{ matrix.target }}
