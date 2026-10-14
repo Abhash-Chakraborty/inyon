@@ -4,8 +4,8 @@
 
 <p align="center">
   <b>Your coding agents, from your phone.</b><br>
-  Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot<br>
-  running in tmux on your own computers. Each keeps its own account.
+  Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot<br>
+  and Antigravity CLI running in tmux on your own computers. Each keeps its own account.
 </p>
 
 <p align="center">
@@ -97,6 +97,7 @@ encrypted with Noise, so nothing needs an open port or an account.
 | Gemini CLI | Beta | Context | Numbered prompts |
 | OpenCode | Beta | Context, cost | Through its API |
 | GitHub Copilot | Beta | Context and activity | Native CLI prompts |
+| Antigravity CLI | Yes | Plan quotas | Yes |
 
 [Agents](https://inyon.abhashchakraborty.tech/docs/agents/) in the docs has the details for each.
 

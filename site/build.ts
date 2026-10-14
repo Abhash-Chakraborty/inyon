@@ -419,7 +419,11 @@ async function releases(): Promise<GhRelease[]> {
 function notes(r: GhRelease): string {
   // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead
   const md = (r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
-  return render(md).html.replace(/<h[23] id="[^"]*">/g, "<h4>").replace(/<\/h[23]>/g, "</h4>");
+  // without their ids the headings' # links would point nowhere, so they go too
+  return render(md)
+    .html.replace(/<h[23] id="[^"]*"><a class="anchor"[^>]*>#<\/a>/g, "<h4>")
+    .replace(/<h[23] id="[^"]*">/g, "<h4>")
+    .replace(/<\/h[23]>/g, "</h4>");
 }
 
 const releaseId = (r: GhRelease) => `v${slugify(r.tag_name.replace(/^v/, ""))}`;

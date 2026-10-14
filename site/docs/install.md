@@ -45,7 +45,7 @@ The installers download from this site's [/download](/download/), which holds th
 Both read `INYON_DOWNLOAD`, a folder URL to fetch from instead. Every release stays on GitHub, so point it at one to pin a version:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.14.0 sh
+curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh
 ```
 
 ## With npm
@@ -139,7 +139,7 @@ To stop being part of a hub but keep Inyon installed, use `inyon disconnect`. To
 
 ## Coming from tether-node
 
-Inyon was called Tether before 0.7.0, and its computer program was `tether-node`. Nothing needs redoing. Its files move from `~/.tether-node` to `~/.inyon/node` (leaving a link behind) the first time the new program runs, and `inyon` moves the old service to its new name the next time it updates or sets the machine up. Settings named `TETHER_*` are still read as `INYON_*`.
+Inyon was called Tether before 0.7.0, and its computer program was `tether-node`. Run the installer again, because those versions updated from a release address that no longer exists. Nothing else needs redoing: its files move from `~/.tether-node` to `~/.inyon/node` (leaving a link behind) the first time the new program runs, and `inyon` moves the old service to its new name the next time it updates or sets the machine up. Settings named `TETHER_*` are still read as `INYON_*`.
 
 Before 0.13, `inyon` was the Bun program itself. It's now the small Rust command, and the Bun program is `inyon-engine`. Two things changed for people who type it:
 
