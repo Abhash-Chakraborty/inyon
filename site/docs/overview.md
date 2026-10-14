@@ -11,8 +11,8 @@ The overview is the first screen. It lists every agent running in tmux on every 
 ## What's on it
 
 - **The status line.** How many machines, agent sessions and tmux panes there are, and what's happening: *2 sessions need you*, *1 working*, or *All quiet. Every session is idle.*
-- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on.
-- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now, the model and effort, the cost so far and how full its context is. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one.
+- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on. A Claude Code session you let go on counts as working until it finishes its turn.
+- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now (or when it was last active), the model and effort, the cost so far and how full its context is. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one.
 - **Plan limits.** Each machine's 5-hour and weekly limits per agent, with when they reset.
 - **Recent activity.** The last few times an agent needed you or finished.
 - **Machines.** Each machine with its agents, tmux state and latency. **Manage →** opens the list.
