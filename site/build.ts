@@ -35,6 +35,8 @@ interface Page {
   html: string;
   toc: { id: string; text: string; level: number }[];
   source?: string;
+  /** when the page last changed, from git */
+  modified?: string;
 }
 
 interface Asset {
@@ -50,6 +52,86 @@ interface Release {
   assets: Asset[];
   /** true when the uncompressed programs were left out to stay inside the Pages size limit */
   gzOnly?: boolean;
+}
+
+const HOME = {
+  title: "Inyon: your coding agents, from your phone",
+  description:
+    "Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot running in tmux on your own computers, from your phone or any browser.",
+};
+const DOWNLOAD_DESCRIPTION =
+  "Download Inyon for Android, Linux, macOS and Windows. Every file is checked against the release's SHA256SUMS.";
+const CHANGELOG_DESCRIPTION = "Every release of Inyon, newest first.";
+const AUTHOR = { "@type": "Person", name: "Abhash Chakraborty", url: "https://abhashchakraborty.tech" };
+
+// ---------- link previews ----------
+
+export const OG_SIZE = { width: 1200, height: 630 };
+
+/** One page's link preview, as site/og.ts draws it into site/og/<id>.png. */
+export interface Card {
+  id: string;
+  path: string;
+  title: string;
+  description: string;
+  eyebrow?: string;
+  chip?: string;
+}
+
+/** Every page that gets its own link preview: home, download, then the docs in sidebar order. */
+export function cards(): Card[] {
+  const list: Card[] = [
+    { id: "home", path: "/", title: HOME.title, description: HOME.description },
+    {
+      id: "download",
+      path: "/download/",
+      title: "Download Inyon",
+      description: DOWNLOAD_DESCRIPTION,
+      eyebrow: "Android · Linux · macOS · Windows",
+      chip: "Download",
+    },
+  ];
+  for (const group of NAV)
+    for (const slug of group.pages) {
+      const meta =
+        slug === "changelog"
+          ? { title: "Changelog", description: CHANGELOG_DESCRIPTION }
+          : frontmatter(readFileSync(join(SITE, "docs", `${slug}.md`), "utf8")).meta;
+      list.push({
+        id: slug === "index" ? "docs" : slug,
+        path: url(slug),
+        title: meta.title,
+        description: meta.description ?? "",
+        eyebrow: group.title,
+        chip: "Docs",
+      });
+    }
+  return list;
+}
+
+/** What a preview was drawn from: the card, the drawing code and the pictures in it. A page whose
+ *  key no longer matches site/og/keys.json has a stale picture. */
+export function ogKey(card: Card): string {
+  const h = createHash("sha256")
+    .update(readFileSync(join(SITE, "og.ts")))
+    .update(readFileSync(join(ROOT, "apps/web/public/icon.svg")))
+    .update(JSON.stringify([card.id, card.path, card.title, card.description, card.eyebrow, card.chip]));
+  if (card.id === "home") h.update(readFileSync(join(ROOT, "docs/phones-light.webp")));
+  return h.digest("hex").slice(0, 12);
+}
+
+const ogKeys: Record<string, string> = existsSync(join(SITE, "og/keys.json"))
+  ? JSON.parse(readFileSync(join(SITE, "og/keys.json"), "utf8"))
+  : {};
+const stale = new Set<string>();
+
+/** The preview image for a page, or the home page's when this page's is missing or out of date. */
+function ogImage(card: Card): string {
+  const key = ogKey(card);
+  if (ogKeys[card.id] === key && existsSync(join(SITE, "og", `${card.id}.png`)))
+    return `${ORIGIN}/og/${card.id}.png?v=${key}`;
+  stale.add(card.id);
+  return `${ORIGIN}/og/home.png`;
 }
 
 // ---------- helpers ----------
@@ -72,6 +154,38 @@ const slugify = (s: string) =>
     .replace(/^-|-$/g, "");
 const url = (slug: string) => (slug === "index" ? "/docs/" : `/docs/${slug}/`);
 const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+/** A WebP or PNG's size in pixels, read from its header, so pictures reserve their space. */
+function imageSize(file: string): { width: number; height: number } | undefined {
+  const b = readFileSync(file);
+  if (b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP") {
+    const kind = b.toString("ascii", 12, 16);
+    if (kind === "VP8X") return { width: 1 + b.readUIntLE(24, 3), height: 1 + b.readUIntLE(27, 3) };
+    if (kind === "VP8 ") return { width: b.readUInt16LE(26) & 0x3fff, height: b.readUInt16LE(28) & 0x3fff };
+    if (kind === "VP8L") {
+      const n = b.readUInt32LE(21);
+      return { width: 1 + (n & 0x3fff), height: 1 + ((n >>> 14) & 0x3fff) };
+    }
+  }
+  if (b.readUInt32BE(0) === 0x89504e47) return { width: b.readUInt32BE(16), height: b.readUInt32BE(20) };
+  return undefined;
+}
+
+/** When a file (or the newest of several) last changed, from git. Undefined in a shallow clone,
+ *  where every file would look as new as the last commit. */
+let shallow: boolean | undefined;
+function lastChanged(...paths: string[]): string | undefined {
+  shallow ??= Bun.spawnSync(["git", "rev-parse", "--is-shallow-repository"], { cwd: ROOT }).stdout.toString().trim() !== "false";
+  if (shallow) return undefined;
+  const out = Bun.spawnSync(["git", "log", "-1", "--format=%cI", "--", ...paths], { cwd: ROOT }).stdout.toString().trim();
+  return out || undefined;
+}
+const newest = (...dates: (string | undefined)[]) =>
+  dates.filter((d): d is string => !!d).sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+
+/** Structured data for search engines, safe inside a <script> element. */
+const jsonLd = (data: object) =>
+  `<script type="application/ld+json">${JSON.stringify({ "@context": "https://schema.org", ...data }).replace(/</g, "\\u003c")}</script>`;
 
 function frontmatter(src: string): { meta: Record<string, string>; body: string } {
   const m = src.match(/^---\n([\s\S]*?)\n---\n/);
@@ -129,7 +243,9 @@ function render(md: string): { html: string; toc: Page["toc"] } {
   // images from the repo's docs/ folder are copied to /img; a -light image with a -dark twin
   // follows the reader's colour scheme
   html = html.replace(/<img src="\.\.\/\.\.\/docs\/([\w.-]+)"([^>]*)>/g, (_, file: string, rest: string) => {
-    const img = `<img src="/img/${file}"${rest.replace(/\s*\/$/, "")} loading="lazy" decoding="async">`;
+    const size = /\swidth=/.test(rest) ? undefined : imageSize(join(ROOT, "docs", file));
+    const dims = size ? ` width="${size.width}" height="${size.height}"` : "";
+    const img = `<img src="/img/${file}"${rest.replace(/\s*\/$/, "")}${dims} loading="lazy" decoding="async">`;
     const dark = file.replace("-light.", "-dark.");
     return dark !== file && existsSync(join(ROOT, "docs", dark))
       ? `<picture><source media="(prefers-color-scheme: dark)" srcset="/img/${dark}">${img}</picture>`
@@ -294,18 +410,58 @@ async function mirror(release: Release, raw: GhRelease) {
   }
 }
 
-async function changelog(): Promise<string> {
-  if (OFFLINE) return `<p>The release notes are on <a class="ext" href="${GITHUB}/releases">GitHub</a>.</p>`;
-  const list = ((await gh("/releases?per_page=100")) as GhRelease[]).filter((r) => !r.draft && !r.prerelease);
+async function releases(): Promise<GhRelease[]> {
+  if (OFFLINE) return [];
+  return ((await gh("/releases?per_page=100")) as GhRelease[]).filter((r) => !r.draft && !r.prerelease);
+}
+
+/** A release's notes as HTML, headings demoted to sit under its version. */
+function notes(r: GhRelease): string {
+  // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead
+  const md = (r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
+  return render(md).html.replace(/<h[23] id="[^"]*">/g, "<h4>").replace(/<\/h[23]>/g, "</h4>");
+}
+
+const releaseId = (r: GhRelease) => `v${slugify(r.tag_name.replace(/^v/, ""))}`;
+
+function changelog(list: GhRelease[]): string {
+  if (!list.length) return `<p>The release notes are on <a class="ext" href="${GITHUB}/releases">GitHub</a>.</p>`;
   return list
     .map((r) => {
       const v = r.tag_name.replace(/^v/, "");
-      // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead
-      const notes = (r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
-      const body = render(notes).html.replace(/<h[23] id="[^"]*">/g, "<h4>").replace(/<\/h[23]>/g, "</h4>");
-      return `<section class="release" id="v${slugify(v)}"><h2><a class="anchor" href="#v${slugify(v)}" aria-hidden="true" tabindex="-1">#</a>${esc(v)}<time datetime="${r.published_at}">${r.published_at.slice(0, 10)}</time></h2>${body}<p class="edit"><a class="ext" href="${r.html_url}" rel="noopener">${esc(v)} on GitHub</a></p></section>`;
+      const id = releaseId(r);
+      return `<section class="release" id="${id}"><h2><a class="anchor" href="#${id}" aria-hidden="true" tabindex="-1">#</a>${esc(v)}<time datetime="${r.published_at}">${r.published_at.slice(0, 10)}</time></h2>${notes(r)}<p class="edit"><a class="ext" href="${r.html_url}" rel="noopener">${esc(v)} on GitHub</a></p></section>`;
     })
     .join("\n");
+}
+
+/** The releases as an Atom feed, so feed readers (and GitHub-watching tools) can follow them. */
+function feed(list: GhRelease[]): string {
+  const entries = list.slice(0, 30).map((r) => {
+    const v = r.tag_name.replace(/^v/, "");
+    const link = `${ORIGIN}/docs/changelog/#${releaseId(r)}`;
+    return `  <entry>
+    <title>Inyon ${esc(v)}</title>
+    <id>${esc(r.html_url)}</id>
+    <link rel="alternate" type="text/html" href="${link}"/>
+    <published>${r.published_at}</published>
+    <updated>${r.published_at}</updated>
+    <content type="html">${esc(notes(r))}</content>
+  </entry>`;
+  });
+  return `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Inyon releases</title>
+  <subtitle>${esc(CHANGELOG_DESCRIPTION)}</subtitle>
+  <id>${ORIGIN}/releases.xml</id>
+  <link rel="self" type="application/atom+xml" href="${ORIGIN}/releases.xml"/>
+  <link rel="alternate" type="text/html" href="${ORIGIN}/docs/changelog/"/>
+  <updated>${list[0]?.published_at ?? new Date().toISOString()}</updated>
+  <author><name>${AUTHOR.name}</name><uri>${AUTHOR.url}</uri></author>
+  <icon>${ORIGIN}/icon.svg</icon>
+${entries.join("\n")}
+</feed>
+`;
 }
 
 // ---------- layout ----------
@@ -313,14 +469,43 @@ async function changelog(): Promise<string> {
 const ICON = readFileSync(join(ROOT, "apps/web/public/icon.svg"), "utf8");
 
 function layout(opts: {
+  /** the whole <title> */
   title: string;
   description: string;
   path: string;
   body: string;
   version?: string;
   bodyClass?: string;
+  /** the link preview; none for pages search engines shouldn't list */
+  card?: Card;
+  type?: "website" | "article";
+  modified?: string;
+  data?: object[];
 }): string {
-  const full = opts.path === "/" ? opts.title : `${opts.title} · Inyon`;
+  const full = opts.title;
+  const canonical = `${ORIGIN}${opts.path}`;
+  const image = opts.card && ogImage(opts.card);
+  const alt = opts.card?.id === "home" ? `${HOME.title}, beside two phones showing Inyon` : `${opts.card?.title}: Inyon docs`;
+  const head = opts.card
+    ? `<link rel="canonical" href="${canonical}">
+<meta property="og:type" content="${opts.type ?? "website"}">
+<meta property="og:site_name" content="Inyon">
+<meta property="og:locale" content="en_GB">
+<meta property="og:title" content="${esc(full)}">
+<meta property="og:description" content="${esc(opts.description)}">
+<meta property="og:url" content="${canonical}">
+<meta property="og:image" content="${image}">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="${OG_SIZE.width}">
+<meta property="og:image:height" content="${OG_SIZE.height}">
+<meta property="og:image:alt" content="${esc(alt)}">${opts.modified ? `\n<meta property="article:modified_time" content="${opts.modified}">` : ""}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${esc(full)}">
+<meta name="twitter:description" content="${esc(opts.description)}">
+<meta name="twitter:image" content="${image}">
+<meta name="twitter:image:alt" content="${esc(alt)}">
+${(opts.data ?? []).map(jsonLd).join("\n")}`
+    : `<meta name="robots" content="noindex">`;
   const nav = [
     ["/docs/", "Docs"],
     ["/download/", "Download"],
@@ -335,15 +520,13 @@ function layout(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(full)}</title>
 <meta name="description" content="${esc(opts.description)}">
-<link rel="canonical" href="${ORIGIN}${opts.path}">
-<meta property="og:title" content="${esc(full)}">
-<meta property="og:description" content="${esc(opts.description)}">
-<meta property="og:url" content="${ORIGIN}${opts.path}">
-<meta property="og:image" content="${ORIGIN}/img/hero-light.webp">
-<meta name="twitter:card" content="summary_large_image">
+<meta name="author" content="${AUTHOR.name}">
+${head}
 <meta name="theme-color" content="#e9e8e4" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1b1a18" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="alternate" type="application/atom+xml" title="Inyon releases" href="/releases.xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -443,8 +626,44 @@ function docPage(page: Page & { nav?: string }, version?: string): string {
   </main>
   ${toc.length > 1 ? `<nav class="toc" aria-label="On this page"><p class="side-title">On this page</p><ul>${toc.map((t) => `<li><a href="#${t.id}">${esc(t.text)}</a></li>`).join("")}</ul></nav>` : '<div class="toc"></div>'}
 </div>`;
-  return layout({ title: page.title, description: page.description, path: url(page.slug), body, version });
+  const path = url(page.slug);
+  const card = cardFor(path);
+  const modified = page.modified;
+  const crumbs = [{ name: "Docs", item: `${ORIGIN}/docs/` }];
+  if (page.slug !== "index") crumbs.push({ name: page.title, item: `${ORIGIN}${path}` });
+  return layout({
+    title: `${page.title} · Inyon docs`,
+    description: page.description,
+    path,
+    body,
+    version,
+    card,
+    type: "article",
+    modified,
+    data: [
+      {
+        "@type": "TechArticle",
+        headline: page.title,
+        description: page.description,
+        url: `${ORIGIN}${path}`,
+        image: ogImage(card),
+        inLanguage: "en",
+        ...(modified ? { dateModified: modified } : {}),
+        author: AUTHOR,
+        publisher: AUTHOR,
+        isPartOf: { "@id": `${ORIGIN}/#website` },
+        about: { "@id": `${ORIGIN}/#app` },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: crumbs.map((c, i) => ({ "@type": "ListItem", position: i + 1, ...c })),
+      },
+    ],
+  });
 }
+
+let cardList: Card[] | undefined;
+const cardFor = (path: string) => (cardList ??= cards()).find((c) => c.path === path)!;
 
 // ---------- build ----------
 
@@ -471,17 +690,20 @@ async function main() {
     const { meta, body } = frontmatter(readFileSync(join(SITE, "docs", file), "utf8"));
     if (!meta.title) throw new Error(`${file}: no title`);
     const { html, toc } = render(body);
-    pages.set(slug, { slug, title: meta.title, nav: meta.nav, description: meta.description ?? "", html, toc, source: file });
+    const modified = lastChanged(`site/docs/${file}`);
+    pages.set(slug, { slug, title: meta.title, nav: meta.nav, description: meta.description ?? "", html, toc, source: file, modified });
   }
+  const releaseList = await releases().catch((e) => {
+    console.warn(`changelog unavailable: ${e.message}`);
+    return [];
+  });
   pages.set("changelog", {
     slug: "changelog",
     title: "Changelog",
-    description: "Every release of Inyon, newest first.",
-    html: await changelog().catch((e) => {
-      console.warn(`changelog unavailable: ${e.message}`);
-      return `<p>The release notes are on <a class="ext" href="${GITHUB}/releases">GitHub</a>.</p>`;
-    }),
+    description: CHANGELOG_DESCRIPTION,
+    html: changelog(releaseList),
     toc: [],
+    modified: releaseList[0]?.published_at,
   });
   const listed = new Set(NAV.flatMap((g) => g.pages));
   for (const slug of pages.keys()) if (!listed.has(slug)) throw new Error(`site/docs/${slug}.md is not in NAV`);
@@ -539,27 +761,58 @@ async function main() {
       .replace("{{downloads}}", () => downloadTable(latest?.release))
       .replaceAll("{{github}}", GITHUB);
   const home = readFileSync(join(SITE, "pages/home.html"), "utf8");
+  // the app as search engines describe it, on the home and download pages
+  const app = {
+    "@type": "SoftwareApplication",
+    "@id": `${ORIGIN}/#app`,
+    name: "Inyon",
+    description: HOME.description,
+    url: `${ORIGIN}/`,
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Android, Linux, macOS, Windows",
+    ...(latest ? { softwareVersion: latest.release.version, dateModified: latest.raw.published_at } : {}),
+    downloadUrl: `${ORIGIN}/download/`,
+    releaseNotes: `${ORIGIN}/docs/changelog/`,
+    screenshot: `${ORIGIN}/img/hero-light.webp`,
+    image: ogImage(cardFor("/")),
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    license: "https://opensource.org/licenses/MIT",
+    isAccessibleForFree: true,
+    author: AUTHOR,
+    sameAs: [GITHUB],
+  };
+  const website = {
+    "@type": "WebSite",
+    "@id": `${ORIGIN}/#website`,
+    name: "Inyon",
+    url: `${ORIGIN}/`,
+    inLanguage: "en",
+    publisher: AUTHOR,
+  };
   writeFileSync(
     join(OUT, "index.html"),
     layout({
-      title: "Inyon: your coding agents, from your phone",
-      description:
-        "Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot running in tmux on your own computers, from your phone or any browser.",
+      title: HOME.title,
+      description: HOME.description,
       path: "/",
       body: fill(home),
       version,
       bodyClass: "home",
+      card: cardFor("/"),
+      data: [website, app],
     }),
   );
   mkdirSync(join(OUT, "download"), { recursive: true });
   writeFileSync(
     join(OUT, "download/index.html"),
     layout({
-      title: "Download",
-      description: "Download Inyon for Android, Linux, macOS and Windows. Every file is checked against the release's SHA256SUMS.",
+      title: "Download Inyon for Android, Linux, macOS and Windows",
+      description: DOWNLOAD_DESCRIPTION,
       path: "/download/",
       body: fill(readFileSync(join(SITE, "pages/download.html"), "utf8")),
       version,
+      card: cardFor("/download/"),
+      data: [app],
     }),
   );
   if (latest) {
@@ -572,7 +825,7 @@ async function main() {
   writeFileSync(
     join(OUT, "404.html"),
     layout({
-      title: "Page not found",
+      title: "Page not found · Inyon",
       description: "This page doesn't exist.",
       path: "/404.html",
       body: readFileSync(join(SITE, "pages/404.html"), "utf8"),
@@ -587,18 +840,67 @@ async function main() {
   mkdirSync(join(OUT, "img"), { recursive: true });
   for (const f of readdirSync(join(ROOT, "docs")).filter((f) => /\.(webp|png|svg)$/.test(f)))
     cpSync(join(ROOT, "docs", f), join(OUT, "img", f));
+  // link previews and the bookmark icon
+  mkdirSync(join(OUT, "og"), { recursive: true });
+  for (const f of readdirSync(join(SITE, "og")).filter((f) => f.endsWith(".png")))
+    cpSync(join(SITE, "og", f), join(OUT, f === "apple-touch-icon.png" ? f : `og/${f}`));
   if (existsSync(join(SITE, "img")))
     for (const f of readdirSync(join(SITE, "img"))) cpSync(join(SITE, "img", f), join(OUT, "img", f));
   writeFileSync(join(OUT, ".nojekyll"), "");
   writeFileSync(join(OUT, "CNAME"), `${new URL(ORIGIN).host}\n`);
+  const order = NAV.flatMap((g) => g.pages);
+  const sitemap: [string, string | undefined][] = [
+    ["/", lastChanged("site/pages/home.html")],
+    ["/download/", newest(lastChanged("site/pages/download.html"), latest?.raw.published_at)],
+    ...order.map((slug): [string, string | undefined] => [url(slug), pages.get(slug)!.modified]),
+  ];
   writeFileSync(
     join(OUT, "sitemap.xml"),
-    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${["/", "/download/", ...[...pages.keys()].map(url)]
-      .map((p) => `  <url><loc>${ORIGIN}${p}</loc></url>`)
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemap
+      .map(([p, d]) => `  <url><loc>${ORIGIN}${p}</loc>${d ? `<lastmod>${d.slice(0, 10)}</lastmod>` : ""}</url>`)
       .join("\n")}\n</urlset>\n`,
   );
   writeFileSync(join(OUT, "robots.txt"), `User-agent: *\nAllow: /\nSitemap: ${ORIGIN}/sitemap.xml\n`);
+  writeFileSync(join(OUT, "releases.xml"), feed(releaseList));
+  writeLlms(order);
+  if (stale.size)
+    console.warn(`link previews out of date for ${[...stale].join(", ")}: run bun site/og.ts (they use the home page's for now)`);
   console.log(`built ${pages.size} docs pages into ${OUT}${version ? ` (Inyon ${version})` : ""}`);
+}
+
+// ---------- llms.txt ----------
+
+/** The docs' Markdown with its links made absolute, so it reads correctly off the site. */
+const absolute = (md: string) =>
+  md
+    .replace(/\]\(([\w-]+)\.md(#[\w-]*)?\)/g, (_, slug: string, hash = "") => `](${ORIGIN}${url(slug)}${hash})`)
+    .replace(/\]\(\.\.\/\.\.\/docs\/([\w.-]+)\)/g, `](${ORIGIN}/img/$1)`)
+    .replace(/\]\(\.\.\/\.\.\/(SECURITY|CONTRIBUTING|LICENSE|NOTICE)(\.md)?\)/g, `](${GITHUB}/blob/main/$1$2)`);
+
+/** /llms.txt (an index of the docs for AI assistants and search tools, llmstxt.org) and
+ *  /llms-full.txt (every docs page's Markdown in one file). */
+function writeLlms(order: string[]) {
+  const sections = NAV.map(
+    (g) =>
+      `## ${g.title}\n\n${g.pages
+        .map((slug) => {
+          const p = pages.get(slug)!;
+          return `- [${p.title}](${ORIGIN}${url(slug)})${p.description ? `: ${p.description}` : ""}`;
+        })
+        .join("\n")}`,
+  );
+  writeFileSync(
+    join(OUT, "llms.txt"),
+    `# Inyon\n\n> ${HOME.description}\n\nInyon runs on your own computers and phone; this site has its documentation and downloads. The source is at ${GITHUB} (MIT). Every docs page in one file: ${ORIGIN}/llms-full.txt\n\n${sections.join("\n\n")}\n\n## Optional\n\n- [Download](${ORIGIN}/download/): ${DOWNLOAD_DESCRIPTION}\n`,
+  );
+  const full = order
+    .filter((slug) => pages.get(slug)?.source)
+    .map((slug) => {
+      const p = pages.get(slug)!;
+      const { body } = frontmatter(readFileSync(join(SITE, "docs", p.source!), "utf8"));
+      return `# ${p.title}\n\nSource: ${ORIGIN}${url(slug)}\n\n${p.description ? `${p.description}\n\n` : ""}${absolute(body).trim()}\n`;
+    });
+  writeFileSync(join(OUT, "llms-full.txt"), `${full.join("\n---\n\n")}`);
 }
 
 // ---------- download table ----------
