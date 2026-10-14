@@ -1,6 +1,6 @@
 import { sleep } from '../platform/store.ts'
 import { Host, shq } from '../hosts/host.ts'
-import { ACCOUNT_SH, MARKER, MOVE_OLD_FOLDER_SH } from '../claude/integration-sh.ts'
+import { ACCOUNT_SH, CURRENT_SH, MOVE_OLD_FOLDER_SH } from '../claude/integration-sh.ts'
 import { MACHINE_KIND_SH, machineKind } from './machine-kind.ts'
 import { SIGNED_IN_SH } from '../agents/auth-sh.ts'
 import { AGENTS, AGENT_KINDS, detectAgent, type AgentKind, type IntegrationState, type MachineKind, type PaneInfo, type SessionInfo, type WindowInfo } from '@inyon/protocol'
@@ -91,11 +91,12 @@ export interface ProbeResult {
 /** Prints whether Claude's integration is installed, missing, removed from settings or outdated. */
 export const HOOK_STATE_SH = `t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
+${CURRENT_SH}
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
 elif ! grep -q 'inyon/statusline.sh' "$s" 2>/dev/null || ! grep -q 'inyon/hook.sh' "$s" 2>/dev/null; then echo removed
-elif grep -q '${MARKER}' "$t/hook.sh" && grep -q '${MARKER}' "$t/statusline.sh"; then echo installed
+elif current "$t/hook.sh" && current "$t/statusline.sh"; then echo installed
 else echo outdated; fi`
 
 const BINS = [...new Set(AGENT_KINDS.flatMap((k) => AGENTS[k].comm))]
@@ -159,7 +160,7 @@ for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-sta
 done
 for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
-  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && grep -q '${MARKER}' "$HOME/.inyon/agy-statusline.sh" 2>/dev/null; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { ${CURRENT_SH}; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
 echo "@@HOOK"
 ${HOOK_STATE_SH}

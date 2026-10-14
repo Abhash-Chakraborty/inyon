@@ -386,3 +386,26 @@ describe('moving an install from before the rename to Inyon', () => {
     }
   })
 })
+
+test('scripts from a newer Inyon count as installed, so an older app leaves them alone', async () => {
+  const { MARKER_VERSION } = await import('./integration-sh.ts')
+  const { HOOK_STATE_SH } = await import('../tmux/tmux.ts')
+  const h = mkdtempSync(join(tmpdir(), 'inyon-version-'))
+  const sh = (cmd: string) => Bun.spawnSync(['sh', '-c', cmd], { env: { HOME: h, PATH: process.env.PATH! } }).stdout.toString().trim()
+  const scripts = (v: number) =>
+    sh(`mkdir -p "$HOME/.inyon" "$HOME/.claude" && for f in hook statusline; do printf '#!/bin/sh\\n# inyon-integration ${v}\\n' > "$HOME/.inyon/$f.sh"; chmod 700 "$HOME/.inyon/$f.sh"; done`)
+  try {
+    scripts(MARKER_VERSION)
+    writeFileSync(join(h, '.claude/settings.json'), JSON.stringify({ statusLine: { command: '~/.inyon/statusline.sh' }, hooks: { Stop: [{ hooks: [{ command: '~/.inyon/hook.sh' }] }] } }))
+    expect(sh(HOOK_STATE_SH)).toBe('installed')
+    scripts(MARKER_VERSION + 1)
+    expect(sh(HOOK_STATE_SH)).toBe('installed')
+    scripts(MARKER_VERSION - 1)
+    expect(sh(HOOK_STATE_SH)).toBe('outdated')
+    // version 10 is newer than 9, not older because "1" sorts before "9"
+    scripts(MARKER_VERSION + 4)
+    expect(sh(HOOK_STATE_SH)).toBe('installed')
+  } finally {
+    rmSync(h, { recursive: true, force: true })
+  }
+})

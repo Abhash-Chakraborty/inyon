@@ -1,7 +1,15 @@
 // Shell shared by the integration scripts and the probe (kept apart to avoid an import cycle).
 
 /** Bump when the scripts change; the probe reports older copies as outdated. */
-export const MARKER = 'inyon-integration 6'
+export const MARKER_VERSION = 6
+export const MARKER = `inyon-integration ${MARKER_VERSION}`
+
+/**
+ * Shell test: the script in file $1 is this version of the integration or a newer one. A phone
+ * still on an older app then leaves scripts a newer one wrote alone, instead of the two putting
+ * their own version back in turn.
+ */
+export const CURRENT_SH = `current() { v=$(sed -n 's/^# inyon-integration \\([0-9][0-9]*\\)$/\\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge ${MARKER_VERSION} ]; }`
 
 /**
  * Sets $pane to the pane the script runs in, as the hub names it. psmux (Windows) numbers panes per
