@@ -1,7 +1,7 @@
 //! The Inyon window on Windows, opened from the tray icon: the status at a glance, a pairing
 //! code drawn as a picture, and the tray's actions as buttons. It's a window of its own, so no
 //! terminal opens or flashes. `inyon window <role> [--pair]` starts it; a second start brings
-//! the open one to the front instead.
+//! the open one to the front instead. What it does goes to ~/.inyon/node/window.log.
 
 use crate::service::Role;
 use crate::ui::dashboard::Status;
@@ -17,36 +17,45 @@ pub fn run(role: Role, pair: bool) -> i32 {
     win::run(role, pair)
 }
 
+/// A line of the status: its text, whether it's the headline (drawn with the dot), and whether
+/// the dot is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub text: String,
+    pub headline: bool,
+    pub on: bool,
+}
+
 /// The lines under the heading: whether it runs, where it answers, which phones are paired.
-/// The flag marks a muted line.
-pub fn summary(s: &Status) -> Vec<(String, bool)> {
-    let mut out = Vec::new();
+pub fn summary(s: &Status) -> Vec<Line> {
+    let line = |text: String| Line { text, headline: false, on: false };
     let running = s.jobs.iter().any(|j| j.running);
     let set_up = s.jobs.iter().any(|j| j.service);
-    out.push(match (running, set_up, s.role.as_str()) {
-        (true, _, "node") => ("●  Running: your phone can reach this computer".to_string(), false),
-        (true, _, "joined") => ("●  Running: connected to your hub".to_string(), false),
-        (true, _, _) => ("●  Running".to_string(), false),
-        (false, true, _) => ("○  Set up, not running".to_string(), false),
-        (false, false, _) => ("○  Not set up yet: run inyon setup in a terminal".to_string(), false),
-    });
+    let head = match (running, set_up, s.role.as_str()) {
+        (true, _, "node") => "Running: your phone can reach this computer",
+        (true, _, "joined") => "Running: connected to your hub",
+        (true, _, _) => "Running",
+        (false, true, _) => "Set up, not running",
+        (false, false, _) => "Not set up yet: run inyon setup in a terminal",
+    };
+    let mut out = vec![Line { text: head.to_string(), headline: true, on: running }];
     if let Some(a) = s.addresses.first().or(s.relays.first()) {
-        out.push((format!("Answers on {}", crate::http::host_of(a)), true));
+        out.push(line(format!("Answers on {}", crate::http::host_of(a))));
     } else if running {
-        out.push(("No address yet: the tunnel is starting".to_string(), true));
+        out.push(line("No address yet: the tunnel is starting".to_string()));
     }
     if s.phones.is_empty() {
-        out.push(("No phones paired yet".to_string(), true));
+        out.push(line("No phones paired yet".to_string()));
     }
     for p in s.phones.iter().take(3) {
         let seen = p.last_seen.as_deref().map(|t| format!("seen {t}")).unwrap_or_else(|| "never seen".to_string());
-        out.push((format!("{}  ·  {seen}", p.name), true));
+        out.push(line(format!("{}  ·  {seen}", p.name)));
     }
     if s.phones.len() > 3 {
-        out.push((format!("and {} more", s.phones.len() - 3), true));
+        out.push(line(format!("and {} more", s.phones.len() - 3)));
     }
     if s.pairing_open {
-        out.push(("A pairing code is open".to_string(), true));
+        out.push(line("A pairing code is open".to_string()));
     }
     out
 }
@@ -61,6 +70,16 @@ pub fn short_code(v: &serde_json::Value) -> Option<(String, String)> {
     Some((format!("{a}-{b}"), format!("{c} {d}")))
 }
 
+/// A line in window.log, with the time, for `inyon logs` and support.
+pub fn trace(what: &str) {
+    use std::io::Write;
+    let dir = crate::paths::node_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("window.log")) {
+        let _ = writeln!(f, "{} {what}", crate::state::format_time(crate::state::now_ms()));
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use std::cell::RefCell;
@@ -72,21 +91,24 @@ mod win {
     use serde_json::Value;
     use windows_sys::Win32::Foundation::{GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{
-        BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, DrawTextW, EndPaint, FillRect, InvalidateRect, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY,
-        CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_END_ELLIPSIS, DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HBRUSH,
-        HFONT, OUT_DEFAULT_PRECIS, PAINTSTRUCT, TRANSPARENT,
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect,
+        InvalidateRect, RoundRect, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS,
+        DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
+        SRCCOPY, TRANSPARENT,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::CreateMutexW;
+    use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
     use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetClientRect, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
-        RegisterClassW, SendMessageW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, BS_PUSHBUTTON, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MSG,
-        SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE, SWP_NOZORDER, SW_SHOWNORMAL, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_PAINT, WM_SETFONT, WM_SIZE, WNDCLASSW, WS_CAPTION,
-        WS_CHILD, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, DrawIconEx, FindWindowW, GetClientRect, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW,
+        PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, BS_OWNERDRAW, CW_USEDEFAULT, DI_NORMAL, IDC_ARROW, MSG, SM_CXSCREEN,
+        SM_CYSCREEN, SWP_NOMOVE, SWP_NOZORDER, SW_SHOW, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD,
+        WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
     };
 
+    use super::{trace, Line};
     use crate::paths;
     use crate::service::{self, Role, Sys};
     use crate::sys::RealProc;
@@ -103,32 +125,38 @@ mod win {
     const BTN_LOG: usize = 2;
     const BTN_RESTART: usize = 3;
     const BTN_QUIT: usize = 4;
+    const LABELS: [&str; 4] = ["Pair a phone", "Show the log", "Restart", "Quit Inyon"];
     /// CREATE_NO_WINDOW
     const NO_WINDOW: u32 = 0x0800_0000;
 
     // silver and ink, as COLORREF (0x00BBGGRR)
     const PAPER: COLORREF = 0x00EC_F0F1;
+    const CARD: COLORREF = 0x00FF_FFFF;
     const INK: COLORREF = 0x001A_1C1D;
+    const INK_PRESSED: COLORREF = 0x0040_4345;
     const MUTED: COLORREF = 0x0066_6A6B;
     const LINE: COLORREF = 0x00D3_D8D9;
-    const WHITE: COLORREF = 0x00FF_FFFF;
+    const PRESSED: COLORREF = 0x00E2_E6E8;
 
     /// logical pixels, scaled by the monitor's DPI
-    const WIDTH: i32 = 480;
-    const PAD: i32 = 24;
-    const LINE_H: i32 = 26;
-    const QR: i32 = 272;
-    const BTN_H: i32 = 32;
+    const WIDTH: i32 = 440;
+    const PAD: i32 = 28;
+    const HEAD_H: i32 = 44;
+    const LINE_H: i32 = 24;
+    const CARD_PAD: i32 = 18;
+    const QR: i32 = 196;
+    const BTN_H: i32 = 36;
+    const GAP: i32 = 10;
 
     struct State {
         role: Role,
-        status: Option<Status>,
-        lines: Vec<(String, bool)>,
+        lines: Vec<Line>,
         pairing: Option<Value>,
         pairing_busy: bool,
         dpi: i32,
         title: HFONT,
         body: HFONT,
+        small: HFONT,
         mono: HFONT,
         buttons: [HWND; 4],
     }
@@ -168,14 +196,16 @@ mod win {
     }
 
     pub fn run(role: Role, pair: bool) -> i32 {
+        trace(&format!("start {role}{}", if pair { " --pair" } else { "" }));
         unsafe {
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             // one window per job: a second start brings the first to the front
             let mutex = CreateMutexW(null(), 0, wide(&format!("Local\\InyonWindow-{}", role.name())).as_ptr());
             if !mutex.is_null() && GetLastError() == ERROR_ALREADY_EXISTS {
                 let open = FindWindowW(wide(CLASS).as_ptr(), null());
+                trace(&format!("another window is open ({}); handing over", if open.is_null() { "not found" } else { "found" }));
                 if !open.is_null() {
-                    ShowWindow(open, SW_SHOWNORMAL);
+                    ShowWindow(open, SW_SHOW);
                     SetForegroundWindow(open);
                     if pair {
                         PostMessageW(open, PAIR_NOW, 0, 0);
@@ -186,7 +216,6 @@ mod win {
             let instance = GetModuleHandleW(null());
             let class = wide(CLASS);
             let wc = WNDCLASSW {
-                style: CS_HREDRAW | CS_VREDRAW,
                 lpfnWndProc: Some(proc_),
                 hInstance: instance,
                 hIcon: crate::tray::win::icon_sized(32, 32),
@@ -198,25 +227,28 @@ mod win {
             STATE.with(|s| {
                 *s.borrow_mut() = Some(State {
                     role,
-                    status: None,
                     lines: Vec::new(),
                     pairing: None,
                     pairing_busy: false,
                     dpi: 96,
                     title: null_mut(),
                     body: null_mut(),
+                    small: null_mut(),
                     mono: null_mut(),
                     buttons: [null_mut(); 4],
                 })
             });
             let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-            let hwnd = CreateWindowExW(0, class.as_ptr(), wide("Inyon").as_ptr(), style, CW_USEDEFAULT, CW_USEDEFAULT, 10, 10, null_mut(), null_mut(), instance, null());
+            let title = wide("Inyon");
+            let hwnd = CreateWindowExW(0, class.as_ptr(), title.as_ptr(), style, CW_USEDEFAULT, CW_USEDEFAULT, 10, 10, null_mut(), null_mut(), instance, null());
             if hwnd.is_null() {
+                trace(&format!("no window: error {}", GetLastError()));
                 return 1;
             }
             fit(hwnd, true);
-            ShowWindow(hwnd, SW_SHOWNORMAL);
+            ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
+            trace("shown");
             // the status comes from a thread of its own: it asks Task Scheduler, which takes a moment
             let target = hwnd as usize;
             std::thread::spawn(move || loop {
@@ -236,24 +268,34 @@ mod win {
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
+            trace("closed");
             0
         }
+    }
+
+    /// The window's content height in logical pixels, from what it shows.
+    fn content_height(lines: usize, has_qr: bool, busy: bool) -> i32 {
+        let mut h = PAD + HEAD_H + 20;
+        // the status card
+        h += CARD_PAD + lines.max(1) as i32 * LINE_H + CARD_PAD;
+        if has_qr {
+            h += GAP + CARD_PAD + QR + CARD_PAD;
+        } else if busy {
+            h += GAP + LINE_H;
+        }
+        h + 20 + BTN_H + PAD
     }
 
     /// Sizes the window to its content and places the buttons; centred on the first showing.
     fn fit(hwnd: HWND, centre: bool) {
         unsafe {
-            let (k, lines, has_qr, buttons) = STATE.with(|s| {
+            let (k, lines, has_qr, busy, buttons) = STATE.with(|s| {
                 let st = s.borrow();
                 let st = st.as_ref().unwrap();
-                (st.dpi as f32 / 96.0, st.lines.len().max(1) as i32, st.pairing.is_some(), st.buttons)
+                (st.dpi as f32 / 96.0, st.lines.len(), st.pairing.is_some(), st.pairing_busy, st.buttons)
             });
             let px = |v: i32| (v as f32 * k) as i32;
-            let mut h = PAD + 40 + 10 + lines * LINE_H + 12;
-            if has_qr {
-                h += QR + 16 + 2 * LINE_H + 8;
-            }
-            h += 1 + 16 + BTN_H + PAD;
+            let h = content_height(lines, has_qr, busy);
             let client = RECT { left: 0, top: 0, right: px(WIDTH), bottom: px(h) };
             let mut outer = client;
             AdjustWindowRectExForDpi(&mut outer, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 0, 0, GetDpiForWindow(hwnd));
@@ -264,8 +306,8 @@ mod win {
             } else {
                 SetWindowPos(hwnd, null_mut(), 0, 0, w, hh, SWP_NOMOVE | SWP_NOZORDER);
             }
-            // four buttons across the bottom
-            let gap = px(8);
+            // the primary button first, the other three after it, across the bottom
+            let gap = px(GAP);
             let bw = (px(WIDTH) - 2 * px(PAD) - 3 * gap) / 4;
             let y = px(h - PAD - BTN_H);
             for (i, b) in buttons.iter().enumerate() {
@@ -284,11 +326,15 @@ mod win {
                 return true;
             }
             st.pairing_busy = true;
+            st.pairing = None;
             false
         });
         if busy {
             return;
         }
+        trace("asking the engine for a pairing code");
+        fit(hwnd, false);
+        unsafe { InvalidateRect(hwnd, null(), 0) };
         let target = hwnd as usize;
         std::thread::spawn(move || {
             let mut answer = None;
@@ -307,16 +353,18 @@ mod win {
         match what {
             BTN_PAIR => start_pairing(hwnd),
             BTN_LOG => {
+                trace("opening the log");
                 let log = service::log_file(role);
                 if let Some(dir) = log.parent() {
                     let _ = std::fs::create_dir_all(dir);
                 }
                 let _ = std::fs::OpenOptions::new().create(true).append(true).open(&log);
                 unsafe {
-                    ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(&log.to_string_lossy()).as_ptr(), null(), null(), SW_SHOWNORMAL);
+                    ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(&log.to_string_lossy()).as_ptr(), null(), null(), SW_SHOW);
                 }
             }
             BTN_RESTART => {
+                trace("restarting");
                 std::thread::spawn(move || {
                     let proc = RealProc;
                     let sys = Sys::new(&proc);
@@ -324,6 +372,7 @@ mod win {
                 });
             }
             BTN_QUIT => {
+                trace("quitting the engine");
                 // ended as a task, so Task Scheduler doesn't count it as a failure to start again from
                 if let Some(task) = service::task_name(role) {
                     let _ = Command::new("schtasks.exe").args(["/End", "/TN", task]).creation_flags(NO_WINDOW).output();
@@ -346,17 +395,18 @@ mod win {
             WM_CREATE => {
                 unsafe {
                     let dpi = GetDpiForWindow(hwnd) as i32;
-                    let (title, body, mono) =
-                        (font(dpi, 17, FW_SEMIBOLD as i32, "Segoe UI"), font(dpi, 10, FW_NORMAL as i32, "Segoe UI"), font(dpi, 12, FW_SEMIBOLD as i32, "Consolas"));
+                    let title = font(dpi, 19, FW_SEMIBOLD as i32, "Segoe UI");
+                    let body = font(dpi, 10, FW_NORMAL as i32, "Segoe UI");
+                    let small = font(dpi, 9, FW_NORMAL as i32, "Segoe UI");
+                    let mono = font(dpi, 13, FW_SEMIBOLD as i32, "Consolas");
                     let instance = GetModuleHandleW(null());
-                    let labels = ["Pair a phone", "Show the log", "Restart", "Quit Inyon"];
                     let mut buttons = [null_mut(); 4];
-                    for (i, label) in labels.iter().enumerate() {
+                    for (i, label) in LABELS.iter().enumerate() {
                         let b = CreateWindowExW(
                             0,
                             wide("BUTTON").as_ptr(),
                             wide(label).as_ptr(),
-                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON as u32,
+                            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW as u32,
                             0,
                             0,
                             10,
@@ -366,7 +416,6 @@ mod win {
                             instance,
                             null(),
                         );
-                        SendMessageW(b, WM_SETFONT, body as WPARAM, 1);
                         buttons[i] = b;
                     }
                     STATE.with(|s| {
@@ -374,6 +423,7 @@ mod win {
                             st.dpi = dpi;
                             st.title = title;
                             st.body = body;
+                            st.small = small;
                             st.mono = mono;
                             st.buttons = buttons;
                         }
@@ -381,10 +431,17 @@ mod win {
                 }
                 0
             }
-            WM_SIZE => 0,
+            // everything is painted in one go from a buffer, so nothing flickers
+            WM_ERASEBKGND => 1,
             WM_COMMAND => {
                 act(hwnd, wparam & 0xffff);
                 0
+            }
+            WM_DRAWITEM => {
+                // SAFETY: Windows hands an owner-drawn button's item struct with this message
+                let item = unsafe { &*(lparam as *const DRAWITEMSTRUCT) };
+                draw_button(item);
+                1
             }
             STATUS => {
                 // SAFETY: the status thread made this box for us and sends each one once
@@ -395,18 +452,18 @@ mod win {
                     let st = st.as_mut().unwrap();
                     let changed = st.lines != lines;
                     st.lines = lines;
-                    st.status = Some(*status);
                     changed
                 });
                 if changed {
                     fit(hwnd, false);
-                    unsafe { InvalidateRect(hwnd, null(), 1) };
+                    unsafe { InvalidateRect(hwnd, null(), 0) };
                 }
                 0
             }
             PAIRED => {
                 // SAFETY: as above, from the pairing thread
                 let v = unsafe { Box::from_raw(lparam as *mut Value) };
+                trace(&format!("pairing code {}", if v.get("error").is_some() { "failed" } else { "shown" }));
                 STATE.with(|s| {
                     if let Some(st) = s.borrow_mut().as_mut() {
                         st.pairing = Some(*v);
@@ -414,7 +471,7 @@ mod win {
                     }
                 });
                 fit(hwnd, false);
-                unsafe { InvalidateRect(hwnd, null(), 1) };
+                unsafe { InvalidateRect(hwnd, null(), 0) };
                 0
             }
             PAIR_NOW => {
@@ -429,9 +486,9 @@ mod win {
                 STATE.with(|s| {
                     if let Some(st) = s.borrow_mut().take() {
                         unsafe {
-                            for f in [st.title, st.body, st.mono] {
+                            for f in [st.title, st.body, st.small, st.mono] {
                                 if !f.is_null() {
-                                    DeleteObject(f as *mut _);
+                                    DeleteObject(f as HGDIOBJ);
                                 }
                             }
                         }
@@ -444,99 +501,169 @@ mod win {
         }
     }
 
+    unsafe fn text(hdc: HDC, font: HFONT, color: COLORREF, s: &str, r: &mut RECT, flags: u32) {
+        unsafe {
+            SelectObject(hdc, font as HGDIOBJ);
+            SetTextColor(hdc, color);
+            let mut w = wide(s);
+            DrawTextW(hdc, w.as_mut_ptr(), -1, r, flags | DT_NOPREFIX);
+        }
+    }
+
+    /// A rounded rectangle filled with `fill`, edged with `edge` (the same colour for no edge).
+    unsafe fn rounded(hdc: HDC, r: &RECT, radius: i32, fill: COLORREF, edge: COLORREF) {
+        unsafe {
+            let brush = CreateSolidBrush(fill);
+            let pen = CreatePen(PS_SOLID, 1, edge);
+            let old_brush = SelectObject(hdc, brush as HGDIOBJ);
+            let old_pen = SelectObject(hdc, pen as HGDIOBJ);
+            RoundRect(hdc, r.left, r.top, r.right, r.bottom, radius, radius);
+            SelectObject(hdc, old_brush);
+            SelectObject(hdc, old_pen);
+            DeleteObject(brush as HGDIOBJ);
+            DeleteObject(pen as HGDIOBJ);
+        }
+    }
+
+    /// The buttons: the first filled with ink, the others on paper with a hairline, all rounded.
+    fn draw_button(item: &DRAWITEMSTRUCT) {
+        unsafe {
+            let (body, dpi) = STATE.with(|s| s.borrow().as_ref().map(|st| (st.body, st.dpi)).unwrap_or((null_mut(), 96)));
+            let hdc = item.hDC;
+            let r = item.rcItem;
+            let pressed = item.itemState & ODS_SELECTED != 0;
+            let primary = item.CtlID as usize == BTN_PAIR;
+            // the parent's paper behind the rounded corners
+            let paper = CreateSolidBrush(PAPER);
+            FillRect(hdc, &r, paper);
+            DeleteObject(paper as HGDIOBJ);
+            let radius = 8 * dpi / 96;
+            let (fill, edge, ink) = match (primary, pressed) {
+                (true, false) => (INK, INK, PAPER),
+                (true, true) => (INK_PRESSED, INK_PRESSED, PAPER),
+                (false, false) => (CARD, LINE, INK),
+                (false, true) => (PRESSED, LINE, INK),
+            };
+            rounded(hdc, &r, radius, fill, edge);
+            SetBkMode(hdc, TRANSPARENT as i32);
+            let mut rr = r;
+            text(hdc, body, ink, LABELS[item.CtlID as usize - 1], &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+    }
+
     fn paint(hwnd: HWND) {
         unsafe {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
-            let hdc = BeginPaint(hwnd, &mut ps);
+            let screen = BeginPaint(hwnd, &mut ps);
             let mut client: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut client);
+            let (w, h) = (client.right - client.left, client.bottom - client.top);
+            // drawn off screen first, then copied in one go
+            let hdc = CreateCompatibleDC(screen);
+            let bitmap = CreateCompatibleBitmap(screen, w, h);
+            let old = SelectObject(hdc, bitmap as HGDIOBJ);
             let paper = CreateSolidBrush(PAPER);
             FillRect(hdc, &client, paper);
-            DeleteObject(paper as *mut _);
+            DeleteObject(paper as HGDIOBJ);
             SetBkMode(hdc, TRANSPARENT as i32);
             STATE.with(|s| {
                 let st = s.borrow();
                 let Some(st) = st.as_ref() else { return };
                 let k = st.dpi as f32 / 96.0;
                 let px = |v: i32| (v as f32 * k) as i32;
-                let text = |font: HFONT, color: COLORREF, s: &str, r: &mut RECT, flags: u32| {
-                    SelectObject(hdc, font as *mut _);
-                    SetTextColor(hdc, color);
-                    let mut w = wide(s);
-                    DrawTextW(hdc, w.as_mut_ptr(), -1, r, flags | DT_NOPREFIX);
-                };
                 let left = px(PAD);
                 let right = px(WIDTH - PAD);
                 let mut y = px(PAD);
-                // heading: the name, the version beside it
-                let mut r = RECT { left, top: y, right, bottom: y + px(32) };
-                text(st.title, INK, "Inyon", &mut r, DT_LEFT | DT_SINGLELINE);
-                let mut r = RECT { left: left + px(72), top: y + px(9), right, bottom: y + px(32) };
-                text(st.body, MUTED, &format!("{} · {}", crate::ui::VERSION, super::super::service::Role::name(st.role)), &mut r, DT_LEFT | DT_SINGLELINE);
-                y += px(40 + 10);
-                let lines: Vec<(String, bool)> = if st.lines.is_empty() { vec![("Looking…".to_string(), true)] } else { st.lines.clone() };
-                for (line, muted) in &lines {
-                    let mut r = RECT { left, top: y, right, bottom: y + px(LINE_H) };
-                    text(st.body, if *muted { MUTED } else { INK }, line, &mut r, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-                    y += px(LINE_H);
+                // the mark, the name, and the version beside it
+                let icon = crate::tray::win::icon_sized(px(HEAD_H), px(HEAD_H));
+                DrawIconEx(hdc, left, y, icon, px(HEAD_H), px(HEAD_H), 0, null_mut(), DI_NORMAL);
+                let tx = left + px(HEAD_H + 14);
+                let mut r = RECT { left: tx, top: y, right, bottom: y + px(26) };
+                text(hdc, st.title, INK, "Inyon", &mut r, DT_LEFT | DT_SINGLELINE);
+                let mut r = RECT { left: tx, top: y + px(26), right, bottom: y + px(HEAD_H) };
+                let what = match st.role {
+                    Role::Link => "paired with the phone",
+                    Role::Node => "on a hub",
+                    Role::Hub => "hub",
+                };
+                text(hdc, st.small, MUTED, &format!("{} · {what}", crate::ui::VERSION), &mut r, DT_LEFT | DT_SINGLELINE);
+                y += px(HEAD_H + 20);
+                // the status card
+                let lines: Vec<Line> = if st.lines.is_empty() { vec![Line { text: "Looking…".to_string(), headline: true, on: false }] } else { st.lines.clone() };
+                let card_h = px(CARD_PAD) * 2 + lines.len() as i32 * px(LINE_H);
+                let card = RECT { left, top: y, right, bottom: y + card_h };
+                rounded(hdc, &card, px(12), CARD, LINE);
+                let mut ly = y + px(CARD_PAD);
+                for line in &lines {
+                    let mut tx = left + px(CARD_PAD);
+                    if line.headline {
+                        // the dot: filled when it runs, a ring otherwise
+                        let d = px(9);
+                        let cy = ly + px(LINE_H) / 2;
+                        let brush = CreateSolidBrush(if line.on { INK } else { CARD });
+                        let pen = CreatePen(PS_SOLID, 1, if line.on { INK } else { MUTED });
+                        let ob = SelectObject(hdc, brush as HGDIOBJ);
+                        let op = SelectObject(hdc, pen as HGDIOBJ);
+                        Ellipse(hdc, tx, cy - d / 2, tx + d, cy + d / 2);
+                        SelectObject(hdc, ob);
+                        SelectObject(hdc, op);
+                        DeleteObject(brush as HGDIOBJ);
+                        DeleteObject(pen as HGDIOBJ);
+                        tx += d + px(10);
+                    }
+                    let mut r = RECT { left: tx, top: ly, right: right - px(CARD_PAD), bottom: ly + px(LINE_H) };
+                    text(hdc, st.body, if line.headline { INK } else { MUTED }, &line.text, &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                    ly += px(LINE_H);
                 }
-                y += px(12);
+                y += card_h;
                 if let Some(v) = &st.pairing {
+                    y += px(GAP);
+                    let card = RECT { left, top: y, right, bottom: y + px(CARD_PAD) * 2 + px(QR) };
+                    rounded(hdc, &card, px(12), CARD, LINE);
+                    let (cx, cy) = (left + px(CARD_PAD), y + px(CARD_PAD));
                     if let Some(err) = v.get("error").and_then(Value::as_str) {
-                        let mut r = RECT { left, top: y, right, bottom: y + px(QR) };
-                        text(st.body, INK, &format!("Couldn't make a pairing code: {err}"), &mut r, DT_LEFT | DT_WORDBREAK);
+                        let mut r = RECT { left: cx, top: cy, right: right - px(CARD_PAD), bottom: cy + px(QR) };
+                        text(hdc, st.body, INK, &format!("Couldn't make a pairing code: {err}"), &mut r, DT_LEFT | DT_WORDBREAK);
                     } else if let Some(code) = v.get("qr").and_then(Value::as_str).and_then(|t| QrCode::with_error_correction_level(t.as_bytes(), EcLevel::L).ok()) {
-                        // the code on a white card, with a quiet zone of four modules
+                        // the code, with a quiet zone of two modules, on the card's white
                         let n = code.width() as i32;
-                        let module = (px(QR) / (n + 8)).max(1);
-                        let side = module * (n + 8);
-                        let card = RECT { left, top: y, right: left + side, bottom: y + side };
-                        let white = CreateSolidBrush(WHITE);
-                        FillRect(hdc, &card, white);
-                        DeleteObject(white as *mut _);
+                        let module = (px(QR) / (n + 4)).max(1);
                         let ink = CreateSolidBrush(INK);
-                        let modules = code.to_colors();
-                        for (i, c) in modules.iter().enumerate() {
+                        let (ox, oy) = (cx + 2 * module, cy + (px(QR) - module * n) / 2);
+                        for (i, c) in code.to_colors().iter().enumerate() {
                             if *c == Color::Dark {
                                 let (x, yy) = ((i as i32) % n, (i as i32) / n);
-                                let r = RECT { left: left + (x + 4) * module, top: y + (yy + 4) * module, right: left + (x + 5) * module, bottom: y + (yy + 5) * module };
+                                let r = RECT { left: ox + x * module, top: oy + yy * module, right: ox + (x + 1) * module, bottom: oy + (yy + 1) * module };
                                 FillRect(hdc, &r, ink);
                             }
                         }
-                        DeleteObject(ink as *mut _);
+                        DeleteObject(ink as HGDIOBJ);
                         // beside it: how to use it, and the typed-in code
-                        let tx = left + side + px(20);
-                        let mut r = RECT { left: tx, top: y, right, bottom: y + px(LINE_H * 4) };
-                        text(
-                            st.body,
-                            INK,
-                            "Scan it in the Inyon app (Add a computer → Scan the code), or with the phone's camera. It works once, within 10 minutes.",
-                            &mut r,
-                            DT_LEFT | DT_WORDBREAK,
-                        );
+                        let tx = cx + module * (n + 4) + px(16);
+                        let mut r = RECT { left: tx, top: cy, right: right - px(CARD_PAD), bottom: cy + px(LINE_H * 3) };
+                        text(hdc, st.body, INK, "Scan this in the Inyon app, or with the phone's camera.", &mut r, DT_LEFT | DT_WORDBREAK);
+                        let mut r = RECT { left: tx, top: cy + px(LINE_H * 3), right: right - px(CARD_PAD), bottom: cy + px(LINE_H * 4) };
+                        text(hdc, st.small, MUTED, "It works once, within 10 minutes.", &mut r, DT_LEFT | DT_WORDBREAK);
                         if let Some((id, pin)) = super::short_code(v) {
-                            let mut r = RECT { left: tx, top: y + px(LINE_H * 4 + 8), right, bottom: y + px(LINE_H * 5 + 8) };
-                            text(st.body, MUTED, "Can't scan? Type a code:", &mut r, DT_LEFT | DT_SINGLELINE);
-                            let mut r = RECT { left: tx, top: y + px(LINE_H * 5 + 8), right, bottom: y + px(LINE_H * 6 + 8) };
-                            text(st.mono, INK, &format!("ID  {id}"), &mut r, DT_LEFT | DT_SINGLELINE);
-                            let mut r = RECT { left: tx, top: y + px(LINE_H * 6 + 8), right, bottom: y + px(LINE_H * 7 + 8) };
-                            text(st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE);
+                            let base = cy + px(QR) - px(LINE_H * 3) - px(4);
+                            let mut r = RECT { left: tx, top: base, right: right - px(CARD_PAD), bottom: base + px(LINE_H) };
+                            text(hdc, st.small, MUTED, "Or type a code in the app", &mut r, DT_LEFT | DT_SINGLELINE);
+                            let mut r = RECT { left: tx, top: base + px(LINE_H), right: right - px(CARD_PAD), bottom: base + px(LINE_H * 2) };
+                            text(hdc, st.mono, INK, &format!("ID    {id}"), &mut r, DT_LEFT | DT_SINGLELINE);
+                            let mut r = RECT { left: tx, top: base + px(LINE_H * 2), right: right - px(CARD_PAD), bottom: base + px(LINE_H * 3) };
+                            text(hdc, st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE);
                         }
                     }
-                    y += px(QR + 16);
-                    let mut r = RECT { left, top: y, right, bottom: y + px(2 * LINE_H) };
-                    text(st.body, MUTED, "Paired phones connect by themselves from now on.", &mut r, DT_LEFT | DT_WORDBREAK);
-                    y += px(2 * LINE_H + 8);
                 } else if st.pairing_busy {
+                    y += px(GAP);
                     let mut r = RECT { left, top: y, right, bottom: y + px(LINE_H) };
-                    text(st.body, MUTED, "Making a pairing code…", &mut r, DT_LEFT | DT_SINGLELINE);
+                    text(hdc, st.body, MUTED, "Making a pairing code…", &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
                 }
-                // a rule above the buttons
-                let rule = RECT { left, top: y, right, bottom: y + 1 };
-                let line: HBRUSH = CreateSolidBrush(LINE);
-                FillRect(hdc, &rule, line);
-                DeleteObject(line as *mut _);
             });
+            BitBlt(screen, 0, 0, w, h, hdc, 0, 0, SRCCOPY);
+            SelectObject(hdc, old);
+            DeleteObject(bitmap as HGDIOBJ);
+            DeleteDC(hdc);
             EndPaint(hwnd, &ps);
         }
     }
@@ -570,16 +697,17 @@ mod tests {
     #[test]
     fn the_summary_says_it_runs_where_it_answers_and_who_is_paired() {
         let lines = summary(&status());
-        assert_eq!(lines[0].0, "●  Running: your phone can reach this computer");
-        assert_eq!(lines[1], ("Answers on quiet-otter.trycloudflare.com".to_string(), true));
-        assert_eq!(lines[2], ("Nothing A142  ·  seen 22:27".to_string(), true));
+        assert_eq!(lines[0], Line { text: "Running: your phone can reach this computer".into(), headline: true, on: true });
+        assert_eq!(lines[1].text, "Answers on quiet-otter.trycloudflare.com");
+        assert_eq!(lines[2].text, "Nothing A142  ·  seen 22:27");
+        assert!(!lines[1].headline);
         let mut s = status();
         s.jobs[0].running = false;
         s.addresses.clear();
         s.phones.clear();
         let lines = summary(&s);
-        assert_eq!(lines[0].0, "○  Set up, not running");
-        assert_eq!(lines[1].0, "No phones paired yet");
+        assert_eq!(lines[0], Line { text: "Set up, not running".into(), headline: true, on: false });
+        assert_eq!(lines[1].text, "No phones paired yet");
     }
 
     #[test]
