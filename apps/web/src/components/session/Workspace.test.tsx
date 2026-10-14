@@ -131,3 +131,20 @@ test('right-clicking a file offers to open it, mention it or copy its path', asy
   await userEvent.click(screen.getByRole('menuitem', { name: /Mention in message/ }))
   expect(composed).toEqual(['@main.ts'])
 })
+
+test("This chat with no edits points to the working tree, where edits made through commands show", async () => {
+  const { ChangesTab } = await import('./Panels.tsx')
+  try {
+    localStorage.removeItem('inyon.changes')
+  } catch {}
+  api.git.mockImplementation(async () => ({ repo: true, branch: 'main', files: [{ path: 'test/cart.test.js', status: 'M', add: 6, del: 1 }] }))
+  api.gitDiff.mockImplementation(async () => ({ path: 'test/cart.test.js', binary: false, hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [' a', '+b'] }] }))
+  await render(<ChangesTab items={[]} p={p} />)
+  expect(screen.getByText('No changes yet')).toBeTruthy()
+  expect(screen.getByText(/Edits it makes through commands show under Working tree/)).toBeTruthy()
+  await userEvent.click(screen.getByRole('button', { name: 'Show working tree' }))
+  expect(await screen.findByText('cart.test.js', { exact: false })).toBeTruthy()
+  try {
+    localStorage.removeItem('inyon.changes')
+  } catch {}
+})

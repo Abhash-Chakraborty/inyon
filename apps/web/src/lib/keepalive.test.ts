@@ -25,6 +25,7 @@ afterEach(() => {
   delete (window as any).Capacitor
   localStorage.removeItem('inyon.keepAlive')
   localStorage.removeItem('inyon.batteryAsked')
+  localStorage.removeItem('inyon.notifyWhyShown')
   useStore.setState({ toasts: [], hosts: [] })
 })
 
@@ -35,18 +36,58 @@ const settle = () => new Promise((r) => setTimeout(r, 10))
 test('stays connected unless turned off, asking for the notification permission first', async () => {
   const calls: string[] = []
   const device = { requestNotificationPermission: async () => void calls.push('permission'), startKeepAlive: async () => void calls.push('start') }
+  useStore.setState({ hosts: [host('box')] })
   phone(device)
   expect(keepAliveWanted()).toBe(true)
   installKeepAlive()
   await settle()
   expect(calls).toEqual(['permission', 'start'])
 
+  // turned off: alerts still need the permission, but nothing runs in the background
   localStorage.setItem('inyon.keepAlive', '0')
   calls.length = 0
   phone(device)
   installKeepAlive()
   await settle()
+  expect(calls).toEqual(['permission'])
+})
+
+test('a first launch asks nothing until a computer is paired, then says why before asking', async () => {
+  localStorage.removeItem('inyon.notifyWhyShown')
+  const calls: string[] = []
+  phone({
+    notificationsEnabled: async () => ({ enabled: false }),
+    requestNotificationPermission: async () => void calls.push('permission'),
+    startKeepAlive: async () => void calls.push('start'),
+  })
+  installKeepAlive()
+  await settle()
   expect(calls).toEqual([])
+  expect(useStore.getState().toasts).toEqual([])
+
+  useStore.setState({ hosts: [host('box')] })
+  await settle()
+  expect(calls).toEqual(['permission', 'start'])
+  expect(useStore.getState().toasts.map((t) => t.title)).toEqual(['Alerts when an agent needs you'])
+
+  // the line is said once; a later launch without the permission asks again, quietly
+  useStore.setState({ toasts: [] })
+  calls.length = 0
+  installKeepAlive()
+  await settle()
+  expect(calls).toEqual(['permission', 'start'])
+  expect(useStore.getState().toasts).toEqual([])
+  localStorage.removeItem('inyon.notifyWhyShown')
+})
+
+test('nothing is asked when notifications are already on', async () => {
+  const calls: string[] = []
+  useStore.setState({ hosts: [host('box')] })
+  phone({ notificationsEnabled: async () => ({ enabled: true }), requestNotificationPermission: async () => void calls.push('permission'), startKeepAlive: async () => void calls.push('start') })
+  installKeepAlive()
+  await settle()
+  expect(calls).toEqual(['start'])
+  expect(useStore.getState().toasts).toEqual([])
 })
 
 test("asks Android once, when there's a machine, not to put Inyon to sleep", async () => {

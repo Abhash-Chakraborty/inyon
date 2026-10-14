@@ -153,7 +153,8 @@ const slugify = (s: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 const url = (slug: string) => (slug === "index" ? "/docs/" : `/docs/${slug}/`);
-const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+/** A file's size in decimal units, as browsers show a download (2,883,584 bytes is 2.9 MB, not 2.7). */
+export const mb = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`);
 
 /** A WebP or PNG's size in pixels, read from its header, so pictures reserve their space. */
 function imageSize(file: string): { width: number; height: number } | undefined {

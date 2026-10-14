@@ -15,7 +15,7 @@ import { linkConnector } from './link.ts'
  * The phone app runs Inyon's core itself and SSHes straight into your servers: no hub, no
  * password. The web app hands it a store and the native SSH plugin and calls it in-process.
  */
-export const startPhone: StartPhone = async ({ store, ssh }) => {
+export const startPhone: StartPhone = async ({ store, ssh, name }) => {
   // records some modules read as they load, so the store goes in before the core is imported
   useStore(store)
   setLocalHost(undefined)
@@ -34,7 +34,7 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
   lookup = (id) => registry.get(id)?.host.config
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, saveEverything, startCore } = core
 
-  const links = linkConnector(keys.noise, phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
+  const links = linkConnector(keys.noise, name || phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
   const ensureLinks = () => {
     for (const c of registry.configs()) if (c.kind === 'link') links.ensure(c)
   }
@@ -246,9 +246,12 @@ function makeRouter(tables: Routes[]) {
  * The phone's own SSH key (made on first use, one for every server, so you add one line to
  * authorized_keys) and each server's password or pasted key, all in the Android keystore.
  */
-/** What a laptop lists this phone as: its model when the WebView says it. */
+/**
+ * What a laptop lists this phone as when the app didn't name it: its model when the WebView says
+ * it, without the build ("A142", not "A142 Build/BP2A.250605.031").
+ */
 function phoneName() {
-  const model = /Android [\d.]+; ([^;)]+)/.exec(globalThis.navigator?.userAgent ?? '')?.[1]?.trim()
+  const model = /Android [\d.]+; ([^;)]+)/.exec(globalThis.navigator?.userAgent ?? '')?.[1]?.replace(/\s+Build\/.*$/, '').trim()
   return model && model !== 'K' && !/^wv$/.test(model) ? model : 'Phone'
 }
 

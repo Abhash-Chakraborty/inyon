@@ -4,10 +4,10 @@ import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
 import { AGENTS, type HostState } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
-import { liveWindow, money, resetsIn, shortPath, timeAgo, tokens } from '../lib/format.ts'
+import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
 import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
-import { toast, useStore } from '../lib/store.ts'
+import { type ActivityEvent, toast, useStore } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
 import { Menu, Meter, openMenu } from './ui/primitives.tsx'
@@ -51,13 +51,16 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
   return (
     <div className="rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
       <div className="flex items-center gap-3">
-        <AgentLogo kind={a.kind} size={30} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[14.5px] font-semibold tracking-tight">{paneTitle(r)}</div>
-          <div className="truncate text-[12px] text-fg-3">
-            {AGENTS[a.kind].name} · {r.host.config.name} · {shortPath(r.pane.cwd, 28)}
+        {/* the session's name opens its chat, as Open does */}
+        <Link to={paneHref(r.host.config.id, r.pane.id)} className="group/open -my-1 flex min-w-0 flex-1 items-center gap-3 py-1">
+          <AgentLogo kind={a.kind} size={30} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-[14.5px] font-semibold tracking-tight group-hover/open:underline group-hover/open:decoration-line-strong group-hover/open:underline-offset-4">{paneTitle(r)}</div>
+            <div className="truncate text-[12px] text-fg-3">
+              {AGENTS[a.kind].name} · {r.host.config.name} · {shortPath(r.pane.cwd, 28)}
+            </div>
           </div>
-        </div>
+        </Link>
         <Link to={paneHref(r.host.config.id, r.pane.id)} className="hidden shrink-0 items-center gap-1 text-[12.5px] text-fg-2 hover:text-fg sm:flex">
           Open <ArrowRight className="size-3.5" />
         </Link>
@@ -253,7 +256,8 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                 <AgentBadges host={h} size={15} />
               </div>
               <div className="truncate font-mono text-[12px] text-fg-3">
-                {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}${h.latencyMs !== undefined ? ` · ${h.latencyMs} ms` : ''}`)}
+                {/* the response time is on the machine's page; here it would push the counts off a phone */}
+                {hostLine(h, h.tmux === 'missing' ? 'tmux not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}`)}
               </div>
             </div>
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
@@ -269,7 +273,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
               <th className="border-b border-line px-5 py-3 font-medium">Machine</th>
               <th className="border-b border-line px-5 py-3 font-medium" title="In colour: running now. Grey: installed.">Agents</th>
               <th className="border-b border-line px-5 py-3 font-medium">tmux</th>
-              <th className="border-b border-line px-5 py-3 text-right font-medium">Latency</th>
+              <th className="border-b border-line px-5 py-3 text-right font-medium" title={RESPONSE_TITLE}>Response</th>
             </tr>
           </thead>
           <tbody>
@@ -296,7 +300,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
                   <td className="border-b border-line/60 px-5 py-3.5 text-fg-2">
                     {h.status !== 'online' ? (h.lastSeen ? 'Offline' : '—') : h.tmux === 'missing' ? 'Not installed' : `${plural(h.sessions.length, 'session')} · ${plural(panes, 'pane')}`}
                   </td>
-                  <td className="tabular border-b border-line/60 px-5 py-3.5 text-right font-mono text-[12px] text-fg-2">{h.latencyMs !== undefined ? `${h.latencyMs} ms` : '—'}</td>
+                  <td className="tabular border-b border-line/60 px-5 py-3.5 text-right font-mono text-[12px] text-fg-2" title={h.latencyMs !== undefined ? RESPONSE_TITLE : undefined}>{h.latencyMs !== undefined ? responseTime(h.latencyMs) : '—'}</td>
                 </tr>
               )
             })}
@@ -308,8 +312,22 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
   )
 }
 
+/**
+ * What a "needs you" entry says now. Only the latest question of a session still waiting needs
+ * you; an earlier one, or one the session has moved on from, was answered (from here, from an
+ * alert or at the keyboard), and one whose session has ended was just asked.
+ */
+export function activityLabel(e: ActivityEvent, activity: ActivityEvent[], hosts: HostState[]) {
+  if (e.kind === 'done') return 'finished'
+  const pane = hosts.find((h) => h.config.id === e.host)?.sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((p) => p.id === e.pane)
+  if (!pane?.agent) return 'asked'
+  const latest = activity.find((a) => a.host === e.host && a.pane === e.pane && a.kind === 'waiting')
+  return pane.agent.state === 'waiting' && latest === e ? 'needs you' : 'answered'
+}
+
 export function ActivityFeed() {
   const activity = useStore((s) => s.activity)
+  const hosts = useStore((s) => s.hosts)
   if (!activity.length) return null
   return (
     <section className="rounded-3xl border border-line bg-elev shadow-card p-5">
@@ -320,7 +338,7 @@ export function ActivityFeed() {
             <AgentLogo kind={e.agent as any} size={18} />
             <div className="min-w-0">
               <div className="truncate text-[13px]">
-                <span className="font-medium">{e.title}</span> <span className="text-fg-2">· {e.kind === 'waiting' ? 'needs you' : 'finished'}</span>
+                <span className="font-medium">{e.title}</span> <span className="text-fg-2">· {activityLabel(e, activity, hosts)}</span>
               </div>
               <div className="font-mono text-[12px] text-fg-3">{timeAgo(e.at)}</div>
             </div>

@@ -13,7 +13,7 @@ While the agent is asking you something, the controls are hidden: typing would a
 | Control | What it changes | Agents |
 |---|---|---|
 | **Model** | The model for the next reply | Claude Code, Codex, OpenCode, Copilot, Antigravity |
-| **Effort** | How hard the model thinks, from *Minimal* to *Max* (Codex adds *Ultra*) | Claude Code, Codex, OpenCode, Antigravity |
+| **Effort** | How hard the model thinks, from *Minimal* to *Max* (Codex adds *Ultra*). Until you pick one it shows the model's own default: *High* for Claude Opus, *Medium* for Sonnet | Claude Code, Codex, OpenCode, Antigravity |
 | **Mode** | How much the agent may do without asking | Claude Code, Codex, OpenCode (*Agent mode*), Copilot, Antigravity |
 
 Each agent offers its own choices. Claude Code's modes are *Ask each time*, *Accept edits*, *Plan*, *Auto* and *Bypass permissions*. Codex's are *Ask for approval*, *Approve for me*, *Read-only*, *Full access* and *Plan*. OpenCode's are *Build* and *Plan*, and Copilot's *Manual approval* and *Full access*. Model lists for Codex, OpenCode, Copilot and Antigravity come live from the agent and refresh every minute, so they match what your account can use.
@@ -57,7 +57,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation:
 
 - **Running:** queued messages, subagents with their transcripts, background shells with live output, and monitors. Shells and monitors each have a real **Stop**.
-- **Changes:** what changed, two ways. **This chat** lists every file the agent touched in this conversation, with the diff of each edit, newest first. **Working tree** (from 0.17) shows what git sees: every change since the last commit, whoever made it. See [Reviewing changes](#reviewing-changes).
+- **Changes:** what changed, two ways. **This chat** lists every file the agent changed with its edit tools in this conversation, with the diff of each edit, newest first. Changes it made by running commands (a formatter, `sed`, a script) aren't there; they show under Working tree. **Working tree** (from 0.17) shows what git sees: every change since the last commit, whoever made it. See [Reviewing changes](#reviewing-changes).
 - **Files** (from 0.17): the session's folder, read only. Open a folder, read a file with syntax highlighting, see an image, or read a Markdown file rendered (**Source** shows the text). **Mention** adds `@path` to your message. Files over 512 KB show their first 512 KB.
 - **Preview:** a dev server the agent started, in a frame, with a phone-width toggle. Inyon suggests the local ports it finds.
 - **Artifacts** (Claude Code): pages the agent published, with **Open**, **Copy link**, and a button that asks the agent to delete one.

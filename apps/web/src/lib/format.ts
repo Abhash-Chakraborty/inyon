@@ -1,14 +1,33 @@
-/** Shortens an absolute path: home → ~, long paths keep the last segments. */
+/** The separator a path uses: a Windows path (C:\Users\me) uses backslashes. */
+const sepOf = (p: string) => (p.includes('\\') && !p.includes('/') ? '\\' : '/')
+
+/** Shortens an absolute path: home → ~, long paths keep the last segments. Windows paths too. */
 export function shortPath(p: string | undefined, max = 42) {
   if (!p) return ''
-  let s = p.replace(/^\/(home\/[^/]+|Users\/[^/]+|root)(?=\/|$)/, '~')
+  const sep = sepOf(p)
+  let s = sep === '/' ? p.replace(/^\/(home\/[^/]+|Users\/[^/]+|root)(?=\/|$)/, '~') : p.replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/i, '~')
   if (s.length <= max) return s
-  const parts = s.split('/')
+  const parts = s.split(sep)
   const n = parts.length
-  while (parts.length > 2 && parts.join('/').length > max - 2) parts.splice(1, 1)
+  while (parts.length > 2 && parts.join(sep).length > max - 2) parts.splice(1, 1)
   // nothing to drop (one long name): show it whole rather than a "…" that hides nothing
-  return parts.length < n ? `${parts[0]}/…/${parts.slice(1).join('/')}` : s
+  return parts.length < n ? `${parts[0]}${sep}…${sep}${parts.slice(1).join(sep)}` : s
 }
+
+/** A long folder as its last two parts ("…/qa/oc1", "…\demo\api"), for a small chip. */
+export function tailPath(p: string, max = 32) {
+  if (p.length <= max) return p
+  const sep = sepOf(p)
+  const parts = p.split(sep).filter(Boolean)
+  return parts.length > 2 ? `…${sep}${parts.slice(-2).join(sep)}` : p
+}
+
+/**
+ * How long a machine took to answer its last status check: "38 ms", "1.4 s". It's the time the
+ * check takes to run there and come back, not the network's round trip.
+ */
+export const RESPONSE_TITLE = 'How long the machine took to report its sessions at the last check'
+export const responseTime = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`)
 
 export const basename = (p: string | undefined) => (p ?? '').replace(/\/+$/, '').split('/').pop() || p || ''
 

@@ -3,7 +3,7 @@ import { screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { fireEvent } from '@testing-library/react'
-import { MachinesTable, NeedsYouCard, SessionCard } from './Overview.tsx'
+import { MachinesTable, NeedsYouCard, SessionCard, activityLabel } from './Overview.tsx'
 import { ContextMenuHost } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { useStore } from '../lib/store.ts'
@@ -15,6 +15,20 @@ import { flush, renderSettled as render } from '../test/render.tsx'
 const asking = () => host('box', { panes: [agentPane('%1', 'codex', { title: 'Migrate auth', agent: { kind: 'codex', pid: 1, state: 'waiting', waitingFor: 'Run the tests?', options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] } })] })
 
 beforeEach(() => useStore.setState({ hosts: [asking()], hostsLoaded: true, toasts: [] }))
+
+// "needs you" stayed on a question long after it was answered at the keyboard
+test('recent activity says needs you only while the session is still on that question', () => {
+  const ev = (id: number, pane = '%1', kind: 'waiting' | 'done' = 'waiting') => ({ id, at: id, host: 'box', pane, kind, title: 'Migrate auth', body: '' })
+  const [newer, older] = [ev(2), ev(1)]
+  const feed = [newer, older]
+  const waiting = [asking()]
+  expect(activityLabel(newer, feed, waiting)).toBe('needs you')
+  expect(activityLabel(older, feed, waiting)).toBe('answered')
+  const moved = [host('box', { panes: [agentPane('%1', 'codex', { agent: { kind: 'codex', pid: 1, state: 'working' } })] })]
+  expect(activityLabel(newer, feed, moved)).toBe('answered')
+  expect(activityLabel(ev(3, '%7'), feed, waiting)).toBe('asked')
+  expect(activityLabel(ev(4, '%1', 'done'), feed, waiting)).toBe('finished')
+})
 
 test('an answer reads Sending…, then Sent', async () => {
   let release!: () => void

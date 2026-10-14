@@ -42,10 +42,12 @@ describe('the machines list', () => {
 
   test('the meta line wraps only between items, never before a dot or inside a count', () => {
     const line = metaLine('build box', 2, 1, 38)
-    expect(line.replace(/\u00a0/g, ' ')).toBe('build box · 2 sessions · 1 agent · 38 ms')
+    // the time is how long the machine took to answer, not a network round trip, and says so
+    expect(line.replace(/\u00a0/g, ' ')).toBe('build box · 2 sessions · 1 agent · responds in 38 ms')
     // the only ordinary spaces left are the ones after each dot, and inside the address
-    expect(line.split(' ')).toEqual(['build', 'box\u00a0·', '2\u00a0sessions\u00a0·', '1\u00a0agent\u00a0·', '38\u00a0ms'])
+    expect(line.split(' ')).toEqual(['build', 'box\u00a0·', '2\u00a0sessions\u00a0·', '1\u00a0agent\u00a0·', 'responds\u00a0in\u00a038\u00a0ms'])
     expect(metaLine('studio', 1, 0)).toBe('studio\u00a0· 1\u00a0session')
+    expect(metaLine('studio', 1, 0, 1373).replace(/\u00a0/g, ' ')).toBe('studio · 1 session · responds in 1.4 s')
   })
 })
 
@@ -73,5 +75,19 @@ describe('a machine page while things load', () => {
     await user.click(screen.getByRole('radio', { name: 'Config' }))
     expect(screen.getByText('Looking for config files on Studio')).toBeTruthy()
     expect(container.querySelector('.animate-spin')).toBeNull()
+  })
+
+  // "abhash-lapto" next to New session on a phone: there the button is its icon, the name gets the room
+  test('New session folds to its icon on a phone, and an empty machine offers it in the page too', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [host('studio', { config: { id: 'studio', name: 'abhash-laptop', kind: 'link' }, latencyMs: 1373, sessions: [] })] })
+    await machine()
+    const [header, empty] = screen.getAllByRole('button', { name: 'New session' })
+    expect(header!.querySelector('span')!.className).toContain('max-sm:hidden')
+    expect(screen.getByText('No tmux sessions')).toBeTruthy()
+    // the time the machine took to answer, said as such
+    expect(screen.getByText(/responds in 1\.4 s/)).toBeTruthy()
+    await user.click(empty!)
+    expect(screen.getByRole('dialog', { name: 'New session' })).toBeTruthy()
   })
 })

@@ -67,3 +67,21 @@ test('no transition-all', () => {
   expect(offenders(/transition-all/)).toEqual([])
   expect(css).not.toMatch(/transition:\s*all\b/)
 })
+
+// a tablet held sideways has no keyboard: "Ctrl K" and "Alt N" there are noise (Oct 2026 test)
+test('keyboard hints hide on a touch screen', () => {
+  const hints = files.flatMap(([f, src]) => [...src.matchAll(/<kbd className="([^"]*)"/g)].map((m) => [f, m[1]!] as const))
+  expect(hints.length).toBeGreaterThan(0)
+  expect(hints.filter(([, cls]) => !cls.includes('pointer-coarse:hidden'))).toEqual([])
+  const menu = files.find(([f]) => f.endsWith('primitives.tsx'))![1]
+  expect(menu).toMatch(/\{it\.keys && <span className="[^"]*pointer-coarse:hidden/)
+})
+
+// the Android app draws under the status bar; everything at the top of the screen starts below it
+test('the sidebar and every page header leave room for the status bar', () => {
+  const shell = files.find(([f]) => f.endsWith('AppShell.tsx'))![1]
+  expect(shell).toMatch(/<aside className="pt-safe /)
+  const headers = files.flatMap(([f, src]) => [...src.matchAll(/<header className="([^"]*)"/g)].map((m) => [f, m[1]!] as const))
+  expect(headers.length).toBeGreaterThan(0)
+  expect(headers.filter(([, cls]) => !cls.includes('pt-safe'))).toEqual([])
+})

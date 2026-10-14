@@ -66,7 +66,8 @@ export interface PhoneRuntime {
   background(hidden: boolean): void
 }
 
-export type StartPhone = (o: { store: PhoneStore; ssh: SshPlugin }) => Promise<PhoneRuntime>
+/** `name`: what a paired computer lists this phone as ("Nothing A142"); its model from the WebView otherwise. */
+export type StartPhone = (o: { store: PhoneStore; ssh: SshPlugin; name?: string }) => Promise<PhoneRuntime>
 
 /** The web app imports the runtime as `@inyon/phone` (a Vite alias to ./index.ts) and types it from here. */
 export declare const startPhone: StartPhone

@@ -11,11 +11,12 @@ The overview is the first screen. It lists every agent running in tmux on every 
 ## What's on it
 
 - **The status line.** How many machines, agent sessions and tmux panes there are, and what's happening: *2 sessions need you*, *1 working*, or *All quiet. Every session is idle.*
-- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on. A Claude Code session you let go on counts as working until it finishes its turn.
-- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now (or when it was last active), the model and effort, the cost so far and how full its context is. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one.
+- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on. A Claude Code session you let go on counts as working until it finishes its turn. Tap the session's name to open its chat instead.
+- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now (or when it was last active), the model and effort, the cost so far and how full its context is. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one. When every session is under **Needs you**, this list is left out.
 - **Plan limits.** Each machine's 5-hour and weekly limits per agent, with when they reset.
-- **Recent activity.** The last few times an agent needed you or finished.
-- **Machines.** Each machine with its agents, tmux state and latency. **Manage →** opens the list.
+- **Recent activity.** The last few times an agent needed you or finished. A question reads *needs you* only while the session is still waiting on it, then *answered*.
+- **Machines.** Each machine with its agents and tmux state, and on a wide screen its **Response** time: how long the machine took to report its sessions at the last check. That includes running the check on the machine, so it isn't a network ping; a Windows machine often takes over a second. **Manage →** opens the list.
+- **The integration.** A machine with Claude Code but without Inyon's integration gets a card with **Turn on** (or **Update** for an older one). It shows a spinner until the machine has answered, then says whether it worked.
 
 Sessions waiting on you come first, then working ones, then idle ones, newest activity first within each. Online machines come before offline ones.
 
@@ -42,7 +43,7 @@ With text selected, **Copy** comes first. From 0.17 the browser's own menu, with
 
 ## Finding a session
 
-- **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result.
+- **Search:** press `Ctrl K` (`⌘ K` on a Mac) or tap the search button on a phone. Touch screens don't show the keyboard hints. Type any part of a session's title, the agent, the machine, the tmux session or window, or the folder. Every word you type has to match. `↑` `↓` and `Enter` open the result.
 - **The sidebar** (tablet and desktop) shows every session in a tree: machine, then tmux session, then pane. Folding a branch is remembered, and a folded branch shows a dot when something inside it needs you. With more than eight panes, a filter box appears above the tree.
 - **Two machines with the same name**, such as two servers both called `ubuntu`, would look alike. From 0.15 the one you've had longer keeps its name, and the other, if it comes through a paired hub, shows that hub's address after it.
 
@@ -56,7 +57,7 @@ Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 
 1. Pick the agent from those installed, or **Terminal** for a plain shell.
 2. Pick the machine.
-3. Pick the folder; recent folders are offered as chips. It starts in `~`.
+3. Pick the folder; recent folders are offered as chips, shortened to their last two parts (`…\inyon-demo\checkout-service` on Windows). It starts in `~`.
 4. Optionally choose the model, the permission mode (Claude Code and Antigravity) and a first message.
 5. Choose whether to start a new tmux session or a new window in an existing one, and its name.
 

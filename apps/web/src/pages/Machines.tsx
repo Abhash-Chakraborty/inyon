@@ -6,7 +6,7 @@ import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { paneHref, paneTitle } from '../lib/overview.ts'
-import { bytes, shortPath, timeAgo } from '../lib/format.ts'
+import { RESPONSE_TITLE, bytes, responseTime, shortPath, timeAgo } from '../lib/format.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Empty, Pulse, SectionLabel, Segmented, Waiting } from '../components/ui/primitives.tsx'
@@ -53,14 +53,15 @@ function PageHeader({ title, back, right }: { title: React.ReactNode; back?: str
 const SEARCH_FROM = 8
 
 /**
- * "studio · 2 sessions · 2 agents · 38 ms", wrapping only between items: each dot stays with the
- * item before it and each count with its word (no-break spaces), so no line starts with a dot.
+ * "studio · 2 sessions · 2 agents · responds in 38 ms", wrapping only between items: each dot
+ * stays with the item before it and each count with its word (no-break spaces), so no line starts
+ * with a dot. The time is how long the machine took to report its sessions, not a network round trip.
  */
 export function metaLine(where: string, sessions: number, agents: number, ms?: number) {
   const nb = (t: string) => t.replace(/ /g, '\u00a0')
   const parts = [where, nb(`${sessions} session${sessions === 1 ? '' : 's'}`)]
   if (agents) parts.push(nb(`${agents} agent${agents === 1 ? '' : 's'}`))
-  if (ms !== undefined) parts.push(nb(`${ms} ms`))
+  if (ms !== undefined) parts.push(nb(`responds in ${responseTime(ms)}`))
   return parts.join('\u00a0· ')
 }
 
@@ -176,7 +177,12 @@ export function MachinePage() {
         }
         right={
           <div className="flex gap-1.5">
-            {!waitingToPair(host) && <Button size="sm" onClick={() => setNewOpen(true)}><Plus className="size-3.5" /> New session</Button>}
+            {/* on a phone the button is its icon, so the machine's name keeps the room */}
+            {!waitingToPair(host) && (
+              <Button size="sm" onClick={() => setNewOpen(true)} aria-label="New session" title="New session">
+                <Plus className="size-3.5" /> <span className="max-sm:hidden">New session</span>
+              </Button>
+            )}
             <Button size="sm" variant="ghost" onClick={() => setEdit(true)} aria-label="Rename or edit"><Pencil className="size-3.5" /> <span className="hidden sm:inline">{host.config.kind === 'ssh' ? 'Edit' : 'Rename'}</span></Button>
             {host.config.kind !== 'local' && <Button size="sm" variant="ghost" onClick={remove} aria-label="Remove"><Trash2 className="size-3.5" /></Button>}
           </div>
@@ -193,7 +199,7 @@ export function MachinePage() {
                 : `ssh ${host.config.target}${host.config.port ? ` -p ${host.config.port}` : ''}${via ? ` from ${via}` : ''}`}
           {host.nodeVersion && ` · inyon ${host.nodeVersion}`}
           {host.os && ` · ${host.os}`}
-          {host.latencyMs !== undefined && ` · ${host.latencyMs} ms`}
+          {host.latencyMs !== undefined && <span title={RESPONSE_TITLE}>{` · responds in ${responseTime(host.latencyMs)}`}</span>}
         </p>
         <NodeUpdate host={host} />
         {host.error && host.status !== 'online' && (
@@ -217,7 +223,7 @@ export function MachinePage() {
             <Segmented value={tab} onChange={setTab} options={[{ v: 'sessions', label: 'Sessions' }, { v: 'setup', label: needsSetup ? 'Setup ·' : 'Setup' }, { v: 'config', label: 'Config' }, { v: 'uploads', label: 'Uploads' }, { v: 'integration', label: 'Integration' }]} />
           </div>
         </div>
-        {tab === 'sessions' && <SessionsTab host={host} />}
+        {tab === 'sessions' && <SessionsTab host={host} onNew={() => setNewOpen(true)} />}
         {tab === 'setup' && <SetupPanel host={host} />}
         {tab === 'config' && <ConfigTab host={host} />}
         {tab === 'uploads' && <UploadsCard host={host} />}
@@ -232,10 +238,16 @@ export function MachinePage() {
   )
 }
 
-function SessionsTab({ host }: { host: HostState }) {
+function SessionsTab({ host, onNew }: { host: HostState; onNew: () => void }) {
   const nav = useNavigate()
   if (host.status !== 'online') return <Empty title="Not connected">Sessions appear once the machine is reachable.</Empty>
-  if (!host.sessions.length) return <Empty icon={<SquareTerminal className="size-5" />} title="No tmux sessions">Start one with New session.</Empty>
+  if (!host.sessions.length) {
+    return (
+      <Empty icon={<SquareTerminal className="size-5" />} title="No tmux sessions" action={<Button onClick={onNew}><Plus className="size-3.5" /> New session</Button>}>
+        Start one from here, or in tmux on the {isPhone() ? 'computer' : 'machine'}.
+      </Empty>
+    )
+  }
   return (
     <div className="space-y-4">
       {host.sessions.map((s) => (

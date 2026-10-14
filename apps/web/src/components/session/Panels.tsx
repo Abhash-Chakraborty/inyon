@@ -10,7 +10,7 @@ import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
-import { Empty, Segmented, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
+import { Button, Empty, Segmented, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
 import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, type PaneKey } from './Workspace.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
@@ -99,17 +99,24 @@ export function ChangesTab({ items, p, onComposed }: { items: ChatItem[]; p?: Pa
       <div className="shrink-0 px-2.5 pt-2.5 pb-1.5">
         <Segmented full size="sm" value={mode} onChange={pick} options={[{ v: 'chat', label: 'This chat' }, { v: 'tree', label: 'Working tree', title: 'Every change since the last commit' }]} />
       </div>
-      {mode === 'chat' ? <ChatChanges items={items} p={p} /> : <WorkingTree p={p} poke={items.length} />}
+      {mode === 'chat' ? <ChatChanges items={items} p={p} onTree={() => pick('tree')} /> : <WorkingTree p={p} poke={items.length} />}
       <ReviewBar p={p} onComposed={onComposed} />
     </div>
   )
 }
 
-function ChatChanges({ items, p }: { items: ChatItem[]; p?: PaneKey }) {
+function ChatChanges({ items, p, onTree }: { items: ChatItem[]; p?: PaneKey; onTree?: () => void }) {
   const changes = useChanges(items)
   const [sel, setSel] = useState<string | null>(null)
   const cur = changes.find((c) => c.path === sel) ?? changes[0]
-  if (!changes.length) return <Empty icon={<FileDiff className="size-5" />} title="No changes yet">Files the agent edits in this conversation show up here with their diffs.</Empty>
+  if (!changes.length) {
+    // edits made with shell commands (cat >>, sed -i, a script) aren't edit tools: git sees them
+    return (
+      <Empty icon={<FileDiff className="size-5" />} title="No changes yet" action={onTree && <Button size="sm" onClick={onTree}>Show working tree</Button>}>
+        Files the agent edits in this conversation show up here with their diffs.{onTree && ' Edits it makes through commands show under Working tree.'}
+      </Empty>
+    )
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="max-h-[40%] shrink-0 overflow-y-auto border-b border-line p-1.5">

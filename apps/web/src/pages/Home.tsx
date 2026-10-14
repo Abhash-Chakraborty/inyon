@@ -62,15 +62,29 @@ export function Home() {
   )
   const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
   const working = panes.filter((r) => busy(r.pane.agent!)).length
-  const needsIntegration = hosts.filter((h) => h.status === 'online' && (h.integration === 'missing' || h.integration === 'removed' || h.integration === 'outdated') && h.agents.includes('claude'))
+  // a card being turned on stays, with its spinner, until the machine answers: the hub may report
+  // the new state before the request returns, and a card that just vanished says nothing
+  // (with the state it had when tapped, so its text doesn't change under the spinner)
+  const [turning, setTurning] = useState<ReadonlyMap<string, string>>(() => new Map())
+  const needsIntegration = hosts.filter(
+    (h) => turning.has(h.config.id) || (h.status === 'online' && (h.integration === 'missing' || h.integration === 'removed' || h.integration === 'outdated') && h.agents.includes('claude')),
+  )
   const panesTotal = hosts.reduce((n, h) => n + h.sessions.reduce((m, s) => m + s.windows.reduce((k, w) => k + w.panes.length, 0), 0), 0)
 
-  const enable = async (id: string) => {
+  const enable = async (id: string, state: string) => {
+    const update = state === 'outdated'
+    setTurning((m) => new Map(m).set(id, state))
     try {
       await api.integration(id, true)
-      toast({ title: 'Claude integration on', body: 'Restart running Claude sessions to get live limits and exact matching.', tone: 'success' })
+      toast({ title: update ? 'Claude integration updated' : 'Claude integration on', body: 'Restart running Claude sessions to get live limits and exact matching.', tone: 'success' })
     } catch (e) {
-      toast({ title: 'Could not enable', body: (e as Error).message, tone: 'error' })
+      toast({ title: update ? 'Could not update the integration' : 'Could not turn on the integration', body: (e as Error).message, tone: 'error' })
+    } finally {
+      setTurning((m) => {
+        const n = new Map(m)
+        n.delete(id)
+        return n
+      })
     }
   }
 
@@ -156,18 +170,22 @@ export function Home() {
 
               {!isPhone() && hosts.length > 0 && <PhoneCard />}
 
-              {needsIntegration.map((h) => (
-                <div key={h.config.id} className="flex items-center gap-3 rounded-3xl border border-line bg-elev px-5 py-3.5 shadow-card">
-                  <Plug className="size-4 shrink-0 text-fg-3" />
-                  <p className="min-w-0 flex-1 text-[13px] text-fg-2">
-                    <span className="font-medium text-fg">{h.config.name}:</span>{' '}
-                    {h.integration === 'missing' ? 'turn on the integration for live usage limits, context and cost, instant updates and exact session matching.' : INTEGRATION_TEXT[h.integration]}
-                  </p>
-                  <Button size="sm" variant="primary" onClick={() => enable(h.config.id)}>
-                    {h.integration === 'outdated' ? 'Update' : 'Turn on'}
-                  </Button>
-                </div>
-              ))}
+              {needsIntegration.map((h) => {
+                const busy = turning.get(h.config.id)
+                const state = busy ?? h.integration
+                return (
+                  <div key={h.config.id} className="flex items-center gap-3 rounded-3xl border border-line bg-elev px-5 py-3.5 shadow-card">
+                    <Plug className="size-4 shrink-0 text-fg-3" />
+                    <p className="min-w-0 flex-1 text-[13px] text-fg-2">
+                      <span className="font-medium text-fg">{h.config.name}:</span>{' '}
+                      {state === 'missing' ? 'turn on the integration for live usage limits, context and cost, instant updates and exact session matching.' : INTEGRATION_TEXT[state]}
+                    </p>
+                    <Button size="sm" variant="primary" loading={!!busy} onClick={() => enable(h.config.id, state)}>
+                      {state === 'outdated' ? (busy ? 'Updating' : 'Update') : busy ? 'Turning on' : 'Turn on'}
+                    </Button>
+                  </div>
+                )
+              })}
 
               {waiting.length > 0 && (
                 <section>
@@ -180,6 +198,8 @@ export function Home() {
                 </section>
               )}
 
+              {/* every session is under Needs you: an empty list here would only repeat that */}
+              {!(waiting.length === panes.length && panes.length > 0 && filter === 'all' && !q) && (
               <section>
                 <SectionLabel
                   right={
@@ -240,6 +260,7 @@ export function Home() {
                   </div>
                 )}
               </section>
+              )}
 
               <section>
                 <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[13px] text-fg-2 hover:text-fg">Manage →</Link>}>{isPhone() ? 'Computers' : 'Machines'}</SectionLabel>
