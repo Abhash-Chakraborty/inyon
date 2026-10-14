@@ -20,7 +20,7 @@ runs at install time, so `--ignore-scripts` works. Every version is published fr
 workflow on GitHub with provenance, and the programs are the ones in that release's signed
 `SHA256SUMS`.
 
-To update the command, run `npm install -g @abhash-chakraborty/inyon@latest`. `inyon update`
-updates the copy in `~/.inyon/bin` that the background service runs.
+To update the command, run `npm install -g @abhash-chakraborty/inyon@latest`. From 0.17.1,
+`inyon update` updates the copy in `~/.inyon/bin` that the background service runs.
 
 Docs: https://inyon.abhashchakraborty.tech/docs/install/ · Source: https://github.com/Abhash-Chakraborty/inyon · MIT
