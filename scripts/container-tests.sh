@@ -119,11 +119,14 @@ echo "--- the newest version, from latest.json"
 ~/.inyon/bin/inyon update | tee /tmp/update.out
 grep -q "is up to date" /tmp/update.out || { echo "inyon update did not find itself up to date"; exit 1; }
 echo "--- a new shell finds inyon by name"
-grep "added by Inyon" ~/.profile
-sh -c ". ~/.profile; command -v inyon" | grep -q "/.inyon/bin/inyon$" || { echo "inyon is not on the PATH of a new shell"; exit 1; }
+# the startup file of the shell in $SHELL: ~/.bashrc on Fedora, whose image sets it, ~/.profile without one
+rc=$(grep -l "added by Inyon" ~/.profile ~/.bashrc ~/.zshrc 2>/dev/null | head -n 1)
+[ -n "$rc" ] || { echo "no startup file has the PATH line"; exit 1; }
+echo "$rc"
+"${SHELL:-sh}" -c ". $rc; command -v inyon" | grep -q "/.inyon/bin/inyon$" || { echo "inyon is not on the PATH of a new shell"; exit 1; }
 echo "--- uninstall --purge leaves nothing behind"
 ~/.inyon/bin/inyon uninstall --purge
-if grep -q "added by Inyon" ~/.profile; then echo "the PATH line is still in ~/.profile"; exit 1; fi
+if grep -q "added by Inyon" "$rc"; then echo "the PATH line is still in $rc"; exit 1; fi
 test ! -e ~/.inyon || { echo "~/.inyon is still there"; ls -la ~/.inyon; exit 1; }'
 systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora upgrade}
 has() { case " $systems " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
