@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
 import zlib from 'node:zlib'
-import { cliTargetOf, nodeRoutes, releaseFile, targetOf, updateScript } from './node-dist.ts'
+import { cliTargetOf, nodeRoutes, releaseFile, sourceCommand, targetOf, updateScript } from './node-dist.ts'
 
 const url = (q: string) => new URL(`http://hub/node/inyon?${q}`)
 const get = (route: keyof typeof nodeRoutes) => nodeRoutes[route](new Request(`http://hub${route}`))
@@ -73,4 +73,33 @@ test('both the .gz and what it unpacks to are checked, and a file not listed is 
   await expect(releaseFile('inyon-linux-x64', `${sha('other')}  inyon-linux-x64\n${sha(GZ)}  inyon-linux-x64.gz\n`, base())).rejects.toThrow('inyon-linux-x64 did not match')
   await expect(releaseFile('inyon-darwin-x64', `${sha(BUILD)}  inyon-linux-x64\n`, base())).rejects.toThrow('has no inyon-darwin-x64')
   await expect(releaseFile('inyon-linux-x64', `${sha(BUILD)}  inyon-linux-x64\n${sha(GZ)}  inyon-linux-x64.gz\n`, `${base()}/gone`)).rejects.toThrow('Could not download inyon-linux-x64.gz (404)')
+})
+
+test('a checkout without a built command hands Windows the release command, and the engine only when that fails', async () => {
+  const calls: string[] = []
+  const from = (release: () => Promise<string>, built?: string) => ({
+    built: () => built,
+    release: async (t: string) => (calls.push(`release ${t}`), release()),
+    engine: async (t: string) => (calls.push(`engine ${t}`), `/out/engine-${t}`),
+  })
+  const ok = from(async () => '/out/v0.17.0-inyon-windows-x64.exe')
+  expect(await sourceCommand('windows-x64', ok)).toBe('/out/v0.17.0-inyon-windows-x64.exe')
+  expect(await sourceCommand('windows-x64', from(async () => '', '/dist/inyon.exe'))).toBe('/dist/inyon.exe')
+  // Linux and macOS keep the engine standing in for both (install.sh reads that from SHA256SUMS)
+  expect(await sourceCommand('linux-x64', ok)).toBe('/out/engine-linux-x64')
+  expect(calls).toEqual(['release windows-x64', 'engine linux-x64'])
+
+  const offline = from(async () => {
+    throw new Error('Could not get the checksums of Inyon 0.17.0 (404)')
+  })
+  const warn = console.warn
+  const warned: string[] = []
+  console.warn = (m: string) => void warned.push(m)
+  try {
+    expect(await sourceCommand('windows-x64', offline)).toBe('/out/engine-windows-x64')
+    expect(warned[0]).toContain('handing out the engine instead')
+    await expect(sourceCommand('windows-arm64', offline)).rejects.toThrow('has no inyon command for windows-arm64')
+  } finally {
+    console.warn = warn
+  }
 })
