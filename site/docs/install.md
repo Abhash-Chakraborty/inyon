@@ -62,6 +62,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 
 - **Update the command** with `npm install -g @abhash-chakraborty/inyon@latest`. From 0.17.1, `inyon update` run from npm's copy updates `~/.inyon/bin`, which the service runs, and leaves npm's copy to npm.
 - **Remove it** with `inyon uninstall` first, then `npm uninstall -g @abhash-chakraborty/inyon`.
+- **Not found after installing?** npm's global folder isn't on your `PATH`. `npm prefix -g` prints it: add that folder on Windows, or its `bin` folder elsewhere, to your `PATH`.
 - **Check it** with `npm audit signatures` after installing. Every release from 0.17.0 is published by the release workflow on GitHub with a provenance statement, and the [npm page](https://www.npmjs.com/package/@abhash-chakraborty/inyon) links to the run that built it.
 
 ## Supported systems
