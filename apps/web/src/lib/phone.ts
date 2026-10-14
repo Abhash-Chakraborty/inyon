@@ -1,6 +1,7 @@
 import type { PhoneRuntime, PhoneStore, SshPlugin } from '@inyon/phone'
 import { isNative, plugin } from './native.ts'
 import { isHosted } from './base.ts'
+import { deviceName } from './deviceName.ts'
 
 /**
  * The phone app has no hub: it runs Inyon's core here, in the app, and SSHes into your servers
@@ -23,8 +24,9 @@ export function phone(): Promise<PhoneRuntime> {
   return (runtime ??= (async () => {
     const ssh = (plugin('InyonSsh') as unknown as SshPlugin | undefined) ?? (isHosted() ? (await import('./browserSsh.ts')).browserSsh() : undefined)
     if (!ssh) throw new Error('This build of the app is missing its SSH support')
-    const [store, { startPhone }] = await Promise.all([idbStore(), import('@inyon/phone')])
-    const rt = await startPhone({ store, ssh })
+    const [store, { startPhone }, name] = await Promise.all([idbStore(), import('@inyon/phone'), deviceName()])
+    // the computers this phone pairs with list it by this name
+    const rt = await startPhone({ store, ssh, name })
     // a new network (Wi-Fi to mobile data, a VPN switching) breaks the links: reconnect right away
     let soon: ReturnType<typeof setTimeout> | undefined
     window.addEventListener('online', () => {

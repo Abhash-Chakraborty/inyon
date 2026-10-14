@@ -11,6 +11,7 @@ import { keepAliveSupported, keepAliveWanted } from '../lib/keepalive.ts'
 import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx'
 import { isHosted } from '../lib/base.ts'
 import { keepData } from '../lib/install.ts'
+import { deviceName } from '../lib/deviceName.ts'
 import { claimHub, hubOriginOf, looksLikeHubLink, normalizeHubCode, parseHubLink } from '../lib/hubs.ts'
 import { Logo } from './AppShell.tsx'
 
@@ -81,13 +82,11 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   const scannedHub = given && link === given ? parseHubLink(given) : undefined
   const scanned = given && link === given && !scannedHub ? pairName(given) : undefined
 
-  /** This phone's name as the hub will list it. */
-  const phoneName = () => (navigator.userAgent.match(/Android[^;]*;\s*([^)]+?)(?:\s+Build|\))/)?.[1]?.trim() || (isHosted() ? 'Browser' : 'Phone'))
-
   const pairHub = async (url: string, code: string) => {
     setBusy(true)
     try {
-      const h = await claimHub(url, code, phoneName())
+      // this phone's name as the hub will list it ("Nothing A142")
+      const h = await claimHub(url, code, await deviceName(isHosted() ? 'Browser' : 'Phone'))
       toast({ title: `Paired with ${h.name}`, body: 'Its machines show here now. Forget it any time in Settings.', tone: 'success' })
       onClose()
     } catch (err) {

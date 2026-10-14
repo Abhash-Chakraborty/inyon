@@ -263,6 +263,14 @@ class InyonDevicePlugin : Plugin() {
         }
     }
 
+    // ---- this phone ------------------------------------------------------------------------
+
+    /** The maker and model ("Nothing", "A142"), for the name a computer lists this phone under. */
+    @PluginMethod
+    fun deviceName(call: PluginCall) {
+        call.resolve(JSObject().put("manufacturer", Build.MANUFACTURER ?: "").put("model", Build.MODEL ?: ""))
+    }
+
     // ---- notifications and push ------------------------------------------------------------
 
     @PluginMethod
