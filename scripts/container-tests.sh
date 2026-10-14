@@ -117,7 +117,14 @@ test -x ~/.inyon/bin/inyon-engine
 ~/.inyon/bin/inyon-engine version
 echo "--- the newest version, from latest.json"
 ~/.inyon/bin/inyon update | tee /tmp/update.out
-grep -q "is up to date" /tmp/update.out || { echo "inyon update did not find itself up to date"; exit 1; }'
+grep -q "is up to date" /tmp/update.out || { echo "inyon update did not find itself up to date"; exit 1; }
+echo "--- a new shell finds inyon by name"
+grep "added by Inyon" ~/.profile
+sh -c ". ~/.profile; command -v inyon" | grep -q "/.inyon/bin/inyon$" || { echo "inyon is not on the PATH of a new shell"; exit 1; }
+echo "--- uninstall --purge leaves nothing behind"
+~/.inyon/bin/inyon uninstall --purge
+if grep -q "added by Inyon" ~/.profile; then echo "the PATH line is still in ~/.profile"; exit 1; fi
+test ! -e ~/.inyon || { echo "~/.inyon is still there"; ls -la ~/.inyon; exit 1; }'
 systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora upgrade}
 has() { case " $systems " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 for sys in ubuntu debian alpine fedora; do

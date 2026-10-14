@@ -33,6 +33,7 @@ These are read by `inyon` and `inyon-engine` on any computer.
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one |
+| `INYON_NO_MODIFY_PATH` | Set to `1` before running `get.sh` or `get.ps1` to keep them from putting `inyon` on your `PATH` (from 0.17.1). See [Put inyon on your PATH](install.md#put-inyon-on-your-path) |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
 | `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on a public address. Don't |
 | `NO_COLOR` | Turn colour off in the terminal |

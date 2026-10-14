@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -282,4 +282,59 @@ test('an unpacked file that does not match the plain checksum is refused too', a
   expect(r.out).toContain("didn't match the release's checksum")
   expect(existsSync(installed())).toBe(false)
   expect(existsSync(`${installed()}.download`)).toBe(false)
+})
+
+describe('inyon on the PATH', () => {
+  const MARK = '# added by Inyon'
+  const read = (rel: string) => (existsSync(path.join(home, rel)) ? readFileSync(path.join(home, rel), 'utf8') : '')
+  const lines = (rel: string) => read(rel).split('\n').filter((l) => l.includes(MARK))
+
+  test('zsh gets one marked line in ~/.zshrc, once, after what was there', async () => {
+    writeFileSync(path.join(home, '.zshrc'), 'alias ll="ls -l"') // no newline at the end
+    const r = await run({ SHELL: '/bin/zsh' })
+    expect(r.code).toBe(0)
+    expect(read('.zshrc')).toBe(`alias ll="ls -l"\nexport PATH="$HOME/.inyon/bin:$PATH" ${MARK}\n`)
+    expect(r.out).toContain('Added inyon to your PATH in ~/.zshrc, so new terminals find it by name.')
+    expect(r.out).toContain('export PATH="$HOME/.inyon/bin:$PATH"')
+    // running it again changes nothing
+    const again = await run({ SHELL: '/bin/zsh' })
+    expect(lines('.zshrc')).toHaveLength(1)
+    expect(again.out).not.toContain('Added inyon to your PATH')
+  })
+
+  test('zsh with ZDOTDIR uses the .zshrc there', async () => {
+    const r = await run({ SHELL: '/usr/bin/zsh', ZDOTDIR: path.join(home, '.config', 'zsh') })
+    expect(r.code).toBe(0)
+    expect(lines('.config/zsh/.zshrc')).toHaveLength(1)
+    expect(read('.zshrc')).toBe('')
+  })
+
+  test('bash gets ~/.bashrc (and ~/.bash_profile on a Mac), fish a file of its own, anything else ~/.profile', async () => {
+    expect((await run({ SHELL: '/bin/bash' })).code).toBe(0)
+    expect(lines('.bashrc')).toEqual([`export PATH="$HOME/.inyon/bin:$PATH" ${MARK}`])
+    expect(lines('.bash_profile')).toHaveLength(process.platform === 'darwin' ? 1 : 0)
+
+    expect((await run({ SHELL: '/usr/local/bin/fish' })).code).toBe(0)
+    expect(read('.config/fish/conf.d/inyon.fish')).toBe(`contains $HOME/.inyon/bin $PATH; or set -gx PATH $HOME/.inyon/bin $PATH ${MARK}\n`)
+
+    expect((await run({ SHELL: '/bin/dash' })).code).toBe(0)
+    expect(lines('.profile')).toHaveLength(1)
+  })
+
+  test('nothing changes when it is already on the PATH, or with INYON_NO_MODIFY_PATH=1', async () => {
+    const onPath = await run({ SHELL: '/bin/zsh', PATH: `${path.join(home, '.inyon', 'bin')}:${process.env.PATH}` })
+    expect(onPath.code).toBe(0)
+    expect(existsSync(path.join(home, '.zshrc'))).toBe(false)
+
+    const optOut = await run({ SHELL: '/bin/zsh', INYON_NO_MODIFY_PATH: '1' })
+    expect(optOut.code).toBe(0)
+    expect(existsSync(path.join(home, '.zshrc'))).toBe(false)
+    expect(optOut.out).not.toContain('PATH')
+  })
+
+  test('the line it writes works: a new shell finds inyon by name', async () => {
+    await run({ SHELL: '/bin/dash' })
+    const p = Bun.spawn(['/bin/sh', '-c', '. "$HOME/.profile"; command -v inyon'], { env: { HOME: home, PATH: '/usr/bin:/bin' }, stdout: 'pipe' })
+    expect((await new Response(p.stdout).text()).trim()).toBe(path.join(home, '.inyon', 'bin', 'inyon'))
+  })
 })

@@ -101,6 +101,35 @@ mv -f "$tmp" "$dir/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
 [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$dir/inyon" >/dev/null 2>&1 || true
 
+# new terminals find inyon by name: one line marked "added by Inyon" in the startup file of your
+# shell, written once (inyon uninstall takes it out again). INYON_NO_MODIFY_PATH=1 leaves it out
+on_path=""
+case ":$PATH:" in *":$dir:"* | *":$dir/:"*) on_path=yes ;; esac
+if [ -z "${INYON_NO_MODIFY_PATH:-}" ] && [ -z "$on_path" ]; then
+  mark="# added by Inyon"
+  case "${SHELL##*/}" in
+    zsh) files="${ZDOTDIR:-$HOME}/.zshrc"; line="export PATH=\"\$HOME/.inyon/bin:\$PATH\" $mark" ;;
+    # a Mac's Terminal starts bash as a login shell, which reads .bash_profile instead
+    bash) files="$HOME/.bashrc"; [ "$os" = darwin ] && files="$files $HOME/.bash_profile"; line="export PATH=\"\$HOME/.inyon/bin:\$PATH\" $mark" ;;
+    fish) files="$HOME/.config/fish/conf.d/inyon.fish"; line="contains \$HOME/.inyon/bin \$PATH; or set -gx PATH \$HOME/.inyon/bin \$PATH $mark" ;;
+    *) files="$HOME/.profile"; line="export PATH=\"\$HOME/.inyon/bin:\$PATH\" $mark" ;;
+  esac
+  changed=""
+  for f in $files; do
+    grep -qF "$mark" "$f" 2>/dev/null && continue
+    mkdir -p "${f%/*}"
+    # on a line of its own, even when the file doesn't end with one
+    if [ -s "$f" ] && { ! command -v tail >/dev/null 2>&1 || [ -n "$(tail -c 1 "$f")" ]; }; then echo >> "$f"; fi
+    printf '%s\n' "$line" >> "$f" || continue
+    case "$f" in "$HOME"/*) f="~/${f#"$HOME"/}" ;; esac
+    changed="${changed:+$changed and }$f"
+  done
+  if [ -n "$changed" ]; then
+    echo "Added inyon to your PATH in $changed, so new terminals find it by name."
+    echo "In this one, first run: export PATH=\"\$HOME/.inyon/bin:\$PATH\""
+  fi
+fi
+
 # the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default
 if [ -n "$libc" ] && [ ! -e /usr/lib/libstdc++.so.6 ]; then
   if [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add -q libstdc++ libgcc >/dev/null 2>&1; then :

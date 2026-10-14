@@ -32,11 +32,12 @@ curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
 3. Download the `inyon` command for this system, compressed when `gzip` is available, and check it against `SHA256SUMS`, both compressed and unpacked. A mismatch stops the install before anything runs.
 4. Put it in `~/.inyon/bin/inyon` (`%USERPROFILE%\.inyon\bin\inyon.exe` on Windows). On macOS it gets an ad-hoc signature so the system will run it.
 5. On Alpine, add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to.
-6. Run `inyon setup`, which downloads and checks `inyon-engine`, installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub` and prints the hub's address and setup code instead.
+6. Put `inyon` on your `PATH` (from 0.17.1), so a new terminal finds it by name. See [Put inyon on your PATH](#put-inyon-on-your-path).
+7. Run `inyon setup`, which downloads and checks `inyon-engine`, installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub` and prints the hub's address and setup code instead.
 
 Piped from `curl`, setup can't ask questions, so it takes the defaults: a computer that pairs with your phone through a free tunnel and your VPN, started at login. Run `inyon setup` again afterwards to choose differently with the [setup screens](cli.md#setup).
 
-> **Note:** The installers don't add `~/.inyon/bin` to your `PATH`. Until you do, run the command by its full path, `~/.inyon/bin/inyon`. See [Put inyon on your PATH](#put-inyon-on-your-path).
+> **Note:** The terminal you installed from doesn't see the new `PATH` yet. Open a new one, or run `export PATH="$HOME/.inyon/bin:$PATH"` first. Until then the command is `~/.inyon/bin/inyon`.
 
 ### Installing from somewhere else
 
@@ -77,17 +78,34 @@ Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) 
 
 ## Put inyon on your PATH
 
-On Linux or macOS with bash or zsh:
+From 0.17.1 the installers do this for you, once, when `~/.inyon/bin` isn't on your `PATH` already:
+
+| Shell | What `get.sh` adds |
+|---|---|
+| zsh | a line in `~/.zshrc` (in `$ZDOTDIR` when that's set) |
+| bash | a line in `~/.bashrc`, and on macOS in `~/.bash_profile` too |
+| fish | the file `~/.config/fish/conf.d/inyon.fish` |
+| anything else | a line in `~/.profile` |
+
+Each line ends with `# added by Inyon`, and running the installer again doesn't add another. On Windows, `get.ps1` puts `%USERPROFILE%\.inyon\bin` on your user `Path`, and on the window you ran it in. `inyon uninstall` takes all of it back out, and nothing else in those files.
+
+To leave your shell's files and `Path` alone, set `INYON_NO_MODIFY_PATH=1` before installing:
+
+```sh
+curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_NO_MODIFY_PATH=1 sh
+```
+
+Then add it yourself, or run the command by its full path, `~/.inyon/bin/inyon`. With an installer from 0.17.0 or earlier, add it by hand:
 
 ```sh
 echo 'export PATH="$HOME/.inyon/bin:$PATH"' >> ~/.zshrc    # or ~/.bashrc
 ```
 
-Open a new terminal and `inyon` works from anywhere. On Windows, in PowerShell:
-
 ```powershell
 [Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.inyon\bin;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
 ```
+
+npm puts `inyon` on your `PATH` itself, so the installers' line isn't needed there.
 
 ## Where things live
 
@@ -132,6 +150,8 @@ If you installed the command with npm, update that copy with npm too. See [With 
 inyon uninstall            # remove the services and the programs, keep pairings
 inyon uninstall --purge    # also delete ~/.inyon: pairings, keys, a hub's records
 ```
+
+From 0.17.1 both also take `inyon` back off your `PATH`: the lines marked `# added by Inyon`, Inyon's fish file, or the entry on the Windows user `Path`.
 
 From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
 
