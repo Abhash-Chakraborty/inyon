@@ -110,6 +110,14 @@ enum Command {
         #[arg(long)]
         pid: Option<u32>,
     },
+    /// The Inyon window on Windows: the status and the pairing code, opened from the tray icon
+    #[command(hide = true)]
+    Window {
+        role: String,
+        /// Show a pairing code straight away
+        #[arg(long)]
+        pair: bool,
+    },
 }
 
 #[derive(Args)]
@@ -274,6 +282,13 @@ fn main() {
         Some(Command::Migrate) => commands::finish(commands::migrate(&sys), json),
         Some(Command::Tray { role, pid }) => match Role::parse(&role) {
             Some(r) => inyon_cli::tray::run(r, pid),
+            None => {
+                eprintln!("{role} isn't link, node or hub");
+                2
+            }
+        },
+        Some(Command::Window { role, pair }) => match Role::parse(&role) {
+            Some(r) => inyon_cli::window::run(r, pair),
             None => {
                 eprintln!("{role} isn't link, node or hub");
                 2

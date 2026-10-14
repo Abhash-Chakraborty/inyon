@@ -27,7 +27,7 @@ pub fn tip(role: Role) -> String {
 }
 
 #[cfg(windows)]
-mod win {
+pub(crate) mod win {
     use std::cell::RefCell;
     use std::os::windows::process::CommandExt;
     use std::path::PathBuf;
@@ -81,8 +81,13 @@ mod win {
 
     /// The icon at the size the notification area draws, from the .ico built into the program.
     fn load_icon() -> HICON {
+        unsafe { icon_sized(GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) }
+    }
+
+    /// The program's icon at `w` by `h` pixels (the window's title bar and the taskbar want
+    /// other sizes than the notification area).
+    pub(crate) fn icon_sized(w: i32, h: i32) -> HICON {
         unsafe {
-            let (w, h) = (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON));
             let id = LookupIconIdFromDirectoryEx(ICON.as_ptr(), 1, w, h, LR_DEFAULTCOLOR);
             // the directory entry for `id` says where that image's bytes are
             let entries = u16::from_le_bytes([ICON[4], ICON[5]]) as usize;
@@ -213,25 +218,23 @@ mod win {
         }
     }
 
-    /// Opens `program` in a terminal window of its own. The engine starts this tray with no
-    /// standard handles at all, and a child spawned the usual way inherits that even in a new
-    /// console, so it sees no terminal, prints nothing, and the window closes at once. The shell
-    /// starts it as a double-click would: a console whose input and output are its own.
-    fn in_terminal(program: &str, args: &str) {
-        unsafe {
-            ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(program).as_ptr(), wide(args).as_ptr(), null(), SW_SHOWNORMAL);
+    /// Opens the Inyon window (`inyon window <role>`): a window of its own, not a terminal, so
+    /// no console shows. `pair` has it show a pairing code straight away.
+    fn open_window(role: Role, pair: bool) {
+        let mut c = Command::new(me());
+        c.args(["window", role.name()]);
+        if pair {
+            c.arg("--pair");
         }
+        let _ = c.creation_flags(NO_WINDOW).spawn();
     }
 
     fn act(what: usize) {
         let Some((role, engine)) = STATE.with(|s| s.borrow().as_ref().map(|st| (st.role, st.engine))) else { return };
         let exe = me();
         match what {
-            OPEN => in_terminal(&exe.to_string_lossy(), ""),
-            PAIR => {
-                // cmd keeps the window open after the code, until you press a key
-                in_terminal("cmd.exe", &format!("/c title Inyon & \"{}\" pair & pause", exe.display()));
-            }
+            OPEN => open_window(role, false),
+            PAIR => open_window(role, true),
             LOG => {
                 let log = service::log_file(role);
                 if let Some(dir) = log.parent() {
