@@ -18,6 +18,8 @@ const OFFLINE = args.includes("--offline");
 const REPO = "Abhash-Chakraborty/inyon";
 const ORIGIN = "https://inyon.abhashchakraborty.tech";
 const GITHUB = `https://github.com/${REPO}`;
+/** The 90-second video on YouTube. Once set, it takes the screenshot's place under the home hero. */
+const YOUTUBE_ID = "";
 
 // The sidebar, in reading order. Every page in site/docs must be listed here (checked below).
 const NAV: { title: string; pages: string[] }[] = [
@@ -780,6 +782,10 @@ async function main() {
   mkdirSync(join(OUT, "assets"), { recursive: true });
   writeFileSync(join(OUT, "assets/search.json"), JSON.stringify(index));
 
+  // The video loads nothing from YouTube until it's played: a poster and a link, swapped for the
+  // player on click (site.js). Without scripts the link opens it on YouTube.
+  const video = (id: string) =>
+    `<figure class="video"><a class="video-play" href="https://www.youtube.com/watch?v=${id}" data-youtube="${id}"><img src="/img/video-poster.webp" width="1920" height="1080" alt="Inyon in 90 seconds: a coding agent asks a question in tmux, and the answer is tapped on a phone"><span class="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>Watch Inyon in 90 seconds</span></a></figure>`;
   // home and download pages
   const fill = (html: string) =>
     html
@@ -792,7 +798,8 @@ async function main() {
           : "From the latest release",
       )
       .replace("{{downloads}}", () => downloadTable(latest?.release))
-      .replaceAll("{{github}}", GITHUB);
+      .replaceAll("{{github}}", GITHUB)
+      .replace(/<!--shot-->[\s\S]*?<!--\/shot-->/, (shot) => (YOUTUBE_ID ? video(YOUTUBE_ID) : shot));
   const home = readFileSync(join(SITE, "pages/home.html"), "utf8");
   // the app as search engines describe it, on the home and download pages
   const app = {
