@@ -62,7 +62,7 @@ What's installed and whether a newer version exists, with **Check now**:
 
 ## About
 
-The version and build, the Android app's version, how the terminal is drawn, and **Copy version details** for a bug report. **Support Inyon** opens [Abhash's GitHub Sponsors page](https://github.com/sponsors/Abhash-Chakraborty) (from 0.16.1). Inyon is free and MIT licensed, so this is only for people who want to chip in.
+The version and build, the Android app's version, how the terminal is drawn, and **Copy version details** for a bug report. **How Inyon works** opens these docs (from 0.17; before, it opened the GitHub page). **Support Inyon** opens [Abhash's GitHub Sponsors page](https://github.com/sponsors/Abhash-Chakraborty) (from 0.16.1). Inyon is free and MIT licensed, so this is only for people who want to chip in.
 
 ## Keyboard shortcuts
 

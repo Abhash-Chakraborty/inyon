@@ -283,6 +283,8 @@ export interface MenuItem {
   disabled?: boolean
   /** a hairline above it, starting a new group */
   separated?: boolean
+  /** its keyboard shortcut, shown on the right ("Ctrl K") */
+  keys?: string
   onSelect: () => void
 }
 
@@ -355,7 +357,12 @@ export function MenuPopup({
 }) {
   const menu = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left: number; width: number; maxHeight: number }>({ left: 0, width, maxHeight: 420 })
-  const [active, setActive] = useState(() => Math.max(0, items.findIndex((i) => i.selected)))
+  const [active, setActive] = useState(() => Math.max(0, items.findIndex((i) => i.selected), items.findIndex((i) => !i.disabled)))
+  // the next item the keys can land on, skipping disabled ones
+  const step = (from: number, by: 1 | -1) => {
+    for (let i = from + by; i >= 0 && i < items.length; i += by) if (!items[i].disabled) return i
+    return from
+  }
 
   useLayoutEffect(() => {
     const place = () => {
@@ -402,9 +409,9 @@ export function MenuPopup({
       e.preventDefault()
       e.stopImmediatePropagation()
       if (e.key === 'Escape') onClose()
-      else if (e.key === 'ArrowDown') setActive((a) => Math.min(items.length - 1, a + 1))
-      else if (e.key === 'ArrowUp') setActive((a) => Math.max(0, a - 1))
-      else pick(items[active])
+      else if (e.key === 'ArrowDown') setActive((a) => step(a, 1))
+      else if (e.key === 'ArrowUp') setActive((a) => step(a, -1))
+      else if (items[active] && !items[active].disabled) pick(items[active])
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
@@ -452,6 +459,7 @@ export function MenuPopup({
                 <span className="block truncate">{it.label}</span>
                 {it.hint && <span className="block truncate text-[12px] text-fg-3">{it.hint}</span>}
               </span>
+              {it.keys && <span className="shrink-0 pl-3 font-mono text-[12px] text-fg-3">{it.keys}</span>}
               {it.selected && <Check className="size-4 shrink-0 text-fg-2" />}
             </button>
           </div>

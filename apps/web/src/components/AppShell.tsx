@@ -10,7 +10,7 @@ import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { keyLabel, shortcut } from '../lib/keys.ts'
-import { ContextMenuHost } from './ui/ContextMenu.tsx'
+import { usePageMenu } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { Waiting } from './ui/primitives.tsx'
 
@@ -213,6 +213,11 @@ export function AppShell() {
   }, [])
 
   const online = useStore((s) => s.hosts.some((h) => h.status === 'online'))
+  // a right-click on nothing in particular offers the same two things as the shortcuts
+  usePageMenu(() => [
+    { key: 'search', label: 'Search…', icon: <Search className="size-4" />, keys: keyLabel('cmd', 'K'), onSelect: () => setSearch(true) },
+    { key: 'new', label: online ? 'New session…' : 'Add a machine…', icon: <Plus className="size-4" />, keys: keyLabel('alt', 'N'), onSelect: () => setNewOpen(true) },
+  ])
 
   return (
     <div className="flex h-dvh overflow-hidden">
@@ -230,7 +235,6 @@ export function AppShell() {
       {online ? <NewSessionSheet open={newOpen} onClose={() => setNewOpen(false)} /> : <MachineSheet open={newOpen} onClose={() => setNewOpen(false)} />}
       <QuickSwitch open={search} onClose={() => setSearch(false)} />
       <ActionSheets />
-      <ContextMenuHost />
     </div>
   )
 }

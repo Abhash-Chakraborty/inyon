@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
 import { Bell, BookOpen, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
-import { AGENTS, SOURCE_REPO } from '@inyon/protocol'
+import { AGENTS, INSTALL_URL } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
@@ -61,8 +61,8 @@ function Background() {
 }
 
 /** Which Inyon this is, to check for updates or put in a bug report. */
-/** The public guide: setup, pairing and commands. */
-const GUIDE = `https://github.com/${SOURCE_REPO}#readme`
+/** The docs on the website: setup, pairing, every screen and command. */
+const GUIDE = `${INSTALL_URL}/docs/`
 /** Where people can pay for Inyon, if they want to (the repo's FUNDING.yml names the same). */
 const SPONSOR = 'https://github.com/sponsors/Abhash-Chakraborty'
 

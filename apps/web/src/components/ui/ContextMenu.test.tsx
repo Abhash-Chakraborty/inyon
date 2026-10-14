@@ -1,6 +1,6 @@
 import { afterEach, expect, mock, test } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ContextMenuHost, contextMenu } from './ContextMenu.tsx'
+import { ContextMenuHost, contextMenu, usePageMenu } from './ContextMenu.tsx'
 
 afterEach(cleanup)
 
@@ -46,11 +46,47 @@ test('Esc closes it, and the keys move through it', () => {
   expect(screen.queryByRole('menu')).toBeNull()
 })
 
-test("the browser's own menu stays in text boxes and with Shift held", () => {
+test("a text box gets Cut, Copy, Paste and Select all instead of the row's menu, and Shift keeps the browser's", () => {
   const { row } = setup()
-  expect(rightClick(screen.getByLabelText('Name'))).toBe(true)
+  expect(rightClick(screen.getByLabelText('Name'))).toBe(false)
+  expect(items().map((t) => t?.replace(/(Ctrl|⌘) ?[A-Z]$/, '').trim())).toEqual(['Cut', 'Copy', 'Paste', 'Select all'])
+  // nothing selected: nothing to cut or copy
+  expect(screen.getByRole('menuitem', { name: /^Cut/ }).hasAttribute('disabled')).toBe(true)
+  fireEvent.keyDown(window, { key: 'Escape' })
   expect(rightClick(row, { shiftKey: true })).toBe(true)
   expect(screen.queryByRole('menu')).toBeNull()
+})
+
+test('a link gets Open and Copy link', () => {
+  render(
+    <>
+      <a href="https://example.com/docs">docs</a>
+      <ContextMenuHost />
+    </>,
+  )
+  fireEvent.pointerDown(screen.getByText('docs'), { pointerType: 'mouse' })
+  expect(rightClick(screen.getByText('docs'))).toBe(false)
+  expect(items()).toEqual(['Open link', 'Copy link'])
+})
+
+test("a right-click on nothing in particular gets the page's menu, not the browser's", () => {
+  const search = mock(() => {})
+  function Shell() {
+    usePageMenu(() => [{ key: 'search', label: 'Search…', keys: 'Ctrl K', onSelect: search }])
+    return <p>empty space</p>
+  }
+  render(
+    <>
+      <Shell />
+      <ContextMenuHost />
+    </>,
+  )
+  fireEvent.pointerDown(screen.getByText('empty space'), { pointerType: 'mouse' })
+  expect(rightClick(screen.getByText('empty space'))).toBe(false)
+  expect(items()).toContain('Reload')
+  expect(items()).toContain('Search…Ctrl K')
+  fireEvent.click(screen.getByRole('menuitem', { name: /Search/ }))
+  expect(search).toHaveBeenCalledTimes(1)
 })
 
 test("a long press on a touch screen keeps doing what it did, unless the menu asks for it", () => {

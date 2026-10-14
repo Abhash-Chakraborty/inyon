@@ -33,8 +33,11 @@ From 0.16 most things have a right-click menu, with the same actions wherever th
 | The agent's reply | **Copy reply**, and **Copy code** inside a code block |
 | The terminal | **Copy**, **Paste**, **Select all** |
 | A past conversation | **Switch to it**, **Copy conversation ID** |
+| A text box (from 0.17) | **Cut**, **Copy**, **Paste**, **Select all** |
+| A link (from 0.17) | **Open link**, **Open in new tab** for a link inside Inyon, **Copy link** |
+| Anywhere else (from 0.17) | **Back**, **Reload**, **Search…** and **New session…** |
 
-With text selected, **Copy** comes first. Text boxes and links to other sites keep the browser's own menu, and so does anything with `Shift` held. On a phone, long-press the sidebar's, a machine's and a past conversation's rows for the same menu.
+With text selected, **Copy** comes first. From 0.17 the browser's own menu, with its *Inspect* and *Save as*, only opens with `Shift` held. If a browser won't let the menu read the clipboard, **Paste** says to press `Ctrl V` (`⌘ V`) instead. On a phone, long-press the sidebar's, a machine's and a past conversation's rows for the same menu; a long press elsewhere still selects text.
 
 ## Finding a session
 

@@ -11,6 +11,7 @@ import { useStore } from './lib/store.ts'
 import { AppShell } from './components/AppShell.tsx'
 import { Toasts } from './components/Toasts.tsx'
 import { ConfirmHost } from './components/Confirm.tsx'
+import { ContextMenuHost } from './components/ui/ContextMenu.tsx'
 import { UpdatePrompt } from './components/UpdatePrompt.tsx'
 import { Waiting } from './components/ui/primitives.tsx'
 import { Home } from './pages/Home.tsx'
@@ -72,7 +73,13 @@ function App() {
       </div>
     )
   }
-  if (!authed) return <Login />
+  if (!authed)
+    return (
+      <>
+        <Login />
+        <ContextMenuHost />
+      </>
+    )
 
   return (
     <>
@@ -88,6 +95,7 @@ function App() {
       </Routes>
       <Toasts />
       <ConfirmHost />
+      <ContextMenuHost />
       {/* the phone app's code ships inside the APK, so only a browser can be behind its hub */}
       {!isNative() && <UpdatePrompt />}
     </>
