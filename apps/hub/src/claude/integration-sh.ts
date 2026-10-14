@@ -1,7 +1,19 @@
 // Shell shared by the integration scripts and the probe (kept apart to avoid an import cycle).
 
 /** Bump when the scripts change; the probe reports older copies as outdated. */
-export const MARKER = 'inyon-integration 5'
+export const MARKER = 'inyon-integration 6'
+
+/**
+ * Sets $pane to the pane the script runs in, as the hub names it. psmux (Windows) numbers panes per
+ * session, so every session has a %1: the hub calls them %<session>.<pane> (win-prelude.sh), and the
+ * scripts ask psmux for the session id so two sessions don't share one file. If psmux doesn't answer,
+ * the plain %1 is no worse than before: the hub has no pane by that name and ignores it.
+ */
+export const PANE_SH = `pane=\${TMUX_PANE:-}
+if [ -n "$pane" ] && [ -n "\${PSMUX_SESSION:-}" ]; then
+  for _ in 1 2; do s=$(tmux display -p -t "$PSMUX_SESSION" '#{session_id}' 2>/dev/null | tr -d '$\\r'); [ -n "$s" ] && break; done
+  case $s in ''|*[!0-9]*) ;; *) pane="%$s.\${pane#%}" ;; esac
+fi`
 
 /**
  * Inyon was called Tether: moves ~/.tether to ~/.inyon once and leaves a link at the old path, so

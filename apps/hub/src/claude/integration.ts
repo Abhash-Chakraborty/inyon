@@ -1,6 +1,6 @@
 import { Host, shq } from '../hosts/host.ts'
 import { HttpError } from '../hosts/registry.ts'
-import { ACCOUNT_SH, MARKER } from './integration-sh.ts'
+import { ACCOUNT_SH, MARKER, PANE_SH } from './integration-sh.ts'
 
 /**
  * The hook only appends Claude Code's own hook payload, tagged with the tmux pane, to a local
@@ -16,13 +16,14 @@ d="$HOME/.inyon"
 mkdir -p "$d/panes" 2>/dev/null
 p=$(tr -d '\\n\\r')
 [ -n "$p" ] || exit 0
-line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "\${TMUX_PANE:-}" "$(date +%s)" "$p")
+${PANE_SH}
+line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "$pane" "$(date +%s)" "$p")
 printf '%s\\n' "$line" >> "$d/events.jsonl"
-[ -n "\${TMUX_PANE:-}" ] && printf '%s\\n' "$line" > "$d/panes/\${TMUX_PANE#%}.json"
+[ -n "$pane" ] && printf '%s\\n' "$line" > "$d/panes/\${pane#%}.json"
 # after a compaction, so Inyon stops showing the context size from before it
 case "$p" in
   *'"hook_event_name":"SessionStart"'*'"source":"compact"'*|*'"source":"compact"'*'"hook_event_name":"SessionStart"'*)
-    [ -n "\${TMUX_PANE:-}" ] && date +%s > "$d/panes/\${TMUX_PANE#%}.compact" ;;
+    [ -n "$pane" ] && date +%s > "$d/panes/\${pane#%}.compact" ;;
 esac
 s=$(wc -c < "$d/events.jsonl" 2>/dev/null || echo 0)
 [ "$s" -gt 2097152 ] && mv -f "$d/events.jsonl" "$d/events.old.jsonl"
@@ -37,10 +38,11 @@ export const STATUS_SCRIPT = `#!/bin/sh
 # Inyon: saves Claude Code's status line data per tmux pane, then runs your own status line.
 # ${MARKER}
 in=$(cat)
+${PANE_SH}
 # (in a subshell, so your own status line below keeps your umask)
-if [ -n "\${TMUX_PANE:-}" ]; then (
+if [ -n "$pane" ]; then (
   umask 077
-  d="$HOME/.inyon/status"; f="$d/\${TMUX_PANE#%}"
+  d="$HOME/.inyon/status"; f="$d/\${pane#%}"
   mkdir -p "$d" 2>/dev/null
   printf '%s' "$in" | tr -d '\\n\\r' > "$f.json.$$" && mv -f "$f.json.$$" "$f.json"
   # the signed-in account, so limits reported for a previous account are never shown as this one's
@@ -64,9 +66,10 @@ export const AGY_STATUS_SCRIPT = `#!/bin/sh
 # Safe to delete; remove "statusLine" from ~/.gemini/antigravity-cli/settings.json too.
 # ${MARKER}
 in=$(cat)
-if [ -n "\${TMUX_PANE:-}" ]; then (
+${PANE_SH}
+if [ -n "$pane" ]; then (
   umask 077
-  d="$HOME/.inyon/agy-status"; f="$d/\${TMUX_PANE#%}"
+  d="$HOME/.inyon/agy-status"; f="$d/\${pane#%}"
   mkdir -p "$d" 2>/dev/null
   printf '%s' "$in" | tr -d '\\n\\r' > "$f.json.$$" && mv -f "$f.json.$$" "$f.json"
 )

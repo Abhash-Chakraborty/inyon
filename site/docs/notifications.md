@@ -7,7 +7,7 @@ description: Hear about it when an agent needs you or finishes, and when a machi
 
 | Event | When | Can be turned off |
 |---|---|---|
-| **Needs you** | An agent is waiting on a prompt. For a command, the alert says what it's for and shows its first line | No |
+| **Needs you** | An agent is waiting on a prompt. For a command, the alert says what it's for and shows its first line; for an edit, which file | No |
 | **Finished** | An agent finished working, with the start of its reply | Yes: *When an agent finishes* |
 | **Offline** | A machine has been unreachable for a minute | No |
 | **Back online** | A machine that was reported offline reconnected, and how long it was away | No |

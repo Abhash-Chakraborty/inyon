@@ -664,3 +664,23 @@ ${D}
  Esc to cancel · Tab to amend`))
   expect(promptSummary(s.prompt!)).toBe('Write hello-inyon to out.txt: echo hello-inyon > out.txt')
 })
+
+test('an edit prompt names the file, not the first line of the diff', () => {
+  const s = parseScreen(
+    screen(`${R}
+ Edit file
+ test\\cart.test.js
+${D}
+ 1  import { test } from 'node:test'
+ 2  import assert from 'node:assert/strict'
+ 3 -import { subtotal, total } from '../src/cart.js'
+ 3 +import { lineTotal, subtotal, total } from '../src/cart.js'
+${D}
+ Do you want to make this edit to cart.test.js?
+ ❯ 1. Yes
+   2. No
+
+ Esc to cancel · Tab to amend`),
+  )
+  expect(promptSummary(s.prompt!)).toBe('Edit file: test\\cart.test.js')
+})

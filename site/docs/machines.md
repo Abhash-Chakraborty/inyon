@@ -49,6 +49,8 @@ It checks the machine and fixes what it can:
 
 Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
 
+When a new version of Inyon changes these scripts, the button says *Update* instead of *Turn on*.
+
 ## When a machine goes offline
 
 The hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back. When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.

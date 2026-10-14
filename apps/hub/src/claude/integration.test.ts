@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { HOOK_SCRIPT, STATUS_SCRIPT } from './integration.ts'
 import { ACCOUNT_SH } from './integration-sh.ts'
 import { claudeStatus } from '../agents/status.ts'
+import { probe } from '../tmux/tmux.ts'
+import type { Host } from '../hosts/host.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'inyon-int-'))
 afterAll(() => rmSync(home, { recursive: true, force: true }))
@@ -51,6 +53,37 @@ describe('integration scripts', () => {
     expect(existsSync(join(home, '.inyon/panes/9.compact'))).toBe(false)
     run(HOOK_SCRIPT, JSON.stringify({ session_id: 's1', hook_event_name: 'SessionStart', source: 'compact' }))
     expect(Number(readFileSync(join(home, '.inyon/panes/9.compact'), 'utf8'))).toBeGreaterThan(0)
+  })
+})
+
+describe('psmux (Windows)', () => {
+  // psmux numbers panes per session, so two sessions both run in %1; the hub calls them %<session>.<pane>
+  function runPsmux(script: string, input: string, answer: string) {
+    const bin = mkdtempSync(join(tmpdir(), 'inyon-psmux-'))
+    writeFileSync(join(bin, 'tmux'), `#!/bin/sh\n[ "$*" = "display -p -t checkout #{session_id}" ] && printf '${answer}'\n`, { mode: 0o755 })
+    Bun.spawnSync(['sh', '-c', script], { stdin: Buffer.from(input), env: { HOME: home, TMUX_PANE: '%1', PSMUX_SESSION: 'checkout', PATH: `${bin}:${process.env.PATH}` } })
+    rmSync(bin, { recursive: true, force: true })
+  }
+
+  test('the status line and hook name the pane as the hub does, so two sessions keep their own files', () => {
+    writeConfig('acct-A')
+    runPsmux(STATUS_SCRIPT, payload('s-psmux'), '$36\\r\\n')
+    expect(JSON.parse(readFileSync(join(home, '.inyon/status/36.1.json'), 'utf8')).session_id).toBe('s-psmux')
+    runPsmux(HOOK_SCRIPT, JSON.stringify({ session_id: 's-psmux', hook_event_name: 'Stop' }), '$36\\n')
+    expect(JSON.parse(readFileSync(join(home, '.inyon/panes/36.1.json'), 'utf8')).pane).toBe('%36.1')
+  })
+
+  test('without an answer from psmux, the pane keeps its own name', () => {
+    runPsmux(STATUS_SCRIPT, payload('s-plain'), '')
+    expect(JSON.parse(readFileSync(join(home, '.inyon/status/1.json'), 'utf8')).session_id).toBe('s-plain')
+  })
+
+  test('the probe reads those files back under the same name', async () => {
+    const out = ['@@STATUS', `36.1 1700000000 - - ${payload('s-psmux')}`, '@@COMPACT', '36.1 1700000001', '@@END'].join('\n')
+    const fake = { config: { id: 'win', name: 'win', kind: 'local' }, exec: async () => ({ stdout: out, stderr: '', code: 0 }) } as unknown as Host
+    const r = await probe(fake)
+    expect(r.statusPanes.get('%36.1')?.data.session_id).toBe('s-psmux')
+    expect(r.compactPanes.get('%36.1')).toBe(1700000001)
   })
 })
 

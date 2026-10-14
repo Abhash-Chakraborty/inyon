@@ -256,7 +256,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
   const bins = new Set((sections.get('BINS') ?? []).map((l) => l.trim()).filter(Boolean))
   res.installed = AGENT_KINDS.filter((k) => AGENTS[k].comm.some((c) => bins.has(c)))
   for (const line of sections.get('STATUS') ?? []) {
-    const m = line.match(/^(\d+) (\d+) (\S+) (\S+) (.*)$/)
+    const m = line.match(/^(\d+(?:\.\d+)?) (\d+) (\S+) (\S+) (.*)$/)
     if (!m) continue
     const acct = (v: string) => (v === '-' ? undefined : v)
     try {
@@ -272,14 +272,14 @@ export async function probe(host: Host): Promise<ProbeResult> {
     if (m) res.agyTitles.set(m[1], m[2].trim())
   }
   for (const line of sections.get('AGYSTATUS') ?? []) {
-    const m = line.match(/^(\d+) (\d+) (.*)$/)
+    const m = line.match(/^(\d+(?:\.\d+)?) (\d+) (.*)$/)
     if (!m) continue
     try {
       res.agyStatus.set(`%${m[1]}`, { ts: Number(m[2]), data: JSON.parse(m[3]) })
     } catch {}
   }
   for (const line of sections.get('COMPACT') ?? []) {
-    const m = line.match(/^(\d+) (\d+)/)
+    const m = line.match(/^(\d+(?:\.\d+)?) (\d+)/)
     if (m) res.compactPanes.set(`%${m[1]}`, Number(m[2]))
   }
 

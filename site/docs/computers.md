@@ -58,6 +58,8 @@ inyon service install link    # restart the link with the new address
 
 On Windows, Inyon drives [psmux](https://github.com/marlocarlo/psmux), the native tmux for Windows. The machine's Setup tab installs it with winget. Everything works as on Linux, except that the terminal shows the current screen without scrollback.
 
+psmux numbers panes per session, so every session has a pane `%1`. Before 0.17.1, two Claude Code sessions on one Windows machine shared the integration's files and the app lost their live model, context and limits. From 0.17.1 each session keeps its own; the app asks you to *Update* the integration once.
+
 ## Moving to a hub later
 
 A paired computer can join a [hub](hub.md) instead: run the hub's *Add a machine* command on it. To stop pairing directly afterwards, `inyon service uninstall link` removes the link.
