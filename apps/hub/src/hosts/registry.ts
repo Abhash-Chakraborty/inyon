@@ -6,7 +6,7 @@ import { loadHosts, loadSettings, saveHosts } from '../config.ts'
 import { keyPart, kv } from '../platform/store.ts'
 import { Host, shq } from './host.ts'
 import { capturePanes, guessTranscript, probe, type ProbeResult } from '../tmux/tmux.ts'
-import { parseScreen } from '../claude/screen.ts'
+import { parseScreen, promptSummary } from '../claude/screen.ts'
 import { isDriving } from '../claude/driving.ts'
 import { claudeStatus } from '../agents/status.ts'
 import { fetchClaudeUsage, type AccountUsage } from '../agents/claude-usage.ts'
@@ -795,13 +795,7 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
   if (!sc.prompt.multi && !sc.prompt.tabs?.length && !sc.prompt.input) {
     info.options = sc.prompt.options.filter((o) => o.n !== sc.prompt!.freeTextOption).slice(0, 4).map((o) => ({ n: o.n, label: o.label }))
   }
-  // the framed block (between ╌ separators) is the command or file being asked about
-  const raw = sc.prompt.body.map((l) => l.trim())
-  const sep = raw.indexOf('╌')
-  const framed = sep >= 0 ? raw.slice(sep + 1).find((l) => l && l !== '╌') : undefined
-  const body = raw.filter((l) => l && l !== '╌' && !/^Tip:/.test(l))
-  const question = body.find((l) => /\?$/.test(l))
-  info.waitingFor = framed && body[0] ? `${body[0].replace(/[?:]$/, '')}: ${framed}`.slice(0, 200) : sc.prompt.input?.label ?? question ?? body[0] ?? 'Needs your input'
+  info.waitingFor = promptSummary(sc.prompt)
 }
 
 /** A host's settings as the browser sees them: the pairing token's hash stays on the hub. */
