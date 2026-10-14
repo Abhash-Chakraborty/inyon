@@ -79,7 +79,9 @@ if (import.meta.main) {
   const sums: string[] = []
   for (const t of targets) {
     if (!TARGETS.includes(t)) throw new Error(`${t} isn't one of ${TARGETS.join(', ')}`)
-    const file = await buildInyon({ target: t, outfile: path.join(out, engineFile(t)), hub: true, commit })
+    // on Windows the engine only runs in the background or for the inyon command, so it gets no
+    // console window of its own: the sign-in task starts it directly, with nothing flashing up
+    const file = await buildInyon({ target: t, outfile: path.join(out, engineFile(t)), hub: true, commit, hideConsole: true })
     sums.push(`${await sha256File(file)}  ${path.basename(file)}`)
     console.log(`built ${path.basename(file)}`)
   }

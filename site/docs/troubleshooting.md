@@ -23,6 +23,7 @@ The computer shows as connecting and never arrives.
 - Check the computer is on and the service is running (`inyon service status`).
 - Quick tunnels have no uptime promise. If Cloudflare is having a bad moment, a private network (Tailscale, NetBird, ZeroTier, WireGuard) is the steadier route; turn it on in `inyon setup`.
 - On a VPN, make sure the phone is connected to it too.
+- On Windows, the firewall blocks the LAN and the VPN unless the rule "Inyon link" is there. Run `inyon setup` again with *LAN* or *VPN* ticked and allow it when Windows asks, or see [The firewall on Windows](cli.md#the-firewall-on-windows).
 
 ## "Couldn't pair with the hub"
 

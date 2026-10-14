@@ -253,7 +253,11 @@ pub fn which(name: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    for dir in std::env::split_paths(&path) {
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    // a program started over SSH (or before a Path change) has an older PATH than a new terminal
+    // would: the Path saved in the registry counts too
+    dirs.extend(saved_path().into_iter().filter(|d| !dirs.contains(d)).collect::<Vec<_>>());
+    for dir in dirs {
         if dir.as_os_str().is_empty() {
             continue;
         }
@@ -265,6 +269,41 @@ pub fn which(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The user's and the machine's Path as saved in the registry, what a new terminal starts with.
+#[cfg(windows)]
+fn saved_path() -> Vec<PathBuf> {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    fn read(root: HKEY, key: &str) -> Option<String> {
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (key, value) = (wide(key), wide("Path"));
+        let mut size = 0u32;
+        // REG_SZ takes REG_EXPAND_SZ too, with %USERPROFILE% and the like filled in (asking for
+        // REG_EXPAND_SZ itself is refused unless it's left unexpanded)
+        let flags = RRF_RT_REG_SZ;
+        unsafe {
+            if RegGetValueW(root, key.as_ptr(), value.as_ptr(), flags, std::ptr::null_mut(), std::ptr::null_mut(), &mut size) != 0 {
+                return None;
+            }
+            let mut buf = vec![0u16; (size as usize).div_ceil(2) + 1];
+            if RegGetValueW(root, key.as_ptr(), value.as_ptr(), flags, std::ptr::null_mut(), buf.as_mut_ptr().cast(), &mut size) != 0 {
+                return None;
+            }
+            let end = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+            Some(String::from_utf16_lossy(&buf[..end]))
+        }
+    }
+    [read(HKEY_CURRENT_USER, "Environment"), read(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment")]
+        .into_iter()
+        .flatten()
+        .flat_map(|p| p.split(';').filter(|d| !d.trim().is_empty()).map(|d| PathBuf::from(d.trim())).collect::<Vec<_>>())
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn saved_path() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 #[cfg(unix)]

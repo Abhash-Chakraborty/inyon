@@ -63,7 +63,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
 2. **Network.** For a computer paired with your phone, tick any of:
    - *Tunnel*: a free Cloudflare tunnel, so the phone reaches it from any network. On by default.
    - *LAN*: also answer on the local network. Off by default.
-   - *VPN*: also answer on Tailscale, Headscale, NetBird, ZeroTier or WireGuard. Setup lists the networks it found, and the computer answers on all of them. On by default, except on Windows, where the firewall would ask about it.
+   - *VPN*: also answer on Tailscale, Headscale, NetBird, ZeroTier or WireGuard. Setup lists the networks it found, and the computer answers on all of them. On by default, except on Windows, where it needs a firewall rule (see [below](#the-firewall-on-windows)).
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
@@ -83,6 +83,12 @@ While you answer, setup downloads and checks `inyon-engine` in the background, w
 | `Esc`, `Ctrl-C`, `q` | Quit without changing anything |
 
 A mouse click chooses a row.
+
+### The firewall on Windows
+
+Windows Firewall lets nothing in to a program it hasn't been told about, and it counts VPNs such as NetBird as public networks. So when you tick *LAN* or *VPN* on Windows, setup from 0.17.1 adds a firewall rule named "Inyon link", and Windows asks an administrator to allow it. The rule lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN ranges (`100.64.0.0/10` and Tailscale's `fd7a:115c:a1e0::/48`).
+
+If you say no, phones can only connect through the tunnel, and setup prints the command to add the rule later from PowerShell run as administrator. `inyon uninstall` removes the rule.
 
 ### Without the screens
 

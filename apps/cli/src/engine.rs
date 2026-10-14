@@ -128,7 +128,7 @@ pub fn forward(args: &[String]) -> ! {
     }
     #[cfg(not(unix))]
     {
-        match c.status() {
+        match relayed(c) {
             Ok(s) => std::process::exit(s.code().unwrap_or(1)),
             Err(err) => {
                 eprintln!("Couldn't start {} ({err}).", engine.display());
@@ -142,8 +142,68 @@ pub fn forward(args: &[String]) -> ! {
 pub fn run_through(args: &[String]) -> Result<ExitStatus, String> {
     let engine = ensure(&|l| eprintln!("{l}"))?;
     let mut c = command(&engine);
-    c.args(args).stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
-    c.status().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))
+    c.args(args);
+    relayed(c).map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))
+}
+
+/// Runs the engine with this terminal. On Windows the engine has no console of its own (so the
+/// sign-in task starts it with no window), so what it prints comes through pipes and is passed
+/// on here, INYON_CONSOLE tells it to print rather than log, and it runs in a job that ends it
+/// with this program (Ctrl-C, a closed window).
+fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
+    if !cfg!(windows) {
+        return c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
+    }
+    c.env("INYON_CONSOLE", "1").stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = c.spawn()?;
+    #[cfg(windows)]
+    let _job = job::ends_with_me(&child);
+    let out = child.stdout.take().map(|mut o| std::thread::spawn(move || std::io::copy(&mut o, &mut std::io::stdout())));
+    let err = child.stderr.take().map(|mut e| std::thread::spawn(move || std::io::copy(&mut e, &mut std::io::stderr())));
+    let status = child.wait();
+    for t in [out, err].into_iter().flatten() {
+        let _ = t.join();
+    }
+    status
+}
+
+#[cfg(windows)]
+mod job {
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub struct Job(HANDLE);
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// A job holding `child` that Windows ends, with whatever it started, once this process has
+    /// gone and nothing holds the job any more.
+    pub fn ends_with_me(child: &Child) -> Option<Job> {
+        unsafe {
+            let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if h.is_null() {
+                return None;
+            }
+            let job = Job(h);
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
+            if SetInformationJobObject(h, JobObjectExtendedLimitInformation, &info as *const _ as *const _, size) == 0 {
+                return None;
+            }
+            (AssignProcessToJobObject(h, child.as_raw_handle() as HANDLE) != 0).then_some(job)
+        }
+    }
 }
 
 /// Runs the engine and collects what it printed.

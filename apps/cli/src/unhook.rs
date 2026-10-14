@@ -86,8 +86,8 @@ fn take_out(file: &Path, script: &str, orig: &Path, hooks: bool) -> Option<Strin
 pub fn unhook(home: &Path) -> Vec<String> {
     let inyon = home.join(".inyon");
     [
-        take_out(&home.join(".claude/settings.json"), "statusline.sh", &inyon.join("statusline.orig"), true),
-        take_out(&home.join(".gemini/antigravity-cli/settings.json"), "agy-statusline.sh", &inyon.join("agy-statusline.orig"), false),
+        take_out(&home.join(".claude").join("settings.json"), "statusline.sh", &inyon.join("statusline.orig"), true),
+        take_out(&home.join(".gemini").join("antigravity-cli").join("settings.json"), "agy-statusline.sh", &inyon.join("agy-statusline.orig"), false),
     ]
     .into_iter()
     .flatten()

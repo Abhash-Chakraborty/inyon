@@ -130,6 +130,22 @@ Setup runs Inyon as a service of your own user, so it starts on its own and come
 
 The role is `link` for a computer paired with your phone, `node` for one that joined a hub, and `hub` for a hub. `inyon service status` shows what's installed and running, and `inyon logs` shows its output.
 
+### On Windows
+
+From 0.17.1 the task starts `inyon-engine.exe` itself. It has no console, so no window opens when you sign in, and its output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub). An install from an earlier version moves to this the next time it updates.
+
+While it runs, the Inyon icon sits in the notification area of the taskbar. Click it for a menu:
+
+| Item | Does |
+|---|---|
+| Open Inyon | The status screen, in a terminal window |
+| Pair a phone… | A pairing code, in a terminal window (computers paired with the phone) |
+| Show the log | Opens the log file |
+| Restart | Starts it again |
+| Quit Inyon | Stops it until you next sign in. `inyon service install` starts it sooner |
+
+If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+
 ## Updating
 
 ```sh
@@ -152,6 +168,8 @@ inyon uninstall --purge    # also delete ~/.inyon: pairings, keys, a hub's recor
 ```
 
 From 0.17.1 both also take `inyon` back off your `PATH`: the lines marked `# added by Inyon`, Inyon's fish file, or the entry on the Windows user `Path`.
+
+On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the engine, the tunnel and the tray icon), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
 
 From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
 

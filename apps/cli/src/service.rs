@@ -14,7 +14,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::paths::{basename, bin_dir, home, installed_binary, node_dir, NAME};
+use crate::paths::{basename, bin_dir, home, installed_binary, node_dir, ENGINE, NAME};
 use crate::sys::{self, run, run_with_stdin, which, Platform, Proc, Signal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -125,6 +125,11 @@ pub fn unit_file(name: &str) -> PathBuf {
 
 pub fn plist_file(label: &str) -> PathBuf {
     home().join("Library").join("LaunchAgents").join(format!("{label}.plist"))
+}
+
+/// The name of `role`'s logon task on Windows, if it has one.
+pub fn task_name(role: Role) -> Option<&'static str> {
+    spec(role).task
 }
 
 /// Where a job writes its log when nothing else keeps it (launchd, nohup).
@@ -296,32 +301,49 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
             let Some(task) = s.task else {
                 return failed("the hub runs on Linux and macOS (on Windows, use WSL)");
             };
-            // a logon task, started hidden through PowerShell so no console window shows.
-            // Start-Process waits for it either way: a hub builds its copies without a console
-            let (exe, rest) = args.split_first().expect("a program to run");
-            let list = rest.iter().map(|a| psq(a)).collect::<Vec<_>>().join(", ");
-            let argument = format!("-NoProfile -WindowStyle Hidden -Command \"Start-Process -FilePath {} -ArgumentList {list} -WindowStyle Hidden -Wait\"", psq(exe));
+            // the task starts the engine itself: it has no console, so nothing shows at sign-in,
+            // and it puts the Inyon icon in the notification area while it runs
+            let engine = match engine_for(&cmd) {
+                Ok(e) => e,
+                Err(e) => return failed(e),
+            };
+            let list = s.args.iter().map(|a| psq(a)).collect::<Vec<_>>().join(", ");
             let shortcut = startup_shortcut(&format!("{task}.lnk"));
             let stop =
                 if restart { format!("Stop-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue\n{}\n", psq(task), stop_copies(sys, Some(role))) } else { String::new() };
             let script = format!(
-                "$ErrorActionPreference='Stop'\n{stop}try {{\n  $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument {arg}\n  $t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"\n  $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n  $p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n  Register-ScheduledTask -TaskName {name} -Action $a -Trigger $t -Settings $s -Principal $p -Description {what} -Force | Out-Null\n  Start-ScheduledTask -TaskName {name}\n  'task'\n}} catch {{\n  # tasks blocked by policy: a shortcut in the Startup folder, and started now\n  $l = (New-Object -ComObject WScript.Shell).CreateShortcut({shortcut})\n  $l.TargetPath = 'powershell.exe'\n  $l.Arguments = {arg}\n  $l.WindowStyle = 7\n  $l.Save()\n  Start-Process -FilePath {exe} -ArgumentList {list} -WindowStyle Hidden\n  'startup'\n}}",
-                arg = psq(&argument),
+                "$ErrorActionPreference='Stop'\n{stop}try {{\n  $a = New-ScheduledTaskAction -Execute {exe} -Argument {arg} -WorkingDirectory $env:USERPROFILE\n  $t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"\n  $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n  $p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n  Register-ScheduledTask -TaskName {name} -Action $a -Trigger $t -Settings $s -Principal $p -Description {what} -Force | Out-Null\n  Remove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n  Start-ScheduledTask -TaskName {name}\n  'task'\n}} catch {{\n  # tasks blocked by policy: a shortcut in the Startup folder, and started now\n  $l = (New-Object -ComObject WScript.Shell).CreateShortcut({shortcut})\n  $l.TargetPath = {exe}\n  $l.Arguments = {arg}\n  $l.WorkingDirectory = $env:USERPROFILE\n  $l.Save()\n  Start-Process -FilePath {exe} -ArgumentList {list} -WorkingDirectory $env:USERPROFILE\n  'startup'\n}}",
+                exe = psq(&path_str(&engine)),
+                arg = psq(&s.args.join(" ")),
                 name = psq(task),
                 what = psq(s.what),
-                exe = psq(exe),
             );
             let r = ps(&script);
             if !r.ok {
                 return failed(r.out.lines().next().filter(|l| !l.is_empty()).unwrap_or("Task Scheduler refused").to_string());
             }
             if r.out.trim().ends_with("startup") {
-                ok("a program that starts when you sign in (Task Scheduler is blocked here, so from the Startup folder)")
+                ok("a program that starts when you sign in (Task Scheduler is blocked here, so from the Startup folder), with the Inyon icon in the notification area")
             } else {
-                ok(format!("a task that starts again by itself when you sign in (\"{task}\" in Task Scheduler)"))
+                ok(format!("a task that starts when you sign in (\"{task}\" in Task Scheduler), with the Inyon icon in the notification area"))
             }
         }
         Platform::Other => failed(format!("{} isn't supported for a background service", sys.platform.name())),
+    }
+}
+
+/// The engine next to the installed command, which the logon task runs: copied there from
+/// wherever this program found it (an npm install keeps its own), or downloaded.
+fn engine_for(cmd: &[String]) -> Result<PathBuf, String> {
+    let first = cmd.first().map(PathBuf::from).unwrap_or_else(installed_binary);
+    let want = crate::update::engine_beside(&first);
+    if want.is_file() {
+        return Ok(want);
+    }
+    match crate::engine::find() {
+        Some(found) if fs::copy(&found, &want).is_ok() => Ok(want),
+        Some(found) => Ok(found),
+        None => crate::engine::download_to(&want, &|_| {}).map(|_| want),
     }
 }
 
@@ -331,14 +353,137 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
 fn stop_copies(sys: &Sys, role: Option<Role>) -> String {
     let line = "(Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.Id)\").CommandLine";
     let job = match role {
-        Some(Role::Node) => format!(" -and {line} -notmatch '\\s\"?(link|hub|migrate|update)\"?(\\s|$)'"),
+        Some(Role::Node) => format!(" -and {line} -notmatch '\\s\"?(link|hub|migrate|update|tray|hidden)\"?(\\s|$)'"),
         Some(r) => format!(" -and {line} -match '\\s\"?{}\"?\\s*$'", spec(r).args[0]),
         None => String::new(),
     };
+    // the link's tunnel (cloudflared from ~/.inyon/bin) outlives an engine stopped this way
+    let tunnel = if matches!(role, None | Some(Role::Link)) {
+        format!(
+            "\nGet-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" | Where-Object {{ $_.ExecutablePath -like {} }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+            psq(&format!("{}\\*", path_str(&bin_dir())))
+        )
+    } else {
+        String::new()
+    };
     format!(
-        "Get-Process -Name '{NAME}', 'tether-node' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {}{job} }} | Stop-Process -Force -ErrorAction SilentlyContinue",
+        "Get-Process -Name '{NAME}', '{ENGINE}', 'tether-node' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {}{job} }} | Stop-Process -Force -ErrorAction SilentlyContinue{tunnel}",
         sys.pid
     )
+}
+
+/// PowerShell that stops every program running from ~/.inyon/bin but this one (the engines, the
+/// tray icons, the tunnel, the shell scripts' busybox), so uninstall can delete the folder.
+fn stop_everything(sys: &Sys) -> String {
+    format!(
+        "Get-CimInstance Win32_Process | Where-Object {{ $_.ProcessId -ne {} -and ($_.ExecutablePath -like {} -or $_.Name -in 'tether-node.exe') }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}\nStart-Sleep -Milliseconds 500",
+        sys.pid,
+        psq(&format!("{}\\*", path_str(&bin_dir())))
+    )
+}
+
+/// Stops every program running from ~/.inyon/bin but this one (Windows only), so uninstall can
+/// delete them: an open .exe can't be deleted there.
+pub fn stop_programs(sys: &Sys) {
+    if sys.platform == Platform::Windows {
+        ps(&stop_everything(sys));
+    }
+}
+
+/// Deletes `files` and then `dir` once this process has ended, from a hidden PowerShell that
+/// waits for it (Windows only): a running .exe can't delete itself.
+pub fn delete_after_exit(sys: &Sys, files: &[PathBuf], dir: &Path) {
+    if sys.platform != Platform::Windows || files.is_empty() {
+        return;
+    }
+    let list = files.iter().map(|f| psq(&path_str(f))).collect::<Vec<_>>().join(", ");
+    let script = format!(
+        "Wait-Process -Id {} -Timeout 120 -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue -LiteralPath {list}\nif (-not (Get-ChildItem -Force -Recurse -File -LiteralPath {d} -ErrorAction SilentlyContinue)) {{ Remove-Item -Force -Recurse -ErrorAction SilentlyContinue -LiteralPath {d} }}",
+        sys.pid,
+        d = psq(&path_str(dir))
+    );
+    let mut c = std::process::Command::new("powershell.exe");
+    c.args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    sys::quiet(&mut c);
+    let _ = c.spawn();
+}
+
+/// The Windows Firewall rule that lets phones on your network and VPN reach the link.
+pub const FIREWALL_RULE: &str = "Inyon link";
+
+/// PowerShell that adds the firewall rule for the link on `port`: inbound TCP to the engine only,
+/// and only from the local network and the VPN ranges (Tailscale and NetBird use 100.64.0.0/10).
+pub fn firewall_rule_script(port: u16) -> String {
+    format!(
+        "Remove-NetFirewallRule -DisplayName {n} -ErrorAction SilentlyContinue\nNew-NetFirewallRule -DisplayName {n} -Description 'Lets phones on your network and VPN reach Inyon' -Direction Inbound -Action Allow -Protocol TCP -LocalPort {port} -Program {prog} -RemoteAddress 'LocalSubnet', '100.64.0.0/10', 'fd7a:115c:a1e0::/48' -Profile Any | Out-Null",
+        n = psq(FIREWALL_RULE),
+        prog = psq(&path_str(&crate::paths::installed_engine()))
+    )
+}
+
+/// Whether the firewall rule is there for `port` (Windows).
+fn firewall_allows(port: u16) -> bool {
+    ps(&format!(
+        "$r = Get-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue | Select-Object -First 1\nif ($r -and $r.Enabled -eq 'True' -and (($r | Get-NetFirewallPortFilter).LocalPort -eq '{port}')) {{ exit 0 }} else {{ exit 1 }}",
+        psq(FIREWALL_RULE)
+    ))
+    .ok
+}
+
+/// Runs `script` as administrator: Windows asks first (UAC), or runs it straight away for an
+/// administrator's elevated session. False when it was refused or couldn't ask.
+fn as_admin(script: &str) -> bool {
+    let file = node_dir().join("admin.ps1");
+    if fs::create_dir_all(node_dir()).is_err() || fs::write(&file, script).is_err() {
+        return false;
+    }
+    let r = ps(&format!(
+        "$ErrorActionPreference='Stop'\ntry {{ $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File \"' + {} + '\"'); exit $p.ExitCode }} catch {{ exit 1 }}",
+        psq(&path_str(&file))
+    ));
+    let _ = fs::remove_file(&file);
+    r.ok
+}
+
+/// Windows Firewall lets nothing in to a program it hasn't been told about, and VPNs such as
+/// NetBird count as public networks, so phones on the LAN or the VPN can't reach the link until
+/// a rule allows it (the tunnel goes out, so it works either way). Adds the rule, which needs an
+/// administrator's yes, and says how it went (Windows only).
+pub fn allow_link_through_firewall(sys: &Sys, port: u16) -> Option<String> {
+    if sys.platform != Platform::Windows {
+        return None;
+    }
+    if firewall_allows(port) {
+        return Some("✓ Windows Firewall lets phones on your network and VPN reach this computer".into());
+    }
+    println!("Windows asks for an administrator's permission to let phones on your network and VPN through the firewall…");
+    if as_admin(&firewall_rule_script(port)) && firewall_allows(port) {
+        return Some(format!("✓ Windows Firewall lets phones on your network and VPN reach this computer (rule \"{FIREWALL_RULE}\")"));
+    }
+    Some(format!(
+        "! Windows Firewall blocks phones on your network and VPN, so they connect through the tunnel only. To let them in, run this in PowerShell as administrator:\n  {}",
+        firewall_rule_script(port).lines().last().unwrap_or_default()
+    ))
+}
+
+/// Takes the firewall rule away again (Windows), asking for an administrator's yes when it's there.
+pub fn remove_firewall_rule(sys: &Sys) -> Option<String> {
+    if sys.platform != Platform::Windows {
+        return None;
+    }
+    let there = ps(&format!("if (Get-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}", psq(FIREWALL_RULE))).ok;
+    if !there {
+        return None;
+    }
+    let script = format!("Remove-NetFirewallRule -DisplayName {}", psq(FIREWALL_RULE));
+    if as_admin(&script) {
+        Some(format!("removed the firewall rule \"{FIREWALL_RULE}\""))
+    } else {
+        Some(format!("the firewall rule \"{FIREWALL_RULE}\" stays; remove it in PowerShell as administrator: {script}"))
+    }
 }
 
 /// No user services (a container, a minimal server): start it detached now, and from cron at
@@ -530,6 +675,17 @@ pub fn restart_service(sys: &Sys, role: Role, cmd: &[String]) -> Installed {
         }
         Platform::Windows => {
             if let Some(task) = s.task {
+                // inyon's own task is registered again, so one set up by an earlier version
+                // starts the engine directly from now on (no console window at sign-in)
+                let own = format!(
+                    "if ((Get-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue) -or (Test-Path {})) {{ exit 0 }} else {{ exit 1 }}",
+                    psq(task),
+                    startup_shortcut(&format!("{task}.lnk"))
+                );
+                if ps(&own).ok {
+                    let again = Sys { platform: sys.platform, proc: sys.proc, pid: sys.pid, program: cmd.to_vec() };
+                    return install_service(&again, role, true);
+                }
                 // a running copy of the old program (renamed aside or not) is stopped, never this
                 // process. Started without a task (install.ps1's Startup shortcut), it's started
                 // the same way.
@@ -747,7 +903,17 @@ pub fn detach(sys: &Sys, args: &[String]) -> Installed {
     }
     if sys.platform == Platform::Windows {
         let (exe, rest) = args.split_first().expect("a program to run");
-        let quoted = rest.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" ");
+        // started through the engine, which has no console, so no window opens for it
+        let engine = crate::update::engine_beside(Path::new(exe));
+        let (exe, quoted) = if engine.is_file() {
+            (
+                path_str(&engine),
+                std::iter::once("hidden").chain(std::iter::once(exe.as_str())).chain(rest.iter().map(String::as_str)).map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" "),
+            )
+        } else {
+            (exe.clone(), rest.iter().map(|a| format!("\"{a}\"")).collect::<Vec<_>>().join(" "))
+        };
+        let exe = &exe;
         let r = ps(&format!(
             "$ErrorActionPreference='Stop'\n$a = New-ScheduledTaskAction -Execute {} -Argument {}\n$p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)\nRegister-ScheduledTask -TaskName '{UPDATE_TASK}' -Action $a -Principal $p -Settings $s -Force | Out-Null\nStart-ScheduledTask -TaskName '{UPDATE_TASK}'",
             psq(exe),

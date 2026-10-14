@@ -3,7 +3,7 @@ use std::io::IsTerminal;
 use clap::{Args, Parser, Subcommand};
 
 use inyon_cli::commands::{self, SetupFlags};
-use inyon_cli::service::Sys;
+use inyon_cli::service::{Role, Sys};
 use inyon_cli::sys::RealProc;
 use inyon_cli::ui::{dashboard, Theme};
 use inyon_cli::{engine, paths, update};
@@ -96,6 +96,14 @@ enum Command {
     /// The old `inyon install [role]` form
     #[command(hide = true)]
     Install { role: Option<String> },
+    /// The icon in the Windows notification area while `role` runs (the engine starts it)
+    #[command(hide = true)]
+    Tray {
+        role: String,
+        /// The engine it belongs to: the icon goes when it stops
+        #[arg(long)]
+        pid: Option<u32>,
+    },
 }
 
 #[derive(Args)]
@@ -252,6 +260,13 @@ fn main() {
         Some(Command::Uninstall { role: None, purge }) => commands::finish(commands::uninstall_all(&sys, purge), json),
         Some(Command::Version) => commands::finish(commands::version(json), json),
         Some(Command::Migrate) => commands::finish(commands::migrate(&sys), json),
+        Some(Command::Tray { role, pid }) => match Role::parse(&role) {
+            Some(r) => inyon_cli::tray::run(r, pid),
+            None => {
+                eprintln!("{role} isn't link, node or hub");
+                2
+            }
+        },
     };
     std::process::exit(code);
 }
