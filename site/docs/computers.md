@@ -42,7 +42,7 @@ The computer can answer in several ways at once, and the phone races them:
 
 Pass options to `inyon pair`, or choose them in `inyon setup`; they're saved. The link listens on port 4780 (`--port` changes it). `cloudflared`, which runs the tunnel, is downloaded on first use into `~/.inyon/bin`, pinned to a known version and checked.
 
-The tunnel works from any network but has no uptime promise: if Cloudflare's quick tunnels are slow, a private network is the steadier route. The private network is off by default on Windows because the firewall would ask about it.
+The tunnel works from any network but has no uptime promise: if Cloudflare's quick tunnels are slow, a private network is the steadier route. The private network is off by default on Windows, because Windows Firewall blocks it until a rule allows it. When you turn it on in `inyon setup`, setup adds that rule with an administrator's permission (see [The firewall on Windows](cli.md#the-firewall-on-windows)).
 
 ### Your own HTTPS address
 

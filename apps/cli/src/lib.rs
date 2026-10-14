@@ -12,6 +12,7 @@ pub mod shellpath;
 pub mod signing;
 pub mod state;
 pub mod sys;
+pub mod tray;
 pub mod ui;
 pub mod unhook;
 pub mod update;

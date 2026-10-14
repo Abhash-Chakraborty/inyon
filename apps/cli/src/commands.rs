@@ -713,20 +713,32 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
     if let Some(pid) = state::link_state().and_then(|s| s.pid).filter(|p| *p != sys.pid && sys.proc.alive(*p)) {
         sys.proc.signal(pid, sys::Signal::Term);
     }
+    // on Windows the engines, the tray icons and the tunnel keep their files open until they stop
+    service::stop_programs(sys);
+    lines.extend(service::remove_firewall_rule(sys));
     let bin = bin_dir();
+    let mut later = Vec::new();
     if bin.exists() {
-        let me = std::env::current_exe().ok();
+        let me = std::env::current_exe().ok().and_then(|m| fs::canonicalize(m).ok());
+        let mut left = Vec::new();
         for entry in fs::read_dir(&bin).into_iter().flatten().flatten() {
             let p = entry.path();
-            if me.as_ref().is_some_and(|m| fs::canonicalize(m).ok() == fs::canonicalize(&p).ok()) && sys.platform == Platform::Windows {
-                // a running .exe can't be deleted, but renamed aside it goes at the next start
-                let _ = fs::rename(&p, format!("{}.old-{}", p.display(), state::now_ms() as u64));
+            if sys.platform == Platform::Windows && me.is_some() && fs::canonicalize(&p).ok() == me {
+                // a running .exe can't be deleted: it goes once this command has ended
+                later.push(p);
                 continue;
             }
-            let _ = fs::remove_file(&p);
+            let gone = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+            if gone.is_err() && p.exists() {
+                left.push(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            }
         }
         let _ = fs::remove_dir(&bin);
-        lines.push(format!("removed {}", bin.display()));
+        if left.is_empty() {
+            lines.push(format!("removed {}", bin.display()));
+        } else {
+            lines.push(format!("couldn't remove {} in {} (in use; close it and run this again)", left.join(", "), bin.display()));
+        }
     }
     // the PATH entry the installer added for it
     if sys.platform == Platform::Windows {
@@ -755,6 +767,7 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
     } else {
         lines.push(format!("Your pairings stay in {}; add --purge to remove them too.", node_dir().display()));
     }
+    service::delete_after_exit(sys, &later, &if purge { home_inyon() } else { bin });
     Ok(json!({ "message": lines.join("\n") }))
 }
 
@@ -915,6 +928,9 @@ pub fn apply(sys: &Sys, plan: &Plan) -> Outcome {
             cfg.port = Some(plan.port_number());
             state::write_json("link.json", &cfg).map_err(|e| e.to_string())?;
             engine::ensure(&|l| eprintln!("{l}"))?;
+            if plan.lan || plan.vpn {
+                lines.extend(service::allow_link_through_firewall(sys, plan.port_number()));
+            }
             if plan.autostart {
                 let running = state::link_state().and_then(|s| s.pid).filter(|p| *p != sys.pid).is_some_and(|p| sys.proc.alive(p));
                 let (svc, note) = if service::old_services(sys).contains(&Role::Link) {

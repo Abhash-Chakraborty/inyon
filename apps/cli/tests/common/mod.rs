@@ -64,6 +64,8 @@ impl Home {
                 "#!/bin/sh\nPATH=/usr/bin:/bin\n{record}\ncmd=\"$2\"\npid=$(cat \"$FAKE_NEXT_PID\" 2>/dev/null || echo 4242)\necho $((pid+1)) > \"$FAKE_NEXT_PID\"\npidfile=$(printf '%s' \"$cmd\" | sed -n \"s/.*echo \\$! > '\\([^']*\\)'.*/\\1/p\")\nargs=$(printf '%s' \"$cmd\" | sed -n 's/^nohup \\(.*\\) >> .*/\\1/p')\nprintf '%s\\n' \"$pid\" > \"$pidfile\"\nprintf '%s\\t%s\\n' \"$pid\" \"$args\" >> \"$FAKE_PROCS\"\n"
             ),
             "systemctl" => format!("#!/bin/sh\nPATH=/usr/bin:/bin\n{record}\nif [ -n \"$FAKE_REFUSE\" ] && [ \"$2\" = \"$FAKE_REFUSE\" ]; then echo 'Failed to enable'; exit 1; fi\nexit 0\n"),
+            // FAKE_PS_NO: a script containing it fails (a task that isn't there, say)
+            "powershell.exe" => format!("#!/bin/sh\nPATH=/usr/bin:/bin\n{record}\nif [ -n \"$FAKE_PS_NO\" ]; then case \"$*\" in *\"$FAKE_PS_NO\"*) exit 1;; esac; fi\nexit 0\n"),
             "inyon" => format!("#!/bin/sh\nPATH=/usr/bin:/bin\n{record}\necho \"inyon ran $*\"\n"),
             _ => format!("#!/bin/sh\nPATH=/usr/bin:/bin\n{record}\nexit 0\n"),
         };

@@ -16,6 +16,7 @@
  *   inyon-engine hub code            show the setup code a new hub asks for
  *   inyon-engine hub reset-password  choose a new password for a forgotten one
  *   inyon-engine version             print the version
+ *   inyon-engine hidden <program> …  run a program with no window and wait for it
  *
  * With --json a command answers in one JSON line (`{"v":1,…}`), which the command reads. The
  * phone link is end-to-end encrypted; tunnels and relays only carry ciphertext. For a hub, plain
@@ -34,11 +35,13 @@ import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfi
 import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
 import { inyonCommand, logFile, nodeDir, runningFile, savedEnv } from './paths.ts'
 
-// run in the background (a service, a hidden task) there's no console to print to: log to a file.
-// Commands people run (pair, phones…) always print, even from a script, so the pairing code shows.
+// run in the background (a service, the sign-in task) there's no console to print to: log to a
+// file. Commands people run (pair, phones…) always print, even from a script, so the pairing code
+// shows, and so does what the inyon command runs in a terminal (it sets INYON_CONSOLE).
 const INTERACTIVE = new Set(['pair', 'join', 'phones', 'forget', 'push', 'update', 'version', '--version', 'help', '--help', '-h'])
 const firstArg = argv[0]
-if (WIN && !process.stdout.isTTY && !(firstArg && INTERACTIVE.has(firstArg))) {
+const BACKGROUND = WIN && !process.stdout.isTTY && !process.env.INYON_CONSOLE && !(firstArg && INTERACTIVE.has(firstArg))
+if (BACKGROUND) {
   const log = logFile(firstArg === 'link' ? 'link' : 'node')
   const write = (...a: unknown[]) => {
     try {
@@ -146,6 +149,21 @@ function leave(why: string) {
   const p = spawn(cli, ['disconnect'], { detached: true, stdio: 'inherit' })
   p.on('exit', () => process.exit(0))
   p.on('error', () => process.exit(0))
+}
+
+/**
+ * The Inyon icon in the Windows notification area while this runs in the background, so you can
+ * see it runs and reach it without a terminal. The inyon command draws it and removes it once this
+ * process has gone; an older command without it just exits.
+ */
+function showTray(role: 'link' | 'node') {
+  const cli = inyonCommand()
+  if (!BACKGROUND || !cli) return
+  try {
+    Bun.spawn([cli, 'tray', role, '--pid', String(process.pid)], { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore', windowsHide: true } as any).unref()
+  } catch (err) {
+    console.log(`! no tray icon: ${(err as Error).message}`)
+  }
 }
 
 /** Checks a hub address; refuses to send a token over plain http to a public address. */
@@ -327,17 +345,26 @@ if (cmd === 'pair') {
   await ensureShell()
   startLink(linkOptions(rest))
   startTidying()
+  showTray('link')
 } else if (cmd === 'join') await join(rest[0])
 // tether-node's installers started the hub connection with no arguments
 else if (cmd === 'connect' || (!cmd && joined)) {
   await ensureShell().catch((err) => console.log(`! ${(err as Error).message}`))
   connectMode(rest[0])
   startTidying()
+  showTray('node')
 } else if (cmd === 'hub') {
   // a hub leaves itself out of the copies it builds for the machines it adds (see build.ts)
   if (process.env.INYON_NODE_ONLY) fail('This copy of inyon has no hub in it. Get the full program with get.sh --hub.')
   await (await import('./hub.ts')).hubCommand(rest)
 } else if (cmd === 'update') updateShim(rest)
+// a program run with no window, which this one has none of on Windows either: the inyon
+// command's one-off update task starts `inyon update` through it
+else if (cmd === 'hidden') {
+  if (!rest.length) fail('usage: inyon-engine hidden <program> [arguments…]')
+  const p = Bun.spawn(rest, { stdin: 'ignore', stdout: 'ignore', stderr: 'ignore', windowsHide: true } as any)
+  process.exit(await p.exited)
+}
 else if (cmd === 'phones') phones()
 else if (cmd === 'forget') forget(rest[0])
 else if (cmd === 'push') await (await import('./push.ts')).pushCommand(rest)

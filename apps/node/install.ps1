@@ -151,12 +151,15 @@ if (-not $mux -and -not $NoPsmux) {
   }
 }
 
-# 5. Start at sign-in and keep running, hidden. A scheduled task can restart it if it ever crashes;
-#    if task creation is blocked by policy, fall back to the Startup folder.
-$argument = "-NoProfile -WindowStyle Hidden -Command `"Start-Process -FilePath '$($exe -replace "'", "''")' -ArgumentList 'connect' -WindowStyle Hidden -Wait`""
+# 5. Start at sign-in and keep running. A scheduled task can restart it if it ever crashes; if task
+#    creation is blocked by policy, fall back to the Startup folder. It starts the engine directly:
+#    the hub builds it with no console, so no window shows at sign-in, and the Inyon icon sits in
+#    the notification area while it runs.
+$engine = Join-Path $Bin 'inyon-engine.exe'
+$runner = if (Test-Path $engine) { $engine } else { $exe }
 $started = $false
 try {
-  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argument -WorkingDirectory $Dir
+  $action = New-ScheduledTaskAction -Execute $runner -Argument 'connect' -WorkingDirectory $Dir
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
@@ -173,12 +176,11 @@ try {
 
 if (-not $started) {
   $s = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $Startup "$TaskName.lnk"))
-  $s.TargetPath = 'powershell.exe'
-  $s.Arguments = $argument
+  $s.TargetPath = $runner
+  $s.Arguments = 'connect'
   $s.WorkingDirectory = $Dir
-  $s.WindowStyle = 7
   $s.Save()
-  Start-Process -FilePath $exe -ArgumentList 'connect' -WorkingDirectory $Dir -WindowStyle Hidden
+  Start-Process -FilePath $runner -ArgumentList 'connect' -WorkingDirectory $Dir
   Write-Host "inyon is running and starts when you sign in (log: $Dir\node.log)."
 }
 

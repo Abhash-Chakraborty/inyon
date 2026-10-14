@@ -68,24 +68,55 @@ fn windows_the_logon_task_is_stopped_and_started_and_the_old_copy_stopped_never_
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
+    // no task or shortcut of inyon's own: only tether-node's may be there
+    std::env::set_var("FAKE_PS_NO", "exit 0 } else { exit 1 }");
     let exe = "C:\\Users\\me\\.tether-node\\tether-node.exe";
     assert!(restart_service(&sys, Role::Node, &v(&[exe])).ok);
     let calls = home.calls();
-    let ps = calls[0].last().unwrap().clone();
+    assert!(calls[0].last().unwrap().contains("Get-ScheduledTask -TaskName 'Inyon node'"), "{calls:?}");
+    let ps = calls[1].last().unwrap().clone();
     assert_eq!(calls[0][0], "powershell.exe");
     assert!(ps.contains("$exe = 'C:\\Users\\me\\.tether-node\\tether-node.exe'"), "{ps}");
     assert!(ps.contains("'Inyon node', 'Tether node' | ForEach-Object"), "{ps}");
-    assert!(ps.contains("Get-Process -Name 'inyon', 'tether-node'"), "{ps}");
+    assert!(ps.contains("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'"), "{ps}");
     assert!(ps.contains(&format!("$_.Id -ne {}", std::process::id())), "{ps}");
     assert!(ps.find("Stop-ScheduledTask").unwrap() < ps.find("Start-ScheduledTask").unwrap());
     // install.ps1's Startup-folder fallback has no task: start it the way that does
     assert!(ps.contains("Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden"), "{ps}");
     home.clear_calls();
     restart_service(&sys, Role::Link, &v(&["C:\\Users\\o'brien\\.inyon\\bin\\inyon.exe"]));
-    let ps = home.calls()[0].last().unwrap().clone();
+    let ps = home.calls()[1].last().unwrap().clone();
     assert!(ps.contains("'Inyon link', 'Tether link'"), "{ps}");
     assert!(ps.contains("$exe = 'C:\\Users\\o''brien\\.inyon\\bin\\inyon.exe'"), "{ps}");
     assert!(ps.contains("-ArgumentList 'link'"), "{ps}");
+    // the link's tunnel is stopped with it
+    assert!(ps.contains("Name='cloudflared.exe'"), "{ps}");
+    std::env::remove_var("FAKE_PS_NO");
+}
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_console() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
+    // the command and the engine next to it, as an install leaves them
+    let bin = home.dir.join(".inyon").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join("inyon"), "").unwrap();
+    std::fs::write(bin.join("inyon-engine"), "").unwrap();
+    let cli = bin.join("inyon").to_string_lossy().into_owned();
+    let engine = bin.join("inyon-engine").to_string_lossy().into_owned();
+    assert!(restart_service(&sys, Role::Link, &v(&[&cli])).ok);
+    let calls = home.calls();
+    let ps = calls.last().unwrap().last().unwrap().clone();
+    assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument 'link'")), "{ps}");
+    assert!(!ps.contains("powershell.exe"), "no PowerShell window in between: {ps}");
+    assert!(ps.find("Stop-ScheduledTask").unwrap() < ps.find("Register-ScheduledTask").unwrap(), "{ps}");
+    assert!(ps.contains("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'"), "{ps}");
+    // the Startup-folder fallback starts the engine too
+    assert!(ps.contains(&format!("$l.TargetPath = '{engine}'")), "{ps}");
 }
 
 #[test]
@@ -161,10 +192,18 @@ fn on_windows_the_update_becomes_a_one_off_task_outside_the_task_it_was_asked_fr
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
-    assert!(detach_update(&sys, &v(&["C:\\t\\inyon.exe"])).ok);
+    let cli = home.dir.join("inyon.exe").to_string_lossy().into_owned();
+    assert!(detach_update(&sys, &v(&[&cli])).ok);
     let ps = home.calls()[0].last().unwrap().clone();
-    assert!(ps.contains("New-ScheduledTaskAction -Execute 'C:\\t\\inyon.exe' -Argument '\"update\"'"), "{ps}");
+    assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{cli}' -Argument '\"update\"'")), "{ps}");
     assert!(ps.contains("Start-ScheduledTask -TaskName 'Inyon update'"), "{ps}");
+    // with the engine next to it, through the engine, so no console window opens
+    let engine = home.dir.join("inyon-engine.exe").to_string_lossy().into_owned();
+    std::fs::write(&engine, "").unwrap();
+    home.clear_calls();
+    assert!(detach_update(&sys, &v(&[&cli])).ok);
+    let ps = home.calls()[0].last().unwrap().clone();
+    assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument '\"hidden\" \"{cli}\" \"update\"'")), "{ps}");
 }
 
 #[test]
