@@ -20,8 +20,9 @@ import { unixPairCommand } from './pair-command.ts'
  * program (get.sh --hub) hands out the release of its own version from GitHub, checked against
  * that release's SHA256SUMS, so a machine never needs GitHub itself. A hub run from a git checkout
  * builds the engine from its own source, without the hub in it, and serves a command built with
- * cargo when one is in apps/cli/dist (INYON_CLI_DIST); without one the engine stands in for both,
- * as every release before 0.13 was. Either way it's kept under ~/.inyon/node-dist.
+ * cargo when one is in apps/cli/dist (INYON_CLI_DIST); without one Windows gets the release's
+ * command, and otherwise the engine stands in for both, as every release before 0.13 was. Either
+ * way it's kept under ~/.inyon/node-dist.
  */
 export const NODE_DIR = path.resolve(import.meta.dir, '../../../node')
 const OUT = path.join(DATA_DIR, 'node-dist')
@@ -123,18 +124,14 @@ const builtCommand = (t: CliTarget) => {
   return fs.existsSync(f) ? f : undefined
 }
 
-/**
- * The inyon command for `t`, downloaded once from the release. A checkout serves what cargo
- * built into apps/cli/dist, and without that the engine itself, which is a whole program too.
- */
+/** The inyon command for `t`: the release's, or for a hub run from a checkout see sourceCommand. */
 export async function command(t: CliTarget): Promise<string> {
-  if (FROM_SOURCE) {
-    const built = builtCommand(t)
-    if (built) return built
-    if (t === 'windows-arm64') throw new HttpError(503, `This hub runs from a checkout and has no inyon command built for ${t} in ${CLI_DIST}.`)
-    return engine(t)
-  }
-  const file = path.join(OUT, `${tag()}-${cliFile(t)}`)
+  return FROM_SOURCE ? sourceCommand(t) : releaseCommand(t)
+}
+
+/** The release's inyon command for `t`, downloaded once and checked against its SHA256SUMS. */
+async function releaseCommand(t: CliTarget): Promise<string> {
+  const file = path.join(OUT, `v${VERSION}-${cliFile(t)}`)
   if (fs.existsSync(file)) return file
   return once(file, async () => {
     fs.mkdirSync(OUT, { recursive: true })
@@ -142,6 +139,29 @@ export async function command(t: CliTarget): Promise<string> {
     fs.renameSync(`${file}.tmp`, file)
     return file
   })
+}
+
+/**
+ * A checkout's command for `t`: what cargo built into apps/cli/dist. Without that, Windows gets the
+ * release's command (the engine as inyon.exe has no `inyon uninstall` and the like), and the
+ * engine only when the release can't be had. Linux and macOS get the engine, which is a whole
+ * program too: install.sh learns from SHA256SUMS that it stands in for both.
+ */
+export async function sourceCommand(
+  t: CliTarget,
+  from: { built: (t: CliTarget) => string | undefined; release: (t: CliTarget) => Promise<string>; engine: (t: Target) => Promise<string> } = { built: builtCommand, release: releaseCommand, engine },
+): Promise<string> {
+  const built = from.built(t)
+  if (built) return built
+  if (!t.startsWith('windows')) return from.engine(t as Target)
+  try {
+    return await from.release(t)
+  } catch (e) {
+    const why = (e as Error).message
+    if (t === 'windows-arm64') throw new HttpError(503, `This hub runs from a checkout and has no inyon command for ${t}: none in ${CLI_DIST}, and the release's failed (${why}).`)
+    console.warn(`inyon command for ${t}: none in ${CLI_DIST} and the release's failed (${why}); handing out the engine instead`)
+    return from.engine(t as Target)
+  }
 }
 
 /** Whether this hub hands out the engine as a file of its own (a checkout without a built command doesn't). */

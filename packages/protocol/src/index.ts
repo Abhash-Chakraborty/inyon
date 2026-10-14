@@ -349,6 +349,11 @@ export interface PromptOption {
 export interface ScreenPrompt {
   /** text above the options (title, command, question) */
   body: string[]
+  /**
+   * each body line is a whole line: the hub has joined the ones the terminal wrapped, so a line
+   * break here is a real one (show it, don't join the lines into a paragraph)
+   */
+  wholeLines?: boolean
   options: PromptOption[]
   /** AskUserQuestion tab strip */
   tabs?: { label: string; done: boolean; current: boolean }[]

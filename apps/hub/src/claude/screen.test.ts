@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { parseScreen, unstyle } from './screen.ts'
+import { parseScreen, promptSummary, unstyle } from './screen.ts'
 
 // Real captures from Claude Code 2.1.296 at 100 columns.
 const R = '─'.repeat(100)
@@ -562,4 +562,105 @@ test('a message from another session waiting to be let through is a question wit
   expect(s.prompt?.body[0]).toBe('Held message from another session')
   expect(s.prompt?.body).toContain('Test message from the Inyon development session: please reply with only')
   expect(s.prompt?.body.filter((l) => l === '╌').length).toBe(2)
+})
+
+// Claude Code on Windows (psmux), 14 Oct 2026: a "│ " gutter down the command, and lines under it
+// that are separate sentences, not one wrapped paragraph
+test('command prompt with a gutter keeps its lines and loses the gutter', () => {
+  const s = parseScreen(
+    screen(`${R}
+ Bash command
+ Append empty-cart test and run the suite
+${D}
+ │ cat >> test/cart.test.js <<'EOF'
+ │
+ │ test('empty cart costs nothing', () => {
+ │   assert.equal(subtotal([]), 0)
+ │ })
+ │ EOF
+${D}
+ Contains brace with quote character (expansion obfuscation)
+ Ask rule Bash overrides auto mode for this command.
+ /permissions to let auto mode decide
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend`),
+    100,
+  )
+  const p = s.prompt!
+  expect(p.body).toEqual([
+    'Bash command',
+    'Append empty-cart test and run the suite',
+    '╌',
+    "cat >> test/cart.test.js <<'EOF'",
+    '',
+    "test('empty cart costs nothing', () => {",
+    '  assert.equal(subtotal([]), 0)',
+    '})',
+    'EOF',
+    '╌',
+    'Contains brace with quote character (expansion obfuscation)',
+    'Ask rule Bash overrides auto mode for this command.',
+    '/permissions to let auto mode decide',
+    'Do you want to proceed?',
+  ])
+  expect(p.wholeLines).toBe(true)
+  expect(p.options.map((o) => o.label)).toEqual(['Yes', 'No'])
+  expect(promptSummary(p)).toBe("Append empty-cart test and run the suite: cat >> test/cart.test.js <<'EOF'")
+})
+
+test('a PowerShell prompt reads as what the command is for', () => {
+  const s = parseScreen(
+    screen(`${R}
+ PowerShell command
+ Re-run the test suite
+${D}
+ npm test
+${D}
+ This command requires approval
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don't ask again for: npm test *
+   3. No
+ Esc to cancel · Tab to amend`),
+    100,
+  )
+  expect(s.prompt!.body.slice(3)).toEqual(['npm test', '╌', 'This command requires approval', 'Do you want to proceed?'])
+  expect(promptSummary(s.prompt!)).toBe('Re-run the test suite: npm test')
+})
+
+test('lines Claude wrapped are joined, real line breaks stay', () => {
+  const s = parseScreen(
+    screen(`${'─'.repeat(80)}
+ Switch model?
+ Your next response will be slower and use more tokens
+ This conversation is cached for the current model. Switching to Sonnet 5.5
+ means the full history gets re-read on your next message.
+ ❯ 1. Yes, switch to Sonnet 5.5
+   2. No, go back
+ Enter to confirm · Esc to cancel`),
+    80,
+  )
+  expect(s.prompt!.body).toEqual([
+    'Switch model?',
+    'Your next response will be slower and use more tokens',
+    'This conversation is cached for the current model. Switching to Sonnet 5.5 means the full history gets re-read on your next message.',
+  ])
+  expect(promptSummary(s.prompt!)).toBe('Switch model?')
+})
+
+test('an alert for a command names what it is for, not the tip', () => {
+  const s = parseScreen(screen(`${R}
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Write hello-inyon to out.txt
+${D}
+ echo hello-inyon > out.txt
+${D}
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. No
+ Esc to cancel · Tab to amend`))
+  expect(promptSummary(s.prompt!)).toBe('Write hello-inyon to out.txt: echo hello-inyon > out.txt')
 })

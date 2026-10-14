@@ -5,8 +5,8 @@ import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type Hos
 import { loadHosts, loadSettings, saveHosts } from '../config.ts'
 import { keyPart, kv } from '../platform/store.ts'
 import { Host, shq } from './host.ts'
-import { capturePanes, guessTranscript, probe, type ProbeResult } from '../tmux/tmux.ts'
-import { parseScreen } from '../claude/screen.ts'
+import { capturePanes, guessTranscript, probe, type HookPaneState, type ProbeResult } from '../tmux/tmux.ts'
+import { parseScreen, promptSummary } from '../claude/screen.ts'
 import { isDriving } from '../claude/driving.ts'
 import { claudeStatus } from '../agents/status.ts'
 import { fetchClaudeUsage, type AccountUsage } from '../agents/claude-usage.ts'
@@ -22,6 +22,7 @@ import { nodeUpdates } from './node-update.ts'
 import { bareTitle, nameTaken, ownsTitle, pendingName, sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
 import { untilStdinCloses } from '../claude/transcript-tail.ts'
+import { Turns } from './turns.ts'
 
 /** Fallback poll; tmux control mode delivers changes as they happen. */
 const POLL_MS = 4000
@@ -290,6 +291,16 @@ class Registry {
     this.persist()
   }
 
+  /** A prompt in this Claude pane was answered from Inyon: show it working until the turn ends. */
+  turnGoesOn(hostId: string, paneId: string) {
+    turns.start(turnKey(hostId, paneId))
+  }
+
+  /** The turn was cancelled from Inyon (Esc): believe the screen again. */
+  turnEnded(hostId: string, paneId: string) {
+    turns.end(turnKey(hostId, paneId))
+  }
+
   /** The agent process found in a pane by the last probe. */
   agentProc(hostId: string, paneId: string) {
     return this.hosts.get(hostId)?.probe?.agentProcs.get(paneId)
@@ -496,6 +507,10 @@ class Registry {
       }
       // live numbers
       if (proc.kind === 'claude') {
+        // a session's last word (its Stop at the end of a turn, say) is activity, whatever tmux
+        // noticed; not the "waiting for your input" notice a minute after it went quiet
+        const said = liveHook(pr, p.id)
+        if (said && said.data.hook_event_name !== 'Notification') wasActive(pr, p.id, said.ts)
         info.status = claudeStatus(pr, p.id, proc.startedAt, info.mappedBy === 'hook' ? info.sessionId : undefined)
         // Claude rewrites its status as it redraws (after /model, say): a moment without a model
         // isn't a change of model, so keep the last one for this conversation
@@ -536,7 +551,7 @@ class Registry {
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
         rt.screens.set(p.id, sc)
-        applyScreen(p, sc, rt.host)
+        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id))
         await applyOpenCodeLive(rt.host, p)
       }
       // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
@@ -616,6 +631,7 @@ class Registry {
     for (const p of claude) {
       const a = p.agent!
       const moved = last.get(a.transcriptPath!) ?? 0
+      wasActive(pr, p.id, moved)
       const st = pr.statusPanes.get(p.id)
       const since = Math.max(st?.ts ?? 0, (a.startedAt ?? 0) / 1000)
       if (moved > since + STALL_S) {
@@ -733,7 +749,7 @@ class Registry {
         const lines = screens.get(id)
         if (!pane?.agent || !lines) continue
         const before = JSON.stringify(pane.agent)
-        applyScreen(pane, parseScreen(lines, pane.width, pane.agent.kind), rt.host)
+        applyScreen(pane, parseScreen(lines, pane.width, pane.agent.kind), rt.host, lines, rt.probe && liveHook(rt.probe, id))
         await applyOpenCodeLive(rt.host, pane)
         if (JSON.stringify(pane.agent) !== before) changed = true
       }
@@ -766,11 +782,35 @@ class Registry {
   }
 }
 
-/** Copies what the screen says (state, mode, prompt summary) onto a pane's agent info. */
-function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host) {
+/**
+ * Moves a window's last activity up to `at` (seconds): tmux's own only counts output, and psmux
+ * doesn't keep it at all, so "Active 11m ago" counted from when the session started.
+ */
+function wasActive(pr: ProbeResult, pane: string, at: number) {
+  if (!at || at > pr.now + 60) return
+  for (const s of pr.sessions) for (const w of s.windows) if (w.panes.some((p) => p.id === pane) && at > w.activity) w.activity = Math.floor(at)
+}
+
+/** The pane's last Claude hook event, if it came from the agent running there now. */
+function liveHook(pr: ProbeResult, pane: string) {
+  const hook = pr.hookPanes.get(pane)
+  const proc = pr.agentProcs.get(pane)
+  return hook && proc && hook.ts >= proc.startedAt - 5 ? hook : undefined
+}
+
+/** Claude turns that go on while the screen reads idle (see turns.ts). */
+const turns = new Turns()
+const turnKey = (host: string, pane: string) => JSON.stringify([host, pane])
+
+/**
+ * Copies what the screen says (state, mode, prompt summary) onto a pane's agent info. For Claude,
+ * an answered prompt or a turn its hooks say is running keeps the state at working.
+ */
+function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState) {
   const info = p.agent!
   if (isDriving(host.id, p.id)) sc = { ...sc, prompt: undefined }
-  info.state = sc.prompt ? 'waiting' : sc.working ? 'working' : 'idle'
+  const shown = sc.prompt ? 'waiting' : sc.working ? 'working' : 'idle'
+  info.state = info.kind === 'claude' ? turns.state(turnKey(host.id, p.id), shown, lines.join('\n'), hook) : shown
   info.mode = sc.mode ?? info.mode
   // a session without live numbers still shows its model and effort on screen
   // agy's and Codex's footers are redrawn the moment you switch, so they beat numbers written earlier
@@ -795,13 +835,7 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
   if (!sc.prompt.multi && !sc.prompt.tabs?.length && !sc.prompt.input) {
     info.options = sc.prompt.options.filter((o) => o.n !== sc.prompt!.freeTextOption).slice(0, 4).map((o) => ({ n: o.n, label: o.label }))
   }
-  // the framed block (between ╌ separators) is the command or file being asked about
-  const raw = sc.prompt.body.map((l) => l.trim())
-  const sep = raw.indexOf('╌')
-  const framed = sep >= 0 ? raw.slice(sep + 1).find((l) => l && l !== '╌') : undefined
-  const body = raw.filter((l) => l && l !== '╌' && !/^Tip:/.test(l))
-  const question = body.find((l) => /\?$/.test(l))
-  info.waitingFor = framed && body[0] ? `${body[0].replace(/[?:]$/, '')}: ${framed}`.slice(0, 200) : sc.prompt.input?.label ?? question ?? body[0] ?? 'Needs your input'
+  info.waitingFor = promptSummary(sc.prompt)
 }
 
 /** A host's settings as the browser sees them: the pairing token's hash stays on the hub. */

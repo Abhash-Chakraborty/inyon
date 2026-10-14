@@ -46,7 +46,7 @@ The app is its own hub, so whoever holds the unlocked phone can reach your compu
 
 ## What Inyon changes on a machine
 
-Nothing, unless you turn on the Claude Code integration from the machine's Integration tab. Then it:
+Nothing, unless you turn on the Claude Code integration from the machine's Integration tab (or switch a Claude Code model, below). Then it:
 
 - writes `~/.inyon/hook.sh` and `~/.inyon/statusline.sh`, and registers them in `~/.claude/settings.json`, backing that file up first to `settings.json.inyon-backup`;
 - keeps your own status line in `~/.inyon/statusline.orig` and still runs it;
@@ -57,6 +57,8 @@ Nothing, unless you turn on the Claude Code integration from the machine's Integ
 Turning the integration off undoes all of it. The hook's log holds your prompts, so `~/.inyon` is readable only by you.
 
 On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link", once an administrator allows it. It lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN address ranges. `inyon uninstall` removes it.
+
+Switching a Claude Code session's model or effort from Inyon touches `settings.json` too, with or without the integration: Claude Code saves the pick there as your default, and from 0.17.1 Inyon puts the old `model`, `effortLevel` and `modelSettings` values back (see [Controls](controls.md#model-effort-and-mode)). It only replaces the file if it hasn't changed since Inyon read it, and leaves every other byte as it was.
 
 Uploads go to `~/.inyon/uploads` and are deleted after the period you choose. From 0.17 a computer also deletes them by itself when no hub does, and an upload that broke off halfway is deleted after an hour. Files with secrets (the integration's settings, a pasted prompt, a token file) are written readable only by you from the first byte, and a temporary file is removed even when the write is interrupted.
 

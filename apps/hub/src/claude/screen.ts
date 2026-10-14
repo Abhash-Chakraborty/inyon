@@ -339,14 +339,79 @@ function parsePrompt(lines: string[], rules: number[], width: number): ScreenPro
     tabs = tabs.map((t, i) => ({ ...t, current: i === idx, done: i === last ? false : t.done }))
   }
   return {
-    // dashed separators frame a command or file; keep them as a single '╌' marker
-    body: body.map((l) => (/^╌+$/.test(l.trim()) ? '╌' : l)),
+    body: tidyBody(body, width),
+    wholeLines: true,
     options,
     tabs,
     footer,
     multi,
     freeTextOption: free?.n,
   }
+}
+
+/**
+ * One line for a prompt: the alert's text and the Needs-you card. A command prompt reads as what
+ * the command is for, then its first line ("Re-run the test suite: npm test"); other framed
+ * prompts as their title and the first framed line; the rest as their question.
+ */
+export function promptSummary(prompt: ScreenPrompt): string {
+  const raw = prompt.body.map((l) => l.trim())
+  const sep = raw.indexOf('╌')
+  // the framed block (between ╌ separators) is the command or file being asked about
+  const framed = sep >= 0 ? raw.slice(sep + 1).find((l) => l && l !== '╌') : undefined
+  const keep = (l: string) => !!l && l !== '╌' && !/^Tip:/.test(l)
+  const body = raw.filter(keep)
+  const question = body.find((l) => /\?$/.test(l))
+  const title = body[0]
+  if (framed && title) {
+    // "Bash command" / "PowerShell command", then a line saying what it's for
+    const about = /command$/i.test(title) ? raw.slice(raw.indexOf(title) + 1, sep).filter(keep).join(' ') : ''
+    return `${(about || title).replace(/[?:.]$/, '')}: ${framed}`.slice(0, 200)
+  }
+  return prompt.input?.label ?? question ?? title ?? 'Needs your input'
+}
+
+/** a "│ " gutter Claude draws down the left of a framed command (psmux, newer Claude Code) */
+const GUTTER = /^(\s*)[│╎┃](?: |$)/
+
+/**
+ * A dialog's text as its real lines. Dashed separators frame a command or file: they become one
+ * '╌' marker, and a "│ " gutter inside the frame goes. Prose lines Claude wrapped at the pane width
+ * are joined again; a line that ends short of the edge was a real line break and stays one.
+ */
+function tidyBody(body: string[], width: number) {
+  const out: string[] = []
+  let frame: string[] | undefined
+  // on-screen length of the previous prose line (the parser dropped its first space)
+  let prevLen = 0
+  for (const l of body) {
+    if (/^╌+$/.test(l.trim())) {
+      if (frame) {
+        const gutter = frame.every((f) => !f.trim() || GUTTER.test(f))
+        out.push(...frame.map((f) => (gutter ? f.replace(GUTTER, '$1') : f)), '╌')
+        frame = undefined
+      } else {
+        out.push('╌')
+        frame = []
+      }
+      prevLen = 0
+      continue
+    }
+    if (frame) {
+      frame.push(l)
+      continue
+    }
+    const t = l.trim()
+    const first = t.split(/\s/)[0] ?? ''
+    // the next word would have fit on the line above (a little slack for the dialog's padding)
+    // (a long link is left for extractLinks, which joins its pieces without a space)
+    const wrapped = prevLen > 0 && t && !/^([●•◦→\-*]|\d+[.)])\s/.test(t) && prevLen + 1 + first.length > width - 3 && !/https?:\/\/\S*$/.test(out[out.length - 1]!)
+    if (wrapped) out[out.length - 1] += ` ${t}`
+    else out.push(l)
+    prevLen = t ? l.length + 1 : 0
+  }
+  if (frame) out.push(...frame)
+  return out
 }
 
 /**

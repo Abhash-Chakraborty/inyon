@@ -1,11 +1,12 @@
 import { sleep } from '../platform/store.ts'
-import { AGENTS, agyModelId, promptKey, type AgentKind } from '@inyon/protocol'
+import { AGENTS, agyModelId, promptKey, type AgentKind, type ScreenPrompt } from '@inyon/protocol'
 import { shq, type Host } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
 import { codexBrowsing, parseScreen } from './screen.ts'
 import { watchers } from './watcher.ts'
 import { clearInput } from './drafts.ts'
+import { keepClaudeDefaults } from './keep-default.ts'
 import { startDriving } from './driving.ts'
 import { bareTitle, originalTitle, ownsTitle, pendingName, setSessionName } from '../hosts/names.ts'
 import { isTaskFile } from '../features/features.ts'
@@ -187,6 +188,8 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
     const m = text.trim().match(/^\/model\s+(\S+)(?:\s+(\S+))?$/) ?? text.trim().match(/^\/effort\s+()(\S+)$/)
     if (m) return codexModel(hostId, paneId, m[1] || undefined, m[2])
   }
+  // Claude Code saves a /model or /effort pick as the default for new sessions; from Inyon it's for this one
+  if (found.pane.agent.kind === 'claude' && /^\/(model|effort)(\s|$)/.test(text.trim())) await keepClaudeDefaults(host)
   const screen = await currentScreen(hostId, paneId)
   if (screen.prompt) throw new HttpError(409, 'The agent is waiting for an answer to a question first')
   const isCodex = found.pane.agent.kind === 'codex'
@@ -334,6 +337,8 @@ export async function answer(hostId: string, paneId: string, option: number, tex
   const p = screen.prompt
   if (!p?.options.some((o) => o.n === option)) throw new HttpError(409, 'That question is no longer on screen')
   if (question && promptKey(p) !== question) throw new HttpError(409, 'That question was answered and another one is waiting. Check it before answering.')
+  // a permission or a question in the middle of a turn: answered (other than No), Claude carries on
+  const carriesOn = found.pane.agent?.kind === 'claude' && midTurn(p) && !/^no\b/i.test(p.options.find((o) => o.n === option)?.label ?? '')
   if (p.navigate && found.pane.agent?.kind === 'opencode') {
     // "Allow once  Allow always  Reject" in a row, the highlight shown only by colour: go to the
     // first button, then right
@@ -351,6 +356,7 @@ export async function answer(hostId: string, paneId: string, option: number, tex
     const from = p.options.find((o) => o.selected)?.n ?? 1
     const delta = option - from
     await sendKeys(host, paneId, [...Array(Math.abs(delta)).fill(delta > 0 ? 'Down' : 'Up'), 'Enter'])
+    if (carriesOn) registry.turnGoesOn(hostId, paneId)
     nudge(hostId, paneId)
     return
   }
@@ -359,12 +365,18 @@ export async function answer(hostId: string, paneId: string, option: number, tex
     await sleep(250)
     await typeText(host, paneId, text, true)
   }
+  if (carriesOn) registry.turnGoesOn(hostId, paneId)
   nudge(hostId, paneId)
 }
+
+/** Claude's tool permissions ("Do you want to proceed?", "Tab to amend") and its questions come mid-turn; menus don't. */
+const midTurn = (p: ScreenPrompt) => !!p.tabs?.length || /Tab to amend/i.test(p.footer ?? '') || p.body.some((l) => /^Do you want to /.test(l.trim()))
 
 export async function keys(hostId: string, paneId: string, list: string[]) {
   const { host } = agentPane(hostId, paneId)
   await sendKeys(host, paneId, list)
+  // Esc cancels the question and the turn with it
+  if (list.includes('Escape')) registry.turnEnded(hostId, paneId)
   nudge(hostId, paneId)
 }
 

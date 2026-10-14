@@ -36,6 +36,8 @@ bun start
 
 `deploy/inyon-hub.service` is a systemd user unit for a source install. A source install takes its settings from the environment; it doesn't read `~/.inyon/hub.env`.
 
+A source install builds the engine it hands to machines from the checkout. For the `inyon` command it serves what `cargo` built into `apps/cli/dist`, if anything. Without that, Windows machines get the release's command from GitHub (from 0.17.1), and Linux and macOS machines get the engine, which also works as the command.
+
 ## First sign-in
 
 The hub listens on `127.0.0.1:4777`. Open it, and the first visit asks you to create a password (8 characters or more), using the setup code it printed. Lost the code? `inyon hub code` shows it again.
