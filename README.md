@@ -131,6 +131,8 @@ Checked against their docs in October 2026.
    irm https://inyon.abhashchakraborty.tech/get.ps1 | iex           # Windows, PowerShell
    ```
 
+   Or with npm: `npm install -g @abhash-chakraborty/inyon`, then `inyon setup`.
+
 3. In the app, tap *Add a computer* and scan it.
 
 Since 0.13 that line installs `inyon`, a 2 MB command, and its setup fetches the engine (about

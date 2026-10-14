@@ -651,14 +651,26 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
             json!({ "background": true, "how": r.how, "message": format!("Updating inyon in the background ({}). Progress goes to {}.", r.how, node_dir().join("update.log").display()) }),
         );
     }
-    let me = PathBuf::from(sys.program.first().cloned().unwrap_or_default());
+    let mut me = PathBuf::from(sys.program.first().cloned().unwrap_or_default());
+    // npm's copy stays as npm installed it: update the one the services run from instead
+    let npm = update::from_npm(&me);
+    if npm {
+        me = paths::installed_binary();
+        if !me.exists() {
+            update::set_status("failed: installed with npm");
+            return Err(format!("This inyon came from npm. Update it with:\n  {}", update::NPM_UPDATE));
+        }
+    }
     let install = update::find_install(&me, saved_hub());
     let host = RealHost { sys, quiet: json };
     let result = update::update(&install, &host, &update::RealFiles);
     service::forget_update_task(sys);
     match result {
-        Ok(r) => {
+        Ok(mut r) => {
             update::set_status(&if r.changed { format!("done {}", r.version.clone().unwrap_or_default()).trim().to_string() } else { format!("current {VERSION}") });
+            if npm {
+                r.message = format!("{} The inyon command itself came from npm. Update it with:\n  {}", r.message, update::NPM_UPDATE);
+            }
             Ok(json!({ "changed": r.changed, "version": r.version, "message": r.message }))
         }
         Err(e) => {

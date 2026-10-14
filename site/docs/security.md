@@ -81,6 +81,7 @@ RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 - The installers check the signature when `minisign` is installed, and say so when it isn't. Either way they check every download against the list before running it.
 - A hub hands its own version's files to its machines with their sha256 in the command, so a machine always runs what its hub runs.
 - The files on this site are copied from the release. The site's build checks the signature and every program's checksum, and publishes nothing if one fails. A new release appears here only once its APK is listed in the signed list.
+- The npm packages (`@abhash-chakraborty/inyon` and one per system) are published only by the release workflow on GitHub, through npm's trusted publishing, so no npm token is stored for them. The workflow copies the programs from the release after checking the signature and every checksum, and each version carries a provenance statement naming the run that published it. `npm audit signatures` checks that after installing.
 - `cloudflared` is pinned to one version and checked against a known hash.
 
 [Checking a download](/download/#verify) shows how to check a file by hand.

@@ -1,6 +1,6 @@
 ---
 title: Install
-description: What the one-line installers do, where Inyon lives on a computer, and how to update or remove it.
+description: How to install Inyon with the one-line installers or npm, where it lives on a computer, and how to update or remove it.
 ---
 
 Every computer that runs agents for you gets two programs. `inyon` is a small command (about 2 MB, written in Rust) that sets things up, shows status and keeps everything updated. `inyon-engine` does the work behind it: the link to your phone, the connection to a hub, or the hub itself. You only ever type `inyon`.
@@ -47,6 +47,21 @@ Both read `INYON_DOWNLOAD`, a folder URL to fetch from instead. Every release st
 ```sh
 curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.14.0 sh
 ```
+
+## With npm
+
+From 0.16.1 the `inyon` command is also on npm, for any system above with Node.js 18 or later:
+
+```sh
+npm install -g @abhash-chakraborty/inyon
+inyon setup
+```
+
+npm installs only the `inyon` command and puts it on your `PATH`. It picks the build for your system from the packages `@abhash-chakraborty/inyon-<platform>-<arch>`, which hold the same files as the release. Nothing runs at install time, so `--ignore-scripts` works. `inyon setup` then downloads and checks the engine like the installers do, and copies `inyon` into `~/.inyon/bin`, so the background service doesn't depend on npm's folder.
+
+- **Update the command** with `npm install -g @abhash-chakraborty/inyon@latest`. From 0.17.1, `inyon update` run from npm's copy updates `~/.inyon/bin`, which the service runs, and leaves npm's copy to npm.
+- **Remove it** with `inyon uninstall` first, then `npm uninstall -g @abhash-chakraborty/inyon`.
+- **Check it** with `npm audit signatures` after installing. Every release from 0.16.1 is published by the release workflow on GitHub with a provenance statement, and the [npm page](https://www.npmjs.com/package/@abhash-chakraborty/inyon) links to the run that built it.
 
 ## Supported systems
 
@@ -108,6 +123,8 @@ It reads the newest version from this site's `latest.json` and checks that the r
 Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
 
 `inyon update --background` does the same without keeping your terminal open, which is how the app and the hub start an update remotely.
+
+If you installed the command with npm, update that copy with npm too. See [With npm](#with-npm).
 
 ## Uninstalling
 

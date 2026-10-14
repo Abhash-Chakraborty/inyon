@@ -525,6 +525,14 @@ pub fn find_install(file: &Path, hub: Option<String>) -> Install {
     Install { kind: hub.map(Kind::Hub).unwrap_or(Kind::Binary), file: file.to_path_buf() }
 }
 
+/// How to update a copy npm installed: npm owns that file, so `inyon update` leaves it alone.
+pub const NPM_UPDATE: &str = "npm install -g @abhash-chakraborty/inyon@latest";
+
+/// Whether `file` is the copy from the `inyon` npm package (it sits inside a node_modules folder).
+pub fn from_npm(file: &Path) -> bool {
+    file.components().any(|c| c.as_os_str() == "node_modules")
+}
+
 /// The engine next to the installed program.
 pub fn engine_beside(file: &Path) -> PathBuf {
     let ext = file.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
@@ -967,6 +975,14 @@ mod tests {
         assert!(stale_link(Some(&with(Some("0.6.3"))), "0.6.4"));
         assert!(!stale_link(Some(&with(Some("0.6.4"))), "0.6.4"));
         assert!(!stale_link(None, "0.6.4"));
+    }
+
+    #[test]
+    fn a_copy_inside_node_modules_came_from_npm() {
+        assert!(from_npm(Path::new("/usr/lib/node_modules/inyon/node_modules/@abhash-chakraborty/inyon-linux-x64/bin/inyon")));
+        assert!(from_npm(Path::new("C:/Users/u/AppData/Roaming/npm/node_modules/@abhash-chakraborty/inyon-win32-x64/bin/inyon.exe")));
+        assert!(!from_npm(Path::new("/h/.inyon/bin/inyon")));
+        assert!(!from_npm(Path::new("/h/node_modules_old/inyon")));
     }
 
     #[test]
