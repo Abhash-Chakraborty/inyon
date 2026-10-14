@@ -114,3 +114,20 @@ test('added text goes after the draft, on its own paragraph when it has several 
   expect(appendTo('look at ', '@a.ts')).toBe('look at @a.ts')
   expect(appendTo('fix this', 'one\ntwo')).toBe('fix this\n\none\ntwo')
 })
+
+test('right-clicking a file offers to open it, mention it or copy its path', async () => {
+  const { ContextMenuHost } = await import('../ui/ContextMenu.tsx')
+  const { fireEvent } = await import('@testing-library/react')
+  api.dir.mockImplementation(async () => ({ cwd: '/srv/app', path: '', entries: [{ name: 'main.ts', dir: false, size: 1, mtime: 0 }] }))
+  await render(
+    <>
+      <FilesTab p={p} />
+      <ContextMenuHost />
+    </>,
+  )
+  fireEvent.contextMenu(screen.getByText('main.ts'), { clientX: 10, clientY: 10 })
+  expect(screen.getByRole('menuitem', { name: /Open/ })).toBeTruthy()
+  expect(screen.getByRole('menuitem', { name: /Copy path/ })).toBeTruthy()
+  await userEvent.click(screen.getByRole('menuitem', { name: /Mention in message/ }))
+  expect(composed).toEqual(['@main.ts'])
+})

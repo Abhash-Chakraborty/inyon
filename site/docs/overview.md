@@ -34,6 +34,7 @@ From 0.16 most things have a right-click menu, with the same actions wherever th
 | The terminal | **Copy**, **Paste**, **Select all** |
 | A past conversation | **Switch to it**, **Copy conversation ID** |
 | A text box (from 0.17) | **Cut**, **Copy**, **Paste**, **Select all** |
+| A file in **Files**, or a changed file in **Changes → Working tree** (from 0.17) | **Open** (**Show diff**), **Mention in message**, **Copy path** |
 | A link (from 0.17) | **Open link**, **Open in new tab** for a link inside Inyon, **Copy link** |
 | Anywhere else (from 0.17) | **Back**, **Reload**, **Search…** and **New session…** |
 

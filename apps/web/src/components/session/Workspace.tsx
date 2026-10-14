@@ -10,6 +10,7 @@ import { Diff, type DiffLine } from '../chat/Diff.tsx'
 import { Markdown } from '../chat/Markdown.tsx'
 import { highlight, isLoaded, languageOf, loadLanguage } from '../chat/highlight.ts'
 import { Button, Empty, IconButton, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
+import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
 
 /** Which session the side panel is showing. */
 export interface PaneKey {
@@ -18,6 +19,12 @@ export interface PaneKey {
 }
 
 const keyOf = (p: PaneKey) => `${p.host}:${p.pane}`
+
+/** Puts `@path` in the session's message box; says so when that chat isn't open. */
+function mentionIn(p: PaneKey, path: string, then?: () => void) {
+  if (!compose({ ...p, text: `@${path}` })) return toast({ title: 'Open the chat to mention it', tone: 'info' })
+  then?.()
+}
 
 /** Loads `load()` now and whenever `deps` change; `reload` asks again. */
 function useLoad<T>(load: () => Promise<T>, deps: unknown[]) {
@@ -205,6 +212,11 @@ export function WorkingTree({ p, poke }: { p: PaneKey; poke: number }) {
                 key={f.path}
                 type="button"
                 onClick={() => setSel(f.path)}
+                {...contextMenu(() => [
+                  { key: 'diff', label: 'Show diff', icon: <FileDiff className="size-4" />, onSelect: () => setSel(f.path) },
+                  f.status !== 'D' && { key: 'mention', label: 'Mention in message', icon: <AtSign className="size-4" />, onSelect: () => mentionIn(p, f.path) },
+                  copyItem('copy', 'Copy path', s.root ? `${s.root}/${f.path}` : f.path, 'Path'),
+                ])}
                 title={f.from ? `${f.from} → ${f.path}` : f.path}
                 className={clsx('flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[12.5px]', cur?.path === f.path ? 'bg-hover' : 'hover:bg-hover/60')}
               >
@@ -292,6 +304,14 @@ export function FilesTab({ p, onComposed }: { p: PaneKey; onComposed?: () => voi
               key={e.name}
               type="button"
               onClick={() => (e.dir ? setPath(path ? `${path}/${e.name}` : e.name) : setOpen(path ? `${path}/${e.name}` : e.name))}
+              {...contextMenu(() => {
+                const rel = path ? `${path}/${e.name}` : e.name
+                return [
+                  { key: 'open', label: 'Open', icon: e.dir ? <Folder className="size-4" /> : <File className="size-4" />, onSelect: () => (e.dir ? setPath(rel) : setOpen(rel)) },
+                  { key: 'mention', label: 'Mention in message', icon: <AtSign className="size-4" />, onSelect: () => mentionIn(p, e.dir ? `${rel}/` : rel, onComposed) },
+                  copyItem('copy', 'Copy path', `${dir.data?.cwd}/${rel}`, 'Path'),
+                ]
+              })}
               className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-[13px] hover:bg-hover/60"
             >
               {e.dir ? <Folder className="size-4 shrink-0 text-fg-3" /> : <File className="size-4 shrink-0 text-fg-3" />}
@@ -330,10 +350,7 @@ function FileViewer({ p, path, onBack, onComposed }: { p: PaneKey; path: string;
   const text = view?.kind === 'text' ? view.text : ''
   const lang = EXT_LANG[ext] ?? languageOf(`language-${ext}`)
   const html = useHighlighted(view?.kind === 'text' ? lang : undefined, text)
-  const mention = () => {
-    if (!compose({ ...p, text: `@${path}` })) return toast({ title: 'Open the chat to mention it', tone: 'info' })
-    onComposed?.()
-  }
+  const mention = () => mentionIn(p, path, onComposed)
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-1 border-b border-line px-1.5 py-1">
