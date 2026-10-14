@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import path from 'node:path'
 import sharp from 'sharp'
 import type { Browser, Page } from 'playwright'
-import type { Device } from './stage.ts'
+import { launch, type Device } from './stage.ts'
 
 type Pt = { x: number; y: number }
 type Move = { t0: number; t1: number; from: Pt; to: Pt }
@@ -262,16 +262,24 @@ export interface FrameStyle {
 export async function render(browser: Browser, take: Take, style: FrameStyle, out: string, o: { fps?: number; quality?: number; scale: number }) {
   const fps = o.fps ?? 20
   const frames = new Map<string, Buffer>()
-  const ctx = await browser.newContext({ viewport: { width: style.width, height: style.height }, deviceScaleFactor: 1 })
-  await ctx.route('http://frame.local/**', async (r) => {
-    const u = new URL(r.request().url())
-    if (u.pathname === '/') return r.fulfill({ path: path.join(import.meta.dir, 'frame.html'), contentType: 'text/html' })
-    const f = frames.get(u.pathname.slice(1))
-    return f ? r.fulfill({ body: f, contentType: 'image/jpeg' }) : r.fulfill({ status: 404 })
-  })
-  const page = await ctx.newPage()
-  await page.goto('http://frame.local/')
-  await page.evaluate((s: any) => (window as any).setup(s), { ...style, device: take.device, scale: o.scale })
+  // Chrome on some ARM servers crashes or hangs after a hundred or so captures, at a different
+  // frame each run, so either starts a fresh browser that carries on from the same frame
+  let own: Browser | undefined
+  let page: Page
+  const open = async (b: Browser) => {
+    const ctx = await b.newContext({ viewport: { width: style.width, height: style.height }, deviceScaleFactor: 1 })
+    await ctx.route('http://frame.local/**', async (r) => {
+      const u = new URL(r.request().url())
+      if (u.pathname === '/') return r.fulfill({ path: path.join(import.meta.dir, 'frame.html'), contentType: 'text/html' })
+      const f = frames.get(u.pathname.slice(1))
+      return f ? r.fulfill({ body: f, contentType: 'image/jpeg' }) : r.fulfill({ status: 404 })
+    })
+    const p = await ctx.newPage()
+    await p.goto('http://frame.local/')
+    await p.evaluate((s: any) => (window as any).setup(s), { ...style, device: take.device, scale: o.scale })
+    return p
+  }
+  page = await open(browser)
 
   const count = Math.ceil((take.endAt / 1000) * fps)
   const out_: { png: Buffer; hash: string; n: number }[] = []
@@ -280,18 +288,27 @@ export async function render(browser: Browser, take: Take, style: FrameStyle, ou
     const shot = take.shotAt(t)
     const key = `s${take.shots.indexOf(shot)}`
     frames.set(key, shot.data)
-    await page.evaluate(
-      async (st: any) => (window as any).draw(st),
-      { src: `http://frame.local/${key}`, view: take.viewAt(t), pointer: take.pointerAt(t), press: take.pressAt(t), caption: take.captionAt(t), step: take.stepAt(t) },
-    )
-    const png = await page.screenshot({ type: 'png' })
+    const st = { src: `http://frame.local/${key}`, view: take.viewAt(t), pointer: take.pointerAt(t), press: take.pressAt(t), caption: take.captionAt(t), step: take.stepAt(t) }
+    let png: Buffer | undefined
+    for (let tries = 0; !png; tries++) {
+      try {
+        // a page can also hang instead of crashing
+        const hung = new Promise<never>((_, no) => setTimeout(() => no(new Error('frame timed out')), 15000))
+        png = await Promise.race([page.evaluate(async (st: any) => (window as any).draw(st), st).then(() => page.screenshot({ type: 'png', timeout: 15000 })), hung])
+      } catch (e) {
+        if (tries >= 3) throw e
+        void own?.close().catch(() => {})
+        own = await launch()
+        page = await open(own)
+      }
+    }
     const hash = createHash('sha1').update(png).digest('hex')
     const last = out_[out_.length - 1]
     // a still moment is one frame shown for longer
     if (last && last.hash === hash) last.n++
     else out_.push({ png, hash, n: 1 })
   }
-  await ctx.close()
+  await Promise.race([page.context().close().then(() => own?.close()), sleep(5000)]).catch(() => {})
   const webp = await sharp(out_.map((f) => f.png), { join: { animated: true } })
     .webp({ quality: o.quality ?? 82, effort: 5, loop: 0, delay: out_.map((f) => Math.round((f.n * 1000) / fps)), smartSubsample: true })
     .toBuffer()

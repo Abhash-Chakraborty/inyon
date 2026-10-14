@@ -2,8 +2,8 @@
 // so run `bun run build` first) fed the made-up world in demo.ts. With names, only those are made.
 import path from 'node:path'
 import { mkdirSync } from 'node:fs'
-import { chromium, type Page } from 'playwright'
-import { DESKTOP, PHONE, TABLET, open, paneUrl, serve, settle, type Device } from './stage.ts'
+import type { Page } from 'playwright'
+import { DESKTOP, PHONE, TABLET, launch, open, paneUrl, serve, settle, type Device } from './stage.ts'
 import { PANES } from './demo.ts'
 import { Take, render, still, type Placed } from './record.ts'
 
@@ -11,7 +11,7 @@ const root = path.join(import.meta.dir, '../../../..')
 const docs = path.join(root, 'docs')
 mkdirSync(docs, { recursive: true })
 const { base, stop } = serve(path.join(import.meta.dir, '../../dist'))
-const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {})
+const browser = await launch()
 
 const main = (page: Page) => page.getByRole('main')
 
@@ -164,9 +164,15 @@ const jobs: Record<string, () => Promise<void>> = {
 }
 
 const names = process.argv.slice(2)
+let failed = false
 try {
   for (const [name, job] of Object.entries(jobs)) if (!names.length || names.includes(name)) await job()
+} catch (e) {
+  console.error(e)
+  failed = true
 } finally {
-  await browser.close()
+  // a browser whose GPU process crashed can hang on close
+  await Promise.race([browser.close(), new Promise((r) => setTimeout(r, 5000))])
   stop()
+  process.exit(failed ? 1 : 0)
 }

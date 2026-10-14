@@ -2,7 +2,7 @@
 // WebSocket are answered here, so no hub, machine or account is involved. Clicks that would change
 // something (answer, send, end) get the reply a real hub would send.
 import path from 'node:path'
-import { type Browser, type BrowserContext, type Page } from 'playwright'
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
 import type { HostState } from '@inyon/protocol'
 import { chat, followUps, hosts, PANES, terminal } from './demo.ts'
 
@@ -17,6 +17,9 @@ export interface Device {
 export const DESKTOP: Device = { name: 'desktop', width: 1440, height: 900, touch: false, frame: 'browser' }
 export const TABLET: Device = { name: 'tablet', width: 1180, height: 820, touch: true, frame: 'tablet' }
 export const PHONE: Device = { name: 'phone', width: 390, height: 844, touch: true, frame: 'phone' }
+
+/** Chrome, or the one CHROME names, with any flags in CHROME_ARGS. */
+export const launch = () => chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}), args: process.env.CHROME_ARGS?.split(' ') ?? [] })
 
 export function serve(dist: string) {
   const server = Bun.serve({
