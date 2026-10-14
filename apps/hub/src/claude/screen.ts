@@ -364,9 +364,12 @@ export function promptSummary(prompt: ScreenPrompt): string {
   const question = body.find((l) => /\?$/.test(l))
   const title = body[0]
   if (framed && title) {
+    const about = raw.slice(raw.indexOf(title) + 1, sep).filter(keep).join(' ')
     // "Bash command" / "PowerShell command", then a line saying what it's for
-    const about = /command$/i.test(title) ? raw.slice(raw.indexOf(title) + 1, sep).filter(keep).join(' ') : ''
-    return `${(about || title).replace(/[?:.]$/, '')}: ${framed}`.slice(0, 200)
+    if (/command$/i.test(title)) return `${(about || title).replace(/[?:.]$/, '')}: ${framed}`.slice(0, 200)
+    // "Edit file" / "Create file": the file's name sits above the frame, which holds the diff
+    if (/file$/i.test(title) && about) return `${title}: ${about}`.slice(0, 200)
+    return `${title.replace(/[?:.]$/, '')}: ${framed}`.slice(0, 200)
   }
   return prompt.input?.label ?? question ?? title ?? 'Needs your input'
 }
