@@ -19,7 +19,7 @@ const REPO = "Abhash-Chakraborty/inyon";
 const ORIGIN = "https://inyon.abhashchakraborty.tech";
 const GITHUB = `https://github.com/${REPO}`;
 /** The 90-second video on YouTube. Once set, it takes the screenshot's place under the home hero. */
-const YOUTUBE_ID = "";
+const YOUTUBE_ID = "NKEb2Pn6ZvQ";
 
 // The sidebar, in reading order. Every page in site/docs must be listed here (checked below).
 const NAV: { title: string; pages: string[] }[] = [
