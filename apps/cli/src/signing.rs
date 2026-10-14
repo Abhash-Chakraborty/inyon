@@ -56,7 +56,9 @@ fn official(base: &str) -> bool {
     let host = host_of(&base);
     let host = host.rsplit('@').next().unwrap_or(&host).split(':').next().unwrap_or("");
     let path = base.split_once("://").map_or(base.as_str(), |(_, rest)| rest).split_once('/').map_or("", |(_, p)| p);
-    host == host_of(RELEASES) || host == host_of(INSTALL_URL) || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+    host == host_of(RELEASES)
+        || host == host_of(INSTALL_URL)
+        || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
 }
 
 /// The key releases from `base` must be signed with. Tests and the container runs point
