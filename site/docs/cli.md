@@ -49,6 +49,8 @@ In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. I
 
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
 
+From 0.17.2 the link counts as running when something answers on its port the way the engine does, not only when the process it last recorded is alive, so a stale record never shows a running link as stopped.
+
 The dashboard draws on the terminal's second screen, so what was in the window before comes back when you quit, and from 0.17.2 the status it showed is printed there as plain lines, like any command's output.
 
 ## Setup

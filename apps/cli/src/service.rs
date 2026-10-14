@@ -996,6 +996,35 @@ pub fn remove_mux(sys: &Sys, ask: bool) -> Option<String> {
     }
 }
 
+/// Whether a link answers on `port` here, the way the engine's listener does (it says "inyon" to
+/// a plain request). The status screen counts a link by this as well as by its recorded pid, so
+/// a stale state.json never shows a running link as stopped.
+pub fn link_answers(port: u16) -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Duration;
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_millis(700)));
+    if s.write_all(b"GET / HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n").is_err() {
+        return false;
+    }
+    let mut buf = [0u8; 1024];
+    let mut text = String::new();
+    while let Ok(n) = s.read(&mut buf) {
+        if n == 0 {
+            break;
+        }
+        text.push_str(&String::from_utf8_lossy(&buf[..n]));
+        if text.contains("\r\n\r\n") && text.len() > 512 {
+            break;
+        }
+    }
+    text.starts_with("HTTP/1.") && text.split("\r\n\r\n").nth(1).is_some_and(|body| body.trim() == "inyon")
+}
+
 /// The registry key that lists Inyon under Settings → Apps on Windows.
 pub const APP_KEY: &str = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inyon";
 
@@ -1155,6 +1184,27 @@ mod tests {
         if cfg!(windows) {
             assert!(s.contains(r"InstallLocation = 'C:\Users\a\.inyon\bin'"));
         }
+    }
+
+    #[test]
+    fn a_link_is_known_by_what_its_port_answers() {
+        use std::io::{Read, Write};
+        let serve = |body: &'static str| {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = l.local_addr().unwrap().port();
+            std::thread::spawn(move || {
+                if let Ok((mut s, _)) = l.accept() {
+                    let mut buf = [0u8; 256];
+                    let _ = s.read(&mut buf);
+                    let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes());
+                }
+            });
+            port
+        };
+        assert!(link_answers(serve("inyon\n")));
+        assert!(!link_answers(serve("<html>something else</html>")));
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        assert!(!link_answers(closed));
     }
 
     #[test]

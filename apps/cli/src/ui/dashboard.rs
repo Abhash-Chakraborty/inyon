@@ -66,12 +66,10 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         .iter()
         .map(|r| {
             let running = crate::update::read_running(*r);
-            Job {
-                role: r.name().to_string(),
-                service: service::has_service(sys, *r),
-                running: running.as_ref().and_then(|s| s.pid).is_some_and(|p| sys.proc.alive(p)),
-                version: running.and_then(|s| s.version),
-            }
+            let alive = running.as_ref().and_then(|s| s.pid).is_some_and(|p| sys.proc.alive(p));
+            // a link whose pid record is stale still answers on its port
+            let answers = || *r == Role::Link && service::link_answers(state::link_config().port.unwrap_or(4780));
+            Job { role: r.name().to_string(), service: service::has_service(sys, *r), running: alive || answers(), version: running.and_then(|s| s.version) }
         })
         .collect();
     let has = |r: Role| jobs.iter().any(|j| j.role == r.name() && (j.service || j.running));
