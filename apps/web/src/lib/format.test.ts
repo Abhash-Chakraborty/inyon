@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, setSystemTime, test } from 'bun:test'
-import { basename, bytes, clock, duration, liveWindow, modelName, money, openLink, paneLabel, resetClock, resetsIn, shortPath, since, timeAgo, tokens } from './format.ts'
+import { basename, bytes, clock, duration, liveWindow, modelName, money, openLink, paneLabel, resetClock, resetsIn, responseTime, shortPath, since, tailPath, timeAgo, tokens } from './format.ts'
 
 const NOW = Date.UTC(2026, 9, 11, 12, 0, 0)
 afterEach(() => setSystemTime())
@@ -31,6 +31,23 @@ describe('shortPath', () => {
     expect(shortPath(undefined)).toBe('')
     expect(shortPath('')).toBe('')
   })
+
+  test('Windows paths keep their backslashes, and their home becomes ~', () => {
+    expect(shortPath('C:\\Users\\abhash\\inyon-demo\\checkout-service')).toBe('~\\inyon-demo\\checkout-service')
+    expect(shortPath('D:\\work\\a\\b\\c\\d\\e\\f\\checkout-service\\src', 30)).toBe('D:\\…\\e\\f\\checkout-service\\src')
+    expect(shortPath('C:\\demo')).toBe('C:\\demo')
+  })
+})
+
+test('tailPath: a long folder as its last two parts, with its own separator', () => {
+  expect(tailPath('C:\\Users\\abhash\\inyon-demo\\checkout-service')).toBe('…\\inyon-demo\\checkout-service')
+  expect(tailPath('/home/me/projects/qa/oc1/very-long-name-here')).toBe('…/oc1/very-long-name-here')
+  expect(tailPath('/srv/app')).toBe('/srv/app')
+})
+
+test('responseTime: milliseconds under a second, seconds after', () => {
+  expect(responseTime(38)).toBe('38 ms')
+  expect(responseTime(1373)).toBe('1.4 s')
 })
 
 test('basename', () => {

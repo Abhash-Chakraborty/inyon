@@ -13,6 +13,7 @@ import { isPhone } from '../lib/phone.ts'
 import { Select } from './ui/Select.tsx'
 import { useOpened } from '../lib/useOpened.ts'
 import { Logo } from './AppShell.tsx'
+import { tailPath } from '../lib/format.ts'
 import { ServerSheet } from './ServerSheet.tsx'
 import { LaptopSheet } from './LaptopSheet.tsx'
 
@@ -72,7 +73,7 @@ export function PairMachine({ onClose, existing }: { onClose?: () => void; exist
       <p className="text-[13.5px] leading-relaxed text-fg-2">
         {os === 'windows'
           ? 'Paste this once into PowerShell or Command Prompt on that machine. It installs a small background app for your user that starts when you sign in, plus psmux (tmux for Windows) if it is missing. No admin rights, no open ports.'
-          : 'Run this once in a terminal on that machine. It installs a small background service (and Bun if needed) for your user. No sudo, no open ports.'}
+          : 'Run this once in a terminal on that machine. It downloads inyon from this hub and keeps it running in the background for your user. No sudo, no open ports.'}
       </p>
       <div className="rounded-2xl border border-line bg-code p-3">
         <code className="block break-all font-mono text-[12px] leading-relaxed">{command}</code>
@@ -312,7 +313,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           <div className="-mt-2 flex flex-wrap gap-1.5">
             {recent.map((r) => (
               <button key={r} type="button" title={r} onClick={() => setCwd(r)} className={clsx('max-w-full truncate rounded-full border px-2 py-0.5 font-mono text-[12px] pointer-coarse:px-2.5 pointer-coarse:py-1.5', cwd === r ? 'border-fg text-fg' : 'border-line text-fg-3 hover:text-fg-2')}>
-                {shortPath(r)}
+                {tailPath(r)}
               </button>
             ))}
           </div>
@@ -353,11 +354,4 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
       </form>
     </Sheet>
   )
-}
-
-/** A long folder keeps its last two parts ("…/qa/oc1"); the full path is in the tooltip. */
-function shortPath(p: string) {
-  if (p.length <= 32) return p
-  const parts = p.split('/').filter(Boolean)
-  return `…/${parts.slice(-2).join('/')}`
 }

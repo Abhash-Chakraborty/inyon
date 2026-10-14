@@ -6,7 +6,9 @@ import type { HostConfig, HostState } from '@inyon/protocol'
 import { MachineSheet, NewSessionSheet, PairMachine } from './Sheets.tsx'
 import { useStore } from '../lib/store.ts'
 import { api, emit } from '../test/fakes.ts'
-import { fresh, host } from '../test/fixtures.ts'
+import { agentPane, fresh, host } from '../test/fixtures.ts'
+
+const agentPaneIn = (cwd: string) => agentPane('%9', 'claude', { cwd })
 import { flush, renderSettled as render } from '../test/render.tsx'
 
 const noop = () => {}
@@ -158,5 +160,17 @@ describe('NewSessionSheet', () => {
     poll(hosts)
     expect(startButton().disabled).toBe(false)
     expect(startButton().textContent).toBe('Start Claude Code')
+  })
+
+  // it read "…/C:\Users\abhash\inyon-demo\checkout-service": a "/" cut on a path that has none
+  test("a recent Windows folder's chip keeps its last two parts, with backslashes", async () => {
+    const user = userEvent.setup()
+    const windows = host('laptop', { panes: [agentPaneIn('C:\\Users\\abhash\\inyon-demo\\checkout-service')] })
+    useStore.setState({ hosts: [windows] })
+    await render(sheet())
+    const chip = screen.getByRole('button', { name: '…\\inyon-demo\\checkout-service' })
+    expect(chip.getAttribute('title')).toBe('C:\\Users\\abhash\\inyon-demo\\checkout-service')
+    await user.click(chip)
+    expect(screen.getByDisplayValue('C:\\Users\\abhash\\inyon-demo\\checkout-service')).toBeTruthy()
   })
 })
