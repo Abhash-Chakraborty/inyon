@@ -52,3 +52,13 @@ jobs:
           include-hidden-files: true
       - id: deploy
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      # GitHub keeps its own copy of each README image for a while: clear it, so the release badge
+      # (badge/release-*.svg from this build) shows the new version straight away
+      - name: Refresh the README's images on GitHub
+        continue-on-error: true
+        run: |
+          sleep 30
+          curl -fsSL "https://github.com/$GITHUB_REPOSITORY" |
+            grep -oE '(src|srcset)="https://camo\.githubusercontent\.com/[^"]+"' |
+            sed -E 's/^(src|srcset)="//; s/"$//' | sort -u |
+            while read -r url; do curl -fsS -X PURGE "$url" >/dev/null || echo "couldn't clear $url"; done

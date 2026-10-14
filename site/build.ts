@@ -662,6 +662,33 @@ function docPage(page: Page & { nav?: string }, version?: string): string {
   });
 }
 
+/**
+ * The README's release badge, saved for the release this build serves. Its URL names the version,
+ * so no cache can hold an older one; the site lets it be kept for 10 minutes, and pages.yml clears
+ * GitHub's copy after each deploy. It's served from this domain, so only plain shapes are kept.
+ */
+async function releaseBadges(version: string) {
+  mkdirSync(join(OUT, "badge"), { recursive: true });
+  for (const mode of ["light", "dark"] as const) {
+    const src = `https://shieldcn.dev/badge/release-v${encodeURIComponent(version.replaceAll("-", "--"))}.svg?variant=secondary&mode=${mode}&logo=lu:Tag`;
+    let svg = "";
+    for (let tries = 0; tries < 3 && !svg; tries++) {
+      const r = await fetch(src).catch(() => null);
+      const body = r?.ok ? await r.text() : "";
+      const tags = [...body.matchAll(/<([a-zA-Z][\w:-]*)/g)].map((m) => m[1]);
+      if (body.startsWith("<svg") && tags.every((t) => ["svg", "g", "path"].includes(t)) && !/\son\w+=|href|url\(/i.test(body)) svg = body;
+    }
+    if (!svg) {
+      console.warn(`release badge: ${src} didn't give a plain SVG; drawing a simple one`);
+      const [bg, fg] = mode === "dark" ? ["#27272a", "#fafafa"] : ["#f4f4f5", "#18181b"];
+      const text = `release v${version}`;
+      const width = 24 + Math.round(text.length * 7.4);
+      svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="32" viewBox="0 0 ${width} 32"><rect width="${width}" height="32" rx="6" fill="${bg}"/><text x="12" y="21" fill="${fg}" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" font-size="13">${text}</text></svg>`;
+    }
+    writeFileSync(join(OUT, "badge", `release-${mode}.svg`), svg);
+  }
+}
+
 let cardList: Card[] | undefined;
 const cardFor = (path: string) => (cardList ??= cards()).find((c) => c.path === path)!;
 
@@ -683,6 +710,7 @@ async function main() {
     await mirror(latest.release, latest.raw);
   }
   const version = latest?.release.version;
+  if (version) await releaseBadges(version);
 
   // docs
   for (const file of readdirSync(join(SITE, "docs")).filter((f) => f.endsWith(".md"))) {
