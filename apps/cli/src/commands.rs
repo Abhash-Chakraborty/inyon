@@ -728,6 +728,15 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
         let _ = fs::remove_dir(&bin);
         lines.push(format!("removed {}", bin.display()));
     }
+    // the PATH entry the installer added for it
+    if sys.platform == Platform::Windows {
+        let o = sys::run(&["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", crate::shellpath::WINDOWS_SCRIPT]);
+        if o.ok && o.out.contains("removed") {
+            lines.push(format!("took {} off your Path", bin.display()));
+        }
+    } else {
+        lines.extend(crate::shellpath::remove_unix(&paths::home(), std::env::var_os("ZDOTDIR").map(PathBuf::from)));
+    }
     if purge {
         // Claude Code and Antigravity stop calling Inyon's scripts before they're deleted
         lines.extend(crate::unhook::unhook(&paths::home()));

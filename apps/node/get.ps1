@@ -74,5 +74,24 @@ if (Test-Path $exe) {
 }
 Move-Item -Force $tmp $exe
 
+# new windows find inyon by name: the folder goes on your user Path once (inyon uninstall takes it
+# off again), and on this window's. Written to the registry as it is, so entries like %USERPROFILE%
+# in it stay as they were. INYON_NO_MODIFY_PATH=1 leaves the Path alone
+if (-not $env:INYON_NO_MODIFY_PATH) {
+  $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+  $userPath = [string]$envKey.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  $parts = @($userPath -split ';' | Where-Object { $_ })
+  $mine = @($dir, '%USERPROFILE%\.inyon\bin')
+  if (-not ($parts | Where-Object { $mine -contains $_.TrimEnd('\') })) {
+    $envKey.SetValue('Path', ((@($dir) + $parts) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+    # tells open programs (Explorer, new terminals) that the environment changed
+    [Environment]::SetEnvironmentVariable('INYON_PATH_CHANGED', '1', 'User')
+    [Environment]::SetEnvironmentVariable('INYON_PATH_CHANGED', $null, 'User')
+    Write-Host "Put inyon on your Path: new windows find it by name."
+  }
+  $envKey.Close()
+  if (-not (@($env:Path -split ';') | Where-Object { $_.TrimEnd('\') -eq $dir })) { $env:Path = "$dir;$env:Path" }
+}
+
 $env:INYON_NO_PAUSE = '1'
 & $exe setup

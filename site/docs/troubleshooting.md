@@ -7,7 +7,7 @@ Start with `inyon doctor` on the computer. It checks the engine, tmux, the agent
 
 ## inyon: command not found
 
-The installers put it in `~/.inyon/bin` without adding that to your `PATH`. Run `~/.inyon/bin/inyon`, or [add it to your PATH](install.md#put-inyon-on-your-path).
+The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
 
 ## The phone won't pair with a computer
 

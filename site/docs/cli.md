@@ -6,7 +6,7 @@ description: Every command and flag, the setup screens, the status dashboard and
 
 `inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. The work happens in `inyon-engine`, which `inyon` starts and talks to for you.
 
-If `inyon` isn't found, it's in `~/.inyon/bin`. See [Put inyon on your PATH](install.md#put-inyon-on-your-path).
+If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` on your `PATH` from 0.17.1. Before that, or with `INYON_NO_MODIFY_PATH=1`, see [Put inyon on your PATH](install.md#put-inyon-on-your-path).
 
 ## At a glance
 
