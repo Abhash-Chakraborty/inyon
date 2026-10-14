@@ -398,7 +398,7 @@ pub fn delete_after_exit(sys: &Sys, files: &[PathBuf], dir: &Path) {
     }
     let list = files.iter().map(|f| psq(&path_str(f))).collect::<Vec<_>>().join(", ");
     let script = format!(
-        "Wait-Process -Id {} -Timeout 120 -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue -LiteralPath {list}\nif (-not (Get-ChildItem -Force -Recurse -File -LiteralPath {d} -ErrorAction SilentlyContinue)) {{ Remove-Item -Force -Recurse -ErrorAction SilentlyContinue -LiteralPath {d} }}",
+        "Wait-Process -Id {} -Timeout 3600 -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue -LiteralPath {list}\nif (-not (Get-ChildItem -Force -Recurse -File -LiteralPath {d} -ErrorAction SilentlyContinue)) {{ Remove-Item -Force -Recurse -ErrorAction SilentlyContinue -LiteralPath {d} }}",
         sys.pid,
         d = psq(&path_str(dir))
     );
@@ -637,6 +637,10 @@ pub fn uninstall_service(sys: &Sys, role: Role) -> Installed {
                 shortcut = startup_shortcut(&format!("{task}.lnk")),
                 stop = stop_copies(sys, Some(role))
             ));
+            // said only once it's true: a task that stays would start the engine again at sign-in
+            if ps(&format!("if (Get-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}", psq(task))).ok {
+                return failed(format!("the task \"{task}\" couldn't be removed; delete it in Task Scheduler"));
+            }
             ok("the logon task is removed")
         }
         Platform::Other => failed("nothing to remove"),
@@ -850,6 +854,192 @@ fn stop_old_background(sys: &Sys, role: Role) {
 
 /// What the phone needs on this machine besides the link: tmux (psmux on Windows). The message
 /// says how to install it, when it's missing.
+/// How tmux (psmux on Windows) is installed and removed here, with the package manager's name
+/// for the question setup asks.
+pub struct MuxPackage {
+    pub manager: &'static str,
+    pub install: &'static [&'static str],
+    pub remove: &'static [&'static str],
+    /// the commands start with sudo, so they need a terminal for the password
+    pub sudo: bool,
+}
+
+/// The package manager that can install tmux (psmux on Windows) on this system, if one is here.
+pub fn mux_package(platform: Platform) -> Option<MuxPackage> {
+    let pkg = |manager, install, remove, sudo| Some(MuxPackage { manager, install, remove, sudo });
+    match platform {
+        Platform::Windows => {
+            if which("winget").is_some() {
+                pkg(
+                    "winget",
+                    &["winget", "install", "--id", "marlocarlo.psmux", "--exact", "--accept-source-agreements", "--accept-package-agreements"],
+                    &["winget", "uninstall", "--id", "marlocarlo.psmux", "--exact"],
+                    false,
+                )
+            } else if which("cargo").is_some() {
+                pkg("cargo", &["cargo", "install", "psmux"], &["cargo", "uninstall", "psmux"], false)
+            } else {
+                None
+            }
+        }
+        Platform::Darwin => {
+            if which("brew").is_some() || Path::new("/opt/homebrew/bin/brew").exists() {
+                pkg("Homebrew", &["brew", "install", "tmux"], &["brew", "uninstall", "tmux"], false)
+            } else {
+                None
+            }
+        }
+        Platform::Linux => {
+            let sudo = sys::uid() != 0;
+            if which("apt-get").is_some() {
+                pkg("apt", &["sudo", "apt-get", "install", "-y", "tmux"], &["sudo", "apt-get", "remove", "-y", "tmux"], sudo)
+            } else if which("dnf").is_some() {
+                pkg("dnf", &["sudo", "dnf", "install", "-y", "tmux"], &["sudo", "dnf", "remove", "-y", "tmux"], sudo)
+            } else if which("pacman").is_some() {
+                pkg("pacman", &["sudo", "pacman", "-S", "--noconfirm", "tmux"], &["sudo", "pacman", "-R", "--noconfirm", "tmux"], sudo)
+            } else if which("zypper").is_some() {
+                pkg("zypper", &["sudo", "zypper", "install", "-y", "tmux"], &["sudo", "zypper", "remove", "-y", "tmux"], sudo)
+            } else if which("apk").is_some() {
+                pkg("apk", &["sudo", "apk", "add", "tmux"], &["sudo", "apk", "del", "tmux"], sudo)
+            } else {
+                None
+            }
+        }
+        Platform::Other => None,
+    }
+}
+
+/// Runs a package manager in the user's terminal, so its progress and any sudo prompt show.
+fn run_package_command(cmd: &[&str], sudo: bool) -> Result<(), String> {
+    let mut cmd = cmd;
+    // root doesn't go through sudo
+    if !sudo && cmd.first() == Some(&"sudo") {
+        cmd = &cmd[1..];
+    }
+    let (prog, args) = cmd.split_first().ok_or("nothing to run")?;
+    let status = std::process::Command::new(prog).args(args).status().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("exit code {}", status.code().unwrap_or(1)))
+    }
+}
+
+fn mux_name(platform: Platform) -> &'static str {
+    if platform == Platform::Windows {
+        "psmux (tmux for Windows)"
+    } else {
+        "tmux"
+    }
+}
+
+/// What setup installed on the user's behalf (installed.json), so uninstall can offer to take
+/// it away again and leaves alone what was there before.
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct InstalledByInyon {
+    /// the package manager tmux or psmux came from
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux: Option<String>,
+}
+
+pub fn installed_by_inyon() -> InstalledByInyon {
+    fs::read_to_string(node_dir().join("installed.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Installs tmux (psmux on Windows) when it's missing: asked first when `ask`, and only with a
+/// terminal when the install needs sudo. The line for setup's summary.
+pub fn install_mux(sys: &Sys, ask: bool, interactive: bool) -> String {
+    let name = mux_name(sys.platform);
+    let Some(missing) = missing_mux(sys.platform) else {
+        return format!("✓ {name} is installed");
+    };
+    let Some(pkg) = mux_package(sys.platform) else {
+        return format!("! {missing}");
+    };
+    if pkg.sudo && !interactive {
+        return format!("! {missing}");
+    }
+    if ask && !crate::ui::ask_yes_no(&format!("{name} isn't installed. Install it now with {}?", pkg.manager), true) {
+        return format!("! {missing}");
+    }
+    println!("Installing {name} with {}…", pkg.manager);
+    match run_package_command(pkg.install, pkg.sudo) {
+        Ok(()) => {
+            let mut rec = installed_by_inyon();
+            rec.mux = Some(pkg.manager.to_string());
+            let _ = crate::state::write_json("installed.json", &rec);
+            let found = missing_mux(sys.platform).is_none();
+            format!("✓ Installed {name} with {}{}", pkg.manager, if found { "" } else { " (new terminals find it)" })
+        }
+        Err(e) => format!("! {name} couldn't be installed with {} ({e}). Install it with: {}", pkg.manager, pkg.install.join(" ")),
+    }
+}
+
+/// With `inyon uninstall`: tmux or psmux that setup installed goes too when the user says so.
+/// Nothing is asked without a terminal, and then it stays. None when setup didn't install it.
+pub fn remove_mux(sys: &Sys, ask: bool) -> Option<String> {
+    let manager = installed_by_inyon().mux?;
+    let name = mux_name(sys.platform);
+    let pkg = mux_package(sys.platform).filter(|p| p.manager == manager);
+    let Some(pkg) = pkg else {
+        return Some(format!("{name} stays (setup installed it with {manager})"));
+    };
+    if !ask {
+        return Some(format!("{name} stays (setup installed it with {manager}; remove it with: {})", pkg.remove.join(" ")));
+    }
+    if !crate::ui::ask_yes_no(&format!("Setup installed {name} with {manager}. Remove it too?"), false) {
+        return Some(format!("{name} stays"));
+    }
+    match run_package_command(pkg.remove, pkg.sudo) {
+        Ok(()) => Some(format!("removed {name}")),
+        Err(e) => Some(format!("{name} couldn't be removed with {manager} ({e}); try: {}", pkg.remove.join(" "))),
+    }
+}
+
+/// The registry key that lists Inyon under Settings → Apps on Windows.
+pub const APP_KEY: &str = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inyon";
+
+/// PowerShell that writes that entry: name, version, icon, where it is, how big, and what
+/// Uninstall runs. `exe` is the installed inyon.exe.
+pub fn app_entry_script(exe: &str, version: &str, size_kb: u64) -> String {
+    let dir = Path::new(exe).parent().map(path_str).unwrap_or_default();
+    format!(
+        "$k = {k}\nNew-Item -Path $k -Force | Out-Null\n$p = [ordered]@{{ DisplayName = 'Inyon'; DisplayVersion = {v}; Publisher = 'Abhash Chakraborty'; DisplayIcon = {exe}; InstallLocation = {dir}; UninstallString = {u}; QuietUninstallString = {q}; URLInfoAbout = 'https://inyon.abhashchakraborty.tech'; HelpLink = 'https://inyon.abhashchakraborty.tech/docs/troubleshooting/'; InstallDate = (Get-Date -Format yyyyMMdd) }}\nforeach ($n in $p.Keys) {{ Set-ItemProperty -Path $k -Name $n -Value $p[$n] }}\nforeach ($n in 'NoModify', 'NoRepair') {{ Set-ItemProperty -Path $k -Name $n -Value 1 -Type DWord }}\nSet-ItemProperty -Path $k -Name EstimatedSize -Value {size} -Type DWord",
+        k = psq(APP_KEY),
+        v = psq(version),
+        exe = psq(exe),
+        dir = psq(&dir),
+        u = psq(&format!("\"{exe}\" uninstall --purge --pause")),
+        q = psq(&format!("\"{exe}\" uninstall --purge --yes")),
+        size = size_kb,
+    )
+}
+
+/// Lists Inyon under Settings → Apps (Windows), once inyon.exe is in place. Done again after
+/// an update, for the version. The line for setup's summary, or None when there's nothing to do.
+pub fn register_app(sys: &Sys) -> Option<String> {
+    if sys.platform != Platform::Windows {
+        return None;
+    }
+    let exe = installed_binary();
+    if !exe.is_file() {
+        return None;
+    }
+    let bytes: u64 = fs::read_dir(bin_dir()).into_iter().flatten().flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum();
+    if ps(&app_entry_script(&path_str(&exe), crate::ui::VERSION, bytes / 1024)).ok {
+        Some("✓ Listed in Settings → Apps as Inyon".into())
+    } else {
+        Some("! Couldn't list Inyon in Settings → Apps (uninstall with `inyon uninstall`)".into())
+    }
+}
+
+/// Takes the Settings → Apps entry away (Windows).
+pub fn unregister_app(sys: &Sys) {
+    if sys.platform == Platform::Windows {
+        ps(&format!("Remove-Item -Path {} -Recurse -Force -ErrorAction SilentlyContinue", psq(APP_KEY)));
+    }
+}
+
 pub fn missing_mux(platform: Platform) -> Option<String> {
     if platform == Platform::Windows {
         if which("psmux").is_some() || which("tmux").is_some() {
@@ -948,4 +1138,29 @@ pub fn forget_update_task(sys: &Sys) {
 /// Which jobs run in the background here: set up as a service, or started and still running.
 pub fn active_roles(sys: &Sys) -> Vec<Role> {
     ROLES.iter().copied().filter(|r| has_service(sys, *r) || crate::update::is_running(sys.proc, *r)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_settings_apps_entry_names_the_program_and_how_to_remove_it() {
+        let s = app_entry_script(r"C:\Users\a\.inyon\bin\inyon.exe", "0.17.2", 90000);
+        assert!(s.contains("DisplayName = 'Inyon'"));
+        assert!(s.contains("DisplayVersion = '0.17.2'"));
+        assert!(s.contains(r#"UninstallString = '"C:\Users\a\.inyon\bin\inyon.exe" uninstall --purge --pause'"#));
+        assert!(s.contains(r#"QuietUninstallString = '"C:\Users\a\.inyon\bin\inyon.exe" uninstall --purge --yes'"#));
+        assert!(s.contains("EstimatedSize -Value 90000"));
+        if cfg!(windows) {
+            assert!(s.contains(r"InstallLocation = 'C:\Users\a\.inyon\bin'"));
+        }
+    }
+
+    #[test]
+    fn root_skips_sudo_in_a_package_command() {
+        // a command that isn't there fails cleanly either way
+        assert!(run_package_command(&["sudo", "no-such-package-manager-here", "install"], false).is_err());
+        assert!(run_package_command(&[], false).is_err());
+    }
 }

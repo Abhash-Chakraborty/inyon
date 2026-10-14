@@ -376,8 +376,12 @@ pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
         }
     })();
     ratatui::restore();
-    if let Ok(Some(next)) = result {
-        crate::commands::run_named(next);
+    match &result {
+        Ok(Some(next)) => crate::commands::run_named(next),
+        // the screen ran on the terminal's second buffer, so what was there before is back;
+        // what it showed stays in the scrollback as plain lines, like any command's output
+        Ok(None) => println!("{}", plain(&status)),
+        Err(_) => {}
     }
     result.map(|_| ())
 }

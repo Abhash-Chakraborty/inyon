@@ -75,7 +75,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 | Windows x64 | Yes | Yes | No (use WSL) |
 | Windows arm64 | Yes | Runs the x64 engine | No |
 
-Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. The setup tab in the app can install it, and the agents, for you. See [Computers](computers.md#windows).
+Every computer also needs tmux, or [psmux](https://github.com/marlocarlo/psmux) on Windows. From 0.17.2 `inyon setup` installs it when it's missing, after asking: with winget (or cargo) on Windows, Homebrew on macOS, and your package manager through `sudo` on Linux. `inyon uninstall` offers to remove it again only when setup installed it. The setup tab in the app can install it, and the agents, too. See [Computers](computers.md#windows).
 
 ## Put inyon on your PATH
 
@@ -145,7 +145,9 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 | Restart | Starts it again |
 | Quit Inyon | Stops it until you next sign in. `inyon service install` starts it sooner |
 
-If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view. In 0.17.1 the first two items opened an empty window that closed at once; 0.17.2 fixes that.
+
+From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
 
 ## Updating
 
@@ -166,11 +168,14 @@ If you installed the command with npm, update that copy with npm too. See [With 
 ```sh
 inyon uninstall            # remove the services and the programs, keep pairings
 inyon uninstall --purge    # also delete ~/.inyon: pairings, keys, a hub's records
+inyon uninstall --yes      # don't ask anything
 ```
 
 From 0.17.1 both also take `inyon` back off your `PATH`: the lines marked `# added by Inyon`, Inyon's fish file, or the entry on the Windows user `Path`.
 
-On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the engine, the tunnel and the tray icon), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
+From 0.17.2, when setup installed tmux (psmux on Windows) for you, uninstall asks whether to remove it too; the answer is no unless you say yes, and `--yes` keeps it. tmux that was there before Inyon is never touched. On Windows it also removes the entry under Settings → Apps.
+
+On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the engine, the tunnel and the tray icon), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one, and from 0.17.2 a file in use under `~/.inyon` (an agent's hook writing the event log, say) stops only itself from going, not the rest. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
 
 From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
 

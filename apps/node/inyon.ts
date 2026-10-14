@@ -240,7 +240,7 @@ function linkOptions(args: string[]): LinkConfig {
  */
 async function pair(args: string[]) {
   const config = linkOptions(args)
-  const service = linkRunning()
+  const service = await linkRunning(config.port)
   if (!service) {
     startLink(config)
     startTidying()
@@ -341,9 +341,13 @@ if (cmd === 'pair') {
   await ensureShell()
   if (await pair(rest)) process.exit(0)
 } else if (cmd === 'link') {
-  if (linkRunning()) fail(`The link is already running (pid ${currentState()!.pid}).`)
+  const config = linkOptions(rest)
+  if (await linkRunning(config.port)) {
+    const pid = currentState()?.pid
+    fail(`The link is already running${pid ? ` (pid ${pid})` : ` on port ${config.port}`}.`)
+  }
   await ensureShell()
-  startLink(linkOptions(rest))
+  startLink(config)
   startTidying()
   showTray('link')
 } else if (cmd === 'join') await join(rest[0])

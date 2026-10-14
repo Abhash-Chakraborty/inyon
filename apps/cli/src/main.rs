@@ -87,6 +87,12 @@ enum Command {
         /// Remove the pairings, keys and logs too
         #[arg(long)]
         purge: bool,
+        /// Don't ask anything (tmux or psmux that setup installed stays)
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Wait for Enter at the end (how Windows runs it from Settings, in a window of its own)
+        #[arg(long, hide = true)]
+        pause: bool,
     },
     /// Print the version
     Version,
@@ -257,7 +263,13 @@ fn main() {
         Some(Command::Doctor) => commands::finish(commands::doctor(&sys), json),
         Some(Command::Update { background }) => commands::finish(commands::update_command(&sys, background, json), json),
         Some(Command::Uninstall { role: Some(role), .. }) => commands::finish(commands::service_uninstall(&sys, Some(&role)), json),
-        Some(Command::Uninstall { role: None, purge }) => commands::finish(commands::uninstall_all(&sys, purge), json),
+        Some(Command::Uninstall { role: None, purge, yes, pause }) => {
+            let code = commands::finish(commands::uninstall_all(&sys, purge, !yes && tty), json);
+            if pause {
+                inyon_cli::ui::wait_for_enter();
+            }
+            code
+        }
         Some(Command::Version) => commands::finish(commands::version(json), json),
         Some(Command::Migrate) => commands::finish(commands::migrate(&sys), json),
         Some(Command::Tray { role, pid }) => match Role::parse(&role) {

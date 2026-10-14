@@ -671,6 +671,10 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
             if npm {
                 r.message = format!("{} The inyon command itself came from npm. Update it with:\n  {}", r.message, update::NPM_UPDATE);
             }
+            if r.changed {
+                // the version Settings → Apps shows on Windows
+                service::register_app(sys);
+            }
             Ok(json!({ "changed": r.changed, "version": r.version, "message": r.message }))
         }
         Err(e) => {
@@ -702,8 +706,11 @@ pub fn migrate(sys: &Sys) -> Outcome {
 }
 
 /// Takes inyon off this machine: every service, the programs, and with `purge` the pairings too.
-pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
+/// With `ask`, a terminal is there to answer whether tmux that setup installed goes as well.
+pub fn uninstall_all(sys: &Sys, purge: bool, ask: bool) -> Outcome {
     let mut lines = Vec::new();
+    // asked first, while the record of what setup installed is still there
+    let mux = service::remove_mux(sys, ask);
     for r in ROLES {
         if service::has_service(sys, r) || update::is_running(sys.proc, r) {
             let u = service::uninstall_service(sys, r);
@@ -716,6 +723,8 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
     // on Windows the engines, the tray icons and the tunnel keep their files open until they stop
     service::stop_programs(sys);
     lines.extend(service::remove_firewall_rule(sys));
+    service::unregister_app(sys);
+    lines.extend(mux);
     let bin = bin_dir();
     let mut later = Vec::new();
     if bin.exists() {
@@ -753,7 +762,22 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
         // Claude Code and Antigravity stop calling Inyon's scripts before they're deleted
         lines.extend(crate::unhook::unhook(&paths::home()));
         let _ = fs::remove_dir_all(node_dir());
-        let _ = fs::remove_dir_all(home_inyon());
+        // one entry at a time: a file something still has open (on Windows) stops only itself,
+        // and bin, where this program runs from, goes after it has ended
+        let mut left = Vec::new();
+        for entry in fs::read_dir(home_inyon()).into_iter().flatten().flatten() {
+            let p = entry.path();
+            if p == bin {
+                continue;
+            }
+            let gone = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+            if gone.is_err() && p.exists() {
+                left.push(p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            }
+        }
+        if !left.is_empty() {
+            lines.push(format!("couldn't remove {} in {} (in use; close it and delete the folder)", left.join(", "), home_inyon().display()));
+        }
         // what older versions and the SSH connections kept: the ~/.tether link, its folder, sockets
         for old in [".tether", ".tether-node", ".cache/inyon-ssh"] {
             let p = paths::home().join(old);
@@ -875,17 +899,15 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
         // the first command that needs it says so in full
         eprintln!("! The engine couldn't be downloaded yet; it's fetched again on the next command that needs it.");
     }
-    apply(sys, &plan)
+    apply(sys, &plan, ask, interactive)
 }
 
-/// Carries the plan out.
-pub fn apply(sys: &Sys, plan: &Plan) -> Outcome {
-    let mut lines = Vec::new();
-    if let Some(m) = service::missing_mux(sys.platform) {
-        lines.push(format!("! {m}"));
-    } else {
-        lines.push(if sys.platform == Platform::Windows { "✓ psmux (tmux for Windows) is installed".into() } else { "✓ tmux is installed".into() });
-    }
+/// Carries the plan out. `ask` says whether to ask before installing tmux; `interactive` whether
+/// a terminal is there at all (sudo can ask for a password).
+pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
+    let mut lines = vec![service::install_mux(sys, ask, interactive)];
+    // Windows lists it under Settings → Apps, with Uninstall there running `inyon uninstall`
+    lines.extend(service::register_app(sys));
     match plan.role {
         RoleChoice::Join => {
             let token = paths::env_var("INYON_TOKEN").unwrap_or_default();

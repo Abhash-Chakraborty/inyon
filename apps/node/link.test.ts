@@ -33,6 +33,13 @@ const exec = (channel: Channel, cmd: string) =>
     channel.send({ op: 'exec', id: 'x', cmd })
   })
 
+test('a running link is seen by its port, whatever state.json says', async () => {
+  for (let i = 0; i < 50 && !(await fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false)); i++) await Bun.sleep(100)
+  // this process's own state.json (the real home's) names no live link; the port does
+  const { linkRunning } = await import('./link.ts')
+  expect(await linkRunning(port)).toBe(true)
+})
+
 test('a phone pairs with the code, runs commands, and comes back without it', async () => {
   for (let i = 0; i < 50 && !(await fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false)); i++) await Bun.sleep(100)
   const info = await pairingLink()
