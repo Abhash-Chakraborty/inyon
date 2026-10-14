@@ -175,6 +175,20 @@
     } else if (e.key === 'Escape' && document.body.classList.contains('menu-open')) setMenu(false)
   })
 
+  // the home video: the poster becomes YouTube's player only when it's played
+  for (const a of $$('[data-youtube]')) {
+    a.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button) return
+      e.preventDefault()
+      const frame = document.createElement('iframe')
+      frame.src = `https://www.youtube-nocookie.com/embed/${a.dataset.youtube}?autoplay=1&rel=0`
+      frame.title = 'Inyon in 90 seconds'
+      frame.allow = 'autoplay; encrypted-media; picture-in-picture; fullscreen'
+      frame.allowFullscreen = true
+      a.replaceWith(frame)
+    })
+  }
+
   // A computer's or hub's pairing QR, scanned with the phone's own camera, opens this site with the
   // code after the #, which browsers never send to a server. Offer to copy it for the app, then
   // take it out of the address bar.
