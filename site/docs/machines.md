@@ -49,7 +49,7 @@ It checks the machine and fixes what it can:
 
 Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
 
-When a new version of Inyon changes these scripts, the button says *Update* instead of *Turn on*.
+When a new version of Inyon changes these scripts, it updates them on the machine by itself, as long as it has seen the integration on there before. Otherwise the button says *Update* instead of *Turn on*.
 
 ## When a machine goes offline
 
