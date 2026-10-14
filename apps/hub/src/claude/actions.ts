@@ -6,6 +6,7 @@ import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
 import { codexBrowsing, parseScreen } from './screen.ts'
 import { watchers } from './watcher.ts'
 import { clearInput } from './drafts.ts'
+import { keepClaudeDefaults } from './keep-default.ts'
 import { startDriving } from './driving.ts'
 import { bareTitle, originalTitle, ownsTitle, pendingName, setSessionName } from '../hosts/names.ts'
 import { isTaskFile } from '../features/features.ts'
@@ -187,6 +188,8 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
     const m = text.trim().match(/^\/model\s+(\S+)(?:\s+(\S+))?$/) ?? text.trim().match(/^\/effort\s+()(\S+)$/)
     if (m) return codexModel(hostId, paneId, m[1] || undefined, m[2])
   }
+  // Claude Code saves a /model or /effort pick as the default for new sessions; from Inyon it's for this one
+  if (found.pane.agent.kind === 'claude' && /^\/(model|effort)(\s|$)/.test(text.trim())) await keepClaudeDefaults(host)
   const screen = await currentScreen(hostId, paneId)
   if (screen.prompt) throw new HttpError(409, 'The agent is waiting for an answer to a question first')
   const isCodex = found.pane.agent.kind === 'codex'

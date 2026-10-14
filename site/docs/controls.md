@@ -20,6 +20,8 @@ Each agent offers its own choices. Claude Code's modes are *Ask each time*, *Acc
 
 Inyon changes them the agent's own way, as if you'd used the agent's picker, so the terminal shows the same thing. Some can't change mid-reply: a mode change waits until the agent finishes working.
 
+A model or effort you pick in Inyon is for that session only. Claude Code saves a `/model` or `/effort` pick as your default for new sessions, so from 0.17.1 Inyon puts `model`, `effortLevel` and `modelSettings` in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) back the way they were once Claude Code has written them. Nothing else in the file changes. To change the default, pick the model in the terminal.
+
 ## Goals
 
 A goal is a condition the agent checks before it stops: it keeps going until the goal is met. Tap the **Goal** chip and write one, such as *All tests pass and the PR is open*, then **Set goal**. The chat marks when a goal is set, met or cleared, and the sheet shows the last goal's outcome. **Turn off** clears it.
