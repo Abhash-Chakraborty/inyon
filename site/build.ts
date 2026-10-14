@@ -11,6 +11,11 @@ import { basename, dirname, join } from "node:path";
 
 const ROOT = dirname(import.meta.dir);
 const SITE = import.meta.dir;
+/** A short hash of a file in site/assets, added to its URL so a new page never meets an old cached copy */
+const assetVersion = (name: string) =>
+  createHash("sha256").update(readFileSync(join(SITE, "assets", name))).digest("hex").slice(0, 10);
+const CSS_URL = `/assets/site.css?v=${assetVersion("site.css")}`;
+const JS_URL = `/assets/site.js?v=${assetVersion("site.js")}`;
 const args = process.argv.slice(2);
 const OUT = args.includes("--out") ? args[args.indexOf("--out") + 1] : join(SITE, "out");
 const MIRROR = args.includes("--mirror");
@@ -537,8 +542,8 @@ ${head}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/assets/site.css">
-<script src="/assets/site.js" defer></script>
+<link rel="stylesheet" href="${CSS_URL}">
+<script src="${JS_URL}" defer></script>
 </head>
 <body class="${opts.bodyClass ?? ""}">
 <a class="skip" href="#main">Skip to content</a>
@@ -785,7 +790,7 @@ async function main() {
   // The video loads nothing from YouTube until it's played: a poster and a link, swapped for the
   // player on click (site.js). Without scripts the link opens it on YouTube.
   const video = (id: string) =>
-    `<figure class="video"><a class="video-play" href="https://www.youtube.com/watch?v=${id}" data-youtube="${id}"><img src="/img/video-poster.webp" width="1920" height="1080" alt="Inyon in 90 seconds: a coding agent asks a question in tmux, and the answer is tapped on a phone"><span class="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>Watch Inyon in 90 seconds</span></a></figure>`;
+    `<figure class="video"><a class="video-play" href="https://www.youtube.com/watch?v=${id}" data-youtube="${id}"><img src="/img/video-poster.webp" width="1920" height="1080" alt="Inyon in 90 seconds: a coding agent asks a question in tmux, and the answer is tapped on a phone"><span class="play"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>Watch Inyon in 90 seconds</span></a></figure>`;
   // home and download pages
   const fill = (html: string) =>
     html
