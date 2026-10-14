@@ -10,6 +10,8 @@ The Android app runs Inyon's core on the phone itself. It pairs with your comput
 
 Download the APK from the [download page](/download/) and open it. Android asks once to allow installs from your browser.
 
+Because it doesn't come from the Play Store, Google Play Protect may say *App scan recommended*. Scanning it is fine and takes a few seconds. To check the file yourself first, see [Downloads](security.md#downloads).
+
 The app checks for a new release once a day (and whenever you open Settings). When one is out, it tells you once, and **Settings → Updates → Download** fetches the new APK, which Android installs over the old one. Your pairings stay.
 
 ## Add a computer
