@@ -604,6 +604,7 @@ dependencies = [
  "clap",
  "crossterm",
  "flate2",
+ "libc",
  "minisign",
  "minisign-verify",
  "qrcode",

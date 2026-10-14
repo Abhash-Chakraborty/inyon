@@ -874,7 +874,7 @@ pub fn set_status(line: &str) {
     let _ = fs::write(status_file(), format!("{line}\n"));
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(dir.join("update.log")) {
         use std::io::Write;
-        let _ = writeln!(f, "{} {line}", crate::state::format_time(crate::state::now_ms()));
+        let _ = writeln!(f, "{} {line}", crate::state::format_iso(crate::state::now_ms()));
     }
 }
 

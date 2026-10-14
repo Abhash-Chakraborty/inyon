@@ -590,7 +590,7 @@ pub fn doctor(sys: &Sys) -> Outcome {
     ));
     let cloudflared = which("cloudflared").is_some() || bin_dir().join("cloudflared").exists() || bin_dir().join("cloudflared.exe").exists();
     checks.push((true, "tunnel".into(), if cloudflared { "cloudflared is here".into() } else { "cloudflared isn't here yet; the link fetches it on first use".into() }));
-    checks.push((true, "clock".into(), format!("{} UTC", state::format_time(state::now_ms()))));
+    checks.push((true, "clock".into(), format!("{} UTC", state::format_utc(state::now_ms()))));
     if let Ok(s) = fs::read_to_string(update::status_file()) {
         let s = s.trim().to_string();
         checks.push((!s.starts_with("failed"), "last update".into(), s));

@@ -166,7 +166,7 @@ pub fn last_log_lines(dir: &Path, n: usize) -> Vec<String> {
     };
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    lines.iter().rev().take(n).rev().map(|l| format!("{name}: {l}")).collect()
+    lines.iter().rev().take(n).rev().map(|l| format!("{name}: {}", state::local_log_line(l))).collect()
 }
 
 fn role_line(s: &Status) -> String {
@@ -399,6 +399,10 @@ mod tests {
         fs::write(dir.join("update.log"), "a\nb\n\nc\n").unwrap();
         assert_eq!(last_log_lines(&dir, 2), vec!["update.log: b", "update.log: c"]);
         assert!(last_log_lines(&dir.join("nope"), 2).is_empty());
+        // the engine's UTC stamps are shown in local time
+        fs::write(dir.join("link.log"), "2025-10-14T11:01:23.456Z tunnel: up\n").unwrap();
+        assert_eq!(last_log_lines(&dir, 1), vec![format!("link.log: {}", state::local_log_line("2025-10-14T11:01:23Z tunnel: up"))]);
+        assert!(!last_log_lines(&dir, 1)[0].contains('Z'));
         fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -73,6 +73,15 @@ test('forget unpairs a phone', async () => {
   await expect(open(phone, info.id, { name: 'Forget me' })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
 }, 30_000)
 
+test("a phone named after Android's build string is listed by its model", async () => {
+  const info = await pairingLink()
+  ;(await open(generateKeyPair(), info.id, { name: 'A142 Build/BP2A.250605.031.A3', pair: info.secret })).channel.close()
+  const list = cli('phones', '--json')
+  const { phones } = JSON.parse(await new Response(list.stdout).text())
+  expect(phones.map((p: { name: string }) => p.name)).toContain('A142')
+  expect(JSON.stringify(phones)).not.toContain('Build/')
+}, 30_000)
+
 test('forgetting a phone ends the session it has open and what that session runs', async () => {
   const info = await pairingLink()
   const phone = generateKeyPair()

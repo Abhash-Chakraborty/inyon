@@ -206,3 +206,40 @@ fn keys_and_clicks_change_the_plan() {
     key(&mut win, KeyCode::Char(' '));
     assert_eq!(win.plan.role, RoleChoice::Node);
 }
+
+#[test]
+fn enter_on_a_checkbox_keeps_the_choice() {
+    // Windows starts with VPN off: Space on VPN, then Enter, must keep it on
+    let mut w = Wizard::new(Plan::new(Platform::Windows, networks()));
+    key(&mut w, KeyCode::Enter);
+    assert_eq!(w.step, Step::Network);
+    assert!(!w.plan.vpn);
+    key(&mut w, KeyCode::Down);
+    key(&mut w, KeyCode::Down);
+    key(&mut w, KeyCode::Char(' '));
+    assert!(w.plan.vpn);
+    key(&mut w, KeyCode::Enter);
+    assert_eq!(w.step, Step::Background);
+    assert!(w.plan.vpn && w.plan.tunnel && !w.plan.lan);
+
+    // Enter alone on a checkbox row moves on without changing it
+    let mut w = wizard();
+    key(&mut w, KeyCode::Enter);
+    let before = w.plan.clone();
+    assert_eq!(key(&mut w, KeyCode::Enter), Action::Stay);
+    assert_eq!(w.step, Step::Background);
+    assert_eq!(w.plan, before);
+    // Enter still picks the radio under the cursor
+    key(&mut w, KeyCode::Down);
+    key(&mut w, KeyCode::Enter);
+    assert!(!w.plan.autostart);
+}
+
+#[test]
+fn the_summary_names_every_vpn() {
+    let mut nets = networks();
+    nets.push(Network { kind: Kind::Netbird, ip: "100.97.115.176".into(), name: None });
+    let plan = Plan::new(Platform::Linux, nets);
+    let answers = plan.summary().into_iter().find(|(k, _)| k == "Answers on").unwrap().1;
+    assert_eq!(answers, "a tunnel (any network), Tailscale (100.64.0.9), NetBird (100.97.115.176), port 4780");
+}
