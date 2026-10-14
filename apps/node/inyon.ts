@@ -146,7 +146,7 @@ function leave(why: string) {
     for (const name of ['env', '.env']) rmSync(path.join(nodeDir(), name), { force: true })
     process.exit(0)
   }
-  const p = spawn(cli, ['disconnect'], { detached: true, stdio: 'inherit' })
+  const p = spawn(cli, ['disconnect'], { detached: true, stdio: 'inherit', windowsHide: true })
   p.on('exit', () => process.exit(0))
   p.on('error', () => process.exit(0))
 }
