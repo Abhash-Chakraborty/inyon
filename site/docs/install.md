@@ -145,7 +145,7 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 | Restart | Starts it again |
 | Quit Inyon | Stops it until you next sign in. `inyon service install` starts it sooner |
 
-From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens; when no phone is paired yet, it shows a pairing code without being asked. Nothing Inyon runs in the background opens a window either: from 0.17.3 every program the engine starts on Windows (psmux, PowerShell, the shell) runs hidden. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
 
 From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
 
