@@ -269,6 +269,8 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
     let engine = ensure(&|l| eprintln!("{l}"))?;
     let mut c = command(&engine);
     c.arg("pair").args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // asked from the Inyon window, which has no console, the engine mustn't open one of its own
+    quiet(&mut c);
     let mut child = c.spawn().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))?;
     let stderr = child.stderr.take().map(|mut e| {
         std::thread::spawn(move || {
