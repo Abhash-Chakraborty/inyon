@@ -17,7 +17,7 @@ GITHUB=https://github.com/Abhash-Chakraborty/inyon/releases
 # a mock release for tests signs with a key of its own; it only counts with downloads pointed
 # somewhere other than the download host, the website or GitHub
 case "$BASE" in
-  "$DL" | "$DL"/* | "$SITE" | "$SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
+  "$DL" | "$DL"/* | http://dl.abhashchakraborty.tech | http://dl.abhashchakraborty.tech/* | "$SITE" | "$SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
   *) if [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && [ -n "${INYON_SIGNING_KEY:-}" ]; then KEY="$INYON_SIGNING_KEY"; fi ;;
 esac
 ROLE=setup
