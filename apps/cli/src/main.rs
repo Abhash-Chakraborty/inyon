@@ -288,7 +288,10 @@ fn main() {
             }
         },
         Some(Command::Window { role, pair }) => match Role::parse(&role) {
-            Some(r) => inyon_cli::window::run(r, pair),
+            Some(r) => {
+                inyon_cli::window::trace("opening");
+                inyon_cli::window::run(r, pair)
+            }
             None => {
                 eprintln!("{role} isn't link, node or hub");
                 2

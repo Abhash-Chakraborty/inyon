@@ -14,6 +14,19 @@ import { binDir, inyonCommand, nodeDir } from './paths.ts'
 
 export const WIN = process.platform === 'win32'
 
+// Run in the background on Windows, the engine has no console, so a console program it starts
+// (psmux, PowerShell, the shell) would get a window of its own and flash it open. Every spawn
+// hides that window unless it says otherwise, whichever part of the program starts it.
+if (WIN) {
+  const b = Bun as unknown as Record<string, (cmd: unknown, opts?: Record<string, unknown>) => unknown>
+  for (const name of ['spawn', 'spawnSync'] as const) {
+    const real = b[name]!
+    try {
+      b[name] = (cmd, opts) => real(cmd, { windowsHide: true, ...opts })
+    } catch {}
+  }
+}
+
 type Proc = { kill(): void; write?(d: string): void; resize?(c: number, r: number): void }
 
 

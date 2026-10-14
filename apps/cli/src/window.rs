@@ -70,9 +70,11 @@ pub fn short_code(v: &serde_json::Value) -> Option<(String, String)> {
     Some((format!("{a}-{b}"), format!("{c} {d}")))
 }
 
-/// A line in window.log, with the time, for `inyon logs` and support.
+/// A line in window.log, with the time, for `inyon logs` and support; on stderr too, for a run
+/// from a terminal.
 pub fn trace(what: &str) {
     use std::io::Write;
+    eprintln!("window: {what}");
     let dir = crate::paths::node_dir();
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("window.log")) {
@@ -91,21 +93,26 @@ mod win {
     use serde_json::Value;
     use windows_sys::Win32::Foundation::{GetLastError, COLORREF, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, RECT, WPARAM};
     use windows_sys::Win32::Graphics::Gdi::{
-        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, Ellipse, EndPaint, FillRect,
-        InvalidateRect, RoundRect, SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CENTER, DT_END_ELLIPSIS,
-        DT_LEFT, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, PAINTSTRUCT, PS_SOLID,
-        SRCCOPY, TRANSPARENT,
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreateSolidBrush, DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, InvalidateRect,
+        SelectObject, SetBkMode, SetTextColor, CLEARTYPE_QUALITY, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DT_CALCRECT, DT_CENTER, DT_END_ELLIPSIS, DT_LEFT,
+        DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK, FF_DONTCARE, FW_NORMAL, FW_SEMIBOLD, HDC, HFONT, HGDIOBJ, OUT_DEFAULT_PRECIS, PAINTSTRUCT, SRCCOPY, TRANSPARENT,
+    };
+    use windows_sys::Win32::Graphics::GdiPlus::{
+        FillModeAlternate, GdipAddPathArcI, GdipClosePathFigure, GdipCreateFromHDC, GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics,
+        GdipDeletePath, GdipDeletePen, GdipDrawEllipseI, GdipDrawImageRectI, GdipDrawPath, GdipFillEllipseI, GdipFillPath, GdipLoadImageFromStream, GdipSetInterpolationMode,
+        GdipSetPixelOffsetMode, GdipSetSmoothingMode, GdiplusStartup, GdiplusStartupInput, GpBrush, GpGraphics, GpImage, GpPath, GpPen, GpSolidFill,
+        InterpolationModeHighQualityBicubic, PixelOffsetModeHalf, SmoothingModeAntiAlias, UnitPixel,
     };
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::Win32::UI::Controls::{DRAWITEMSTRUCT, ODS_SELECTED};
     use windows_sys::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::Shell::{SHCreateMemStream, ShellExecuteW};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, DrawIconEx, FindWindowW, GetClientRect, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW,
-        PostQuitMessage, RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, BS_OWNERDRAW, CW_USEDEFAULT, DI_NORMAL, IDC_ARROW, MSG, SM_CXSCREEN,
-        SM_CYSCREEN, SWP_NOMOVE, SWP_NOZORDER, SW_SHOW, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD,
-        WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetClientRect, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
+        RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, BS_OWNERDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE,
+        SWP_NOZORDER, SW_SHOW, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_MINIMIZEBOX, WS_OVERLAPPED,
+        WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
     };
 
     use super::{trace, Line};
@@ -115,6 +122,8 @@ mod win {
     use crate::ui::dashboard::{gather, Status};
 
     const CLASS: &str = "InyonWindow";
+    /// the mark at 512 px, drawn down to size with a smooth filter
+    const MARK: &[u8] = include_bytes!("../assets/inyon-512.png");
     /// a fresh status arrived (lparam: Box<Status>)
     const STATUS: u32 = WM_APP + 2;
     /// the engine answered the pairing request (lparam: Box<Value>)
@@ -129,22 +138,24 @@ mod win {
     /// CREATE_NO_WINDOW
     const NO_WINDOW: u32 = 0x0800_0000;
 
-    // silver and ink, as COLORREF (0x00BBGGRR)
+    // silver and ink: text colours as COLORREF (0x00BBGGRR), shapes as ARGB
     const PAPER: COLORREF = 0x00EC_F0F1;
-    const CARD: COLORREF = 0x00FF_FFFF;
     const INK: COLORREF = 0x001A_1C1D;
-    const INK_PRESSED: COLORREF = 0x0040_4345;
     const MUTED: COLORREF = 0x0066_6A6B;
-    const LINE: COLORREF = 0x00D3_D8D9;
-    const PRESSED: COLORREF = 0x00E2_E6E8;
+    const A_CARD: u32 = 0xFFFF_FFFF;
+    const A_INK: u32 = 0xFF1D_1C1A;
+    const A_INK_PRESSED: u32 = 0xFF45_4340;
+    const A_MUTED: u32 = 0xFF6B_6A66;
+    const A_LINE: u32 = 0xFFD9_D8D3;
+    const A_PRESSED: u32 = 0xFFE8_E6E2;
 
     /// logical pixels, scaled by the monitor's DPI
-    const WIDTH: i32 = 440;
+    const WIDTH: i32 = 500;
     const PAD: i32 = 28;
-    const HEAD_H: i32 = 44;
+    const HEAD_H: i32 = 48;
     const LINE_H: i32 = 24;
     const CARD_PAD: i32 = 18;
-    const QR: i32 = 196;
+    const QR: i32 = 188;
     const BTN_H: i32 = 36;
     const GAP: i32 = 10;
 
@@ -153,11 +164,14 @@ mod win {
         lines: Vec<Line>,
         pairing: Option<Value>,
         pairing_busy: bool,
+        /// a code is shown unasked once, when no phone is paired yet
+        offered: bool,
         dpi: i32,
         title: HFONT,
         body: HFONT,
         small: HFONT,
         mono: HFONT,
+        mark: *mut GpImage,
         buttons: [HWND; 4],
     }
 
@@ -213,6 +227,15 @@ mod win {
                 }
                 return 0;
             }
+            // GDI+ draws the rounded shapes and the mark; GDI draws the text
+            let mut token = 0usize;
+            let input = GdiplusStartupInput { GdiplusVersion: 1, DebugEventCallback: 0, SuppressBackgroundThread: 0, SuppressExternalCodecs: 0 };
+            GdiplusStartup(&mut token, &input, null_mut());
+            let mut mark: *mut GpImage = null_mut();
+            let stream = SHCreateMemStream(MARK.as_ptr(), MARK.len() as u32);
+            if !stream.is_null() {
+                GdipLoadImageFromStream(stream, &mut mark);
+            }
             let instance = GetModuleHandleW(null());
             let class = wide(CLASS);
             let wc = WNDCLASSW {
@@ -230,11 +253,13 @@ mod win {
                     lines: Vec::new(),
                     pairing: None,
                     pairing_busy: false,
+                    offered: pair,
                     dpi: 96,
                     title: null_mut(),
                     body: null_mut(),
                     small: null_mut(),
                     mono: null_mut(),
+                    mark,
                     buttons: [null_mut(); 4],
                 })
             });
@@ -398,7 +423,7 @@ mod win {
                     let title = font(dpi, 19, FW_SEMIBOLD as i32, "Segoe UI");
                     let body = font(dpi, 10, FW_NORMAL as i32, "Segoe UI");
                     let small = font(dpi, 9, FW_NORMAL as i32, "Segoe UI");
-                    let mono = font(dpi, 13, FW_SEMIBOLD as i32, "Consolas");
+                    let mono = font(dpi, 12, FW_SEMIBOLD as i32, "Consolas");
                     let instance = GetModuleHandleW(null());
                     let mut buttons = [null_mut(); 4];
                     for (i, label) in LABELS.iter().enumerate() {
@@ -447,16 +472,25 @@ mod win {
                 // SAFETY: the status thread made this box for us and sends each one once
                 let status = unsafe { Box::from_raw(lparam as *mut Status) };
                 let lines = super::summary(&status);
-                let changed = STATE.with(|s| {
+                let running = status.jobs.iter().any(|j| j.running);
+                let (changed, offer) = STATE.with(|s| {
                     let mut st = s.borrow_mut();
                     let st = st.as_mut().unwrap();
                     let changed = st.lines != lines;
                     st.lines = lines;
-                    changed
+                    // opened with no phone paired yet: the code is the one thing to do, so show it
+                    let offer = !st.offered && running && status.phones.is_empty() && st.pairing.is_none() && !st.pairing_busy;
+                    if offer {
+                        st.offered = true;
+                    }
+                    (changed, offer)
                 });
                 if changed {
                     fit(hwnd, false);
                     unsafe { InvalidateRect(hwnd, null(), 0) };
+                }
+                if offer {
+                    start_pairing(hwnd);
                 }
                 0
             }
@@ -510,18 +544,52 @@ mod win {
         }
     }
 
-    /// A rounded rectangle filled with `fill`, edged with `edge` (the same colour for no edge).
-    unsafe fn rounded(hdc: HDC, r: &RECT, radius: i32, fill: COLORREF, edge: COLORREF) {
+    /// How tall `s` is when wrapped to `width` in `font`.
+    unsafe fn height_of(hdc: HDC, font: HFONT, s: &str, width: i32) -> i32 {
         unsafe {
-            let brush = CreateSolidBrush(fill);
-            let pen = CreatePen(PS_SOLID, 1, edge);
-            let old_brush = SelectObject(hdc, brush as HGDIOBJ);
-            let old_pen = SelectObject(hdc, pen as HGDIOBJ);
-            RoundRect(hdc, r.left, r.top, r.right, r.bottom, radius, radius);
-            SelectObject(hdc, old_brush);
-            SelectObject(hdc, old_pen);
-            DeleteObject(brush as HGDIOBJ);
-            DeleteObject(pen as HGDIOBJ);
+            SelectObject(hdc, font as HGDIOBJ);
+            let mut w = wide(s);
+            let mut r = RECT { left: 0, top: 0, right: width, bottom: 0 };
+            DrawTextW(hdc, w.as_mut_ptr(), -1, &mut r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+            r.bottom
+        }
+    }
+
+    /// A GDI+ surface over `hdc`, anti-aliased, for the shapes and the mark.
+    unsafe fn canvas(hdc: HDC) -> *mut GpGraphics {
+        unsafe {
+            let mut g: *mut GpGraphics = null_mut();
+            GdipCreateFromHDC(hdc, &mut g);
+            GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+            GdipSetInterpolationMode(g, InterpolationModeHighQualityBicubic);
+            GdipSetPixelOffsetMode(g, PixelOffsetModeHalf);
+            g
+        }
+    }
+
+    /// A rounded rectangle filled with `fill` and edged with `edge` (ARGB).
+    unsafe fn rounded(g: *mut GpGraphics, r: &RECT, radius: i32, fill: u32, edge: u32) {
+        unsafe {
+            let mut path: *mut GpPath = null_mut();
+            GdipCreatePath(FillModeAlternate, &mut path);
+            let d = (radius * 2).max(1);
+            let (x, y, w, h) = (r.left, r.top, r.right - r.left - 1, r.bottom - r.top - 1);
+            GdipAddPathArcI(path, x, y, d, d, 180.0, 90.0);
+            GdipAddPathArcI(path, x + w - d, y, d, d, 270.0, 90.0);
+            GdipAddPathArcI(path, x + w - d, y + h - d, d, d, 0.0, 90.0);
+            GdipAddPathArcI(path, x, y + h - d, d, d, 90.0, 90.0);
+            GdipClosePathFigure(path);
+            let mut brush: *mut GpSolidFill = null_mut();
+            GdipCreateSolidFill(fill, &mut brush);
+            GdipFillPath(g, brush as *mut GpBrush, path);
+            GdipDeleteBrush(brush as *mut GpBrush);
+            if edge != fill {
+                let mut pen: *mut GpPen = null_mut();
+                GdipCreatePen1(edge, 1.0, UnitPixel, &mut pen);
+                GdipDrawPath(g, pen, path);
+                GdipDeletePen(pen);
+            }
+            GdipDeletePath(path);
         }
     }
 
@@ -537,14 +605,15 @@ mod win {
             let paper = CreateSolidBrush(PAPER);
             FillRect(hdc, &r, paper);
             DeleteObject(paper as HGDIOBJ);
-            let radius = 8 * dpi / 96;
             let (fill, edge, ink) = match (primary, pressed) {
-                (true, false) => (INK, INK, PAPER),
-                (true, true) => (INK_PRESSED, INK_PRESSED, PAPER),
-                (false, false) => (CARD, LINE, INK),
-                (false, true) => (PRESSED, LINE, INK),
+                (true, false) => (A_INK, A_INK, PAPER),
+                (true, true) => (A_INK_PRESSED, A_INK_PRESSED, PAPER),
+                (false, false) => (A_CARD, A_LINE, INK),
+                (false, true) => (A_PRESSED, A_LINE, INK),
             };
-            rounded(hdc, &r, radius, fill, edge);
+            let g = canvas(hdc);
+            rounded(g, &r, 8 * dpi / 96, fill, edge);
+            GdipDeleteGraphics(g);
             SetBkMode(hdc, TRANSPARENT as i32);
             let mut rr = r;
             text(hdc, body, ink, LABELS[item.CtlID as usize - 1], &mut rr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -573,59 +642,72 @@ mod win {
                 let px = |v: i32| (v as f32 * k) as i32;
                 let left = px(PAD);
                 let right = px(WIDTH - PAD);
+                let inner = right - px(CARD_PAD);
                 let mut y = px(PAD);
-                // the mark, the name, and the version beside it
-                let icon = crate::tray::win::icon_sized(px(HEAD_H), px(HEAD_H));
-                DrawIconEx(hdc, left, y, icon, px(HEAD_H), px(HEAD_H), 0, null_mut(), DI_NORMAL);
+                let lines: Vec<Line> = if st.lines.is_empty() { vec![Line { text: "Looking…".to_string(), headline: true, on: false }] } else { st.lines.clone() };
+                let card_h = px(CARD_PAD) * 2 + lines.len() as i32 * px(LINE_H);
+                let status_card = RECT { left, top: y + px(HEAD_H + 20), right, bottom: y + px(HEAD_H + 20) + card_h };
+                let code_card =
+                    st.pairing.as_ref().map(|_| RECT { left, top: status_card.bottom + px(GAP), right, bottom: status_card.bottom + px(GAP) + px(CARD_PAD) * 2 + px(QR) });
+
+                // the shapes and the mark first, with GDI+
+                let g = canvas(hdc);
+                if !st.mark.is_null() {
+                    GdipDrawImageRectI(g, st.mark, left, y, px(HEAD_H), px(HEAD_H));
+                }
+                rounded(g, &status_card, px(12), A_CARD, A_LINE);
+                if let Some(c) = &code_card {
+                    rounded(g, c, px(12), A_CARD, A_LINE);
+                }
+                // the dot by the headline: filled when it runs, a ring otherwise
+                let d = px(9);
+                let mut ly = status_card.top + px(CARD_PAD);
+                for line in &lines {
+                    if line.headline {
+                        let (dx, dy) = (left + px(CARD_PAD), ly + px(LINE_H) / 2 - d / 2);
+                        if line.on {
+                            let mut brush: *mut GpSolidFill = null_mut();
+                            GdipCreateSolidFill(A_INK, &mut brush);
+                            GdipFillEllipseI(g, brush as *mut GpBrush, dx, dy, d, d);
+                            GdipDeleteBrush(brush as *mut GpBrush);
+                        } else {
+                            let mut pen: *mut GpPen = null_mut();
+                            GdipCreatePen1(A_MUTED, 1.0, UnitPixel, &mut pen);
+                            GdipDrawEllipseI(g, pen, dx, dy, d - 1, d - 1);
+                            GdipDeletePen(pen);
+                        }
+                    }
+                    ly += px(LINE_H);
+                }
+                GdipDeleteGraphics(g);
+
+                // then the text, with GDI
                 let tx = left + px(HEAD_H + 14);
-                let mut r = RECT { left: tx, top: y, right, bottom: y + px(26) };
+                let mut r = RECT { left: tx, top: y + px(2), right, bottom: y + px(28) };
                 text(hdc, st.title, INK, "Inyon", &mut r, DT_LEFT | DT_SINGLELINE);
-                let mut r = RECT { left: tx, top: y + px(26), right, bottom: y + px(HEAD_H) };
+                let mut r = RECT { left: tx, top: y + px(28), right, bottom: y + px(HEAD_H) };
                 let what = match st.role {
                     Role::Link => "paired with the phone",
                     Role::Node => "on a hub",
                     Role::Hub => "hub",
                 };
                 text(hdc, st.small, MUTED, &format!("{} · {what}", crate::ui::VERSION), &mut r, DT_LEFT | DT_SINGLELINE);
-                y += px(HEAD_H + 20);
-                // the status card
-                let lines: Vec<Line> = if st.lines.is_empty() { vec![Line { text: "Looking…".to_string(), headline: true, on: false }] } else { st.lines.clone() };
-                let card_h = px(CARD_PAD) * 2 + lines.len() as i32 * px(LINE_H);
-                let card = RECT { left, top: y, right, bottom: y + card_h };
-                rounded(hdc, &card, px(12), CARD, LINE);
+                y = status_card.top;
                 let mut ly = y + px(CARD_PAD);
                 for line in &lines {
-                    let mut tx = left + px(CARD_PAD);
-                    if line.headline {
-                        // the dot: filled when it runs, a ring otherwise
-                        let d = px(9);
-                        let cy = ly + px(LINE_H) / 2;
-                        let brush = CreateSolidBrush(if line.on { INK } else { CARD });
-                        let pen = CreatePen(PS_SOLID, 1, if line.on { INK } else { MUTED });
-                        let ob = SelectObject(hdc, brush as HGDIOBJ);
-                        let op = SelectObject(hdc, pen as HGDIOBJ);
-                        Ellipse(hdc, tx, cy - d / 2, tx + d, cy + d / 2);
-                        SelectObject(hdc, ob);
-                        SelectObject(hdc, op);
-                        DeleteObject(brush as HGDIOBJ);
-                        DeleteObject(pen as HGDIOBJ);
-                        tx += d + px(10);
-                    }
-                    let mut r = RECT { left: tx, top: ly, right: right - px(CARD_PAD), bottom: ly + px(LINE_H) };
+                    let tx = left + px(CARD_PAD) + if line.headline { d + px(10) } else { 0 };
+                    let mut r = RECT { left: tx, top: ly, right: inner, bottom: ly + px(LINE_H) };
                     text(hdc, st.body, if line.headline { INK } else { MUTED }, &line.text, &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
                     ly += px(LINE_H);
                 }
-                y += card_h;
-                if let Some(v) = &st.pairing {
-                    y += px(GAP);
-                    let card = RECT { left, top: y, right, bottom: y + px(CARD_PAD) * 2 + px(QR) };
-                    rounded(hdc, &card, px(12), CARD, LINE);
-                    let (cx, cy) = (left + px(CARD_PAD), y + px(CARD_PAD));
+                y = status_card.bottom;
+                if let (Some(v), Some(card)) = (&st.pairing, &code_card) {
+                    let (cx, cy) = (card.left + px(CARD_PAD), card.top + px(CARD_PAD));
                     if let Some(err) = v.get("error").and_then(Value::as_str) {
-                        let mut r = RECT { left: cx, top: cy, right: right - px(CARD_PAD), bottom: cy + px(QR) };
+                        let mut r = RECT { left: cx, top: cy, right: inner, bottom: cy + px(QR) };
                         text(hdc, st.body, INK, &format!("Couldn't make a pairing code: {err}"), &mut r, DT_LEFT | DT_WORDBREAK);
                     } else if let Some(code) = v.get("qr").and_then(Value::as_str).and_then(|t| QrCode::with_error_correction_level(t.as_bytes(), EcLevel::L).ok()) {
-                        // the code, with a quiet zone of two modules, on the card's white
+                        // the code, crisp: whole pixels per module, with a quiet zone of two
                         let n = code.width() as i32;
                         let module = (px(QR) / (n + 4)).max(1);
                         let ink = CreateSolidBrush(INK);
@@ -638,20 +720,25 @@ mod win {
                             }
                         }
                         DeleteObject(ink as HGDIOBJ);
-                        // beside it: how to use it, and the typed-in code
+                        // beside it: how to use it, then the typed-in code at the bottom
                         let tx = cx + module * (n + 4) + px(16);
-                        let mut r = RECT { left: tx, top: cy, right: right - px(CARD_PAD), bottom: cy + px(LINE_H * 3) };
-                        text(hdc, st.body, INK, "Scan this in the Inyon app, or with the phone's camera.", &mut r, DT_LEFT | DT_WORDBREAK);
-                        let mut r = RECT { left: tx, top: cy + px(LINE_H * 3), right: right - px(CARD_PAD), bottom: cy + px(LINE_H * 4) };
-                        text(hdc, st.small, MUTED, "It works once, within 10 minutes.", &mut r, DT_LEFT | DT_WORDBREAK);
+                        let tw = inner - tx;
+                        let scan = "Scan this in the Inyon app, or with the phone's camera.";
+                        let h1 = height_of(hdc, st.body, scan, tw);
+                        let mut r = RECT { left: tx, top: cy, right: inner, bottom: cy + h1 };
+                        text(hdc, st.body, INK, scan, &mut r, DT_LEFT | DT_WORDBREAK);
+                        let once = "It works once, within 10 minutes.";
+                        let h2 = height_of(hdc, st.small, once, tw);
+                        let mut r = RECT { left: tx, top: cy + h1 + px(6), right: inner, bottom: cy + h1 + px(6) + h2 };
+                        text(hdc, st.small, MUTED, once, &mut r, DT_LEFT | DT_WORDBREAK);
                         if let Some((id, pin)) = super::short_code(v) {
-                            let base = cy + px(QR) - px(LINE_H * 3) - px(4);
-                            let mut r = RECT { left: tx, top: base, right: right - px(CARD_PAD), bottom: base + px(LINE_H) };
-                            text(hdc, st.small, MUTED, "Or type a code in the app", &mut r, DT_LEFT | DT_SINGLELINE);
-                            let mut r = RECT { left: tx, top: base + px(LINE_H), right: right - px(CARD_PAD), bottom: base + px(LINE_H * 2) };
-                            text(hdc, st.mono, INK, &format!("ID    {id}"), &mut r, DT_LEFT | DT_SINGLELINE);
-                            let mut r = RECT { left: tx, top: base + px(LINE_H * 2), right: right - px(CARD_PAD), bottom: base + px(LINE_H * 3) };
-                            text(hdc, st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE);
+                            let base = cy + px(QR) - px(LINE_H * 3);
+                            let mut r = RECT { left: tx, top: base, right: inner, bottom: base + px(LINE_H) };
+                            text(hdc, st.small, MUTED, "Or type this in the app", &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                            let mut r = RECT { left: tx, top: base + px(LINE_H), right: inner, bottom: base + px(LINE_H * 2) };
+                            text(hdc, st.mono, INK, &format!("ID    {id}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                            let mut r = RECT { left: tx, top: base + px(LINE_H * 2), right: inner, bottom: base + px(LINE_H * 3) };
+                            text(hdc, st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
                         }
                     }
                 } else if st.pairing_busy {
