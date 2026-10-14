@@ -1167,6 +1167,34 @@ export async function launch(hostId: string, opts: LaunchOpts) {
   return paneId
 }
 
+/**
+ * Opens a copy of the conversation in a new tmux window next to this one, in the same folder and
+ * with the same flags: both carry on from here separately. Claude Code, Codex and OpenCode fork
+ * a conversation themselves; this only starts them that way.
+ */
+export async function forkConversation(hostId: string, paneId: string) {
+  const { host, found } = agentPane(hostId, paneId)
+  const a = found.pane.agent
+  if (!a || (a.kind !== 'claude' && a.kind !== 'codex' && a.kind !== 'opencode')) throw new HttpError(400, 'Only Claude Code, Codex and OpenCode conversations can be forked')
+  if (!a.sessionId || !isSessionId(a.sessionId, a.kind)) throw new HttpError(409, 'No conversation to fork yet')
+  if (a.kind !== 'opencode' && !(a.transcriptPath && (await host.exec(`test -s ${shq(a.transcriptPath)} && echo yes`)).stdout.includes('yes'))) {
+    throw new HttpError(409, 'Say something first; there is nothing to fork yet')
+  }
+  const proc = registry.agentProc(hostId, paneId)
+  const cwd = proc?.cwd ?? found.pane.cwd
+  const args = proc ? ((await argv(host, proc.pid)) ?? proc.args) : AGENTS[a.kind].launch
+  const cmd = a.kind === 'claude' ? `${resumeCommand('claude', a.sessionId, args)} --fork-session`
+    : a.kind === 'codex' ? resumeCommand('codex', a.sessionId, args).replace(/^(\S+) resume /, '$1 fork ')
+    : `${AGENTS.opencode.launch} --session ${a.sessionId} --fork`
+  const r = await host.exec(`tmux new-window -t ${shq(found.session.name)} -c ${shq(cwd)} -P -F ${shq('#{pane_id}')}`)
+  const newPane = r.stdout.trim()
+  if (r.code !== 0 || !newPane.startsWith('%')) throw new HttpError(500, r.stderr.trim() || 'Could not open a window')
+  await shellReady(host, newPane)
+  await typeText(host, newPane, withBin(cmd, await launchBin(host, a.kind)), true)
+  registry.refresh(hostId, 1500)
+  return newPane
+}
+
 /** Turns Remote Control on, or off (opens the /remote-control menu and picks Disconnect). */
 export async function remoteControl(hostId: string, paneId: string, on: boolean) {
   const { found } = agentPane(hostId, paneId)

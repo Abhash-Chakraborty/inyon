@@ -21,7 +21,21 @@ export function useHunks(meta: ToolResultMeta | undefined, input: any): Hunk[] {
   }, [meta, input])
 }
 
-export function Diff({ hunks, maxLines = 400 }: { hunks: Hunk[]; maxLines?: number }) {
+/** A diff line someone can comment on: its number (in the old file for a removed line) and its text. */
+export interface DiffLine {
+  no: number
+  removed: boolean
+  text: string
+}
+
+export function Diff({ hunks, maxLines = 400, onLine, marked }: {
+  hunks: Hunk[]
+  maxLines?: number
+  /** makes each line number a button that comments on that line */
+  onLine?: (l: DiffLine) => void
+  /** lines that already have a comment */
+  marked?: (l: DiffLine) => boolean
+}) {
   let shown = 0
   let hidden = 0
   return (
@@ -54,9 +68,25 @@ export function Diff({ hunks, maxLines = 400 }: { hunks: Hunk[]; maxLines?: numb
               if (sign === '\\') continue
               const oldNo = add ? '' : o++
               const newNo = del ? '' : n++
+              const l: DiffLine = { no: Number(del ? oldNo : newNo), removed: del, text }
+              const on = marked?.(l)
               rows.push(
                 <tr key={`${hi}-${li}`} className={add ? 'bg-[var(--diff-add)]' : del ? 'bg-[var(--diff-del)]' : ''}>
-                  <td className="w-[1%] select-none whitespace-nowrap px-2 text-right text-fg-3/80">{del ? oldNo : newNo}</td>
+                  <td className="w-[1%] select-none whitespace-nowrap p-0 text-right text-fg-3/80">
+                    {onLine ? (
+                      <button
+                        type="button"
+                        onClick={() => onLine(l)}
+                        title="Comment on this line"
+                        aria-label={`Comment on ${l.removed ? 'removed ' : ''}line ${l.no}`}
+                        className={`block w-full px-2 text-right hover:bg-accent-soft hover:text-fg ${on ? 'bg-accent-soft font-semibold text-accent-text' : ''}`}
+                      >
+                        {l.no}
+                      </button>
+                    ) : (
+                      <span className="px-2">{l.no}</span>
+                    )}
+                  </td>
                   <td className={`w-[1%] select-none pl-1 ${add ? 'text-ok' : del ? 'text-danger' : 'text-fg-3'}`}>{add ? '+' : del ? '−' : ' '}</td>
                   <td className="whitespace-pre pr-4 pl-1.5">{text || ' '}</td>
                 </tr>,

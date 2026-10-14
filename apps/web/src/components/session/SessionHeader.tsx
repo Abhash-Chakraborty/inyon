@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History,
+  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
 } from 'lucide-react'
 import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
@@ -10,7 +10,7 @@ import { ConversationsSheet } from './ConversationsSheet.tsx'
 import { contextOf, UsageSummary, useTick } from './Usage.tsx'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { liveWindow, openLink, shortPath, tokens } from '../../lib/format.ts'
-import { paneTitle, terminalName } from '../../lib/overview.ts'
+import { paneHref, paneTitle, terminalName } from '../../lib/overview.ts'
 import { IconButton, Menu } from '../ui/primitives.tsx'
 import { StateDot, StatePill, shownState } from '../ui/status.tsx'
 
@@ -190,6 +190,7 @@ export function SessionHeader({
               def.set.compact && { key: 'compact', label: 'Compact context', icon: <Shrink className="size-4" />, onSelect: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { key: 'rewind', label: agent === 'opencode' ? 'Undo last message…' : 'Rewind…', icon: <RotateCcw className="size-4" />, onSelect: actions.rewind },
               switchable && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => setConvos(true) },
+              actions.canFork && ref && { key: 'fork', label: 'Fork conversation', icon: <GitFork className="size-4" />, onSelect: () => actions.fork((p) => nav(paneHref(ref.host.config.id, p))) },
               { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, onSelect: () => setRenaming(true) },
               { key: 'copy', label: 'Copy session ID', icon: <Copy className="size-4" />, onSelect: actions.copyId },
               def.set.clear && { key: 'clear', label: 'Clear conversation', icon: <Trash2 className="size-4" />, danger: true, onSelect: actions.clear },

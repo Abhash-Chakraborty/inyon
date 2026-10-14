@@ -66,6 +66,8 @@ From 0.17, removing a machine that can be reached takes back what Inyon put ther
 
 For Claude's plan limits, the hub runs a short script on the machine that reads Claude Code's access token from `~/.claude/.credentials.json` (or the macOS Keychain) and asks `api.anthropic.com` for the account's usage, as `/usage` does. The token goes to `curl` on stdin, so it never appears in the process list, and it never leaves that machine. Only the percentages and reset times come back.
 
+From 0.17 the **Files** tab and **Changes → Working tree** read the session's folder on the machine while you have them open: a folder listing, one file, or `git status` and one file's diff. Nothing is kept on the hub or the phone. **Commit all** and **Push** run only when you press them, as your user, with git's own hooks and signing.
+
 ## Downloads
 
 Every release ships a `SHA256SUMS` file, and from 0.14 a minisign signature of it, `SHA256SUMS.minisig`, made with Inyon's release key:

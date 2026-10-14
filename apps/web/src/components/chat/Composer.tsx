@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
 import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, SquareTerminal, X } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
@@ -162,6 +163,15 @@ export function Composer({
       window.removeEventListener('pagehide', now)
     }
   }, [])
+  // a file mention or review comments from the side panel
+  useEffect(
+    () =>
+      onCompose(host, pane, (more) => {
+        setText((v) => appendTo(v, more))
+        if (!matchMedia('(pointer: coarse)').matches) requestAnimationFrame(() => ta.current?.focus())
+      }),
+    [host, pane],
+  )
   // a draft from the terminal (or another device): adopt it unless you're mid-edit with other text
   useEffect(() => {
     if (!serverDraft) return

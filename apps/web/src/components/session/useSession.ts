@@ -93,6 +93,14 @@ export function useSession(host: string, pane: string) {
         toast({ title: `${def.name} exited`, tone: 'success' })
       })
     },
+    /** Claude Code, Codex and OpenCode can carry on a copy of the conversation in a new window */
+    canFork: (agent === 'claude' || agent === 'codex' || agent === 'opencode') && !!(info?.sessionId ?? ref?.pane.agent?.sessionId),
+    fork: (go: (pane: string) => void) =>
+      run('Could not fork', async () => {
+        const r = await api.fork(host, pane)
+        toast({ title: 'Forked into a new window', body: 'Both conversations carry on separately from here.', tone: 'success' })
+        go(r.pane)
+      }),
     copyId: async () => {
       const id = info?.sessionId ?? ref?.pane.agent?.sessionId
       if (!id) return

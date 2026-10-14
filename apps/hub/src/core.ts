@@ -2,7 +2,7 @@ import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protoco
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
-import { answer, codexRewind, endSession, exitAgent, findTaskOutput, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
+import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
@@ -22,6 +22,7 @@ import { pruneChats } from './claude/chat-cache.ts'
 import { lastReply } from './claude/last-reply.ts'
 import { saveDrafts } from './claude/drafts.ts'
 import { paneConversations, switchConversation } from './features/conversations.ts'
+import { gitCommit, gitDiff, gitPush, gitStatus, listDir, readFile } from './features/workspace.ts'
 
 /**
  * Inyon's API and live updates, independent of how they are served: the hub puts them behind
@@ -429,6 +430,28 @@ export const coreRoutes: Routes = {
   },
   '/api/hosts/:id/panes/:pane/models': {
     GET: api(async (req) => json(await listModels(req.params.id, paneParam(req.params.pane)))),
+  },
+  // the session's folder: its files (read only) and its git working tree
+  '/api/hosts/:id/panes/:pane/dir': {
+    GET: api(async (req) => json(await listDir(req.params.id, paneParam(req.params.pane), q(req, 'path')))),
+  },
+  '/api/hosts/:id/panes/:pane/file': {
+    GET: api(async (req) => json(await readFile(req.params.id, paneParam(req.params.pane), q(req, 'path')))),
+  },
+  '/api/hosts/:id/panes/:pane/git': {
+    GET: api(async (req) => json(await gitStatus(req.params.id, paneParam(req.params.pane)))),
+  },
+  '/api/hosts/:id/panes/:pane/git/diff': {
+    GET: api(async (req) => json(await gitDiff(req.params.id, paneParam(req.params.pane), q(req, 'path')))),
+  },
+  '/api/hosts/:id/panes/:pane/git/commit': {
+    POST: api(async (req) => json(await gitCommit(req.params.id, paneParam(req.params.pane), (await body<{ message?: string }>(req)).message))),
+  },
+  '/api/hosts/:id/panes/:pane/git/push': {
+    POST: api(async (req) => json(await gitPush(req.params.id, paneParam(req.params.pane)))),
+  },
+  '/api/hosts/:id/panes/:pane/fork': {
+    POST: api(async (req) => json({ pane: await forkConversation(req.params.id, paneParam(req.params.pane)) })),
   },
   '/api/hosts/:id/panes/:pane/files': {
     GET: api(async (req) => json(await listFiles(req.params.id, paneParam(req.params.pane)))),

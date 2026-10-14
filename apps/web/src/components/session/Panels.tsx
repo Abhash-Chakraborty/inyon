@@ -10,7 +10,8 @@ import { api } from '../../lib/api.ts'
 import { openLink, shortPath, since } from '../../lib/format.ts'
 import { Diff, useHunks } from '../chat/Diff.tsx'
 import { AssistantTurn, CommandRow, GoalRow, NoticeRow, UserMessage } from '../chat/Messages.tsx'
-import { Empty, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
+import { Empty, Segmented, Sheet, Waiting, inputClass } from '../ui/primitives.tsx'
+import { CommentableDiff, FilesTab, ReviewBar, WorkingTree, type PaneKey } from './Workspace.tsx'
 import { UsagePanel } from './Usage.tsx'
 import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
@@ -62,15 +63,49 @@ export function useChanges(items: ChatItem[]) {
   }, [items])
 }
 
-function EditDiff({ e }: { e: FileChange['edits'][number] }) {
+function EditDiff({ e, file, p }: { e: FileChange['edits'][number]; file: string; p?: PaneKey }) {
   const hunks = useHunks(e.meta, e.input)
   if (e.name === 'ApplyPatch' && !hunks.length) {
     return <pre className="max-h-[50vh] overflow-auto whitespace-pre px-3 py-2 font-mono text-[12px] leading-[1.6] text-fg-2">{String(e.input?.patch ?? '')}</pre>
   }
-  return hunks.length ? <Diff hunks={hunks} /> : <div className="px-3 py-2 text-[12px] text-fg-3">No diff recorded</div>
+  if (!hunks.length) return <div className="px-3 py-2 text-[12px] text-fg-3">No diff recorded</div>
+  return p ? <CommentableDiff p={p} file={file} hunks={hunks} /> : <Diff hunks={hunks} />
 }
 
-export function ChangesTab({ items }: { items: ChatItem[] }) {
+type ChangesMode = 'chat' | 'tree'
+
+/**
+ * What changed: the edits the agent made in this conversation, or (with a session to ask) the git
+ * working tree, which also shows changes made by shell commands or by hand. Line numbers in either
+ * take comments, which go into the message box together.
+ */
+export function ChangesTab({ items, p, onComposed }: { items: ChatItem[]; p?: PaneKey; onComposed?: () => void }) {
+  const [mode, setMode] = useState<ChangesMode>(() => {
+    try {
+      return localStorage.getItem('inyon.changes') === 'tree' ? 'tree' : 'chat'
+    } catch {
+      return 'chat'
+    }
+  })
+  const pick = (m: ChangesMode) => {
+    setMode(m)
+    try {
+      localStorage.setItem('inyon.changes', m)
+    } catch {}
+  }
+  if (!p) return <ChatChanges items={items} />
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 px-2.5 pt-2.5 pb-1.5">
+        <Segmented full size="sm" value={mode} onChange={pick} options={[{ v: 'chat', label: 'This chat' }, { v: 'tree', label: 'Working tree', title: 'Every change since the last commit' }]} />
+      </div>
+      {mode === 'chat' ? <ChatChanges items={items} p={p} /> : <WorkingTree p={p} poke={items.length} />}
+      <ReviewBar p={p} onComposed={onComposed} />
+    </div>
+  )
+}
+
+function ChatChanges({ items, p }: { items: ChatItem[]; p?: PaneKey }) {
   const changes = useChanges(items)
   const [sel, setSel] = useState<string | null>(null)
   const cur = changes.find((c) => c.path === sel) ?? changes[0]
@@ -107,7 +142,7 @@ export function ChangesTab({ items }: { items: ChatItem[] }) {
                   <span className="font-medium text-fg-2">{e.name === 'Write' ? (e.meta?.created ? 'Created' : 'Rewrote') : 'Edited'}</span>
                   <span>{since(e.ts)} ago</span>
                 </div>
-                <EditDiff e={e} />
+                <EditDiff e={e} file={cur.path} p={p} />
               </div>
             ))}
         </div>
@@ -312,13 +347,15 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
 
 // ---------- side panel ----------
 
-export type PanelTab = 'changes' | 'activity' | 'preview' | 'usage'
+export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'usage'
 
 export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; tab: PanelTab; setTab: (t: PanelTab) => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
   const changes = useChanges(items)
+  const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   const running = (s.info?.tasks.filter((t) => t.status === 'running').length ?? 0) + (s.info?.subagents.filter((a) => a.status === 'running').length ?? 0)
   const tabs: { id: PanelTab; label: string; badge?: number }[] = [
     { id: 'changes', label: 'Changes', badge: changes.length || undefined },
+    { id: 'files', label: 'Files' },
     { id: 'activity', label: 'Activity', badge: running || undefined },
     { id: 'preview', label: 'Preview' },
     { id: 'usage', label: 'Usage' },
@@ -352,7 +389,8 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
         ))}
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        {tab === 'changes' && <ChangesTab items={items} />}
+        {tab === 'changes' && <ChangesTab items={items} p={p} />}
+        {tab === 'files' && p && <FilesTab key={`${p.host}:${p.pane}`} p={p} />}
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={previewSuggestions} />}
         {tab === 'usage' && (

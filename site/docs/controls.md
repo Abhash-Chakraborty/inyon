@@ -48,15 +48,26 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 - **End session…** closes the pane, its window or the whole tmux session. The confirmation says exactly which, and the session disappears at once.
 - **Copy session ID** copies the agent's conversation ID, for resuming it elsewhere.
 - **Past conversations…** (**History** on a phone) lists the agent's earlier conversations in this folder and switches to one. See [Past conversations](sessions.md#past-conversations).
+- **Fork conversation** (**Fork** on a phone), from 0.17, opens a copy of the conversation in a new tmux window next to this one, in the same folder and with the same flags, and takes you there. From then on the two carry on separately, so you can try another approach without losing this one. It works for Claude Code, Codex and OpenCode once the conversation has a first message; Inyon starts the agent with its own fork option (`claude --resume <id> --fork-session`, `codex fork <id>`, `opencode --session <id> --fork`).
 
 ## Background work
 
 The layers button in the header (or the side panel on a wide screen) shows what's running beside the conversation:
 
 - **Running:** queued messages, subagents with their transcripts, background shells with live output, and monitors. Shells and monitors each have a real **Stop**.
-- **Changes:** every file the agent touched, marked added or modified with line counts, and the diff of each edit, newest first.
+- **Changes:** what changed, two ways. **This chat** lists every file the agent touched in this conversation, with the diff of each edit, newest first. **Working tree** (from 0.17) shows what git sees: every change since the last commit, whoever made it. See [Reviewing changes](#reviewing-changes).
+- **Files** (from 0.17): the session's folder, read only. Open a folder, read a file with syntax highlighting, see an image, or read a Markdown file rendered (**Source** shows the text). **Mention** adds `@path` to your message. Files over 512 KB show their first 512 KB.
 - **Preview:** a dev server the agent started, in a frame, with a phone-width toggle. Inyon suggests the local ports it finds.
 - **Artifacts** (Claude Code): pages the agent published, with **Open**, **Copy link**, and a button that asks the agent to delete one.
+
+## Reviewing changes
+
+From 0.17, **Changes → Working tree** reads the git repository the session's folder is in: the branch, how many commits it is ahead of or behind its upstream, and each changed file marked **M** (modified), **A** (added), **D** (deleted), **R** (renamed) or **U** (not tracked yet), with line counts. Tap a file for its diff. It refreshes when the agent does something, or with the refresh button.
+
+- **Commit all** commits every change shown, with your message, as `git add -A` and `git commit` would. Your git hooks and commit signing run as usual; one that needs a password typed in the terminal fails with git's message instead of waiting.
+- **Push** appears when there's a remote and something to push. A branch with no upstream yet goes to `origin` under the same name.
+
+To comment on a line, tap its number in any diff, in either view. Comments collect under the diff; **Add to message** puts them all in your message box as one review, each under the file, line and code it's about, so you can add to it before sending. **Clear** drops them. Comments stay in the app until you add or clear them, and aren't saved anywhere.
 
 ## Usage and limits
 

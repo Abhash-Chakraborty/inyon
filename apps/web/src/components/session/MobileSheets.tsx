@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { CircleX, Copy, History, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { CircleX, Copy, GitFork, History, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { openMenu, Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'
 import { ActivityTab, ChangesTab, PreviewTab } from './Panels.tsx'
+import { FilesTab } from './Workspace.tsx'
 import { GoalSheet, modeMatches } from './ComposerControls.tsx'
 import { currentModelId, type SessionModel } from './useSession.ts'
 import { confirmAction } from '../Confirm.tsx'
+import { paneHref } from '../../lib/overview.ts'
 
 const EFFORT_SHORT: Record<string, string> = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
 
@@ -108,6 +110,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
               def.set.compact && { label: 'Compact', icon: Shrink, on: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { label: agent === 'opencode' ? 'Undo' : 'Rewind', icon: RotateCcw, on: actions.rewind },
               def.conversations?.length && { label: 'History', icon: History, on: () => (onClose(), openMenu('conversations')) },
+              actions.canFork && s.ref && { label: 'Fork', icon: GitFork, on: () => (onClose(), actions.fork((p) => nav(paneHref(s.ref!.host.config.id, p)))) },
               { label: 'Copy ID', icon: Copy, on: actions.copyId },
               def.set.clear && { label: 'Clear', icon: Trash2, on: async () => (await confirmAction({ title: 'Start a fresh conversation?', body: 'The current one is saved and can be resumed later.', yes: 'Clear' })) && actions.clear() },
               { label: 'To shell', icon: LogOut, on: actions.exit },
@@ -132,15 +135,17 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
 }
 
 export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; open: boolean; onClose: () => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
-  const [tab, setTab] = useState<'activity' | 'changes' | 'preview'>('activity')
+  const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'preview'>('activity')
+  const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   return (
     <Sheet open={open} onClose={onClose} wide title="Activity">
       <div className="-mx-1 mb-3">
-        <Segmented full value={tab} onChange={setTab} options={[{ v: 'activity', label: 'Running' }, { v: 'changes', label: 'Changes' }, { v: 'preview', label: 'Preview' }]} />
+        <Segmented full value={tab} onChange={setTab} options={[{ v: 'activity', label: 'Running' }, { v: 'changes', label: 'Changes' }, { v: 'files', label: 'Files' }, { v: 'preview', label: 'Preview' }]} />
       </div>
       <div className="-mx-5 flex min-h-[50dvh] flex-col">
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
-        {tab === 'changes' && <ChangesTab items={items} />}
+        {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
+        {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={[]} />}
       </div>
     </Sheet>

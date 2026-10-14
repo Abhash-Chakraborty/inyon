@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, PastConversation, SlashCommand } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, PastConversation, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -158,6 +158,41 @@ export interface HubUpdate {
   restartNeeded?: boolean
 }
 
+export interface DirEntry {
+  name: string
+  dir: boolean
+  size: number
+  /** seconds since 1970 */
+  mtime: number
+}
+
+export type FileView =
+  | { kind: 'text'; path: string; text: string; size: number; truncated: boolean }
+  | { kind: 'image'; path: string; type: string; data: string; size: number }
+  | { kind: 'binary'; path: string; size: number }
+  | { kind: 'large'; path: string; size: number }
+
+export interface GitFile {
+  path: string
+  from?: string
+  status: 'M' | 'A' | 'D' | 'R' | '?'
+  add: number
+  del: number
+}
+
+export interface GitState {
+  repo: boolean
+  root?: string
+  branch?: string
+  remote?: boolean
+  upstream?: string
+  ahead?: number
+  behind?: number
+  files: GitFile[]
+}
+
+type Hunk = NonNullable<ToolResultMeta['patch']>[number]
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -211,6 +246,16 @@ export const api = {
   commands: (host: string, pane: string) => request<SlashCommand[]>('GET', `${panePath(host, pane)}/commands`),
   models: (host: string, pane: string) => request<AgentCatalog>('GET', `${panePath(host, pane)}/models`, undefined, 25_000),
   files: (host: string, pane: string) => request<{ cwd: string; files: string[] }>('GET', `${panePath(host, pane)}/files`),
+  /** the session's folder, read only: one folder's entries, or one file to look at */
+  dir: (host: string, pane: string, path: string) => request<{ cwd: string; path: string; entries: DirEntry[] }>('GET', `${panePath(host, pane)}/dir${qs({ path })}`, undefined, 20_000),
+  file: (host: string, pane: string, path: string) => request<FileView>('GET', `${panePath(host, pane)}/file${qs({ path })}`, undefined, 40_000),
+  /** its git working tree against the last commit */
+  git: (host: string, pane: string) => request<GitState>('GET', `${panePath(host, pane)}/git`, undefined, 25_000),
+  gitDiff: (host: string, pane: string, path: string) => request<{ path: string; binary: boolean; hunks: Hunk[] }>('GET', `${panePath(host, pane)}/git/diff${qs({ path })}`, undefined, 25_000),
+  gitCommit: (host: string, pane: string, message: string) => request<{ commit: string }>('POST', `${panePath(host, pane)}/git/commit`, { message }, 70_000),
+  gitPush: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/git/push`, undefined, 100_000),
+  /** a copy of the conversation in a new window next to this one */
+  fork: (host: string, pane: string) => request<{ pane: string }>('POST', `${panePath(host, pane)}/fork`, undefined, 30_000),
   signIn: (id: string, agent: AgentKind) => request<{ pane: string }>('POST', `${h(id)}/signin`, { agent }),
   signInScreen: (id: string, pane: string) => request<SignInScreen>('GET', `${h(id)}/signin/${paneSlug(pane)}`),
   signInSend: (id: string, pane: string, b: { text?: string; keys?: string[]; option?: number }) => request('POST', `${h(id)}/signin/${paneSlug(pane)}`, b),
