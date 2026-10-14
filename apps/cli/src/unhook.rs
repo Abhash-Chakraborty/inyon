@@ -145,11 +145,14 @@ mod tests {
         let said = unhook(&h.0);
         assert_eq!(said.len(), 1);
         let after: Value = serde_json::from_str(&fs::read_to_string(h.0.join(".claude/settings.json")).unwrap()).unwrap();
-        assert_eq!(after, json!({
-            "model": "opus",
-            "statusLine": { "type": "command", "command": "node ~/my-status.js", "padding": 0 },
-            "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] }
-        }));
+        assert_eq!(
+            after,
+            json!({
+                "model": "opus",
+                "statusLine": { "type": "command", "command": "node ~/my-status.js", "padding": 0 },
+                "hooks": { "Stop": [{ "hooks": [{ "type": "command", "command": "say done" }] }] }
+            })
+        );
         // the keys stay in the order you wrote them
         let text = fs::read_to_string(h.0.join(".claude/settings.json")).unwrap();
         assert!(text.find("\"model\"").unwrap() < text.find("\"statusLine\"").unwrap());

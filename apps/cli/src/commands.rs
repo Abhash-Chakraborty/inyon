@@ -944,6 +944,21 @@ pub fn joined() -> bool {
     saved_hub().is_some() || saved_env().contains_key("INYON_HUB")
 }
 
+/// Writes a file only you can read, from its first byte: it holds the hub token.
+fn write_secret(file: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        o.mode(0o600);
+        // an older file keeps its mode when opened, so set it too
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
+    }
+    o.open(file)?.write_all(content.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1009,19 +1024,4 @@ mod tests {
         let f = SetupFlags { yes: true, role: Some("hub".into()), network: None, port: None, autostart: None, hub: None };
         assert!(plan_from_flags(Platform::Windows, Vec::new(), &f).unwrap_err().contains("WSL"));
     }
-}
-
-/// Writes a file only you can read, from its first byte: it holds the hub token.
-fn write_secret(file: &std::path::Path, content: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut o = fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        o.mode(0o600);
-        // an older file keeps its mode when opened, so set it too
-        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
-    }
-    o.open(file)?.write_all(content.as_bytes())
 }
