@@ -167,6 +167,8 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
         nodeLinks.attach(hostId, socket)
         nodeLinks.receive(hostId, { type: 'hello', version: (welcome as any).version, os: welcome.os })
       } catch (err) {
+        // removed while this attempt was out: its failure belongs to a computer that's gone
+        if (c.stopped) return
         c.lastError = (err as Error).message
         // not paired any more: retrying won't help until it pairs again (coming back to the app
         // still tries once more, in case it was paired again meanwhile)
@@ -212,6 +214,8 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
       clearTimeout(c.timer)
       drop(c, 'removed')
       conns.delete(id)
+      // a computer added again under this id starts without the old one's error
+      nodeLinks.clearError(id)
     },
     /** Back in the foreground: check every connection now instead of waiting out a backoff. */
     resume() {

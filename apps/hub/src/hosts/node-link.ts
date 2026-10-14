@@ -67,6 +67,10 @@ class NodeLinks {
     for (const l of this.listeners) l(hostId, false)
   }
 
+  clearError(hostId: string) {
+    this.errors.delete(hostId)
+  }
+
   /** Why the machine isn't connected, when something more specific than "waiting" is known. */
   why(hostId: string) {
     return this.errors.get(hostId)

@@ -68,6 +68,14 @@ test('pairs from the code, runs commands, and reconnects after the laptop restar
   links.ensure({ ...config, id: 'laptop2' })
   expect(await until(() => /isn't paired/.test(nodeLinks.why('laptop2') ?? ''))).toBe(true)
   links.forget('laptop2')
+  expect(nodeLinks.why('laptop2')).toBeUndefined()
+
+  // removed while it was still connecting: the failure that comes back afterwards isn't kept,
+  // so a computer added again under that id doesn't open with the old one's error
+  links.ensure({ ...config, id: 'laptop3', name: 'Old name' })
+  links.forget('laptop3')
+  await Bun.sleep(1500)
+  expect(nodeLinks.why('laptop3')).toBeUndefined()
 }, 40_000)
 
 test('a browser page on https skips plain ws:// addresses; the Android app and the hub keep them', () => {
