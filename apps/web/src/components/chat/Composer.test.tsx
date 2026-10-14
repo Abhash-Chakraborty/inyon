@@ -319,3 +319,43 @@ describe('the phone app hands over keyboard images', () => {
     }
   })
 })
+
+describe('after Send', () => {
+  const pointer = (coarse: boolean) => {
+    const was = window.matchMedia
+    window.matchMedia = ((q: string) => ({ matches: coarse && q.includes('coarse'), media: q, addEventListener() {}, removeEventListener() {} })) as any
+    return () => void (window.matchMedia = was)
+  }
+
+  test('a touch screen puts the keyboard away, so the reply has the screen', async () => {
+    const restore = pointer(true)
+    try {
+      const user = userEvent.setup()
+      await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+      await user.click(box())
+      await user.type(box(), 'run the tests')
+      expect(document.activeElement).toBe(box())
+      await user.click(sendButton())
+      await flush()
+      expect(box().value).toBe('')
+      expect(document.activeElement).not.toBe(box())
+    } finally {
+      restore()
+    }
+  })
+
+  test('with a keyboard the box keeps focus for the next message', async () => {
+    const restore = pointer(false)
+    try {
+      const user = userEvent.setup()
+      await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+      await user.click(box())
+      await user.type(box(), 'run the tests')
+      await user.click(sendButton())
+      await flush()
+      expect(document.activeElement).toBe(box())
+    } finally {
+      restore()
+    }
+  })
+})

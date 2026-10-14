@@ -73,7 +73,7 @@ Passwords and keys stay in Android's encrypted storage, and the app's data is ex
 
 Android pauses apps in the background, which drops their connections. **Settings → Notifications → Stay connected**, on by default, keeps a small ongoing notification so your sessions stay live and alerts arrive at once. The notification has **Open** and **Stop**.
 
-The first time a machine appears, the app asks once to run without battery limits; **Battery limits** in Settings asks again. If Android stops the service, the app says why when you come back.
+Nothing is asked before you've added a computer or server. Once the first one appears, the app says why it wants notifications (so it can tell you when a session asks something or finishes), asks for them, then asks once to run without battery limits; **Battery limits** in Settings asks again. If Android stops the service, the app says why when you come back.
 
 A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-android-app).
 
@@ -82,6 +82,8 @@ A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-
 - From 0.15, a phone stays upright. A tablet, or a foldable when it's open, turns with the device and gets the wide layout: a sidebar with every session, and on a large tablet in landscape a side panel next to the chat.
 - The back button closes the top sheet first, then goes back a page.
 - Pasting an image from the keyboard attaches it, as on a computer.
+- The keyboard goes down after you send a message, so you can read the reply.
+- Keyboard shortcut hints such as `Ctrl K` are hidden on touch screens.
 - Long-press a session card for its menu.
 - `inyon://pair` and `inyon://hub` links open the app at the right sheet.
 

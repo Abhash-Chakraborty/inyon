@@ -119,7 +119,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
     )
 
   return (
-    <aside className="hidden w-[240px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[264px]">
+    <aside className="pt-safe hidden w-[240px] shrink-0 flex-col border-r border-line bg-sidebar md:flex lg:w-[264px]">
       <div className="flex h-[60px] items-center gap-2.5 px-5">
         <Logo target />
         <span className="text-[17px] font-semibold tracking-[-0.04em]">Inyon</span>
@@ -129,11 +129,11 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
         <button type="button" onClick={onSearch} className="mb-2 flex h-9 w-full items-center gap-2 rounded-full border border-line bg-elev px-3 text-[13px] text-fg-3 shadow-card hover:border-line-strong">
           <Search className="size-3.5" />
           Search or jump to…
-          <kbd className="ml-auto rounded-full border border-line px-2 font-mono text-[12px]">{keyLabel('cmd', 'K')}</kbd>
+          <kbd className="ml-auto rounded-full border border-line px-2 font-mono text-[12px] pointer-coarse:hidden">{keyLabel('cmd', 'K')}</kbd>
         </button>
         <button type="button" onClick={onNew} className={item(false)}>
           <Plus className="size-4" /> New session
-          <kbd className="ml-auto font-mono text-[12px] text-fg-3">{keyLabel('alt', 'N')}</kbd>
+          <kbd className="ml-auto font-mono text-[12px] text-fg-3 pointer-coarse:hidden">{keyLabel('alt', 'N')}</kbd>
         </button>
         <NavLink to="/" end className={({ isActive }) => item(isActive)}>
           <LayoutGrid className="size-4" /> Overview

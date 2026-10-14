@@ -459,7 +459,7 @@ export function MenuPopup({
                 <span className="block truncate">{it.label}</span>
                 {it.hint && <span className="block truncate text-[12px] text-fg-3">{it.hint}</span>}
               </span>
-              {it.keys && <span className="shrink-0 pl-3 font-mono text-[12px] text-fg-3">{it.keys}</span>}
+              {it.keys && <span className="shrink-0 pl-3 font-mono text-[12px] text-fg-3 pointer-coarse:hidden">{it.keys}</span>}
               {it.selected && <Check className="size-4 shrink-0 text-fg-2" />}
             </button>
           </div>

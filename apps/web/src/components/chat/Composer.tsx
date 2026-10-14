@@ -58,7 +58,8 @@ function useFiles(key: string) {
     () => ATTACH.get(key) ?? NO_FILES,
   )
 }
-const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+const coarsePointer = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
+const touch = coarsePointer()
 const LONG_PASTE_LINES = 40
 
 /** Subsequence match score; higher is better, -1 for no match. */
@@ -432,6 +433,9 @@ export function Composer({
       synced.current = ''
       setTextState('')
       setOrigin(null)
+      // on a touch screen the keyboard goes down, so the reply has the screen (a tablet's keyboard
+      // covers half of it); with a keyboard you keep typing
+      if (coarsePointer()) ta.current?.blur()
     }
     // the image previews aren't shown any more: free them (phones run out of memory otherwise)
     const gone = new Set(ready.map((f) => f.id))
