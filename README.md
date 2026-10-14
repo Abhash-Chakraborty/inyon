@@ -100,6 +100,25 @@ encrypted with Noise, so nothing needs an open port or an account.
 
 [Agents](https://inyon.abhashchakraborty.tech/docs/agents/) in the docs has the details for each.
 
+## Why not Paseo, Happy or Claude Remote Control?
+
+They're good tools, and each needs the agent started its own way: Paseo starts it from its
+daemon, Happy when you run `happy` instead of `claude`, and Remote Control only from inside
+`claude` itself. Inyon works the other way round. It picks up the agents already running in your tmux panes,
+including the one you started an hour ago over SSH, and you can still start new ones from it.
+
+| | Inyon | Paseo | Happy | Claude Remote Control |
+|---|---|---|---|---|
+| An agent already running in tmux | Any pane | No | No | Only by typing `/remote-control` in it |
+| Needs on a server | tmux and your agents, over SSH | Its daemon | The `happy` CLI or app | Claude Code |
+| Phone to computer | Encrypted end to end over a free tunnel or your VPN, or your own hub | Encrypted relay, or direct | Encrypted relay, or one you host | Anthropic's servers |
+| Agents | Six, from Claude Code to Antigravity | Seven | Several | Claude Code |
+| Account | None | None | A Happy key pair | A Claude plan, no API keys |
+
+What you give up: Paseo and Happy have iPhone apps and Inyon doesn't yet. Inyon also reads each
+agent's transcript and screen, so a new agent release can break a reader until Inyon catches up.
+Checked against their docs in October 2026.
+
 ## Quick start
 
 **With the Android app**, nothing is hosted anywhere:
@@ -117,8 +136,7 @@ encrypted with Noise, so nothing needs an open port or an account.
 Since 0.13 that line installs `inyon`, a 2 MB command, and its setup fetches the engine (about
 85 MB, with Bun inside) next to it as `inyon-engine`. The command draws the setup, the status
 screen and the pairing code; the engine runs the link and the hub. A 0.11 or 0.12 install crosses
-over on its next update, and an older one needs the line above again. The split is in beta for
-this release.
+over on its next update, and an older one needs the line above again.
 
 **From a browser**, run a hub on a machine that stays on, then open the address it prints:
 
@@ -149,6 +167,12 @@ OpenCode and Copilot readers are in beta, and the iOS app isn't built yet.
 
 The name comes from 인연 (*inyeon*), the Korean word for a bond between people. 연 on its own also
 means kite, which is the mark.
+
+## Support
+
+Inyon is free and MIT licensed. If it saves you a walk back to your desk and you want to chip in,
+[GitHub Sponsors](https://github.com/sponsors/Abhash-Chakraborty) is the place. Bug reports and
+pull requests help just as much.
 
 ## License
 

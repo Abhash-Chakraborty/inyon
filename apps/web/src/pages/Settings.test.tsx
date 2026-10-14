@@ -90,6 +90,20 @@ describe('About', () => {
     Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true })
     delete (window as any).isSecureContext
   })
+
+  test('Support Inyon opens the sponsor page in a new tab', async () => {
+    const user = userEvent.setup()
+    const opened: string[] = []
+    const open = window.open
+    window.open = ((url: string) => (opened.push(url), null)) as typeof window.open
+    try {
+      await render(page())
+      await user.click(screen.getByText('Support Inyon'))
+      expect(opened).toEqual(['https://github.com/sponsors/Abhash-Chakraborty'])
+    } finally {
+      window.open = open
+    }
+  })
 })
 
 describe('while the hub answers', () => {

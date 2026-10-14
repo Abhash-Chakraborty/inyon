@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, BookOpen, ChevronRight, Copy, Download, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
+import { Bell, BookOpen, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
 import { AGENTS, SOURCE_REPO } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
@@ -63,6 +63,8 @@ function Background() {
 /** Which Inyon this is, to check for updates or put in a bug report. */
 /** The public guide: setup, pairing and commands. */
 const GUIDE = `https://github.com/${SOURCE_REPO}#readme`
+/** Where people can pay for Inyon, if they want to (the repo's FUNDING.yml names the same). */
+const SPONSOR = 'https://github.com/sponsors/Abhash-Chakraborty'
 
 function About() {
   const [app, setApp] = useState<{ version: string; build: string } | undefined>()
@@ -96,6 +98,13 @@ function About() {
         className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50"
       >
         <BookOpen className="size-4 text-fg-3" /> How Inyon works <span className="text-fg-3">↗</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => openLink(SPONSOR)}
+        className="flex w-full items-center gap-3 px-4 py-3.5 text-left text-[14px] font-medium hover:bg-hover/50"
+      >
+        <Heart className="size-4 text-fg-3" /> Support Inyon <span className="text-fg-3">↗</span>
       </button>
     </Section>
   )
