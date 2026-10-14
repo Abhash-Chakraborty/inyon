@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { DOWNLOAD_URL, fetchLatestRelease, INSTALL_URL, LATEST_URL } from './versions.ts'
+import { DOWNLOAD_URL, fetchLatestRelease, LATEST_URL } from './versions.ts'
 
 /** A fetch that answers every request with `body` (JSON unless it's text) and notes the address. */
 function answering(body: unknown, status = 200) {
@@ -11,9 +11,9 @@ function answering(body: unknown, status = 200) {
   return { get, urls }
 }
 
-test('the newest release is read from latest.json on the website', async () => {
-  expect(DOWNLOAD_URL).toBe(`${INSTALL_URL}/download`)
-  expect(LATEST_URL).toBe('https://inyon.abhashchakraborty.tech/download/latest.json')
+test('the newest release is read from latest.json on the download host', async () => {
+  expect(DOWNLOAD_URL).toBe('https://dl.abhashchakraborty.tech')
+  expect(LATEST_URL).toBe('https://dl.abhashchakraborty.tech/latest.json')
   const listing = {
     version: '0.14.0',
     tag: 'v0.14.0',
@@ -42,14 +42,14 @@ test('the newest release is read from latest.json on the website', async () => {
 
 test('anything but a plain release number throws, so it never counts as an update', async () => {
   for (const version of ['0.15.0-rc.1', '0.15', 'latest', '', 15, undefined]) {
-    await expect(fetchLatestRelease(answering({ version, files: [] }).get)).rejects.toThrow("inyon.abhashchakraborty.tech didn't name a release")
+    await expect(fetchLatestRelease(answering({ version, files: [] }).get)).rejects.toThrow("dl.abhashchakraborty.tech didn't name a release")
   }
   await expect(fetchLatestRelease(answering('<html>not json</html>').get)).rejects.toThrow("didn't name a release")
   await expect(fetchLatestRelease(answering('null').get)).rejects.toThrow("didn't name a release")
 })
 
 test('a site that answers with an error, or not at all, throws', async () => {
-  await expect(fetchLatestRelease(answering('not found', 404).get)).rejects.toThrow('inyon.abhashchakraborty.tech answered 404')
+  await expect(fetchLatestRelease(answering('not found', 404).get)).rejects.toThrow('dl.abhashchakraborty.tech answered 404')
   const offline = (async () => {
     throw new TypeError('fetch failed')
   }) as unknown as typeof fetch

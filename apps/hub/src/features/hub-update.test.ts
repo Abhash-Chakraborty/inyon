@@ -247,12 +247,12 @@ describe('the hub checks for updates and starts one', () => {
 })
 
 describe('a hub run as the inyon program', () => {
-  /** latest.json on the website naming `version`; the addresses asked are noted in `urls` */
+  /** latest.json on the download host naming `version`; the addresses asked are noted in `urls` */
   const urls: string[] = []
   const releases = (version: unknown, status = 200) =>
     (async (url: string) => (urls.push(String(url)), Response.json({ version, tag: `v${version}`, files: [] }, { status }))) as unknown as typeof fetch
 
-  test('looks for a new release on the website, not in a checkout', async () => {
+  test('looks for a new release on the download host, not in a checkout', async () => {
     const asked: string[][] = []
     const run: Exec = async (cmd) => (asked.push(cmd), { code: 0, out: '' })
     const dataDir = path.join(root, 'bin1')
@@ -265,7 +265,7 @@ describe('a hub run as the inyon program', () => {
     expect((await same.status()).latest).toBeUndefined()
   })
 
-  test('a website that is down, or names no release, means no update rather than an error', async () => {
+  test('a download host that is down, or names no release, means no update rather than an error', async () => {
     const dataDir = path.join(root, 'bin1b')
     const statusFile = path.join(dataDir, 'update-status')
     const run: Exec = async () => ({ code: 0, out: '' })

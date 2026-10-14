@@ -206,7 +206,7 @@ inyon pair --json | jq -r '.link'
 | Variable | Meaning |
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
-| `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
+| `INYON_DOWNLOAD` | Where to fetch releases from, instead of the copy of the newest one at `https://dl.abhashchakraborty.tech` |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one |
 | `INYON_DATA_DIR` | Where a hub keeps its records (default `~/.inyon`) |
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |

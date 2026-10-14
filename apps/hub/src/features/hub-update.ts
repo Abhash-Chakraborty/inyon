@@ -238,7 +238,7 @@ export function hubUpdater(o: HubUpdateOptions) {
     }
   }
 
-  /** the newest release, from latest.json on the website */
+  /** the newest release, from latest.json on the download host */
   async function checkRelease() {
     let latest: string | undefined
     try {

@@ -31,7 +31,7 @@ These are read by `inyon` and `inyon-engine` on any computer.
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
-| `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
+| `INYON_DOWNLOAD` | Where to fetch releases from, instead of the copy of the newest one at `https://dl.abhashchakraborty.tech` |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
 | `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on a public address. Don't |

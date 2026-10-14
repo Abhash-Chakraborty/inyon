@@ -3,8 +3,8 @@ import { isNative, plugin } from './native.ts'
 import { toast } from './store.ts'
 
 /**
- * The Android app checks the website's copy of the newest release for a newer APK: at most once a
- * day on its own, and whenever Settings opens. It never installs anything. Download opens the APK
+ * The Android app checks the download host's copy of the newest release for a newer APK: at most
+ * once a day on its own, and whenever Settings opens. It never installs anything. Download opens the APK
  * in the browser and Android asks before installing it (and refuses one not signed with this
  * app's key).
  */
@@ -48,8 +48,8 @@ async function appVersion(): Promise<string | undefined> {
 
 /**
  * The newest release that has an APK, and where to download it. Releases carry the inyon program
- * too, so a release without an APK doesn't count. The website also keeps the APK as inyon.apk,
- * which says nothing about its version, so the versioned name comes first.
+ * too, so a release without an APK doesn't count. The download host also keeps the APK as
+ * inyon.apk, which says nothing about its version, so the versioned name comes first.
  */
 export async function latestApk(): Promise<{ version: string; url: string } | undefined> {
   const { version, files } = await fetchLatestRelease()
@@ -60,8 +60,8 @@ export async function latestApk(): Promise<{ version: string; url: string } | un
 
 /**
  * This app's version and, when there is one, the newer release and its APK. `force` asks the
- * website now (Settings opening); otherwise the last answer is used for a day. Undefined outside
- * the app.
+ * download host now (Settings opening); otherwise the last answer is used for a day. Undefined
+ * outside the app.
  */
 export function checkAppUpdate(force = false, now = Date.now()): Promise<AppUpdate | undefined> {
   // a start and a return to the app at the same moment share one request

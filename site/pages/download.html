@@ -35,8 +35,8 @@
     {{downloads}}
     <h2 id="verify">Checking a download</h2>
     <p>The release's list of checksums is signed with <a class="ext" href="https://jedisct1.github.io/minisign/">minisign</a>. Check the list's signature against Inyon's release key, then the files you downloaded against the list:</p>
-    <div class="code"><span class="lang">shell</span><button class="copy" type="button" aria-label="Copy">Copy</button><pre><code>curl -fsSLO https://inyon.abhashchakraborty.tech/download/SHA256SUMS
-curl -fsSLO https://inyon.abhashchakraborty.tech/download/SHA256SUMS.minisig
+    <div class="code"><span class="lang">shell</span><button class="copy" type="button" aria-label="Copy">Copy</button><pre><code>curl -fsSLO {{dl}}/SHA256SUMS
+curl -fsSLO {{dl}}/SHA256SUMS.minisig
 minisign -Vm SHA256SUMS -P RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 sha256sum --ignore-missing -c SHA256SUMS</code></pre></div>
     <p>On macOS, use <code>shasum -a 256 -c</code> in place of <code>sha256sum -c</code>. Releases before 0.14 have no signature; their lists are on GitHub.</p>

@@ -1,8 +1,10 @@
 name: Site
 
-# Publishes inyon.abhashchakraborty.tech: the home page, the docs (site/docs), the changelog and the
-# latest release's files under /download (each checked against its SHA256SUMS), plus get.sh and
-# get.ps1 at the root so the one-line installers can be typed short. site/build.ts does all of it.
+# Publishes inyon.abhashchakraborty.tech: the home page, the docs (site/docs), the changelog and
+# get.sh and get.ps1 at the root so the one-line installers can be typed short. The latest
+# release's files (each checked against its signed SHA256SUMS) go to dl.abhashchakraborty.tech,
+# and the ones versions before 0.17.1 read stay under the site's /download. site/build.ts builds
+# it all and site/publish-downloads.ts uploads the files.
 # The app itself is never hosted here; it runs on your own computers, phone and hub.
 on:
   push:
@@ -43,9 +45,18 @@ jobs:
       - name: Build the site
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        # the newest release's files, so the short installer URLs and /download always match the
-        # binaries the installers fetch
-        run: bun site/build.ts --mirror --out out
+        # the newest release's files, so the short installer URLs and the downloads always match
+        # the binaries the installers fetch
+        run: bun site/build.ts --mirror --out out --dl dl
+      # the same checked files to dl.abhashchakraborty.tech (an R2 bucket), where installs and
+      # updates download from since 0.17.1. Before the site deploys, so its download links never
+      # name a file that isn't there. The keys can only write that bucket
+      - name: Publish the downloads
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: bun site/publish-downloads.ts dl
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: out

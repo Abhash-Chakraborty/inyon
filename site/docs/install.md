@@ -40,7 +40,7 @@ Piped from `curl`, setup can't ask questions, so it takes the defaults: a comput
 
 ### Installing from somewhere else
 
-The installers download from this site's [/download](/download/), which holds the newest release. Without `gzip`, `get.sh` takes the uncompressed `inyon` from the same release on GitHub instead, checked against the same signed list. Installers from 0.14.0 and earlier download from GitHub.
+The installers download from `dl.abhashchakraborty.tech`, which holds every file of the newest release (the links on the [download page](/download/) point there too). Without `gzip`, `get.sh` takes the uncompressed `inyon`, checked against the same signed list. Installers from 0.14.1 to 0.17.0 download from this site's `/download`, which still keeps the files they need, and those from 0.14.0 and earlier from GitHub.
 
 Both read `INYON_DOWNLOAD`, a folder URL to fetch from instead. Every release stays on GitHub, so point it at one to pin a version:
 
@@ -118,9 +118,9 @@ The role is `link` for a computer paired with your phone, `node` for one that jo
 inyon update
 ```
 
-It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon` and `inyon-engine`, checks both against that list, and only then swaps them in. Every running role restarts on the new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
+It reads the newest version from `latest.json` on `dl.abhashchakraborty.tech` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon` and `inyon-engine`, checks both against that list, and only then swaps them in. Every running role restarts on the new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
 
-Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
+From 0.17.1 it updates from `dl.abhashchakraborty.tech`. Versions 0.14.1 to 0.17.0 update from this site's `/download`, and 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
 
 `inyon update --background` does the same without keeping your terminal open, which is how the app and the hub start an update remotely.
 

@@ -76,11 +76,11 @@ Every release ships a `SHA256SUMS` file, and from 0.14 a minisign signature of i
 RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 ```
 
-- `inyon update` and `inyon setup` refuse a list without a good signature before they download anything. The key is built into `inyon`, so an environment variable can't swap it for the real releases, on this site or on GitHub.
-- Installs and updates download from this site. Its `latest.json`, which names the newest version, isn't signed, so it only chooses what to fetch: `inyon update` also checks that the signed list names that version's APK, and refuses an old or altered copy. This ties each release to its Android build: if that build fails, machines stay on the version they have until the release is complete, rather than take one that isn't.
+- `inyon update` and `inyon setup` refuse a list without a good signature before they download anything. The key is built into `inyon`, so an environment variable can't swap it for the real releases, on `dl.abhashchakraborty.tech`, this site or GitHub.
+- Installs and updates download from `dl.abhashchakraborty.tech` (versions before 0.17.1 from this site's `/download`). Its `latest.json`, which names the newest version, isn't signed, so it only chooses what to fetch: `inyon update` also checks that the signed list names that version's APK, and refuses an old or altered copy. This ties each release to its Android build: if that build fails, machines stay on the version they have until the release is complete, rather than take one that isn't.
 - The installers check the signature when `minisign` is installed, and say so when it isn't. Either way they check every download against the list before running it.
 - A hub hands its own version's files to its machines with their sha256 in the command, so a machine always runs what its hub runs.
-- The files on this site are copied from the release. The site's build checks the signature and every program's checksum, and publishes nothing if one fails. A new release appears here only once its APK is listed in the signed list.
+- The files there are copied from the release. The site's build checks the signature and every program's checksum, and publishes nothing if one fails. A new release appears only once its APK is listed in the signed list.
 - The npm packages (`@abhash-chakraborty/inyon` and one per system) are published only by the release workflow on GitHub, through npm's trusted publishing, so no npm token is stored for them. The workflow copies the programs from the release after checking the signature and every checksum, and each version carries a provenance statement naming the run that published it. `npm audit signatures` checks that after installing.
 - `cloudflared` is pinned to one version and checked against a known hash.
 

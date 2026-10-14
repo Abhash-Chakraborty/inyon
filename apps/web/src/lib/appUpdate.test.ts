@@ -7,7 +7,7 @@ let appVersion = '0.6.3'
 let release: unknown = {}
 const fetched = mock((_url: string) => {})
 
-/** latest.json on the website, as its build writes it (the APK also under its stable name) */
+/** latest.json on the download host, as its build writes it (the APK also under its stable name) */
 const apk = (version: string, name = `inyon-${version}.apk`) => ({
   version,
   tag: `v${version}`,
@@ -35,20 +35,20 @@ afterEach(() => {
 })
 
 describe('the Android app looks for a newer APK', () => {
-  test('finds the newer release and its APK on the website', async () => {
-    expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3', latest: '0.6.4', url: 'https://inyon.abhashchakraborty.tech/download/inyon-0.6.4.apk' })
+  test('finds the newer release and its APK on the download host', async () => {
+    expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3', latest: '0.6.4', url: 'https://dl.abhashchakraborty.tech/inyon-0.6.4.apk' })
     expect(fetched.mock.calls[0][0]).toBe(LATEST_URL)
-    expect(LATEST_URL).toBe('https://inyon.abhashchakraborty.tech/download/latest.json')
+    expect(LATEST_URL).toBe('https://dl.abhashchakraborty.tech/latest.json')
   })
 
   test('takes the versioned APK, else another, and the stable name only when it is the only one', async () => {
     release = apk('0.6.4', 'inyon-release.apk')
-    expect((await checkAppUpdate(true))?.url).toBe('https://inyon.abhashchakraborty.tech/download/inyon-release.apk')
+    expect((await checkAppUpdate(true))?.url).toBe('https://dl.abhashchakraborty.tech/inyon-release.apk')
     release = { version: '0.6.4', files: [{ name: 'inyon.apk' }] }
-    expect((await checkAppUpdate(true))?.url).toBe('https://inyon.abhashchakraborty.tech/download/inyon.apk')
+    expect((await checkAppUpdate(true))?.url).toBe('https://dl.abhashchakraborty.tech/inyon.apk')
   })
 
-  test('asks the website at most once a day unless Settings asks', async () => {
+  test('asks the download host at most once a day unless Settings asks', async () => {
     const t = 1_000_000_000
     await checkAppUpdate(false, t)
     await checkAppUpdate(false, t + 60_000)
@@ -65,7 +65,7 @@ describe('the Android app looks for a newer APK', () => {
     expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3' })
     release = { version: '0.7.0', files: [{ name: 'get.sh', size: 1 }] }
     expect(await checkAppUpdate(true)).toEqual({ current: '0.6.3' })
-    // the website only ever lists a release, but a prerelease named there still isn't one
+    // the download host only ever lists a release, but a prerelease named there still isn't one
     release = apk('0.7.0-rc.1')
     await expect(checkAppUpdate(true)).rejects.toThrow("didn't name a release")
   })
@@ -86,9 +86,9 @@ describe('the Android app looks for a newer APK', () => {
 
   test('a failed check says so when asked for, and is quiet otherwise', async () => {
     globalThis.fetch = (async () => new Response('not found', { status: 404 })) as unknown as typeof fetch
-    await expect(checkAppUpdate(true)).rejects.toThrow('inyon.abhashchakraborty.tech answered 404')
+    await expect(checkAppUpdate(true)).rejects.toThrow('dl.abhashchakraborty.tech answered 404')
     globalThis.fetch = (async () => new Response('<html>', { status: 200 })) as unknown as typeof fetch
-    await expect(checkAppUpdate(true)).rejects.toThrow("inyon.abhashchakraborty.tech didn't name a release")
+    await expect(checkAppUpdate(true)).rejects.toThrow("dl.abhashchakraborty.tech didn't name a release")
     // a failed check on its own isn't repeated on every return to the app, only an hour later
     const t = 2_000_000_000
     localStorage.removeItem('inyon.app-update')

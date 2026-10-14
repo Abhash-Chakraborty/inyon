@@ -164,19 +164,20 @@ test.skipIf(!SIGNED)('with minisign the list must carry a good signature, from t
   await refused()
   signature = 'none'
   await refused()
-  // the test key only stands in because downloads are pointed away from the website; the release
+  // the test key only stands in because downloads are pointed away from the real ones; the release
   // key is the default, and this list isn't signed with it
   signature = 'good'
   await refused({ INYON_SIGNING_KEY: '' })
   expect((await run()).code).toBe(0)
 })
 
+const DL = 'https://dl.abhashchakraborty.tech/'
 const SITE = 'https://inyon.abhashchakraborty.tech/download/'
 const GITHUB = 'https://github.com/Abhash-Chakraborty/inyon/releases/'
 
 /**
  * A curl in front of the real one (put first on `PATH`, or into `bin`): it notes each address on
- * the website or GitHub and fetches that file from the local server instead, so nothing leaves
+ * the download host, the website or GitHub and fetches that file from the local server instead, so nothing leaves
  * this machine. Returns the addresses noted so far.
  */
 function realAddresses(bin = tools([])) {
@@ -187,7 +188,7 @@ function realAddresses(bin = tools([])) {
     `#!/bin/sh
 n=$#
 for a in "$@"; do
-  case "$a" in ${SITE}* | ${GITHUB}*) echo "$a" >> "${asked}"; a="http://127.0.0.1:${server.port}/\${a##*/}" ;; esac
+  case "$a" in ${DL}* | ${SITE}* | ${GITHUB}*) echo "$a" >> "${asked}"; a="http://127.0.0.1:${server.port}/\${a##*/}" ;; esac
   set -- "$@" "$a"
 done
 shift $n
@@ -198,24 +199,24 @@ exec ${Bun.which('curl')} "$@"
   return { bin, asked: () => (existsSync(asked) ? readFileSync(asked, 'utf8').trim().split('\n') : []) }
 }
 
-test('by default the release comes from the website', async () => {
+test('by default the release comes from the download host', async () => {
   const curl = realAddresses()
   const r = await run({ PATH: `${curl.bin}:${process.env.PATH}`, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '', INYON_SIGNING_KEY: '' })
   // the test key signed this list, and the release key is the one that counts here
   if (SIGNED) {
     expect(r.code).toBe(1)
-    expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}SHA256SUMS.minisig`])
+    expect(curl.asked()).toEqual([`${DL}SHA256SUMS`, `${DL}SHA256SUMS.minisig`])
   } else {
     expect(r.code).toBe(0)
-    expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}${NAME}.gz`])
+    expect(curl.asked()).toEqual([`${DL}SHA256SUMS`, `${DL}${NAME}.gz`])
   }
 })
 
-test.skipIf(!SIGNED)('a signing key from the environment is ignored for the website and GitHub, named or not', async () => {
+test.skipIf(!SIGNED)('a signing key from the environment is ignored for the download host, the website and GitHub, named or not', async () => {
   const curl = realAddresses()
   const PATH = `${curl.bin}:${process.env.PATH}`
   // INYON_SIGNING_KEY names the test key, which signed this list, every time
-  for (const INYON_DOWNLOAD of ['', SITE, SITE.slice(0, -1), `${GITHUB}latest/download`, `${GITHUB}download/v0.14.0`]) {
+  for (const INYON_DOWNLOAD of ['', DL, DL.slice(0, -1), SITE, SITE.slice(0, -1), `${GITHUB}latest/download`, `${GITHUB}download/v0.14.0`]) {
     const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
     expect(r.code).toBe(1)
     expect(r.out).toContain("isn't signed by Inyon's release key, so nothing was installed")
@@ -227,23 +228,33 @@ test.skipIf(!SIGNED)('a signing key from the environment is ignored for the webs
   expect((await run()).code).toBe(0)
 })
 
-test("without gzip, the website's release takes the plain file from GitHub, checked against the same list", async () => {
+test('without gzip, the download host gives the plain file, checked against the same list', async () => {
   release.apk = '0.14.0'
   const curl = realAddresses(tools(TOOLS))
   const r = await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })
+  expect(r.code).toBe(0)
+  expect(readFileSync(installed(), 'utf8')).toBe(PROGRAM)
+  expect(curl.asked()).toEqual([`${DL}SHA256SUMS`, `${DL}${NAME}`])
+})
+
+test("without gzip, the website's old copy takes the plain file from GitHub, checked against the same list", async () => {
+  release.apk = '0.14.0'
+  const curl = realAddresses(tools(TOOLS))
+  const env = { PATH: curl.bin, INYON_DOWNLOAD: SITE.slice(0, -1), TETHER_DOWNLOAD: '' }
+  const r = await run(env)
   expect(r.code).toBe(0)
   expect(readFileSync(installed(), 'utf8')).toBe(PROGRAM)
   expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${GITHUB}download/v0.14.0/${NAME}`])
   // a list without the APK doesn't say which tag: the plain file is asked of the website
   release.apk = ''
   rmSync(path.join(home, 'asked'))
-  expect((await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })).code).toBe(0)
+  expect((await run(env)).code).toBe(0)
   expect(curl.asked()).toEqual([`${SITE}SHA256SUMS`, `${SITE}${NAME}`])
   // the plain file from GitHub must match the list like any other
   release.apk = '0.14.0'
   release.sums = `${sha('tampered')}  ${NAME}\n${sha('the app')}  inyon-0.14.0.apk\n`
   rmSync(installed())
-  const bad = await run({ PATH: curl.bin, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: '' })
+  const bad = await run(env)
   expect(bad.code).toBe(1)
   expect(bad.out).toContain("didn't match the release's checksum")
   expect(existsSync(installed())).toBe(false)

@@ -8,7 +8,7 @@ use minisign_verify::{PublicKey, Signature};
 
 use crate::http::host_of;
 use crate::paths::env_var;
-use crate::update::{INSTALL_URL, RELEASES_REPO};
+use crate::update::{INSTALL_URL, RELEASES, RELEASES_REPO};
 
 /// Inyon's release key (minisign key 0F27F489FF0BBD53).
 pub const RELEASE_KEY: &str = "RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6";
@@ -48,19 +48,20 @@ pub fn key_line(text: &str) -> Option<String> {
     text.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.starts_with("untrusted comment:")).map(String::from)
 }
 
-/// Whether `base` is where real releases come from: anything on the website, or the releases on
-/// GitHub (the newest, or one pinned to a tag).
+/// Whether `base` is where real releases come from: the download host, anything on the website
+/// (its /download kept the newest release before 0.17.1), or the releases on GitHub (the newest,
+/// or one pinned to a tag).
 fn official(base: &str) -> bool {
     let base = base.trim().to_ascii_lowercase();
     let host = host_of(&base);
     let host = host.rsplit('@').next().unwrap_or(&host).split(':').next().unwrap_or("");
     let path = base.split_once("://").map_or(base.as_str(), |(_, rest)| rest).split_once('/').map_or("", |(_, p)| p);
-    host == host_of(INSTALL_URL) || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+    host == host_of(RELEASES) || host == host_of(INSTALL_URL) || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
 }
 
 /// The key releases from `base` must be signed with. Tests and the container runs point
 /// INYON_DOWNLOAD at a mock release and INYON_SIGNING_KEY at the key that signed it; with the real
-/// releases (the website's copy or GitHub's) the variable is ignored, so an environment variable
+/// releases (the download host's copy, the website's or GitHub's) the variable is ignored, so an environment variable
 /// alone can't point an install at another key.
 pub fn signing_key(base: &str) -> String {
     if !official(base) {
@@ -95,8 +96,11 @@ mod tests {
     }
 
     #[test]
-    fn the_website_and_the_github_releases_are_official_and_nothing_else_is() {
+    fn the_download_host_the_website_and_the_github_releases_are_official_and_nothing_else_is() {
         for base in [
+            "https://dl.abhashchakraborty.tech",
+            "https://dl.abhashchakraborty.tech/",
+            "HTTPS://DL.AbhashChakraborty.tech",
             "https://inyon.abhashchakraborty.tech/download",
             "https://inyon.abhashchakraborty.tech/download/",
             "HTTPS://Inyon.AbhashChakraborty.tech/download",
@@ -110,6 +114,8 @@ mod tests {
             "http://127.0.0.1:8000/download",
             "http://release:8000/releases/latest/download",
             "https://inyon.abhashchakraborty.tech.example.com/download",
+            "https://dl.abhashchakraborty.tech.example.com",
+            "https://abhashchakraborty.tech/download",
             "https://github.com/someone-else/inyon/releases/latest/download",
             "https://example.com/github.com/Abhash-Chakraborty/inyon/releases/latest/download",
         ] {

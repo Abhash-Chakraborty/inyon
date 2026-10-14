@@ -9,7 +9,7 @@ This takes about two minutes and needs nothing hosted anywhere. You need an Andr
 
 Download the APK on your phone and open it:
 
-<p><a class="btn" href="/download/inyon.apk">Download for Android</a></p>
+<p><a class="btn" href="https://dl.abhashchakraborty.tech/inyon.apk">Download for Android</a></p>
 
 Android asks once to allow installs from your browser. Later versions install over this one, and the app tells you when one is out.
 

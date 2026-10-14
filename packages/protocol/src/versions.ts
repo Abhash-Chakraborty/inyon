@@ -20,10 +20,11 @@ export const APP_ID = 'tech.abhashchakraborty.inyon'
 /** The repository every release is published on. */
 export const RELEASES_REPO = SOURCE_REPO
 /**
- * The website's copy of the newest release, where the app and the inyon program are downloaded
- * from. Older releases stay on GitHub only.
+ * The copy of the newest release the app and the inyon program are downloaded from, on its own
+ * host since 0.17.1 (before that, the website's INSTALL_URL/download, which still keeps one for
+ * those versions). Older releases stay on GitHub only.
  */
-export const DOWNLOAD_URL = `${INSTALL_URL}/download`
+export const DOWNLOAD_URL = 'https://dl.abhashchakraborty.tech'
 /** What that copy is: {"version":"0.14.0","tag":"v0.14.0","date":…,"files":[{name,size,sha256}…]} */
 export const LATEST_URL = `${DOWNLOAD_URL}/latest.json`
 
@@ -73,8 +74,8 @@ export interface ReleaseFile {
 }
 
 /**
- * The newest release, from latest.json on the website: its version ("0.14.0") and its files,
- * each downloaded from `${DOWNLOAD_URL}/<name>`. Throws when the site can't be reached or doesn't
+ * The newest release, from latest.json on the download host: its version ("0.14.0") and its files,
+ * each downloaded from `${DOWNLOAD_URL}/<name>`. Throws when the host can't be reached or doesn't
  * name a plain release number, so a prerelease or a broken file never counts as an update.
  * latest.json isn't signed: it only says what is newest. What gets installed is checked on its
  * own, by `inyon update` against the release's signed SHA256SUMS and by Android against the

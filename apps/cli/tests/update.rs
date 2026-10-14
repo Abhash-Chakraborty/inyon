@@ -679,9 +679,14 @@ fn ignores_the_key_from_the_environment(base: &str) {
 }
 
 #[test]
-fn the_websites_copy_ignores_a_signing_key_from_the_environment() {
-    assert_eq!(update::RELEASES, "https://inyon.abhashchakraborty.tech/download");
+fn the_download_hosts_copy_ignores_a_signing_key_from_the_environment() {
+    assert_eq!(update::RELEASES, "https://dl.abhashchakraborty.tech");
     ignores_the_key_from_the_environment(update::RELEASES);
+}
+
+#[test]
+fn the_websites_old_copy_ignores_a_signing_key_from_the_environment() {
+    ignores_the_key_from_the_environment("https://inyon.abhashchakraborty.tech/download");
 }
 
 #[test]
@@ -927,7 +932,7 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     let said = RefCell::new(Vec::new());
     let say = |l: &str| said.borrow_mut().push(l.to_string());
 
-    // nothing set: the newest release on the website
+    // nothing set: the newest release on the download host
     assert_eq!(source(), Source::Release(update::RELEASES.to_string()));
 
     // a release (INYON_DOWNLOAD stands in for the website): checked against its signed

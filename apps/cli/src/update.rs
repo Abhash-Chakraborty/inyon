@@ -1,6 +1,6 @@
 //! `inyon update`: replaces the installed programs with the newest release and restarts each job
-//! they run as (the phone link, the hub connection, the hub). The release comes from the website,
-//! which keeps a copy of the newest one (RELEASES; INYON_DOWNLOAD points elsewhere). It is two
+//! they run as (the phone link, the hub connection, the hub). The release comes from the download
+//! host, which keeps a copy of the newest one (RELEASES; INYON_DOWNLOAD points elsewhere). It is two
 //! files, the engine and this program, checked against the release's SHA256SUMS like get.sh does
 //! (the gzipped copy of each first); the list itself must carry a signature by Inyon's release
 //! key. Nothing is replaced until both downloads match, and the old copies come back if the new
@@ -20,13 +20,14 @@ use crate::service::{Installed, Role};
 use crate::signing;
 use crate::sys::{Libc, Platform, Proc};
 
-/// The GitHub repository the releases are published on. Every release stays there; the website
-/// keeps a copy of the newest one only.
+/// The GitHub repository the releases are published on. Every release stays there; the download
+/// host keeps a copy of the newest one only.
 pub const RELEASES_REPO: &str = "Abhash-Chakraborty/inyon";
 pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
-/// Where the newest release is downloaded from: the website's copy of it (INSTALL_URL/download),
-/// with latest.json naming its version next to the files.
-pub const RELEASES: &str = "https://inyon.abhashchakraborty.tech/download";
+/// Where the newest release is downloaded from: a copy of it on its own host (before 0.17.1 the
+/// website's INSTALL_URL/download, which still keeps one for those versions), with latest.json
+/// naming its version next to the files.
+pub const RELEASES: &str = "https://dl.abhashchakraborty.tech";
 
 /// What the app reads to follow an update it started: running, done <version>, current, failed: …
 pub fn status_file() -> PathBuf {
@@ -233,7 +234,8 @@ pub fn sum_for(sums: &str, name: &str) -> Option<String> {
 /// - a GitHub release pinned to a tag (…/releases/download/v1.2.3) says so itself;
 /// - GitHub's newest (…/releases/latest/download): `…/releases/latest` redirects to
 ///   `…/releases/tag/v1.2.3`, so one request without following it says which;
-/// - anything else (the website's copy, or a mirror) names it in latest.json next to the files.
+/// - anything else (the download host, the website's old copy, or a mirror) names it in
+///   latest.json next to the files.
 pub fn latest_version(base: &str) -> Result<String, Error> {
     let base = base.trim_end_matches('/');
     if let Some(tag) = pinned_tag(base) {
@@ -258,7 +260,7 @@ fn pinned_tag(base: &str) -> Option<String> {
     (!rest.is_empty() && !rest.contains('/')).then(|| rest.trim_start_matches('v').to_string())
 }
 
-/// Whether the newest version at `base` comes from latest.json (the website or a mirror) rather
+/// Whether the newest version at `base` comes from latest.json (the download host or a mirror) rather
 /// than from GitHub's redirect or a pinned tag.
 pub fn from_listing(base: &str) -> bool {
     let base = base.trim_end_matches('/');
@@ -267,7 +269,7 @@ pub fn from_listing(base: &str) -> bool {
 
 /// latest.json isn't signed, so it only chooses which release to fetch; the signed SHA256SUMS has
 /// to agree. Each release lists its APK as inyon-<version>.apk, so a list without the one for
-/// `version` belongs to another release: an old copy, or the website caught mid-update.
+/// `version` belongs to another release: an old copy, or the download host caught mid-update.
 pub fn check_listed_version(sums: &str, version: &str) -> Result<(), Error> {
     let apk = format!("inyon-{version}.apk");
     if sum_for(sums, &apk).is_some() {
@@ -508,7 +510,7 @@ pub fn cleanup_old(files: &dyn Files, target: &Path, now: u64) {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
-    /// from the releases (get.sh, get.ps1), the website's copy unless INYON_DOWNLOAD says otherwise
+    /// from the releases (get.sh, get.ps1), the download host's copy unless INYON_DOWNLOAD says otherwise
     Binary,
     /// from the hub this machine was added to
     Hub(String),
@@ -944,8 +946,8 @@ mod tests {
     }
 
     #[test]
-    fn the_releases_are_the_websites_copy() {
-        assert_eq!(RELEASES, format!("{INSTALL_URL}/download"));
+    fn the_releases_are_the_download_hosts_copy() {
+        assert_eq!(RELEASES, "https://dl.abhashchakraborty.tech");
         assert!(from_listing(RELEASES));
         assert!(from_listing("http://127.0.0.1:8000/download/"));
         assert!(!from_listing("https://github.com/Abhash-Chakraborty/inyon/releases/latest/download"));

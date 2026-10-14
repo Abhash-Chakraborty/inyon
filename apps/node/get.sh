@@ -1,22 +1,23 @@
 #!/bin/sh
 # Gets inyon for this computer and sets it up for the Inyon phone app:
 #   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
-# It downloads the inyon command for this system into ~/.inyon/bin from the website's copy of the
-# newest release, checks it against the release's checksums (and their signature, when minisign
-# is installed), and runs its setup, which fetches the engine behind it, starts it in the
+# It downloads the inyon command for this system into ~/.inyon/bin from the download host's copy
+# of the newest release, checks it against the release's checksums (and their signature, when
+# minisign is installed), and runs its setup, which fetches the engine behind it, starts it in the
 # background at login, and shows a code to scan with the app. With --hub it sets up an Inyon
 # hub instead (the server the app signs in to):
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
-BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://inyon.abhashchakraborty.tech/download}}"
+BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://dl.abhashchakraborty.tech}}"
 # the minisign key a release's SHA256SUMS is signed with (the inyon command carries the same one)
 KEY=RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 SITE=https://inyon.abhashchakraborty.tech
+DL=https://dl.abhashchakraborty.tech
 GITHUB=https://github.com/Abhash-Chakraborty/inyon/releases
 # a mock release for tests signs with a key of its own; it only counts with downloads pointed
-# somewhere other than the website or GitHub
+# somewhere other than the download host, the website or GitHub
 case "$BASE" in
-  "$SITE" | "$SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
+  "$DL" | "$DL"/* | "$SITE" | "$SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
   *) if [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && [ -n "${INYON_SIGNING_KEY:-}" ]; then KEY="$INYON_SIGNING_KEY"; fi ;;
 esac
 ROLE=setup
@@ -83,9 +84,9 @@ if [ -n "$want_gz" ] && command -v gzip >/dev/null 2>&1; then
   gzip -dc "$tmp.gz" > "$tmp"
   rm -f "$tmp.gz"
 else
-  # the website keeps only the gzipped copies of a large release; the plain ones stay on GitHub
-  # under the release's tag, which the list gives away in its APK's name (inyon-<version>.apk).
-  # Either way the file is checked against the same list below
+  # the website's old copy (before 0.17.1) keeps only the gzipped files of a large release; the
+  # plain ones stay on GitHub under the release's tag, which the list gives away in its APK's
+  # name (inyon-<version>.apk). Either way the file is checked against the same list below
   plain="$BASE/$name"
   case "$BASE" in
     "$SITE"/download | "$SITE"/download/)

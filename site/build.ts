@@ -2,8 +2,10 @@
 // and the changelog (from GitHub releases). Static files only; GitHub Pages serves them.
 //
 //   bun site/build.ts                 build into site/out, release details read from GitHub
-//   bun site/build.ts --mirror        also download the latest release's files into /download,
-//                                     each checked against its SHA256SUMS (the Pages workflow)
+//   bun site/build.ts --mirror        also download the latest release's files, each checked
+//                                     against its SHA256SUMS (the Pages workflow), into site/dl
+//                                     (--dl <dir>) for dl.abhashchakraborty.tech, and the ones
+//                                     versions before 0.17.1 read into the site's /download
 //   bun site/build.ts --offline       skip GitHub entirely (no download table, no changelog)
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,10 +15,13 @@ const ROOT = dirname(import.meta.dir);
 const SITE = import.meta.dir;
 const args = process.argv.slice(2);
 const OUT = args.includes("--out") ? args[args.indexOf("--out") + 1] : join(SITE, "out");
+const DL = args.includes("--dl") ? args[args.indexOf("--dl") + 1] : join(SITE, "dl");
 const MIRROR = args.includes("--mirror");
 const OFFLINE = args.includes("--offline");
 const REPO = "Abhash-Chakraborty/inyon";
 const ORIGIN = "https://inyon.abhashchakraborty.tech";
+/** Where the newest release is downloaded from (an R2 bucket; site/publish-downloads.ts fills it). */
+export const DL_ORIGIN = "https://dl.abhashchakraborty.tech";
 const GITHUB = `https://github.com/${REPO}`;
 
 // The sidebar, in reading order. Every page in site/docs must be listed here (checked below).
@@ -49,9 +54,10 @@ interface Release {
   version: string;
   tag: string;
   date: string;
+  /** every file, as dl.abhashchakraborty.tech serves them */
   assets: Asset[];
-  /** true when the uncompressed programs were left out to stay inside the Pages size limit */
-  gzOnly?: boolean;
+  /** the ones the site's own /download keeps for versions before 0.17.1, inside the Pages size limit */
+  site: Asset[];
 }
 
 const HOME = {
@@ -282,7 +288,7 @@ interface GhRelease {
 /** What /download may take up, leaving room for the pages and pictures under Pages' 1 GB. */
 const MIRROR_BUDGET = 900 * 1024 * 1024;
 
-// Files the site serves from /download. The old tether-node copies stay on GitHub only.
+// Files served from dl and /download. The old tether-node copies stay on GitHub only.
 const mirrored = (name: string) => !name.startsWith("tether-node");
 
 /**
@@ -313,15 +319,16 @@ async function latestRelease(): Promise<{ release: Release; raw: GhRelease } | n
     console.log(`  ${r.tag_name} isn't complete yet (no APK in its SHA256SUMS), so it waits`);
   }
   if (!raw) throw new Error("none of the last 10 releases is complete");
-  let assets = raw.assets.filter((a) => mirrored(a.name)).map((a) => ({ name: a.name, size: a.size }));
+  const assets: Asset[] = raw.assets.filter((a) => mirrored(a.name)).map((a) => ({ name: a.name, size: a.size }));
   // GitHub Pages publishes at most 1 GB. Every installer and updater takes a program's .gz copy
-  // when there is one, so the plain copies are the ones to leave on GitHub if a release outgrows it
+  // when there is one, so the plain copies are the ones the site's /download leaves out if a
+  // release outgrows it (dl has them all)
   const total = assets.reduce((n, a) => n + a.size, 0);
   const names = new Set(assets.map((a) => a.name));
-  const gzOnly = total > MIRROR_BUDGET;
-  if (gzOnly) {
-    assets = assets.filter((a) => !names.has(`${a.name}.gz`));
-    console.log(`  ${mb(total)} is over the ${mb(MIRROR_BUDGET)} budget: serving the .gz copies only`);
+  let site = assets;
+  if (total > MIRROR_BUDGET) {
+    site = assets.filter((a) => !names.has(`${a.name}.gz`));
+    console.log(`  ${mb(total)} is over the ${mb(MIRROR_BUDGET)} budget: /download keeps the .gz copies only`);
   }
   return {
     raw,
@@ -330,7 +337,7 @@ async function latestRelease(): Promise<{ release: Release; raw: GhRelease } | n
       tag: raw.tag_name,
       date: raw.published_at.slice(0, 10),
       assets,
-      gzOnly,
+      site,
     },
   };
 }
@@ -361,10 +368,13 @@ export function minisignOk(data: Buffer, sig: string, key: string): boolean {
 }
 
 /** Downloads every mirrored file of the release and refuses to publish one that doesn't match the
- *  release's SHA256SUMS, so the domain can never serve something the release didn't sign off. */
+ *  release's SHA256SUMS, so neither domain can serve something the release didn't sign off. */
 async function mirror(release: Release, raw: GhRelease) {
   const dir = join(OUT, "download");
   mkdirSync(dir, { recursive: true });
+  rmSync(DL, { recursive: true, force: true });
+  mkdirSync(DL, { recursive: true });
+  const onSite = new Set(release.site.map((a) => a.name));
   const fetchAsset = async (name: string) => {
     const a = raw.assets.find((x) => x.name === name);
     if (!a) throw new Error(`release has no ${name}`);
@@ -401,11 +411,15 @@ async function mirror(release: Release, raw: GhRelease) {
       throw new Error(`${asset.name}: not in SHA256SUMS`);
     }
     asset.sha256 = sha;
-    writeFileSync(join(dir, asset.name), data);
+    writeFileSync(join(DL, asset.name), data);
+    if (onSite.has(asset.name)) writeFileSync(join(dir, asset.name), data);
     // the installers are also served short, at the site's root
     if (asset.name === "get.sh" || asset.name === "get.ps1") writeFileSync(join(OUT, asset.name), data);
     // a stable name for the newest APK
-    if (asset.name.endsWith(".apk")) writeFileSync(join(dir, "inyon.apk"), data);
+    if (asset.name.endsWith(".apk")) {
+      writeFileSync(join(DL, "inyon.apk"), data);
+      writeFileSync(join(dir, "inyon.apk"), data);
+    }
     console.log(`  ${asset.name} ${mb(asset.size)} ${want ? "checked" : ""}`);
   }
 }
@@ -783,7 +797,8 @@ async function main() {
   const fill = (html: string) =>
     html
       .replaceAll("{{version}}", version ? esc(version) : "")
-      .replaceAll("{{apk}}", latest ? "/download/inyon.apk" : `${GITHUB}/releases/latest`)
+      .replaceAll("{{apk}}", latest ? `${DL_ORIGIN}/inyon.apk` : `${GITHUB}/releases/latest`)
+      .replaceAll("{{dl}}", DL_ORIGIN)
       .replaceAll(
         "{{apk-meta}}",
         latest
@@ -851,8 +866,11 @@ async function main() {
     const r = latest.release;
     writeFileSync(
       join(OUT, "download/latest.json"),
-      JSON.stringify({ version: r.version, tag: r.tag, date: r.date, files: r.assets }, null, 2),
+      JSON.stringify({ version: r.version, tag: r.tag, date: r.date, files: r.site }, null, 2),
     );
+    if (MIRROR) {
+      writeFileSync(join(DL, "latest.json"), JSON.stringify({ version: r.version, tag: r.tag, date: r.date, files: r.assets }, null, 2));
+    }
   }
   writeFileSync(
     join(OUT, "404.html"),
@@ -952,7 +970,7 @@ const PLATFORMS: { os: string; arch: string; match: RegExp }[] = [
 function downloadTable(r?: Release): string {
   if (!r) return `<p>The files are on <a class="ext" href="${GITHUB}/releases/latest">the latest release</a>.</p>`;
   const link = (a: Asset) =>
-    `<a href="/download/${encodeURIComponent(a.name)}" download><code>${esc(a.name)}</code></a><span class="size">${mb(a.size)}</span>`;
+    `<a href="${DL_ORIGIN}/${encodeURIComponent(a.name)}" download><code>${esc(a.name)}</code></a><span class="size">${mb(a.size)}</span>`;
   const rows = PLATFORMS.map((p) => {
     const files = r.assets.filter((a) => p.match.test(a.name));
     if (!files.length) return "";
@@ -963,7 +981,7 @@ function downloadTable(r?: Release): string {
   const programs = new Set(r.assets.filter((a) => PLATFORMS.some((p) => p.match.test(a.name))).map((a) => a.name));
   const extra = r.assets.filter((a) => !programs.has(a.name) && !programs.has(`${a.name}.gz`));
   return `<div class="table"><table class="files"><thead><tr><th>System</th><th>Files (gzip)</th></tr></thead><tbody>${rows}</tbody></table></div>
-<p class="note">${r.gzOnly ? `The uncompressed copies of this release are on <a class="ext" href="${GITHUB}/releases/tag/${esc(r.tag)}">GitHub</a>.` : "Each file is also served uncompressed, without the <code>.gz</code>."} The installers pick the right ones for you.</p>
+<p class="note">Each file is also served uncompressed, without the <code>.gz</code>. The installers pick the right ones for you.</p>
 <h2 id="everything-else">Everything else</h2>
 <div class="table"><table class="files"><tbody>${extra.map((a) => `<tr><td>${link(a)}</td></tr>`).join("")}</tbody></table></div>`;
 }

@@ -161,13 +161,13 @@ test('from 0.7.0 a machine runs its own inyon update, detached, and its status i
   expect(m.calls[1]!.cmd).toBe('cat "$HOME/.inyon/node/update-status" 2>/dev/null || cat "$HOME/.tether-node/update-status" 2>/dev/null; true')
 })
 
-test('the phone learns the newest release from latest.json on the website', async () => {
+test('the phone learns the newest release from latest.json on the download host', async () => {
   const u = new NodeUpdates(fast)
   const urls: string[] = []
   const get = (async (url: string) => (urls.push(url), Response.json({ version: '0.7.2', tag: 'v0.7.2', files: [] }))) as unknown as typeof fetch
   clearInterval(u.watchReleases(get))
   await until(() => u.latestRelease === '0.7.2')
-  expect(urls).toEqual(['https://inyon.abhashchakraborty.tech/download/latest.json'])
+  expect(urls).toEqual(['https://dl.abhashchakraborty.tech/latest.json'])
 })
 
 test('a latest.json that fails or names no release leaves the last known version alone', async () => {
