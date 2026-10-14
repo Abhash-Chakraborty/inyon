@@ -44,6 +44,8 @@ When the agent asks something, the composer is replaced by the question:
 
 Each answer is tied to the question it was shown for. If the agent has already moved on, an old card can't answer the wrong question.
 
+If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers.
+
 You can also answer straight from the [overview](overview.md#whats-on-it) or from a notification, without opening the session.
 
 ## Writing messages

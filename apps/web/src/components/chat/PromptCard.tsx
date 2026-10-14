@@ -45,12 +45,64 @@ function joinWrapped(lines: string[]) {
   return out
 }
 
-export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host: string; pane: string }) {
+type DiffKind = 'add' | 'del' | 'same'
+
+/**
+ * Claude's edit prompt frames a diff: "12  text" (unchanged), "14 -  text" (removed), "14 +  text"
+ * (added), with the terminal's wrapped tails on lines of their own. Each line's kind, or undefined
+ * when the block isn't a diff (a command, a file's content).
+ */
+export function diffKinds(lines: string[]): DiffKind[] | undefined {
+  if (!lines.some((l) => /^\s*\d+ [-+]/.test(l))) return undefined
+  let last: DiffKind = 'same'
+  return lines.map((l) => {
+    const m = /^\s*\d+(?: ([-+ ])|$)/.exec(l)
+    if (m) last = m[1] === '+' ? 'add' : m[1] === '-' ? 'del' : 'same'
+    // a line without a number is the rest of the one above, wrapped
+    return last
+  })
+}
+
+/** A command or a file's text; an edit's diff in the Changes view's colours. */
+function CodeBlock({ lines }: { lines: string[] }) {
+  const text = lines.map((l) => l.replace(/^ /, ''))
+  while (text.length && !text[0]!.trim()) text.shift()
+  while (text.length && !text[text.length - 1]!.trim()) text.pop()
+  const kinds = diffKinds(text)
+  return (
+    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-code px-3 py-2 font-mono text-[12.5px] leading-relaxed">
+      {kinds
+        ? text.map((l, i) => {
+            const sign = /^(\s*\d+ )([-+])(.*)$/.exec(l)
+            return (
+              <span key={i} data-diff={kinds[i]} className={clsx('-mx-3 block px-3', kinds[i] === 'add' ? 'bg-[var(--diff-add)]' : kinds[i] === 'del' && 'bg-[var(--diff-del)]')}>
+                {sign ? (
+                  <>
+                    {sign[1]}
+                    <span className={sign[2] === '+' ? 'text-ok' : 'text-danger'}>{sign[2]}</span>
+                    {sign[3]}
+                  </>
+                ) : (
+                  l || ' '
+                )}
+              </span>
+            )
+          })
+        : text.join('\n').trim()}
+    </pre>
+  )
+}
+
+/** `disabled`: shown as last seen while the machine reconnects; nothing can be answered yet */
+export function PromptCard({ prompt, host, pane, disabled }: { prompt: ScreenPrompt; host: string; pane: string; disabled?: boolean }) {
   const [busy, setBusy] = useState<number | string | null>(null)
   const [freeText, setFreeText] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const { title, blocks } = parseBody(prompt.body)
+  // the hub sends Claude's prompts as whole lines, so their line breaks are the agent's own
+  const wholeLines = (prompt as { wholeLines?: boolean }).wholeLines === true
   const isQuestion = !!prompt.tabs?.length || /\?$/.test(title)
+  const locked = busy !== null || !!disabled
 
   useEffect(() => setBusy(null), [prompt])
   useEffect(() => {
@@ -108,15 +160,10 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
               <div className={clsx('font-semibold leading-snug', isQuestion ? 'text-[16px]' : 'text-[15px]')}>{title}</div>
               {blocks.map((b, i) =>
                 b.kind === 'code' ? (
-                  <pre
-                    key={i}
-                    className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-code px-3 py-2 font-mono text-[12.5px] leading-relaxed"
-                  >
-                    {b.lines.map((l) => l.replace(/^ /, '')).join('\n').trim()}
-                  </pre>
+                  <CodeBlock key={i} lines={b.lines} />
                 ) : (
                   <div key={i} className="mt-1.5 whitespace-pre-line text-sm leading-relaxed text-fg-2">
-                    {joinWrapped(b.lines)}
+                    {wholeLines ? b.lines.map((l) => l.trimEnd()).join('\n').trim() : joinWrapped(b.lines)}
                   </div>
                 ),
               )}
@@ -163,7 +210,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             <span className="mb-1 block text-[12px] text-fg-3">{prompt.input.label}</span>
             <input name="answer" autoComplete="off" autoCapitalize="off" spellCheck={false} className="h-11 w-full rounded-xl border border-field bg-bg px-3 font-mono text-[14px] transition-colors focus:border-fg" placeholder="Paste here" />
           </label>
-          <button type="submit" disabled={busy !== null} className="press flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
+          <button type="submit" disabled={locked} className="press flex size-11 shrink-0 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-40" aria-label="Submit">
             <Send className="size-4" />
           </button>
         </form>
@@ -186,7 +233,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
           />
           <button
             type="submit"
-            disabled={!freeText.trim() || busy !== null}
+            disabled={!freeText.trim() || locked}
             className="press flex size-11 items-center justify-center rounded-full bg-accent text-accent-fg disabled:opacity-40"
             aria-label="Send answer"
           >
@@ -199,7 +246,7 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             <button
               key={o.n}
               type="button"
-              disabled={busy !== null}
+              disabled={locked}
               onClick={() => pick(o.n)}
               className={clsx(
                 'flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition-[background,border,transform] active:scale-[0.99] disabled:opacity-60',
@@ -238,8 +285,9 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
       <div className="flex shrink-0 items-center gap-1 border-t border-line px-2 py-1.5">
         <button
           type="button"
+          disabled={disabled}
           onClick={() => (freeText !== null ? setFreeText(null) : keys(['Escape']))}
-          className="press h-9 rounded-full px-4 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg"
+          className="press h-9 rounded-full px-4 text-sm font-medium text-fg-2 hover:bg-hover hover:text-fg disabled:opacity-50"
         >
           {freeText !== null ? 'Back' : 'Cancel'}
         </button>
@@ -250,15 +298,16 @@ export function PromptCard({ prompt, host, pane }: { prompt: ScreenPrompt; host:
             { k: 'Down', icon: ArrowDown, label: 'Down' },
             { k: 'Enter', icon: CornerDownLeft, label: 'Enter' },
           ].map(({ k, icon: Icon, label }) => (
-            <button key={k} type="button" aria-label={label} title={label} onClick={() => keys([k])} className="press relative flex size-9 items-center justify-center rounded-full text-fg-3 after:absolute after:-inset-0.5 hover:bg-hover hover:text-fg">
+            <button key={k} type="button" aria-label={label} title={label} disabled={disabled} onClick={() => keys([k])} className="press relative flex size-9 items-center justify-center rounded-full text-fg-3 after:absolute after:-inset-0.5 hover:bg-hover hover:text-fg disabled:opacity-50">
               <Icon className="size-4" />
             </button>
           ))}
           {prompt.multi && (
             <button
               type="button"
+              disabled={disabled}
               onClick={() => keys(['Right'])}
-              className="press ml-1 inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90"
+              className="press ml-1 inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
             >
               Next <ArrowRight className="size-4" />
             </button>

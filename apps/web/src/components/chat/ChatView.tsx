@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind } from '@inyon/protocol'
+import { AGENTS, chatKey, type AgentKind, type HostStatus } from '@inyon/protocol'
+import { lastAsk } from '../../lib/lastAsk.ts'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
 import { clearNativeNotification } from '../../lib/native.ts'
@@ -54,6 +55,10 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
   const running = chat?.info?.running ?? true
   const working = !!screen?.working
   const prompt = screen?.prompt
+  // a question asked before the connection dropped (opened from its alert, say) keeps its buttons,
+  // held until the machine is back and its own screen takes over
+  const shownPrompt = prompt ?? (connected ? undefined : lastAsk(host, pane))
+  const reconnecting = useReconnecting(machine?.status)
   const queue = chat?.info?.queue ?? NO_QUEUE
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
   // the hub follows every send into the agent's record (info.sends); a bubble lasts until it's there.
@@ -350,7 +355,9 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                   stick.current = true
                   toBottom()
                 }}
-                className="animate-fade-in absolute -top-12 left-1/2 z-10 flex size-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float hover:text-fg"
+                // at the side, over the end of a line rather than the middle of one (on a wide
+                // screen, beside the conversation)
+                className="animate-fade-in absolute -top-12 right-4 z-10 flex size-9 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float hover:text-fg sm:right-6"
                 aria-label="Jump to latest"
               >
                 <ArrowDown className="size-4" />
@@ -359,11 +366,13 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
             {running && chatCapable && (
               <div className="pb-safe-2 mx-auto flex min-h-0 w-full max-w-[760px] flex-col px-3 pt-1 sm:px-6 sm:pb-4">
                 {!hubUp ? (
-                  <div className="mb-2 text-center text-[12px] text-fg-3">Reconnecting…</div>
+                  <div className="mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting…</div>
+                ) : machineDown && reconnecting ? (
+                  <div className="mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…</div>
                 ) : machineDown ? (
                   <div className="mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
                 ) : null}
-                {prompt ? <PromptCard prompt={prompt} host={host} pane={pane} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} />}
+                {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} />}
               </div>
             )}
           </div>
@@ -373,6 +382,39 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
     </ChatRewind.Provider>
     </ChatAgent.Provider>
   )
+}
+
+/** How long a machine that isn't answering counts as reconnecting rather than offline. */
+export const reconnect = { graceMs: 15_000 }
+
+/**
+ * True for a while after the chat opens, the app comes back to the front, or the machine drops:
+ * the link is most likely coming back by itself (an app opened from an alert reconnects in a
+ * few seconds), so the chat says it's reconnecting before it calls the machine offline.
+ */
+function useReconnecting(status: HostStatus | undefined) {
+  const [fresh, setFresh] = useState(true)
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const restart = useCallback(() => {
+    clearTimeout(timer.current)
+    setFresh(true)
+    timer.current = setTimeout(() => setFresh(false), reconnect.graceMs)
+  }, [])
+  useEffect(() => {
+    restart()
+    const onVisible = () => !document.hidden && restart()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearTimeout(timer.current)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [restart])
+  const was = useRef(status)
+  useEffect(() => {
+    if (was.current === 'online' && status !== 'online') restart()
+    was.current = status
+  }, [status, restart])
+  return fresh
 }
 
 function NotRunning({

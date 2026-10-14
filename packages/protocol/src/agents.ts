@@ -35,7 +35,8 @@ export interface AgentModel {
   context?: number
   /** Advertised choices for this model; empty means there is no adjustable effort. */
   efforts?: string[]
-  /** The level the CLI uses when none is chosen (Codex's footer then just says "default"). */
+  /** The level the CLI uses when none is chosen (Codex's footer then just says "default"; Claude Code
+   *  names none until one is picked). */
   defaultEffort?: string
   /** CLI model ids for a family whose effort is encoded in the model name. */
   variants?: Record<string, string>
@@ -313,8 +314,8 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     chat: true,
     shell: true,
     models: [
-      { id: 'opus', label: 'Opus 5.5', note: 'Default · 1M context', context: 1_000_000 },
-      { id: 'sonnet', label: 'Sonnet 5.5', note: 'Faster, cheaper' },
+      { id: 'opus', label: 'Opus 5.5', note: 'Default · 1M context', context: 1_000_000, defaultEffort: 'high' },
+      { id: 'sonnet', label: 'Sonnet 5.5', note: 'Faster, cheaper', defaultEffort: 'medium' },
       { id: 'haiku', label: 'Haiku 5.5', note: 'Quick edits' },
       { id: 'claude-fable-5-1', label: 'Fable 5.1', note: 'Most capable' },
     ],

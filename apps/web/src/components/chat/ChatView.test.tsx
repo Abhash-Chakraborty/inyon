@@ -1,14 +1,14 @@
 import { afterAll, describe, expect, mock, spyOn, test } from 'bun:test'
 import { act, render, screen } from '@testing-library/react'
 import type { ChatItem, SendState } from '@inyon/protocol'
-import { ChatView } from './ChatView.tsx'
+import { ChatView, reconnect } from './ChatView.tsx'
 import { GoalRow } from './Messages.tsx'
 import { buildRows } from '../../lib/chat.ts'
 import { patchChat, useStore } from '../../lib/store.ts'
 import { api } from '../../lib/api.ts'
 import { socket } from '../../lib/socket.ts'
 import { emit } from '../../test/fakes.ts'
-import { chatInfo, host, item } from '../../test/fixtures.ts'
+import { agentPane, chatInfo, host, item } from '../../test/fixtures.ts'
 import { flush } from '../../test/render.tsx'
 
 // bun keeps a spy in place for every test file after this one
@@ -289,5 +289,61 @@ describe('a long question card', () => {
       expect(el.className).toContain('min-h-0')
       expect(el.className).toContain('flex-col')
     }
+  })
+})
+
+describe('opened while the machine reconnects', () => {
+  const view = () => <ChatView host="box" pane="%1" agent="claude" onTerminal={() => {}} />
+  const asking = () =>
+    host('box', { panes: [agentPane('%1', 'claude', { agent: { kind: 'claude', pid: 1, state: 'waiting', waitingFor: 'Bash command: npm test', options: [{ n: 1, label: 'Yes' }, { n: 2, label: 'No' }] } })] })
+  // the app's own first picture after a cold start: the machine connecting, what it was doing unknown
+  const connecting = () => host('box', { status: 'connecting', panes: [agentPane('%1', 'claude', { agent: { kind: 'claude', pid: 1, state: 'unknown' } })] })
+
+  test('says it is reconnecting, not offline, and keeps the question it was asking, held until it is back', async () => {
+    useStore.setState({ connected: true, hosts: [asking()] })
+    useStore.setState({ hosts: [connecting()] })
+    render(view())
+    act(() => emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [item.user('run the tests')], hasMore: false }))
+    await flush()
+    expect(screen.getByText('Reconnecting to box…')).toBeTruthy()
+    expect(screen.queryByText(/is offline/)).toBeNull()
+    expect(screen.getByText('Bash command: npm test')).toBeTruthy()
+    const yes = () => screen.getByText('Yes').closest('button')!
+    expect(yes().disabled).toBe(true)
+    expect(screen.getByText('Cancel').closest('button')!.disabled).toBe(true)
+
+    // back: the session's own screen takes over, and its answers work
+    act(() => {
+      useStore.setState({ hosts: [asking()] })
+      emit({ t: 'chat.screen', key: 'box:%1', screen: { working: false, width: 80, prompt: { body: ['Bash command', '╌', 'npm test', '╌', 'Do you want to proceed?'], options: [{ n: 1, label: 'Yes', selected: true }, { n: 2, label: 'No', selected: false }], multi: false } } })
+    })
+    await flush()
+    expect(screen.queryByText(/Reconnecting/)).toBeNull()
+    expect(yes().disabled).toBe(false)
+  })
+
+  test('a machine still away after a while is called offline', async () => {
+    const was = reconnect.graceMs
+    reconnect.graceMs = 30
+    try {
+      useStore.setState({ connected: true, hosts: [connecting()] })
+      render(view())
+      act(() => emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [item.user('hello')], hasMore: false }))
+      expect(screen.getByText('Reconnecting to box…')).toBeTruthy()
+      await act(() => new Promise((r) => setTimeout(r, 60)))
+      expect(screen.getByText(/box is offline/)).toBeTruthy()
+    } finally {
+      reconnect.graceMs = was
+    }
+  })
+
+  test('once the machine is back, a question its screen no longer shows is gone', async () => {
+    useStore.setState({ connected: true, hosts: [asking()] })
+    useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude')] })] })
+    render(view())
+    act(() => emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [], hasMore: false }))
+    await flush()
+    expect(screen.queryByText('Bash command: npm test')).toBeNull()
+    expect(screen.getByRole('textbox', { name: /Message/ })).toBeTruthy()
   })
 })
