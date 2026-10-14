@@ -88,7 +88,7 @@ From 0.17.1 the installers do this for you, once, when `~/.inyon/bin` isn't on y
 | fish | the file `~/.config/fish/conf.d/inyon.fish` |
 | anything else | a line in `~/.profile` |
 
-Each line ends with `# added by Inyon`, and running the installer again doesn't add another. On Windows, `get.ps1` puts `%USERPROFILE%\.inyon\bin` on your user `Path`, and on the window you ran it in. `inyon uninstall` takes all of it back out, and nothing else in those files.
+Each line ends with `# added by Inyon`, and running the installer again doesn't add another. On Windows, `get.ps1` puts `%USERPROFILE%\.inyon\bin` on your user `Path`, and on the window you ran it in; from 0.17.2 `inyon setup` adds it too when it's missing, so a copy that got into `~\.inyon\bin` some other way is found by name as well. `inyon uninstall` takes all of it back out, and nothing else in those files.
 
 To leave your shell's files and `Path` alone, set `INYON_NO_MODIFY_PATH=1` before installing:
 

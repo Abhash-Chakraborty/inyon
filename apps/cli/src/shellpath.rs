@@ -74,9 +74,34 @@ if ($keep.Count -ne $all.Count) {
 }
 $k.Close()"#;
 
+/// The PowerShell that puts `%USERPROFILE%\.inyon\bin` on the user's Path when it isn't there,
+/// the way get.ps1 does, so `inyon setup` run from a copy that got there some other way (or
+/// after an uninstall took the entry off) also leaves `inyon` findable by name.
+pub const WINDOWS_ADD_SCRIPT: &str = r#"$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+$p = [string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+$d = Join-Path $env:USERPROFILE '.inyon\bin'
+$all = @($p -split ';' | Where-Object { $_ })
+if (-not ($all | Where-Object { $_.TrimEnd('\') -eq $d -or $_.TrimEnd('\') -eq '%USERPROFILE%\.inyon\bin' })) {
+  $k.SetValue('Path', ((@($d) + $all) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString)
+  [Environment]::SetEnvironmentVariable('INYON_PATH_CHANGED', '1', 'User')
+  [Environment]::SetEnvironmentVariable('INYON_PATH_CHANGED', $null, 'User')
+  'added'
+}
+$k.Close()"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_windows_scripts_add_and_remove_the_same_entry() {
+        for s in [WINDOWS_SCRIPT, WINDOWS_ADD_SCRIPT] {
+            assert!(s.contains(r"Join-Path $env:USERPROFILE '.inyon\bin'"));
+            assert!(s.contains("DoNotExpandEnvironmentNames"), "other entries stay as written");
+            assert!(s.contains("INYON_PATH_CHANGED"), "open programs hear of the change");
+        }
+        assert!(WINDOWS_ADD_SCRIPT.contains("'added'") && WINDOWS_SCRIPT.contains("'removed'"));
+    }
 
     fn dir() -> PathBuf {
         let p =

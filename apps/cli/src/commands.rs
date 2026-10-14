@@ -908,6 +908,14 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
     let mut lines = vec![service::install_mux(sys, ask, interactive)];
     // Windows lists it under Settings → Apps, with Uninstall there running `inyon uninstall`
     lines.extend(service::register_app(sys));
+    // and finds `inyon` by name in new windows, whichever way this copy got into ~/.inyon/bin
+    let installed_here = std::env::current_exe().ok().and_then(|e| fs::canonicalize(e).ok()).is_some_and(|e| Some(e) == fs::canonicalize(paths::installed_binary()).ok());
+    if sys.platform == Platform::Windows && installed_here && paths::env_var("INYON_NO_MODIFY_PATH").is_none() {
+        let o = sys::run(&["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", crate::shellpath::WINDOWS_ADD_SCRIPT]);
+        if o.ok && o.out.contains("added") {
+            lines.push("✓ Put inyon on your Path: new windows find it by name".into());
+        }
+    }
     match plan.role {
         RoleChoice::Join => {
             let token = paths::env_var("INYON_TOKEN").unwrap_or_default();
