@@ -16,3 +16,4 @@ pub mod tray;
 pub mod ui;
 pub mod unhook;
 pub mod update;
+pub mod window;

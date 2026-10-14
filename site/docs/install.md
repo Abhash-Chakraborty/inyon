@@ -139,13 +139,13 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 
 | Item | Does |
 |---|---|
-| Open Inyon | The status screen, in a terminal window |
-| Pair a phone… | A pairing code, in a terminal window (computers paired with the phone) |
+| Open Inyon | The Inyon window: whether it runs, where it answers, which phones are paired, with the same four actions as buttons |
+| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone) |
 | Show the log | Opens the log file |
 | Restart | Starts it again |
 | Quit Inyon | Stops it until you next sign in. `inyon service install` starts it sooner |
 
-If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view. In 0.17.1 the first two items opened an empty window that closed at once; 0.17.2 fixes that.
+From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
 
 From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
 
