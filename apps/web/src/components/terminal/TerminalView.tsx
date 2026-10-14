@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import '@xterm/xterm/css/xterm.css'
+import './symbols.css'
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ClipboardPaste, Copy, Keyboard, Minus, Plus, RotateCw, TextSelect } from 'lucide-react'
 import type { AgentKind } from '@inyon/protocol'
 import { socket } from '../../lib/socket.ts'
@@ -32,6 +33,23 @@ const DARK: ITheme = {
   black: '#1f1e1d', red: '#ec7a6f', green: '#a5c98a', yellow: '#e3b46b', blue: '#8fb6e8', magenta: '#c5a3e3', cyan: '#7cc4c4', white: '#c3c1b8',
   brightBlack: '#6e6c66', brightRed: '#f09a8f', brightGreen: '#bddba6', brightYellow: '#f0cb8d', brightBlue: '#aecbf0', brightMagenta: '#d7bdf0', brightCyan: '#9ed8d8', brightWhite: '#f4f3ee',
 }
+
+/** The system's monospace font, then the symbols it may lack (symbols.css) as the last resort. */
+export const TERMINAL_FONT = "'JetBrains Mono Variable', ui-monospace, Menlo, monospace, 'Inyon Symbols'"
+
+/**
+ * Text at least this far from its background. Agents pick colours for the terminal they expect:
+ * a light theme's syntax colours, 256-colour greys or ANSI black, drawn on this dark ground (or
+ * the reverse), came out dark on dark, as parts of Claude's diffs did over psmux. xterm nudges
+ * such text lighter or darker until it reads; dim text gets half the ratio, so it still looks dim.
+ */
+export const MIN_CONTRAST = 4.5
+
+/**
+ * WebGL draws each glyph once and keeps it: a glyph drawn before the symbols face loaded stays a
+ * box. Load it up front, and redraw with it once it's in.
+ */
+const symbolsReady = () => (typeof document !== 'undefined' && document.fonts?.load ? document.fonts.load("16px 'Inyon Symbols'", '⏵').then(() => true, () => false) : Promise.resolve(false))
 
 const isDark = () => document.documentElement.dataset.theme === 'dark'
 
@@ -65,9 +83,10 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     const id = Math.random().toString(36).slice(2)
     idRef.current = id
     const term = new Terminal({
-      fontFamily: "'JetBrains Mono Variable', ui-monospace, Menlo, monospace",
+      fontFamily: TERMINAL_FONT,
       fontSize: useStore.getState().settings.termFontSize,
       lineHeight: 1.15,
+      minimumContrastRatio: MIN_CONTRAST,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 5000,
@@ -84,6 +103,12 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     fit.fit()
     // WebGL when the browser has it, the default renderer otherwise (and after a lost context)
     const webgl = attachWebgl(term, undefined, () => refit.current())
+    let closed = false
+    void symbolsReady().then((loaded) => {
+      if (!loaded || closed) return
+      term.clearTextureAtlas()
+      term.refresh(0, term.rows - 1)
+    })
 
     // Agents ask the terminal for its colours (OSC 4/10/11/12). If this browser terminal answers,
     // the reply goes back through tmux as keystrokes and lands in the agent's input box as junk
@@ -148,6 +173,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     ro.observe(el.current)
 
     return () => {
+      closed = true
       host_.removeEventListener('paste', onPaste, true)
       untouch()
       ro.disconnect()
