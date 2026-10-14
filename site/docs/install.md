@@ -50,7 +50,7 @@ curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://
 
 ## With npm
 
-From 0.16.1 the `inyon` command is also on npm, for any system above with Node.js 18 or later:
+From 0.17.0 the `inyon` command is also on npm, for any system above with Node.js 18 or later:
 
 ```sh
 npm install -g @abhash-chakraborty/inyon
@@ -61,7 +61,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 
 - **Update the command** with `npm install -g @abhash-chakraborty/inyon@latest`. From 0.17.1, `inyon update` run from npm's copy updates `~/.inyon/bin`, which the service runs, and leaves npm's copy to npm.
 - **Remove it** with `inyon uninstall` first, then `npm uninstall -g @abhash-chakraborty/inyon`.
-- **Check it** with `npm audit signatures` after installing. Every release from 0.16.1 is published by the release workflow on GitHub with a provenance statement, and the [npm page](https://www.npmjs.com/package/@abhash-chakraborty/inyon) links to the run that built it.
+- **Check it** with `npm audit signatures` after installing. Every release from 0.17.0 is published by the release workflow on GitHub with a provenance statement, and the [npm page](https://www.npmjs.com/package/@abhash-chakraborty/inyon) links to the run that built it.
 
 ## Supported systems
 
