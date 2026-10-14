@@ -83,7 +83,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
     termRef.current = term
     fit.fit()
     // WebGL when the browser has it, the default renderer otherwise (and after a lost context)
-    const webgl = attachWebgl(term)
+    const webgl = attachWebgl(term, undefined, () => refit.current())
 
     // Agents ask the terminal for its colours (OSC 4/10/11/12). If this browser terminal answers,
     // the reply goes back through tmux as keystrokes and lands in the agent's input box as junk

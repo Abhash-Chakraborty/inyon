@@ -32,7 +32,7 @@ On a phone, a bar above the keyboard has the keys it lacks:
 
 ## Colours and drawing
 
-The terminal takes the agent's colours inside a session. It draws with WebGL where the device supports it, and falls back to ordinary page drawing; Settings → About → *Terminal drawing* says which.
+The terminal takes the agent's colours inside a session. It draws with WebGL where the device supports it, and falls back to ordinary page drawing; Settings → About → *Terminal drawing* says which. From 0.16.1 it also falls back when WebGL would draw at the wrong scale, which on some high-resolution screens showed a few giant lines instead of the whole screen.
 
 ## When the terminal closes
 
