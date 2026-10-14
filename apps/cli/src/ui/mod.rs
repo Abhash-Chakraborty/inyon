@@ -9,11 +9,12 @@ use ratatui::style::{Color, Modifier, Style};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The Inyon mark in text: a kite on a slack line, ending in a node.
-pub const MARK: [&str; 2] = ["◆", " ╰─●"];
+/// The Inyon mark in text: a kite on a line that hangs from it, ending in a node. The corner
+/// sits right under the kite, so the line meets it in any monospace font.
+pub const MARK: [&str; 2] = ["◆", "╰─●"];
 
 /// The kite's line drawing itself: three frames, shown while the engine answers.
-pub const MOTIF: [&str; 3] = ["◆        ●", "◆ ╰──    ●", "◆ ╰──────●"];
+pub const MOTIF: [&str; 3] = ["◆        ●", "◆───     ●", "◆────────●"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
@@ -86,7 +87,7 @@ pub fn banner(width: u16) -> Vec<String> {
     if width < 40 {
         return vec![format!("◆╰─● inyon {VERSION}")];
     }
-    vec![format!("  {}", MARK[0]), format!("  {}   inyon {VERSION}", MARK[1])]
+    vec![format!("  {}", MARK[0]), format!("  {}    inyon {VERSION}", MARK[1])]
 }
 
 /// A line cut to `width` cells, with an ellipsis when it had to be.
@@ -132,6 +133,33 @@ pub fn progress_line(text: &str) {
     let mut out = std::io::stderr();
     let _ = write!(out, "\r\x1b[2K{text}");
     let _ = out.flush();
+}
+
+/// Asks a yes-or-no question on the terminal. An empty answer, or one that can't be read, is
+/// `default`.
+pub fn ask_yes_no(question: &str, default: bool) -> bool {
+    use std::io::{BufRead, Write};
+    let mut err = std::io::stderr();
+    let _ = write!(err, "{question} [{}] ", if default { "Y/n" } else { "y/N" });
+    let _ = err.flush();
+    let mut line = String::new();
+    if std::io::stdin().lock().read_line(&mut line).is_err() {
+        return default;
+    }
+    match line.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => true,
+        "n" | "no" => false,
+        _ => default,
+    }
+}
+
+/// Waits for Enter, for a window that would close as soon as the command ends.
+pub fn wait_for_enter() {
+    use std::io::{BufRead, Write};
+    let _ = write!(std::io::stderr(), "Press Enter to close this window. ");
+    let _ = std::io::stderr().flush();
+    let mut line = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut line);
 }
 
 /// Asks for a secret on the terminal without echoing it.
@@ -211,6 +239,9 @@ mod tests {
         assert_eq!(banner(30), vec![format!("◆╰─● inyon {VERSION}")]);
         assert_eq!(banner(80).len(), 2);
         assert!(banner(80)[1].contains("inyon"));
+        // the line's corner is in the kite's column, so it hangs from the kite
+        let kite = banner(80)[0].find('◆').unwrap();
+        assert_eq!(banner(80)[1].find('╰').unwrap(), kite);
     }
 
     #[test]

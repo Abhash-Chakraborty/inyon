@@ -57,8 +57,6 @@ mod win {
     const LOG: usize = 3;
     const RESTART: usize = 4;
     const QUIT: usize = 5;
-    /// CREATE_NEW_CONSOLE: the status screen and the pairing code get a window of their own
-    const NEW_CONSOLE: u32 = 0x10;
     /// CREATE_NO_WINDOW
     const NO_WINDOW: u32 = 0x0800_0000;
 
@@ -215,17 +213,24 @@ mod win {
         }
     }
 
+    /// Opens `program` in a terminal window of its own. The engine starts this tray with no
+    /// standard handles at all, and a child spawned the usual way inherits that even in a new
+    /// console, so it sees no terminal, prints nothing, and the window closes at once. The shell
+    /// starts it as a double-click would: a console whose input and output are its own.
+    fn in_terminal(program: &str, args: &str) {
+        unsafe {
+            ShellExecuteW(null_mut(), wide("open").as_ptr(), wide(program).as_ptr(), wide(args).as_ptr(), null(), SW_SHOWNORMAL);
+        }
+    }
+
     fn act(what: usize) {
         let Some((role, engine)) = STATE.with(|s| s.borrow().as_ref().map(|st| (st.role, st.engine))) else { return };
         let exe = me();
         match what {
-            OPEN => {
-                let _ = Command::new(&exe).creation_flags(NEW_CONSOLE).spawn();
-            }
+            OPEN => in_terminal(&exe.to_string_lossy(), ""),
             PAIR => {
                 // cmd keeps the window open after the code, until you press a key
-                let line = format!("/c title Inyon & \"{}\" pair & pause", exe.display());
-                let _ = Command::new("cmd.exe").raw_arg(line).creation_flags(NEW_CONSOLE).spawn();
+                in_terminal("cmd.exe", &format!("/c title Inyon & \"{}\" pair & pause", exe.display()));
             }
             LOG => {
                 let log = service::log_file(role);

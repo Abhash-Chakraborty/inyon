@@ -9,6 +9,18 @@ Start with `inyon doctor` on the computer. It checks the engine, tmux, the agent
 
 The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
 
+## The phone reached the computer once, then couldn't
+
+Before 0.17.2, `inyon pair` on Windows could miss the link already running in the background and start a second one. The second one published its own address, and when it ended with the terminal, the phone was left pointing at it. Update both sides; from 0.17.2 `pair` sees a running link by its port too. Until then, `inyon service install link` restarts the background link, which publishes the right address again.
+
+## The tray menu opens an empty window (Windows)
+
+In 0.17.1, **Open Inyon** and **Pair a phone…** in the tray menu opened a window that closed at once. Run `inyon` or `inyon pair` in a terminal instead, or update to 0.17.2.
+
+## Inyon isn't in Settings → Apps (Windows)
+
+Setup and `inyon update` list it there from 0.17.2. An install from 0.17.1 appears after its next `inyon update` or `inyon setup`. `inyon uninstall --purge` works either way.
+
 ## The phone won't pair with a computer
 
 - **The code expired.** Codes last 10 minutes and work once. Run `inyon pair` for a fresh one.

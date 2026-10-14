@@ -66,12 +66,10 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         .iter()
         .map(|r| {
             let running = crate::update::read_running(*r);
-            Job {
-                role: r.name().to_string(),
-                service: service::has_service(sys, *r),
-                running: running.as_ref().and_then(|s| s.pid).is_some_and(|p| sys.proc.alive(p)),
-                version: running.and_then(|s| s.version),
-            }
+            let alive = running.as_ref().and_then(|s| s.pid).is_some_and(|p| sys.proc.alive(p));
+            // a link whose pid record is stale still answers on its port
+            let answers = || *r == Role::Link && service::link_answers(state::link_config().port.unwrap_or(4780));
+            Job { role: r.name().to_string(), service: service::has_service(sys, *r), running: alive || answers(), version: running.and_then(|s| s.version) }
         })
         .collect();
     let has = |r: Role| jobs.iter().any(|j| j.role == r.name() && (j.service || j.running));
@@ -376,8 +374,12 @@ pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
         }
     })();
     ratatui::restore();
-    if let Ok(Some(next)) = result {
-        crate::commands::run_named(next);
+    match &result {
+        Ok(Some(next)) => crate::commands::run_named(next),
+        // the screen ran on the terminal's second buffer, so what was there before is back;
+        // what it showed stays in the scrollback as plain lines, like any command's output
+        Ok(None) => println!("{}", plain(&status)),
+        Err(_) => {}
     }
     result.map(|_| ())
 }

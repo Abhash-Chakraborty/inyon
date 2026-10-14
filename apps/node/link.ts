@@ -129,16 +129,28 @@ export function exited(pid: number) {
   }
 }
 
-/** Whether a link other than this process runs: the pid state.json names is still alive. */
-export function linkRunning() {
+/**
+ * Whether a link other than this process runs: the pid state.json names is still alive, or
+ * something answers on the link's port the way a link does. The pid alone isn't enough: a link
+ * that ended with the terminal it was started in leaves its pid behind, and a pid check doesn't
+ * see every process on every platform. A second link on the same computer would publish an
+ * address of its own and leave the phone pointing at it once it ends, so this errs towards "yes".
+ */
+export async function linkRunning(port?: number) {
   const pid = currentState()?.pid
-  if (!pid || pid === process.pid) return false
+  if (pid && pid !== process.pid) {
+    try {
+      process.kill(pid, 0)
+      if (!exited(pid)) return true
+    } catch {}
+  }
+  if (!port) return false
   try {
-    process.kill(pid, 0)
+    const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(700) })
+    return r.ok && (await r.text()).trim() === 'inyon'
   } catch {
     return false
   }
-  return !exited(pid)
 }
 
 export function forgetPhone(key: string) {
