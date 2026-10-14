@@ -89,6 +89,12 @@ export const loadConfig = (): LinkConfig => ({ ...DEFAULT_CONFIG, ...readJson<Pa
 export const saveConfig = (c: LinkConfig) => writeJson('link.json', c)
 
 const phones = () => readJson<Record<string, Phone>>('phones.json', {})
+
+/** The phone's model without the build number Android's browser adds ("A142 Build/BP2A.250605" is "A142"). */
+export function phoneName(raw: unknown) {
+  return String(raw ?? '').split(' Build/')[0]!.trim().slice(0, 64) || 'Phone'
+}
+
 const hex = (b: Uint8Array) => Buffer.from(b).toString('hex')
 
 const sameText = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
@@ -166,7 +172,8 @@ function dropForgotten() {
   for (const key of [...active.keys()]) if (!all[key]) endSessions(key)
 }
 
-export const listPhones = () => phones()
+// phones paired before names were cleaned may still carry the build number
+export const listPhones = () => Object.fromEntries(Object.entries(phones()).map(([key, p]) => [key, { ...p, name: phoneName(p.name) }]))
 
 /** Everything a phone session can do once it's in. */
 function welcome() {
@@ -195,7 +202,7 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
   const live = (pairing.expires ?? 0) > Date.now()
   const matches = (want?: string) => !!want && !!hello.pair && sameText(hello.pair, want)
   if (hello.pair && live && (matches(pairing.secret) || matches(pairing.short))) {
-    all[key] = { name: String(hello.name ?? 'Phone').slice(0, 64), pairedAt: Date.now(), lastSeen: Date.now() }
+    all[key] = { name: phoneName(hello.name), pairedAt: Date.now(), lastSeen: Date.now() }
     writeJson('phones.json', all)
     // one code, one phone
     rmSync(file('pairing.json'), { force: true })

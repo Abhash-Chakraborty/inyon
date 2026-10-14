@@ -22,6 +22,10 @@ serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.11"
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
+[target.'cfg(unix)'.dependencies]
+# local time for the dashboard (already built for crossterm)
+libc = "0.2"
+
 [profile.release]
 lto = true
 codegen-units = 1

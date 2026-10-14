@@ -153,10 +153,12 @@ impl Plan {
                     ways.push("the LAN".to_string());
                 }
                 if self.vpn {
-                    ways.push(match self.vpn_networks().first() {
-                        Some(n) => format!("{} ({})", n.kind.label(), n.ip),
-                        None => "VPN networks".to_string(),
-                    });
+                    // the link answers on every private network it finds
+                    let vpns = self.vpn_networks();
+                    if vpns.is_empty() {
+                        ways.push("VPN networks".to_string());
+                    }
+                    ways.extend(vpns.iter().map(|n| format!("{} ({})", n.kind.label(), n.ip)));
                 }
                 if !self.own_url.is_empty() {
                     ways.push(self.own_url.clone());
@@ -449,7 +451,8 @@ impl Wizard {
                 Action::Stay
             }
             KeyCode::Enter | KeyCode::Right => {
-                if key.code == KeyCode::Enter && !typing {
+                // Enter picks the radio under the cursor; a checkbox keeps what Space made it
+                if key.code == KeyCode::Enter && matches!(self.items().get(self.cursor), Some(Item::Radio { .. })) {
                     self.choose(self.cursor);
                 }
                 self.advance()

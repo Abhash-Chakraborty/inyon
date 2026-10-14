@@ -40,7 +40,7 @@ inyon
 inyon status --plain
 ```
 
-In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses, the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. At 72 columns or wider it uses two columns.
+In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses, the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. Times are in this computer's time zone. At 72 columns or wider it uses two columns.
 
 | Key | Does |
 |---|---|
@@ -63,22 +63,22 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
 2. **Network.** For a computer paired with your phone, tick any of:
    - *Tunnel*: a free Cloudflare tunnel, so the phone reaches it from any network. On by default.
    - *LAN*: also answer on the local network. Off by default.
-   - *VPN*: also answer on Tailscale, Headscale, NetBird, ZeroTier or WireGuard. Setup lists the networks it found. On by default, except on Windows, where the firewall would ask about it.
+   - *VPN*: also answer on Tailscale, Headscale, NetBird, ZeroTier or WireGuard. Setup lists the networks it found, and the computer answers on all of them. On by default, except on Windows, where the firewall would ask about it.
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
    For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. To join a hub, type the hub's address.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
-5. **Summary.** What will happen. Press Enter to set it up.
+5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
 
 While you answer, setup downloads and checks `inyon-engine` in the background, with the progress in the footer.
 
 | Key | Does |
 |---|---|
 | `↑` `↓`, `Tab`, `j` `k` | Move between rows |
-| `Space` | Choose the row |
-| `Enter` | Choose the row and go on |
+| `Space` | Choose the row, or tick and untick a box |
+| `Enter` | Go on. On a step with one choice (Role, Background, a hub's network) it picks the row first; ticked boxes stay as they are |
 | `→` / `←` | Next or previous step |
 | `Esc`, `Ctrl-C`, `q` | Quit without changing anything |
 
