@@ -61,4 +61,6 @@ A machine that joined the hub updates from its page under Machines, to the hub's
 
 **Remove** on its page disconnects it and revokes its token. From 0.16 the machine then leaves the hub by itself, as `inyon disconnect` would: it forgets the hub and removes its background service, so nothing starts it again. A machine that's off at the time does this the next time it starts. Its tmux sessions keep running, and Inyon stays installed; `inyon uninstall` removes it.
 
+From 0.17, if the machine is online, the hub first takes back what it put there: the Claude Code and Antigravity integration, the uploads and the prompt log. For an SSH server it also closes the connection it kept open. See [Security](security.md#removing-a-machine-cleans-it-up).
+
 Before 0.16 the service kept starting it again, and it called the hub every 30 seconds. On a machine you removed before then, run `inyon disconnect`.

@@ -473,11 +473,14 @@ export function Settings() {
             <p className="mt-0.5 text-[13px] text-fg-3">Files you attach, paste or drop are copied to ~/.inyon/uploads on the session's machine, and the agent gets their paths.</p>
             <div className="mt-3 divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
               {!hub ? (
-                <Waiting shape="rows" count={2} label="Loading upload settings" className="px-4 py-3.5" />
+                <Waiting shape="rows" count={3} label="Loading upload settings" className="px-4 py-3.5" />
               ) : (
                 <>
-                  <Row label="Delete uploads after" hint="Checked every few hours on every connected machine.">
+                  <Row label="Delete uploads after" hint="Checked when a machine connects, every few hours, and after an upload. A file cut off half way is deleted after an hour.">
                     <Segmented size="sm" value={String(hub.uploads.retentionDays)} onChange={(v) => saveHub({ retentionDays: Number(v) })} options={[{ v: '1', label: '1 day' }, { v: '7', label: '7 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
+                  </Row>
+                  <Row label="Keep at most" hint="Per machine. Past this, the oldest uploads go first.">
+                    <Segmented size="sm" value={String(hub.uploads.maxTotalMB ?? 1024)} onChange={(v) => saveHub({ maxTotalMB: Number(v) })} options={[{ v: '512', label: '500 MB' }, { v: '1024', label: '1 GB' }, { v: '5120', label: '5 GB' }, { v: '0', label: 'No limit' }]} />
                   </Row>
                   <Row label="Largest file">
                     <Segmented size="sm" value={String(hub.uploads.maxMB)} onChange={(v) => saveHub({ maxMB: Number(v) })} options={[{ v: '25', label: '25 MB' }, { v: '100', label: '100 MB' }, { v: '500', label: '500 MB' }]} />

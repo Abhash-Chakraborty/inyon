@@ -236,6 +236,11 @@ async function session(id: Identity, wire: Wire, via: string) {
     dropForgotten()
     if (!open) return
     if (m?.op === 'ping') return channel.send({ type: 'pong', t: m.t })
+    // the phone removed this computer: it stops being trusted here too, as `inyon forget` would
+    if (m?.op === 'unpair') {
+      console.log(`a phone removed this computer; it is no longer paired (${key.slice(0, 12)}…)`)
+      return forgetPhone(key)
+    }
     ops.message(m)
   }
   channel.onclose = () => {

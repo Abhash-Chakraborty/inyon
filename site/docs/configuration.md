@@ -56,6 +56,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |
 | `~/.inyon/uploads/` | Files you attached, per day and session |
+| `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |
 
 Folders are readable only by you, and the files with keys or tokens only by you.

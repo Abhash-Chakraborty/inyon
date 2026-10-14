@@ -13,6 +13,7 @@ import { installIntegration, uninstallIntegration } from './claude/integration.t
 import { openTerminal } from './terminal/terminal.ts'
 import type { PtyHandle } from './hosts/host.ts'
 import { nodeLinks } from './hosts/node-link.ts'
+import { tidyMachine } from './hosts/tidy.ts'
 import { rememberRemoved } from './hosts/removed-nodes.ts'
 import { nodeUpdates } from './hosts/node-update.ts'
 import { listModels } from './features/models.ts'
@@ -274,12 +275,20 @@ export const coreRoutes: Routes = {
       if (!cur) throw new HttpError(404, 'Unknown machine')
       const b = await body(req)
       if (cur.kind !== 'ssh') registry.update(id, { name: String(b.name ?? cur.name).trim() || cur.name })
-      else registry.update(id, validateHost({ ...cur, ...b }))
+      else {
+        const next = validateHost({ ...cur, ...b })
+        // a new address or key: the connection kept open to the old one goes
+        if (next.target !== cur.target || next.port !== cur.port || next.identityFile !== cur.identityFile) await registry.get(id)?.host.close()
+        registry.update(id, next)
+      }
       return ok()
     }),
-    DELETE: api((req) => {
+    DELETE: api(async (req) => {
       if (req.params.id === 'local') throw new HttpError(400, 'This machine cannot be removed')
-      rememberRemoved(registry.get(req.params.id)?.host.config.tokenHash)
+      const rt = registry.get(req.params.id)
+      // hooks, uploads and the open connection come off the machine first, while it still answers
+      if (rt) await tidyMachine(rt.host, rt.state)
+      rememberRemoved(rt?.host.config.tokenHash)
       nodeLinks.disconnect(req.params.id)
       registry.remove(req.params.id)
       return ok()
@@ -329,6 +338,7 @@ export const coreRoutes: Routes = {
         uploads: {
           retentionDays: Math.max(0, Math.min(365, Number(u.retentionDays ?? cur.uploads.retentionDays) | 0)),
           maxMB: Math.max(1, Math.min(2048, Number(u.maxMB ?? cur.uploads.maxMB) | 0)),
+          maxTotalMB: Math.max(0, Math.min(102400, Number(u.maxTotalMB ?? cur.uploads.maxTotalMB) | 0)),
           longPasteLines: Math.max(5, Math.min(1000, Number(u.longPasteLines ?? cur.uploads.longPasteLines) | 0)),
         },
       }

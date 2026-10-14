@@ -20,14 +20,15 @@ export function saveHosts(hosts: HostConfig[]) {
 // ---------- settings ----------
 
 export interface HubSettings {
-  uploads: { retentionDays: number; maxMB: number; longPasteLines: number }
+  /** maxTotalMB: the most a machine's uploads folder keeps before the oldest go (0: no limit) */
+  uploads: { retentionDays: number; maxMB: number; maxTotalMB: number; longPasteLines: number }
   /** machines where Inyon keeps a tmux session running */
   keepSession?: Record<string, boolean>
   /** resume idle Claude sessions that stopped reporting live numbers (off unless turned on) */
   autoResume?: boolean
 }
 
-const DEFAULT_SETTINGS: HubSettings = { uploads: { retentionDays: 7, maxMB: 100, longPasteLines: 40 } }
+const DEFAULT_SETTINGS: HubSettings = { uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 } }
 
 export function loadSettings(): HubSettings {
   const s = kv.get<Partial<HubSettings>>('settings') ?? {}

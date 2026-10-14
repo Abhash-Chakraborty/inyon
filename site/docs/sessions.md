@@ -72,7 +72,7 @@ Attach with the paperclip, take a photo on a phone, paste a screenshot, or drag 
 
 Pasting more than 40 lines of text attaches it as a file instead (*Pasted text · 120 lines*), so long logs don't flood the box. On a computer, typing anywhere on the page goes into the box, and pasting anywhere attaches.
 
-Settings → **Uploads and clipboard** sets how long uploads are kept (1, 7 or 30 days, or forever) and the largest file allowed.
+Settings → **Uploads and clipboard** sets how long uploads are kept (1, 7 or 30 days, or forever), the largest file allowed and, from 0.17, how much space they may take on each machine. See [Settings](settings.md#uploads-and-clipboard).
 
 ### Drafts follow you
 

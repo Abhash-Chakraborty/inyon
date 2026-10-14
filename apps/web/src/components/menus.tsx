@@ -67,7 +67,7 @@ async function updateMachine(h: HostState) {
 
 /** Asks, then removes a machine from this hub (or the phone). */
 export async function removeMachine(h: HostState, after?: () => void) {
-  if (!(await confirmAction({ title: `Remove ${h.config.name}?`, body: 'Its tmux sessions keep running on the computer.', yes: 'Remove', danger: true }))) return
+  if (!(await confirmAction({ title: `Remove ${h.config.name}?`, body: 'Its tmux sessions keep running. If it can be reached, Inyon first takes its hooks, uploads and prompt log off it.', yes: 'Remove', danger: true }))) return
   try {
     await api.removeHost(h.config.id)
     after?.()

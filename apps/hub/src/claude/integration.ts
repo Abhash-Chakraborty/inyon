@@ -103,7 +103,9 @@ async function readSettings(host: Host): Promise<any> {
 }
 
 async function writeSettings(host: Host, settings: any) {
+  // private to you (settings.json often holds API keys), and no half-written copy left if the connection drops
   const cmd = [
+    `umask 077; trap 'rm -f "$HOME/.claude/settings.json.inyon-tmp"' EXIT HUP INT TERM`,
     'mkdir -p "$HOME/.claude"',
     '[ -f "$HOME/.claude/settings.json" ] && [ ! -f "$HOME/.claude/settings.json.tether-backup" ] && [ ! -f "$HOME/.claude/settings.json.inyon-backup" ] && cp "$HOME/.claude/settings.json" "$HOME/.claude/settings.json.inyon-backup"',
     'cat > "$HOME/.claude/settings.json.inyon-tmp" && mv "$HOME/.claude/settings.json.inyon-tmp" "$HOME/.claude/settings.json"',
@@ -188,6 +190,7 @@ async function readAgySettings(host: Host): Promise<any | undefined> {
 async function writeAgySettings(host: Host, settings: any) {
   const f = AGY_SETTINGS
   const cmd = [
+    `umask 077; trap 'rm -f "${f}.inyon-tmp"' EXIT HUP INT TERM`,
     'mkdir -p "$HOME/.gemini/antigravity-cli"',
     `[ -f "${f}" ] && [ ! -f "${f}.tether-backup" ] && [ ! -f "${f}.inyon-backup" ] && cp "${f}" "${f}.inyon-backup"`,
     `cat > "${f}.inyon-tmp" && mv "${f}.inyon-tmp" "${f}"`,
@@ -252,7 +255,7 @@ export async function reconnectStatusLine(host: Host, cwd: string) {
   if (settings.statusLine && !isOurStatus(settings.statusLine.command)) throw new HttpError(409, 'This project has its own status line')
   if (!isOurStatus(settings.statusLine?.command)) {
     settings.statusLine = { type: 'command', command: STATUS_CMD, padding: 0 }
-    const w = await host.exec(`mkdir -p ${shq(dir)} && cat > ${shq(file)}`, { input: JSON.stringify(settings, null, 2) + '\n' })
+    const w = await host.exec(`umask 077; mkdir -p ${shq(dir)} && cat > ${shq(file)}`, { input: JSON.stringify(settings, null, 2) + '\n' })
     if (w.code !== 0) throw new HttpError(500, w.stderr.trim() || `Could not write ${file}`)
   }
   await host.exec(
@@ -297,6 +300,7 @@ export async function uninstallIntegration(host: Host) {
   }
   if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks
   await writeSettings(host, settings)
-  await host.exec('rm -f "$HOME/.inyon/hook.sh" "$HOME/.inyon/statusline.sh" "$HOME/.inyon/statusline.orig"')
+  // the hook's log holds your prompts: it goes with the hook
+  await host.exec('rm -f "$HOME/.inyon/hook.sh" "$HOME/.inyon/statusline.sh" "$HOME/.inyon/statusline.orig" "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl"')
   await uninstallAgyIntegration(host)
 }

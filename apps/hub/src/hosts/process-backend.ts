@@ -89,6 +89,13 @@ export function processBackend(controlDir: string): HostBackend {
       return { kill, exited: proc.exited }
     },
 
+    // the master would otherwise stay up for ControlPersist's ten minutes after the machine is gone
+    async close(config) {
+      if (config.kind !== 'ssh') return
+      const proc = Bun.spawn(['ssh', ...sshArgs(config, false).slice(0, -2), '-O', 'exit', config.target!], { env: process.env, stdin: 'ignore', stdout: 'ignore', stderr: 'ignore' })
+      await Promise.race([proc.exited, new Promise((r) => setTimeout(r, 5000))])
+    },
+
     pty(config, cmd, cols, rows, onData) {
       const proc = Bun.spawn(argv(config, cmd, true), {
         env: { ...process.env, TERM: 'xterm-256color', LANG: process.env.LANG || 'C.UTF-8' },

@@ -1,10 +1,10 @@
 import { afterAll, expect, mock, spyOn, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Host } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
-import { uploadFiles, uploadPiece } from './features.ts'
+import { cleanScript, uploadFiles, uploadPiece } from './features.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
@@ -84,4 +84,46 @@ test('two files of the same name sent in the same second both keep their bytes',
   expect(a.path).not.toBe(b.path)
   expect(readFileSync(a.path, 'utf8')).toBe('FIRST')
   expect(readFileSync(b.path, 'utf8')).toBe('SECOND')
+})
+
+test('a file in progress is a .part file, and takes its name only once the last piece is in', async () => {
+  const piece = (at: number, n: number) => new File([video.slice(at, at + n)], 'half.mp4', { type: 'video/mp4' })
+  const first = await uploadPiece('up', undefined, piece(0, 1_000_000), { total: 2_000_000, offset: 0 })
+  // cut off here: an agent can't be handed a file that is half there
+  expect(existsSync(first.path)).toBe(false)
+  expect(existsSync(`${first.path}.part`)).toBe(true)
+  await uploadPiece('up', undefined, piece(1_000_000, 1_000_000), { total: 2_000_000, offset: 1_000_000, path: first.path })
+  expect(existsSync(`${first.path}.part`)).toBe(false)
+  expect(statSync(first.path).size).toBe(2_000_000)
+  // the last piece sent again, after its answer was lost: the whole file stays as it is
+  await uploadPiece('up', undefined, piece(1_000_000, 1_000_000), { total: 2_000_000, offset: 1_000_000, path: first.path })
+  expect(statSync(first.path).size).toBe(2_000_000)
+})
+
+test('the janitor deletes old uploads, leftover .part files and the oldest past the size limit', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'inyon-clean-'))
+  try {
+    const file = (name: string, kb: number, daysOld: number, minsOld = 0) => {
+      const p = join(dir, name)
+      mkdirSync(join(p, '..'), { recursive: true })
+      writeFileSync(p, new Uint8Array(kb * 1024))
+      const t = new Date(Date.now() - daysOld * 86400_000 - minsOld * 60_000)
+      utimesSync(p, t, t)
+      return p
+    }
+    const ancient = file('2026-09-01/a/old.png', 10, 40)
+    const stale = file('2026-10-14/b/cut.mp4.part', 10, 0, 90)
+    const fresh = file('2026-10-14/b/going.mp4.part', 10, 0, 5)
+    const big1 = file('2026-10-10/c/one.bin', 600, 4)
+    const big2 = file('2026-10-13/c/two.bin', 600, 1)
+    const today = file('2026-10-14/c/three.bin', 600, 0)
+    const sh = Bun.spawnSync(['sh', '-c', cleanScript(dir, 30, 1)])
+    expect(sh.exitCode).toBe(0)
+    expect([ancient, stale, big1, big2].map(existsSync)).toEqual([false, false, false, false])
+    // still being written, and today's file under the 1 MB cap, both stay
+    expect([fresh, today].map(existsSync)).toEqual([true, true])
+    expect(existsSync(join(dir, '2026-09-01'))).toBe(false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

@@ -280,12 +280,7 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
         }
     }
     let file = dir.join(if win { ".env" } else { "env" });
-    fs::write(&file, format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&file, fs::Permissions::from_mode(0o600));
-    }
+    write_secret(&file, &format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
     // the other file name may hold a token from an earlier pairing
     let _ = fs::remove_file(dir.join(if win { "env" } else { ".env" }));
     if win {
@@ -722,9 +717,20 @@ pub fn uninstall_all(sys: &Sys, purge: bool) -> Outcome {
         lines.push(format!("removed {}", bin.display()));
     }
     if purge {
+        // Claude Code and Antigravity stop calling Inyon's scripts before they're deleted
+        lines.extend(crate::unhook::unhook(&paths::home()));
         let _ = fs::remove_dir_all(node_dir());
         let _ = fs::remove_dir_all(home_inyon());
-        lines.push("removed the pairings, keys and logs".into());
+        // what older versions and the SSH connections kept: the ~/.tether link, its folder, sockets
+        for old in [".tether", ".tether-node", ".cache/inyon-ssh"] {
+            let p = paths::home().join(old);
+            if fs::symlink_metadata(&p).is_ok_and(|m| m.file_type().is_symlink()) {
+                let _ = fs::remove_file(&p);
+            } else {
+                let _ = fs::remove_dir_all(&p);
+            }
+        }
+        lines.push("removed the pairings, keys, uploads and logs".into());
     } else {
         lines.push(format!("Your pairings stay in {}; add --purge to remove them too.", node_dir().display()));
     }
@@ -1003,4 +1009,19 @@ mod tests {
         let f = SetupFlags { yes: true, role: Some("hub".into()), network: None, port: None, autostart: None, hub: None };
         assert!(plan_from_flags(Platform::Windows, Vec::new(), &f).unwrap_err().contains("WSL"));
     }
+}
+
+/// Writes a file only you can read, from its first byte: it holds the hub token.
+fn write_secret(file: &std::path::Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut o = fs::OpenOptions::new();
+    o.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        o.mode(0o600);
+        // an older file keeps its mode when opened, so set it too
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
+    }
+    o.open(file)?.write_all(content.as_bytes())
 }

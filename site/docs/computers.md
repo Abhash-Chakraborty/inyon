@@ -16,7 +16,7 @@ prints a QR code, an ID like `K7Q4-MX2T` with a 6-digit code, and a link. Scan t
 
 - A code pairs one phone, once, within 10 minutes.
 - Five wrong typed codes cancel the typed code (the QR code still works until it expires).
-- `inyon phones` lists paired phones and when each was last seen; `inyon forget <name>` unpairs one at once.
+- `inyon phones` lists paired phones and when each was last seen; `inyon forget <name>` unpairs one at once. From 0.17, removing the computer in the app unpairs the phone on the computer too.
 
 Pair as many phones as you like, and pair the same phone with as many computers as you like.
 

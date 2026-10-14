@@ -29,6 +29,7 @@ import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
+import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
 import { inyonCommand, logFile, nodeDir, runningFile, savedEnv } from './paths.ts'
@@ -222,7 +223,10 @@ function linkOptions(args: string[]): LinkConfig {
 async function pair(args: string[]) {
   const config = linkOptions(args)
   const service = linkRunning()
-  if (!service) startLink(config)
+  if (!service) {
+    startLink(config)
+    startTidying()
+  }
   const { secret, short } = newPairing()
   // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
   // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
@@ -322,11 +326,13 @@ if (cmd === 'pair') {
   if (linkRunning()) fail(`The link is already running (pid ${currentState()!.pid}).`)
   await ensureShell()
   startLink(linkOptions(rest))
+  startTidying()
 } else if (cmd === 'join') await join(rest[0])
 // tether-node's installers started the hub connection with no arguments
 else if (cmd === 'connect' || (!cmd && joined)) {
   await ensureShell().catch((err) => console.log(`! ${(err as Error).message}`))
   connectMode(rest[0])
+  startTidying()
 } else if (cmd === 'hub') {
   // a hub leaves itself out of the copies it builds for the machines it adds (see build.ts)
   if (process.env.INYON_NODE_ONLY) fail('This copy of inyon has no hub in it. Get the full program with get.sh --hub.')
@@ -338,5 +344,8 @@ else if (cmd === 'push') await (await import('./push.ts')).pushCommand(rest)
 else if (cmd === 'version' || cmd === '--version') emit({ version: VERSION, engine: true }, VERSION)
 else if (cmd === 'help' || cmd === '--help' || cmd === '-h') console.log(USAGE)
 // the form tether-node's installers used: a hub address, with the token in the environment
-else if (cmd && /^https?:\/\//.test(cmd)) connectMode(cmd, rest[0])
+else if (cmd && /^https?:\/\//.test(cmd)) {
+  connectMode(cmd, rest[0])
+  startTidying()
+}
 else fail(USAGE)

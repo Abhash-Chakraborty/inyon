@@ -140,7 +140,7 @@ export interface ServerForm {
 }
 
 export interface HubSettings {
-  uploads: { retentionDays: number; maxMB: number; longPasteLines: number }
+  uploads: { retentionDays: number; maxMB: number; maxTotalMB: number; longPasteLines: number }
   autoResume?: boolean
 }
 

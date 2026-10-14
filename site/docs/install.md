@@ -116,6 +116,8 @@ inyon uninstall            # remove the services and the programs, keep pairings
 inyon uninstall --purge    # also delete ~/.inyon: pairings, keys, a hub's records
 ```
 
+From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
+
 To stop being part of a hub but keep Inyon installed, use `inyon disconnect`. To unpair one phone, use `inyon forget <phone>`.
 
 ## Coming from tether-node

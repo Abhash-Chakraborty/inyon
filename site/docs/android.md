@@ -61,6 +61,8 @@ If you can't install anything on a server, the phone can use SSH, through a nati
    - **Key:** paste a private key.
 3. The app shows the server's host key fingerprint. Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server, then confirm. If the key ever changes, the app refuses to connect and warns you until you check it again.
 
+Removing the server from the phone (from 0.17) takes the phone key back out of its `~/.ssh/authorized_keys`, along with Inyon's uploads and integration there, if the phone can still reach it.
+
 You can also connect *from a paired computer*: the phone asks that computer to SSH onward, using its own `~/.ssh/config`, keys and aliases.
 
 Passwords and keys stay in Android's encrypted storage, and the app's data is excluded from backups. The phone has to reach the server itself, so use the same Wi-Fi or a VPN. A server on Tailscale SSH lets the phone in with no key at all.

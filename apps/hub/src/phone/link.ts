@@ -204,6 +204,10 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
     forget(id: string) {
       const c = conns.get(id)
       if (!c) return
+      // the computer forgets the phone too, so its key stops working there (computers before 0.17 ignore this)
+      try {
+        c.channel?.send({ op: 'unpair' })
+      } catch {}
       c.stopped = true
       clearTimeout(c.timer)
       drop(c, 'removed')

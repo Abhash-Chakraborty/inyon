@@ -36,6 +36,8 @@ export interface HostBackend {
   stream(config: HostConfig, cmd: string, onLine: (line: string) => void, opts: { keepStdin?: boolean }): StreamHandle
   /** Interactive command in a pseudo-terminal (terminal views). */
   pty(config: HostConfig, cmd: string, cols: number, rows: number, onData: (d: Uint8Array) => void): PtyHandle
+  /** Ends any connection kept open for the machine (an SSH master), when it's removed or changed. */
+  close?(config: HostConfig): Promise<void>
 }
 
 let pick: ((config: HostConfig) => HostBackend) | undefined
@@ -72,5 +74,9 @@ export class Host {
 
   pty(cmd: string, cols: number, rows: number, onData: (d: Uint8Array) => void): PtyHandle {
     return backend(this.config).pty(this.config, cmd, cols, rows, onData)
+  }
+
+  close(): Promise<void> {
+    return backend(this.config).close?.(this.config) ?? Promise.resolve()
   }
 }

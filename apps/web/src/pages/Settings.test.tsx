@@ -20,7 +20,7 @@ const page = () => (
 )
 
 beforeEach(() => {
-  api.settings.mockResolvedValue({ uploads: { retentionDays: 7, maxMB: 100, longPasteLines: 40 }, autoResume: false })
+  api.settings.mockResolvedValue({ uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false })
   api.uploadUsage.mockResolvedValue({ bytes: 2048, files: 1, expired: 0, dir: '/home/me/.inyon/uploads' })
   useStore.setState({ hosts })
 })
@@ -64,7 +64,7 @@ describe('Settings keeps what you type while live data flows', () => {
     await render(page())
     await user.click(screen.getByText('30 days'))
     await flush()
-    expect(api.saveSettings.mock.calls[0][0]).toEqual({ uploads: { retentionDays: 30, maxMB: 100, longPasteLines: 40 }, autoResume: false })
+    expect(api.saveSettings.mock.calls[0][0]).toEqual({ uploads: { retentionDays: 30, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false })
   })
 
   test('appearance settings apply at once', async () => {

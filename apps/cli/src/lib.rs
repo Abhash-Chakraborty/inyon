@@ -12,4 +12,5 @@ pub mod signing;
 pub mod state;
 pub mod sys;
 pub mod ui;
+pub mod unhook;
 pub mod update;

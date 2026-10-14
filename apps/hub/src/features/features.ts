@@ -53,17 +53,24 @@ function uploadPath(home: string, hostId: string, paneId: string | undefined, na
 const PIECE = 2 * 1024 * 1024
 // (Bun's File has slice(); the File type the hub is checked against doesn't say so)
 type Piece = { size: number; slice(start: number, end: number): { arrayBuffer(): Promise<ArrayBuffer> } }
-async function writeUpload(host: ReturnType<typeof hostAndHome>['host'], path: string, file: File, from = 0) {
+async function writeUpload(host: ReturnType<typeof hostAndHome>['host'], path: string, file: File, from = 0, total = from + file.size) {
   const data = file as unknown as Piece
   const dir = path.slice(0, path.lastIndexOf('/'))
+  // the file grows as <name>.part and takes its name once whole, so an upload cut off half way never
+  // looks finished to an agent; the janitor deletes .part files an hour old
+  const part = `${path}.part`
   for (let at = 0; at < data.size || at === 0; at += PIECE) {
     const input = new Uint8Array(await data.slice(at, at + PIECE).arrayBuffer())
+    const end = from + at + input.length
     // private to your user on shared machines
     // a later piece goes on the end only where the file stops; one that's already there (the app
     // retrying after its answer got lost) is skipped, so a retry never doubles a piece
-    const cmd = from + at === 0
-      ? `umask 077; mkdir -p ${shq(dir)} && cat > ${shq(path)}`
-      : `n="$(wc -c < ${shq(path)} | tr -d ' ')"; if [ "$n" = ${from + at + input.length} ]; then cat > /dev/null; else [ "$n" = ${from + at} ] && cat >> ${shq(path)}; fi`
+    const write = from + at === 0
+      ? `umask 077; mkdir -p ${shq(dir)} && cat > ${shq(part)}`
+      : `n="$(wc -c < ${shq(part)} | tr -d ' ')"; if [ "$n" = ${end} ]; then cat > /dev/null; else [ "$n" = ${from + at} ] && cat >> ${shq(part)}; fi`
+    const finish = end >= total ? ` && mv -f ${shq(part)} ${shq(path)}` : ''
+    // the whole file is already there: this is a retry of the last piece
+    const cmd = `if [ -f ${shq(path)} ]; then cat > /dev/null; else { ${write}; }${finish}; fi`
     const r = await host.exec(cmd, { input, timeoutMs: 120000 })
     if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || `Could not save ${path.slice(path.lastIndexOf('/') + 1)}`)
   }
@@ -80,6 +87,7 @@ export async function uploadFiles(hostId: string, paneId: string | undefined, fi
     await writeUpload(host, path, f)
     out.push({ name: f.name, path, size: f.size, type: f.type })
   }
+  janitor.soon(hostId)
   return out
 }
 
@@ -94,39 +102,84 @@ export async function uploadPiece(hostId: string, paneId: string | undefined, pi
   if (o.total > maxMB * 1024 * 1024) throw new HttpError(413, `${piece.name} is larger than ${maxMB} MB`)
   const path = o.offset ? o.path : uploadPath(home, hostId, paneId, piece.name)
   if (!path || !path.startsWith(`${home}/.inyon/uploads/`) || /\/\.\.?(\/|$)|[\n\0]/.test(path)) throw new HttpError(400, 'Bad upload path')
-  await writeUpload(host, path, piece, o.offset)
+  await writeUpload(host, path, piece, o.offset, o.total)
+  if (o.offset + piece.size >= o.total) janitor.soon(hostId)
   return { name: piece.name, path, size: o.total, type: piece.type }
 }
 
 export async function uploadUsage(hostId: string) {
   const { host, home } = hostAndHome(hostId)
   const dir = `${home}/.inyon/uploads`
-  const r = await host.exec(`[ -d ${shq(dir)} ] || { echo "0 0 0"; exit 0; }; echo "$(du -sk ${shq(dir)} | cut -f1) $(find ${shq(dir)} -type f | wc -l) $(find ${shq(dir)} -type f -mtime +${loadSettings().uploads.retentionDays} | wc -l)"`)
-  const [kb, files, old] = r.stdout.trim().split(/\s+/).map(Number)
-  return { bytes: (kb || 0) * 1024, files: files || 0, expired: old || 0, dir }
+  const days = loadSettings().uploads.retentionDays
+  const old = days > 0 ? `$(find ${shq(dir)} -type f -mtime +${days} | wc -l)` : '0'
+  const r = await host.exec(`[ -d ${shq(dir)} ] || { echo "0 0 0"; exit 0; }; echo "$(du -sk ${shq(dir)} | cut -f1) $(find ${shq(dir)} -type f | wc -l) ${old}"`)
+  const [kb, files, expired] = r.stdout.trim().split(/\s+/).map(Number)
+  return { bytes: (kb || 0) * 1024, files: files || 0, expired: expired || 0, dir }
 }
 
-/** Deletes uploads older than `days` (all of them when days is 0). */
+/**
+ * The shell that tidies a machine's uploads: files older than `days` (none when 0, all when -1),
+ * .part files an upload left behind over an hour ago, then the oldest days first while the folder
+ * is over `maxTotalMB` (0: no limit). Only find, du and rm, so it runs on macOS, Linux and busybox.
+ */
+export function cleanScript(dir: string, days: number, maxTotalMB = 0) {
+  const d = shq(dir)
+  const age = days > 0 ? `find ${d} -type f -mtime +${Math.floor(days)} -exec rm -f {} +;` : days < 0 ? `find ${d} -type f -exec rm -f {} +;` : ''
+  const cap = maxTotalMB > 0
+    ? `n=${days > 0 ? Math.floor(days) : 365}; while [ "$n" -ge 0 ] && [ "$(du -sk ${d} | cut -f1)" -gt ${Math.floor(maxTotalMB) * 1024} ]; do find ${d} -type f -mtime +$n -exec rm -f {} +; n=$((n-1)); done;`
+    : ''
+  // the machine's own inyon tidies by the same rules while no hub is connected (apps/node/tidy.ts)
+  const policy = days >= 0 ? `printf '%s %s\\n' ${Math.floor(days)} ${Math.floor(maxTotalMB)} > ${shq(dir.replace(/\/uploads$/, '/upload-policy'))} 2>/dev/null;` : ''
+  return `${policy} [ -d ${d} ] || exit 0; ${age} find ${d} -type f -name '*.part' -mmin +60 -exec rm -f {} +; ${cap} find ${d} -mindepth 1 -type d -empty -delete 2>/dev/null; true`
+}
+
+/** Deletes uploads older than `days` (all of them when days is 0), and anything a cut-off upload left. */
 export async function cleanUploads(hostId: string, days: number) {
   const { host, home } = hostAndHome(hostId)
-  const dir = `${home}/.inyon/uploads`
-  const age = days > 0 ? `-mtime +${Math.floor(days)}` : ''
-  await host.exec(`[ -d ${shq(dir)} ] && find ${shq(dir)} -type f ${age} -delete; [ -d ${shq(dir)} ] && find ${shq(dir)} -mindepth 1 -type d -empty -delete; true`)
+  const { maxTotalMB } = loadSettings().uploads
+  await host.exec(cleanScript(`${home}/.inyon/uploads`, days > 0 ? days : -1, maxTotalMB))
   return uploadUsage(hostId)
 }
 
-/** Applies the retention setting on every connected machine. */
-export function startUploadJanitor() {
-  const run = async () => {
-    const days = loadSettings().uploads.retentionDays
-    if (days <= 0) return
-    for (const h of registry.overview()) {
-      if (h.status === 'online') cleanUploads(h.config.id, days).catch(() => {})
-    }
+/**
+ * Keeps every machine's uploads within the settings: each connected machine is tidied when it's
+ * first seen, when it comes back after being away, every six hours, and soon after an upload.
+ */
+export const janitor = (() => {
+  const last = new Map<string, number>()
+  const tidy = async (id: string) => {
+    last.set(id, Date.now())
+    const rt = registry.get(id)
+    const home = rt?.probe?.home
+    if (!rt || !home) return last.delete(id)
+    const { retentionDays, maxTotalMB } = loadSettings().uploads
+    await rt.host.exec(cleanScript(`${home}/.inyon/uploads`, retentionDays, maxTotalMB)).catch(() => last.delete(id))
   }
-  setTimeout(run, 60_000)
-  setInterval(run, 6 * 3600_000)
-}
+  const sweep = () => {
+    const online = new Set<string>()
+    for (const h of registry.overview()) {
+      if (h.status !== 'online') continue
+      online.add(h.config.id)
+      if (Date.now() - (last.get(h.config.id) ?? 0) > 6 * 3600_000) void tidy(h.config.id)
+    }
+    // a machine that went away is tidied again as soon as it's back
+    for (const id of last.keys()) if (!online.has(id)) last.delete(id)
+  }
+  return {
+    start() {
+      setTimeout(sweep, 60_000)
+      setInterval(sweep, 10 * 60_000)
+    },
+    /** after an upload: at most once an hour per machine */
+    soon(id: string) {
+      if (Date.now() - (last.get(id) ?? 0) > 3600_000) setTimeout(() => void tidy(id), 5_000)
+    },
+    sweep,
+  }
+})()
+
+/** Applies the retention setting on every connected machine. */
+export const startUploadJanitor = () => janitor.start()
 
 /** A small cache: entries go after `ttl` ms, and past `max` entries the least recently used go first. */
 export function lruCache<T>(ttl: number, max: number) {
@@ -316,7 +369,7 @@ export async function writeConfig(hostId: string, path: string, content: string)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
   const p = shq(path)
   const r = await host.exec(
-    `mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.inyon-bak-${stamp}`)}; } && cat > ${shq(`${path}.inyon-tmp`)} && mv ${shq(`${path}.inyon-tmp`)} ${p} || exit $?; ls -t ${p}.inyon-bak-* 2>/dev/null | tail -n +6 | while IFS= read -r f; do rm -f -- "$f"; done; true`,
+    `umask 077; trap ${shq(`rm -f ${shq(`${path}.inyon-tmp`)}`)} EXIT HUP INT TERM; mkdir -p "$(dirname ${p})" && { [ ! -f ${p} ] || cp ${p} ${shq(`${path}.inyon-bak-${stamp}`)}; } && cat > ${shq(`${path}.inyon-tmp`)} && mv ${shq(`${path}.inyon-tmp`)} ${p} || exit $?; ls -t ${p}.inyon-bak-* 2>/dev/null | tail -n +6 | while IFS= read -r f; do rm -f -- "$f"; done; true`,
     { input: content },
   )
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not save')

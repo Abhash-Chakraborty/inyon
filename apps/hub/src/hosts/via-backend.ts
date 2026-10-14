@@ -47,6 +47,13 @@ export function viaBackend(lookup: (id: string) => HostConfig | undefined): Host
       if (!v) return { kill() {}, exited: Promise.resolve(255) }
       return nodeBackend.stream(v, viaCommand(config, cmd), onLine, opts)
     },
+    // ends the computer's shared connection to the server, which would otherwise stay up ten minutes
+    async close(config) {
+      const v = through(config)
+      if (!v) return
+      const port = config.port ? ` -p ${config.port}` : ''
+      await nodeBackend.exec(v, `ssh -o "ControlPath=$HOME/.cache/inyon-ssh/%C"${port} -O exit -- ${shq(config.target!)} 2>/dev/null; true`, { timeoutMs: 5000 }).catch(() => {})
+    },
     pty(config, cmd, cols, rows, onData) {
       const v = through(config)
       if (!v) throw new Error(gone)

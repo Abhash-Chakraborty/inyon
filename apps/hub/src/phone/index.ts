@@ -156,6 +156,12 @@ export const startPhone: StartPhone = async ({ store, ssh }) => {
       }),
       DELETE: api(async (req) => {
         const id = req.params.id
+        const rt = registry.get(id)
+        // while it still answers: Inyon's hooks and uploads come off it, and so does the phone's key
+        if (rt) {
+          const { dropAuthorizedKey, tidyMachine } = await import('../hosts/tidy.ts')
+          await tidyMachine(rt.host, rt.state, rt.host.config.auth === 'phone-key' ? dropAuthorizedKey(await keys.publicLine()) : '')
+        }
         links.forget(id)
         await conn.forget(id)
         await keys.drop(id)

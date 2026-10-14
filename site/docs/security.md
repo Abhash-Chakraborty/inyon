@@ -56,7 +56,11 @@ Nothing, unless you turn on the Claude Code integration from the machine's Integ
 
 Turning the integration off undoes all of it. The hook's log holds your prompts, so `~/.inyon` is readable only by you.
 
-Uploads go to `~/.inyon/uploads` and are deleted after the period you choose.
+Uploads go to `~/.inyon/uploads` and are deleted after the period you choose. From 0.17 a computer also deletes them by itself when no hub does, and an upload that broke off halfway is deleted after an hour. Files with secrets (the integration's settings, a pasted prompt, a token file) are written readable only by you from the first byte, and a temporary file is removed even when the write is interrupted.
+
+## Removing a machine cleans it up
+
+From 0.17, removing a machine that can be reached takes back what Inyon put there before it goes: the Claude Code and Antigravity integration (your own status line comes back), the uploads, the prompt log and the SSH connection the hub kept open to it. Removing a server the phone reached with its phone key also takes that key out of the server's `~/.ssh/authorized_keys`, and nothing else in the file changes. Removing a paired computer from the phone unpairs the phone on that computer too. A machine that's off or out of reach is removed anyway; run `inyon uninstall --purge` on it later, or delete the files by hand.
 
 ## What Inyon reads
 
