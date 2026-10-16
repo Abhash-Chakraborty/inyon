@@ -14,9 +14,12 @@ export const isPhone = () => isNative() || isHosted()
 /** Whether this device can SSH into a server itself (the Android app can; a browser can't). */
 export const canSsh = isNative
 
-/** Adds the phone's key to authorized_keys once, with the permissions sshd insists on. */
+/**
+ * Adds the phone's key to authorized_keys once, with the permissions sshd insists on. A file whose
+ * last line has no newline after it gets one first, or the key would be glued onto that line.
+ */
 export const authorizeCommand = (key: string) =>
-  `mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qxF '${key}' ~/.ssh/authorized_keys 2>/dev/null || echo '${key}' >> ~/.ssh/authorized_keys; } && chmod 600 ~/.ssh/authorized_keys`
+  `mkdir -p ~/.ssh && chmod 700 ~/.ssh && { grep -qxF '${key}' ~/.ssh/authorized_keys 2>/dev/null || { [ -s ~/.ssh/authorized_keys ] && [ -n "$(tail -c1 ~/.ssh/authorized_keys)" ] && echo >> ~/.ssh/authorized_keys; echo '${key}' >> ~/.ssh/authorized_keys; }; } && chmod 600 ~/.ssh/authorized_keys`
 
 let runtime: Promise<PhoneRuntime> | undefined
 

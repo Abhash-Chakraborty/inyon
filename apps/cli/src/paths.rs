@@ -88,7 +88,13 @@ fn link_dir(target: &Path, at: &Path) -> std::io::Result<()> {
 
 #[cfg(windows)]
 fn link_dir(target: &Path, at: &Path) -> std::io::Result<()> {
-    // a junction needs no admin rights; a directory symlink does
+    // a junction needs no admin rights; a directory symlink wants them (or Developer Mode),
+    // so it's only the fallback
+    let mut c = std::process::Command::new("cmd");
+    c.args(["/C", "mklink", "/J"]).arg(at).arg(target);
+    if crate::sys::quiet(&mut c).output().map(|o| o.status.success()).unwrap_or(false) && at.is_dir() {
+        return Ok(());
+    }
     std::os::windows::fs::symlink_dir(target, at)
 }
 

@@ -412,6 +412,9 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
 
 // ---------- viewers ----------
 
+/** how often a running task's output is fetched while the sheet is open (the label says so) */
+const TASK_REFRESH_MS = 3000
+
 export function TaskOutputSheet({ host, task, onClose }: { host: string; task: BackgroundTask | null; onClose: () => void }) {
   const [out, setOut] = useState<string | null>(null)
   const pre = useRef<HTMLPreElement>(null)
@@ -429,7 +432,7 @@ export function TaskOutputSheet({ host, task, onClose }: { host: string; task: B
         .catch((e) => alive && setOut(`Could not read output: ${e.message}`))
     load()
     // only while it's on screen; a hidden app doesn't need the output every few seconds
-    const t = task.status === 'running' ? setInterval(() => document.hidden || load(), 3000) : undefined
+    const t = task.status === 'running' ? setInterval(() => document.hidden || load(), TASK_REFRESH_MS) : undefined
     return () => {
       alive = false
       clearInterval(t)
@@ -441,7 +444,7 @@ export function TaskOutputSheet({ host, task, onClose }: { host: string; task: B
       <pre ref={pre} className="max-h-[60dvh] overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">
         {out ?? 'Loading…'}
       </pre>
-      <div className="mt-2 text-[12px] text-fg-3">{task?.status === 'running' ? 'Live · refreshes every 2 seconds' : task?.summary ?? task?.status}</div>
+      <div className="mt-2 text-[12px] text-fg-3">{task?.status === 'running' ? `Live · refreshes every ${TASK_REFRESH_MS / 1000} seconds` : task?.summary ?? task?.status}</div>
     </Sheet>
   )
 }

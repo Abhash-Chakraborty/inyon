@@ -1,5 +1,20 @@
 import { afterAll, expect, test } from 'bun:test'
-import { serveOps, WIN } from './ops.ts'
+import { serveOps, WIN, winLine } from './ops.ts'
+
+test('on Windows, live output from a hub attach gets its session in front of the pane', () => {
+  // what apps/hub/src/tmux/live.ts runs (attach), and the plain form from before it
+  const attach = `exec tmux $([ "$(command -v tmux)" = tmux ] || echo -u) -C attach-session -t '$3' -f read-only,ignore-size`
+  const plain = `tmux -C attach-session -t $3`
+  for (const cmd of [attach, plain]) {
+    const map = winLine(cmd, true)
+    expect(map).toBeDefined()
+    expect(map!('%output %1 aGVsbG8=')).toBe('%output %3.1 aGVsbG8=')
+    expect(map!('%extended-output %12 0 : x')).toBe('%extended-output %3.12 0 : x')
+    expect(map!('%window-add @1')).toBe('%window-add @1')
+  }
+  expect(winLine('tmux list-panes -a', true)).toBeUndefined()
+  expect(winLine(attach, false)).toBeUndefined()
+})
 
 // a sleep only these tests start, so they can tell whether it is still running
 const MARK = `${4000 + Math.floor(Math.random() * 999)}.${process.pid}`

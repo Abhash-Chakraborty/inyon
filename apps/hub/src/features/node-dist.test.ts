@@ -1,7 +1,11 @@
 import { afterAll, expect, test } from 'bun:test'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import zlib from 'node:zlib'
-import { cliTargetOf, nodeRoutes, releaseFile, sourceCommand, targetOf, updateScript } from './node-dist.ts'
+import { VERSION } from '@inyon/protocol'
+import { cliTargetOf, nodeRoutes, pruneOld, releaseFile, sourceCommand, tag, targetOf, updateScript } from './node-dist.ts'
 
 const url = (q: string) => new URL(`http://hub/node/inyon?${q}`)
 const get = (route: keyof typeof nodeRoutes) => nodeRoutes[route](new Request(`http://hub${route}`))
@@ -26,6 +30,17 @@ test('the hub hands out the command and the engine under their own routes', () =
   }
 })
 
+test('the pinned busybox-w32 checksum is served per architecture, without a download', async () => {
+  const sum = async (q: string) => nodeRoutes['/node/busybox.exe.sha256'](new Request(`http://hub/node/busybox.exe.sha256?${q}`))
+  const x64 = await (await sum('os=windows&arch=x64')).text()
+  const arm64 = await (await sum('arch=arm64')).text()
+  expect(x64).toMatch(/^[0-9a-f]{64}$/)
+  expect(arm64).toMatch(/^[0-9a-f]{64}$/)
+  expect(x64).not.toBe(arm64)
+  expect(await (await sum('')).text()).toBe(x64)
+  expect((await sum('arch=x86')).status).toBe(400)
+})
+
 test('tether-node as a Bun script is told to run "Add a machine" again', async () => {
   const res = await get('/node/tether-node.ts')
   expect(res.status).toBe(410)
@@ -36,6 +51,37 @@ test('tether-node as a Bun script is told to run "Add a machine" again', async (
 test('the installers are served as they are in the repository', async () => {
   expect(await (await get('/node/install.sh')).text()).toStartWith('#!/bin/sh\n')
   expect(await (await get('/node/install.ps1')).text()).toContain("$TaskName = 'Inyon node'")
+})
+
+test('earlier builds go, with their .gz and .sha256; this build, this release and busybox stay', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-node-dist-'))
+  const stale = [
+    'v0.12.0-inyon-engine-linux-x64',
+    'v0.12.0-inyon-engine-linux-x64.gz',
+    'v0.12.0-inyon-engine-linux-x64.sha256',
+    'v0.12.0-inyon-windows-x64.exe',
+    '0123456789abcdef-inyon-engine-darwin-arm64',
+    // how hubs before 0.13 named their builds
+    'inyon-0123456789abcdef-inyon-engine-linux-x64',
+    'tether-node-0123456789abcdef.js',
+  ]
+  const kept = [
+    `${tag()}-inyon-engine-linux-x64`,
+    `${tag()}-inyon-engine-linux-x64.gz`,
+    `${tag()}-inyon-engine-linux-x64.sha256`,
+    `${tag()}-inyon-engine-windows-x64.exe.tmp`,
+    `v${VERSION}-inyon-linux-x64`,
+    `v${VERSION}-inyon-windows-arm64.exe`,
+    'busybox-w64u-FRP-6075-g169694ebd.exe',
+    'notes.txt',
+  ]
+  for (const f of [...stale, ...kept]) fs.writeFileSync(path.join(dir, f), f)
+  try {
+    pruneOld(dir)
+    expect(fs.readdirSync(dir).sort()).toEqual([...kept].sort())
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 // A stand-in for the GitHub release the hub takes the program from.

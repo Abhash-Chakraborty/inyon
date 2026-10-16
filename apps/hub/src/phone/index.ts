@@ -109,9 +109,9 @@ export const startPhone: StartPhone = async ({ store, ssh, name }) => {
         const b = await body(req)
         const text = String(b.link ?? '')
         const short = parseShortCode(text)
-        // a typed ID and code: the relays say which machine the ID stands for
+        // a typed ID and code: the relays say which machine the two together stand for
         const info = short ? await resolveShortCode(short).catch(() => undefined) : parsePairLink(text)
-        if (short && !info) throw new HttpError(404, 'No computer has that ID right now. Check it, or run `inyon pair` again for a new one (each lasts 10 minutes).')
+        if (short && !info) throw new HttpError(404, "That ID and code don't match a computer right now. Check both against the terminal, or run `inyon pair` again for new ones (each lasts 10 minutes).")
         if (!info) throw new HttpError(400, "That isn't an Inyon pairing code. Run `inyon pair` on the computer and scan the code it shows.")
         let welcome
         try {

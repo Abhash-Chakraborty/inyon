@@ -225,12 +225,13 @@ pub fn is_private(host: &str) -> bool {
             || inner.starts_with("fea")
             || inner.starts_with("feb");
     }
-    if h == "localhost" || h == "::1" || h.starts_with("127.") {
+    if h == "localhost" || h == "::1" {
         return true;
     }
-    let p: Vec<u16> = h.split('.').filter_map(|o| o.parse().ok()).collect();
+    // an address only when every part is a number: 10.0.0.1.attacker.com is a name
+    let p: Vec<u8> = h.split('.').map(|o| o.parse().ok()).collect::<Option<Vec<_>>>().unwrap_or_default();
     if p.len() == 4 {
-        if p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16..=31).contains(&p[1])) {
+        if p[0] == 127 || p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16..=31).contains(&p[1])) {
             return true;
         }
         // the CGNAT range Tailscale and NetBird use
@@ -1037,6 +1038,13 @@ mod tests {
         }
         for h in ["example.com", "8.8.8.8", "100.200.1.1", "172.32.0.1", "[2001:db8::1]"] {
             assert!(!is_private(h), "{h}");
+        }
+        // a public name that starts like a private address is still a public name
+        for h in ["10.0.0.1.attacker.com", "127.0.0.1.evil.io", "192.168.1.5.example.com"] {
+            assert!(!is_private(h), "{h}");
+        }
+        for h in ["10.0.0.1", "192.168.1.5", "100.64.0.1"] {
+            assert!(is_private(h), "{h}");
         }
         assert!(check_hub_url("http://192.168.1.2:4777").is_ok());
         assert!(check_hub_url("https://hub.example.com").is_ok());

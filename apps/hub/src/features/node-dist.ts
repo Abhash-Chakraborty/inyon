@@ -87,14 +87,23 @@ function once(key: string, make: () => Promise<string>) {
   return p
 }
 
-/** Earlier builds and downloads (about 100 MB each) are never served again. */
-function pruneOld(keep: string) {
+export const tag = () => (FROM_SOURCE ? sourceHash() : `v${VERSION}`)
+
+/**
+ * Earlier builds and downloads (about 100 MB each) are never served again. A file is named after
+ * its build (`<tag>-inyon-engine-…`, `v<version>-inyon-…`, with .gz and .sha256 next to it); only
+ * this hub's own tag and release version stay, and files from before 0.13 (`inyon-<tag>-…`,
+ * `tether-node-…`) go with the rest. busybox is pinned on its own and isn't touched.
+ */
+export function pruneOld(dir = OUT) {
+  const keep = new Set([tag(), `v${VERSION}`])
   try {
-    for (const f of fs.readdirSync(OUT)) if (/^(inyon|tether-node)-/.test(f) && !f.includes(keep)) fs.rmSync(path.join(OUT, f), { force: true })
+    for (const f of fs.readdirSync(dir)) {
+      const m = /^(?:(.*?)-)?(?:inyon|tether-node)-/.exec(f)
+      if (m && !keep.has(m[1] ?? '')) fs.rmSync(path.join(dir, f), { force: true })
+    }
   } catch {}
 }
-
-const tag = () => (FROM_SOURCE ? sourceHash() : `v${VERSION}`)
 
 /** The engine for `t`, built or downloaded once. */
 export async function engine(t: Target) {
@@ -113,7 +122,7 @@ export async function engine(t: Target) {
       fs.writeFileSync(`${file}.tmp`, await releaseFile(engineFile(t), await releaseSums(), releaseBase()))
       fs.renameSync(`${file}.tmp`, file)
     }
-    pruneOld(tag())
+    pruneOld()
     return file
   })
 }
@@ -137,6 +146,7 @@ async function releaseCommand(t: CliTarget): Promise<string> {
     fs.mkdirSync(OUT, { recursive: true })
     fs.writeFileSync(`${file}.tmp`, await releaseFile(cliFile(t), await releaseSums(), releaseBase()))
     fs.renameSync(`${file}.tmp`, file)
+    pruneOld()
     return file
   })
 }
@@ -296,6 +306,8 @@ export const nodeRoutes = {
   '/node/inyon-engine.gz': route(async (req) => binary(await gzipped(await engine(engineOf(req))), `${engineFile(engineOf(req))}.gz`)),
   '/node/inyon-engine.sha256': route(async (req) => plain(await sha256(await engine(engineOf(req))))),
   '/node/busybox.exe': route(async (req) => binary(await busybox(archOf(new URL(req.url))), 'busybox.exe')),
+  // its pinned checksum, which install.ps1 checks the download against (known without downloading it)
+  '/node/busybox.exe.sha256': route((req) => plain(BUSYBOX[archOf(new URL(req.url))]!.sha256)),
   // a Windows machine set up before the rename updates through these (see hub-update.ps1)
   '/node/tether-node.exe': route(async () => binary(await windows(), 'tether-node.exe')),
   '/node/tether-node.exe.gz': route(async () => binary(await gzipped(await windows()), 'tether-node.exe.gz')),

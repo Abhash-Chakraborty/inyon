@@ -26,6 +26,7 @@ Inyon gives whoever reaches it a shell on your machines, as the user your agents
 A paired phone gets a shell on the computer as the user running `inyon`, the same as SSH.
 
 - **The pairing code is the secret.** It works for 10 minutes and for one phone. Don't share a screenshot of it. `inyon forget` revokes a phone.
+- **Typed codes.** The ID and the 6-digit code together pick out the computer's record on the relays, through a slow key derivation, so knowing the ID alone doesn't let anyone stand in for the computer. From 0.17.4, typing a code needs both the app and the computer on that version or newer; the QR code and the link work across versions.
 - **End-to-end encrypted.** Phone and computer run Noise IK (X25519, ChaCha20-Poly1305, SHA-256). The phone already knows the computer's key from the code, so a tunnel, relay or network in between can't read or change the traffic, or pretend to be the computer. The computer only lets in phone keys it has paired.
 - **The tunnel is public; the listener isn't open.** The Cloudflare quick tunnel gives the computer a public address, but it only reaches the link on `127.0.0.1`, which answers nothing until the handshake proves a paired phone. The link also listens on private-network addresses (not on Windows) with the same handshake; `--no-vpn` turns that off.
 - **Addresses are signed.** The computer publishes where it can be reached as a pkarr record signed by its own key. The record names addresses only.

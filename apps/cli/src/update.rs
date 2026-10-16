@@ -101,9 +101,10 @@ pub fn compare_versions(a: &str, b: &str) -> i32 {
         return 0;
     };
     for i in 0..x.0.len().max(y.0.len()) {
-        let d = x.0.get(i).copied().unwrap_or(0) as i64 - y.0.get(i).copied().unwrap_or(0) as i64;
-        if d != 0 {
-            return d.signum() as i32;
+        match x.0.get(i).copied().unwrap_or(0).cmp(&y.0.get(i).copied().unwrap_or(0)) {
+            std::cmp::Ordering::Greater => return 1,
+            std::cmp::Ordering::Less => return -1,
+            std::cmp::Ordering::Equal => {}
         }
     }
     // a release is newer than its own pre-releases
@@ -217,7 +218,10 @@ pub fn reinstall_command(platform: Platform) -> String {
 pub fn sum_for(sums: &str, name: &str) -> Option<String> {
     for line in sums.lines() {
         let line = line.trim();
-        let (hash, rest) = line.split_once(char::is_whitespace)?;
+        // a blank line or a bare word is nobody's checksum; the lines after it still count
+        let Some((hash, rest)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
         if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
             continue;
         }
@@ -895,6 +899,7 @@ mod tests {
         assert_eq!(compare_versions("0.10.0", "0.9.9"), 1);
         assert_eq!(compare_versions("v0.7.0", "0.7.0"), 0);
         assert_eq!(compare_versions("0.7", "0.7.0"), 0);
+        assert_eq!(compare_versions("18446744073709551615.0.0", "1.0.0"), 1);
         assert_eq!(compare_versions("0.7.0", "0.7.0-rc.1"), 1);
         assert_eq!(compare_versions("0.7.0-rc.10", "0.7.0-rc.2"), 1);
         assert!(!is_newer("nonsense", "0.1.0"));
@@ -903,10 +908,12 @@ mod tests {
 
     #[test]
     fn sha256sums_lines_match_the_exact_file_name_in_either_format() {
-        let sums = format!("{}  inyon-linux-x64\n{} *inyon-windows-x64.exe\n", "a".repeat(64), "b".repeat(64));
+        let sums = format!("{}  inyon-linux-x64\n\nnotes\n{} *inyon-windows-x64.exe\n", "a".repeat(64), "b".repeat(64));
         assert_eq!(sum_for(&sums, "inyon-linux-x64").unwrap(), "a".repeat(64));
+        // the blank line and the bare word before it don't hide this one
         assert_eq!(sum_for(&sums, "inyon-windows-x64.exe").unwrap(), "b".repeat(64));
         assert_eq!(sum_for(&sums, "inyon-linux"), None);
+        assert_eq!(sum_for(&sums, "notes"), None);
     }
 
     #[test]

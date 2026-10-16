@@ -18,6 +18,27 @@ import { emit, fail } from './output.ts'
 const dataDir = () => process.env.INYON_DATA_DIR || path.join(os.homedir(), '.inyon')
 export const hubEnvFile = () => path.join(dataDir(), 'hub.env')
 
+/** A private IPv4 address: a whole dotted quad (10.0.0.1.example.com is a name, not one) in a private range. */
+function privateIPv4(h: string) {
+  const parts = h.split('.')
+  if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return false
+  const [a, b] = parts.map(Number) as [number, number]
+  if (a === 10 || a === 127) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  return a === 100 && b >= 64 && b <= 127 // CGNAT range used by Tailscale and NetBird
+}
+
+/** Whether a hub's address is on your own network, where plain http:// is accepted for the token. */
+export function privateHost(url: URL) {
+  const h = url.hostname
+  // IPv6 literals: loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
+  if (h.startsWith('[')) return /^\[(::1|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(h)
+  if (h === 'localhost' || h === '::1' || privateIPv4(h)) return true
+  if (/\.(ts\.net|netbird\.cloud|netbird\.selfhosted|local|lan|internal)$/.test(h)) return true
+  return !h.includes('.') // single-label names on your private network
+}
+
 export async function hubCommand(args: string[]) {
   const [sub] = args
   for (const [k, v] of Object.entries(readEnvFile(hubEnvFile()))) process.env[k] ??= v
@@ -42,7 +63,11 @@ function localUrl(env: Record<string, string | undefined> = { ...readEnvFile(hub
   return `${tls ? 'https' : 'http'}://${bind === '0.0.0.0' || bind === '::' || bind === '127.0.0.1' ? '127.0.0.1' : bind}:${env.PORT || 4777}`
 }
 
-const askHub = (url: string) => fetch(`${url}/api/session`, { tls: { rejectUnauthorized: false } } as any).then((r) => r.json() as Promise<{ setup?: boolean }>, () => undefined)
+/** The running hub's answer, or nothing when it's not there or something else answers at its address. */
+const askHub = (url: string): Promise<{ setup?: boolean } | undefined> =>
+  fetch(`${url}/api/session`, { tls: { rejectUnauthorized: false } } as any)
+    .then((r) => r.json() as Promise<{ setup?: boolean }>)
+    .catch(() => undefined)
 
 /**
  * What `inyon hub code` says: the code while the hub still waits for its first password, and

@@ -1,4 +1,4 @@
-import { sha256 } from '@noble/hashes/sha2.js'
+import { scryptAsync } from '@noble/hashes/scrypt.js'
 import { identityFromSeed, isMachineId } from './identity.ts'
 import type { PairInfo } from './pair.ts'
 import { PKARR_RELAYS, publish, resolve } from './pkarr.ts'
@@ -7,11 +7,13 @@ import { PKARR_RELAYS, publish, resolve } from './pkarr.ts'
  * Pairing by typing instead of scanning (a server whose SSH session is on the same phone, or a
  * camera that won't focus): a one-time ID and a 6-digit code, like "K7Q4-MX2T" and "493812".
  *
- * The ID finds the machine. It stands for a throwaway key, and the machine publishes a record under
- * that key naming its real id and addresses, through the same pkarr relays it uses for its own
- * address. Guessing an ID means one relay lookup per try out of 2^40, so nobody finds the machine
- * by chance. The code is the pairing secret: it travels inside the Noise channel to the machine
- * the record named, and the machine drops it after a few wrong tries or ten minutes.
+ * The ID and the code together find the machine. Run through scrypt, they give a throwaway key, and
+ * the machine publishes a record under that key naming its real id and addresses, through the same
+ * pkarr relays it uses for its own address. Someone who only has the ID can't publish a record of
+ * their own in its place, and can't tell which record is the machine's without trying codes: each
+ * try costs a slow derivation and a relay lookup, out of a million. The code is also the pairing
+ * secret: it travels inside the Noise channel to the machine the record named, and the machine
+ * drops it after a few wrong tries or ten minutes.
  */
 export interface ShortCode {
   /** 8 characters of Crockford base32, without the dash */
@@ -54,19 +56,21 @@ export function parseShortCode(text: string): ShortCode | undefined {
 }
 
 /**
- * The throwaway key an ID stands for; anyone holding the ID can work it out. The salt is a wire id
- * from before the rename to Inyon: a new one would derive other identities.
+ * The throwaway key an ID and code stand for. scrypt at these settings takes 16 MiB and tens of
+ * milliseconds a try, so going through the million codes behind an ID is real work on top of the
+ * relay lookups. Records from before this scheme are under other keys and are ignored.
  */
-export const shortIdIdentity = (id: string) => identityFromSeed(sha256(new TextEncoder().encode(`tether-pair-id:v1:${id}`)))
+export const shortCodeIdentity = async (c: ShortCode) =>
+  identityFromSeed(await scryptAsync(shortSecret(c), 'inyon-pair-id:v2', { N: 2 ** 14, r: 8, p: 1, dkLen: 32 }))
 
 /** Machine side: tells the relays which machine this ID stands for, and where it is. */
-export function publishShortCode(c: ShortCode, rec: { machine: string; name: string; urls: string[]; relays: string[] }, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch) {
-  return publish(shortIdIdentity(c.id), rec, relays, fetcher)
+export async function publishShortCode(c: ShortCode, rec: { machine: string; name: string; urls: string[]; relays: string[] }, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch) {
+  await publish(await shortCodeIdentity(c), rec, relays, fetcher)
 }
 
-/** Phone side: what pairing needs, from the ID and code alone; undefined if no machine has that ID. */
+/** Phone side: what pairing needs, from the ID and code alone; undefined if no machine publishes under them. */
 export async function resolveShortCode(c: ShortCode, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch): Promise<PairInfo | undefined> {
-  const rec = await resolve(shortIdIdentity(c.id).id, relays, fetcher)
+  const rec = await resolve((await shortCodeIdentity(c)).id, relays, fetcher)
   if (!rec?.machine || !isMachineId(rec.machine)) return
   return { id: rec.machine, secret: shortSecret(c), name: rec.name || 'Computer', urls: rec.urls, relays: rec.relays }
 }

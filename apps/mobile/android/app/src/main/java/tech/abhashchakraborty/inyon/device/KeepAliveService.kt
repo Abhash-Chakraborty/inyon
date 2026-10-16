@@ -49,8 +49,10 @@ class KeepAliveService : Service() {
 
     override fun onDestroy() {
         running = false
-        wakeLock?.let { if (it.isHeld) it.release() }
-        wakeLock = null
+        synchronized(lockGuard) {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        }
         super.onDestroy()
     }
 
@@ -78,6 +80,9 @@ class KeepAliveService : Service() {
         @Volatile
         private var wakeLock: PowerManager.WakeLock? = null
 
+        /** nudge() runs on SSH threads while onDestroy releases the lock on main: both hold this */
+        private val lockGuard = Any()
+
         @Volatile
         private var nudgedAt = 0L
 
@@ -86,14 +91,17 @@ class KeepAliveService : Service() {
          * finishing, say) before the phone sleeps again. Each call pushes the deadline back.
          */
         fun nudge() {
-            val lock = wakeLock ?: return
-            val now = System.currentTimeMillis()
-            // a busy stream calls this for every batch of lines; once a second is plenty
-            if (now - nudgedAt < 1000) return
-            nudgedAt = now
-            try {
-                lock.acquire(AWAKE_MS)
-            } catch (_: RuntimeException) {
+            synchronized(lockGuard) {
+                // once the service is gone there is nothing to hold awake
+                val lock = wakeLock ?: return
+                val now = System.currentTimeMillis()
+                // a busy stream calls this for every batch of lines; once a second is plenty
+                if (now - nudgedAt < 1000) return
+                nudgedAt = now
+                try {
+                    lock.acquire(AWAKE_MS)
+                } catch (_: RuntimeException) {
+                }
             }
         }
 

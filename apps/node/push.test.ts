@@ -63,6 +63,10 @@ test("each browser gets its own tag and link; finished notices only where wanted
   // the browser behind /3 unsubscribed
   expect(readEntries().map((e) => e.subscription.endpoint.slice(-1))).toEqual(['2'])
   sent.length = 0
+  // a notice about the machine itself opens its page, as the hub's do (apps/hub/src/push/registrations.ts)
+  expect(await deliver({ kind: 'waiting', pane: '', title: 'my-laptop', body: 'needs you' }, { send })).toBe(1)
+  expect(sent.map((s) => [s.payload.tag, s.payload.href])).toEqual([['machine:my-laptop', '/machines/my-laptop']])
+  sent.length = 0
   // the iPhone asked for needs-you only
   expect(await deliver({ kind: 'done', pane: '%7', title: 'Fix the login', body: 'Claude finished' }, { send })).toBe(0)
   expect(sent).toEqual([])
@@ -89,6 +93,16 @@ test('follows the hook log from its end, across the 2 MB move', async () => {
   renameSync(log, `${log}.old`)
   writeFileSync(log, 'three\n')
   await tick()
+  // moved aside with nothing in its place for a while: no crash, and the next file is picked up
+  renameSync(log, `${log}.old`)
+  await tick()
+  await tick()
+  writeFileSync(log, 'four\n')
+  await tick()
+  // the new file is already longer than the old one was read to: still from its top
+  renameSync(log, `${log}.old`)
+  writeFileSync(log, `${'x'.repeat(200)}\nfive\n`)
+  await tick()
   stop()
-  expect(seen).toEqual(['one', 'two', 'three'])
+  expect(seen).toEqual(['one', 'two', 'three', 'four', 'x'.repeat(200), 'five'])
 })

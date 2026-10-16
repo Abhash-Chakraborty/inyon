@@ -121,13 +121,16 @@ impl Proc for RealProc {
 
     #[cfg(unix)]
     fn signal(&self, pid: u32, sig: Signal) {
+        let Some(pid) = kill_target(pid) else {
+            return;
+        };
         let n = match sig {
             Signal::Term => 15,
             Signal::Kill => 9,
         };
         // SAFETY: kill takes two integers and touches no memory of ours
         unsafe {
-            kill(pid as i32, n);
+            kill(pid, n);
         }
     }
 
@@ -143,11 +146,11 @@ impl Proc for RealProc {
 
     #[cfg(unix)]
     fn alive(&self, pid: u32) -> bool {
-        if pid <= 1 {
+        let Some(target) = kill_target(pid) else {
             return false;
-        }
+        };
         // SAFETY: signal 0 only checks that the process exists
-        let exists = unsafe { kill(pid as i32, 0) } == 0;
+        let exists = unsafe { kill(target, 0) } == 0;
         exists && !exited(pid)
     }
 
@@ -164,6 +167,16 @@ impl Proc for RealProc {
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+}
+
+/// A pid from state.json as kill() takes it. Nothing for 0, 1 or anything past i32, since
+/// kill(-1, …) would signal every process of this user and kill(0, …) the whole group.
+#[cfg(unix)]
+fn kill_target(pid: u32) -> Option<i32> {
+    if pid <= 1 {
+        return None;
+    }
+    i32::try_from(pid).ok()
 }
 
 /// A process that has exited but wasn't collected yet (in a container whose first process
@@ -377,5 +390,18 @@ mod tests {
     #[test]
     fn exited_reads_the_state_letter() {
         assert!(!exited(u32::MAX));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_a_real_pid_is_signalled() {
+        // 4294967295 as i32 is -1, which kill() reads as "everything of mine"
+        assert_eq!(kill_target(u32::MAX), None);
+        assert_eq!(kill_target(i32::MAX as u32 + 1), None);
+        assert_eq!(kill_target(0), None);
+        assert_eq!(kill_target(1), None);
+        assert_eq!(kill_target(4242), Some(4242));
+        assert!(!RealProc.alive(u32::MAX));
+        RealProc.signal(u32::MAX, Signal::Term);
     }
 }

@@ -56,16 +56,17 @@ export function Diff({ hunks, maxLines = 400, onLine, marked }: {
               )
             }
             for (const [li, line] of h.lines.entries()) {
+              const sign = line[0]
+              // "\ No newline at end of file" is not a line of the file: it neither shows nor counts
+              if (sign === '\\') continue
               if (shown >= maxLines) {
                 hidden++
                 continue
               }
               shown++
-              const sign = line[0]
               const text = line.slice(1)
               const add = sign === '+'
               const del = sign === '-'
-              if (sign === '\\') continue
               const oldNo = add ? '' : o++
               const newNo = del ? '' : n++
               const l: DiffLine = { no: Number(del ? oldNo : newNo), removed: del, text }

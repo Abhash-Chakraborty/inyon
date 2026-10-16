@@ -6,11 +6,12 @@ const hooked = (s?: HostState['integration']) => s === 'installed' || s === 'out
 
 /**
  * Removes one exact line from ~/.ssh/authorized_keys. The file is only rewritten when the copy
- * without the line has exactly the lines it should, so a full disk can never empty it.
+ * without the line has exactly the lines it should, so a full disk can never empty it. Lines are
+ * counted with `grep -c ''`, which unlike `wc -l` counts a last line with no newline after it.
  */
 export function dropAuthorizedKey(line: string) {
   const l = shq(line)
-  return `f="$HOME/.ssh/authorized_keys"; t="$f.inyon-tmp"; if [ -f "$f" ] && grep -qxF ${l} "$f"; then grep -vxF ${l} "$f" > "$t"; [ "$(wc -l < "$t")" -eq "$(( $(wc -l < "$f") - $(grep -cxF ${l} "$f") ))" ] && cat "$t" > "$f"; rm -f "$t"; fi;`
+  return `f="$HOME/.ssh/authorized_keys"; t="$f.inyon-tmp"; if [ -f "$f" ] && grep -qxF ${l} "$f"; then grep -vxF ${l} "$f" > "$t"; [ "$(grep -c '' "$t")" -eq "$(( $(grep -c '' "$f") - $(grep -cxF ${l} "$f") ))" ] && cat "$t" > "$f"; rm -f "$t"; fi;`
 }
 
 /**

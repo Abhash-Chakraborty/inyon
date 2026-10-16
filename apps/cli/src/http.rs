@@ -29,17 +29,22 @@ fn agent(follow: bool, insecure: bool) -> ureq::Agent {
     c.build().new_agent()
 }
 
+/// More than any release file (the engine is about 120 MB) and less than would fill memory.
+const MAX_BODY: u64 = 1024 * 1024 * 1024;
+/// What a Content-Length may reserve up front; a bigger body grows into it as it arrives.
+const MAX_RESERVE: u64 = 64 * 1024 * 1024;
+
 fn fetch(url: &str, follow: bool, insecure: bool, progress: Option<&dyn Fn(u64, Option<u64>)>) -> Result<Response, String> {
     let mut res = agent(follow, insecure).get(url).call().map_err(|e| e.to_string())?;
     let status = res.status().as_u16();
     let location = res.headers().get("location").and_then(|v| v.to_str().ok()).map(String::from);
     let total = res.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
     let body = match progress {
-        None => res.body_mut().with_config().limit(u64::MAX).read_to_vec().map_err(|e| e.to_string())?,
+        None => res.body_mut().with_config().limit(MAX_BODY).read_to_vec().map_err(|e| e.to_string())?,
         Some(report) => {
             use std::io::Read;
-            let mut reader = res.body_mut().with_config().limit(u64::MAX).reader();
-            let mut body = Vec::with_capacity(total.unwrap_or(0) as usize);
+            let mut reader = res.body_mut().with_config().limit(MAX_BODY).reader();
+            let mut body = Vec::with_capacity(total.unwrap_or(0).min(MAX_RESERVE) as usize);
             let mut buf = [0u8; 64 * 1024];
             loop {
                 let n = reader.read(&mut buf).map_err(|e| e.to_string())?;

@@ -172,9 +172,13 @@ function winProcs(): Promise<string> {
   return next
 }
 
-/** psmux's control mode numbers panes per session; tell the hub which session they belong to. */
-function winLine(cmd: string): ((l: string) => string) | undefined {
-  const sid = WIN && cmd.match(/tmux -C attach-session -t '?\$(\d+)/)?.[1]
+/**
+ * psmux's control mode numbers panes per session; tell the hub which session they belong to. The
+ * hub's live attach (apps/hub/src/tmux/live.ts) puts options between `tmux` and `-C`, so anything
+ * goes there.
+ */
+export function winLine(cmd: string, win = WIN): ((l: string) => string) | undefined {
+  const sid = win && cmd.match(/\btmux\b.*?-C attach-session -t '?\$(\d+)/)?.[1]
   if (!sid) return
   return (l) => l.replace(/^(%(?:extended-)?output) %(\d+) /, `$1 %${sid}.$2 `)
 }

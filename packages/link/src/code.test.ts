@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { formatShortId, newShortCode, parseShortCode, publishShortCode, resolveShortCode, shortIdIdentity, shortSecret } from './code.ts'
+import { formatShortId, newShortCode, parseShortCode, publishShortCode, resolveShortCode, shortCodeIdentity, shortSecret } from './code.ts'
 import { newIdentity } from './identity.ts'
 
 /** A pkarr relay in memory: PUT stores the body, GET returns it. */
@@ -36,15 +36,21 @@ test('typing an ID loosely still reads it, and junk is refused', () => {
   expect(parseShortCode('inyon://pair?m=x')).toBeUndefined()
 })
 
-test('the phone finds the machine from the ID alone, and the code travels as the secret', async () => {
+test('the phone finds the machine from the ID and code, and the code travels as the secret', async () => {
   const relay = memoryRelay()
   const machine = newIdentity()
   const c = newShortCode()
   await publishShortCode(c, { machine: machine.id, name: 'build-box', urls: ['wss://a.example'], relays: [] }, ['https://relay.test'], relay.fetcher)
   const info = await resolveShortCode(c, ['https://relay.test'], relay.fetcher)
   expect(info).toEqual({ id: machine.id, secret: shortSecret(c), name: 'build-box', urls: ['wss://a.example'], relays: [] })
-  // a different ID is a different key, so it finds nothing
+  // a different ID or code is a different key, so it finds nothing
   expect(await resolveShortCode({ ...c, id: c.id === '00000000' ? '11111111' : '00000000' }, ['https://relay.test'], relay.fetcher)).toBeUndefined()
+  expect(await resolveShortCode({ ...c, code: c.code === '000000' ? '111111' : '000000' }, ['https://relay.test'], relay.fetcher)).toBeUndefined()
+})
+
+test('the key behind an ID and code is fixed: app and computer must derive the same one', async () => {
+  // a change to the derivation splits phones from computers that haven't updated; this pins it
+  expect((await shortCodeIdentity({ id: 'K7Q4MX2T', code: '493812' })).id).toBe('36dztu7b7pgb4kh1n854k4prefu9pwc5spim3h7g8n48cexkxamy')
 })
 
 test("a record signed by another key isn't accepted for an ID", async () => {
@@ -53,6 +59,6 @@ test("a record signed by another key isn't accepted for an ID", async () => {
   const other = newShortCode()
   await publishShortCode(other, { machine: newIdentity().id, name: 'x', urls: [], relays: [] }, ['https://relay.test'], relay.fetcher)
   // copy the other ID's record to where this ID's record would be
-  relay.store.set(`/${shortIdIdentity(c.id).id}`, relay.store.get(`/${shortIdIdentity(other.id).id}`)!)
+  relay.store.set(`/${(await shortCodeIdentity(c)).id}`, relay.store.get(`/${(await shortCodeIdentity(other)).id}`)!)
   expect(await resolveShortCode(c, ['https://relay.test'], relay.fetcher)).toBeUndefined()
 })
