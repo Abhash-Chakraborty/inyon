@@ -359,7 +359,8 @@ export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'usage'
 export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; tab: PanelTab; setTab: (t: PanelTab) => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
   const changes = useChanges(items)
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
-  const running = (s.info?.tasks.filter((t) => t.status === 'running').length ?? 0) + (s.info?.subagents.filter((a) => a.status === 'running').length ?? 0)
+  // a background subagent is also listed as a task of the kind the transcript can't name: count it once
+  const running = (s.info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (s.info?.subagents.filter((a) => a.status === 'running').length ?? 0)
   const tabs: { id: PanelTab; label: string; badge?: number }[] = [
     { id: 'changes', label: 'Changes', badge: changes.length || undefined },
     { id: 'files', label: 'Files' },

@@ -27,11 +27,44 @@ function CopyLine({ cmd }: { cmd: string }) {
   )
 }
 
+/** "codex-cli 0.49.0" and "2.1.296 (Claude Code)" as just the number */
+const short = (v?: string) => v?.match(/\d+(?:\.\d+)+/)?.[0] ?? v ?? ''
+
+/** A step that failed, shown under the row it belongs to. */
+interface Failure {
+  action: string
+  hint?: string
+  output?: string
+  manual?: string
+  docs?: string
+}
+
+function FailureBlock({ f, className }: { f: Failure; className?: string }) {
+  const tail = f.output?.split('\n').slice(-12).join('\n').trim()
+  return (
+    <div className={clsx('animate-slide-up mt-2 space-y-2 text-[12.5px]', className)}>
+      <p className="text-danger">{f.hint ?? "It didn't finish."}</p>
+      {tail && <pre className="max-h-48 overflow-auto rounded-2xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{tail}</pre>}
+      {f.manual && (
+        <div>
+          <p className="text-fg-3">Or run it on the machine yourself:</p>
+          <CopyLine cmd={f.manual} />
+        </div>
+      )}
+      {f.docs && (
+        <a href={f.docs} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-fg-2 hover:text-fg">
+          Install guide <ExternalLink className="size-3" />
+        </a>
+      )}
+    </div>
+  )
+}
+
 /** Everything a machine needs for Inyon, with one-tap fixes where it's safe to run them. */
 export function SetupPanel({ host }: { host: HostState }) {
   const [report, setReport] = useState<SetupReport | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [log, setLog] = useState('')
+  const [failure, setFailure] = useState<Failure | null>(null)
   const [signIn, setSignIn] = useState<AgentKind | null>(null)
   const nav = useNavigate()
   const id = host.config.id
@@ -41,17 +74,18 @@ export function SetupPanel({ host }: { host: HostState }) {
     if (host.status === 'online') load()
   }, [id, host.status])
 
-  const run = async (action: string, label: string) => {
+  /** Runs a step; `done` is the toast title when it worked, given what the hub reported. */
+  const run = async (action: string, done: (version?: string) => string, more: Partial<Failure> = {}) => {
     setBusy(action)
-    setLog('')
+    setFailure(null)
     try {
       const r = await api.runSetup(id, action)
       if (r.pane) return nav(paneHref(id, r.pane, 'terminal'))
-      setLog(r.output ?? '')
-      toast({ title: r.ok ? `${label}: done` : `${label}: failed`, tone: r.ok ? 'success' : 'error' })
+      if (r.ok) toast({ title: done(r.version), tone: 'success' })
+      else setFailure({ action, hint: r.hint, output: r.output, manual: r.manual ?? more.manual, docs: more.docs })
       await load()
     } catch (e) {
-      toast({ title: label, body: (e as Error).message, tone: 'error' })
+      setFailure({ action, hint: (e as Error).message, manual: more.manual, docs: more.docs })
     } finally {
       setBusy(null)
     }
@@ -83,11 +117,12 @@ export function SetupPanel({ host }: { host: HostState }) {
                 {c.detail && <div className="truncate text-[12.5px] text-fg-3">{c.detail}</div>}
               </div>
               {c.fix && (
-                <Button size="sm" variant="primary" loading={busy === c.fix.action} onClick={() => run(c.fix!.action, c.fix!.label)}>
+                <Button size="sm" variant="primary" loading={busy === c.fix.action} onClick={() => run(c.fix!.action, () => `${c.fix!.label}: done`, { manual: c.manual })}>
                   {c.fix.label}
                 </Button>
               )}
             </div>
+            {failure && c.fix && failure.action === c.fix.action && <FailureBlock f={failure} className="pl-8" />}
             {!c.ok && !c.fix && c.manual && (
               <div className="pl-8">
                 <p className="mt-1 text-[12px] text-fg-3">Run this on the machine (it needs your password):</p>
@@ -110,39 +145,55 @@ export function SetupPanel({ host }: { host: HostState }) {
         <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
           {report.agents.map((a) => {
             const def = AGENTS[a.kind]
+            const install = `agent:${a.kind}`
+            const update = `update:${a.kind}`
+            const working = busy === install ? 'Installing…' : busy === update ? 'Updating…' : null
+            const state = !a.installed ? 'Not installed' : [short(a.version), a.latest && !a.outdated && 'up to date', a.signedIn ? 'signed in' : 'not signed in'].filter(Boolean).join(' · ')
+            const more = { docs: def.install.docs }
             return (
-              <div key={a.kind} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                <AgentLogo kind={a.kind} size={28} />
-                <div className="min-w-0 flex-[1_1_180px]">
-                  <div className="text-[14px] font-medium">{def.name}</div>
-                  <div className="truncate text-[12px] text-fg-3">
-                    {a.installed ? `${a.version}${a.signedIn ? ' · signed in' : ' · not signed in'}` : 'Not installed'}
+              <div key={a.kind} className="px-4 py-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <AgentLogo kind={a.kind} size={28} />
+                  <div className="min-w-0 flex-[1_1_180px]">
+                    <div className="text-[14px] font-medium">{def.name}</div>
+                    <div className="truncate text-[12px] text-fg-3">{working ?? state}</div>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    {!a.installed && (
+                      <Button size="sm" loading={busy === install} onClick={() => run(install, (v) => `${def.name} ${short(v)} installed`, more)}>
+                        <Download className="size-3.5" /> Install
+                      </Button>
+                    )}
+                    {a.installed && a.outdated && (
+                      <Button size="sm" loading={busy === update} onClick={() => run(update, (v) => `${def.name} updated to ${short(v)}`, more)}>
+                        <RefreshCw className="size-3.5" /> Update to {short(a.latest)}
+                      </Button>
+                    )}
+                    {/* no registry answer for this one: an update still runs its own updater */}
+                    {a.installed && !a.latest && (
+                      <Button size="sm" variant="ghost" loading={busy === update} onClick={() => run(update, (v) => `${def.name} updated to ${short(v)}`, more)}>
+                        <RefreshCw className="size-3.5" /> Update
+                      </Button>
+                    )}
+                    {a.installed && !a.signedIn && (
+                      <Button size="sm" variant="primary" onClick={() => setSignIn(a.kind)}>
+                        <LogIn className="size-3.5" /> Sign in
+                      </Button>
+                    )}
+                    <a href={def.install.docs} target="_blank" rel="noreferrer" className="inline-flex size-8 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg" aria-label={`${def.name} docs`}>
+                      <ExternalLink className="size-3.5" />
+                    </a>
                   </div>
                 </div>
-                <div className="flex shrink-0 gap-1.5">
-                  {!a.installed && (
-                    <Button size="sm" loading={busy === `agent:${a.kind}`} onClick={() => run(`agent:${a.kind}`, `Install ${def.name}`)}>
-                      <Download className="size-3.5" /> Install
-                    </Button>
-                  )}
-                  {a.installed && !a.signedIn && (
-                    <Button size="sm" variant="primary" onClick={() => setSignIn(a.kind)}>
-                      <LogIn className="size-3.5" /> Sign in
-                    </Button>
-                  )}
-                  <a href={def.install.docs} target="_blank" rel="noreferrer" className="inline-flex size-8 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg" aria-label={`${def.name} docs`}>
-                    <ExternalLink className="size-3.5" />
-                  </a>
-                </div>
+                {failure && (failure.action === install || failure.action === update) && <FailureBlock f={failure} className="pl-10" />}
               </div>
             )
           })}
         </div>
-        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer. Sign in runs the agent's own sign-in on that machine and walks you through it here.</p>
+        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer; Update runs its own updater, or npm when it came from npm. Sign in runs the agent's sign-in on that machine and walks you through it here.</p>
       </section>
 
       <SignInSheet hostId={id} hostName={host.config.name} agent={signIn} onClose={() => (setSignIn(null), load())} />
-      {log && <pre className="max-h-64 overflow-auto rounded-2xl border border-line bg-code px-3 py-2.5 font-mono text-[12px] leading-relaxed text-fg-2">{log}</pre>}
     </div>
   )
 }

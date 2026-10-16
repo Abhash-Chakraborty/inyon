@@ -95,7 +95,9 @@ export function SessionHeader({
     return () => window.removeEventListener('inyon:open-menu', onOpen)
   }, [switchable])
   const title = ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
-  const busy = (info?.tasks.filter((t) => t.status === 'running').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
+  // a background subagent is also listed as a task (the kind the transcript can't name), so only
+  // shells, monitors and workflows count from the task list
+  const busy = (info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
 
   const subtitle = [def?.name ?? 'Terminal', ref?.host.config.name, ref && `${ref.session.name}:${ref.window.index}`, shortPath(info?.cwd ?? ref?.pane.cwd, 28)]
     .filter(Boolean)

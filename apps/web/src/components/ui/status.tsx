@@ -28,8 +28,12 @@ export type ShownState = AgentState | 'background' | 'offline'
 export const shownState = (a: { state: AgentState; background?: string }, host?: { status: HostStatus }): ShownState =>
   host && host.status !== 'online' ? 'offline' : a.state === 'idle' && a.background ? 'background' : a.state
 
-/** "1 background task" → "1 task running in the background" */
-export const backgroundText = (bg: string) => `${bg.replace(/\bbackground /, '')} running in the background`
+/** "1 background task" → "1 task running in the background"; "1 shell, 1 agent" → "1 shell and 1 agent running in the background" */
+export const backgroundText = (bg: string) => {
+  const parts = bg.split(', ').map((p) => p.replace(/\bbackground /, ''))
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]
+  return `${list} running in the background`
+}
 
 const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }> = {
   // chips stay neutral and the dot carries the state: ink with a ring while working, colour only

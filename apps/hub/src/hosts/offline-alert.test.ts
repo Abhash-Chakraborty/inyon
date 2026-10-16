@@ -44,3 +44,36 @@ test('back from an outage, a turn that finished meanwhile is reported and a wait
   expect(got).toEqual(['done', 'waiting'])
   off()
 })
+
+test('a turn that ends with agents still running is reported finished once they are done', () => {
+  const state = (agent: string, background?: string) => ({ config: { id: 'bg-test', name: 'Box', kind: 'ssh' }, status: 'online', sessions: [{ name: 'main', windows: [{ index: 0, panes: [{ id: '%1', title: 'Fix login', agent: { kind: 'claude', state: agent, background } }] }] }] })
+  const rt: any = { host: { id: 'bg-test', config: { id: 'bg-test', name: 'Box', kind: 'ssh' } }, state: state('working') }
+  const got: string[] = []
+  const off = registry.on((e) => void (e.type === 'notify' && e.host === 'bg-test' && got.push(e.kind)))
+  const step = (agent: string, background?: string) => {
+    const prev = rt.state
+    rt.state = state(agent, background)
+    ;(registry as any).diffNotify(rt, prev)
+  }
+  // the main turn ends, but a subagent and a shell are still going
+  step('idle', '1 shell, 1 agent')
+  expect(got).toEqual([])
+  step('idle', '1 agent')
+  expect(got).toEqual([])
+  step('idle')
+  expect(got).toEqual(['done'])
+  // a new turn while an agent runs: the finish belongs to that turn's end
+  step('working', '1 agent')
+  step('working')
+  step('idle')
+  expect(got).toEqual(['done', 'done'])
+  // a question still comes through while agents run, and a plain turn still finishes as before
+  step('working', '1 agent')
+  step('waiting', '1 agent')
+  step('working', '1 agent')
+  step('idle', '1 agent')
+  step('working')
+  step('idle')
+  expect(got).toEqual(['done', 'done', 'waiting', 'done'])
+  off()
+})

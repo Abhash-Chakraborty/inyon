@@ -116,13 +116,36 @@ export interface SignInScreen {
   menu?: { question?: string; options: { n: number; label: string; detail?: string; selected: boolean }[] }
 }
 
+export interface SetupAgent {
+  kind: AgentKind
+  installed: boolean
+  version?: string
+  signedIn: boolean
+  /** the newest published version, when the hub could ask the registry */
+  latest?: string
+  outdated?: boolean
+  /** how it was installed, which decides how it's updated */
+  via?: 'npm' | 'installer'
+}
+
 export interface SetupReport {
   os: string
   pkg?: string
   sudo: boolean
   checks: SetupCheck[]
-  agents: { kind: AgentKind; installed: boolean; version?: string; signedIn: boolean }[]
+  agents: SetupAgent[]
   keepSession: boolean
+}
+
+/** What a setup step came back with; `manual` and `hint` only when it failed. */
+export interface SetupResult {
+  ok: boolean
+  output?: string
+  pane?: string
+  version?: string
+  latest?: string
+  manual?: string
+  hint?: string
 }
 
 export interface ServerForm {
@@ -261,7 +284,7 @@ export const api = {
   signInSend: (id: string, pane: string, b: { text?: string; keys?: string[]; option?: number }) => request('POST', `${h(id)}/signin/${paneSlug(pane)}`, b),
   signInStop: (id: string, pane: string) => request('DELETE', `${h(id)}/signin/${paneSlug(pane)}`),
   setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup`),
-  runSetup: (id: string, action: string) => request<{ ok: boolean; output?: string; pane?: string }>('POST', `${h(id)}/setup`, { action }),
+  runSetup: (id: string, action: string) => request<SetupResult>('POST', `${h(id)}/setup`, { action }),
   keepSession: (id: string, keepSession: boolean) => request('POST', `${h(id)}/setup`, { keepSession }),
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
   startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
