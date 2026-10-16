@@ -321,6 +321,7 @@ class ChatWatcher {
   }
 
   private async doMirror() {
+    if (this.stopped) return
     const pane = registry.findPane(this.hostId, this.paneId)?.pane
     const d = getDraft(this.key)
     if (!MIRRORS.has(pane?.agent?.kind as AgentKind) || this.screen.prompt || !this.screen.inputVisible) return
@@ -463,14 +464,15 @@ class ChatWatcher {
     const host = registry.host(this.hostId)
     const reader = new TranscriptReader(from)
     const out: { entry: any; at: number }[] = []
+    let watchdog: ReturnType<typeof setTimeout> | undefined
     const code = await new Promise<number>((done) => {
       const t = host.stream(rangeCommand(path, from, to, this.onRemoteHost()), (line) => {
         const r = reader.line(line)
         if (r?.entry) out.push({ entry: r.entry, at: reader.offset - r.bytes })
       })
       t.exited ? t.exited.then((c) => done(c ?? 0), () => done(-1)) : done(0)
-      setTimeout(() => (t.kill(), done(-1)), 60_000)
-    })
+      watchdog = setTimeout(() => (t.kill(), done(-1)), 60_000)
+    }).finally(() => clearTimeout(watchdog))
     return { lines: out, complete: code === 0 && reader.received === to }
   }
 
@@ -482,14 +484,15 @@ class ChatWatcher {
   private async readMeta(path: string, to: number, meta: TranscriptMeta, from = 0) {
     const host = registry.host(this.hostId)
     const reader = new TranscriptReader(from)
+    let watchdog: ReturnType<typeof setTimeout> | undefined
     await new Promise<void>((done) => {
       const t = host.stream(metaCommand(path, to, this.onRemoteHost(), from), (line) => {
         const r = reader.line(line)
         if (r?.entry) normalize(r.entry, meta)
       })
       t.exited ? t.exited.then(() => done(), () => done()) : done()
-      setTimeout(() => (t.kill(), done()), 30_000)
-    })
+      watchdog = setTimeout(() => (t.kill(), done()), 30_000)
+    }).finally(() => clearTimeout(watchdog))
   }
 
   /**
@@ -556,6 +559,7 @@ class ChatWatcher {
       }
       if (this.codex) for (const line of await codexHistory(host, path).catch(() => [] as string[])) try { add(JSON.parse(line)) } catch {}
       const reader = new TranscriptReader()
+      let watchdog: ReturnType<typeof setTimeout> | undefined
       await new Promise<void>((done) => {
         const t = host.stream(tailCommand(path, 0, this.onRemoteHost(), false), (line) => {
           const r = reader.line(line)
@@ -565,8 +569,8 @@ class ChatWatcher {
           }
         })
         t.exited?.then(() => done())
-        setTimeout(() => (t.kill(), done()), 120_000)
-      })
+        watchdog = setTimeout(() => (t.kill(), done()), 120_000)
+      }).finally(() => clearTimeout(watchdog))
       if (this.stopped || path !== this.transcript || this.items[0]?.seq !== first) return
       this.items.unshift(...older.slice(-Math.max(PAGE, KEEP - this.items.length)))
     })().finally(() => (this.history = undefined)))
@@ -1103,6 +1107,10 @@ class ChatWatcher {
     clearTimeout(this.screenTimer)
     clearTimeout(this.flushTimer)
     clearTimeout(this.idleTimer)
+    clearTimeout(this.mirrorTimer)
+    clearTimeout(this.snapshotTimer)
+    clearTimeout(this.infoTimer)
+    clearTimeout(this.changeTimer)
   }
 }
 

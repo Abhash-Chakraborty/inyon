@@ -39,6 +39,17 @@ test('the only key in the file can come out too', () => {
   expect(keysOf(h)).toBe('')
 })
 
+test('a file whose last line has no newline after it loses the line all the same', () => {
+  // the phone's line last, unterminated: how `echo >>` used to leave it after another such line
+  const h = home(`ssh-ed25519 AAAAmine me@laptop\n${PHONE}`)
+  expect(run(h, dropAuthorizedKey(PHONE)).exitCode).toBe(0)
+  expect(keysOf(h)).toBe('ssh-ed25519 AAAAmine me@laptop\n')
+  // and another key's line last, unterminated, which keeps its place
+  const h2 = home(`${PHONE}\nssh-rsa AAAAwork work@ci`)
+  run(h2, dropAuthorizedKey(PHONE))
+  expect(keysOf(h2)).toBe('ssh-rsa AAAAwork work@ci\n')
+})
+
 function fakeHost() {
   const ran: string[] = []
   let closed = 0

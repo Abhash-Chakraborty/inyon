@@ -30,6 +30,7 @@ import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
+import { privateHost } from './hub.ts'
 import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
@@ -50,17 +51,6 @@ if (BACKGROUND) {
   }
   console.log = write
   console.error = write
-}
-
-function isPrivate(url: URL) {
-  const h = url.hostname
-  // IPv6 literals: loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
-  if (h.startsWith('[')) return /^\[(::1|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(h)
-  if (h === 'localhost' || h === '::1' || /^127\./.test(h)) return true
-  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return true
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true // CGNAT range used by Tailscale and NetBird
-  if (/\.(ts\.net|netbird\.cloud|netbird\.selfhosted|local|lan|internal)$/.test(h)) return true
-  return !h.includes('.') // single-label names on your private network
 }
 
 /** The hub connection: one outbound WebSocket to the hub, running what it asks for as this user. */
@@ -174,7 +164,7 @@ function hubUrl(hub: string) {
   } catch {
     fail(`${hub} isn't a web address.`)
   }
-  if (url.protocol === 'http:' && !isPrivate(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
+  if (url.protocol === 'http:' && !privateHost(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
   return url
 }
 

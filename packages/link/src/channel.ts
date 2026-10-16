@@ -20,6 +20,8 @@ const PROLOGUE = new TextEncoder().encode('tether-link 1')
 const HANDSHAKE_MS = 15000
 // Noise caps a message at 65535 bytes; larger JSON goes in pieces
 const CHUNK = 60000
+// the most a peer can make this end hold while a message is still arriving in pieces
+const MAX_MESSAGE = 16 * 1024 * 1024
 const NONE = new Uint8Array(0)
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -34,10 +36,12 @@ export class Channel {
   onmessage?: (msg: any) => void
   onclose?: (code: number, reason: string) => void
   private parts: Uint8Array[] = []
+  private buffered = 0
   closed = false
 
   constructor(private wire: Wire, private t: Transport) {
     wire.onmessage = (data) => {
+      if (this.closed) return
       let plain: Uint8Array
       try {
         plain = t.recv.decrypt(NONE, data)
@@ -46,9 +50,15 @@ export class Channel {
         return this.close(4400, 'bad message')
       }
       this.parts.push(plain.subarray(1))
+      this.buffered += plain.length - 1
+      if (this.buffered > MAX_MESSAGE) {
+        this.parts = []
+        return this.close(4413, 'message too large')
+      }
       if (plain[0] !== 1) return
       const whole = this.parts.length === 1 ? this.parts[0]! : join(this.parts)
       this.parts = []
+      this.buffered = 0
       let msg: unknown
       try {
         msg = JSON.parse(dec.decode(whole))

@@ -75,7 +75,7 @@ pub fn from_tailscale(status: &serde_json::Value) -> Option<Network> {
         .map(|s| s.trim_end_matches('.').to_lowercase())
         .unwrap_or_default();
     // Tailscale's own servers hand out names under ts.net; any other suffix is a Headscale server
-    let kind = if !suffix.is_empty() && !suffix.ends_with("ts.net") { Kind::Headscale } else { Kind::Tailscale };
+    let kind = if !suffix.is_empty() && suffix != "ts.net" && !suffix.ends_with(".ts.net") { Kind::Headscale } else { Kind::Tailscale };
     Some(Network { kind, ip, name })
 }
 
@@ -210,6 +210,10 @@ mod tests {
         let hs: serde_json::Value =
             serde_json::from_str(r#"{"BackendState":"Running","Self":{"TailscaleIPs":["100.64.0.9"]},"CurrentTailnet":{"MagicDNSSuffix":"example.org"}}"#).unwrap();
         assert_eq!(from_tailscale(&hs).unwrap().kind, Kind::Headscale);
+        // a Headscale suffix that merely ends in the letters ts.net is still Headscale
+        let lookalike: serde_json::Value =
+            serde_json::from_str(r#"{"BackendState":"Running","Self":{"TailscaleIPs":["100.64.0.9"]},"CurrentTailnet":{"MagicDNSSuffix":"notts.net"}}"#).unwrap();
+        assert_eq!(from_tailscale(&lookalike).unwrap().kind, Kind::Headscale);
         let stopped: serde_json::Value = serde_json::from_str(r#"{"BackendState":"Stopped"}"#).unwrap();
         assert!(from_tailscale(&stopped).is_none());
         let nb: serde_json::Value = serde_json::from_str(r#"{"management":{"connected":true},"netbirdIp":"100.90.0.3/16","fqdn":"box.netbird.cloud."}"#).unwrap();

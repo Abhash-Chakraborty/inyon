@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
-import { accept, connect, LinkError, type Wire } from './channel.ts'
+import { accept, Channel, connect, LinkError, type Wire } from './channel.ts'
 import { identityFromSeed, isMachineId, newIdentity, noiseKeyOf, z32decode, z32encode } from './identity.ts'
-import { decodePublished, encodePublished } from './pkarr.ts'
+import { decodePublished, encodePublished, nextSeq, publish } from './pkarr.ts'
 import { pairLink, parsePairLink } from './pair.ts'
 import { frame, unframe } from './relay.ts'
-import { generateKeyPair } from './noise.ts'
+import { generateKeyPair, Initiator, Responder } from './noise.ts'
 
 /** Two connected in-memory wires, delivering on later tasks like a socket would. */
 function wires(): [Wire, Wire] {
@@ -21,6 +21,15 @@ test('z-base-32 round trips and ids are 52 characters', () => {
   // the machine's Noise key follows from its id alone
   expect([...noiseKeyOf(id.id)]).toEqual([...id.noise.publicKey])
   expect(identityFromSeed(id.seed).id).toBe(id.id)
+})
+
+test('an id has one spelling: other last characters decode to the same key but are refused', () => {
+  const id = newIdentity()
+  const alphabet = 'ybndrfg8ejkmcpqxot1uwisza345h769'
+  const alike = [...alphabet].map((ch) => id.id.slice(0, 51) + ch).filter((s) => z32decode(s).every((b, i) => b === id.publicKey[i]))
+  expect(alike).toHaveLength(16)
+  expect(alike.filter(isMachineId)).toEqual([id.id])
+  expect(isMachineId(id.id.toUpperCase())).toBe(false)
 })
 
 test('a paired phone gets an encrypted channel; large messages arrive whole', async () => {
@@ -48,6 +57,32 @@ test('a paired phone gets an encrypted channel; large messages arrive whole', as
   mc.send({ type: 'exit', code: 0 })
   await new Promise((r) => setTimeout(r, 20))
   expect(back).toEqual([{ type: 'exit', code: 0 }])
+})
+
+test('a message that keeps coming in pieces is cut off at 16 MiB', () => {
+  const machine = newIdentity()
+  const init = new Initiator(generateKeyPair(), machine.noise.publicKey)
+  const resp = new Responder(machine.noise)
+  resp.readMessage1(init.writeMessage1(new Uint8Array(0)))
+  const { message, transport: mt } = resp.writeMessage2(new Uint8Array(0))
+  const { transport: pt } = init.readMessage2(message)
+  const closed: [number, string][] = []
+  const wire: Wire = { send() {}, close: (c = 1000, r = '') => closed.push([c, r]) }
+  const mc = new Channel(wire, mt)
+  mc.onmessage = () => {
+    throw new Error('nothing whole was sent')
+  }
+  // 60000 bytes of a message that is never marked as its last piece
+  const piece = new Uint8Array(60001)
+  let sent = 0
+  while (!closed.length && sent < 20 * 1024 * 1024) {
+    wire.onmessage!(pt.send.encrypt(new Uint8Array(0), piece))
+    sent += 60000
+  }
+  expect(closed).toEqual([[4413, 'message too large']])
+  expect(sent).toBeGreaterThan(16 * 1024 * 1024)
+  expect(sent).toBeLessThan(16 * 1024 * 1024 + 60000)
+  expect(mc.closed).toBe(true)
 })
 
 test('an unpaired phone is told why, encrypted', async () => {
@@ -80,6 +115,22 @@ test('published addresses verify against the machine id only', () => {
   const tampered = body.slice()
   tampered[tampered.length - 3] ^= 1
   expect(decodePublished(machine.id, tampered)).toBeUndefined()
+})
+
+test('a new record is newer than the last one even after the clock went back', async () => {
+  expect(nextSeq(undefined, 1_700_000_000_000)).toBe(1_700_000_000_000_000)
+  expect(nextSeq(1_700_000_000_000_000, 1_699_999_999_000)).toBe(1_700_000_000_000_001)
+  expect(nextSeq(1_600_000_000_000_000, 1_700_000_000_000)).toBe(1_700_000_000_000_000)
+  // publish says which seq it used, so the caller can keep it for next time
+  const machine = newIdentity()
+  let body: Uint8Array | undefined
+  const fetcher = (async (_url: string, init?: RequestInit) => {
+    body = new Uint8Array(init!.body as ArrayBuffer)
+    return new Response(null, { status: 204 })
+  }) as unknown as typeof fetch
+  const seq = await publish(machine, { urls: ['wss://a.example'], relays: [] }, ['https://relay.test'], fetcher, 4_000_000_000_000_000)
+  expect(seq).toBe(4_000_000_000_000_001)
+  expect(decodePublished(machine.id, body!)?.seq).toBe(seq)
 })
 
 test('pairing links round trip and reject junk', () => {

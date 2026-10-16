@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import {
-  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, publish, relayWs, shortSecret, sign, unframe,
+  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
@@ -58,6 +58,8 @@ interface State {
   pid: number
   /** missing from links before `tether-node update` existed */
   version?: string
+  /** the seq of the last address record published, so the next is newer even if the clock went back */
+  lastSeq?: number
 }
 
 function readJson<T>(name: string, fallback: T): T {
@@ -497,6 +499,7 @@ export function startLink(config: LinkConfig) {
   listen(id, config.lan ? '0.0.0.0' : '127.0.0.1', config.port)
   let tunnelUrl: string | undefined
   let lastPublished = ''
+  let lastSeq = currentState()?.lastSeq
   // private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
   const vpn = new Map<string, { stop(): void }>()
 
@@ -509,13 +512,17 @@ export function startLink(config: LinkConfig) {
         ...(config.lan ? lanUrls(config.port) : []),
       ]),
     ]
-    const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION }
+    const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION, lastSeq }
     writeJson('state.json', state)
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return
     lastPublished = key
-    publish(id, { urls, relays: config.relays })
-      .then(() => console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`))
+    publish(id, { urls, relays: config.relays }, PKARR_RELAYS, fetch, lastSeq)
+      .then((seq) => {
+        lastSeq = seq
+        writeJson('state.json', { ...(currentState() ?? state), lastSeq })
+        console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
+      })
       .catch((e) => {
         lastPublished = ''
         console.error(`publish: ${e.message}`)

@@ -139,9 +139,17 @@ export function decodePublished(id: string, body: Uint8Array): Published | undef
   }
 }
 
-/** Publishes to every relay; resolves as soon as one of them took it (the rest carry on). */
-export async function publish(identity: Identity, p: Omit<Published, 'seq'>, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch) {
-  const body = encodePublished(identity, p)
+/** The seq for a new record: the clock in microseconds, or one past the last record if the clock went back. */
+export const nextSeq = (lastSeq = 0, now = Date.now()) => Math.max(now * 1000, lastSeq + 1)
+
+/**
+ * Publishes to every relay; resolves with the seq it used as soon as one of them took it (the rest
+ * carry on). Keep that seq and pass it back as `lastSeq` next time: relays drop a record whose seq
+ * isn't above the one they hold, so a clock step backwards would otherwise leave them stale.
+ */
+export async function publish(identity: Identity, p: Omit<Published, 'seq'>, relays = PKARR_RELAYS, fetcher: typeof fetch = fetch, lastSeq?: number) {
+  const seq = nextSeq(lastSeq)
+  const body = encodePublished(identity, p, seq)
   const puts = relays.map(async (r) => {
     const res = await fetcher(`${r}/${identity.id}`, { method: 'PUT', body: body as Uint8Array<ArrayBuffer>, signal: AbortSignal.timeout(40000) })
     if (!res.ok) throw new Error(`${r}: ${res.status}`)
@@ -152,6 +160,7 @@ export async function publish(identity: Identity, p: Omit<Published, 'seq'>, rel
     const why = (err as AggregateError).errors?.map((e: Error) => e?.message) ?? [(err as Error).message]
     throw new Error(`Couldn't publish the address: ${why.join('; ')}`)
   }
+  return seq
 }
 
 /** The newest correctly signed record any relay has. */

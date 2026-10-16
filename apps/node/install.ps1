@@ -121,10 +121,25 @@ if ($engineSum -match '^[0-9a-f]{64}$') {
 }
 
 # 2. A small POSIX shell (busybox-w32). The hub drives every machine with short sh scripts, and this
-#    keeps them working on Windows without Git Bash or WSL. Served (and pinned) by the hub.
-Write-Host 'Downloading the shell helper (busybox-w32)...'
+#    keeps them working on Windows without Git Bash or WSL. Served (and pinned) by the hub, and
+#    checked against that pin like the two programs above; a copy from before that still matches stays.
+function Test-Sum([string]$File, [string]$Want) { (Test-Path $File) -and ((Get-FileHash -Algorithm SHA256 $File).Hash.ToLower() -eq $Want) }
 $busybox = Join-Path $Bin 'busybox.exe'
-if (-not (Test-Path $busybox)) { Get-File "$Hub/node/busybox.exe?arch=$arch" $busybox }
+$busyboxSum = Hub-Sum 'busybox.exe'
+if (-not (Test-Sum $busybox $busyboxSum)) {
+  Write-Host 'Downloading the shell helper (busybox-w32)...'
+  Remove-Item -Force "$busybox.new" -ErrorAction SilentlyContinue
+  Get-File "$Hub/node/busybox.exe?arch=$arch" "$busybox.new"
+  if (-not (Test-Sum "$busybox.new" $busyboxSum)) {
+    Remove-Item -Force "$busybox.new"
+    throw 'busybox.exe did not arrive intact. Run the command again.'
+  }
+  # a phone link's shell may be running the old file: it can't be replaced, but it can be renamed
+  if (Test-Path $busybox) {
+    try { Remove-Item -Force $busybox } catch { Move-Item -Force $busybox "$busybox.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+  }
+  Move-Item -Force "$busybox.new" $busybox
+}
 
 # 3. The secrets file, which inyon reads when it connects.
 $envFile = Join-Path $Dir '.env'

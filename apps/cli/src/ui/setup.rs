@@ -2,6 +2,7 @@
 //! in the background, a summary), then the engine takes over for the pairing code. Keys and
 //! mouse both work; with no terminal, or --yes, the flags answer the same questions.
 
+use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -220,8 +221,23 @@ pub struct Wizard {
     pub progress: Arc<Mutex<Option<String>>>,
     /// where each item was drawn last, for the mouse
     hit: Vec<(u16, usize)>,
-    next_hit: Option<u16>,
-    back_hit: Option<u16>,
+    /// the row and columns of "Enter next" and "← back" in the hint line
+    next_hit: Option<(u16, Range<u16>)>,
+    back_hit: Option<(u16, Range<u16>)>,
+}
+
+/// The columns `word` covers on a line drawn from column `x`. Every character in the hint line
+/// is one cell wide (the arrows and dots included), so a column is a character count, the same
+/// way `fit` measures the line.
+fn columns(line: &str, word: &str, x: u16) -> Option<Range<u16>> {
+    let start = line.find(word)?;
+    let from = x + line[..start].chars().count() as u16;
+    Some(from..from + word.chars().count() as u16)
+}
+
+/// Whether a click at (col, row) lands on a word placed by `columns`.
+fn on(hit: &Option<(u16, Range<u16>)>, col: u16, row: u16) -> bool {
+    matches!(hit, Some((y, cols)) if *y == row && cols.contains(&col))
 }
 
 impl Wizard {
@@ -481,18 +497,19 @@ impl Wizard {
         }
     }
 
-    /// A click: on a row selects it, on Next or Back moves on.
-    pub fn click(&mut self, _col: u16, row: u16) -> Action {
+    /// A click: on a row selects it, on the "Enter next" or "← back" words moves on; anywhere
+    /// else on the hint line does nothing.
+    pub fn click(&mut self, col: u16, row: u16) -> Action {
         if let Some((_, i)) = self.hit.iter().find(|(y, _)| *y == row) {
             let i = *i;
             self.cursor = i;
             self.choose(i);
             return Action::Stay;
         }
-        if self.next_hit == Some(row) {
+        if on(&self.next_hit, col, row) {
             return self.advance();
         }
-        if self.back_hit == Some(row) {
+        if on(&self.back_hit, col, row) {
             return self.back();
         }
         Action::Stay
@@ -582,13 +599,13 @@ impl Wizard {
 
         let foot = rows[2];
         let progress = self.progress.lock().ok().and_then(|p| p.clone());
-        let keys = match self.step {
-            Step::Summary => "Enter set up  ·  ← back  ·  Esc quit",
-            Step::SignIn => "Enter next  ·  ← back  ·  Esc quit",
-            _ => "↑↓ move  ·  Space choose  ·  Enter next  ·  ← back  ·  Esc quit",
+        let (keys, next) = match self.step {
+            Step::Summary => ("Enter set up  ·  ← back  ·  Esc quit", "Enter set up"),
+            Step::SignIn => ("Enter next  ·  ← back  ·  Esc quit", "Enter next"),
+            _ => ("↑↓ move  ·  Space choose  ·  Enter next  ·  ← back  ·  Esc quit", "Enter next"),
         };
-        self.back_hit = Some(foot.y + 1);
-        self.next_hit = Some(foot.y + 1);
+        self.next_hit = columns(keys, next, foot.x).map(|c| (foot.y + 1, c));
+        self.back_hit = columns(keys, "← back", foot.x).map(|c| (foot.y + 1, c));
         let mut lines = vec![Line::from(Span::styled(fit(&progress.unwrap_or_default(), foot.width as usize), theme.faint()))];
         lines.push(Line::from(Span::styled(fit(keys, foot.width as usize), theme.faint())));
         f.render_widget(Paragraph::new(lines), Rect { x: foot.x, y: foot.y, width: foot.width, height: foot.height });
@@ -623,4 +640,59 @@ pub fn run_interactive(plan: Plan, theme: Theme, progress: Arc<Mutex<Option<Stri
     let _ = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
     ratatui::restore();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn draw(w: &mut Wizard) {
+        let mut t = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| w.render(f, Theme::detect(false))).unwrap();
+    }
+
+    #[test]
+    fn columns_count_cells_from_the_left_edge() {
+        let line = "Enter set up  ·  ← back  ·  Esc quit";
+        assert_eq!(columns(line, "Enter set up", 0), Some(0..12));
+        assert_eq!(columns(line, "← back", 2), Some(19..25));
+        assert_eq!(columns(line, "Enter next", 0), None);
+    }
+
+    #[test]
+    fn only_the_back_word_goes_back_and_only_the_next_word_goes_on() {
+        let mut w = Wizard::new(Plan::new(Platform::Linux, Vec::new()));
+        draw(&mut w);
+        let (row, next) = w.next_hit.clone().unwrap();
+        let (_, back) = w.back_hit.clone().unwrap();
+        assert!(next.end <= back.start);
+        // back on the first screen stays put; between the words nothing happens
+        assert_eq!(w.click(back.start, row), Action::Stay);
+        assert_eq!(w.step, Step::Role);
+        assert_eq!(w.click(next.end, row), Action::Stay);
+        assert_eq!(w.step, Step::Role);
+        assert_eq!(w.click(next.start, row), Action::Stay);
+        assert_eq!(w.step, Step::Network);
+        draw(&mut w);
+        let (row, _) = w.next_hit.clone().unwrap();
+        let (_, back) = w.back_hit.clone().unwrap();
+        assert_eq!(w.click(back.end - 1, row), Action::Stay);
+        assert_eq!(w.step, Step::Role);
+        // on the summary, back must never start the install
+        while w.step != Step::Summary {
+            w.advance();
+        }
+        draw(&mut w);
+        let (row, next) = w.next_hit.clone().unwrap();
+        let (_, back) = w.back_hit.clone().unwrap();
+        assert_eq!(w.click(back.start + 2, row), Action::Stay);
+        assert_ne!(w.step, Step::Summary);
+        while w.step != Step::Summary {
+            w.advance();
+        }
+        draw(&mut w);
+        assert_eq!(w.click(next.start, row), Action::Done);
+    }
 }

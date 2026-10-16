@@ -80,7 +80,10 @@ class SshCore(private val events: Events) {
     private val pool = Executors.newCachedThreadPool(daemon("inyon-ssh"))
     private val timer = Executors.newSingleThreadScheduledExecutor(daemon("inyon-ssh-timer"))
     private val servers = ConcurrentHashMap<String, Server>()
+    // one lock per server id, kept for good: dropping an entry on disconnect would hand a concurrent connect a different lock
     private val locks = ConcurrentHashMap<String, Any>()
+    // the socket of a login still in progress, so disconnect can cut it short instead of waiting for it
+    private val pending = ConcurrentHashMap<String, SocketOpener>()
     private val streams = ConcurrentHashMap<String, StreamJob>()
     private val ptys = ConcurrentHashMap<String, PtyJob>()
 
@@ -116,24 +119,37 @@ class SshCore(private val events: Events) {
         if (hostKey.isNullOrBlank()) throw SshException(BAD_REQUEST, "hostKey is required")
         if (creds == null || creds.username.isNullOrEmpty()) throw SshException(BAD_REQUEST, "username is required")
         val expected = normalizeFingerprint(hostKey)
-        synchronized(lockFor(id)) {
-            val existing = servers[id]
-            if (existing != null) {
-                if (existing.same(host, port, expected, creds) && existing.hasLiveLink()) return
-                disconnect(id)
+        // registered before taking the lock, so a disconnect that arrives while this waits for it finds it too
+        val opener = SocketOpener()
+        pending[id] = opener
+        try {
+            synchronized(lockFor(id)) {
+                val existing = servers[id]
+                if (existing != null) {
+                    if (existing.same(host, port, expected, creds) && existing.hasLiveLink()) return
+                    closeServer(id)
+                }
+                val server = Server(id, host, port, expected, creds)
+                val link = openLink(server, opener)
+                synchronized(server) { server.links.add(link) }
+                if (link.lost) {
+                    closeLink(link)
+                    throw SshException(UNREACHABLE, "connection to $host:$port dropped right after login")
+                }
+                servers[id] = server
             }
-            val server = Server(id, host, port, expected, creds)
-            val link = openLink(server)
-            synchronized(server) { server.links.add(link) }
-            if (link.lost) {
-                closeLink(link)
-                throw SshException(UNREACHABLE, "connection to $host:$port dropped right after login")
-            }
-            servers[id] = server
+        } finally {
+            pending.remove(id, opener)
         }
     }
 
     fun disconnect(id: String) {
+        // a login in progress holds the lock for up to the connect and auth timeouts: cut it so it fails now and lets go
+        pending[id]?.kill()
+        closeServer(id)
+    }
+
+    private fun closeServer(id: String) {
         synchronized(lockFor(id)) {
             val server = servers.remove(id) ?: return
             server.closing = true
@@ -265,6 +281,7 @@ class SshCore(private val events: Events) {
 
     /** Closes every server. The instance can't be used afterwards. */
     fun shutdown() {
+        pending.values.forEach(SocketOpener::kill)
         servers.keys.toList().forEach(::disconnect)
         timer.shutdown()
         pool.shutdown()
@@ -311,7 +328,8 @@ class SshCore(private val events: Events) {
     private class SocketOpener : ProxyData {
         @Volatile private var socket: Socket? = null
 
-        @Volatile private var killed = false
+        @Volatile var killed = false
+            private set
 
         override fun openConnection(hostname: String, port: Int, connectTimeout: Int): Socket {
             val s = Socket()
@@ -343,9 +361,8 @@ class SshCore(private val events: Events) {
         }
     }
 
-    private fun openLink(server: Server): Link {
+    private fun openLink(server: Server, opener: SocketOpener = SocketOpener()): Link {
         val conn = Connection(server.host, server.port)
-        val opener = SocketOpener()
         conn.setProxyData(opener)
         val link = Link(server, conn, opener)
         conn.addConnectionMonitor(link)
@@ -366,6 +383,12 @@ class SshCore(private val events: Events) {
             link.ready = true
             ok = true
             return link
+        } catch (e: SshException) {
+            // the socket was cut from outside (a disconnect, or the login guard), so the library's own complaint is beside the point
+            if (opener.killed && e.code != HOST_KEY_MISMATCH) {
+                throw SshException(UNREACHABLE, "login to ${server.host}:${server.port} was cut off (cancelled or timed out)", e)
+            }
+            throw e
         } finally {
             guard.cancel(false)
             if (!ok) {

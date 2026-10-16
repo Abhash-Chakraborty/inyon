@@ -105,7 +105,7 @@ export async function deliver(n: Notice, o: { only?: string; send?: typeof sendP
           kind: n.kind,
           // the same tag and link as the open app, so one replaces the other (apps/web/src/lib/store.ts)
           tag: n.kind === 'test' ? 'test' : machine ? `machine:${e.host}` : `${e.host}:${n.pane}`,
-          href: n.kind === 'test' ? '/settings#notifications' : `/m/${encodeURIComponent(e.host)}/p/${n.pane.replace(/^%/, '')}`,
+          href: n.kind === 'test' ? '/settings#notifications' : machine ? `/machines/${encodeURIComponent(e.host)}` : `/m/${encodeURIComponent(e.host)}/p/${n.pane.replace(/^%/, '')}`,
         }
         try {
           const r = await (o.send ?? sendPush)(e.subscription, payload, e.vapid)
@@ -159,32 +159,37 @@ async function titleOf(pane: string) {
 
 /**
  * Follows the hook log from its current end. It's checked once a second; the hook moves it aside
- * past 2 MB, which shows here as the file getting shorter.
+ * past 2 MB (see the hub's claude/integration.ts), which shows here as a new file (another inode,
+ * or none for a moment), read from its top.
  */
 export function followEvents(onLine: (line: string) => void, events = eventsFile(), everyMs = 1000) {
-  const size = () => {
+  const stat = () => {
     try {
-      return statSync(events).size
+      const s = statSync(events)
+      return { size: s.size, ino: s.ino }
     } catch {
-      return 0
+      return { size: 0, ino: 0 }
     }
   }
-  let pos = size()
+  let { size: pos, ino } = stat()
   let rest = ''
   const timer = setInterval(() => {
-    const end = size()
-    if (end < pos) (pos = 0), (rest = '')
-    if (end === pos) return
-    const fd = openSync(events, 'r')
+    const now = stat()
+    if (now.ino !== ino || now.size < pos) (pos = 0), (rest = ''), (ino = now.ino)
+    if (now.size === pos) return
+    let fd: number | undefined
     try {
-      const buf = Buffer.alloc(Math.min(end - pos, 1 << 20))
+      fd = openSync(events, 'r')
+      const buf = Buffer.alloc(Math.min(now.size - pos, 1 << 20))
       const n = readSync(fd, buf, 0, buf.length, pos)
       pos += n
       const lines = (rest + buf.subarray(0, n).toString('utf8')).split('\n')
       rest = lines.pop() ?? ''
       for (const l of lines) if (l.trim()) onLine(l)
+    } catch {
+      // moved aside or busy between the look and the read: the next tick starts over
     } finally {
-      closeSync(fd)
+      if (fd !== undefined) closeSync(fd)
     }
   }, everyMs)
   return () => clearInterval(timer)

@@ -103,14 +103,29 @@ internal object Notifications {
         return NotificationManagerCompat.from(ctx).areNotificationsEnabled()
     }
 
-    /** Opens (or brings back) the app; with an href, the plugin hands it to the web app. */
-    private fun openApp(ctx: Context, href: String?, requestCode: Int): PendingIntent {
+    /**
+     * Opens (or brings back) the app; with an href, the plugin hands it to the web app. `tag` (or
+     * failing that the href) is made part of the Intent's identity: Android matches PendingIntents
+     * without their extras, so two sessions whose request codes collide would otherwise share one
+     * and both open whichever href was posted last.
+     */
+    private fun openApp(ctx: Context, href: String?, requestCode: Int, tag: String? = null): PendingIntent {
         val intent = Intent(ctx, MainActivity::class.java)
         if (href != null) {
             // its own action, so Android never treats it as "just bring the task to the front"
             intent.setAction(ACTION_OPEN_HREF).putExtra(EXTRA_HREF, href)
         } else {
             intent.setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        // not setData: Capacitor's App plugin would take any data as a URL to open
+        val identity = tag ?: href
+        if (identity != null) {
+            if (Build.VERSION.SDK_INT >= 29) {
+                intent.setIdentifier(identity)
+            } else {
+                // categories count towards identity too, and an Intent aimed at a component by name starts it whatever they say
+                intent.addCategory("inyon.open.$identity")
+            }
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(ctx, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -175,7 +190,7 @@ internal object Notifications {
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setContentIntent(openApp(ctx, href, requestCode))
+            .setContentIntent(openApp(ctx, href, requestCode, tag))
             .setWhen(System.currentTimeMillis())
             .setShowWhen(true)
             .setAutoCancel(true)
@@ -183,9 +198,9 @@ internal object Notifications {
             .setPriority(if (waiting) NotificationCompat.PRIORITY_HIGH else if (machine) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(if (waiting) NotificationCompat.CATEGORY_REMINDER else NotificationCompat.CATEGORY_STATUS)
         if (machine) {
-            b.button("Open computers", openApp(ctx, MACHINES_HREF, requestCode + 1))
+            b.button("Open computers", openApp(ctx, MACHINES_HREF, requestCode + 1, tag))
         } else {
-            b.button("Open", openApp(ctx, href, requestCode + 1))
+            b.button("Open", openApp(ctx, href, requestCode + 1, tag))
             // tagged ones only: an untagged notification has an id the button couldn't know
             if (waiting && tag != null) b.button("Mark read", broadcast(ctx, NotificationActions.MARK_READ, requestCode + 2, tag))
         }

@@ -33,9 +33,11 @@ export function hasPassword() {
 
 /** Async so a burst of guesses doesn't block the hub while scrypt runs. */
 export async function checkPassword(password: string) {
-  if (!hub.passwordHash || !hub.salt) return false
-  const hash = await new Promise<Buffer>((ok, fail) => crypto.scrypt(password, hub.salt!, 64, (e, k) => (e ? fail(e) : ok(k))))
-  const b = Buffer.from(hub.passwordHash, 'hex')
+  // one record throughout: setPassword may swap `hub` while scrypt runs
+  const { salt, passwordHash } = hub
+  if (!passwordHash || !salt) return false
+  const hash = await new Promise<Buffer>((ok, fail) => crypto.scrypt(password, salt, 64, (e, k) => (e ? fail(e) : ok(k))))
+  const b = Buffer.from(passwordHash, 'hex')
   return hash.length === b.length && crypto.timingSafeEqual(hash, b)
 }
 

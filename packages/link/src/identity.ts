@@ -73,5 +73,9 @@ export function z32decode(text: string): Uint8Array {
   return Uint8Array.from(out)
 }
 
-/** A 32-byte public key's id is 52 characters. */
-export const isMachineId = (s: string) => /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/.test(s)
+/**
+ * A 32-byte public key's id is 52 lowercase characters, spelt the way the key encodes: the last
+ * character carries four padding bits, so 16 spellings decode to the same key and only the one
+ * with them zero counts. Otherwise the same machine could be saved twice under different ids.
+ */
+export const isMachineId = (s: string) => /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/.test(s) && z32encode(z32decode(s)) === s
