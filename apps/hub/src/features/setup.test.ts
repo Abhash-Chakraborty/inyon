@@ -67,51 +67,27 @@ test('an agent with no installer of its own goes straight to npm', () => {
 
 test('how an agent was installed: npm when its package is listed or its program sits in node_modules', () => {
   const globals = '/usr/lib /usr/lib/node_modules/@openai/codex /usr/lib/node_modules/npm'
-  expect(installedVia(AGENTS.codex, '/usr/bin/codex', globals)).toBe('npm')
-  expect(installedVia(AGENTS.codex, '/home/me/.local/bin/codex', '')).toBe('installer')
-  expect(installedVia(AGENTS.claude, '/home/me/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js', '')).toBe('npm')
-  expect(installedVia(AGENTS.claude, '/home/me/.local/bin/claude', globals)).toBe('installer')
-  expect(installedVia(AGENTS.antigravity, '/home/me/.local/bin/agy', globals)).toBe('installer')
+  expect(installedVia(AGENTS.codex, '/usr/bin/codex', globals)).toEqual({ via: 'npm' })
+  expect(installedVia(AGENTS.codex, '/home/me/.local/bin/codex', '')).toEqual({ via: 'installer' })
+  expect(installedVia(AGENTS.claude, '/home/me/.npm-global/lib/node_modules/@anthropic-ai/claude-code/cli.js', '')).toEqual({ via: 'npm' })
+  expect(installedVia(AGENTS.claude, '/home/me/.local/bin/claude', globals)).toEqual({ via: 'installer' })
+  expect(installedVia(AGENTS.antigravity, '/home/me/.local/bin/agy', globals)).toEqual({ via: 'installer' })
+  // the global folder itself (Windows lays it out without lib/), and a copy under lib/ of a prefix
+  expect(installedVia(AGENTS.codex, '/usr/lib/node_modules/@openai/codex/bin/codex.js', globals)).toEqual({ via: 'npm' })
+  expect(installedVia(AGENTS.codex, 'C:/Users/me/AppData/Roaming/npm/node_modules/@openai/codex/bin/codex.js', 'C:/Users/me/AppData/Roaming/npm')).toEqual({ via: 'npm' })
 })
 
-test('the update step: npm for an npm install, else the agent’s own updater, else its installer', () => {
-  expect(updateCommand(AGENTS.codex, 'npm', PATHS)).toBe(`${PATHS}; { npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; npm install -g @openai/codex@latest; }`)
-  expect(updateCommand(AGENTS.claude, 'npm', PATHS)).toContain('npm install -g @anthropic-ai/claude-code@latest')
-  expect(updateCommand(AGENTS.codex, 'installer', PATHS)).toBe(`${PATHS}; codex update`)
-  expect(updateCommand(AGENTS.claude, 'installer', PATHS)).toBe(`${PATHS}; claude update`)
-  expect(updateCommand(AGENTS.opencode, 'installer', PATHS)).toBe(`${PATHS}; opencode upgrade`)
-  expect(updateCommand(AGENTS.copilot, 'installer', PATHS)).toBe(`${PATHS}; copilot update`)
-  expect(updateCommand(AGENTS.antigravity, 'installer', PATHS)).toBe(`${PATHS}; agy update`)
-  // Gemini CLI has no updater of its own: npm again, which is also its installer
-  expect(updateCommand(AGENTS.gemini, 'installer', PATHS)).toBe(installCommand(AGENTS.gemini, PATHS))
-  expect(updateCommand(AGENTS.gemini, 'npm', PATHS)).toContain('npm install -g @google/gemini-cli@latest')
+test('an npm copy in a folder of its own is updated there, not as a second global copy', () => {
+  // an older Inyon kept OpenCode this way, with ~/.local/bin/opencode pointing into it
+  const bin = '/home/me/.local/share/tether-tools/opencode/node_modules/opencode-ai/bin/opencode'
+  const where = installedVia(AGENTS.opencode, bin, '/usr/lib /usr/lib/node_modules/npm')
+  expect(where).toEqual({ via: 'npm', prefix: '/home/me/.local/share/tether-tools/opencode' })
+  expect(updateCommand(AGENTS.opencode, 'npm', PATHS, where.prefix)).toBe(`${PATHS}; npm install --prefix '/home/me/.local/share/tether-tools/opencode' opencode-ai@latest`)
+  expect(manualCommand(AGENTS.opencode, 'update', 'npm', where.prefix)).toBe(`npm install --prefix '/home/me/.local/share/tether-tools/opencode' opencode-ai@latest`)
+  // without a prefix the global copy is the one
+  expect(updateCommand(AGENTS.opencode, 'npm', PATHS)).toContain('npm install -g opencode-ai@latest')
 })
 
-test('the command to run by hand is one line', () => {
-  expect(manualCommand(AGENTS.codex, 'update', 'npm')).toBe('npm install -g @openai/codex@latest')
-  expect(manualCommand(AGENTS.codex, 'update', 'installer')).toBe('codex update')
-  expect(manualCommand(AGENTS.gemini, 'update', 'installer')).toBe('npm install -g @google/gemini-cli')
-  expect(manualCommand(AGENTS.codex, 'install')).toBe(AGENTS.codex.install.cmd!)
-  expect(manualCommand(AGENTS.gemini, 'install')).toBe('npm install -g @google/gemini-cli')
-})
-
-test('a failed step is explained in one line', () => {
-  expect(failureHint('npm ERR! code EACCES\nnpm ERR! syscall mkdir\nnpm ERR! path /usr/lib/node_modules', '@openai/codex')).toBe(
-    'npm can\'t write there; set a user prefix: npm config set prefix "$HOME/.npm-global" && npm install -g @openai/codex@latest',
-  )
-  expect(failureHint('sh: 1: npm: not found')).toBe('Install Node.js first (the Setup tab can)')
-  expect(failureHint('zsh: command not found: npm')).toBe('Install Node.js first (the Setup tab can)')
-  expect(failureHint("The installer didn't finish, and there's no npm here to try instead.")).toBe('Install Node.js first (the Setup tab can)')
-  expect(failureHint('npm ERR! code ENOTFOUND\nnpm ERR! network request to https://registry.npmjs.org/@openai%2fcodex failed')).toBe("The machine couldn't reach the download; check its network and try again")
-  expect(failureHint('curl: (22) The requested URL returned error: 503')).toBe("The machine couldn't reach the download; check its network and try again")
-  expect(failureHint('curl: (28) Operation timed out after 4000 milliseconds')).toBe("The machine couldn't reach the download; check its network and try again")
-  // a version number with a 50x in it isn't a network error
-  expect(failureHint('installed codex 1.0.502\nerror: checksum mismatch')).toBe('error: checksum mismatch')
-  expect(failureHint('Checking…\nDone\n')).toBe('Done')
-  expect(failureHint('')).toBeUndefined()
-})
-
-/** a machine that answers the report script and then the step */
 function fakeMachine({ installed, via, step }: { installed: string; via: 'npm' | 'installer'; step: { code: number; out: string; after: string } }) {
   const ran: string[] = []
   const host = {

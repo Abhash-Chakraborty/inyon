@@ -20,7 +20,7 @@ export interface SetupCheck {
   docs?: string
 }
 
-/** npm: a global npm package (updated with npm) · installer: the agent's own installer */
+/** npm: an npm package (updated with npm, global or under its own prefix) · installer: the agent's own installer */
 export type InstalledVia = 'npm' | 'installer'
 
 export interface SetupAgent {
@@ -33,6 +33,8 @@ export interface SetupAgent {
   /** the installed version is older than `latest` */
   outdated?: boolean
   via?: InstalledVia
+  /** an npm install that isn't global: the folder whose node_modules holds it, updated in place */
+  prefix?: string
 }
 
 export interface SetupReport {
@@ -137,7 +139,9 @@ ${authTests}
     const a: SetupAgent = { kind: k, installed: !!version, version: version || undefined, signedIn: auth }
     if (latest[k]) a.latest = latest[k]
     if (!version) return a
-    a.via = installedVia(AGENTS[k], get(`BIN ${k}`), npmGlobals)
+    const where = installedVia(AGENTS[k], get(`BIN ${k}`), npmGlobals)
+    a.via = where.via
+    if (where.prefix) a.prefix = where.prefix
     if (a.latest) a.outdated = compareVersions(version, a.latest) < 0
     return a
   })
@@ -167,29 +171,47 @@ export function installCommand(def: Pick<AgentDef, 'install' | 'version'>, paths
 
 /**
  * How an installed agent got there: through npm when `npm ls -g` lists its package or its program
- * lives in a node_modules or npm-global folder, otherwise through its own installer.
+ * lives in a node_modules or npm-global folder, otherwise through its own installer. An npm copy
+ * outside the global folder (an older Inyon kept OpenCode under ~/.local/share/tether-tools, say)
+ * comes with the folder it was installed into, so an update goes there and not to a second copy
+ * the PATH would never reach.
  */
-export function installedVia(def: Pick<AgentDef, 'install' | 'latest'>, binPath: string, npmGlobals: string): InstalledVia {
+export function installedVia(def: Pick<AgentDef, 'install' | 'latest'>, binPath: string, npmGlobals: string): { via: InstalledVia; prefix?: string } {
   const pkg = def.latest?.npm ?? def.install.npm
-  if (pkg && npmGlobals.split(/\s+/).some((p) => p.endsWith(`/node_modules/${pkg}`))) return 'npm'
-  if (/node_modules|npm-global/.test(binPath)) return 'npm'
-  return 'installer'
+  const globals = npmGlobals.split(/\s+/).filter(Boolean)
+  if (pkg && globals.some((p) => p.endsWith(`/node_modules/${pkg}`))) return { via: 'npm' }
+  const own = pkg && binPath.match(new RegExp(`^(.*)/node_modules/${pkg.replace(/[/@.]/g, '\\$&')}/`))
+  if (own) {
+    // the first word of npm ls -g is the global folder; a package under it, or under lib/, is global
+    const root = globals[0]
+    const prefix = own[1]
+    const global = (root && (prefix === root || prefix === `${root}/lib`)) || /\/(lib|\.npm-global)$/.test(prefix)
+    return global ? { via: 'npm' } : { via: 'npm', prefix }
+  }
+  if (/node_modules|npm-global/.test(binPath)) return { via: 'npm' }
+  return { via: 'installer' }
 }
+
+/** npm install into a folder of its own, where an agent already lives, so the PATH keeps pointing at it. */
+const npmPrefixed = (prefix: string, spec: string) => `npm install --prefix ${shq(prefix)} ${spec}`
 
 /**
  * The step that brings an agent to its newest version: npm for an npm install (into the user's
- * prefix, as installCommand does), else the agent's own updater, else its installer again.
+ * prefix, as installCommand does, or the folder it already sits in), else the agent's own updater,
+ * else its installer again.
  */
-export function updateCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update' | 'version'>, via: InstalledVia | undefined, paths = PATHS): string {
+export function updateCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update' | 'version'>, via: InstalledVia | undefined, paths = PATHS, prefix?: string): string {
   const pkg = def.latest?.npm ?? def.install.npm
+  if (via === 'npm' && pkg && prefix) return `${paths}; ${npmPrefixed(prefix, `${pkg}@latest`)}`
   if (via === 'npm' && pkg) return `${paths}; ${npmGlobal(`${pkg}@latest`)}`
   if (def.update) return `${paths}; ${def.update}`
   return installCommand(def, paths)
 }
 
 /** The same step as one line the user can paste into a terminal on the machine. */
-export function manualCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update'>, step: 'install' | 'update', via?: InstalledVia): string {
+export function manualCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update'>, step: 'install' | 'update', via?: InstalledVia, prefix?: string): string {
   const pkg = def.latest?.npm ?? def.install.npm
+  if (step === 'update' && via === 'npm' && pkg && prefix) return npmPrefixed(prefix, `${pkg}@latest`)
   if (step === 'update' && via === 'npm' && pkg) return `npm install -g ${pkg}@latest`
   if (step === 'update' && def.update) return def.update
   return def.install.cmd ?? `npm install -g ${def.install.npm}`
@@ -216,7 +238,7 @@ export async function runSetup(hostId: string, action: string): Promise<SetupRes
   const pkg = report.pkg
   const root = (cmd: string) => (pkg === 'brew' ? cmd : `sudo -n sh -c ${shq(cmd)}`)
   let cmd: string | undefined
-  let agent: { def: AgentDef; step: 'install' | 'update'; via?: InstalledVia } | undefined
+  let agent: { def: AgentDef; step: 'install' | 'update'; via?: InstalledVia; prefix?: string } | undefined
   let state: SetupAgent | undefined
   if (action === 'install:tmux' && pkg) cmd = root(PKG_INSTALL[pkg]('tmux'))
   else if (action === 'install:node' && pkg) cmd = root(PKG_INSTALL[pkg](pkg === 'brew' ? 'node' : 'nodejs npm'))
@@ -233,8 +255,8 @@ export async function runSetup(hostId: string, action: string): Promise<SetupRes
     const step = action.startsWith('update:') && state?.installed ? 'update' : 'install'
     const node = report.checks.find((c) => c.id === 'node')?.ok
     if (step === 'install' && !def.install.cmd && !node) throw new HttpError(409, 'Install Node.js first')
-    agent = { def, step, via: state?.via }
-    cmd = step === 'update' ? updateCommand(def, state?.via) : installCommand(def)
+    agent = { def, step, via: state?.via, prefix: state?.prefix }
+    cmd = step === 'update' ? updateCommand(def, state?.via, PATHS, state?.prefix) : installCommand(def)
   } else throw new HttpError(400, 'Unknown setup step')
   if (!cmd) throw new HttpError(409, 'No package manager found on that machine')
   if (!agent) {
@@ -253,7 +275,7 @@ export async function runSetup(hostId: string, action: string): Promise<SetupRes
   const ok = r.code === 0 && !!version
   const result: SetupResult = { ok, output, version, latest }
   if (!ok) {
-    result.manual = manualCommand(agent.def, agent.step, agent.via)
+    result.manual = manualCommand(agent.def, agent.step, agent.via, agent.prefix)
     result.hint = failureHint(output, agent.def.latest?.npm ?? agent.def.install.npm) ?? (version ? undefined : `${agent.def.name} still doesn't run after the step`)
   }
   return result

@@ -126,6 +126,8 @@ export interface SetupAgent {
   outdated?: boolean
   /** how it was installed, which decides how it's updated */
   via?: 'npm' | 'installer'
+  /** an npm install under its own folder, updated in place */
+  prefix?: string
 }
 
 export interface SetupReport {
