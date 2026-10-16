@@ -86,7 +86,9 @@ export async function updateHub({ repo, run = exec, log = console.log, step = ()
   if (co.reason) return fail(co.reason)
   step('fetch')
   log('Fetching new commits and tags')
-  const fetched = await run(['git', 'fetch', '--tags'], repo)
+  // --force: node-latest and android-latest move with every build, and a fetch that refuses to
+  // move them exits non-zero as if the network were down
+  const fetched = await run(['git', 'fetch', '--tags', '--force'], repo)
   if (fetched.code !== 0) return fail("Couldn't fetch from the remote. Check the network and try again.", fetched.out)
   step('pull')
   log(`Updating ${co.branch}`)
@@ -254,7 +256,7 @@ export function hubUpdater(o: HubUpdateOptions) {
     let latest: string | undefined
     let behind: number | undefined
     if (co.git) {
-      await run(['git', 'fetch', '--tags', '--quiet'], repo)
+      await run(['git', 'fetch', '--tags', '--force', '--quiet'], repo)
       latest = newestRelease((await run(['git', 'tag', '--list', 'v*'], repo)).out.split('\n'), version)
       const count = await run(['git', 'rev-list', '--count', 'HEAD..@{u}'], repo)
       if (count.code === 0 && /^\d+$/.test(count.out)) behind = Number(count.out)
