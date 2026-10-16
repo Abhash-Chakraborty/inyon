@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "build:hosted": "VITE_INYON_HOSTED=1 vite build --outDir dist-hosted",
+    "build": "bun --bun vite build",
+    "build:hosted": "VITE_INYON_HOSTED=1 bun --bun vite build --outDir dist-hosted",
     "icons": "bun ../mobile/scripts/icons.ts",
     "typecheck": "tsc --noEmit",
     "e2e": "bun e2e/layout.ts",
