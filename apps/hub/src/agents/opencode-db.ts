@@ -6,8 +6,10 @@ import { Host, shq } from '../hosts/host.ts'
  * JSON its server API returns, so Inyon reads that. Read-only, and only those tables: the same
  * file holds account tokens, which are never queried.
  *
- * sqlite3 answers in a few ms; Python's sqlite3 module is the fallback, `opencode db` (2-3 s per
- * call) the last resort.
+ * Every query asks SQLite for its rows as one JSON array (json_group_array), printed as is:
+ * sqlite3's own JSON output mode took minutes on a message holding a megabyte of diff, and the
+ * reader gave up at its 15 s limit, so the chat stayed empty. sqlite3 answers in a few ms;
+ * Python's sqlite3 module is the fallback, `opencode db` (2-3 s per call) the last resort.
  */
 /** where OpenCode installs itself (the hub's own PATH is minimal) */
 export const OC_PATH = 'export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$HOME/.bun/bin:$HOME/.npm-global/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"'
@@ -15,14 +17,17 @@ export const OC_PATH = 'export PATH="$HOME/.opencode/bin:$HOME/.local/bin:$HOME/
 const SCRIPT = `
 db="\${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode.db"
 [ -f "$db" ] || { echo '@@NODB'; exit 0; }
-if command -v sqlite3 >/dev/null 2>&1 && out=$(sqlite3 -readonly -json "$db" "$Q" 2>/dev/null); then printf '%s' "$out"
+if command -v sqlite3 >/dev/null 2>&1 && out=$(sqlite3 -readonly -noheader -list "$db" "$Q" 2>/dev/null); then printf '%s' "$out"
 elif command -v python3 >/dev/null 2>&1; then
-  python3 -c 'import sqlite3,json,sys
+  python3 -c 'import sqlite3,sys
 c=sqlite3.connect("file:"+sys.argv[1]+"?mode=ro",uri=True)
-c.row_factory=sqlite3.Row
-print(json.dumps([dict(r) for r in c.execute(sys.argv[2])]))' "$db" "$Q"
+print(c.execute(sys.argv[2]).fetchone()[0])' "$db" "$Q"
 else ${OC_PATH}; opencode db "$Q" --format json 2>/dev/null; fi
 `
+
+/** The rows of `from` as one JSON array built by SQLite, with these columns. */
+export const jsonRows = (columns: string[], from: string) =>
+  `select json_group_array(json_object(${columns.map((c) => `'${c}', ${c}`).join(', ')})) as rows from (${from})`
 
 export const OCDB = 'opencode-db:'
 const SESSION_ID = /^ses_[A-Za-z0-9]+$/
@@ -32,12 +37,15 @@ export const ocdbSession = (uri: string) => {
   return SESSION_ID.test(id) ? id : undefined
 }
 
+/** Runs a `jsonRows` query and returns its rows. */
 export async function ocdbQuery(host: Host, sql: string): Promise<any[]> {
   const r = await host.exec(`Q=${shq(sql)}\n${SCRIPT}`, { timeoutMs: 15_000 })
   const out = r.stdout.trim()
   if (!out || out === '@@NODB') return []
   try {
-    const rows = JSON.parse(out)
+    let rows = JSON.parse(out)
+    // `opencode db` prints the query's result set: one row whose `rows` column holds the array
+    if (Array.isArray(rows) && rows.length === 1 && typeof rows[0]?.rows === 'string') rows = JSON.parse(rows[0].rows)
     return Array.isArray(rows) ? rows : []
   } catch {
     return []
@@ -59,7 +67,8 @@ export interface OcdbSessionRow {
 
 /** Top-level conversations in a folder, newest activity first. */
 export async function ocdbSessions(host: Host, directory: string, limit = 30): Promise<OcdbSessionRow[]> {
-  return ocdbQuery(host, `select id, title, directory, parent_id, time_created, time_updated, agent, model from session where directory = ${quote(directory)} and parent_id is null and time_archived is null order by time_updated desc limit ${limit}`)
+  const rows: OcdbSessionRow[] = await ocdbQuery(host, jsonRows(['id', 'title', 'directory', 'parent_id', 'time_created', 'time_updated', 'agent', 'model'], `select id, title, directory, parent_id, time_created, time_updated, agent, model from session where directory = ${quote(directory)} and parent_id is null and time_archived is null order by time_updated desc limit ${limit}`))
+  return rows.sort((a, b) => b.time_updated - a.time_updated)
 }
 
 /**
@@ -91,9 +100,15 @@ export async function guessOpenCodeSession(host: Host, proc: { cwd?: string; sta
 /** Change marker: the newest write to the conversation's messages or parts. */
 export async function ocdbStamp(host: Host, session: string): Promise<number> {
   if (!SESSION_ID.test(session)) return 0
-  const rows = await ocdbQuery(host, `select max(t) as t from (select max(time_updated) as t from message where session_id = ${quote(session)} union all select max(time_updated) from part where session_id = ${quote(session)} union all select time_updated from session where id = ${quote(session)})`)
+  const rows = await ocdbQuery(host, jsonRows(['t'], `select max(t) as t from (select max(time_updated) as t from message where session_id = ${quote(session)} union all select max(time_updated) from part where session_id = ${quote(session)} union all select time_updated from session where id = ${quote(session)})`))
   return Number(rows[0]?.t) || 0
 }
+
+/**
+ * A message's `summary` is the turn's whole diff (megabytes after a lock file changed), and
+ * nothing here shows it: it stays in the database.
+ */
+const DATA = `case when json_valid(data) then json_remove(data, '$.summary') else data end as data`
 
 /**
  * Messages in the server API's shape ({info, parts}[]). `since` fetches only rows written after
@@ -103,8 +118,8 @@ export async function ocdbRows(host: Host, session: string, since = 0) {
   if (!SESSION_ID.test(session)) return { messages: [] as any[], parts: [] as any[] }
   const s = quote(session)
   const [messages, parts] = await Promise.all([
-    ocdbQuery(host, `select id, time_created, time_updated, data from message where session_id = ${s} and time_updated >= ${Math.floor(since)} order by time_created, id`),
-    ocdbQuery(host, `select id, message_id, time_created, time_updated, data from part where session_id = ${s} and time_updated >= ${Math.floor(since)} order by time_created, id`),
+    ocdbQuery(host, jsonRows(['id', 'time_created', 'time_updated', 'data'], `select id, time_created, time_updated, ${DATA} from message where session_id = ${s} and time_updated >= ${Math.floor(since)} order by time_created, id`)),
+    ocdbQuery(host, jsonRows(['id', 'message_id', 'time_created', 'time_updated', 'data'], `select id, message_id, time_created, time_updated, data from part where session_id = ${s} and time_updated >= ${Math.floor(since)} order by time_created, id`)),
   ])
   return { messages, parts }
 }
@@ -116,8 +131,8 @@ export async function ocdbRows(host: Host, session: string, since = 0) {
 export async function ocdbShape(host: Host, session: string): Promise<{ ids: Set<string>; revert?: string }> {
   if (!SESSION_ID.test(session)) return { ids: new Set() }
   const [ids, [row]] = await Promise.all([
-    ocdbQuery(host, `select id from message where session_id = ${quote(session)}`),
-    ocdbQuery(host, `select revert from session where id = ${quote(session)}`),
+    ocdbQuery(host, jsonRows(['id'], `select id from message where session_id = ${quote(session)}`)),
+    ocdbQuery(host, jsonRows(['revert'], `select revert from session where id = ${quote(session)}`)),
   ])
   let revert: string | undefined
   try { revert = row?.revert ? JSON.parse(row.revert)?.messageID : undefined } catch {}
@@ -126,13 +141,14 @@ export async function ocdbShape(host: Host, session: string): Promise<{ ids: Set
 
 export async function ocdbSessionInfo(host: Host, session: string): Promise<{ title?: string; cost?: number; additions?: number; deletions?: number; files?: number } | undefined> {
   if (!SESSION_ID.test(session)) return undefined
-  const [r] = await ocdbQuery(host, `select title, cost, summary_additions, summary_deletions, summary_files from session where id = ${quote(session)}`)
+  const [r] = await ocdbQuery(host, jsonRows(['title', 'cost', 'summary_additions', 'summary_deletions', 'summary_files'], `select title, cost, summary_additions, summary_deletions, summary_files from session where id = ${quote(session)}`))
   return r ? { title: r.title, cost: r.cost, additions: r.summary_additions ?? undefined, deletions: r.summary_deletions ?? undefined, files: r.summary_files ?? undefined } : undefined
 }
 
 export async function ocdbTodos(host: Host, session: string): Promise<{ content: string; status: string }[]> {
   if (!SESSION_ID.test(session)) return []
-  return ocdbQuery(host, `select content, status from todo where session_id = ${quote(session)} order by position`)
+  const rows: { content: string; status: string; position: number }[] = await ocdbQuery(host, jsonRows(['content', 'status', 'position'], `select content, status, position from todo where session_id = ${quote(session)} order by position`))
+  return rows.sort((a, b) => a.position - b.position).map(({ content, status }) => ({ content, status }))
 }
 
 /** Keeps a conversation's rows by id and rebuilds the API-shaped list after each merge. */
