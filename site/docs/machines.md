@@ -39,9 +39,13 @@ It checks the machine and fixes what it can:
 
 - **tmux**, and a tmux session to work in (it can keep one called `main` running).
 - **Node.js**, needed for the agents installed through npm (Codex, Gemini CLI and GitHub Copilot).
-- **Each agent:** installed or not, its version, and whether it's signed in.
+- **Each agent:** installed or not, its version, whether it's signed in, and from 0.17.4 whether it's up to date: the row says *up to date*, or shows **Update to 0.50.0** when a newer version is on npm.
 
 **Install** uses the agent's official installer, or npm when there isn't one. Fixes run with the machine's package manager (apt, dnf, yum, pacman, apk, zypper or Homebrew); when one needs your password, the tab shows the command to run yourself instead.
+
+**Update** runs `npm install -g <package>@latest` when the agent came from npm, otherwise the agent's own updater (`claude update`, `codex update`, `opencode upgrade`, `copilot update`, `agy update`); Gemini CLI has none, so it's installed again from npm. Antigravity CLI isn't on npm, so Inyon can't tell whether it's behind; its row offers a plain **Update** that runs `agy update`. The hub asks npm for the newest versions at most once an hour, and when it can't reach npm the rows just show the installed version.
+
+When an install or update fails, the row opens with the likely cause (npm can't write to its folder, no Node.js, no network), the last lines of what the step printed, the command to run on the machine yourself with a copy button, and a link to the agent's install guide. The version shown comes from the agent itself after the step, so an installer that reports success without installing anything still counts as a failure.
 
 **Sign in** runs the agent's own sign-in in a hidden tmux session and turns it into steps: a code to copy, a page to open, a menu as buttons, or a box to paste a code into. Closing the sheet stops it.
 

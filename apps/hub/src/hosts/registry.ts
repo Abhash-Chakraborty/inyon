@@ -716,11 +716,17 @@ class Registry {
           if (was === 'unknown' && last && last.kind === p.agent?.kind) was = last.state as typeof was
           const now = p.agent?.state
           const agentName = p.agent ? AGENTS[p.agent.kind].name : 'Agent'
-          if (!was || !now || was === now) continue
+          if (!was || !now) continue
+          // a turn that ends with agents or shells still running isn't finished: the alert waits
+          // until the pane is idle with nothing left in the background
+          const hadBackground = !!before.get(p.id)?.agent?.background
+          const background = !!p.agent?.background
           const title = paneTitle(p) || `${s.name}:${w.index}`
-          if (now === 'waiting') {
+          if (was === now) {
+            if (now === 'idle' && hadBackground && !background) this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'done', title, body: `${agentName} finished`, agent: p.agent?.kind })
+          } else if (now === 'waiting') {
             this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'waiting', title, body: p.agent?.waitingFor ?? `${agentName} needs your input`, agent: p.agent?.kind })
-          } else if (was === 'working' && now === 'idle') {
+          } else if (was === 'working' && now === 'idle' && !background) {
             this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'done', title, body: `${agentName} finished`, agent: p.agent?.kind })
           }
         }

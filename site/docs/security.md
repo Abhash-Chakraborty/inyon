@@ -13,6 +13,7 @@ Inyon gives whoever reaches it a shell on your machines, as the user your agents
 - **Only its own names.** The hub doesn't answer a browser that reaches it under a public domain it wasn't told about (`INYON_ALLOWED_HOSTS`), so a web page can't point its own domain at your hub (DNS rebinding) and use it from your browser.
 - **Machines connect out, not in.** A machine running `inyon` opens an outbound connection to the hub; nothing on it listens. Each machine gets its own random token, the hub stores only its SHA-256, and removing the machine revokes it. A token no machine has used stops working after a day. `inyon` refuses to send its token over plain HTTP unless the hub is on a private address.
 - **Servers over SSH** use the hub's own `ssh` with your config and keys. The hub stores no SSH keys. It accepts a new server's host key on first contact and refuses one that changes later.
+- **What it asks the internet.** Besides its own update check, from 0.17.4 the hub asks `registry.npmjs.org` for the newest version of each agent's npm package when a machine's Setup tab opens, at most once an hour per package. The request names the package and nothing else; nothing about you or your machines is sent.
 
 ## Phones paired with a hub
 

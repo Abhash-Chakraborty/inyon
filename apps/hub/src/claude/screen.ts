@@ -11,8 +11,10 @@ const INPUT = /^\s*[❯>!](\s|$)/
 const SPINNER = /^\s*([^\s\w])\s+([A-Z][\w'’ -]*…)\s*(?:\((.*)\))?\s*$/u
 const MODE = /(?:⏵⏵|⏸|⏵)\s+([a-z][a-z ]*?)(?: mode)? on\b/
 const FOOTER = /(Esc to|Enter to|to cancel|to navigate|to select|to confirm)/i
-/** "1 shell", "2 monitors" in the footer: background work owned by the Claude process */
-const BACKGROUND = /\b\d+ (?:shells?|monitors?|background tasks?|bash)\b/
+/** "1 shell", "2 monitors", "← 1 agent" in the footer: background work owned by the Claude process */
+const BACKGROUND = /\b\d+ (?:shells?|monitors?|agents?|tasks?|background (?:tasks?|terminals?)|bash)\b/g
+/** The agent list under the footer (toggled with ↓): "● main", "◯ general-purpose  Sleep briefly  6s · ↓ 37.9k tokens" */
+const AGENT_ROW = /^\s*[●◯]\s/
 const TABS = /^\s*←\s+(.+?)\s+→\s*$/
 const CHECKBOX = /^\[([ ✔✓x×])\]\s*/
 /** Working lines of other agents: "⠋ Working (12s • esc to interrupt)" and friends. */
@@ -99,12 +101,16 @@ export function parseScreen(captured: string[], paneWidth?: number, agent: Agent
       draft = draft.trim()
       // a dimmed suggestion is not something you typed
       if (draft && !styled[top + 1]?.ghost && !/^Try "/.test(draft)) state.draft = draft
+      // every kind of background work in the footer, in order: "1 shell, 1 agent"; an agent's
+      // description in the list under it could say anything, so those rows are skipped
+      const background: string[] = []
       for (const l of lines.slice(rules[k + 1] + 1)) {
+        if (AGENT_ROW.test(l)) continue
         const m = l.match(MODE)
         if (m) state.mode = m[1].trim()
-        const bg = l.match(BACKGROUND)
-        if (bg) state.background = bg[0]
+        background.push(...(l.match(BACKGROUND) ?? []))
       }
+      if (background.length) state.background = background.join(', ')
       break
     }
   }

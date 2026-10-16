@@ -56,6 +56,10 @@ export interface AgentDef {
    * npm package, used when there's no installer or the installer fails. Then how to sign in.
    */
   install: { cmd?: string; npm?: string; docs: string }
+  /** where its newest version is published (its npm package); none means Inyon can't tell */
+  latest?: { npm: string }
+  /** the agent's own update command, from its --help; npm installs are updated with npm instead */
+  update?: string
   login: string
   /** a command that prints the version */
   version: string
@@ -289,6 +293,8 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   claude: {
     kind: 'claude',
     install: { cmd: 'curl -fsSL https://claude.ai/install.sh | bash', docs: 'https://docs.claude.com/en/docs/claude-code/setup' },
+    latest: { npm: '@anthropic-ai/claude-code' },
+    update: 'claude update',
     login: 'claude /login',
     version: 'claude --version',
     authFiles: ['~/.claude/.credentials.json', '~/.claude.json'],
@@ -349,6 +355,8 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   codex: {
     kind: 'codex',
     install: { cmd: 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh', npm: '@openai/codex', docs: 'https://developers.openai.com/codex/cli' },
+    latest: { npm: '@openai/codex' },
+    update: 'codex update',
     login: 'codex login',
     version: 'codex --version',
     authFiles: ['~/.codex/auth.json'],
@@ -412,6 +420,8 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   opencode: {
     kind: 'opencode',
     install: { cmd: 'curl -fsSL https://opencode.ai/install | bash', docs: 'https://opencode.ai/docs' },
+    latest: { npm: 'opencode-ai' },
+    update: 'opencode upgrade',
     login: 'opencode auth login',
     version: 'opencode --version',
     authFiles: ['~/.local/share/opencode/auth.json'],
@@ -454,6 +464,8 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   copilot: {
     kind: 'copilot',
     install: { cmd: 'curl -fsSL https://gh.io/copilot-install | bash', npm: '@github/copilot', docs: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli/install-copilot-cli' },
+    latest: { npm: '@github/copilot' },
+    update: 'copilot update',
     login: 'copilot login --device-code',
     version: 'copilot --version',
     authFiles: ['~/.copilot/config.json'],
@@ -489,6 +501,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   gemini: {
     kind: 'gemini',
     install: { npm: '@google/gemini-cli', docs: 'https://github.com/google-gemini/gemini-cli' },
+    latest: { npm: '@google/gemini-cli' },
     login: 'gemini',
     version: 'gemini --version',
     authFiles: ['~/.gemini/oauth_creds.json', '~/.gemini/google_accounts.json'],
@@ -529,6 +542,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
   antigravity: {
     kind: 'antigravity',
     install: { cmd: 'curl -fsSL https://antigravity.google/cli/install.sh | bash', docs: 'https://antigravity.google/docs/cli/install' },
+    update: 'agy update',
     login: 'agy',
     version: 'agy --version',
     authFiles: ['~/.gemini/antigravity-cli/antigravity-oauth-token'],

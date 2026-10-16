@@ -684,3 +684,35 @@ ${D}
   )
   expect(promptSummary(s.prompt!)).toBe('Edit file: test\\cart.test.js')
 })
+
+describe('background agents in the Claude footer', () => {
+  // the ← is the hint to expand the agent list; the two rows under it are that list, opened
+  const footer = (status: string, ...rows: string[]) => screen(`● Started the agent in the background.
+${R}
+❯
+${R}
+  ${status}${rows.map((r) => `\n  ${r}`).join('')}`)
+  const agents = ['● main', '◯ general-purpose  Sleep briefly for a footer test                                                      6s · ↓ 37.9k tokens']
+
+  test('a shell and an agent, with bypass mode', () => {
+    const s = parseScreen(footer('⏵⏵ bypass permissions on · 1 shell · ← 1 agent', ...agents), 100)
+    expect(s).toMatchObject({ working: false, inputVisible: true, mode: 'bypass permissions', background: '1 shell, 1 agent' })
+    expect(s.draft).toBeUndefined()
+    expect(s.prompt).toBeUndefined()
+  })
+
+  test('agents alone, without the mode segment', () => {
+    expect(parseScreen(footer('← 1 agent'), 100).background).toBe('1 agent')
+    expect(parseScreen(footer('1 shell · 1 agent'), 100).background).toBe('1 shell, 1 agent')
+    expect(parseScreen(footer('← 2 agents', ...agents, '◯ Explore  Find the parser  12s · ↓ 4.1k tokens'), 100)).toMatchObject({ working: false, background: '2 agents' })
+  })
+
+  test('the agent list rows are not read as a footer', () => {
+    const s = parseScreen(footer('⏵ plan mode on · ← 1 agent', '● main', '◯ general-purpose  Start 2 shells, then ⏵⏵ bypass permissions on  6s · ↓ 1.2k tokens'), 100)
+    expect(s).toMatchObject({ mode: 'plan', background: '1 agent' })
+  })
+
+  test('nothing in the background once the footer is bare', () => {
+    expect(parseScreen(footer('⏵⏵ bypass permissions on'), 100).background).toBeUndefined()
+  })
+})

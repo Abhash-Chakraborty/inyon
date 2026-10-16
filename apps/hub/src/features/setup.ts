@@ -4,6 +4,7 @@ import { HIDDEN_PREFIXES } from '../tmux/tmux.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { loadSettings, saveSettings } from '../config.ts'
 import { signedInTest } from '../agents/auth-sh.ts'
+import { compareVersions, latestAgentVersions } from './agent-latest.ts'
 
 export const PATHS = 'export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done'
 
@@ -19,14 +20,47 @@ export interface SetupCheck {
   docs?: string
 }
 
+/** npm: a global npm package (updated with npm) · installer: the agent's own installer */
+export type InstalledVia = 'npm' | 'installer'
+
+export interface SetupAgent {
+  kind: AgentKind
+  installed: boolean
+  version?: string
+  signedIn: boolean
+  /** the newest published version, when the registry answered */
+  latest?: string
+  /** the installed version is older than `latest` */
+  outdated?: boolean
+  via?: InstalledVia
+}
+
 export interface SetupReport {
   os: string
   pkg?: string
   sudo: boolean
   checks: SetupCheck[]
-  agents: { kind: AgentKind; installed: boolean; version?: string; signedIn: boolean }[]
+  agents: SetupAgent[]
   keepSession: boolean
 }
+
+/** What an install or update step came back with. */
+export interface SetupResult {
+  ok: boolean
+  output?: string
+  /** a sign-in that opened a terminal pane */
+  pane?: string
+  /** the agent's version once the step ran */
+  version?: string
+  latest?: string
+  /** when it failed: the command to run on the machine yourself */
+  manual?: string
+  /** when it failed: the likely cause, in one line */
+  hint?: string
+}
+
+/** the program an agent's version command runs */
+const binary = (def: Pick<AgentDef, 'version'>) => def.version.split(' ')[0]
 
 const PKG_INSTALL: Record<string, (p: string) => string> = {
   apt: (p) => `apt-get update -qq && apt-get install -y -qq ${p}`,
@@ -54,9 +88,12 @@ echo "NPM $(npm --version 2>/dev/null)"
 echo "CURL $(command -v curl >/dev/null && echo 1)"
 echo "GIT $(git --version 2>/dev/null)"
 ${AGENT_KINDS.map((k) => `echo "VER ${k} $(${AGENTS[k].version} 2>/dev/null | head -1)"`).join('\n')}
+${AGENT_KINDS.map((k) => `echo "BIN ${k} $(b=$(command -v ${binary(AGENTS[k])} 2>/dev/null) && { readlink -f "$b" 2>/dev/null || echo "$b"; })"`).join('\n')}
+echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\\n' ' ')"
 ${authTests}
 `
-  const r = await host.exec(script, { timeoutMs: 30000 })
+  // the registry is asked while the machine runs the script, so the report isn't slower for it
+  const [r, latest] = await Promise.all([host.exec(script, { timeoutMs: 30000 }), latestAgentVersions()])
   const get = (k: string) => r.stdout.split('\n').find((l) => l.startsWith(`${k} `))?.slice(k.length + 1).trim() ?? ''
   const os = get('OS')
   const pkg = get('PKG') || undefined
@@ -93,13 +130,22 @@ ${authTests}
       manual: !node ? asRoot(install(pkg === 'brew' ? 'node' : 'nodejs npm')) : undefined,
     },
   ]
-  const agents = AGENT_KINDS.map((k) => {
+  const npmGlobals = get('NPMLS')
+  const agents = AGENT_KINDS.map((k): SetupAgent => {
     const version = get(`VER ${k}`)
     const auth = r.stdout.split('\n').find((l) => l.startsWith(`AUTH ${k} `))?.endsWith('1') ?? false
-    return { kind: k, installed: !!version, version: version || undefined, signedIn: auth }
+    const a: SetupAgent = { kind: k, installed: !!version, version: version || undefined, signedIn: auth }
+    if (latest[k]) a.latest = latest[k]
+    if (!version) return a
+    a.via = installedVia(AGENTS[k], get(`BIN ${k}`), npmGlobals)
+    if (a.latest) a.outdated = compareVersions(version, a.latest) < 0
+    return a
   })
   return { os, pkg, sudo, checks, agents, keepSession }
 }
+
+/** A global npm install into the user's own prefix when the global one isn't theirs to write. */
+const npmGlobal = (spec: string) => `{ npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; npm install -g ${spec}; }`
 
 /**
  * The agent's own installer when it has one. If the agent still doesn't run after it (a piped
@@ -108,7 +154,7 @@ ${authTests}
  */
 export function installCommand(def: Pick<AgentDef, 'install' | 'version'>, paths = PATHS): string {
   const { cmd, npm } = def.install
-  const viaNpm = `{ npm config get prefix | grep -q "^$HOME" || npm config set prefix "$HOME/.npm-global"; npm install -g ${npm}; }`
+  const viaNpm = npmGlobal(npm!)
   if (!cmd) return `${paths}; ${viaNpm}`
   if (!npm) return `${paths}; ${cmd}`
   return [
@@ -119,30 +165,98 @@ export function installCommand(def: Pick<AgentDef, 'install' | 'version'>, paths
   ].join('\n')
 }
 
+/**
+ * How an installed agent got there: through npm when `npm ls -g` lists its package or its program
+ * lives in a node_modules or npm-global folder, otherwise through its own installer.
+ */
+export function installedVia(def: Pick<AgentDef, 'install' | 'latest'>, binPath: string, npmGlobals: string): InstalledVia {
+  const pkg = def.latest?.npm ?? def.install.npm
+  if (pkg && npmGlobals.split(/\s+/).some((p) => p.endsWith(`/node_modules/${pkg}`))) return 'npm'
+  if (/node_modules|npm-global/.test(binPath)) return 'npm'
+  return 'installer'
+}
+
+/**
+ * The step that brings an agent to its newest version: npm for an npm install (into the user's
+ * prefix, as installCommand does), else the agent's own updater, else its installer again.
+ */
+export function updateCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update' | 'version'>, via: InstalledVia | undefined, paths = PATHS): string {
+  const pkg = def.latest?.npm ?? def.install.npm
+  if (via === 'npm' && pkg) return `${paths}; ${npmGlobal(`${pkg}@latest`)}`
+  if (def.update) return `${paths}; ${def.update}`
+  return installCommand(def, paths)
+}
+
+/** The same step as one line the user can paste into a terminal on the machine. */
+export function manualCommand(def: Pick<AgentDef, 'install' | 'latest' | 'update'>, step: 'install' | 'update', via?: InstalledVia): string {
+  const pkg = def.latest?.npm ?? def.install.npm
+  if (step === 'update' && via === 'npm' && pkg) return `npm install -g ${pkg}@latest`
+  if (step === 'update' && def.update) return def.update
+  return def.install.cmd ?? `npm install -g ${def.install.npm}`
+}
+
+/** The likely cause of a failed install or update, in one line, from what it printed. */
+export function failureHint(output: string, pkg?: string): string | undefined {
+  const lines = output.split('\n').map((l) => l.trim()).filter(Boolean)
+  if (!lines.length) return undefined
+  if (/EACCES|permission denied|EPERM/i.test(output))
+    return `npm can't write there; set a user prefix: npm config set prefix "$HOME/.npm-global" && npm install -g ${pkg ?? '<package>'}@latest`
+  if (/(command not found: npm|npm: (command )?not found|node: (command )?not found|command not found: node|no npm here)/i.test(output))
+    return 'Install Node.js first (the Setup tab can)'
+  if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EAI_AGAIN|timed out|Could not resolve host|Failed to connect|Connection refused|Network is unreachable|\bE(403|50[0-9])\b|returned error: (403|50[0-9])|HTTP(\/[\d.]+)? (403|50[0-9])\b|\b(403|50[0-9]) (Forbidden|Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout)/i.test(output))
+    return "The machine couldn't reach the download; check its network and try again"
+  const err = [...lines].reverse().find((l) => /error|fail|cannot|can't|not /i.test(l)) ?? lines[lines.length - 1]
+  return err.slice(0, 200)
+}
+
 /** Runs one setup step. Installs run non-interactively; sign-ins go through features/signin.ts. */
-export async function runSetup(hostId: string, action: string): Promise<{ ok: boolean; output?: string; pane?: string }> {
+export async function runSetup(hostId: string, action: string): Promise<SetupResult> {
   const host = registry.host(hostId)
   const report = await setupReport(hostId)
   const pkg = report.pkg
   const root = (cmd: string) => (pkg === 'brew' ? cmd : `sudo -n sh -c ${shq(cmd)}`)
   let cmd: string | undefined
+  let agent: { def: AgentDef; step: 'install' | 'update'; via?: InstalledVia } | undefined
+  let state: SetupAgent | undefined
   if (action === 'install:tmux' && pkg) cmd = root(PKG_INSTALL[pkg]('tmux'))
   else if (action === 'install:node' && pkg) cmd = root(PKG_INSTALL[pkg](pkg === 'brew' ? 'node' : 'nodejs npm'))
   else if (action === 'session') {
     const r = await host.exec(`tmux new-session -d -s main -c "$HOME" 2>&1 || tmux new-session -d -c "$HOME" 2>&1`)
     registry.refresh(hostId, 200)
     return { ok: r.code === 0, output: r.stdout + r.stderr }
-  } else if (action.startsWith('agent:')) {
-    const kind = action.slice(6) as AgentKind
+  } else if (action.startsWith('agent:') || action.startsWith('update:')) {
+    const kind = action.slice(action.indexOf(':') + 1) as AgentKind
     const def = AGENTS[kind]
     if (!def) throw new HttpError(400, 'Unknown agent')
-    if (!def.install.cmd && !report.checks.find((c) => c.id === 'node')?.ok) throw new HttpError(409, 'Install Node.js first')
-    cmd = installCommand(def)
+    state = report.agents.find((a) => a.kind === kind)
+    // updating something that isn't there is an install
+    const step = action.startsWith('update:') && state?.installed ? 'update' : 'install'
+    const node = report.checks.find((c) => c.id === 'node')?.ok
+    if (step === 'install' && !def.install.cmd && !node) throw new HttpError(409, 'Install Node.js first')
+    agent = { def, step, via: state?.via }
+    cmd = step === 'update' ? updateCommand(def, state?.via) : installCommand(def)
   } else throw new HttpError(400, 'Unknown setup step')
   if (!cmd) throw new HttpError(409, 'No package manager found on that machine')
-  const r = await host.exec(cmd, { timeoutMs: 600_000 })
+  if (!agent) {
+    const r = await host.exec(cmd, { timeoutMs: 600_000 })
+    registry.refresh(hostId, 200)
+    return { ok: r.code === 0, output: (r.stdout + r.stderr).slice(-6000) }
+  }
+  // the agent's version is read in the same round trip, after the step
+  const r = await host.exec(`${cmd}\n__inyon_code=$?; echo "INYON_VERSION $(${PATHS}; ${agent.def.version} 2>/dev/null | head -1)"; exit $__inyon_code`, { timeoutMs: 600_000 })
   registry.refresh(hostId, 200)
-  return { ok: r.code === 0, output: (r.stdout + r.stderr).slice(-6000) }
+  const out = r.stdout + r.stderr
+  const version = out.split('\n').find((l) => l.startsWith('INYON_VERSION '))?.slice(14).trim() || undefined
+  const output = out.split('\n').filter((l) => !l.startsWith('INYON_VERSION ')).join('\n').trim().slice(-6000)
+  const latest = state?.latest
+  // the step said it failed, or it ended and the agent still isn't there
+  const ok = r.code === 0 && !!version
+  const result: SetupResult = { ok, output, version, latest }
+  if (!ok) {
+    result.manual = manualCommand(agent.def, agent.step, agent.via)
+    result.hint = failureHint(output, agent.def.latest?.npm ?? agent.def.install.npm) ?? (version ? undefined : `${agent.def.name} still doesn't run after the step`)
+  }
+  return result
 }
 
 export function setKeepSession(hostId: string, on: boolean) {

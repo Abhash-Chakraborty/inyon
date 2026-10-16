@@ -24,7 +24,7 @@ Settings → Appearance → **Tool calls in chat** switches between *Everything*
 
 The chat follows new replies as they arrive, unless you've scrolled up to read; then it keeps your place and offers **Jump to latest**. Scroll up to load earlier messages. If you've been away for more than five minutes, it opens at the newest reply.
 
-While the agent works, a line under the last message says what it's doing. Background work (shells, monitors, subagents) shows under it too; see [Background work](controls.md#background-work).
+While the agent works, a line under the last message says what it's doing. Background work (shells, monitors, subagents) shows under it too, and stays after the reply until it's done; see [Background work](controls.md#background-work).
 
 ### Images
 
