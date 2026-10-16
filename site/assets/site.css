@@ -184,6 +184,12 @@ h2:hover > .anchor, h3:hover > .anchor { opacity: 1; }
 .meta, .card .meta { font: 400 12.5px var(--mono); color: var(--fg-3); margin: 12px 0 0; }
 .meta a { text-decoration: none; color: var(--fg); }
 .meta a:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Product Hunt badge: their graphite version in both modes, scaled to the button height */
+.ph { display: inline-block; margin-top: 22px; border-radius: 8px; line-height: 0; transition: opacity var(--dur-small) var(--ease), transform var(--dur-small) var(--ease); }
+.ph:hover { opacity: .9; }
+.ph:active { transform: scale(.97); }
+.ph img { display: block; width: 204px; height: 44px; border-radius: 8px; }
+@media (prefers-color-scheme: dark) { .ph img { box-shadow: 0 0 0 1px var(--line-strong); } }
 .shot { margin: 28px 0 8px; }
 .shot img { display: block; width: 100%; border-radius: 22px; border: 1px solid var(--line); }
 .video { position: relative; margin: 28px 0 8px; aspect-ratio: 16 / 9; border-radius: 22px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
