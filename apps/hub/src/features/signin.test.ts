@@ -1,4 +1,4 @@
-import { parseOpenCodeAuthMenu, parseOpenCodeAuthInput, stopSignIn } from './signin.ts'
+import { parseOpenCodeAuthMenu, parseOpenCodeAuthInput, signInWindows, startSignIn, stopSignIn } from './signin.ts'
 import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { parseSignIn } from './signin.ts'
 import { registry } from '../hosts/registry.ts'
@@ -70,6 +70,26 @@ test('OpenCode next login-method prompt replaces the completed provider choice',
   expect(menu?.options.find((o) => o.selected)?.n).toBe(2)
   expect(parseOpenCodeAuthMenu(['◇ Login method', '│ API Key', '◆ Enter API Key', '│ _'])).toBeUndefined()
   expect(parseOpenCodeAuthMenu(['◇ Finished', '│ ○ Earlier option'])).toBeUndefined()
+})
+
+test('connecting a provider runs OpenCode\'s own login for that provider, and its "Error:" counts as a failure even at exit 0', async () => {
+  const ran: string[] = []
+  const host = { exec: async (cmd: string) => { ran.push(cmd); return { code: 0, stdout: '%9\n', stderr: '' } } }
+  spyOn(registry, 'host').mockReturnValue(host as any)
+  spyOn(registry, 'get').mockReturnValue({ state: { os: 'Linux' } } as any)
+  expect(await startSignIn('h', 'opencode', { provider: 'anthropic' })).toEqual({ pane: '%9' })
+  // quoted once for sh -c and once for tmux, so the provider id sits between escaped quotes
+  expect(ran[0]).toMatch(/opencode auth login -p \S*anthropic\S*; s=\$\?/)
+  expect(ran[0]).toContain('inyon-login-opencode-')
+  await expect(startSignIn('h', 'opencode', { provider: 'bad id' })).rejects.toThrow('Unknown provider')
+  expect(signInWindows('opencode', 'groq')).toStartWith("opencode auth login -p 'groq'; ")
+  expect(signInWindows('opencode')).toStartWith('opencode auth login; ')
+  const failed = parseSignIn('┌  Add credential\nError: Unknown provider "nope"\n\n[inyon-exit 0]\n')
+  expect(failed.exit).toBe(1)
+  expect(failed.error).toBe('Unknown provider "nope"')
+  const done = parseSignIn('┌  Add credential\n│\n◇  Enter your API key\n│  ▪▪▪▪\n│\n└  Done\n\n[inyon-exit 0]\n')
+  expect(done.exit).toBe(0)
+  expect(done.error).toBeUndefined()
 })
 
 test('stopping a sign-in ends that session by its exact name, even if its pane has just gone', async () => {

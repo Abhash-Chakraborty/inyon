@@ -11,14 +11,14 @@ import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.
 import { bytes } from '../../lib/format.ts'
 import { openMenu } from '../ui/primitives.tsx'
 
-/** commands that open a picker in the agent's terminal; the composer's own menus do the job */
-const MENU_COMMANDS: Record<string, string> = { '/model': 'model', '/models': 'model', '/effort': 'effort', '/agents': 'mode', '/agent': 'mode' }
+/** commands that open a picker in the agent's terminal; the composer's own menus (and OpenCode's providers sheet) do the job */
+const MENU_COMMANDS: Record<string, string> = { '/model': 'model', '/models': 'model', '/effort': 'effort', '/variants': 'effort', '/agents': 'mode', '/agent': 'mode', '/connect': 'providers' }
 
 /** The app's own sheet for a command typed bare, if it has one: a menu above, or past conversations (/resume). */
 function menuFor(command: string, agent?: AgentKind) {
   const c = command.toLowerCase()
   const menu = MENU_COMMANDS[c]
-  if (menu) return menu !== 'mode' || agent === 'opencode' ? menu : undefined
+  if (menu) return (menu !== 'mode' && menu !== 'providers') || agent === 'opencode' ? menu : undefined
   return agent && AGENTS[agent].conversations?.includes(c) ? 'conversations' : undefined
 }
 

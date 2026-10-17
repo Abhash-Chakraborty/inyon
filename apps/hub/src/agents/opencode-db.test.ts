@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OCDB, OcdbCache, guessOpenCodeSession, ocdbRows, ocdbSessionInfo, ocdbSessions, ocdbShape, ocdbStamp, ocdbTodos } from './opencode-db.ts'
+import { OCDB, OcdbCache, guessOpenCodeSession, ocdbRows, ocdbSessionInfo, ocdbSessions, ocdbShape, ocdbStamp } from './opencode-db.ts'
 
 // A database laid out like OpenCode's, read through the reader's real shell script (sqlite3 or
 // python3, whichever the machine has), so a slow path shows up here as a slow test.
@@ -14,19 +14,17 @@ const S = 'ses_test0000000000000000001'
 const OLDER = 'ses_test0000000000000000002'
 mkdirSync(join(root, 'opencode'))
 const db = new Database(join(root, 'opencode/opencode.db'))
-db.exec(`create table session (id text primary key, title text, directory text, parent_id text, time_created integer, time_updated integer, time_archived integer, agent text, model text, revert text, cost real, summary_additions integer, summary_deletions integer, summary_files integer);
+db.exec(`create table session (id text primary key, title text, directory text, parent_id text, time_created integer, time_updated integer, time_archived integer, agent text, model text, revert text, cost real, summary_additions integer, summary_deletions integer, summary_files integer, share_url text);
 create table message (id text primary key, session_id text, time_created integer, time_updated integer, data text);
-create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text);
-create table todo (session_id text, content text, status text, position integer)`)
-db.exec(`insert into session values ('${S}', 'Greeting', '/work', null, 1000, 5000, null, 'build', 'x/y', null, 0.5, 3, 1, 2)`)
-db.exec(`insert into session values ('${OLDER}', 'Older talk', '/work', null, 500, 900, null, null, null, null, null, null, null, null)`)
+create table part (id text primary key, message_id text, session_id text, time_created integer, time_updated integer, data text)`)
+db.exec(`insert into session values ('${S}', 'Greeting', '/work', null, 1000, 5000, null, 'build', 'x/y', null, 0.5, 3, 1, 2, 'https://opencode.ai/s/abc')`)
+db.exec(`insert into session values ('${OLDER}', 'Older talk', '/work', null, 500, 900, null, null, null, null, 0, null, null, null, null)`)
 // a user message whose summary carries the turn's whole diff: two megabytes of lock file
 const diff = 'x'.repeat(2_000_000)
 db.query('insert into message values (?, ?, ?, ?, ?)').run('msg_1', S, 1000, 1000, JSON.stringify({ role: 'user', time: { created: 1000 }, summary: { diffs: [{ file: 'Cargo.lock', patch: diff }] } }))
 db.query('insert into message values (?, ?, ?, ?, ?)').run('msg_2', S, 2000, 5000, JSON.stringify({ role: 'assistant', time: { created: 2000 }, modelID: 'y', providerID: 'x', cost: 0.5 }))
 db.query('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_1', 'msg_1', S, 1000, 1000, JSON.stringify({ type: 'text', text: 'hi' }))
 db.query('insert into part values (?, ?, ?, ?, ?, ?)').run('prt_2', 'msg_2', S, 2000, 2000, JSON.stringify({ type: 'text', text: 'hello "there"\nline | two' }))
-db.exec(`insert into todo values ('${S}', 'second', 'pending', 2), ('${S}', 'first', 'completed', 1)`)
 db.close()
 
 /** a machine whose OpenCode data lives in `dataDir` */
@@ -64,16 +62,13 @@ test("the folder's conversations come newest first, and the pane title names the
   expect(await guessOpenCodeSession(host, { cwd: '/work', startedAt: 0 }, undefined, 'OpenCode')).toBe(OCDB)
 })
 
-test('stamp, shape, info and todos', async () => {
+test('stamp, shape and the session row (title, cost, lines changed, share link)', async () => {
   expect(await ocdbStamp(host, S)).toBe(5000)
   const shape = await ocdbShape(host, S)
   expect([...shape.ids].sort()).toEqual(['msg_1', 'msg_2'])
   expect(shape.revert).toBeUndefined()
-  expect(await ocdbSessionInfo(host, S)).toEqual({ title: 'Greeting', cost: 0.5, additions: 3, deletions: 1, files: 2 })
-  expect(await ocdbTodos(host, S)).toEqual([
-    { content: 'first', status: 'completed' },
-    { content: 'second', status: 'pending' },
-  ])
+  expect(await ocdbSessionInfo(host, S)).toEqual({ title: 'Greeting', cost: 0.5, additions: 3, deletions: 1, files: 2, share: 'https://opencode.ai/s/abc' })
+  expect(await ocdbSessionInfo(host, OLDER)).toEqual({ title: 'Older talk', cost: 0, additions: undefined, deletions: undefined, files: undefined, share: undefined })
   expect(await ocdbRows(host, 'ses_nothing')).toEqual({ messages: [], parts: [] })
 })
 

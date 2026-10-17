@@ -250,6 +250,7 @@ export function UsagePanel({ status, info, onCompact, host, agent, agentInfo, pa
           ['Branch', info?.gitBranch],
           ['Folder', info?.cwd],
           ['Session', info?.sessionId],
+          ['Shared link', info?.share],
           ['Matched by', info?.mappedBy === 'hook' ? 'Integration hook (exact)' : info?.mappedBy === 'process' ? 'Open conversation (exact)' : info?.mappedBy === 'resume' ? 'Resume flag' : info?.mappedBy ? 'Folder (best guess)' : undefined],
         ]
           .filter(([, v]) => v)
@@ -257,7 +258,7 @@ export function UsagePanel({ status, info, onCompact, host, agent, agentInfo, pa
             <div key={k} className="flex items-center gap-3 px-3.5 py-2">
               <span className="w-24 shrink-0 text-fg-3">{k}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[12px]">{v}</span>
-              {(k === 'Session' || k === 'Folder') && <CopyButton text={String(v)} />}
+              {(k === 'Session' || k === 'Folder' || k === 'Shared link') && <CopyButton text={String(v)} />}
             </div>
           ))}
       </section>

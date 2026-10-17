@@ -15,15 +15,14 @@ export function useSession(host: string, pane: string) {
   const ref = useMemo(() => allPanes(hosts).find((r) => r.host.config.id === host && r.pane.id === pane), [hosts, host, pane])
   const agent: AgentKind | undefined = ref?.pane.agent?.kind ?? chat?.info?.agent
   const catalog = useAgentCatalog(host, pane, agent)
-  const def = useMemo(() => agent ? { ...AGENTS[agent], models: catalog?.models ?? AGENTS[agent].models } : undefined, [agent, catalog])
+  // the machine's own lists when the agent has them: OpenCode's models and agents (custom ones too)
+  const def = useMemo(() => agent ? { ...AGENTS[agent], models: catalog?.models ?? AGENTS[agent].models, modes: catalog?.modes ?? AGENTS[agent].modes } : undefined, [agent, catalog])
   const info = chat?.info
   const live = ref?.pane.agent?.status
-  // OpenCode's numbers come from its transcript, but the model and variant you just picked show
-  // first on its footer (or its API), which the pane reports
   const reported: AgentStatus | undefined = agent === 'copilot'
     ? info?.status ?? live
-    : agent === 'opencode' && info?.status
-      ? { ...info.status, ...(live?.model && { model: live.model, modelId: live.modelId, effort: live.effort }), ...(live?.contextSize && { contextSize: live.contextSize }) }
+    : agent === 'opencode'
+      ? openCodeStatus(info?.status, live)
       : live
   // a session that isn't reporting still has a known model, and so a known window size
   const selectedModel = def?.models.find((m) => m.id === currentModelId(def, reported, info?.model))
@@ -82,13 +81,23 @@ export function useSession(host: string, pane: string) {
     rewind: async () => {
       if (agent === 'claude' || agent === 'antigravity') return send('/rewind')
       if (agent === 'opencode') {
-        if (!(await confirmAction({ title: 'Undo your last message?', body: 'OpenCode reverts it and its file changes, and puts the message back in its input box.', yes: 'Undo', danger: true }))) return
+        if (!(await confirmAction({ title: 'Undo your last message?', body: 'OpenCode takes it back with its file changes. Redo puts it back.', yes: 'Undo', danger: true }))) return
         return send('/undo', 'Could not undo')
       }
       if (agent !== 'codex' || !(await confirmAction({ title: 'Rewind your last message?', body: 'Codex forgets it and its reply. To go further back, use the rewind button under any message.', yes: 'Rewind', danger: true }))) return
       return run('Could not rewind', async () => {
         await api.rewind(host, pane)
         toast({ title: 'Conversation rewound', tone: 'success' })
+      })
+    },
+    /** OpenCode: puts back what Undo took away */
+    redo: () => send('/redo', 'Could not redo'),
+    /** OpenCode: a public link to the conversation, or taking it back */
+    share: async (on: boolean) => {
+      if (on && !(await confirmAction({ title: 'Share this conversation?', body: 'OpenCode puts it at a public link that anyone who has it can open. Stop sharing takes it down.', yes: 'Share' }))) return
+      return run(on ? 'Could not share' : 'Could not stop sharing', async () => {
+        await api.send(host, pane, on ? '/share' : '/unshare')
+        toast({ title: on ? 'Shared' : 'No longer shared', body: on ? 'The link shows under Usage in a moment.' : undefined, tone: 'success' })
       })
     },
     interrupt: () => run('Could not interrupt', () => api.interrupt(host, pane)),
@@ -122,9 +131,39 @@ export function useSession(host: string, pane: string) {
 
 export type SessionModel = ReturnType<typeof useSession>
 
-/** Claude reports "Opus 5.5"; map to the alias we send. */
+/**
+ * OpenCode's numbers come from its record (the conversation), but the model, variant and agent
+ * are whatever its terminal footer shows, which the pane reports (and keeps while a menu hides
+ * it): a pick made in the terminal or in the app shows here the moment the footer changes. The
+ * footer's own context and cost fill in when the record has none yet.
+ */
+export function openCodeStatus(record?: AgentStatus, live?: AgentStatus): AgentStatus | undefined {
+  if (!record && !live) return undefined
+  const out: AgentStatus = { ...(record ?? { updatedAt: 0 }) }
+  if (live?.model) {
+    out.model = live.model
+    out.modelId = live.modelId
+    out.effort = live.effort
+  }
+  if (live?.contextSize) out.contextSize = live.contextSize
+  if (out.contextUsed === undefined) {
+    if (live?.contextUsed !== undefined) out.contextUsed = live.contextUsed
+    if (live?.contextPct !== undefined) out.contextPct = live.contextPct
+  }
+  if (out.costUsd === undefined && live?.costUsd !== undefined) out.costUsd = live.costUsd
+  out.updatedAt = Math.max(out.updatedAt, live?.updatedAt ?? 0)
+  return out
+}
+
+/** Claude reports "Opus 5.5"; map to the alias we send. An exact id (OpenCode's "provider/model") wins over any name. */
 export function currentModelId(def: (typeof AGENTS)[AgentKind] | undefined, status?: AgentStatus, model?: string) {
   if (!def) return undefined
+  if (status?.modelId && def.models.some((m) => m.id === status.modelId)) return status.modelId
   const label = (status?.model ?? model ?? '').toLowerCase()
-  return def.models.find((m) => label.includes(m.label.toLowerCase()) || label.includes(m.id.toLowerCase()) || (status?.modelId ?? '').includes(m.id))?.id
+  const exact = label && def.models.find((m) => m.label.toLowerCase() === label || m.label.split(' · ').pop()!.toLowerCase() === label)
+  if (exact) return exact.id
+  // the longest match, so "gpt-5" never stands in for "gpt-5.1-codex"
+  return [...def.models]
+    .sort((a, b) => b.id.length - a.id.length)
+    .find((m) => (label && (label.includes(m.label.toLowerCase()) || label.includes(m.id.toLowerCase()))) || (status?.modelId ?? '').includes(m.id))?.id
 }

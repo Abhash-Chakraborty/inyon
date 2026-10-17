@@ -10,26 +10,33 @@ import { copyText } from '../lib/clipboard.ts'
 
 const copy = (text: string, what: string) => copyText(text).then((ok) => ok && toast({ title: `${what} copied`, tone: 'success' }))
 
+/** An OpenCode model provider to connect, instead of the agent's whole sign-in. */
+export interface ProviderToConnect {
+  id: string
+  name: string
+}
+
 /**
  * Signs an agent in on a machine from here: the hub runs the agent's own sign-in out of sight, and
  * this shows its link and code, takes the code the sign-in page hands back, and shows the output.
+ * With `provider`, it connects that OpenCode provider the same way (`opencode auth login -p`).
  */
-export function SignInSheet({ hostId, hostName, agent, onClose }: { hostId: string; hostName?: string; agent: AgentKind | null; onClose: () => void }) {
+export function SignInSheet({ hostId, hostName, agent, provider, onClose }: { hostId: string; hostName?: string; agent: AgentKind | null; provider?: ProviderToConnect; onClose: () => void }) {
   const open = !!agent
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={agent ? `Sign in to ${AGENTS[agent].name}` : ''}
+      title={agent ? (provider ? `Connect ${provider.name}` : `Sign in to ${AGENTS[agent].name}`) : ''}
       icon={agent ? <AgentLogo kind={agent} size={24} /> : undefined}
       wide
     >
-      {agent && <SignInFlow key={agent} hostId={hostId} hostName={hostName} agent={agent} onClose={onClose} />}
+      {agent && <SignInFlow key={`${agent}:${provider?.id ?? ''}`} hostId={hostId} hostName={hostName} agent={agent} provider={provider} onClose={onClose} />}
     </Sheet>
   )
 }
 
-function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; hostName?: string; agent: AgentKind; onClose: () => void }) {
+function SignInFlow({ hostId, hostName, agent, provider, onClose }: { hostId: string; hostName?: string; agent: AgentKind; provider?: ProviderToConnect; onClose: () => void }) {
   const [pane, setPane] = useState<string | null>(null)
   const [screen, setScreen] = useState<SignInScreen | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +48,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
   const out = useRef<HTMLPreElement>(null)
   const openLink = useRef<HTMLAnchorElement>(null)
   const codeInput = useRef<HTMLInputElement>(null)
-  const name = AGENTS[agent].name
+  const name = provider?.name ?? AGENTS[agent].name
   const done = screen?.exit !== undefined
 
   // start the sign-in, and end it if the sheet closes first
@@ -51,8 +58,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
     setPane(null)
     setScreen(null)
     setError(null)
-    api
-      .signIn(hostId, agent)
+    ;(provider ? api.connectProvider(hostId, provider.id) : api.signIn(hostId, agent))
       .then((r) => {
         started = r.pane
         if (alive) setPane(r.pane)
@@ -86,7 +92,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
   }, [screen?.lines.length])
 
   useEffect(() => {
-    if (screen?.exit === 0) toast({ title: `${name} is signed in`, body: hostName, tone: 'success' })
+    if (screen?.exit === 0) toast({ title: provider ? `${name} is connected` : `${name} is signed in`, body: hostName, tone: 'success' })
   }, [screen?.exit])
 
   const send = async (b: { text?: string; keys?: string[]; option?: number }) => {
@@ -142,15 +148,16 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
     <div className="space-y-4">
       {done ? (
         screen.exit === 0 ? (
-          <Notice tone="ok">{name} is signed in{hostName ? ` on ${hostName}` : ''}.</Notice>
+          <Notice tone="ok">{name} is {provider ? 'connected' : 'signed in'}{hostName ? ` on ${hostName}` : ''}.</Notice>
         ) : (
-          <Notice tone="error">The sign-in ended without signing in. The details below say why.</Notice>
+          <Notice tone="error">{screen.error ?? `The ${provider ? 'connection' : 'sign-in'} ended without ${provider ? 'connecting' : 'signing in'}. The details below say why.`}</Notice>
         )
       ) : menu ? null : sent ? (
         <div className="flex items-center gap-2.5 text-[13.5px] text-fg-2">
           <Pulse /> Checking the code with {name}…
         </div>
-      ) : (
+      ) : screen.input && !link ? null : (
+        // a box asking for a key says enough on its own
         <Steps code={!!screen.code} link={!!link} name={name} />
       )}
 
@@ -222,7 +229,7 @@ function SignInFlow({ hostId, hostName, agent, onClose }: { hostId: string; host
               autoComplete="off"
               spellCheck={false}
             />
-            <Button type="submit" variant="primary" disabled={!answer.trim()} className="h-10">Sign in</Button>
+            <Button type="submit" variant="primary" disabled={!answer.trim()} className="h-10">{provider ? 'Connect' : 'Sign in'}</Button>
           </div>
         </form>
       )}

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AGENTS } from '@inyon/protocol'
-import { failureHint, installCommand, installedVia, manualCommand, runSetup, setupReport, updateCommand } from './setup.ts'
+import { connectedProviders, failureHint, installCommand, installedVia, manualCommand, runSetup, setupReport, updateCommand } from './setup.ts'
 import { registry } from '../hosts/registry.ts'
 import { forgetLatest } from './agent-latest.ts'
 
@@ -158,6 +158,13 @@ test('an install that ends without the agent is a failure, even when the install
   expect(r.ok).toBe(false)
   expect(r.hint).toBe("Claude Code still doesn't run after the step")
   expect(r.manual).toBe(AGENTS.claude.install.cmd!)
+})
+
+test("OpenCode's row says which providers are connected, from `opencode auth list` carried in the report", () => {
+  const list = '┌  Credentials /x/auth.json\n│\n●  Anthropic api\n│\n└  1 credentials\n\n┌  Environment\n│\n●  Groq GROQ_API_KEY\n│\n└  1 environment variable\n'
+  expect(connectedProviders(Buffer.from(list).toString('base64'))).toEqual(['Anthropic', 'Groq'])
+  expect(connectedProviders('')).toEqual([])
+  expect(connectedProviders('not base64 at all!')).toEqual([])
 })
 
 test('updating an agent that is not installed installs it', async () => {

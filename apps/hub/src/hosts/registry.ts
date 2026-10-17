@@ -1,5 +1,6 @@
 import { coalesce } from './coalesce.ts'
 import { opencodeLive } from '../agents/opencode-controls.ts'
+import { opencodeCatalogCached } from '../agents/opencode-api.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
 import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@inyon/protocol'
 import { loadHosts, loadSettings, saveHosts } from '../config.ts'
@@ -14,7 +15,7 @@ import { codexStatus, codexTitle, guessCodexRollout } from '../agents/codex.ts'
 import { guessCopilotSession } from '../agents/copilot.ts'
 import { guessGeminiSession } from '../agents/gemini.ts'
 import { agyStatus, agyTranscript } from '../agents/antigravity.ts'
-import { opencodeEndpoint } from '../agents/opencode.ts'
+import { opencodeEndpoint, viaOpenCodeApi } from '../agents/opencode.ts'
 import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.ts'
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
@@ -493,7 +494,7 @@ class Registry {
             : proc.kind === 'gemini' ? await guessGeminiSession(rt.host, pr.home, proc)
             : proc.kind === 'copilot' ? await guessCopilotSession(rt.host, pr.home, proc)
             // its local server when started with --port, else its database
-            : (await opencodeEndpoint(rt.host, proc.pid, proc.cwd)) ?? (await guessOpenCodeSession(rt.host, proc, screens.get(p.id), p.title))
+            : (await opencodeEndpoint(rt.host, proc.pid, proc.cwd, p.title)) ?? (await guessOpenCodeSession(rt.host, proc, screens.get(p.id), p.title))
           cached = { path, at: Date.now(), title: p.title }
           rt.cwdMap.set(proc.pid, cached)
         }
@@ -548,14 +549,14 @@ class Registry {
         else if (generic) p.title = ''
       }
       // the pane as it was last seen, for what the screen doesn't say this time
-      const before = this.findPane(rt.host.id, p.id)?.pane.agent
+      const was = this.findPane(rt.host.id, p.id)?.pane.agent
       p.agent = info
       const lines = screens.get(p.id)
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
         rt.screens.set(p.id, sc)
-        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), before)
-        await applyOpenCodeLive(rt.host, p)
+        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), was)
+        await applyOpenCodeLive(rt.host, p, sc)
       }
       // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
       const want = pendingName(rt.host.id, info.sessionId)
@@ -782,8 +783,10 @@ class Registry {
         const lines = screens.get(id)
         if (!pane?.agent || !lines) continue
         const before = JSON.stringify(pane.agent)
-        applyScreen(pane, parseScreen(lines, pane.width, pane.agent.kind), rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent)
-        await applyOpenCodeLive(rt.host, pane)
+        const sc = parseScreen(lines, pane.width, pane.agent.kind)
+        rt.screens.set(id, sc)
+        applyScreen(pane, sc, rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent)
+        await applyOpenCodeLive(rt.host, pane, sc)
         if (JSON.stringify(pane.agent) !== before) changed = true
       }
       if (changed) {
@@ -855,19 +858,12 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
   // a question Codex asked mid-turn waits for you like a prompt does, even while it keeps working
   const shown = sc.prompt || sc.questions ? 'waiting' : sc.working ? 'working' : 'idle'
   info.state = info.kind === 'claude' ? turns.state(turnKey(host.id, p.id), shown, lines.join('\n'), hook) : shown
-  info.mode = sc.mode ?? info.mode
-  // a session without live numbers still shows its model and effort on screen
-  // agy's and Codex's footers are redrawn the moment you switch, so they beat numbers written earlier
-  const live = info.kind === 'antigravity' || info.kind === 'codex'
-  if (info.kind === 'opencode' && !info.transcriptPath?.startsWith('opencode://')) {
-    // plain OpenCode: its footer is the only live source, and no variant there means the default
-    if (sc.model) {
-      const models = peekOpenCodeModels(host.id)?.models
-      if (!models) void opencodeCliModels(host)
-      const known = models && modelFromFooter(models, sc.model)
-      info.status = { ...(info.status ?? { updatedAt: 0 }), model: known ? known.label.split(' · ').pop() : withoutProvider(sc.model), modelId: known?.id, effort: sc.effort, ...(known?.context && { contextSize: known.context }) }
-    }
-  } else {
+  if (info.kind === 'opencode') applyOpenCodeScreen(info, sc, host, was)
+  else {
+    info.mode = sc.mode ?? info.mode
+    // a session without live numbers still shows its model and effort on screen
+    // agy's and Codex's footers are redrawn the moment you switch, so they beat numbers written earlier
+    const live = info.kind === 'antigravity' || info.kind === 'codex'
     if (sc.model && (live || !info.status?.model)) info.status = { ...(info.status ?? { updatedAt: 0 }), model: sc.model }
     if (sc.effort && (live || !info.status?.effort)) info.status = { ...(info.status ?? { updatedAt: 0 }), effort: sc.effort }
   }
@@ -902,19 +898,54 @@ export class HttpError extends Error {
 
 export const registry = new Registry()
 
-async function applyOpenCodeLive(host: Host, pane: PaneInfo) {
+/**
+ * OpenCode's footer (agent · model · variant) is the truth whenever it shows, in both modes: it
+ * is what OpenCode itself runs the next message with. A menu, a permission or a question hides
+ * it; the last values then stand for the same process, as Claude's status does above. No variant
+ * on the footer means the model's default. The sidebar and status row give context and cost.
+ */
+export function applyOpenCodeScreen(info: AgentPaneInfo, sc: ScreenState, host: Pick<Host, 'id' | 'exec'>, was?: AgentPaneInfo) {
+  const same = was && was.kind === 'opencode' && was.pid === info.pid ? was : undefined
+  const st: AgentStatus = { ...(info.status ?? same?.status ?? { updatedAt: 0 }) }
+  if (sc.model) {
+    const models = peekOpenCodeModels(host.id)?.models
+    // plain OpenCode has no API to ask: the CLI's list names the footer's model and its window
+    if (!models && !viaOpenCodeApi(info.transcriptPath)) void opencodeCliModels(host)
+    const known = models && modelFromFooter(models, sc.model)
+    st.model = known ? known.label.split(' · ').slice(1).join(' · ') : withoutProvider(sc.model)
+    st.modelId = known?.id
+    st.effort = sc.effort
+    if (known?.context) st.contextSize = known.context
+    info.mode = sc.mode
+  } else info.mode = info.mode ?? same?.mode
+  if (sc.contextPct !== undefined) st.contextPct = sc.contextPct
+  if (sc.contextUsed !== undefined) st.contextUsed = sc.contextUsed
+  if (sc.costUsd !== undefined) st.costUsd = sc.costUsd
+  st.updatedAt = Date.now()
+  info.status = st
+}
+
+/**
+ * A session with its own server says itself whether it's busy or waiting for a permission; the
+ * footer still decides the model, agent and variant (see applyOpenCodeScreen), its server's
+ * catalogue only puts the exact id and the window size to the footer's name.
+ */
+async function applyOpenCodeLive(host: Host, pane: PaneInfo, sc?: ScreenState) {
   const info = pane.agent
-  if (info?.kind !== 'opencode' || !info.transcriptPath?.startsWith('opencode://')) return
+  if (info?.kind !== 'opencode' || !viaOpenCodeApi(info.transcriptPath)) return
   try {
-    const live = await opencodeLive(host, info.transcriptPath, pane.cwd)
+    const live = await opencodeLive(host, info.transcriptPath!, pane.cwd)
     info.state = live.permission ? 'waiting' : live.working ? 'working' : 'idle'
     info.activity = live.retrying ? 'Retrying' : live.working ? 'Working' : undefined
+    // its subagents' work counts as background, like a shell the footer lists
     info.background = live.background ?? undefined
-    info.mode = live.selection.agent ?? info.mode
-    info.status = { ...info.status, model: live.selection.model, modelId: live.selection.model, effort: live.selection.variant, updatedAt: Date.now() }
     if (live.permission) {
       info.waitingFor = live.permission.permission ?? 'Permission requested'
       info.options = [{ n: 1, label: 'Allow once' }, { n: 2, label: 'Always allow' }, { n: 3, label: 'Reject' }]
+    }
+    if (sc?.model && info.status && !info.status.modelId) {
+      const known = modelFromFooter((await opencodeCatalogCached(host, info.transcriptPath!, pane.cwd)).models, sc.model)
+      if (known) info.status = { ...info.status, model: known.label.split(' · ').slice(1).join(' · '), modelId: known.id, ...(known.context ? { contextSize: known.context } : {}) }
     }
   } catch { /* Keep the terminal observation if the local API is unavailable. */ }
 }

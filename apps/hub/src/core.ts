@@ -9,6 +9,7 @@ import {
 } from './features/features.ts'
 import { ensureSessions, runSetup, setKeepSession, setupReport } from './features/setup.ts'
 import { answerSignIn, readSignIn, startSignIn, stopSignIn } from './features/signin.ts'
+import { connectProvider, disconnectProvider, listProviders } from './features/providers.ts'
 import { installIntegration, uninstallIntegration } from './claude/integration.ts'
 import { openTerminal } from './terminal/terminal.ts'
 import type { PtyHandle } from './hosts/host.ts'
@@ -399,6 +400,17 @@ export const coreRoutes: Routes = {
     }),
     DELETE: api(async (req) => {
       await stopSignIn(req.params.id, paneParam(req.params.pane))
+      return ok()
+    }),
+  },
+  // OpenCode's model providers on the machine; `pane` names a session whose own server can list them
+  '/api/hosts/:id/providers': {
+    GET: api(async (req) => json(await listProviders(req.params.id, q(req, 'pane') ? paneParam(q(req, 'pane')) : undefined))),
+  },
+  '/api/hosts/:id/providers/:provider': {
+    POST: api(async (req) => json(await connectProvider(req.params.id, req.params.provider))),
+    DELETE: api(async (req) => {
+      await disconnectProvider(req.params.id, req.params.provider)
       return ok()
     }),
   },

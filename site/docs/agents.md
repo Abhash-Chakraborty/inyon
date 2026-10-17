@@ -11,14 +11,16 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 |---|---|---|---|---|---|---|
 | Chat view | Full | Full | Beta | Beta | Beta | Yes |
 | Reply shown as it's written | No | From 0.17.6 | No | No | No | No |
-| Prompts as buttons | Yes | Yes | Yes | Yes | Yes | Yes |
+| Prompts as buttons | Yes | Yes | Yes | Yes, several answers too | Yes | Yes |
 | Sub-agents listed | Yes | From 0.17.6 | No | No | No | No |
 | Model | Yes | Yes | No | Live list | Live list | Yes |
-| Effort | Yes | Yes | No | Yes | No | Yes |
-| Mode | Yes | Yes | No | Build / Plan | Yes | Yes |
+| Effort | Yes | Yes | No | Every variant | No | Yes |
+| Mode | Yes | Yes | No | Its agents, custom too | Yes | Yes |
+| Providers | No | No | No | Connect, disconnect | No | No |
 | Goal | Yes | Yes | No | No | No | Set only |
 | Compact | Yes | Yes | Yes | Yes | Yes | No |
-| Rewind | Yes | Per message | No | Undo | No | Yes |
+| Rewind | Yes | Per message | No | Undo, redo | No | Yes |
+| Share | No | No | No | Link, stop sharing | No | No |
 | [Past conversations](sessions.md#past-conversations) | Yes | Yes | No | Yes | Yes | Yes |
 | `!` shell commands | Yes | Yes | No | Yes | Yes | No |
 | Remote Control | Yes | No | No | No | No | Yes |
@@ -35,7 +37,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
 | Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex and Antigravity: their own status events |
-| Context and cost | Claude's status line data (with the integration) and transcripts; the others' own events |
+| Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
 | Typing and answering | `tmux send-keys`, exactly as if you typed it |
 
 The agents never know Inyon is there. Close it and nothing breaks.
@@ -58,11 +60,19 @@ The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CL
 
 ## OpenCode (beta)
 
-Inyon talks to the local server OpenCode already runs. Sessions Inyon starts expose a loopback API (`--hostname 127.0.0.1 --port 0`); their providers supply the model list and reasoning variants, and *Build* / *Plan* picks the OpenCode agent.
+Made for OpenCode 1.19. Inyon reads a session two ways: one it started (`--hostname 127.0.0.1 --port 0`) through OpenCode's own local server, any other through OpenCode's database and its screen. Either way the terminal's footer (agent · model · variant) is what the app shows, and a pick made in the app goes through OpenCode's own keys, so the two never disagree. While a menu or a question hides the footer, the last values stand.
 
-- Two sessions sharing a folder need an explicit `-s` session ID.
-- Password-protected OpenCode servers aren't supported yet.
-- The API path works for sessions Inyon started; others are read from the screen.
+From 0.17.6:
+
+- **Providers.** A machine's Setup tab lists OpenCode's providers, connected ones first, and connects or disconnects them with OpenCode's own `opencode auth login` and `opencode auth logout`. The same list opens from a session's model menu (*Connect a provider…*), on the phone too, and the model list follows at once. See [Adding machines](machines.md#the-setup-tab).
+- **Agents and variants.** The agent list comes from the machine, custom agents included, and every variant a model has is read, whatever it's called; *Default* means none.
+- **Context and cost** come from OpenCode's own record (the last reply's whole usage, counted as its sidebar counts it), and the sidebar and status row fill in on the session cards.
+- **Undo, redo, share and compact**, and a new conversation, work in both modes; a session Inyon started gets them through its server.
+- **Questions** that take several answers, or ask several things at once, show as checkboxes and tabs with a Confirm button.
+- OpenCode's key bindings are read from its config (user and project), so a remapped Tab or Ctrl+T doesn't break the controls.
+- With several conversations in one folder, the one the terminal shows is found by its title.
+
+A password-protected OpenCode server isn't supported. A plain `opencode` already running sees a provider connected from the app after it restarts; a session Inyon started sees it at once.
 
 ## GitHub Copilot (beta)
 

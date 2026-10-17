@@ -341,6 +341,8 @@ export interface ChatInfo {
   error?: string
   goal?: { condition: string; met: boolean; reason?: string; ts: string }
   rc?: { url: string; ts: string }
+  /** the conversation's public link, while it's shared (OpenCode's /share) */
+  share?: string
   /** messages typed while the agent was busy, not yet picked up */
   queue: string[]
   /** the turn under way, for the working timer (Codex: from its records and its live events) */
@@ -388,9 +390,17 @@ export interface ScreenPrompt {
   input?: { label: string }
   /** URLs shown in the dialog, re-joined when the terminal wrapped them */
   links?: string[]
-  /** answered through the agent's API rather than keystrokes (OpenCode permissions) */
+  /** answered through the agent's API rather than keystrokes (OpenCode permissions and questions) */
   api?: boolean
+  /**
+   * The choices are toggled one by one and sent together: this is the label of the action that
+   * sends them ("Confirm", or "Next" when another question follows). Answered with option 0.
+   */
+  confirm?: string
 }
+
+/** Option number that stands for a prompt's `confirm` action. */
+export const CONFIRM_OPTION = 0
 
 /**
  * Which question a prompt is: its text and its choices, whitespace aside (the screen rewraps). An
@@ -429,7 +439,35 @@ export interface ScreenState {
   effort?: string
   /** Claude Code's ultracode switch, as its input box shows it; undefined while the box isn't visible */
   ultracode?: boolean
+  /** context and cost as the agent's own status row or sidebar prints them (OpenCode) */
+  contextPct?: number
+  contextUsed?: number
+  costUsd?: number
+  /** a menu of the agent's own open over the box, by its title ("Select model", "Select variant") */
+  dialog?: string
   width: number
+}
+
+// ---------- OpenCode providers ----------
+
+/** A model provider OpenCode knows, and whether this machine can use it. */
+export interface OpenCodeProvider {
+  id: string
+  name: string
+  connected: boolean
+  /** a saved credential (`opencode auth login`), or an API key in the machine's environment */
+  via?: 'credential' | 'env'
+  /** the credential's kind, as `opencode auth list` prints it (api, oauth) */
+  type?: string
+  /** environment variables that connect it without a saved credential */
+  env?: string[]
+}
+
+export interface ProvidersReport {
+  providers: OpenCodeProvider[]
+  updatedAt: number
+  /** the provider list couldn't be read (OpenCode missing, or its server didn't start) */
+  error?: string
 }
 
 // ---------- Phones paired with a hub ----------

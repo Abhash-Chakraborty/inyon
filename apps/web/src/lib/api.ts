@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, PastConversation, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -113,6 +113,8 @@ export interface SignInScreen {
   code?: string
   input?: { label: string; secret?: boolean }
   exit?: number
+  /** what the command said went wrong, when it did */
+  error?: string
   menu?: { question?: string; options: { n: number; label: string; detail?: string; selected: boolean }[] }
 }
 
@@ -128,6 +130,8 @@ export interface SetupAgent {
   via?: 'npm' | 'installer'
   /** an npm install under its own folder, updated in place */
   prefix?: string
+  /** OpenCode: the providers connected on the machine */
+  providers?: string[]
 }
 
 export interface SetupReport {
@@ -288,6 +292,11 @@ export const api = {
   signInScreen: (id: string, pane: string) => request<SignInScreen>('GET', `${h(id)}/signin/${paneSlug(pane)}`),
   signInSend: (id: string, pane: string, b: { text?: string; keys?: string[]; option?: number }) => request('POST', `${h(id)}/signin/${paneSlug(pane)}`, b),
   signInStop: (id: string, pane: string) => request('DELETE', `${h(id)}/signin/${paneSlug(pane)}`),
+  /** OpenCode's model providers on a machine; `pane` names a session whose own server can answer */
+  providers: (id: string, pane?: string) => request<ProvidersReport>('GET', `${h(id)}/providers${pane ? qs({ pane: paneSlug(pane) }) : ''}`, undefined, 120_000),
+  /** runs `opencode auth login` for that provider on the machine; the sign-in sheet drives the pane it returns */
+  connectProvider: (id: string, provider: string) => request<{ pane: string }>('POST', `${h(id)}/providers/${encodeURIComponent(provider)}`),
+  disconnectProvider: (id: string, provider: string) => request('DELETE', `${h(id)}/providers/${encodeURIComponent(provider)}`, undefined, 60_000),
   setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup`),
   runSetup: (id: string, action: string) => request<SetupResult>('POST', `${h(id)}/setup`, { action }),
   keepSession: (id: string, keepSession: boolean) => request('POST', `${h(id)}/setup`, { keepSession }),

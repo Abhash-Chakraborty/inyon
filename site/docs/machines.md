@@ -49,6 +49,8 @@ When an install or update fails, the row opens with the likely cause (npm can't 
 
 **Sign in** runs the agent's own sign-in in a hidden tmux session and turns it into steps: a code to copy, a page to open, a menu as buttons, or a box to paste a code into. Closing the sheet stops it.
 
+**Providers** (OpenCode, from 0.17.6): OpenCode signs in per model provider, and its free models need none, so its row names the providers connected on the machine (*free models only* when there are none) and the button opens the list. Connected providers come first, each saying how (an API key, a sign-in, an environment variable), with **Disconnect** for a saved credential; the rest are there to connect, with a search box. Connecting runs `opencode auth login` for that provider the same way Sign in does, as steps in the app: a menu, a link and a code, or a box for an API key. **Sign out of OpenCode** disconnects every saved credential at once. A provider set through an environment variable is listed, but only that variable's removal disconnects it. The same list opens from an OpenCode session's model menu, on the phone too.
+
 ### The Claude Code integration
 
 Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.

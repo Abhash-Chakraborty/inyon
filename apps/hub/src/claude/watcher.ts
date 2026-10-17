@@ -1,5 +1,6 @@
 import { OpenCodeClient } from '../agents/opencode-api.ts'
-import { opencodeSelection, opencodeLive } from '../agents/opencode-controls.ts'
+import { opencodeLive } from '../agents/opencode-controls.ts'
+import { OpenCodeQuestionFlow } from '../agents/opencode-questions.ts'
 import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg, SubagentInfo } from '@inyon/protocol'
 import { isDriving, startDriving } from './driving.ts'
 import { SendLedger } from './delivery.ts'
@@ -9,8 +10,8 @@ import { CodexLiveState, codexLiveCommand, codexThreadId } from '../agents/codex
 import { normalizeCopilot } from '../agents/copilot.ts'
 import { AntigravityDoc } from '../agents/antigravity.ts'
 import { GeminiDoc } from '../agents/gemini.ts'
-import { opencodeItems, opencodePost, parseEndpoint } from '../agents/opencode.ts'
-import { OcdbCache, isOcdb, ocdbRows, ocdbSession, ocdbShape, ocdbStamp } from '../agents/opencode-db.ts'
+import { opencodeItems, opencodePost, parseEndpoint, viaOpenCodeApi } from '../agents/opencode.ts'
+import { OcdbCache, isOcdb, ocdbRows, ocdbSession, ocdbSessionInfo, ocdbShape, ocdbStamp, type OcdbSessionInfo } from '../agents/opencode-db.ts'
 import { shq } from '../hosts/host.ts'
 import { paneTitle, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys } from '../tmux/tmux.ts'
@@ -690,6 +691,7 @@ class ChatWatcher {
       ultracode: this.screen.ultracode ?? agent?.ultracode,
       goal: this.goalUnsure ? undefined : m.goal,
       rc: m.rc ?? this.remote,
+      share: m.share,
       queue: [...this.currentQueue()],
       turn: this.live.turn ?? m.turn,
       sends: this.ledger.list(),
@@ -708,6 +710,21 @@ class ChatWatcher {
   /** Formats whose files are edited in place (Gemini) or read over an API (OpenCode): rebuild the whole view. */
   private snapshotTimer?: ReturnType<typeof setTimeout>
   private apiPermission?: { id: string; base: string; title: string; detail?: string }
+  /** a question OpenCode's agent asked, answered through its API one question at a time */
+  private apiQuestion?: { flow: OpenCodeQuestionFlow; client: OpenCodeClient }
+
+  /** What OpenCode's own record says about the conversation as a whole: title, cost, lines changed, share link. */
+  private applyOpenCodeInfo(info?: OcdbSessionInfo) {
+    if (!info) return
+    const m = this.meta
+    // the title OpenCode gives a conversation it hasn't named yet says nothing
+    if (info.title && !/^New session - /.test(info.title)) m.title = info.title
+    if (typeof info.cost === 'number') m.stats.costUsd = info.cost
+    if (typeof info.additions === 'number') m.stats.linesAdded = info.additions
+    if (typeof info.deletions === 'number') m.stats.linesRemoved = info.deletions
+    m.share = info.share || undefined
+    if (m.status) m.status = { ...m.status, costUsd: m.stats.costUsd }
+  }
 
   private publishSnapshot(items: ChatItem[]) {
     // a very long conversation keeps only its latest messages, like the ones read line by line
@@ -755,26 +772,26 @@ class ChatWatcher {
     const client = new OpenCodeClient(host, uri, cwd)
     const refresh = async () => {
       this.snapshotTimer = undefined
-      const msgs = await client.request(`/session/${encodeURIComponent(ep.session)}/message`).catch(() => undefined)
+      const [msgs, info] = await Promise.all([client.messages().catch(() => undefined), client.info().catch(() => undefined)])
       if (gen !== this.generation || !Array.isArray(msgs)) return
       const items = opencodeItems(msgs, this.meta)
-      const selection = await opencodeSelection(host, uri, cwd).catch(() => undefined)
-      if (gen !== this.generation) return
-      if (selection) {
-        this.meta.model = selection.model
-        this.meta.effort = selection.variant
-        this.meta.mode = selection.agent
-        this.meta.status = { ...this.meta.status, model: selection.model, modelId: selection.model, effort: selection.variant, updatedAt: Date.now() }
-      }
+      this.applyOpenCodeInfo(info ? { title: info.title, cost: info.cost, additions: info.summary?.additions, deletions: info.summary?.deletions, share: info.share?.url } : undefined)
       this.publishSnapshot(items)
-      const perms = await client.permissions().catch(() => undefined)
+      const [perms, questions] = await Promise.all([client.permissions().catch(() => undefined), client.questions().catch(() => undefined)])
       if (gen !== this.generation) return
       const mine = (Array.isArray(perms) ? perms : []).find((p: any) => p.sessionID === ep.session)
       const next = mine ? { id: mine.id, base: ep.base, title: mine.title ?? mine.permission ?? 'Permission requested', detail: [mine.type, ...(mine.patterns ?? [])].filter(Boolean).join(' ') } : undefined
+      let changed = false
       if (JSON.stringify(next) !== JSON.stringify(this.apiPermission)) {
         this.apiPermission = next
-        this.pollScreen()
+        changed = true
       }
+      const asked = (Array.isArray(questions) ? questions : []).find((q: any) => q.sessionID === ep.session && Array.isArray(q.questions) && q.questions.length)
+      if ((asked?.id as string | undefined) !== this.apiQuestion?.flow.id) {
+        this.apiQuestion = asked ? { flow: new OpenCodeQuestionFlow(asked.id, asked.questions), client } : undefined
+        changed = true
+      }
+      if (changed) this.pollScreen()
     }
     const later = () => {
       if (!this.snapshotTimer) this.snapshotTimer = setTimeout(refresh, 300)
@@ -809,11 +826,13 @@ class ChatWatcher {
           last = stamp
           changedAt = Date.now()
           // a little overlap: rows written in the same millisecond as the last read
-          const [rows, shape] = await Promise.all([ocdbRows(host, session, Math.max(0, cache.stamp - 1500)), ocdbShape(host, session)])
+          const [rows, shape, info] = await Promise.all([ocdbRows(host, session, Math.max(0, cache.stamp - 1500)), ocdbShape(host, session), ocdbSessionInfo(host, session)])
           if (gen !== this.generation) return
           cache.merge(rows)
           cache.retain(shape.ids)
-          this.publishSnapshot(opencodeItems(cache.list(shape.revert), this.meta))
+          const items = opencodeItems(cache.list(shape.revert), this.meta)
+          this.applyOpenCodeInfo(info)
+          this.publishSnapshot(items)
         }
       } catch {
         if (!this.ready) this.publishSnapshot([])
@@ -824,16 +843,32 @@ class ChatWatcher {
     tick()
   }
 
-  /** Answers a permission request through the agent's API (OpenCode). */
-  async answerApi(option: number) {
+  /** Answers a permission request, or a question from the agent, through the agent's API (OpenCode). */
+  async answerApi(option: number, text?: string) {
     const p = this.apiPermission
-    if (!p) return false
-    const reply = option === 1 ? 'once' : option === 2 ? 'always' : 'reject'
-    const ok = await opencodePost(registry.host(this.hostId), `${p.base}/permission/${p.id}/reply`, { reply })
-    if (!ok) throw new Error('OpenCode did not accept the permission response. The question is still pending.')
-    this.apiPermission = undefined
+    if (p) {
+      const reply = option === 1 ? 'once' : option === 2 ? 'always' : 'reject'
+      const ok = await opencodePost(registry.host(this.hostId), `${p.base}/permission/${p.id}/reply`, { reply })
+      if (!ok) throw new Error('OpenCode did not accept the permission response. The question is still pending.')
+      this.apiPermission = undefined
+      this.pollScreen()
+      return ok
+    }
+    const q = this.apiQuestion
+    if (!q || q.flow.done) return false
+    if (!q.flow.answer(option, text)) {
+      this.pollScreen()
+      return true
+    }
+    // all answered: send them; if OpenCode won't take them, the next refresh asks afresh
+    this.apiQuestion = undefined
+    try {
+      await q.client.replyQuestion(q.flow.id, q.flow.answers)
+    } catch {
+      throw new Error('OpenCode did not take the answers. The question is still open; try again.')
+    }
     this.pollScreen()
-    return ok
+    return true
   }
 
   private retryTimer?: ReturnType<typeof setTimeout>
@@ -1182,17 +1217,16 @@ class ChatWatcher {
           screen.prompt = undefined
           screen.inputVisible = this.screen.inputVisible
         }
-        if (pane.agent.kind === 'opencode' && pane.agent.transcriptPath?.startsWith('opencode://')) {
-          const live = await opencodeLive(host, pane.agent.transcriptPath, pane.cwd).catch(() => undefined)
+        // the server knows when it's busy; the footer keeps the last word on model, agent and variant
+        if (pane.agent.kind === 'opencode' && viaOpenCodeApi(pane.agent.transcriptPath)) {
+          const live = await opencodeLive(host, pane.agent.transcriptPath!, pane.cwd).catch(() => undefined)
           if (live) {
             screen.working = live.working
             screen.activity = live.retrying ? 'Retrying' : live.working ? 'Working' : undefined
             screen.background = live.background
-            screen.model = live.selection.model
-            screen.effort = live.selection.variant
-            screen.mode = live.selection.agent
           }
         }
+        if (this.apiQuestion && !this.apiQuestion.flow.done && !this.apiPermission) screen.prompt = this.apiQuestion.flow.prompt()
         if (this.apiPermission) {
           screen.prompt = {
             body: [this.apiPermission.title, ...(this.apiPermission.detail ? ['╌', this.apiPermission.detail, '╌'] : [])],

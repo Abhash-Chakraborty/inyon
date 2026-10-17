@@ -28,6 +28,8 @@ export interface TranscriptMeta {
   rc?: { url: string; ts: string }
   /** the turn under way, from the agent's own record (Codex: task_started) */
   turn?: { id?: string; startedAt: number }
+  /** the conversation's public link while it's shared (OpenCode) */
+  share?: string
   queue: string[]
   tasks: Map<string, BackgroundTask>
   subagents: Map<string, SubagentInfo>

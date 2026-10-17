@@ -39,8 +39,10 @@ export interface SignInScreen {
   /** a device code to type on the sign-in page, e.g. ABCD-12345 */
   code?: string
   input?: { label: string; secret?: boolean }
-  /** set once the command has finished */
+  /** set once the command has finished (non-zero when it printed an error, whatever it exited with) */
   exit?: number
+  /** what the command said went wrong ("Unknown provider …") */
+  error?: string
   /** a menu on screen (e.g. "Select login method"), to answer with `{ option }` */
   menu?: { question?: string; options: PromptOption[] }
 }
@@ -61,26 +63,31 @@ setInterval(() => {
 }, 60_000).unref?.()
 const seen = (hostId: string, pane: string) => watched.set(`${hostId} ${pane}`, { hostId, pane, seen: Date.now() })
 
-export async function startSignIn(hostId: string, kind: AgentKind) {
+/** The sign-in command; for OpenCode, `provider` skips its provider menu and goes straight to that one's. */
+const signInCommand = (kind: AgentKind, provider?: string, windows = false) =>
+  kind === 'opencode' && provider ? `opencode auth login -p ${shq(provider)}` : (windows ? SIGN_IN_WINDOWS : SIGN_IN)[kind]
+
+export async function startSignIn(hostId: string, kind: AgentKind, opts: { provider?: string } = {}) {
   if (!AGENT_KINDS.includes(kind)) throw new HttpError(400, 'Unknown agent')
+  if (opts.provider !== undefined && !/^[\w.-]{1,64}$/.test(opts.provider)) throw new HttpError(400, 'Unknown provider')
   const host = registry.host(hostId)
   const name = `${LOGIN_PREFIX}${kind}-${Math.random().toString(36).slice(2, 7)}`
   const windows = registry.get(hostId)?.state?.os === 'Windows'
-  const script = `${PATHS}; ${SIGN_IN[kind]}; s=$?; echo; echo "[inyon-exit $s]"; exec sleep 3600`
+  const script = `${PATHS}; ${signInCommand(kind, opts.provider)}; s=$?; echo; echo "[inyon-exit $s]"; exec sleep 3600`
   // wide, so links wrap as little as possible; capture -J re-joins what still wraps
   const r = await host.exec(`tmux new-session -d -s ${shq(name)} -x 220 -y 50 -P -F '#{pane_id}'${windows ? '' : ` ${shq(`sh -c ${shq(script)}`)}`}`)
   const pane = r.stdout.trim()
   if (r.code !== 0 || !/^%\d+(\.\d+)?$/.test(pane)) throw new HttpError(500, r.stderr.trim() || 'Could not start the sign-in')
   if (windows) {
     await shellReady(host, pane)
-    await typeText(host, pane, signInWindows(kind), true)
+    await typeText(host, pane, signInWindows(kind, opts.provider), true)
   }
   seen(hostId, pane)
   return { pane }
 }
 
 /** The PowerShell line for a sign-in on Windows; it prints the same exit mark as the sh script. */
-export const signInWindows = (kind: AgentKind) => `${SIGN_IN_WINDOWS[kind]}; Write-Output ''; Write-Output "[inyon-exit $([int]$LASTEXITCODE)]"`
+export const signInWindows = (kind: AgentKind, provider?: string) => `${signInCommand(kind, provider, true)}; Write-Output ''; Write-Output "[inyon-exit $([int]$LASTEXITCODE)]"`
 
 async function ownPane(hostId: string, pane: string) {
   if (!/^%\d+(\.\d+)?$/.test(pane)) throw new HttpError(400, 'Bad pane')
@@ -121,14 +128,24 @@ async function signInMenu(owned: Awaited<ReturnType<typeof ownPane>>, pane: stri
   return p && !p.input && p.options.length >= 2 ? p : undefined
 }
 
+/** sign-ins whose end was already acted on */
+const finished = new Set<string>()
+
 export async function readSignIn(hostId: string, pane: string): Promise<SignInScreen> {
   const owned = await ownPane(hostId, pane)
   const { host } = owned
   seen(hostId, pane)
   const r = await host.exec(`tmux capture-pane -p -J -S -200 -t ${shq(pane)}`)
   const screen = parseSignIn(r.stdout)
-  if (screen.exit !== undefined) registry.refresh(hostId, 0)
-  else {
+  if (screen.exit !== undefined) {
+    registry.refresh(hostId, 0)
+    // a provider connected (or not): OpenCode's lists on this machine are read again
+    if (owned.signInKind === 'opencode' && !finished.has(`${hostId} ${pane}`)) {
+      finished.add(`${hostId} ${pane}`)
+      const { afterCredentialChange } = await import('./providers.ts')
+      afterCredentialChange(hostId).catch(() => {})
+    }
+  } else {
     const p = await signInMenu(owned, pane)
     if (p) {
       const question = p.body.map((l) => l.trim()).filter((l) => l && !/^[╌─]+$/.test(l)).at(-1)
@@ -182,7 +199,10 @@ export function parseSignIn(captured: string): SignInScreen {
   const text = rejoinLinks(shown).join('\n')
   const links = [...new Set([...text.matchAll(/https?:\/\/[^\s"'<>]+/g)].map((m) => m[0].replace(/[).,;]+$/, '')))]
   const code = text.replace(/https?:\/\/\S+/g, '').match(/\b[A-Z0-9]{4,5}-[A-Z0-9]{4,5}\b/)?.[0]
-  return { lines: shown.slice(-60), links, code, exit }
+  // OpenCode's sign-in prints "Error: Unknown provider …" and still exits 0
+  const error = shown.map((l) => l.trim().match(/^(?:[│■]\s+)?Error:\s+(.+)$/)?.[1]).find(Boolean)
+  if (error && exit === 0) exit = 1
+  return { lines: shown.slice(-60), links, code, exit, ...(error ? { error } : {}) }
 }
 
 /** Types into the sign-in (a pasted code), or presses keys to move through its menus. */

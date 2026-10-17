@@ -398,7 +398,8 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
   if (r.code !== 0) throw new Error(r.stderr.trim() || 'send-keys failed')
 }
 
-const KEY_RE = /^([A-Za-z0-9]|Enter|Escape|Tab|BTab|Up|Down|Left|Right|S-Left|S-Right|Space|BSpace|Home|End|PageUp|PageDown|C-[a-z])$/
+// letters, the named keys, function keys, and Ctrl/Alt chords (OpenCode's bindings can be remapped to those)
+const KEY_RE = /^([A-Za-z0-9]|Enter|Escape|Tab|BTab|Up|Down|Left|Right|S-Left|S-Right|Space|BSpace|Home|End|PageUp|PageDown|F[1-9]|F1[0-2]|(C-|M-|C-M-)[A-Za-z0-9])$/
 
 export async function sendKeys(host: Host, pane: string, keys: string[]) {
   for (const k of keys) if (!KEY_RE.test(k)) throw new Error(`key not allowed: ${k}`)

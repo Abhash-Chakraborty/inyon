@@ -47,6 +47,8 @@ export interface AgentCatalog {
   source: 'cli' | 'fallback'
   updatedAt: number
   error?: string
+  /** the agent's own list of modes when it can be asked (OpenCode's primary agents, custom ones included) */
+  modes?: { id: string; label: string }[]
 }
 
 export interface AgentDef {
@@ -210,18 +212,37 @@ const CODEX_COMMANDS: [string, string, boolean?][] = [
   ['/exit', 'Exit Codex', true],
 ]
 
+// OpenCode 1.19, as its "/" popup lists them inside a conversation
 const OPENCODE_COMMANDS: [string, string, boolean?][] = [
-  ['/new', 'Start a new session', true],
-  ['/compact', 'Summarize the session to free up context', true],
-  ['/undo', 'Undo the last message and its file changes', true],
-  ['/redo', 'Redo the last undone message', true],
-  ['/init', 'Create or update AGENTS.md', true],
-  ['/review', 'Review changes [commit|branch|pr], defaults to uncommitted'],
-  ['/models', 'Switch model', true],
   ['/agents', 'Switch agent', true],
-  ['/thinking', 'Show or hide thinking in the terminal', true],
-  ['/share', 'Share the session (creates a public link)', true],
-  ['/unshare', 'Stop sharing the session', true],
+  ['/compact', 'Compact session', true],
+  ['/connect', 'Connect provider', true],
+  ['/copy', 'Copy session transcript', true],
+  ['/debug', 'View debug info', true],
+  ['/diff', 'Open diff viewer', true],
+  ['/editor', 'Open editor', true],
+  ['/exit', 'Exit the app', true],
+  ['/export', 'Export session transcript', true],
+  ['/fork', 'Fork session', true],
+  ['/help', 'Help', true],
+  ['/init', 'guided AGENTS.md setup', true],
+  ['/mcps', 'Toggle MCPs', true],
+  ['/models', 'Switch model', true],
+  ['/move', 'Move to another project dir', true],
+  ['/new', 'New session', true],
+  ['/redo', 'Redo the last undone message', true],
+  ['/rename', 'Rename session'],
+  ['/review', 'review changes [commit|branch|pr], defaults to uncommitted'],
+  ['/sessions', 'Switch session', true],
+  ['/skills', 'Skills', true],
+  ['/status', 'View status', true],
+  ['/themes', 'Switch theme', true],
+  ['/thinking', 'Collapse thinking', true],
+  ['/timeline', 'Jump to message', true],
+  ['/timestamps', 'Show timestamps', true],
+  ['/undo', 'Undo previous message', true],
+  ['/update', 'Update OpenCode', true],
+  ['/variants', 'Switch model variant', true],
 ]
 
 const GEMINI_COMMANDS: [string, string, boolean?][] = [
@@ -450,6 +471,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
     shell: true,
     models: [],
     efforts: [],
+    // the built-in agents; a machine's own list (custom agents too) replaces this when it's asked
     modes: [
       { id: 'build', label: 'Build' },
       { id: 'plan', label: 'Plan' },

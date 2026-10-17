@@ -83,7 +83,7 @@ export function parseScreen(captured: string[], paneWidth?: number, agent: Agent
   const styled = captured.map(unstyle)
   const raw = styled.map((l) => l.text)
   if (agent === 'copilot') return finish(parseCopilotScreen(raw, paneWidth))
-  if (agent === 'opencode') return finish(parseOpenCodeScreen(raw, paneWidth))
+  if (agent === 'opencode') return finish(parseOpenCodeScreen(raw, paneWidth, captured))
   if (agent === 'antigravity') return finish(parseAntigravity(raw, paneWidth))
   if (agent === 'codex') return finish(parseCodex(raw, styled.map((l) => l.ghost), paneWidth))
   if (agent !== 'claude') return finish(parseGeneric(raw, paneWidth))

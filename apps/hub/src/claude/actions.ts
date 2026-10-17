@@ -1,5 +1,5 @@
 import { sleep } from '../platform/store.ts'
-import { AGENTS, agyModelId, promptKey, type AgentKind, type ScreenPrompt } from '@inyon/protocol'
+import { AGENTS, CONFIRM_OPTION, agyModelId, promptKey, type AgentCatalog, type AgentKind, type ScreenPrompt, type ScreenState } from '@inyon/protocol'
 import { shq, type Host } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
@@ -16,9 +16,11 @@ import { codexAccepted, inputContains, hasPastePreview } from './delivery.ts'
 import { setCopilotControl } from '../agents/copilot-controls.ts'
 import { agyModels } from '../agents/antigravity-models.ts'
 
-import { OpenCodeClient } from '../agents/opencode-api.ts'
-import { opencodeSelection, setOpenCodeSelection } from '../agents/opencode-controls.ts'
+import { OpenCodeClient, opencodeCatalogCached, type OpenCodeSelection } from '../agents/opencode-api.ts'
+import { selectionFromFooter, selectionFromMessages, storedSelection } from '../agents/opencode-controls.ts'
+import { opencodeKeys } from '../agents/opencode-keys.ts'
 import { modelFromFooter, opencodeCliModels } from '../agents/opencode-models.ts'
+import { viaOpenCodeApi } from '../agents/opencode.ts'
 
 function agentPane(hostId: string, paneId: string) {
   const found = registry.findPane(hostId, paneId)
@@ -134,10 +136,12 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
   if (!text.trim()) throw new HttpError(400, 'Message is empty')
   const startedAt = fromComposer ? Date.now() : 0
   if (hasPastePreview(text) && /^\[Pasted[^\n]+\]$/i.test(text.trim())) throw new HttpError(409, 'This saved message contains only a terminal paste preview. Paste the original text again; the preview does not contain the message.')
-  if (found.pane.agent.kind === 'opencode' && !viaApi(found.pane.agent.transcriptPath)) {
-    const setting = text.trim().match(/^\/(model|effort|agent)\s+(\S+)$/)
+  if (found.pane.agent.kind === 'opencode') {
+    // model, variant and agent go through OpenCode's own keys in both modes, so its footer and the
+    // app always agree (see openCodeModel)
+    const setting = text.trim().match(/^\/(model|effort|variant|agent)\s+(\S+)$/)
     if (setting?.[1] === 'model') return openCodeModel(hostId, paneId, setting[2])
-    if (setting?.[1] === 'effort') return openCodeEffort(hostId, paneId, setting[2])
+    if (setting?.[1] === 'effort' || setting?.[1] === 'variant') return openCodeEffort(hostId, paneId, setting[2])
     if (setting?.[1] === 'agent') return openCodeAgent(hostId, paneId, setting[2])
     const command = text.trim().match(/^\/(\S+)\s*$/)?.[1]
     if (command && OPENCODE_TERMINAL.has(command)) {
@@ -147,35 +151,12 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
     }
   }
   if (found.pane.agent.kind === 'opencode' && viaApi(found.pane.agent.transcriptPath)) {
-    let uri = found.pane.agent.transcriptPath!
-    let client = new OpenCodeClient(host, uri, found.pane.cwd)
-    if (!client.session) {
-      const created = await client.request('/session', 'POST', {})
-      if (!created?.id) throw new HttpError(502, 'OpenCode did not create a session')
-      await client.request('/tui/select-session', 'POST', { sessionID: created.id })
-      uri += created.id
-      client = new OpenCodeClient(host, uri, found.pane.cwd)
-      found.pane.agent.transcriptPath = uri
-      found.pane.agent.sessionId = created.id
-    }
-    const setting = text.trim().match(/^\/(model|effort|agent)\s+(\S+)$/)
-    if (setting) {
-      await setOpenCodeSelection(host, uri, { [setting[1] === 'model' ? 'model' : setting[1] === 'effort' ? 'variant' : 'agent']: setting[2] }, found.pane.cwd)
-      return nudge(hostId, paneId)
-    }
-    const selection = await opencodeSelection(host, uri, found.pane.cwd)
+    const uri = await openCodeSessionUri(hostId, paneId)
+    const client = new OpenCodeClient(host, uri, found.pane.cwd)
+    const selection = await openCodeApiSelection(hostId, paneId, client)
     if (text.trimStart().startsWith('!')) await client.shell(text.trimStart().slice(1).trim(), selection.agent ?? 'build', selection.model)
-    else if (text.startsWith('/')) {
-      const [, command, args = ''] = text.match(/^\/(\S+)(?:\s+([\s\S]*))?$/) ?? []
-      if (command === 'compact' && selection.model) {
-        const { openCodeModel } = await import('../agents/opencode-api.ts')
-        await client.request(`/session/${encodeURIComponent(client.session)}/summarize`, 'POST', openCodeModel(selection.model), 300)
-      } else {
-        const commands = await client.request('/command')
-        if (!Array.isArray(commands) || !commands.some((c: any) => c.name === command)) throw new HttpError(400, 'This OpenCode command is a terminal control. Open the terminal to use it.')
-        await client.command(command, args, selection)
-      }
-    } else await client.prompt(text, selection)
+    else if (text.startsWith('/')) await openCodeApiCommand(hostId, paneId, client, text, selection)
+    else await client.prompt(text, selection)
     watchers.peek(hostId, paneId)?.draftSent(text, startedAt)
     return nudge(hostId, paneId)
   }
@@ -337,13 +318,33 @@ echo "stopped $all"`
  */
 export async function answer(hostId: string, paneId: string, option: number, text?: string, question?: string) {
   const { host, found } = agentPane(hostId, paneId)
-  if (await watchers.peek(hostId, paneId)?.answerApi(option)) return nudge(hostId, paneId)
+  if (await watchers.peek(hostId, paneId)?.answerApi(option, text)) return nudge(hostId, paneId)
   const screen = await currentScreen(hostId, paneId)
   const p = screen.prompt
-  if (!p?.options.some((o) => o.n === option)) throw new HttpError(409, 'That question is no longer on screen')
+  const confirming = option === CONFIRM_OPTION && !!p?.confirm
+  if (!p || (!confirming && !p.options.some((o) => o.n === option))) throw new HttpError(409, 'That question is no longer on screen')
   if (question && promptKey(p) !== question) throw new HttpError(409, 'That question was answered and another one is waiting. Check it before answering.')
   // a permission or a question in the middle of a turn: answered (other than No), Claude carries on
   const carriesOn = found.pane.agent?.kind === 'claude' && midTurn(p) && !/^no\b/i.test(p.options.find((o) => o.n === option)?.label ?? '')
+  if (confirming && found.pane.agent?.kind === 'opencode') {
+    // Tab moves on to the next question or to the Confirm step, where Enter sends every answer
+    if (!p.options.length) await sendKeys(host, paneId, ['Enter'])
+    else {
+      await sendKeys(host, paneId, ['Tab'])
+      const next = await waitScreen(hostId, paneId, (s) => !s.prompt || promptKey(s.prompt) !== promptKey(p), 1500)
+      if (next.prompt?.confirm === 'Submit' && !next.prompt.options.length) await sendKeys(host, paneId, ['Enter'])
+    }
+    return nudge(hostId, paneId)
+  }
+  if (p.multi && found.pane.agent?.kind === 'opencode') {
+    // a number toggles its checkbox; the typed answer goes in after its own
+    await sendKeys(host, paneId, [String(option)])
+    if (option === p.freeTextOption && text?.trim()) {
+      await sleep(250)
+      await typeText(host, paneId, text, true)
+    }
+    return nudge(hostId, paneId)
+  }
   if (p.navigate && found.pane.agent?.kind === 'opencode') {
     // "Allow once  Allow always  Reject" in a row, the highlight shown only by colour: go to the
     // first button, then right
@@ -386,9 +387,95 @@ export async function keys(hostId: string, paneId: string, list: string[]) {
 }
 
 /** OpenCode started with --port has an HTTP API; plain `opencode` is driven through its screen */
-const viaApi = (uri?: string) => !!uri?.startsWith('opencode://')
-/** OpenCode commands that open a terminal menu or program instead of acting */
-const OPENCODE_TERMINAL = new Set(['model', 'models', 'agents', 'sessions', 'themes', 'connect', 'mcps', 'skills', 'status', 'export', 'rename', 'move', 'fork', 'diff', 'debug', 'editor', 'help', 'copy', 'exit'])
+const viaApi = viaOpenCodeApi
+/** OpenCode 1.19 commands that open a menu or a view in its terminal instead of acting on the conversation */
+const OPENCODE_TERMINAL = new Set(['model', 'models', 'agents', 'variants', 'sessions', 'themes', 'connect', 'mcps', 'skills', 'status', 'help', 'editor', 'diff', 'timeline', 'debug', 'move', 'update', 'export', 'copy', 'exit'])
+
+/** The models and agents OpenCode offers this pane: its own server's list when it has one, else the CLI's. */
+async function openCodeCatalog(hostId: string, paneId: string): Promise<AgentCatalog> {
+  const { host, found } = agentPane(hostId, paneId)
+  const uri = found.pane.agent?.transcriptPath
+  if (viaApi(uri)) return opencodeCatalogCached(host, uri!, found.pane.cwd).catch(() => opencodeCliModels(host))
+  return opencodeCliModels(host)
+}
+
+/**
+ * The session the pane's terminal shows, with its server. A terminal on its home screen has none
+ * yet: one is made and shown there, reusing an empty one OpenCode already made for the folder, so
+ * no stray "New session" piles up in its list.
+ */
+async function openCodeSessionUri(hostId: string, paneId: string) {
+  const { host, found } = agentPane(hostId, paneId)
+  const uri = found.pane.agent!.transcriptPath!
+  const client = new OpenCodeClient(host, uri, found.pane.cwd)
+  if (client.session) return uri
+  const list = await client.request('/session').catch(() => [])
+  const empty = (Array.isArray(list) ? list : [])
+    .filter((s: any) => typeof s?.id === 'string' && !s.parentID && !s.time?.archived && /^New session - /.test(s.title ?? '') && Date.now() - (s.time?.updated ?? 0) < 3600_000)
+    .sort((a: any, b: any) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))[0]
+  const created = empty ?? (await client.request('/session', 'POST', {}))
+  if (!created?.id) throw new HttpError(502, 'OpenCode did not create a session')
+  await client.selectSession(created.id)
+  const withSession = uri + created.id
+  found.pane.agent!.transcriptPath = withSession
+  found.pane.agent!.sessionId = created.id
+  return withSession
+}
+
+/**
+ * What a message sent through the API runs with: whatever the terminal's footer shows (kept by
+ * the pane while a menu hides the footer), else what the session last ran with, so the reply
+ * matches what the terminal says it will use.
+ */
+async function openCodeApiSelection(hostId: string, paneId: string, client: OpenCodeClient): Promise<OpenCodeSelection> {
+  const { host, found } = agentPane(hostId, paneId)
+  const agent = found.pane.agent!
+  const screen = await currentScreen(hostId, paneId)
+  const catalog = await opencodeCatalogCached(host, agent.transcriptPath!, found.pane.cwd).catch(() => undefined)
+  const footer = selectionFromFooter(screen, catalog?.models ?? [])
+  if (footer?.model) return footer
+  if (agent.status?.modelId) return { model: agent.status.modelId, variant: agent.status.effort, agent: agent.mode }
+  const stored = client.session ? await storedSelection(client) : {}
+  if (stored.model) return stored
+  const messages = client.session ? await client.messages().catch(() => []) : []
+  return selectionFromMessages(Array.isArray(messages) ? messages : [])
+}
+
+/** A slash command for a session with its own server: what the server does itself, else refused. */
+async function openCodeApiCommand(hostId: string, paneId: string, client: OpenCodeClient, text: string, selection: OpenCodeSelection) {
+  const [, command, args = ''] = text.match(/^\/(\S+)(?:\s+([\s\S]*))?$/) ?? []
+  switch (command) {
+    case 'compact':
+    case 'summarize': {
+      const model = selection.model ?? (await storedSelection(client)).model
+      if (!model) throw new HttpError(409, 'Send a message first, so OpenCode knows which model to compact with')
+      return client.summarize(model)
+    }
+    case 'undo': {
+      // back to before the last message still in the conversation (an earlier /undo hides the ones after its mark)
+      const [messages, info] = await Promise.all([client.messages(), client.info().catch(() => undefined)])
+      const cutoff: string | undefined = info?.revert?.messageID
+      const users = (Array.isArray(messages) ? messages : []).map((m: any) => m.info ?? m).filter((m: any) => m.role === 'user' && (!cutoff || String(m.id) < cutoff))
+      if (!users.length) throw new HttpError(409, 'Nothing to undo yet')
+      return client.revert(users[users.length - 1].id)
+    }
+    case 'redo':
+      return client.unrevert()
+    case 'share':
+      return client.share()
+    case 'unshare':
+      return client.unshare()
+    case 'new': {
+      const created = await client.request('/session', 'POST', {})
+      if (!created?.id) throw new HttpError(502, 'OpenCode did not create a session')
+      await client.selectSession(created.id)
+      return registry.refresh(hostId, 300)
+    }
+  }
+  const commands = await client.request('/command')
+  if (!Array.isArray(commands) || !commands.some((c: any) => c.name === command)) throw new HttpError(400, `/${command} is a control of OpenCode's terminal. Open the terminal to use it.`)
+  return client.command(command, args, selection)
+}
 
 /** OpenCode's box must be showing (no question, no menu) before its keys are pressed. */
 async function openCodeReady(hostId: string, paneId: string) {
@@ -398,7 +485,7 @@ async function openCodeReady(hostId: string, paneId: string) {
   return s
 }
 
-async function waitScreen(hostId: string, paneId: string, done: (s: Awaited<ReturnType<typeof currentScreen>>) => boolean, ms = 2000) {
+async function waitScreen(hostId: string, paneId: string, done: (s: ScreenState) => boolean, ms = 2000) {
   let s = await currentScreen(hostId, paneId)
   for (let t = 0; !done(s) && t < ms; t += 150) {
     await sleep(150)
@@ -407,68 +494,82 @@ async function waitScreen(hostId: string, paneId: string, done: (s: Awaited<Retu
   return s
 }
 
-/** Tab steps through OpenCode's agents (Build, Plan, custom ones) until the footer names the target. */
+/**
+ * OpenCode's own key for the next agent (Tab unless rebound), pressed until the footer names the
+ * target: Build, Plan or a custom agent. The footer is what the terminal and the app both show.
+ */
 async function openCodeAgent(hostId: string, paneId: string, target: string) {
-  const { host } = agentPane(hostId, paneId)
+  const { host, found } = agentPane(hostId, paneId)
   const want = target.toLowerCase()
+  const keys = await opencodeKeys(host, found.pane.cwd)
   let start: string | undefined
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     const s = await openCodeReady(hostId, paneId)
     if (s.mode === want) return nudge(hostId, paneId)
     // back where it started: every agent has been shown
     if (i === 0) start = s.mode
     else if (s.mode === start) break
-    await sendKeys(host, paneId, ['Tab'])
+    await sendKeys(host, paneId, keys.agent_cycle)
     await waitScreen(hostId, paneId, (n) => n.mode !== s.mode, 1200)
   }
   throw new HttpError(409, `OpenCode has no ${target} agent to switch to`)
 }
 
-/** Ctrl+T steps through the model's variants and back to the default. */
+/** The variant key (Ctrl+T unless rebound) steps through the model's variants and back to the default. */
 async function openCodeEffort(hostId: string, paneId: string, level: string) {
-  const { host } = agentPane(hostId, paneId)
-  const want = level === 'default' ? undefined : level
+  const { host, found } = agentPane(hostId, paneId)
+  const want = level === 'default' ? undefined : level.toLowerCase()
   const first = await openCodeReady(hostId, paneId)
-  const catalog = await opencodeCliModels(host)
+  const catalog = await openCodeCatalog(hostId, paneId)
   const model = first.model ? modelFromFooter(catalog.models, first.model) : undefined
   if (model && want && !model.efforts?.includes(want)) throw new HttpError(400, 'This OpenCode model does not have that reasoning level')
   if (model && !model.efforts?.length) throw new HttpError(400, 'This OpenCode model has no reasoning levels')
+  const keys = await opencodeKeys(host, found.pane.cwd)
   for (let i = 0; i < 10; i++) {
     const s = await openCodeReady(hostId, paneId)
     if (s.effort === want) return nudge(hostId, paneId)
-    await sendKeys(host, paneId, ['C-t'])
+    await sendKeys(host, paneId, keys.variant_cycle)
     await waitScreen(hostId, paneId, (n) => n.effort !== s.effort, 1200)
   }
   throw new HttpError(409, 'OpenCode did not switch to that reasoning level')
 }
 
-/** Picks a model in OpenCode's "/models" menu by typing its name, keeping whatever was in the box. */
+/**
+ * Picks a model in OpenCode's own model menu, opened with its key (Ctrl+X M unless rebound) so the
+ * message box is left alone: the name goes into the menu's search and Enter takes it. A model with
+ * variants then asks for one; the level in use is kept when the model has it, else its default.
+ * The footer shows the result, in the terminal and in the app.
+ */
 async function openCodeModel(hostId: string, paneId: string, id: string) {
-  const { host } = agentPane(hostId, paneId)
-  const catalog = await opencodeCliModels(host)
+  const { host, found } = agentPane(hostId, paneId)
+  const catalog = await openCodeCatalog(hostId, paneId)
   const model = catalog.models.find((m) => m.id === id)
   if (!model) throw new HttpError(400, 'That model is not offered by OpenCode on this machine')
   const before = await openCodeReady(hostId, paneId)
   if (before.model && modelFromFooter(catalog.models, before.model)?.id === id) return nudge(hostId, paneId)
-  const draft = before.draft
+  const keys = await opencodeKeys(host, found.pane.cwd)
+  const keep = before.effort && model.efforts?.includes(before.effort) ? before.effort : undefined
+  const on = (s: ScreenState) => !!s.model && modelFromFooter(catalog.models, s.model)?.id === id
   const stopDriving = startDriving(hostId, paneId)
-  const release = await watchers.peek(hostId, paneId)?.holdDraft(draft)
+  const release = await watchers.peek(hostId, paneId)?.holdDraft(before.draft)
   let picked = false
   try {
-    if (draft) await clearInput(hostId, paneId, draft)
-    await typeText(host, paneId, '/models')
-    await waitScreen(hostId, paneId, (s) => s.draft === '/models', 1500)
-    await sendKeys(host, paneId, ['Enter'])
+    await sendKeys(host, paneId, keys.model_list)
     const menu = await waitScreen(hostId, paneId, (s) => s.inputVisible === false, 2500)
     if (menu.inputVisible !== false) throw new HttpError(409, 'OpenCode did not open its model menu. Open the terminal to check.')
-    await typeText(host, paneId, model.label.split(' · ').pop()!)
+    await typeText(host, paneId, model.label.split(' · ').slice(1).join(' · '))
     await sleep(350)
     await sendKeys(host, paneId, ['Enter'])
-    // the footer shows the new model at once, even under the "Select variant" menu that the first
-    // pick of a model with variants opens (closed below with Esc, which keeps the default)
-    const on = (s: Awaited<ReturnType<typeof currentScreen>>) => !!s.model && modelFromFooter(catalog.models, s.model)?.id === id
-    const after = await waitScreen(hostId, paneId, on, 3000)
-    picked = on(after) && after.inputVisible !== false
+    const after = await waitScreen(hostId, paneId, (s) => (on(s) && s.inputVisible !== false) || /variant/i.test(s.dialog ?? ''), 3000)
+    if (/variant/i.test(after.dialog ?? '')) {
+      if (keep) {
+        await typeText(host, paneId, keep)
+        await sleep(350)
+        await sendKeys(host, paneId, ['Enter'])
+      } else await sendKeys(host, paneId, ['Escape'])
+    }
+    const done = await waitScreen(hostId, paneId, (s) => on(s) && s.inputVisible !== false, 3000)
+    picked = on(done) && done.inputVisible !== false
   } finally {
     // the driving flag must end even if the screen can't be read, or prompts stay hidden
     try {
@@ -476,12 +577,11 @@ async function openCodeModel(hostId: string, paneId: string, id: string) {
       if (now.inputVisible === false && !now.prompt) {
         await sendKeys(host, paneId, ['Escape'])
         const closed = await waitScreen(hostId, paneId, (s) => s.inputVisible !== false, 1500)
-        picked ||= closed.inputVisible !== false && !!closed.model && modelFromFooter(catalog.models, closed.model)?.id === id
+        picked ||= closed.inputVisible !== false && on(closed)
       }
     } catch {}
     stopDriving()
     if (release) await release()
-    else if (draft) await typeText(host, paneId, draft).catch(() => {})
   }
   if (!picked) throw new HttpError(409, 'OpenCode did not switch to that model. Open the terminal to check.')
   nudge(hostId, paneId)
@@ -511,12 +611,11 @@ export async function setMode(hostId: string, paneId: string, target: string) {
 async function setPaneMode(hostId: string, paneId: string, target: string) {
   const { host, found } = agentPane(hostId, paneId)
   const kind = found.pane.agent?.kind
-  if (!kind || !AGENTS[kind].modes.some((m) => m.id === target)) throw new HttpError(400, 'That permission mode is not supported by this agent')
+  // OpenCode's agents are its own list (custom ones too); the switch itself checks the target exists
+  if (!kind || (kind !== 'opencode' && !AGENTS[kind].modes.some((m) => m.id === target))) throw new HttpError(400, 'That permission mode is not supported by this agent')
   if (kind === 'opencode') {
-    const uri = found.pane.agent?.transcriptPath
-    if (!viaApi(uri)) return openCodeAgent(hostId, paneId, target)
-    await setOpenCodeSelection(host, uri!, { agent: target }, found.pane.cwd)
-    return nudge(hostId, paneId)
+    if (!/^[\w.-]{1,64}$/.test(target)) throw new HttpError(400, 'Unknown OpenCode agent')
+    return openCodeAgent(hostId, paneId, target)
   }
   if (kind === 'codex') return codexMode(hostId, paneId, target)
   if (kind === 'copilot') {
@@ -839,11 +938,12 @@ export async function interrupt(hostId: string, paneId: string) {
     await new OpenCodeClient(host, found.pane.agent.transcriptPath!, found.pane.cwd).abort()
     return nudge(hostId, paneId)
   }
+  // OpenCode stops on the second press of its interrupt key ("esc again to interrupt"), Esc unless rebound
+  const stop = found.pane.agent?.kind === 'opencode' ? await opencodeKeys(host, found.pane.cwd).then((k) => [...k.session_interrupt, ...k.session_interrupt]) : ['Escape']
   for (let attempt = 0; attempt < 2; attempt++) {
     const s = await currentScreen(hostId, paneId)
     if (!s.working) break
-    // OpenCode stops on the second Esc ("esc again to interrupt")
-    await sendKeys(host, paneId, found.pane.agent?.kind === 'opencode' ? ['Escape', 'Escape'] : ['Escape'])
+    await sendKeys(host, paneId, stop)
     for (let i = 0; i < 8; i++) {
       await sleep(250)
       if (!(await currentScreen(hostId, paneId)).working) {
