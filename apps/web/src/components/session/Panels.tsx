@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, RefreshCw, Smartphone,
@@ -99,7 +99,9 @@ export function ChangesTab({ items, p, onComposed }: { items: ChatItem[]; p?: Pa
       <div className="shrink-0 px-2.5 pt-2.5 pb-1.5">
         <Segmented full size="sm" value={mode} onChange={pick} options={[{ v: 'chat', label: 'This chat' }, { v: 'tree', label: 'Working tree', title: 'Every change since the last commit' }]} />
       </div>
-      {mode === 'chat' ? <ChatChanges items={items} p={p} onTree={() => pick('tree')} /> : <WorkingTree p={p} poke={items.length} />}
+      <div key={mode} className="animate-fade-in flex min-h-0 flex-1 flex-col">
+        {mode === 'chat' ? <ChatChanges items={items} p={p} onTree={() => pick('tree')} /> : <WorkingTree p={p} poke={items.length} />}
+      </div>
       <ReviewBar p={p} onComposed={onComposed} />
     </div>
   )
@@ -356,8 +358,42 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
 
 export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'usage'
 
-export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; tab: PanelTab; setTab: (t: PanelTab) => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
+/**
+ * One underline for a tab strip, moved under the chosen tab by transform alone (a 100px strip
+ * placed and scaled, as the Segmented pill is). Measured by the component that owns the strip,
+ * so the ref is in place by the time it measures.
+ */
+function useTabUnderline(strip: React.RefObject<HTMLElement | null>, index: number) {
+  const [at, setAt] = useState<{ left: number; width: number } | null>(null)
+  useLayoutEffect(() => {
+    const measure = () => {
+      const el = strip.current?.querySelectorAll<HTMLElement>('[role=tab]')[index]
+      setAt(el ? { left: el.offsetLeft, width: el.offsetWidth } : null)
+    }
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : undefined
+    if (strip.current) ro?.observe(strip.current)
+    return () => ro?.disconnect()
+  }, [index])
+  // it slides from the second placing on; the first draws it in place
+  const moved = useRef(false)
+  useEffect(() => {
+    if (at) moved.current = true
+  }, [at?.left])
+  if (!at) return null
+  return (
+    <span
+      aria-hidden
+      data-part="underline"
+      className={clsx('pointer-events-none absolute -bottom-px left-0 h-0.5 w-[100px] origin-left bg-accent', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')}
+      style={{ transform: `translateX(${at.left}px) scaleX(${at.width / 100})` }}
+    />
+  )
+}
+
+export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }: { s: SessionModel; items: ChatItem[]; tab: PanelTab; setTab: (t: PanelTab) => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void; closing?: boolean }) {
   const changes = useChanges(items)
+  const strip = useRef<HTMLDivElement>(null)
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   // a background subagent is also listed as a task of the kind the transcript can't name: count it once
   const running = (s.info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (s.info?.subagents.filter((a) => a.status === 'running').length ?? 0)
@@ -368,6 +404,7 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
     { id: 'preview', label: 'Preview' },
     { id: 'usage', label: 'Usage' },
   ]
+  const underline = useTabUnderline(strip, tabs.findIndex((t) => t.id === tab))
   const previewSuggestions = useMemo(() => {
     const out = new Set<string>()
     for (const i of items.slice(-400)) {
@@ -380,8 +417,9 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
     return [...out].slice(-6)
   }, [items])
   return (
-    <aside className="flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-sidebar 2xl:w-[480px]">
-      <div role="tablist" className="flex shrink-0 gap-0.5 border-b border-line px-2.5 pt-2">
+    // in from its edge; out with a fade while PanePage keeps it mounted
+    <aside className={clsx('flex min-h-0 w-[420px] shrink-0 flex-col border-l border-line bg-sidebar 2xl:w-[480px]', closing ? 'animate-fade-out' : 'animate-panel-in')}>
+      <div ref={strip} role="tablist" className="relative flex shrink-0 gap-0.5 border-b border-line px-2.5 pt-2">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -389,14 +427,16 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent }: { s: Se
             role="tab"
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
-            className={clsx('-mb-px flex h-9 items-center gap-1.5 border-b-2 px-2.5 text-[12.5px] font-medium transition-colors', tab === t.id ? 'border-accent text-fg' : 'border-transparent text-fg-3 hover:text-fg-2')}
+            className={clsx('flex h-9 items-center gap-1.5 px-2.5 text-[12.5px] font-medium transition-colors', tab === t.id ? 'text-fg' : 'text-fg-3 hover:text-fg-2')}
           >
             {t.label}
             {t.badge !== undefined && <span className="tabular rounded-full bg-sunken px-1.5 text-[12px] text-fg-2">{t.badge}</span>}
           </button>
         ))}
+        {underline}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      {/* each tab's body fades in as it takes over */}
+      <div key={tab} className="animate-fade-in flex min-h-0 flex-1 flex-col overflow-y-auto">
         {tab === 'changes' && <ChangesTab items={items} p={p} />}
         {tab === 'files' && p && <FilesTab key={`${p.host}:${p.pane}`} p={p} />}
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}

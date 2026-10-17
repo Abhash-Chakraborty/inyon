@@ -76,7 +76,7 @@ export function PullRefresh({ onRefresh, className, children }: { onRefresh: () 
         aria-label={busy ? 'Refreshing' : undefined}
         className={clsx(
           'pointer-events-none absolute left-1/2 z-30 flex size-9 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float',
-          !dragging && 'transition-[transform,opacity] duration-300 ease-[var(--ease-spring)] motion-reduce:transition-none',
+          !dragging && 'transition-[transform,opacity] duration-(--dur-move) ease-spring motion-reduce:transition-none',
         )}
         style={{
           top: 'calc(env(safe-area-inset-top) + 52px)',

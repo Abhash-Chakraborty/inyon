@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import clsx from 'clsx'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type HostStatus } from '@inyon/protocol'
 import { lastAsk } from '../../lib/lastAsk.ts'
@@ -263,6 +264,42 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
     return last?.type === 'assistant' && last.open
   })()
 
+  // which rows come in rising: the ones added after the conversation was on screen. The first
+  // batch is drawn still, so are earlier messages joining at the top, and a message that was a
+  // bubble a moment ago (sent from here, or queued) takes the bubble's place without moving.
+  // Each row's answer is kept, so a render while it rises can't take the class off it
+  const arrivals = useRef<Map<string, boolean>>(new Map())
+  const lastSeq = useRef<number | undefined>(undefined)
+  const bubbles = useRef<Set<string>>(new Set())
+  const arriving = useMemo(() => {
+    const now = new Map<string, boolean>()
+    if (!chat?.loaded) return now
+    const seq = (k: string) => Number(k.slice(1))
+    const settled = lastSeq.current !== undefined
+    const decide = (k: string, fresh: boolean) => now.set(k, arrivals.current.get(k) ?? (settled && fresh))
+    for (const r of rows) decide(r.key, seq(r.key) > (lastSeq.current ?? Infinity) && !(r.type === 'user' && bubbles.current.has(r.item.text)))
+    for (const p of pending) decide(`p${p.id}`, true)
+    for (const q of queue) decide(`q${q}`, true)
+    lastSeq.current = Math.max(lastSeq.current ?? 0, ...rows.map((r) => seq(r.key)))
+    bubbles.current = new Set([...pending.map((p) => p.text), ...queue])
+    arrivals.current = now
+    return now
+  }, [rows, pending, queue, chat?.loaded])
+  const rowView = (r: (typeof rows)[number]) => {
+    switch (r.type) {
+      case 'user':
+        return <UserMessage row={r} />
+      case 'assistant':
+        return <AssistantTurn row={r} live={working} />
+      case 'command':
+        return <CommandRow row={r} />
+      case 'goal':
+        return <GoalRow row={r} />
+      case 'notice':
+        return <NoticeRow row={r} />
+    }
+  }
+
   return (
     <ChatAgent.Provider value={agent}>
     <ChatRewind.Provider value={agent === 'codex' && running && !working ? rewind : undefined}>
@@ -301,25 +338,18 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     </Empty>
                   )}
                   <div ref={list} className="space-y-5">
-                    {rows.map((r) => {
-                      switch (r.type) {
-                        case 'user':
-                          return <UserMessage key={r.key} row={r} />
-                        case 'assistant':
-                          return <AssistantTurn key={r.key} row={r} live={working} />
-                        case 'command':
-                          return <CommandRow key={r.key} row={r} />
-                        case 'goal':
-                          return <GoalRow key={r.key} row={r} />
-                        case 'notice':
-                          return <NoticeRow key={r.key} row={r} />
-                      }
-                    })}
+                    {rows.map((r) => (
+                      <div key={r.key} className={arriving.get(r.key) ? 'animate-slide-up' : undefined}>{rowView(r)}</div>
+                    ))}
                     {pending.map((p) => (
-                      <PendingBubble key={p.id} p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} />
+                      <div key={p.id} className={arriving.get(`p${p.id}`) ? 'animate-slide-up' : undefined}>
+                        <PendingBubble p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} />
+                      </div>
                     ))}
                     {queue.map((q, i) => (
-                      <QueuedBubble key={`${i}:${q}`} text={q} agent={agent} />
+                      <div key={`${i}:${q}`} className={arriving.get(`q${q}`) ? 'animate-slide-up' : undefined}>
+                        <QueuedBubble text={q} agent={agent} />
+                      </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}
                     {working && !prompt && chat.catchingUp === undefined && (
@@ -328,7 +358,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                       </div>
                     )}
                     {!working && !prompt && screen?.background && (
-                      <div className="flex items-center gap-3 py-1 text-[13px] text-fg-3">
+                      <div className="animate-fade-in flex items-center gap-3 py-1 text-[13px] text-fg-3">
                         <div className="flex size-6 shrink-0 items-center justify-center">
                           <span className="size-1.5 rounded-full bg-fg-3 pulse-soft" />
                         </div>
@@ -347,30 +377,34 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
           </div>
 
           <div className="relative flex min-h-0 flex-col">
-            {!atBottom && (
-              <button
-                type="button"
-                onClick={() => {
-                  // straight there in one tap: a glide is slow over a long chat and new output cuts it short
-                  stick.current = true
-                  toBottom()
-                }}
-                // at the side, over the end of a line rather than the middle of one (on a wide
-                // screen, beside the conversation)
-                className="animate-fade-in absolute -top-12 right-4 z-10 flex size-9 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float hover:text-fg sm:right-6"
-                aria-label="Jump to latest"
-              >
-                <ArrowDown className="size-4" />
-              </button>
-            )}
+            {/* always there, so it can rise in from the composer and sink back out instead of appearing and vanishing */}
+            <button
+              type="button"
+              inert={atBottom}
+              aria-hidden={atBottom}
+              onClick={() => {
+                // straight there in one tap: a glide is slow over a long chat and new output cuts it short
+                stick.current = true
+                toBottom()
+              }}
+              // at the side, over the end of a line rather than the middle of one (on a wide
+              // screen, beside the conversation)
+              className={clsx(
+                'absolute -top-12 right-4 z-10 flex size-9 items-center justify-center rounded-full border border-line bg-elev text-fg-2 shadow-float transition-[opacity,transform] hover:text-fg sm:right-6',
+                atBottom ? 'translate-y-2 opacity-0 duration-(--dur-exit) ease-in' : 'translate-y-0 opacity-100',
+              )}
+              aria-label="Jump to latest"
+            >
+              <ArrowDown className="size-4" />
+            </button>
             {running && chatCapable && (
               <div className="pb-safe-2 mx-auto flex min-h-0 w-full max-w-[760px] flex-col px-3 pt-1 sm:px-6 sm:pb-4">
                 {!hubUp ? (
-                  <div className="mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting…</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting…</div>
                 ) : machineDown && reconnecting ? (
-                  <div className="mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…</div>
                 ) : machineDown ? (
-                  <div className="mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
                 ) : null}
                 {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} ultracode={ultracode} />}
               </div>
@@ -478,7 +512,7 @@ function NotRunning({
 /** A read the hub is doing out of sight; the chat updates all at once when it's done. */
 function Reading({ label, done }: { label: string; done: number }) {
   return (
-    <div className="flex items-center gap-3 py-1 text-[13px] text-fg-3" role="status">
+    <div className="animate-fade-in flex items-center gap-3 py-1 text-[13px] text-fg-3" role="status">
       <Pulse className="mx-[3px]" />
       <span>{label}…</span>
       <span className="tabular-nums">{Math.round(done * 100)}%</span>

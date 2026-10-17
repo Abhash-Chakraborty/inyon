@@ -1,7 +1,9 @@
 import { useState } from 'react'
+import clsx from 'clsx'
 import { Share, X } from 'lucide-react'
 import { dismissInstall, install, installDismissed, useInstallWay } from '../lib/install.ts'
 import { Button } from './ui/primitives.tsx'
+import { LEAVE_MS } from './ui/AnimatedList.tsx'
 
 /**
  * The web app, once a computer is paired: install it, so the browser keeps its data and it opens
@@ -11,10 +13,16 @@ import { Button } from './ui/primitives.tsx'
 export function InstallCard() {
   const way = useInstallWay()
   const [gone, setGone] = useState(installDismissed)
+  const [closing, setClosing] = useState(false)
   if (!way || gone) return null
-  const close = () => (dismissInstall(), setGone(true))
+  // remembered at once; the card fades for a moment before it goes
+  const close = () => {
+    dismissInstall()
+    setClosing(true)
+    setTimeout(() => setGone(true), LEAVE_MS)
+  }
   return (
-    <div className="animate-fade-in relative rounded-3xl border border-line bg-elev p-5 pr-12 shadow-card">
+    <div className={clsx('relative rounded-3xl border border-line bg-elev p-5 pr-12 shadow-card', closing ? 'animate-fade-out' : 'animate-fade-in')}>
       <p className="text-[15px] font-semibold tracking-tight">{way === 'share' ? 'Add Inyon to your Home Screen' : 'Install Inyon'}</p>
       {way === 'share' ? (
         <p className="mt-1.5 text-[13.5px] leading-relaxed text-fg-2">

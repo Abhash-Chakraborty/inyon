@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Clock3,
@@ -13,7 +13,8 @@ import { AgentSpinner } from '../ui/status.tsx'
 import { AntigravityMark, CodexMark, TileMark } from '../ui/AgentMarks.tsx'
 import { CopyButton, Markdown } from './Markdown.tsx'
 import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
-import { SpecialTool, ToolGroup } from './Tools.tsx'
+import { Fold, useFold } from '../ui/Fold.tsx'
+import { SpecialTool, ToolGroup, TurnSettled, useArrived } from './Tools.tsx'
 
 /** Which agent is speaking (for avatars and spinners). */
 export const ChatAgent = createContext<AgentKind | undefined>(undefined)
@@ -118,7 +119,8 @@ export function PendingBubble({ p, onRetry, onDismiss }: { p: PendingMessage; on
           p.status === 'failed' && { key: 'retry', label: 'Retry', icon: <RotateCcw className="size-4" />, onSelect: onRetry },
           p.status === 'failed' && { key: 'dismiss', label: 'Dismiss', icon: <X className="size-4" />, separated: true, onSelect: onDismiss },
         ])}
-        className={clsx('max-w-[88%] whitespace-pre-wrap break-words rounded-3xl bg-bubble px-4.5 py-3 text-[15px] leading-[1.55] sm:max-w-[78%]', p.status !== 'failed' && 'opacity-70')}
+        // the same box as the message it becomes, so nothing moves when the agent takes it
+        className={clsx('max-w-[88%] whitespace-pre-wrap break-words rounded-3xl bg-bubble px-4 py-2.5 text-[15px] leading-[1.55] transition-opacity sm:max-w-[78%]', p.status !== 'failed' && 'opacity-70')}
       >
         <LinkedPaths text={p.text} />
       </div>
@@ -153,7 +155,7 @@ export function PendingBubble({ p, onRetry, onDismiss }: { p: PendingMessage; on
 export function QueuedBubble({ text, agent }: { text: string; agent?: AgentKind }) {
   return (
     <div className="flex flex-col items-end">
-      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-3xl border border-dashed border-line-strong px-4.5 py-3 text-[15px] leading-[1.55] text-fg-2 sm:max-w-[78%]">
+      <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-3xl border border-dashed border-line-strong px-4 py-2.5 text-[15px] leading-[1.55] text-fg-2 sm:max-w-[78%]">
         <LinkedPaths text={text} />
       </div>
       <div className="mt-1 flex h-6 items-center gap-1.5 px-1 text-[12px] text-fg-3">
@@ -164,15 +166,18 @@ export function QueuedBubble({ text, agent }: { text: string; agent?: AgentKind 
 }
 
 function Thinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false)
+  const [open, mounted, toggle] = useFold()
+  const arrived = useArrived()
   return (
-    <div className="my-1 -mx-2">
-      <button type="button" onClick={() => setOpen(!open)} className="flex items-center gap-2.5 rounded-full px-2 py-1.5 text-[13px] text-fg-3 hover:bg-hover">
+    <div className={clsx('my-1 -mx-2', arrived && 'animate-row-in')}>
+      <button type="button" onClick={toggle} className="flex items-center gap-2.5 rounded-full px-2 py-1.5 text-[13px] text-fg-3 hover:bg-hover">
         <Lightbulb className="size-[15px]" />
         <span className="font-medium">Thinking</span>
         <ChevronRight className={clsx('size-3.5 transition-transform', open && 'rotate-90')} />
       </button>
-      {open && <div className="animate-fade-in ml-[30px] whitespace-pre-wrap border-l border-line-strong pl-3 text-[13.5px] italic leading-relaxed text-fg-2">{text}</div>}
+      <Fold open={open} mounted={mounted}>
+        <div className="ml-[30px] whitespace-pre-wrap border-l border-line-strong pl-3 text-[13.5px] italic leading-relaxed text-fg-2">{text}</div>
+      </Fold>
     </div>
   )
 }
@@ -196,8 +201,9 @@ function PartView({ part, live }: { part: Part; live: boolean }) {
 function JobFinished({ item }: { item: Extract<Row, { type: 'notice' }>['item'] }) {
   const failed = item.level !== 'info'
   const Icon = failed ? CircleX : CircleCheck
+  const arrived = useArrived()
   return (
-    <div className="my-1 flex items-center gap-2.5 px-0 py-1 text-[12.5px] text-fg-3">
+    <div className={clsx('my-1 flex items-center gap-2.5 px-0 py-1 text-[12.5px] text-fg-3', arrived && 'animate-row-in')}>
       <Icon className={clsx('size-4 shrink-0', failed ? 'text-danger' : 'text-fg-3')} />
       <span className="min-w-0 truncate">{item.text}</span>
       <span className="ml-auto shrink-0 tabular text-[12px]">{clock(item.ts)}</span>
@@ -220,15 +226,23 @@ export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: E
     const code = (e.target as Element).closest?.('pre')?.textContent
     return [code && copyItem('copy-code', 'Copy code', code, 'Code', <CodeIcon className="size-4" />), !row.open && !!text && copyItem('copy', 'Copy reply', text, 'Reply')]
   })
+  // once this reply has been painted, the steps that join it afterwards come in rising
+  const settled = useRef(false)
+  useEffect(() => {
+    settled.current = true
+  }, [])
+  const isSettled = useCallback(() => settled.current, [])
   return (
     <div className="group flex gap-3">
       <div className="mt-[2px] hidden size-6 shrink-0 items-center justify-center sm:flex">
         <AgentMark />
       </div>
       <div {...menu} className="min-w-0 flex-1">
-        {row.parts.map((p) => (
-          <PartView key={p.key} part={p} live={live && row.open} />
-        ))}
+        <TurnSettled.Provider value={isSettled}>
+          {row.parts.map((p) => (
+            <PartView key={p.key} part={p} live={live && row.open} />
+          ))}
+        </TurnSettled.Provider>
         {!row.open && (
           <div className="mt-1 flex h-7 items-center gap-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
             {text && <CopyButton text={text} className="-ml-1.5" />}
@@ -242,14 +256,14 @@ export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: E
 })
 
 export function CommandRow({ row }: { row: Extract<Row, { type: 'command' }> }) {
-  const [open, setOpen] = useState(false)
+  const [open, mounted, toggle] = useFold()
   const shell = row.name === '!'
   const out = row.output?.replace(/\x1b\[[0-9;]*m/g, '').trim()
   return (
     <div className="flex flex-col items-center">
       <button
         type="button"
-        onClick={() => out && setOpen(!open)}
+        onClick={() => out && toggle()}
         className={clsx('inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-elev px-3 py-1 text-[12.5px] text-fg-2', out && 'hover:bg-hover')}
       >
         {shell && <SquareTerminal className="size-3.5 text-fg-3" />}
@@ -258,10 +272,10 @@ export function CommandRow({ row }: { row: Extract<Row, { type: 'command' }> }) 
         </span>
         {out && <ChevronRight className={clsx('size-3.5 text-fg-3 transition-transform', open && 'rotate-90')} />}
       </button>
-      {open && out && (
-        <pre className="animate-fade-in mt-2 max-h-72 w-full overflow-auto whitespace-pre-wrap rounded-2xl border border-line bg-code px-4 py-3 font-mono text-[12px] leading-relaxed text-fg-2">
-          {out}
-        </pre>
+      {out && (
+        <Fold open={open} mounted={mounted} className="w-full">
+          <pre className="mt-2 max-h-72 w-full overflow-auto whitespace-pre-wrap rounded-2xl border border-line bg-code px-4 py-3 font-mono text-[12px] leading-relaxed text-fg-2">{out}</pre>
+        </Fold>
       )}
     </div>
   )
@@ -329,7 +343,7 @@ export function NoticeRow({ row }: { row: Extract<Row, { type: 'notice' }> }) {
 export function WorkingIndicator({ activity, since }: { activity?: string; since?: number }) {
   const [verb, rest] = (activity ?? 'Working…').split(/ \((.*)\)$/)
   return (
-    <div className="flex items-center gap-3 py-1">
+    <div className="animate-fade-in flex items-center gap-3 py-1">
       <div className="flex size-6 shrink-0 items-center justify-center">
         <AgentMark active />
       </div>

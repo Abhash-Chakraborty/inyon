@@ -71,23 +71,24 @@ function ago(ms: number) {
 
 export function StatePill({ state, title, className }: { state: ShownState; title?: string; className?: string }) {
   const m = stateMeta[state]
+  // the dot's colour and the chip's fade to the new state; the word comes in fresh
   return (
-    <span title={title} className={clsx('inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-mono text-[12px]', m.pill, className)}>
-      <span className={clsx('size-1.5 rounded-full', m.dot)} />
-      {m.label}
+    <span title={title} className={clsx('inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-mono text-[12px] transition-colors', m.pill, className)}>
+      <span className={clsx('size-1.5 rounded-full transition-colors', m.dot)} />
+      <span key={m.label} className="animate-fade-in">{m.label}</span>
     </span>
   )
 }
 
 export function StateDot({ state, className }: { state: ShownState; className?: string }) {
-  return <span className={clsx('inline-block size-[7px] shrink-0 rounded-full transition-colors duration-200', stateMeta[state].dot, className)} />
+  return <span className={clsx('inline-block size-[7px] shrink-0 rounded-full transition-colors', stateMeta[state].dot, className)} />
 }
 
 export function HostDot({ status }: { status: HostStatus }) {
   return (
     <span
       className={clsx(
-        'inline-block size-[7px] shrink-0 rounded-full transition-colors duration-200',
+        'inline-block size-[7px] shrink-0 rounded-full transition-colors',
         status === 'online' && 'bg-fg',
         status === 'connecting' && 'bg-fg-3 pulse-soft',
         status === 'error' && 'bg-danger',

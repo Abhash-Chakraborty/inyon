@@ -152,7 +152,7 @@ export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: {
       <div className="-mx-1 mb-3">
         <Segmented full value={tab} onChange={setTab} options={[{ v: 'activity', label: 'Running' }, { v: 'changes', label: 'Changes' }, { v: 'files', label: 'Files' }, { v: 'preview', label: 'Preview' }]} />
       </div>
-      <div className="-mx-5 flex min-h-[50dvh] flex-col">
+      <div key={tab} className="animate-fade-in -mx-5 flex min-h-[50dvh] flex-col">
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
         {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
         {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}

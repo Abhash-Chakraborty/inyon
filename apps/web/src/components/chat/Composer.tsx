@@ -479,8 +479,9 @@ export function Composer({
   const showStop = working && !canSend && !uploading && !failed
 
   return (
+    // it fades in when it takes the place of a question card
     <div
-      className="relative"
+      className="animate-fade-in relative"
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) {
           e.preventDefault()
@@ -495,7 +496,8 @@ export function Composer({
       }}
     >
       {pop && suggestions.length > 0 && (
-        <div className="animate-pop absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-3xl border border-line bg-elev shadow-float">
+        // it sits over the box, so it rises out of it
+        <div className="animate-pop-up absolute inset-x-0 bottom-full z-20 mb-2 origin-bottom overflow-hidden rounded-3xl border border-line bg-elev shadow-float">
           <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-[12px] text-fg-3">
             {pop.kind === 'slash' ? (agent === 'codex' ? 'Commands' : 'Commands and skills') : pop.kind === 'skill' ? 'Skills' : `Files in ${paths ? 'this folder' : '…'}`}
             <span className="ml-auto hidden font-mono sm:inline">↑↓ · ⏎ · esc</span>
@@ -537,7 +539,7 @@ export function Composer({
         {files.length > 0 && (
           <div className="no-scrollbar flex gap-2 overflow-x-auto px-2.5 pt-2.5 pb-0.5">
             {files.map((f) => (
-              <div key={f.id} className="group/att relative shrink-0">
+              <div key={f.id} className="group/att animate-fade-in relative shrink-0">
                 {f.preview ? (
                   <div className="relative size-14 overflow-hidden rounded-xl border border-line bg-sunken">
                     <img src={f.preview} alt={f.name} className="size-full object-cover" />
@@ -663,34 +665,23 @@ export function Composer({
           <span className={clsx('truncate pr-1 text-[12px] text-fg-3', !controls && 'ml-auto')}>
             {uploading ? 'Uploading…' : failed ? 'Upload failed' : text && origin === 'terminal' ? 'From the terminal' : ''}
           </span>
-          {showStop ? (
-            <button
-              type="button"
-              onClick={stop}
-              onMouseDown={(e) => e.preventDefault()}
-              disabled={stopping}
-              className="press flex size-9 shrink-0 items-center justify-center rounded-full bg-fg text-bg transition-opacity hover:opacity-85 disabled:opacity-50"
-              aria-label="Stop"
-              title="Stop (Esc in the terminal)"
-            >
-              <Square className="size-3 fill-current" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => send()}
-              onMouseDown={(e) => e.preventDefault()}
-              disabled={!canSend}
-              className={clsx(
-                'press flex size-9 shrink-0 items-center justify-center rounded-full',
-                canSend ? 'bg-accent text-accent-fg hover:opacity-90' : 'bg-sunken text-fg-3',
-              )}
-              aria-label={shellMode ? 'Run command' : working ? 'Queue follow-up' : 'Send'}
-              title={shellMode ? 'Run shell command' : working ? 'Queue a follow-up' : 'Send'}
-            >
-              <ArrowUp className="size-[17px]" strokeWidth={2.4} />
-            </button>
-          )}
+          {/* one button for Send and Stop: its colour fades between the two and the icon swaps with a fade */}
+          <button
+            type="button"
+            onClick={() => (showStop ? stop() : send())}
+            onMouseDown={(e) => e.preventDefault()}
+            disabled={showStop ? stopping : !canSend}
+            className={clsx(
+              'press flex size-9 shrink-0 items-center justify-center rounded-full',
+              showStop ? 'bg-fg text-bg hover:opacity-85 disabled:opacity-50' : canSend ? 'bg-accent text-accent-fg hover:opacity-90' : 'bg-sunken text-fg-3',
+            )}
+            aria-label={showStop ? 'Stop' : shellMode ? 'Run command' : working ? 'Queue follow-up' : 'Send'}
+            title={showStop ? 'Stop (Esc in the terminal)' : shellMode ? 'Run shell command' : working ? 'Queue a follow-up' : 'Send'}
+          >
+            <span key={showStop ? 'stop' : 'send'} className="animate-fade-in flex">
+              {showStop ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-[17px]" strokeWidth={2.4} />}
+            </span>
+          </button>
         </div>
       </div>
       <input ref={fileInput} type="file" multiple hidden onChange={(e) => (addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />

@@ -13,6 +13,7 @@ import { keyLabel, shortcut } from '../lib/keys.ts'
 import { usePageMenu } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { Waiting } from './ui/primitives.tsx'
+import { LEAVE_MS } from './ui/AnimatedList.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
@@ -39,8 +40,15 @@ const SQUIRCLE = 'M25 0H39C60 0 64 4 64 25V39C64 60 60 64 39 64H25C4 64 0 60 0 3
 /** Quick switcher: type to jump to any session, terminal or machine. */
 const NO_HOSTS: HostState[] = []
 function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) {
+  // it stays a moment after closing, fading out, as a sheet does
+  const [shown, setShown] = useState(open)
+  useEffect(() => {
+    if (open) return setShown(true)
+    const t = setTimeout(() => setShown(false), LEAVE_MS)
+    return () => clearTimeout(t)
+  }, [open])
   // closed, it has nothing to do with an overview update
-  const hosts = useStore((s) => (open ? s.hosts : NO_HOSTS))
+  const hosts = useStore((s) => (shown ? s.hosts : NO_HOSTS))
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
@@ -64,14 +72,14 @@ function QuickSwitch({ open, onClose }: { open: boolean; onClose: () => void }) 
       setTimeout(() => input.current?.focus(), 10)
     }
   }, [open])
-  if (!open) return null
+  if (!shown) return null
   const go = (href: string) => {
     nav(href)
     onClose()
   }
   return (
-    <div className="fixed inset-0 z-[80] flex items-start justify-center bg-black/45 px-4 pt-[12vh]" onClick={onClose}>
-      <div className="animate-pop w-full max-w-lg overflow-hidden rounded-3xl border border-line bg-elev shadow-float" onClick={(e) => e.stopPropagation()}>
+    <div className={clsx('fixed inset-0 z-[80] flex items-start justify-center bg-black/45 px-4 pt-[12vh]', open ? 'animate-fade-in' : 'animate-fade-out')} onClick={onClose}>
+      <div className={clsx('w-full max-w-lg overflow-hidden rounded-3xl border border-line bg-elev shadow-float', open ? 'animate-pop' : 'animate-fade-out')} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center gap-2.5 border-b border-line px-4">
           <Search className="size-4 text-fg-3" />
           <input

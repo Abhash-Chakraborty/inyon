@@ -235,7 +235,7 @@ export function Home() {
                         return (
                           <div key={g.key}>
                             <button type="button" onClick={() => toggle(g.key)} aria-expanded={open} className="-mx-2 flex h-10 w-[calc(100%+1rem)] items-center gap-2 rounded-full px-2 text-left hover:bg-hover/60">
-                              <ChevronRight className={clsx('size-4 shrink-0 text-fg-3 transition-transform duration-200', open && 'rotate-90')} />
+                              <ChevronRight className={clsx('size-4 shrink-0 text-fg-3 transition-transform', open && 'rotate-90')} />
                               <MachineIcon kind={machineKindOf(g.host)} size={16} className={clsx('shrink-0', g.host.status === 'online' ? 'text-fg-2' : 'text-fg-3')} />
                               <span className={clsx('truncate text-[14px] font-medium', g.host.status !== 'online' && 'text-fg-2')}>{g.host.config.name}</span>
                               {g.host.status !== 'online' && <span className="shrink-0 text-[12px] text-fg-3">{g.host.status === 'error' ? 'Offline' : 'Connecting'}</span>}

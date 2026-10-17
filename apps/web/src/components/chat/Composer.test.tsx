@@ -133,10 +133,17 @@ describe('Composer send button', () => {
     expect(sendButton().disabled).toBe(false)
     rerender(<Composer host="box" pane={pane} agent="claude" working />)
     expect(sendButton().getAttribute('aria-label')).toBe('Queue follow-up')
+    const button = sendButton()
+    const icon = button.firstElementChild!
     await user.clear(box())
     expect(sendButton().getAttribute('aria-label')).toBe('Stop')
+    // the same button turns into Stop: its colour fades over and only the icon is swapped, with a fade
+    expect(sendButton()).toBe(button)
+    expect(button.firstElementChild).not.toBe(icon)
+    expect(button.firstElementChild!.className).toContain('animate-fade-in')
     await user.type(box(), '!ls -la')
     expect(sendButton().getAttribute('aria-label')).toBe('Run command')
+    expect(sendButton()).toBe(button)
     expect(screen.getByText(/Shell command/)).toBeTruthy()
   })
 

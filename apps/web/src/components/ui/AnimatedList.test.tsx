@@ -24,6 +24,43 @@ test('an item that goes fades first, then leaves', async () => {
   expect(container.querySelector('[data-key="b"]')).not.toBeNull()
 })
 
+test('an item that goes fades where it was, not in the last cell', async () => {
+  const keys = (c: HTMLElement) => [...c.querySelectorAll('[data-key]')].map((el) => el.getAttribute('data-key'))
+  const { container, rerender } = render(<AnimatedList items={items('a', 'b', 'c', 'd')} />)
+  rerender(<AnimatedList items={items('a', 'd')} />)
+  expect(keys(container)).toEqual(['a', 'b', 'c', 'd'])
+  expect(container.querySelector('[data-key="b"]')!.className).toContain('leave')
+  expect(container.querySelector('[data-key="c"]')!.className).toContain('leave')
+  // one added meanwhile goes after the ones still there
+  rerender(<AnimatedList items={items('a', 'd', 'e')} />)
+  expect(keys(container)).toEqual(['a', 'b', 'c', 'd', 'e'])
+  await sleep(LEAVE_MS + 20)
+  expect(keys(container)).toEqual(['a', 'd', 'e'])
+})
+
+test('the first batch comes in one row after another; later arrivals come at once', () => {
+  const { container, rerender } = render(<AnimatedList items={items('a', 'b', 'c')} />)
+  const row = (k: string) => container.querySelector(`[data-key="${k}"]`) as HTMLElement
+  for (const [k, i] of [['a', 0], ['b', 1], ['c', 2]] as const) {
+    expect(row(k).className).toContain('staggered')
+    expect(row(k).style.getPropertyValue('--i')).toBe(String(i))
+  }
+  // a refresh with the same items leaves the rows as they are, mid-rise or not
+  rerender(<AnimatedList items={items('a', 'b', 'c')} />)
+  expect(row('a').className).toContain('animate-slide-up')
+  rerender(<AnimatedList items={items('a', 'b', 'c', 'd')} />)
+  expect(row('d').className).toContain('animate-slide-up')
+  expect(row('d').className).not.toContain('staggered')
+  expect(row('d').style.getPropertyValue('--i')).toBe('')
+  expect(row('a').className).not.toContain('animate-slide-up')
+})
+
+test('a list can name the way its items arrive', () => {
+  const { container } = render(<AnimatedList items={items('a')} enter="animate-toast-in" />)
+  expect(container.querySelector('[data-key="a"]')!.className).toContain('animate-toast-in')
+  expect(container.querySelector('[data-key="a"]')!.className).not.toContain('animate-slide-up')
+})
+
 test('an item that comes straight back is not shown twice', async () => {
   const { container, rerender } = render(<AnimatedList items={items('a', 'b')} />)
   rerender(<AnimatedList items={items('b')} />)

@@ -227,6 +227,53 @@ describe('ChatView', () => {
     expect(screen.getByText('done while you were away')).toBeTruthy()
   })
 
+  test('rows added once the conversation is on screen rise in; the first batch, earlier messages and a confirmed bubble hold still', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    render(view())
+    const first = [item.user('first question'), item.text('first reply'), item.end()]
+    load(first)
+    await flush()
+    const rises = (text: string) => !!screen.getByText(text).closest('.animate-slide-up')
+    expect(rises('first question')).toBe(false)
+    expect(rises('first reply')).toBe(false)
+    // typed at the keyboard: new to this screen
+    act(() => emit({ t: 'chat.append', key: 'box:%1', items: [item.user('typed in tmux'), item.text('second reply')] }))
+    expect(rises('typed in tmux')).toBe(true)
+    expect(rises('second reply')).toBe(true)
+    expect(rises('first question')).toBe(false)
+    // older messages joining at the top were there before you looked
+    act(() => emit({ t: 'chat.more', key: 'box:%1', items: [{ ...item.user('older'), seq: 0 }], hasMore: false }))
+    expect(rises('older')).toBe(false)
+    // sent from here: the bubble rises, and the message that takes its place doesn't move
+    const at = Date.now()
+    act(() => patchChat('box:%1', () => ({ pending: [{ id: 'p1', text: 'from here', status: 'sent', at }] })))
+    expect(rises('from here')).toBe(true)
+    act(() => {
+      emit({ t: 'chat.info', key: 'box:%1', info: chatInfo({ sends: [{ id: 'p1', text: 'from here', at, state: 'delivered' }] }) })
+      emit({ t: 'chat.append', key: 'box:%1', items: [item.user('from here')] })
+    })
+    expect(screen.getAllByText('from here')).toHaveLength(1)
+    expect(rises('from here')).toBe(false)
+  })
+
+  test('Jump to latest is always there: hidden and inert at the bottom, shown once you read back', async () => {
+    useStore.setState({ connected: true, hosts: [host('box')] })
+    const { container } = render(view())
+    load(longConversation(5))
+    await flush()
+    const jump = container.querySelector('[aria-label="Jump to latest"]') as HTMLElement
+    expect(jump.hasAttribute('inert')).toBe(true)
+    expect(jump.className).toContain('opacity-0')
+    const el = container.querySelector('.overflow-y-auto') as HTMLElement
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: 5000 })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: 800 })
+    Object.defineProperty(el, 'scrollTop', { configurable: true, value: 1000 })
+    act(() => void el.dispatchEvent(new Event('scroll')))
+    expect(jump.hasAttribute('inert')).toBe(false)
+    expect(jump.className).toContain('opacity-100')
+    expect(container.querySelector('[aria-label="Jump to latest"]')).toBe(jump)
+  })
+
   test('coming back after a while jumps to the latest message', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     const { container } = render(view())
@@ -306,6 +353,7 @@ describe('opened while the machine reconnects', () => {
     act(() => emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [item.user('run the tests')], hasMore: false }))
     await flush()
     expect(screen.getByText('Reconnecting to box…')).toBeTruthy()
+    expect(screen.getByText('Reconnecting to box…').className).toContain('animate-fade-in')
     expect(screen.queryByText(/is offline/)).toBeNull()
     expect(screen.getByText('Bash command: npm test')).toBeTruthy()
     const yes = () => screen.getByText('Yes').closest('button')!
@@ -344,6 +392,7 @@ describe('opened while the machine reconnects', () => {
     act(() => emit({ t: 'chat.reset', key: 'box:%1', info: chatInfo(), items: [], hasMore: false }))
     await flush()
     expect(screen.queryByText('Bash command: npm test')).toBeNull()
-    expect(screen.getByRole('textbox', { name: /Message/ })).toBeTruthy()
+    // the composer fades back into the card's place
+    expect(screen.getByRole('textbox', { name: /Message/ }).closest('.animate-fade-in')).not.toBeNull()
   })
 })
