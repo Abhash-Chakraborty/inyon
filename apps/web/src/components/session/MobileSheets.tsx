@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { CircleX, Copy, GitFork, History, LogOut, Shrink, RadioTower, RotateCcw, Sparkles, Target, Trash2 } from 'lucide-react'
+import { CircleX, Copy, GitFork, History, Link2, LogOut, Plug, Shrink, RadioTower, RotateCcw, RotateCw, Sparkles, Target, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
@@ -11,12 +11,14 @@ import { FilesTab } from './Workspace.tsx'
 import { GoalSheet, modeMatches } from './ComposerControls.tsx'
 import { currentModelId, type SessionModel } from './useSession.ts'
 import { confirmAction } from '../Confirm.tsx'
+import { ProvidersSheet } from '../ProvidersSheet.tsx'
 import { paneHref } from '../../lib/overview.ts'
 
-const EFFORT_SHORT: Record<string, string> = { minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
+const EFFORT_SHORT: Record<string, string> = { default: 'Default', none: 'None', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
 
 export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boolean; onClose: () => void }) {
   const [goalOpen, setGoalOpen] = useState(false)
+  const [providers, setProviders] = useState(false)
   const nav = useNavigate()
   const { def, status, info, agent, actions } = s
   if (!def) return null
@@ -37,7 +39,7 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
           )}
           {!asking && (
           <div className="min-w-0 space-y-5">
-          {def.models.length > 0 && (
+          {(def.models.length > 0 || agent === 'opencode') && (
             <div>
               <Label>Model</Label>
               <div className="grid grid-cols-2 gap-2">
@@ -53,17 +55,28 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
                   </button>
                 ))}
               </div>
+              {agent === 'opencode' && (
+                <button type="button" onClick={() => setProviders(true)} className="mt-2 inline-flex h-9 items-center gap-1.5 rounded-full px-2.5 text-[13px] text-fg-2 hover:bg-hover hover:text-fg">
+                  <Plug className="size-3.5" /> Connect a provider…
+                </button>
+              )}
             </div>
           )}
           {s.efforts.length > 0 && (
             <div>
               <Label>Reasoning effort</Label>
-              <Segmented full value={status?.effort ?? ''} onChange={(v) => actions.setEffort(v)} options={s.efforts.map((e) => ({ v: e, label: EFFORT_SHORT[e] ?? e }))} />
+              {/* OpenCode runs a model without a variant unless one is picked */}
+              <Segmented
+                full
+                value={status?.effort ?? (agent === 'opencode' ? 'default' : '')}
+                onChange={(v) => actions.setEffort(v)}
+                options={[...(agent === 'opencode' ? ['default'] : []), ...s.efforts].map((e) => ({ v: e, label: EFFORT_SHORT[e] ?? e }))}
+              />
             </div>
           )}
           {def.modes.length > 0 && (
             <div>
-              <Label>{agent === 'opencode' ? 'Agent mode' : 'Permission mode'}</Label>
+              <Label>{agent === 'opencode' ? 'Agent' : 'Permission mode'}</Label>
               <div className="flex flex-wrap gap-1.5">
                 {def.modes.map((m) => (
                   <button
@@ -119,6 +132,8 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
             {[
               def.set.compact && { label: 'Compact', icon: Shrink, on: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { label: agent === 'opencode' ? 'Undo' : 'Rewind', icon: RotateCcw, on: actions.rewind },
+              agent === 'opencode' && { label: 'Redo', icon: RotateCw, on: actions.redo },
+              agent === 'opencode' && { label: info?.share ? 'Unshare' : 'Share', icon: Link2, on: () => actions.share(!info?.share) },
               def.conversations?.length && { label: 'History', icon: History, on: () => (onClose(), openMenu('conversations')) },
               actions.canFork && s.ref && { label: 'Fork', icon: GitFork, on: () => (onClose(), actions.fork((p) => nav(paneHref(s.ref!.host.config.id, p)))) },
               { label: 'Copy ID', icon: Copy, on: actions.copyId },
@@ -140,6 +155,9 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
         </div>
       </Sheet>
       <GoalSheet key={String(goalOpen)} s={s} open={goalOpen} onClose={() => setGoalOpen(false)} />
+      {agent === 'opencode' && s.ref && (
+        <ProvidersSheet hostId={s.ref.host.config.id} hostName={s.ref.host.config.name} pane={s.ref.pane.id} open={providers} onClose={() => setProviders(false)} />
+      )}
     </>
   )
 }

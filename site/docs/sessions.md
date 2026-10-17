@@ -62,7 +62,7 @@ Codex takes a message two ways while it works, and from 0.17.6 a switch next to 
 
 Type `/` for the agent's commands, skills and plugins, fetched from the machine each time, with where each comes from (project, user, plugin). Keep typing to filter, then `↑` `↓` and `Enter` or `Tab` to pick.
 
-A few commands open Inyon's own controls instead of being typed: `/model`, `/models`, `/effort`, for OpenCode `/agents`, and the agent's resume command, which opens [Past conversations](#past-conversations). Commands that only change a setting (model, effort, mode, goal…) don't clutter the chat. In Codex, `$` lists skills.
+A few commands open Inyon's own controls instead of being typed: `/model`, `/models`, `/effort`, for OpenCode `/agents`, `/variants` and `/connect` (its providers), and the agent's resume command, which opens [Past conversations](#past-conversations). Commands that only change a setting (model, effort, mode, goal…) don't clutter the chat. In Codex, `$` lists skills.
 
 ### Files with @
 

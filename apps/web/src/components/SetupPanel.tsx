@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { Check, Copy, Download, ExternalLink, LogIn, RefreshCw, TriangleAlert } from 'lucide-react'
+import { Check, Copy, Download, ExternalLink, LogIn, Plug, RefreshCw, TriangleAlert } from 'lucide-react'
 import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type SetupReport } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
@@ -9,6 +9,7 @@ import { paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Toggle, Waiting } from './ui/primitives.tsx'
 import { SignInSheet } from './SignInSheet.tsx'
+import { ProvidersSheet } from './ProvidersSheet.tsx'
 import { copyText } from '../lib/clipboard.ts'
 
 function CopyLine({ cmd }: { cmd: string }) {
@@ -66,6 +67,7 @@ export function SetupPanel({ host }: { host: HostState }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [failure, setFailure] = useState<Failure | null>(null)
   const [signIn, setSignIn] = useState<AgentKind | null>(null)
+  const [providers, setProviders] = useState(false)
   const nav = useNavigate()
   const id = host.config.id
 
@@ -148,7 +150,9 @@ export function SetupPanel({ host }: { host: HostState }) {
             const install = `agent:${a.kind}`
             const update = `update:${a.kind}`
             const working = busy === install ? 'Installing…' : busy === update ? 'Updating…' : null
-            const state = !a.installed ? 'Not installed' : [short(a.version), a.latest && !a.outdated && 'up to date', a.signedIn ? 'signed in' : 'not signed in'].filter(Boolean).join(' · ')
+            // OpenCode signs in per provider; its free models need none
+            const account = a.kind === 'opencode' ? (a.providers?.length ? a.providers.join(', ') : 'free models only') : a.signedIn ? 'signed in' : 'not signed in'
+            const state = !a.installed ? 'Not installed' : [short(a.version), a.latest && !a.outdated && 'up to date', account].filter(Boolean).join(' · ')
             const more = { docs: def.install.docs }
             return (
               <div key={a.kind} className="px-4 py-3">
@@ -175,7 +179,12 @@ export function SetupPanel({ host }: { host: HostState }) {
                         <RefreshCw className="size-3.5" /> Update
                       </Button>
                     )}
-                    {a.installed && !a.signedIn && (
+                    {a.installed && a.kind === 'opencode' && (
+                      <Button size="sm" variant={a.providers?.length ? 'secondary' : 'primary'} onClick={() => setProviders(true)}>
+                        <Plug className="size-3.5" /> Providers
+                      </Button>
+                    )}
+                    {a.installed && a.kind !== 'opencode' && !a.signedIn && (
                       <Button size="sm" variant="primary" onClick={() => setSignIn(a.kind)}>
                         <LogIn className="size-3.5" /> Sign in
                       </Button>
@@ -190,10 +199,11 @@ export function SetupPanel({ host }: { host: HostState }) {
             )
           })}
         </div>
-        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer; Update runs its own updater, or npm when it came from npm. Sign in runs the agent's sign-in on that machine and walks you through it here.</p>
+        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer; Update runs its own updater, or npm when it came from npm. Sign in runs the agent's sign-in on that machine and walks you through it here. Providers connects and disconnects OpenCode's model providers the same way.</p>
       </section>
 
       <SignInSheet hostId={id} hostName={host.config.name} agent={signIn} onClose={() => (setSignIn(null), load())} />
+      <ProvidersSheet hostId={id} hostName={host.config.name} open={providers} onClose={() => (setProviders(false), load())} />
     </div>
   )
 }

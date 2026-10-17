@@ -139,16 +139,20 @@ export async function ocdbShape(host: Host, session: string): Promise<{ ids: Set
   return { ids: new Set(ids.map((r) => r.id)), revert }
 }
 
-export async function ocdbSessionInfo(host: Host, session: string): Promise<{ title?: string; cost?: number; additions?: number; deletions?: number; files?: number } | undefined> {
-  if (!SESSION_ID.test(session)) return undefined
-  const [r] = await ocdbQuery(host, jsonRows(['title', 'cost', 'summary_additions', 'summary_deletions', 'summary_files'], `select title, cost, summary_additions, summary_deletions, summary_files from session where id = ${quote(session)}`))
-  return r ? { title: r.title, cost: r.cost, additions: r.summary_additions ?? undefined, deletions: r.summary_deletions ?? undefined, files: r.summary_files ?? undefined } : undefined
+/** What the session row says about the conversation as a whole: its title, cost, lines changed and share link. */
+export interface OcdbSessionInfo {
+  title?: string
+  cost?: number
+  additions?: number
+  deletions?: number
+  files?: number
+  share?: string
 }
 
-export async function ocdbTodos(host: Host, session: string): Promise<{ content: string; status: string }[]> {
-  if (!SESSION_ID.test(session)) return []
-  const rows: { content: string; status: string; position: number }[] = await ocdbQuery(host, jsonRows(['content', 'status', 'position'], `select content, status, position from todo where session_id = ${quote(session)} order by position`))
-  return rows.sort((a, b) => a.position - b.position).map(({ content, status }) => ({ content, status }))
+export async function ocdbSessionInfo(host: Host, session: string): Promise<OcdbSessionInfo | undefined> {
+  if (!SESSION_ID.test(session)) return undefined
+  const [r] = await ocdbQuery(host, jsonRows(['title', 'cost', 'summary_additions', 'summary_deletions', 'summary_files', 'share_url'], `select title, cost, summary_additions, summary_deletions, summary_files, share_url from session where id = ${quote(session)}`))
+  return r ? { title: r.title ?? undefined, cost: typeof r.cost === 'number' ? r.cost : undefined, additions: r.summary_additions ?? undefined, deletions: r.summary_deletions ?? undefined, files: r.summary_files ?? undefined, share: r.share_url ?? undefined } : undefined
 }
 
 /** Keeps a conversation's rows by id and rebuilds the API-shaped list after each merge. */

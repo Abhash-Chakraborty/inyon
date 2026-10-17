@@ -74,6 +74,8 @@ For Claude's plan limits, the hub runs a short script on the machine that reads 
 
 From 0.17 the **Files** tab and **Changes → Working tree** read the session's folder on the machine while you have them open: a folder listing, one file, or `git status` and one file's diff. Nothing is kept on the hub or the phone. **Commit all** and **Push** run only when you press them, as your user, with git's own hooks and signing.
 
+From 0.17.6, OpenCode's providers are OpenCode's own business. Connecting one runs `opencode auth login -p <provider>` on that machine, in a tmux session of its own: a key you type in the app is typed into that command and goes nowhere else, is never logged, and Inyon never reads `auth.json`, where OpenCode keeps it. Listing providers runs `opencode auth list`, which prints names and kinds, never values; when no OpenCode session of Inyon's is running on the machine, it also starts `opencode serve` on `127.0.0.1` for a few seconds in an empty folder to read the provider catalogue, and stops it. Disconnecting runs `opencode auth logout`.
+
 ## Downloads
 
 Every release ships a `SHA256SUMS` file, and from 0.14 a minisign signature of it, `SHA256SUMS.minisig`, made with Inyon's release key:

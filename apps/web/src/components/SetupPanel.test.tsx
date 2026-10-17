@@ -91,6 +91,26 @@ describe('the agents in the Setup tab', () => {
     expect(screen.getByRole('button', { name: 'Update to 0.50.0' })).toBeTruthy()
   })
 
+  test("OpenCode's row names its connected providers and opens them, instead of a sign-in", async () => {
+    const user = userEvent.setup()
+    api.setup.mockResolvedValue(report([{ kind: 'opencode', version: '1.19.3', latest: '1.19.3', outdated: false, signedIn: false, providers: ['Anthropic', 'Groq'] }]))
+    api.providers.mockResolvedValue({ updatedAt: 1, providers: [{ id: 'anthropic', name: 'Anthropic', connected: true, via: 'credential', type: 'api' }] })
+    await panel()
+    expect(screen.getByText('1.19.3 · up to date · Anthropic, Groq')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Providers' }))
+    await flush()
+    expect(api.providers.mock.calls).toEqual([['laptop', undefined]])
+    expect(screen.getByRole('dialog', { name: 'OpenCode providers' })).toBeTruthy()
+  })
+
+  test('an OpenCode with no provider connected says it runs the free models', async () => {
+    api.setup.mockResolvedValue(report([{ kind: 'opencode', version: '1.19.3', signedIn: true, providers: [] }]))
+    await panel()
+    expect(screen.getByText('1.19.3 · free models only')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Providers' })).toBeTruthy()
+  })
+
   test("the hub's refusal shows in place too", async () => {
     const user = userEvent.setup()
     api.setup.mockResolvedValue(report([{ kind: 'gemini', installed: false, version: undefined, signedIn: false }]))

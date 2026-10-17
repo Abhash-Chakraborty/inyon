@@ -10,14 +10,23 @@ type Draft = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'seq'> : n
  * exposes): /session, /session/{id}/message, /permission, /event. Inyon finds that server's port
  * from the process's listening sockets and reads the same session you see in tmux. (beta)
  */
-export function selectOpenCodeSession(sessions: any[], cwd?: string, explicitSession?: string): string | undefined {
+export function selectOpenCodeSession(sessions: any[], cwd?: string, explicitSession?: string, title?: string): string | undefined {
   const mine = sessions.filter((s) => typeof s?.id === 'string' && (!cwd || s.directory === cwd))
   if (explicitSession) return mine.find((s) => s.id === explicitSession)?.id
   const roots = mine.filter((s) => !s.parentID && !s.time?.archived)
+  // the terminal's title names the conversation on screen ("OC | <title>"): with several in the
+  // folder, that's the one (the newest when two share a title)
+  if (title) {
+    const named = roots.filter((s) => s.title === title).sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+    if (named.length) return named[0].id
+  }
   // There is no endpoint for the TUI's active session. Never guess another conversation.
   return roots.length === 1 ? roots[0].id : undefined
 }
-export async function opencodeEndpoint(host: Host, pid: number, cwd?: string): Promise<string | undefined> {
+/** The TUI puts the conversation's title in the terminal title: "OC | <title>". */
+export const titledSession = (paneTitle?: string) => paneTitle?.match(/^OC \| (.+)$/)?.[1]?.trim()
+
+export async function opencodeEndpoint(host: Host, pid: number, cwd?: string, paneTitle?: string): Promise<string | undefined> {
   if (!Number.isSafeInteger(pid) || pid <= 0) return undefined
   const [sockets, process, children] = await Promise.all([
     host.exec('ss -ltnpH 2>/dev/null'),
@@ -36,9 +45,10 @@ export async function opencodeEndpoint(host: Host, pid: number, cwd?: string): P
     if (healthy?.healthy !== true) continue
     const list = await opencodeGet(host, `${base}/session${cwd ? `?directory=${encodeURIComponent(cwd)}` : ''}`)
     if (!Array.isArray(list)) continue
-    const session = selectOpenCodeSession(list, cwd, explicit)
+    const session = selectOpenCodeSession(list, cwd, explicit, titledSession(paneTitle))
     if (session) return `opencode://127.0.0.1:${port}/${session}`
-    if (!list.length) return `opencode://127.0.0.1:${port}/`
+    // the home screen: no conversation yet (its own title says so), or none in this folder
+    if (!list.length || paneTitle?.trim() === 'OpenCode') return `opencode://127.0.0.1:${port}/`
   }
   return undefined
 }
@@ -47,6 +57,8 @@ export const parseEndpoint = (uri: string) => {
   const m = uri.match(/^opencode:\/\/(127\.0\.0\.1):(\d+)\/([^?#]*)$/)
   return m ? { base: `http://${m[1]}:${m[2]}`, session: m[3] } : undefined
 }
+/** OpenCode started with --port has an HTTP API; plain `opencode` is read from its database and driven through its screen */
+export const viaOpenCodeApi = (uri?: string) => !!uri?.startsWith('opencode://')
 
 export async function opencodeGet(host: Host, url: string): Promise<any> {
   try { return await opencodeRequest(host, url) } catch { return undefined }
@@ -122,9 +134,13 @@ export function opencodeItems(messages: any[], meta: TranscriptMeta): ChatItem[]
     if (info.error?.name === 'MessageAbortedError') out.push({ kind: 'notice', ...base, uuid: `${info.id}:error`, level: 'info', subtype: 'interrupted', text: 'Stopped' })
     else if (info.error) out.push({ kind: 'notice', ...base, uuid: `${info.id}:error`, level: 'error', subtype: 'api_error', text: String(info.error.data?.message ?? info.error.message ?? info.error.name ?? 'OpenCode request failed') })
     if (typeof info.cost === 'number') { cost += info.cost; hasCost = true }
-    if (info.tokens) {
-      const t = info.tokens
-      meta.stats.contextTokens = (t.input ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0) + (t.output ?? 0)
+    // the context is what the last reply with usage took, counting everything the TUI's sidebar
+    // counts: input, output, reasoning and both kinds of cache
+    const t = info.tokens
+    if (t && ((t.output ?? 0) > 0 || (t.total ?? 0) > 0)) {
+      meta.stats.contextTokens = typeof t.total === 'number' ? t.total : (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0) + (t.cache?.write ?? 0)
+      const at = info.time?.completed ?? info.time?.created
+      if (at) meta.stats.contextAt = at
     }
     for (const p of parts) {
       const pb = { ...base, uuid: p.id ?? `${info.id}:${out.length}`, msgId: info.id }

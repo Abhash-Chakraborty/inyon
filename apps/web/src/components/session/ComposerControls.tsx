@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { ChevronDown, Shield, Sparkles, Target } from 'lucide-react'
+import { ChevronDown, Plug, Shield, Sparkles, Target } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
 import { modelName } from '../../lib/format.ts'
-import { Button, Field, Menu, Sheet, inputClass } from '../ui/primitives.tsx'
+import { Button, Field, Menu, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
+import { ProvidersSheet } from '../ProvidersSheet.tsx'
 
-export const EFFORT_LABEL: Record<string, string> = { default: 'Default', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
+export const EFFORT_LABEL: Record<string, string> = { default: 'Default', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'X-high', max: 'Max', ultra: 'Ultra' }
 
 function Chip({ children, onClick, title, tone, open, innerRef }: { children: React.ReactNode; onClick?: () => void; title?: string; tone?: 'goal'; open?: boolean; innerRef?: React.Ref<HTMLButtonElement> }) {
   return (
@@ -43,7 +44,19 @@ export function EffortBars({ level, levels }: { level?: string; levels: string[]
 /** Model, effort, permission mode and goal, in the composer where you use them. */
 export function ComposerControls({ s }: { s: SessionModel }) {
   const [goalOpen, setGoalOpen] = useState(false)
+  const [providers, setProviders] = useState(false)
   const { def, status, info, agent, actions } = s
+  // "/connect" typed in the box opens the providers sheet, as "/models" opens the model menu
+  useEffect(() => {
+    if (agent !== 'opencode') return
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<string>).detail !== 'providers') return
+      e.preventDefault()
+      setTimeout(() => setProviders(true))
+    }
+    window.addEventListener('inyon:open-menu', onOpen)
+    return () => window.removeEventListener('inyon:open-menu', onOpen)
+  }, [agent])
   if (!agent || !def) return null
   const modelId = currentModelId(def, status, info?.model)
   // a catalog id (OpenCode's "provider/model") reads better as its label, without the provider prefix
@@ -52,13 +65,18 @@ export function ComposerControls({ s }: { s: SessionModel }) {
   const mode = s.screen?.mode ?? s.ref?.pane.agent?.mode ?? info?.mode
   const goal = info?.goal
   const goalOn = !!goal && !goal.met
+  const modelItems: MenuItem[] = [
+    ...def.models.map((m) => ({ key: m.id, label: m.label, hint: m.note, selected: m.id === modelId, onSelect: () => actions.setModel(m.id) })),
+    // OpenCode's list is what its connected providers offer; one more provider adds to it
+    ...(agent === 'opencode' ? [{ key: 'connect', label: 'Connect a provider…', icon: <Plug className="size-4" />, separated: def.models.length > 0, onSelect: () => setProviders(true) }] : []),
+  ]
   return (
     <>
-      {def.models.length > 0 && (
+      {modelItems.length > 0 && (
         <Menu
           name="model"
           header="Model"
-          items={def.models.map((m) => ({ key: m.id, label: m.label, hint: m.note, selected: m.id === modelId, onSelect: () => actions.setModel(m.id) }))}
+          items={modelItems}
           trigger={({ toggle, ref, open }) => (
             <Chip innerRef={ref} onClick={toggle} open={open} title="Model">
               <span className="truncate">{modelLabel}</span>
@@ -93,13 +111,13 @@ export function ComposerControls({ s }: { s: SessionModel }) {
       {def.modes.length > 0 && (
         <Menu
           name="mode"
-          header={agent === 'opencode' ? 'Agent mode' : 'Permission mode'}
+          header={agent === 'opencode' ? 'Agent' : 'Permission mode'}
           width={220}
           items={def.modes.map((m) => ({ key: m.id, label: m.label, selected: modeMatches(mode, m.id, agent), onSelect: () => actions.setMode(m.id) }))}
           trigger={({ toggle, ref, open }) => (
-            <Chip innerRef={ref} onClick={toggle} open={open} title={`${agent === 'opencode' ? 'Agent mode' : 'Permission mode'}: ${modeLabel(mode, agent)}`}>
+            <Chip innerRef={ref} onClick={toggle} open={open} title={`${agent === 'opencode' ? 'Agent' : 'Permission mode'}: ${modeLabel(mode, agent, def.modes)}`}>
               <Shield className="size-3.5 shrink-0" />
-              <span className="hidden truncate @[460px]:inline">{modeLabel(mode, agent)}</span>
+              <span className="hidden truncate @[460px]:inline">{modeLabel(mode, agent, def.modes)}</span>
             </Chip>
           )}
         />
@@ -111,6 +129,9 @@ export function ComposerControls({ s }: { s: SessionModel }) {
         </Chip>
       )}
       <GoalSheet key={String(goalOpen)} s={s} open={goalOpen} onClose={() => setGoalOpen(false)} />
+      {agent === 'opencode' && s.ref && (
+        <ProvidersSheet hostId={s.ref.host.config.id} hostName={s.ref.host.config.name} pane={s.ref.pane.id} open={providers} onClose={() => setProviders(false)} />
+      )}
     </>
   )
 }
@@ -159,8 +180,13 @@ export function GoalSheet({ s, open, onClose }: { s: SessionModel; open: boolean
 /** Codex names its modes itself (permission presets); the others share Claude's names. */
 const OWN_MODES = new Set(['codex', 'copilot', 'opencode'])
 
-export function modeLabel(mode?: string, agent?: AgentKind) {
-  if (agent && OWN_MODES.has(agent)) return AGENTS[agent].modes.find((m) => m.id === (mode || 'default'))?.label ?? mode ?? 'Default'
+/** `modes` is the agent's own list when the machine gave one (OpenCode's agents, custom ones too). */
+export function modeLabel(mode?: string, agent?: AgentKind, modes?: { id: string; label: string }[]) {
+  if (agent && OWN_MODES.has(agent)) {
+    const list = modes ?? AGENTS[agent].modes
+    const id = mode || 'default'
+    return list.find((m) => m.id === id)?.label ?? (agent === 'opencode' && mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : mode ?? 'Default')
+  }
   if (!mode || /^(manual|default|normal)$/.test(mode)) return 'Ask each time'
   if (/accept/.test(mode)) return 'Accept edits'
   if (/plan/.test(mode)) return 'Plan'

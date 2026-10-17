@@ -5,6 +5,7 @@ import { HttpError, registry } from '../hosts/registry.ts'
 import { loadSettings, saveSettings } from '../config.ts'
 import { signedInTest } from '../agents/auth-sh.ts'
 import { compareVersions, latestAgentVersions } from './agent-latest.ts'
+import { parseAuthList } from './providers.ts'
 
 export const PATHS = 'export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done'
 
@@ -35,6 +36,8 @@ export interface SetupAgent {
   via?: InstalledVia
   /** an npm install that isn't global: the folder whose node_modules holds it, updated in place */
   prefix?: string
+  /** OpenCode: the providers it's connected to on the machine (a saved credential or an environment variable) */
+  providers?: string[]
 }
 
 export interface SetupReport {
@@ -92,6 +95,7 @@ echo "GIT $(git --version 2>/dev/null)"
 ${AGENT_KINDS.map((k) => `echo "VER ${k} $(${AGENTS[k].version} 2>/dev/null | head -1)"`).join('\n')}
 ${AGENT_KINDS.map((k) => `echo "BIN ${k} $(b=$(command -v ${binary(AGENTS[k])} 2>/dev/null) && { readlink -f "$b" 2>/dev/null || echo "$b"; })"`).join('\n')}
 echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\\n' ' ')"
+command -v opencode >/dev/null 2>&1 && echo "OCAUTH $(opencode auth list 2>/dev/null | base64 | tr -d '\\n')"
 ${authTests}
 `
   // the registry is asked while the machine runs the script, so the report isn't slower for it
@@ -139,6 +143,7 @@ ${authTests}
     const a: SetupAgent = { kind: k, installed: !!version, version: version || undefined, signedIn: auth }
     if (latest[k]) a.latest = latest[k]
     if (!version) return a
+    if (k === 'opencode') a.providers = connectedProviders(get('OCAUTH'))
     const where = installedVia(AGENTS[k], get(`BIN ${k}`), npmGlobals)
     a.via = where.via
     if (where.prefix) a.prefix = where.prefix
@@ -146,6 +151,18 @@ ${authTests}
     return a
   })
   return { os, pkg, sudo, checks, agents, keepSession }
+}
+
+/** The provider names `opencode auth list` (base64 in the report) says are connected, credentials first. */
+export function connectedProviders(encoded: string): string[] {
+  let text = ''
+  try {
+    text = encoded ? Buffer.from(encoded, 'base64').toString('utf8') : ''
+  } catch {
+    return []
+  }
+  const auth = parseAuthList(text)
+  return [...new Set([...auth.credentials.map((c) => c.name), ...auth.env.map((e) => e.name)])]
 }
 
 /** A global npm install into the user's own prefix when the global one isn't theirs to write. */

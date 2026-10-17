@@ -1,6 +1,7 @@
 import type { AgentCatalog, AgentModel } from '@inyon/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import { parseEndpoint } from './opencode.ts'
+import { noteProviderNames } from './opencode-models.ts'
 
 /** The CLI owns execution/auth; this adapter speaks its documented local server API.
  * https://opencode.ai/docs/server/ and packages/sdk/js/src/v2/gen/types.gen.ts
@@ -28,7 +29,8 @@ export async function opencodeRequest(host: Host, url: string, method = 'GET', b
   try { return JSON.parse(text) } catch { throw new Error(`OpenCode ${parsed.pathname} returned invalid JSON`) }
 }
 
-export type OpenCodeSelection = { model?: string; variant?: string; agent?: string; messageID?: string }
+/** What a prompt runs with, as the TUI's footer shows it: "provider/model", the variant, the agent. */
+export type OpenCodeSelection = { model?: string; variant?: string; agent?: string }
 export type OpenCodePermission = { permission: string; pattern: string; action: 'allow' | 'deny' | 'ask' }
 export function openCodeModel(id: string) {
   const slash = id.indexOf('/')
@@ -67,26 +69,36 @@ export class OpenCodeClient {
   }
   abort() { return this.request(this.sessionPath('/abort'), 'POST') }
   status() { return this.request('/session/status') }
+  /** the conversation itself: title, agent and model last used, tokens, cost, share link, what /undo reverted */
+  info() { return this.request(this.sessionPath()) }
+  messages() { return this.request(this.sessionPath('/message')) }
+  /** /undo: back to before `messageID` (its files too); /redo puts it back */
+  revert(messageID: string) { return this.request(this.sessionPath('/revert'), 'POST', { messageID }, 60) }
+  unrevert() { return this.request(this.sessionPath('/unrevert'), 'POST', undefined, 60) }
+  share() { return this.request(this.sessionPath('/share'), 'POST', undefined, 60) }
+  unshare() { return this.request(this.sessionPath('/share'), 'DELETE', undefined, 60) }
+  summarize(model: string) { return this.request(this.sessionPath('/summarize'), 'POST', openCodeModel(model), 300) }
   permissions() { return this.request('/permission') }
   reply(id: string, reply: 'once' | 'always' | 'reject') { return this.request(`/permission/${encodeURIComponent(id)}/reply`, 'POST', { reply }) }
   setPermissions(permission: OpenCodePermission[]) { return this.request(this.sessionPath(), 'PATCH', { permission }) }
-  authorize(provider: string, method: number, inputs?: Record<string, string>) {
-    return this.request(`/provider/${encodeURIComponent(provider)}/oauth/authorize`, 'POST', { method, inputs })
-  }
-  oauthCallback(provider: string, method: number, code?: string) {
-    return this.request(`/provider/${encodeURIComponent(provider)}/oauth/callback`, 'POST', { method, code }, 120)
-  }
-  setApiKey(provider: string, key: string) {
-    if (!key.trim()) throw new Error('API key is required')
-    return this.request(`/auth/${encodeURIComponent(provider)}`, 'PUT', { type: 'api', key })
-  }
+  /** questions the agent asked (its question tool), one request per tool call */
+  questions() { return this.request('/question') }
+  /** one array of chosen labels (or a typed answer) per question, in order */
+  replyQuestion(id: string, answers: string[][]) { return this.request(`/question/${encodeURIComponent(id)}/reply`, 'POST', { answers }) }
+  rejectQuestion(id: string) { return this.request(`/question/${encodeURIComponent(id)}/reject`, 'POST') }
+  /** shows a session in the terminal, after one was created here */
+  selectSession(sessionID: string) { return this.request('/tui/select-session', 'POST', { sessionID }) }
+  /** drops the server's cached state for the folder (providers, credentials): read again on the next request; the terminal carries on */
+  dispose() { return this.request('/instance/dispose', 'POST') }
 }
 
 /** Never return raw provider objects: they include provider.key/options/headers. */
 export function openCodeCatalogFromProviders(payload: any): AgentCatalog {
   const connected = new Set<string>(Array.isArray(payload?.connected) ? payload.connected : [])
   const models: AgentModel[] = []
-  for (const provider of Array.isArray(payload?.all) ? payload.all : []) {
+  const all = Array.isArray(payload?.all) ? payload.all : []
+  noteProviderNames(all.filter((p: any) => typeof p?.id === 'string' && typeof p?.name === 'string'))
+  for (const provider of all) {
     if (typeof provider.id !== 'string' || !connected.has(provider.id)) continue
     for (const [key, value] of Object.entries(provider.models ?? {})) {
       const model = value as any
@@ -100,18 +112,35 @@ export function openCodeCatalogFromProviders(payload: any): AgentCatalog {
   }
   return { models, source: 'cli', updatedAt: Date.now() }
 }
-export async function opencodeCatalog(host: Host, uri: string, directory?: string): Promise<AgentCatalog> {
-  return openCodeCatalogFromProviders(await new OpenCodeClient(host, uri, directory).request('/provider'))
+
+/** The agents a session can switch to: the primary ones, custom ones included; never the hidden internal ones. */
+export function openCodeAgentsFrom(payload: any): { id: string; label: string }[] {
+  return (Array.isArray(payload) ? payload : [])
+    .filter((a: any) => typeof a?.name === 'string' && !a.hidden && a.mode !== 'subagent')
+    .map((a: any) => ({ id: a.name, label: a.name.charAt(0).toUpperCase() + a.name.slice(1) }))
 }
-export async function opencodeCapabilities(host: Host, uri: string, directory?: string) {
+
+/** The models of every connected provider, and the agents, from a session's own server. */
+export async function opencodeCatalog(host: Host, uri: string, directory?: string): Promise<AgentCatalog> {
   const client = new OpenCodeClient(host, uri, directory)
-  const [providers, auth, agents, commands] = await Promise.all([client.request('/provider'), client.request('/provider/auth'), client.request('/agent'), client.request('/command')])
-  return {
-    catalog: openCodeCatalogFromProviders(providers),
-    providers: (providers.all ?? []).map((p: any) => ({ id: p.id, name: p.name, connected: (providers.connected ?? []).includes(p.id) })),
-    authMethods: auth,
-    agents: (Array.isArray(agents) ? agents : []).filter((a: any) => !a.hidden && a.mode !== 'subagent').map((a: any) => ({ id: a.name, label: a.name, description: a.description, permission: a.permission })),
-    commands: (Array.isArray(commands) ? commands : []).map((c: any) => ({ name: `/${c.name}`, description: c.description ?? '', source: c.source === 'mcp' ? 'plugin' : 'project' })),
-    supportsGoal: false,
-  }
+  const [providers, agents] = await Promise.all([client.request('/provider'), client.request('/agent').catch(() => [])])
+  const modes = openCodeAgentsFrom(agents)
+  const catalog = { ...openCodeCatalogFromProviders(providers), ...(modes.length ? { modes } : {}) }
+  recent.set(client.base, { at: Date.now(), catalog })
+  return catalog
+}
+
+const recent = new Map<string, { at: number; catalog: AgentCatalog }>()
+
+/** The same, kept for a minute: the footer is matched against it on every screen read. */
+export async function opencodeCatalogCached(host: Host, uri: string, directory?: string): Promise<AgentCatalog> {
+  const ep = parseEndpoint(uri)
+  const hit = ep && recent.get(ep.base)
+  if (hit && Date.now() - hit.at < 60_000) return hit.catalog
+  return opencodeCatalog(host, uri, directory)
+}
+
+/** After a provider was connected or disconnected on the machine: ask again next time. */
+export function forgetOpenCodeCatalogs() {
+  recent.clear()
 }

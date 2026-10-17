@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, Sparkles, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
+  ChevronLeft, Layers, Link2, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, RotateCw, Shrink, Sparkles, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
 } from 'lucide-react'
 import { isBusy } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
@@ -203,6 +203,8 @@ export function SessionHeader({
               def.set.rc && !info?.rc && { key: 'rc', label: 'Turn on Remote Control', icon: <RadioTower className="size-4" />, onSelect: () => actions.rc(true) },
               def.set.compact && { key: 'compact', label: 'Compact context', icon: <Shrink className="size-4" />, onSelect: actions.compact },
               (agent === 'claude' || agent === 'antigravity' || agent === 'codex' || agent === 'opencode') && { key: 'rewind', label: agent === 'opencode' ? 'Undo last message…' : 'Rewind…', icon: <RotateCcw className="size-4" />, onSelect: actions.rewind },
+              agent === 'opencode' && { key: 'redo', label: 'Redo last undo', icon: <RotateCw className="size-4" />, onSelect: actions.redo },
+              agent === 'opencode' && { key: 'share', label: info?.share ? 'Stop sharing' : 'Share link…', icon: <Link2 className="size-4" />, onSelect: () => actions.share(!info?.share) },
               switchable && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => setConvos(true) },
               actions.canFork && ref && { key: 'fork', label: 'Fork conversation', icon: <GitFork className="size-4" />, onSelect: () => actions.fork((p) => nav(paneHref(ref.host.config.id, p))) },
               { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, onSelect: () => setRenaming(true) },

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, ArrowRight, ArrowUp, Check, Copy, CornerDownLeft, ExternalLink, Send } from 'lucide-react'
-import { promptKey, type ScreenPrompt } from '@inyon/protocol'
+import { CONFIRM_OPTION, promptKey, type ScreenPrompt } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
@@ -292,25 +292,39 @@ export function PromptCard({ prompt, host, pane, disabled }: { prompt: ScreenPro
           {freeText !== null ? 'Back' : 'Cancel'}
         </button>
         <div className="ml-auto flex items-center">
-          {/* raw keys only when the choices couldn't be read as buttons, or for multi-select steps */}
-          {(!prompt.options.length || prompt.multi) && [
-            { k: 'Up', icon: ArrowUp, label: 'Up' },
-            { k: 'Down', icon: ArrowDown, label: 'Down' },
-            { k: 'Enter', icon: CornerDownLeft, label: 'Enter' },
-          ].map(({ k, icon: Icon, label }) => (
-            <button key={k} type="button" aria-label={label} title={label} disabled={disabled} onClick={() => keys([k])} className="press relative flex size-9 items-center justify-center rounded-full text-fg-3 after:absolute after:-inset-0.5 hover:bg-hover hover:text-fg disabled:opacity-50">
-              <Icon className="size-4" />
-            </button>
-          ))}
-          {prompt.multi && (
+          {prompt.confirm ? (
+            // the choices above are toggled one by one; this sends them (OpenCode's questions)
             <button
               type="button"
-              disabled={disabled}
-              onClick={() => keys(['Right'])}
+              disabled={locked}
+              onClick={() => run('confirm', () => api.answer(host, pane, CONFIRM_OPTION, undefined, promptKey(prompt)))}
               className="press ml-1 inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
             >
-              Next <ArrowRight className="size-4" />
+              {prompt.confirm} <ArrowRight className="size-4" />
             </button>
+          ) : (
+            <>
+              {/* raw keys only when the choices couldn't be read as buttons, or for multi-select steps */}
+              {(!prompt.options.length || prompt.multi) && [
+                { k: 'Up', icon: ArrowUp, label: 'Up' },
+                { k: 'Down', icon: ArrowDown, label: 'Down' },
+                { k: 'Enter', icon: CornerDownLeft, label: 'Enter' },
+              ].map(({ k, icon: Icon, label }) => (
+                <button key={k} type="button" aria-label={label} title={label} disabled={disabled} onClick={() => keys([k])} className="press relative flex size-9 items-center justify-center rounded-full text-fg-3 after:absolute after:-inset-0.5 hover:bg-hover hover:text-fg disabled:opacity-50">
+                  <Icon className="size-4" />
+                </button>
+              ))}
+              {prompt.multi && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => keys(['Right'])}
+                  className="press ml-1 inline-flex h-9 items-center gap-1.5 rounded-full bg-accent px-4 text-sm font-medium text-accent-fg hover:opacity-90 disabled:opacity-50"
+                >
+                  Next <ArrowRight className="size-4" />
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
