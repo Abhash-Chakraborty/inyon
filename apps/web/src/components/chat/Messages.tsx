@@ -5,7 +5,7 @@ import {
   AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, File as FileIcon, Image as ImageIcon, Info, Layers, Lightbulb,
   Code as CodeIcon, Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@inyon/protocol'
+import { AGENTS, type AgentKind, type LiveItem } from '@inyon/protocol'
 import type { Part, Row } from '../../lib/chat.ts'
 import type { PendingMessage } from '../../lib/store.ts'
 import { clock, duration } from '../../lib/format.ts'
@@ -15,9 +15,9 @@ import { CopyButton, Markdown } from './Markdown.tsx'
 import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
 import { Fold, useFold } from '../ui/Fold.tsx'
 import { SpecialTool, ToolGroup, TurnSettled, useArrived } from './Tools.tsx'
+import { ChatAgent } from './agent.ts'
 
-/** Which agent is speaking (for avatars and spinners). */
-export const ChatAgent = createContext<AgentKind | undefined>(undefined)
+export { ChatAgent }
 /** Rewinds the conversation to just before a message, when the agent can (Codex). */
 export const ChatRewind = createContext<((text: string) => void) | undefined>(undefined)
 
@@ -340,8 +340,25 @@ export function NoticeRow({ row }: { row: Extract<Row, { type: 'notice' }> }) {
   )
 }
 
-export function WorkingIndicator({ activity, since }: { activity?: string; since?: number }) {
+/** A tick every second while `on`, so an elapsed time keeps counting. */
+function useTicking(on: boolean) {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!on) return
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [on])
+}
+
+/**
+ * `since`: when the turn started (unix ms), counted up every second. `output`: the last of what a
+ * running command has printed, shown as the line's detail (Codex).
+ */
+export function WorkingIndicator({ activity, since, output }: { activity?: string; since?: number; output?: string }) {
   const [verb, rest] = (activity ?? 'Working…').split(/ \((.*)\)$/)
+  useTicking(!!since && !rest)
+  const elapsed = since ? Math.max(0, Date.now() - since) : 0
+  const tail = output?.trimEnd().split('\n').pop()?.trim()
   return (
     <div className="animate-fade-in flex items-center gap-3 py-1">
       <div className="flex size-6 shrink-0 items-center justify-center">
@@ -351,9 +368,30 @@ export function WorkingIndicator({ activity, since }: { activity?: string; since
         <span className="font-medium text-accent-text">{verb}</span>
         {rest ? (
           <span className="text-fg-3"> {rest.replace(/\s*·\s*esc to interrupt/i, '')}</span>
-        ) : since ? (
-          <span className="text-fg-3"> {duration(Date.now() - since)}</span>
+        ) : since && elapsed >= 1000 ? (
+          <span className="text-fg-3 tabular-nums"> {duration(elapsed)}</span>
         ) : null}
+        {tail && <span className="ml-2 font-mono text-[12px] text-fg-3">{tail}</span>}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The reply as Codex writes it, above the working line: its thinking folded, the text and a plan
+ * as Markdown. It fades in once and then only grows; the finished message takes its place with the
+ * same text, so nothing moves when it lands.
+ */
+export function LiveTurn({ items }: { items: LiveItem[] }) {
+  const shown = items.filter((i) => i.kind !== 'output' && i.text.trim())
+  if (!shown.length) return null
+  return (
+    <div className="animate-fade-in flex gap-3" data-live>
+      <div className="mt-[2px] hidden size-6 shrink-0 items-center justify-center sm:flex">
+        <AgentMark />
+      </div>
+      <div className="min-w-0 flex-1">
+        {shown.map((i) => (i.kind === 'thinking' ? <Thinking key={i.id} text={i.text} /> : <Markdown key={i.id} text={i.text} className="my-2" />))}
       </div>
     </div>
   )

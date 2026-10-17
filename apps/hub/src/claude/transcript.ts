@@ -26,6 +26,8 @@ export interface TranscriptMeta {
   stats: SessionStats
   goal?: { condition: string; met: boolean; reason?: string; ts: string }
   rc?: { url: string; ts: string }
+  /** the turn under way, from the agent's own record (Codex: task_started) */
+  turn?: { id?: string; startedAt: number }
   queue: string[]
   tasks: Map<string, BackgroundTask>
   subagents: Map<string, SubagentInfo>

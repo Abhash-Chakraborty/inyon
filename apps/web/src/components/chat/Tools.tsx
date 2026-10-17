@@ -2,9 +2,10 @@ import { createContext, useContext, useState } from 'react'
 import { ChatActionsContext } from '../../lib/chatActions.ts'
 import clsx from 'clsx'
 import { AlertCircle, Check, ChevronRight, CircleDashed, ClipboardList, ExternalLink, ListTodo, Loader2, MessageCircleQuestion } from 'lucide-react'
-import type { BackgroundTask, SubagentInfo } from '@inyon/protocol'
+import { AGENTS, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
 import type { ToolCall } from '../../lib/chat.ts'
-import { summarize } from '../../lib/tools.ts'
+import { describeStep, summarize, type ScriptStep } from '../../lib/tools.ts'
+import { ChatAgent } from './agent.ts'
 import { duration, shortPath } from '../../lib/format.ts'
 import { useStore } from '../../lib/store.ts'
 import { Diff, useHunks } from './Diff.tsx'
@@ -174,6 +175,30 @@ function Details({ call }: { call: ToolCall }) {
       break
     case 'Read':
       return <Output text={r?.text ?? ''} />
+    case 'Script': {
+      // Codex ran several tools from one small script: each step, then the diffs and the output
+      const steps: ScriptStep[] = Array.isArray(i.steps) ? i.steps : []
+      return (
+        <>
+          {steps.length > 0 && (
+            <ol className="space-y-1.5 border-b border-line/70 px-3 py-2">
+              {steps.map((s, n) => (
+                <li key={n} className="flex items-start gap-2 text-[12.5px]">
+                  <span className="shrink-0 pt-px font-sans font-medium text-fg-3">{describeStep(s).verb}</span>
+                  {s.arg && <pre className="min-w-0 flex-1 whitespace-pre-wrap break-words font-mono leading-[1.55] text-fg-2">{s.tool === 'apply_patch' ? s.arg.split('\n').filter((l) => /^\*\*\* (Update|Add|Delete) File:/.test(l)).map((l) => l.replace(/^\*\*\* \w+ File: /, '')).join(', ') || 'a patch' : s.arg}</pre>}
+                </li>
+              ))}
+            </ol>
+          )}
+          {hunks.length > 0 && <Diff hunks={hunks} />}
+          {r && <Output text={r.text} label={r.isError ? 'Error' : 'Output'} />}
+          <details className="border-t border-line/70 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium text-fg-3">Script</summary>
+            <pre className="mt-1.5 max-h-72 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-[1.55] text-fg-2">{String(i.code ?? '')}</pre>
+          </details>
+        </>
+      )
+    }
     case 'Task':
     case 'Agent':
       return (
@@ -298,6 +323,7 @@ function Card({ icon, title, children, tone = 'default' }: { icon: React.ReactNo
 
 export function SpecialTool({ call, live }: { call: ToolCall; live: boolean }) {
   const i = call.input ?? {}
+  const agent = useContext(ChatAgent)
   if (call.name === 'ExitPlanMode') {
     const plan = call.result?.meta?.plan ?? i.plan ?? ''
     const status = call.result ? (call.result.isError ? 'Not approved' : 'Approved') : live ? 'Waiting for approval' : 'Proposed'
@@ -311,10 +337,11 @@ export function SpecialTool({ call, live }: { call: ToolCall; live: boolean }) {
     const answers = call.result?.meta?.answers ?? {}
     const qs: any[] = i.questions ?? []
     return (
-      <Card icon={<MessageCircleQuestion className="size-4 text-accent" />} title={call.result ? 'Questions answered' : 'Claude is asking'}>
+      <Card icon={<MessageCircleQuestion className="size-4 text-accent" />} title={call.result ? (qs.length === 1 ? 'Question answered' : 'Questions answered') : `${agent ? AGENTS[agent].name : 'The agent'} is asking`}>
         <div className="space-y-3">
           {qs.map((q, n) => (
             <div key={n}>
+              {q.header && q.header !== q.question && <div className="text-[12px] font-medium text-fg-3">{q.header}</div>}
               <div className="text-sm font-medium">{q.question}</div>
               {answers[q.question] ? (
                 <div className="mt-1 flex items-start gap-1.5 text-sm text-accent-text">

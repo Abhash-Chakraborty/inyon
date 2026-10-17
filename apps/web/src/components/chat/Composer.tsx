@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
-import { ArrowUp, Camera, FileText, Folder, Paperclip, RotateCw, Square, SquareTerminal, X } from 'lucide-react'
+import { ArrowUp, Camera, Clock3, FileText, Folder, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
@@ -122,6 +122,14 @@ export function Composer({
   const serverDraft = useStore((s) => s.chats[key]?.draft)
   const [text, setTextState] = useState(() => DRAFTS.get(key) ?? serverDraft?.text ?? '')
   const shellMode = !!agent && AGENTS[agent].shell && text.trimStart().startsWith('!')
+  // Codex takes a message two ways while it works: queued for after this turn (its default), or
+  // steered into the turn under way. The choice sits by the send button only then.
+  const [steer, setSteer] = useState(false)
+  const canSteer = agent === 'codex' && working && !shellMode
+  // each turn starts from the safe choice
+  useEffect(() => {
+    if (!working) setSteer(false)
+  }, [working])
   const [focused, setFocused] = useState(false)
   const [origin, setOrigin] = useState<'app' | 'terminal' | null>(null)
   /**
@@ -450,9 +458,10 @@ export function Composer({
       }),
     )
     setPop(null)
+    const steering = canSteer && steer
     try {
       // the same id on every try: the hub submits it once however many times it arrives
-      await withRetries(() => api.send(host, pane, msg, id))
+      await withRetries(() => api.send(host, pane, msg, id, steering || undefined))
       // the tap on Send was the tick; the agent's reply is the confirmation
       patchChat(key, (c) => ({ pending: c.pending.map((p) => (p.id === id ? { ...p, status: 'sent' } : p)) }))
     } catch (e) {
@@ -647,7 +656,7 @@ export function Composer({
               send()
             }
           }}
-          placeholder={working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
+          placeholder={canSteer && steer ? `Steer ${agentName} now…` : working ? `Queue a message for ${agentName}…` : `Message ${agentName}…`}
           aria-label={`Message ${agentName}`}
           className={clsx('block max-h-[40vh] w-full resize-none bg-transparent px-4 pb-1 text-[15.5px] leading-[1.5] text-fg placeholder:text-fg-3', shellMode ? 'pt-1' : 'pt-3')}
         />
@@ -665,6 +674,24 @@ export function Composer({
           <span className={clsx('truncate pr-1 text-[12px] text-fg-3', !controls && 'ml-auto')}>
             {uploading ? 'Uploading…' : failed ? 'Upload failed' : text && origin === 'terminal' ? 'From the terminal' : ''}
           </span>
+          {canSteer && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={steer}
+              aria-label={steer ? 'Steer now: Codex reads the message in the middle of this turn. Switch to queue it for after the turn' : 'Queue: Codex reads the message after this turn. Switch to steer it in now'}
+              title={steer ? 'Steer now (Enter in the terminal): Codex reads it in the middle of this turn' : 'Queue (Tab in the terminal): Codex reads it after this turn'}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setSteer((v) => !v)}
+              className={clsx(
+                'relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2.5 font-mono text-[12px] transition-colors after:absolute after:-inset-1 hover:bg-hover hover:text-fg',
+                steer ? 'text-accent-text' : 'text-fg-2',
+              )}
+            >
+              {steer ? <Zap className="size-3.5" /> : <Clock3 className="size-3.5" />}
+              {steer ? 'Steer now' : 'Queue'}
+            </button>
+          )}
           {/* one button for Send and Stop: its colour fades between the two and the icon swaps with a fade */}
           <button
             type="button"
@@ -675,8 +702,8 @@ export function Composer({
               'press flex size-9 shrink-0 items-center justify-center rounded-full',
               showStop ? 'bg-fg text-bg hover:opacity-85 disabled:opacity-50' : canSend ? 'bg-accent text-accent-fg hover:opacity-90' : 'bg-sunken text-fg-3',
             )}
-            aria-label={showStop ? 'Stop' : shellMode ? 'Run command' : working ? 'Queue follow-up' : 'Send'}
-            title={showStop ? 'Stop (Esc in the terminal)' : shellMode ? 'Run shell command' : working ? 'Queue a follow-up' : 'Send'}
+            aria-label={showStop ? 'Stop' : shellMode ? 'Run command' : canSteer && steer ? 'Steer now' : working ? 'Queue follow-up' : 'Send'}
+            title={showStop ? 'Stop (Esc in the terminal)' : shellMode ? 'Run shell command' : canSteer && steer ? 'Steer Codex now' : working ? 'Queue a follow-up' : 'Send'}
           >
             <span key={showStop ? 'stop' : 'send'} className="animate-fade-in flex">
               {showStop ? <Square className="size-3 fill-current" /> : <ArrowUp className="size-[17px]" strokeWidth={2.4} />}

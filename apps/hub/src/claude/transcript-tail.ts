@@ -108,6 +108,23 @@ export function metaCommand(path: string, to: number, slim: boolean, from = 0) {
 }
 
 /**
+ * The Codex rollout lines that carry the conversation as a whole: its folder and version
+ * (session_meta), model and permissions (turn_context, thread_settings_applied), usage
+ * (token_count), turns, the goal, compactions, each file change (for the line counts) and the
+ * sub-agents. Everything that was said stays behind.
+ */
+const CODEX_META_LINES = [
+  '"type":"session_meta"', '"type":"turn_context"', '"thread_settings_applied"', '"token_count"', '"task_started"', '"task_complete"',
+  '"turn_aborted"', '"thread_goal_updated"', '"type":"compacted"', 'compaction"', '"type":"FileChange"', '"type":"SubAgentActivity"',
+].join('|')
+
+/** The CODEX_META_LINES lines among bytes `from` up to `to` of a rollout file. */
+export function codexMetaCommand(path: string, to: number, slim: boolean, from = 0) {
+  const part = from > 0 ? `tail -c +${from + 1} ${shq(path)} 2>/dev/null | head -c ${Math.max(0, to - from)}` : `head -c ${to} ${shq(path)} 2>/dev/null`
+  return slimmed(`${part} | grep -E ${shq(CODEX_META_LINES)}`, slim)
+}
+
+/**
  * Runs `cmd` until stdin closes (run it with `keepStdin`), for a command that never ends on its
  * own on a machine reached over SSH, where closing the connection doesn't stop it.
  */

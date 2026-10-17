@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { codexHistory, codexPermission, codexScript, codexTitle, normalizeCodex, pickCodexRollout, unifiedHunks } from './codex.ts'
+import { codexHistory, codexPermission, codexScript, codexTitle, normalizeCodex, pickCodexRollout, scriptSteps, unifiedHunks } from './codex.ts'
 import { newMeta } from '../claude/transcript.ts'
 import { parseCodexModels } from './codex-models.ts'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -197,4 +197,132 @@ test('direct shell commands render input and output without an assistant turn', 
   const rows = normalizeCodex({ type: 'event_msg', timestamp: '2026-10-10T12:00:00Z', payload: { type: 'item_completed', item: { type: 'CommandExecution', source: 'user_shell', command: ['/bin/sh', '-lc', 'printf hello'], aggregated_output: 'hello' } } }, newMeta())
   expect(rows[0]).toMatchObject({ kind: 'user', text: 'printf hello', shell: true })
   expect(rows[1]).toMatchObject({ kind: 'command', name: '!', output: 'hello' })
+})
+
+// Records from a Codex 0.162.1 thread (its app-server 0.163.0 writes the rollout), paths shortened.
+const rec = (type: string, payload: any, timestamp = '2026-10-17T17:00:30.000Z') => ({ timestamp, type, payload })
+const item = (item: any) => rec('event_msg', { type: 'item_completed', thread_id: 't', turn_id: 'turn-1', item })
+
+describe('codex records keep their own ids', () => {
+  test("a reply's item id is the app-server's, so a live copy can be matched to it", () => {
+    const meta = newMeta()
+    const [a] = normalizeCodex(rec('response_item', { type: 'message', status: 'completed', id: 'msg_05b5d60b8898bebc016ad3a9afaa7c81919a0a99b324450b29', role: 'assistant', content: [{ type: 'output_text', text: 'Hi again!' }], phase: 'final_answer' }), meta) as any[]
+    expect(a.uuid).toBe('msg_05b5d60b8898bebc016ad3a9afaa7c81919a0a99b324450b29')
+    expect(a.msgId).toBe(a.uuid)
+    const [r] = normalizeCodex(rec('response_item', { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'Thinking it over' }] }), meta) as any[]
+    expect(r.uuid).toBe('rs_1')
+    expect(r.block).toEqual({ type: 'thinking', text: 'Thinking it over' })
+  })
+})
+
+describe('codex turns', () => {
+  test('task_started marks the turn under way; task_complete ends it with its duration', () => {
+    const meta = newMeta()
+    expect(normalizeCodex(rec('event_msg', { type: 'task_started', turn_id: 'turn-1', started_at: 1792256430, model_context_window: 258400 }), meta)).toEqual([])
+    expect(meta.turn).toEqual({ id: 'turn-1', startedAt: 1792256430000 })
+    const out = normalizeCodex(rec('event_msg', { type: 'task_complete', turn_id: 'turn-1', last_agent_message: 'Hi again!', started_at: 1792256430, completed_at: 1792256431, duration_ms: 1239, time_to_first_token_ms: 1104 }), meta)
+    expect(out).toMatchObject([{ kind: 'turn_end', durationMs: 1239 }])
+    expect(meta.turn).toBeUndefined()
+    expect(meta.stats.turns).toBe(1)
+  })
+
+  test('a turn that ends with an error says so', () => {
+    const meta = newMeta()
+    const out = normalizeCodex(rec('event_msg', { type: 'task_complete', turn_id: 't', duration_ms: 50, error: { message: 'Rate limit reached' } }), meta)
+    expect(out).toMatchObject([{ kind: 'notice', level: 'error', text: 'Rate limit reached' }, { kind: 'turn_end', durationMs: 50 }])
+  })
+
+  test('an interrupted turn is over too', () => {
+    const meta = newMeta()
+    normalizeCodex(rec('event_msg', { type: 'task_started', turn_id: 't', started_at: 1 }), meta)
+    expect(normalizeCodex(rec('event_msg', { type: 'turn_aborted', turn_id: 't' }), meta)).toMatchObject([{ kind: 'notice', subtype: 'interrupted' }])
+    expect(meta.turn).toBeUndefined()
+  })
+})
+
+describe('codex questions', () => {
+  test('request_user_input_async becomes a question card; the reply answers it instead of showing as a bubble', () => {
+    const meta = newMeta()
+    const call = normalizeCodex(rec('response_item', { type: 'function_call', status: 'completed', id: 'fc_q', name: 'request_user_input_async', arguments: '{"questions":[{"title":"Colour","options":["Red","Blue"]}]}', call_id: 'call_32ce' }), meta) as any[]
+    expect(call[0].block).toEqual({ type: 'tool_use', id: 'call_32ce', name: 'AskUserQuestion', input: { questions: [{ id: undefined, header: undefined, question: 'Colour', options: [{ label: 'Red' }, { label: 'Blue' }], isOther: undefined }] } })
+    // the async form only acknowledges here
+    expect(normalizeCodex(rec('response_item', { type: 'function_call_output', id: 'fco_q', call_id: 'call_32ce', output: '{"accepted":true}' }), meta)).toEqual([])
+    // Codex sleeps until the answer; nothing to show for that
+    expect(normalizeCodex(rec('response_item', { type: 'function_call', id: 'fc_s', name: 'sleep', namespace: 'clock', arguments: '{"duration_ms":3600000}', call_id: 'call_548b' }), meta)).toEqual([])
+    expect(normalizeCodex(rec('response_item', { type: 'function_call_output', id: 'fco_s', call_id: 'call_548b', output: '{}' }), meta)).toEqual([])
+    const reply = '<send_user_message_question_reply>\n[{"answer":"Red","question":"Colour","questionItemId":"[\\"request_user_input_async\\",\\"call_32ce\\",0]"}]\n</send_user_message_question_reply>'
+    const out = normalizeCodex(rec('response_item', { type: 'message', id: 'msg_reply', role: 'user', content: [{ type: 'input_text', text: reply }] }), meta) as any[]
+    expect(out).toMatchObject([{ kind: 'tool_result', toolUseId: 'call_32ce', isError: false, text: 'Colour: Red', meta: { answers: { Colour: 'Red' } } }])
+  })
+
+  test('the blocking request_user_input gets its answers from the tool output', () => {
+    const meta = newMeta()
+    normalizeCodex(rec('response_item', { type: 'function_call', id: 'fc', name: 'request_user_input', arguments: JSON.stringify({ questions: [{ id: 'q1', header: 'Scope', question: 'Which files?', options: [{ label: 'All', description: 'Every file' }, { label: 'Some', description: '' }], isOther: true }] }), call_id: 'call_b' }), meta)
+    const [r] = normalizeCodex(rec('response_item', { type: 'function_call_output', id: 'fco', call_id: 'call_b', output: JSON.stringify({ answers: { q1: { answers: ['All'] } } }) }), meta) as any[]
+    expect(r).toMatchObject({ kind: 'tool_result', toolUseId: 'call_b', text: 'Which files?: All', meta: { answers: { 'Which files?': 'All' } } })
+  })
+})
+
+describe('codex plans', () => {
+  test('a proposed plan is a plan card, not a tagged message', () => {
+    const meta = newMeta()
+    const text = '<proposed_plan>\n## Add a Folder File List to README\n\n### Steps\n1. Add a section.\n</proposed_plan>'
+    const [a] = normalizeCodex(rec('response_item', { type: 'message', id: 'msg_plan', role: 'assistant', content: [{ type: 'output_text', text }], phase: 'final_answer' }), meta) as any[]
+    expect(a.block).toEqual({ type: 'tool_use', id: 'msg_plan', name: 'ExitPlanMode', input: { plan: '## Add a Folder File List to README\n\n### Steps\n1. Add a section.' } })
+    expect(normalizeCodex(item({ type: 'Plan', id: 'turn-1-plan', text: '## Add…' }), meta)).toEqual([])
+  })
+})
+
+describe('codex scripts with several steps', () => {
+  const patchScript = 'const r = await tools.apply_patch("*** Begin Patch\\n*** Update File: notes2.txt\\n@@\\n three\\n+four\\n*** End Patch");\ntext(r);\n'
+
+  test('a patch followed by a command reads as a script with both steps', () => {
+    const code = 'const r = await tools.apply_patch("*** Begin Patch\\n*** Add File: a.txt\\n+a\\n*** End Patch");\nconst t = await tools.exec_command({cmd:"bun test", yield_time_ms: 30000});\ntext(r + t.output);\n'
+    const s = codexScript(code)
+    expect(s.name).toBe('Script')
+    expect(s.input.steps).toEqual([{ tool: 'apply_patch', arg: '*** Begin Patch\n*** Add File: a.txt\n+a\n*** End Patch' }, { tool: 'exec_command', arg: 'bun test' }])
+    expect(scriptSteps('await tools.view_image({path:"shot.png"}); await tools.write_stdin({session_id: 3, chars: "y\\n"}); tools.mystery(42)')).toEqual([
+      { tool: 'view_image', arg: 'shot.png' }, { tool: 'write_stdin', arg: 'y\n' }, { tool: 'mystery' },
+    ])
+  })
+
+  test('the diffs Codex reported go with the script output, whatever the script was', () => {
+    const meta = newMeta()
+    const ev = (payload: any) => normalizeCodex(rec(payload.type === 'item_completed' ? 'event_msg' : 'response_item', payload), meta)
+    ev({ type: 'custom_tool_call', id: 'ctc_1', name: 'exec', call_id: 'call_1', input: 'await tools.apply_patch("*** Begin Patch\\n*** Add File: a.txt\\n+a\\n*** End Patch"); const t = await tools.exec_command({cmd:"cat a.txt"}); text(t.output)' })
+    ev({ type: 'item_completed', item: { type: 'FileChange', id: 'exec-1', status: 'completed', changes: { '/w/a.txt': { type: 'add', content: 'a\n' } } } })
+    const [r] = ev({ type: 'custom_tool_call_output', id: 'ctco_1', call_id: 'call_1', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' }, { type: 'input_text', text: 'a\n' }] }) as any[]
+    expect(r).toMatchObject({ kind: 'tool_result', toolUseId: 'call_1', text: 'a', meta: { patch: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: ['+a'] }] } })
+    expect(meta.stats).toMatchObject({ linesAdded: 1 })
+  })
+
+  test('a script still running when it answers is finished by the wait that reads its cell', () => {
+    const meta = newMeta()
+    const ev = (payload: any) => normalizeCodex(rec(payload.type === 'item_completed' ? 'event_msg' : 'response_item', payload), meta)
+    const [call] = ev({ type: 'custom_tool_call', id: 'ctc_2', name: 'exec', call_id: 'call_361a', input: patchScript }) as any[]
+    expect(call.block.name).toBe('ApplyPatch')
+    // approval pending: the script hasn't finished when its output line is written
+    expect(ev({ type: 'custom_tool_call_output', id: 'ctco_2', call_id: 'call_361a', output: 'Script running with cell ID 8\nWall time 31.0 seconds\nOutput:\n' })).toEqual([])
+    ev({ type: 'item_completed', item: { type: 'FileChange', id: 'exec-65b8', status: 'completed', changes: { '/w/notes2.txt': { type: 'update', unified_diff: '@@ -3 +3,2 @@\n three\n+four\n' } } } })
+    expect(ev({ type: 'function_call', id: 'fc_w', name: 'wait', arguments: '{"cell_id":"8","yield_time_ms":30000}', call_id: 'call_6f1b' })).toEqual([])
+    const [r] = ev({ type: 'function_call_output', id: 'fco_w', call_id: 'call_6f1b', output: [{ type: 'input_text', text: 'Script completed\nWall time 0.0 seconds\nOutput:\n' }, { type: 'input_text', text: '{}' }] }) as any[]
+    expect(r).toMatchObject({ kind: 'tool_result', toolUseId: 'call_361a', isError: false, meta: { patch: [{ oldStart: 3, oldLines: 1, newStart: 3, newLines: 2, lines: [' three', '+four'] }] } })
+  })
+})
+
+describe('codex sub-agents', () => {
+  test('spawn, activity and the message back are listed and shown', () => {
+    const meta = newMeta()
+    const child = '01a14ae4-8cfb-7252-9639-34db58c5b1c9'
+    const [spawn] = normalizeCodex(rec('response_item', { type: 'function_call', id: 'fc_sp', name: 'spawn_agent', namespace: 'collaboration', arguments: JSON.stringify({ task_name: 'pong_only', fork_turns: 'none', message: 'gAAAAABq068-Nm8JQY-ZkjyflSH4UWwPULkZEMWxdyRXFnUiFRmABLWf1b6hvrb0teOqmIUvFkNCnPPueIaAwrY0rDoGQAJOJRibh9YvCePKmuJ6r4-0D9gnde95yS1FOYTePwmC4qncvLXGKrdZ4KKNUfiT0kAmjj7R9rrlwj0Gaxj4l-qbXA8=' }), call_id: 'call_2d3' }), meta) as any[]
+    expect(spawn.block).toMatchObject({ type: 'tool_use', id: 'call_2d3', name: 'spawn_agent', input: { task_name: 'pong_only', message: '[encrypted]' } })
+    normalizeCodex(item({ type: 'SubAgentActivity', model: 'gpt-6-luna', id: 'call_2d3', kind: 'started', agent_thread_id: child, agent_path: '/root/pong_only' }), meta)
+    expect([...meta.subagents.values()]).toMatchObject([{ toolUseId: child, type: 'codex', description: 'pong_only', status: 'running' }])
+    const [waited] = normalizeCodex(rec('response_item', { type: 'function_call', id: 'fc_wa', name: 'wait_agent', namespace: 'collaboration', arguments: '{"timeout_ms":30000}', call_id: 'call_c74' }), meta) as any[]
+    expect(waited.block.name).toBe('wait_agent')
+    normalizeCodex(item({ type: 'SubAgentActivity', id: 'subagent-completed-x', kind: 'completed', agent_thread_id: child, agent_path: '/root/pong_only' }), meta)
+    expect(meta.subagents.get(child)?.status).toBe('done')
+    const [msg] = normalizeCodex(rec('response_item', { type: 'agent_message', id: 'amsg_1', author: '/root/pong_only', recipient: '/root', content: [{ type: 'input_text', text: 'Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/pong_only\nPayload:\npong' }] }), meta) as any[]
+    expect(msg).toMatchObject({ kind: 'notice', subtype: 'task', level: 'info', text: 'pong_only: pong' })
+  })
 })

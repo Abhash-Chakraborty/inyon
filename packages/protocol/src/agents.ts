@@ -170,7 +170,6 @@ const CLAUDE_COMMANDS: [string, string, boolean?][] = [
 
 const CODEX_COMMANDS: [string, string, boolean?][] = [
   ['/model', 'Choose model and reasoning effort', true],
-  ['/fast', '2x speed, increased usage', true],
   ['/permissions', 'Choose what Codex is allowed to do', true],
   ['/plan', 'Switch to Plan mode'],
   ['/goal', 'Set or view the goal for a long-running task'],

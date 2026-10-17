@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@inyon/protocol'
+import type { ChatInfo, ChatItem, HostState, LiveItem, ScreenState, ServerMsg } from '@inyon/protocol'
 import { socket, type Tagged } from './socket.ts'
 import { splitHostId, tellApart } from './hubs.ts'
 import { haptic } from './haptics.ts'
@@ -17,6 +17,8 @@ export interface ChatState {
   hasMore: boolean
   loaded: boolean
   screen?: ScreenState
+  /** what the agent is writing right now, shown until its record has it */
+  live?: LiveItem[]
   /** when earlier messages last came back (with or without any), so a wait for them can end */
   moreAt?: number
   /** catching up on what was said while away, as a fraction read; cleared by the next reset */
@@ -241,8 +243,11 @@ function onMessage(m: Tagged) {
         const head = m.items[0]
         const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
         const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
-        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends) }
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends), live: withoutRecorded(c.live, m.items) }
       })
+      break
+    case 'chat.live':
+      patchChat(m.key, (c) => ({ live: withoutRecorded(m.items, c.items) }))
       break
     case 'chat.progress':
       patchChat(m.key, () => ({ catchingUp: m.total > 0 ? Math.min(1, m.done / m.total) : undefined }))
@@ -251,7 +256,7 @@ function onMessage(m: Tagged) {
       patchChat(m.key, (c) => {
         const last = c.items[c.items.length - 1]?.seq ?? -1
         const fresh = m.items.filter((i) => i.seq > last)
-        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends) }
+        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends), live: withoutRecorded(c.live, fresh) }
       })
       break
     case 'chat.more':
@@ -273,6 +278,23 @@ function onMessage(m: Tagged) {
       notify(m)
       break
   }
+}
+
+/**
+ * Live text whose finished record is among `items` goes: the record (same id) takes its place in
+ * the same render, so the reply never shows twice and never blinks out between the two.
+ */
+export function withoutRecorded(live: LiveItem[] | undefined, items: ChatItem[]): LiveItem[] | undefined {
+  if (!live?.length || !items.length) return live
+  const ids = new Set<string>()
+  for (const i of items) {
+    ids.add(i.uuid)
+    if (i.kind === 'assistant') ids.add(i.msgId)
+    if (i.kind === 'assistant' && i.block.type === 'tool_use') ids.add(i.block.id)
+    if (i.kind === 'tool_result') ids.add(i.toolUseId)
+  }
+  const kept = live.filter((l) => !ids.has(l.id))
+  return kept.length === live.length ? live : kept
 }
 
 /** Sessions with a "needs you" notification up, by tag. */

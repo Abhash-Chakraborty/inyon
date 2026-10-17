@@ -310,6 +310,18 @@ export interface PastConversation {
   current?: boolean
 }
 
+/**
+ * Something the agent is writing right now, before it's in its record: a reply, its thinking, a
+ * plan, or a running command's output (Codex, from 0.17.6). The record's item has the same id,
+ * so the finished message takes the live one's place without a jump.
+ */
+export interface LiveItem {
+  id: string
+  kind: 'text' | 'thinking' | 'plan' | 'output'
+  text: string
+  turnId?: string
+}
+
 export interface ChatInfo {
   /** Live metrics from transcript/API adapters. */
   status?: AgentStatus
@@ -331,6 +343,8 @@ export interface ChatInfo {
   rc?: { url: string; ts: string }
   /** messages typed while the agent was busy, not yet picked up */
   queue: string[]
+  /** the turn under way, for the working timer (Codex: from its records and its live events) */
+  turn?: { id?: string; startedAt: number }
   /** recent sends and how far each got, matched by the hub against the agent's own record */
   sends?: SendState[]
   tasks: BackgroundTask[]
@@ -394,6 +408,8 @@ export interface ScreenState {
   working: boolean
   /** spinner line, e.g. "Undulating… (12s · thinking)" */
   activity?: string
+  /** when the current turn started (unix ms), read off the spinner's elapsed time (Codex) */
+  since?: number
   mode?: string
   /** text sitting in Claude's input box (typed but not sent) */
   draft?: string
@@ -406,6 +422,8 @@ export interface ScreenState {
   background?: string | null
   /** messages waiting to be sent after the current turn, when only the screen shows them (Antigravity) */
   queue?: string[]
+  /** questions Codex asked while it works, waiting to be answered (it opens them with shift+←) */
+  questions?: number
   /** model and effort from the agent's own footer, for sessions that don't report live numbers */
   model?: string
   effort?: string
@@ -472,6 +490,8 @@ export type ServerMsg =
   | { t: 'chat.more'; key: string; items: ChatItem[]; hasMore: boolean }
   | { t: 'chat.info'; key: string; info: ChatInfo }
   | { t: 'chat.screen'; key: string; screen: ScreenState }
+  /** what the agent is writing right now (the whole list each time; empty when nothing is) */
+  | { t: 'chat.live'; key: string; items: LiveItem[] }
   /**
    * Reading what was said while nobody was watching (bytes of the transcript read so far, of how
    * many). The chat shows what it had until a chat.reset brings everything at once.
