@@ -85,6 +85,21 @@ test("the hub's machines get its id, and a draft keeps saying where it was typed
   expect(heard[3]).toEqual({ t: 'notify', host: 'hub:h1/local', pane: '%3', kind: 'done', title: 'Done', body: '' })
 })
 
+test('a hub out of reach when the app opens lists the machines this device remembers as connecting', async () => {
+  // the phone opened off its VPN: the ticket request fails before anything was ever heard
+  localStorage.setItem('inyon.overview.v1', JSON.stringify({ at: Date.now(), data: [
+    { config: { id: 'hub:h1/srv', name: 'srv', kind: 'ssh' }, status: 'online', sessions: [] },
+    { config: { id: 'own', name: 'own', kind: 'link' }, status: 'online', sessions: [] },
+  ] }))
+  globalThis.fetch = mock(async () => { throw new TypeError('Failed to fetch') }) as any
+  const cold = new HubConn(hub, (m) => heard.push(m), () => true, () => [])
+  await cold.connect()
+  cold.stop()
+  localStorage.removeItem('inyon.overview.v1')
+  expect(heard).toHaveLength(1)
+  expect(heard[0]).toMatchObject({ t: 'overview', source: 'hub:h1', hosts: [{ config: { id: 'hub:h1/srv' }, status: 'connecting', error: 'Connecting to studio…' }] })
+})
+
 test('messages for the hub name its machines as the hub does', async () => {
   await conn.connect()
   const ws = FakeWS.all[0]!

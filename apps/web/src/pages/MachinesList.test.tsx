@@ -34,6 +34,38 @@ describe('the machines list', () => {
     expect(screen.getByText('No machine matches “nothing”')).toBeTruthy()
   })
 
+  test("before the first answer: rows in the list's shape", async () => {
+    useStore.setState({ hosts: [], hostsLoaded: false })
+    const { container } = await page()
+    expect(screen.getByRole('status', { name: 'Loading machines' })).toBeTruthy()
+    expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0)
+    expect(screen.queryAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/machines/'))).toEqual([])
+  })
+
+  test('no machines: an invitation to add one', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts: [], hostsLoaded: true })
+    await page()
+    expect(screen.getByText('No machines yet')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Add a machine' }))
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
+  test("a paired hub that hasn't answered yet: the page says it's connecting to it", async () => {
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'studio', url: 'http://box:4777', token: 't', pairedAt: 1 }]))
+    useStore.setState({ hosts: [], hostsLoaded: true })
+    await page()
+    localStorage.removeItem('inyon.hubs.v1')
+    expect(screen.getByText('Connecting to studio…')).toBeTruthy()
+    expect(screen.getByText(/Its computers appear as soon as it answers\. On a VPN, make sure this device is connected to it too\./)).toBeTruthy()
+  })
+
+  test("a hub's machine shows why it isn't answering while the hub is out of reach", async () => {
+    useStore.setState({ hosts: [{ ...m('srv', 'server', 'connecting'), error: 'Reconnecting to studio' }], hostsLoaded: true })
+    await page()
+    expect(screen.getByText('Reconnecting to studio')).toBeTruthy()
+  })
+
   test('a few machines, no search box', async () => {
     useStore.setState({ hosts: [m('one'), m('two')] })
     await page()

@@ -2,6 +2,7 @@ import type { ClientMsg, HostState, ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
 import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, splitHostId, type PairedHub } from './hubs.ts'
+import { loadOverview } from './snapshot.ts'
 
 /** A hub message as this app sees it: the hub's machines carry the hub's id, and the message says where it came from. */
 export type Tagged = ServerMsg & { source?: string }
@@ -231,7 +232,8 @@ export class HubConn {
   private retry = 0
   private timer?: ReturnType<typeof setTimeout>
   private stopped = false
-  private last: HostState[] = []
+  /** the hub's machines as last heard, starting from the copy this device kept of them */
+  private last: HostState[]
   private terms = new Set<string>()
   private heard = 0
   private pingTimer?: ReturnType<typeof setInterval>
@@ -242,7 +244,11 @@ export class HubConn {
     private emit: (m: Tagged) => void,
     private wantOverview: () => boolean,
     private chats: () => { host: string; pane: string }[],
-  ) {}
+  ) {
+    // the app may open while the hub is out of reach (the phone off its VPN, say): its machines
+    // still have to show, as connecting, so they start from what this device remembers of them
+    this.last = (loadOverview() ?? []).filter((h) => splitHostId(h.config.id).hub?.id === hub.id)
+  }
 
   get source() {
     return `hub:${this.hub.id}`
@@ -262,6 +268,8 @@ export class HubConn {
     } catch (err) {
       if (attempt !== this.attempts) return
       if (err instanceof HubRevoked) return this.revoked()
+      // a hub that can't be reached at all is as gone as one whose connection dropped
+      this.offline()
       return this.later()
     }
     if (this.stopped || attempt !== this.attempts) return
@@ -322,7 +330,8 @@ export class HubConn {
   /** The hub's machines, as last seen, shown as connecting while the hub itself is out of reach. */
   private offline() {
     if (!this.last.length) return
-    this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error: `Reconnecting to ${this.hub.name}` })), source: this.source })
+    const error = this.heard ? `Reconnecting to ${this.hub.name}` : `Connecting to ${this.hub.name}…`
+    this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error })), source: this.source })
   }
 
   private revoked() {

@@ -1,6 +1,6 @@
 import { describe, expect, jest, setSystemTime, test, afterEach } from 'bun:test'
 import type { ChatItem } from '@inyon/protocol'
-import { hydrateChat, notifyTag, patchChat, PENDING_MS, useStore, type PendingMessage } from './store.ts'
+import { hydrateChat, notifyTag, patchChat, PENDING_MS, rememberSources, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
 import { closeChat, emit } from '../test/fakes.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
@@ -17,6 +17,18 @@ describe('hub messages', () => {
     emit({ t: 'overview', hosts: [host('a'), host('b')] })
     expect(useStore.getState().hosts.map((h) => h.config.id)).toEqual(['a', 'b'])
     expect(useStore.getState().hostsLoaded).toBe(true)
+  })
+
+  test("a paired hub's remembered machines stay while the phone's own core answers first", () => {
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'studio', url: 'http://box:4777', token: 't', pairedAt: 1 }]))
+    rememberSources([host('own'), host('hub:h1/srv')])
+    emit({ t: 'overview', hosts: [host('own'), host('new')] })
+    expect(useStore.getState().hosts.map((h) => h.config.id).sort()).toEqual(['hub:h1/srv', 'new', 'own'])
+    // the hub answers: its part is replaced in turn
+    emit({ t: 'overview', hosts: [], source: 'hub:h1' } as any)
+    expect(useStore.getState().hosts.map((h) => h.config.id).sort()).toEqual(['new', 'own'])
+    rememberSources([])
+    localStorage.removeItem('inyon.hubs.v1')
   })
 
   test('chat.reset loads the transcript', () => {
