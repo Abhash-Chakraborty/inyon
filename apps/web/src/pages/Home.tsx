@@ -10,7 +10,7 @@ import { Button, Empty, Segmented, SectionLabel } from '../components/ui/primiti
 import { api } from '../lib/api.ts'
 import { INTEGRATION_TEXT } from '../components/session/IntegrationNote.tsx'
 import { toast } from '../lib/store.ts'
-import type { AgentPaneInfo } from '@inyon/protocol'
+import { isBusy, type AgentPaneInfo } from '@inyon/protocol'
 import { MachineSheet } from '../components/Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { isHosted } from '../lib/base.ts'
@@ -28,7 +28,7 @@ import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 const SEARCH_FROM = 6
 
 /** working, or idle with shells or tasks still running */
-const busy = (a: AgentPaneInfo) => a.state === 'working' || (a.state === 'idle' && !!a.background)
+const busy = (a: AgentPaneInfo) => isBusy(a)
 
 export function Home() {
   const hosts = useStore((s) => s.hosts)
@@ -62,6 +62,9 @@ export function Home() {
   )
   const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
   const working = panes.filter((r) => busy(r.pane.agent!)).length
+  // the status line tells the two apart: a turn in progress, and work left running behind an idle prompt
+  const inFront = panes.filter((r) => r.pane.agent!.state === 'working').length
+  const behind = working - inFront
   // a card being turned on stays, with its spinner, until the machine answers: the hub may report
   // the new state before the request returns, and a card that just vanished says nothing
   // (with the state it had when tapped, so its text doesn't change under the spinner)
@@ -160,8 +163,12 @@ export function Home() {
               <p className="mt-1.5 truncate text-[14px] text-fg-2 md:mt-3 md:text-[15px]">
                 {waiting.length
                   ? `${waiting.length} session${waiting.length > 1 ? 's need' : ' needs'} you.`
-                  : working
-                    ? `${working} session${working > 1 ? 's are' : ' is'} working.`
+                  : inFront && behind
+                    ? `${inFront} working, ${behind} in the background.`
+                    : inFront
+                      ? `${inFront} session${inFront > 1 ? 's are' : ' is'} working.`
+                    : behind
+                      ? `${behind} session${behind > 1 ? 's have' : ' has'} work running in the background.`
                     : panes.length
                       ? 'All quiet. Every session is idle.'
                       : 'No agents are running right now.'}

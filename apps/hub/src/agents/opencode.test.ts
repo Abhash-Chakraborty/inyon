@@ -6,7 +6,18 @@ import { Host } from '../hosts/host.ts'
 import { newMeta } from '../claude/transcript.ts'
 import { opencodeItems, opencodePost, selectOpenCodeSession } from './opencode.ts'
 import { OpenCodeClient, opencodeRequest, openCodeCatalogFromProviders, openCodeModel } from './opencode-api.ts'
-import { OpenCodeSelections } from './opencode-controls.ts'
+import { OpenCodeSelections, liveValue } from './opencode-controls.ts'
+
+test("an OpenCode session's subagents count as background work, and their questions as waiting", () => {
+  const states = { ses_root: { type: 'idle' }, ses_a: { type: 'busy' }, ses_b: { type: 'retry' }, ses_other: { type: 'busy' } }
+  const children = new Set(['ses_a', 'ses_b'])
+  expect(liveValue(states, [], {}, 'ses_root', children)).toMatchObject({ working: false, background: '2 agents', permission: undefined })
+  expect(liveValue({ ...states, ses_b: { type: 'idle' } }, [], {}, 'ses_root', children).background).toBe('1 agent')
+  expect(liveValue({ ses_root: { type: 'busy' } }, [], {}, 'ses_root').background).toBeNull()
+  // a question from a subagent is this session's to answer; another session's is not
+  expect(liveValue(states, [{ id: 'p1', sessionID: 'ses_a' }], {}, 'ses_root', children).permission?.id).toBe('p1')
+  expect(liveValue(states, [{ id: 'p2', sessionID: 'ses_other' }], {}, 'ses_root', children).permission).toBeUndefined()
+})
 
 const host = new Host({ id: 'test-opencode', kind: 'local', name: 'test' })
 test('OpenCode HTTP failures are never accepted as a delivered message', async () => {

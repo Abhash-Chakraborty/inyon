@@ -2,6 +2,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { sendPush, type PushSubscriptionJSON, type Vapid } from '../hub/src/push/webpush.ts'
+import { backgroundOnScreen } from '../hub/src/claude/screen.ts'
 import { listPhones } from './link.ts'
 import { emit } from './output.ts'
 import { nodeDir } from './paths.ts'
@@ -195,18 +196,58 @@ export function followEvents(onLine: (line: string) => void, events = eventsFile
   return () => clearInterval(timer)
 }
 
-/** The link service's part: notify paired browsers when an agent needs you or finishes. */
-export function startPush() {
+type HookNotice = NonNullable<ReturnType<typeof noticeFor>>
+
+/** What the pane's footer lists as still running ("1 shell, 1 agent"), read the way the hub reads it. */
+async function backgroundOf(pane: string): Promise<string | null | undefined> {
+  try {
+    const p = Bun.spawn(['tmux', 'capture-pane', '-p', '-t', pane], { stdout: 'pipe', stderr: 'ignore' })
+    const text = await new Response(p.stdout).text()
+    if ((await p.exited) !== 0) return undefined
+    return backgroundOnScreen(text.split('\n'))
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The link service's part: notify paired browsers when an agent needs you or finishes. A turn
+ * that ends with agents or shells still running isn't finished: Claude's Stop fires all the
+ * same, so the finish waits until the pane's footer lists nothing (checked every few seconds,
+ * for half an hour at most).
+ */
+export function startPush(o: { events?: string; everyMs?: number; checkMs?: number; background?: (pane: string) => Promise<string | null | undefined>; send?: typeof sendPush } = {}) {
   // one notice per pane and kind every few seconds: a hook can fire twice for one prompt
   const recent = new Map<string, number>()
+  // the finish on hold per pane; a newer event for the pane takes over
+  const held = new Map<string, object>()
+  const background = o.background ?? backgroundOf
+  const checkMs = o.checkMs ?? 5000
+  const send = (n: HookNotice) => void titleOf(n.pane).then((title) => deliver({ kind: n.kind, pane: n.pane, title, body: n.body }, { send: o.send }))
+  const finish = async (n: HookNotice) => {
+    const token = {}
+    held.set(n.pane, token)
+    const startedAt = Date.now()
+    while (await background(n.pane)) {
+      if (Date.now() - startedAt > 30 * 60_000) break
+      await new Promise((r) => setTimeout(r, checkMs))
+      if (held.get(n.pane) !== token) return
+    }
+    if (held.get(n.pane) !== token) return
+    held.delete(n.pane)
+    send(n)
+  }
   return followEvents((line) => {
     const n = noticeFor(line)
     if (!n || !readEntries().length) return
     const key = `${n.pane} ${n.kind}`
     if (Date.now() - (recent.get(key) ?? 0) < 5000) return
     recent.set(key, Date.now())
-    void titleOf(n.pane).then((title) => deliver({ kind: n.kind, pane: n.pane, title, body: n.body }))
-  })
+    // a question while a finish waits: the turn went on, so that finish is no longer news
+    held.delete(n.pane)
+    if (n.kind === 'done') void finish(n)
+    else send(n)
+  }, o.events, o.everyMs)
 }
 
 /** `inyon push set|test|list`: what the app runs here over the link, and a look for you. */

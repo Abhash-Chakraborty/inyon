@@ -712,7 +712,17 @@ ${R}
     expect(s).toMatchObject({ mode: 'plan', background: '1 agent' })
   })
 
-  test('nothing in the background once the footer is bare', () => {
-    expect(parseScreen(footer('⏵⏵ bypass permissions on'), 100).background).toBeUndefined()
+  test('nothing in the background once the footer is bare, which is not the same as no footer', () => {
+    expect(parseScreen(footer('⏵⏵ bypass permissions on'), 100).background).toBeNull()
+    // a picker over the input box: the footer can't be read, so nothing is known
+    expect(parseScreen(['▔'.repeat(40), '   Effort', '   ←/→ to adjust · Enter to confirm · Esc to cancel'], 100).background).toBeUndefined()
+  })
+
+  test('every kind of background work Claude Code 2.1.299 names', () => {
+    expect(parseScreen(footer('⏵⏵ bypass permissions on · 1 local agent'), 100).background).toBe('1 local agent')
+    expect(parseScreen(footer('⏵⏵ auto mode on (shift+tab to cycle) · 1 background dynamic workflow'), 100).background).toBe('1 background dynamic workflow')
+    expect(parseScreen(footer('1 MCP task · 1 Artifact comment monitor · 1 cloud session'), 100).background).toBe('1 MCP task, 1 Artifact comment monitor, 1 cloud session')
+    expect(parseScreen(footer('⏵⏵ bypass permissions on · 1 shell · /tasks to see subagents · ← 1 agent'), 100).background).toBe('1 shell, 1 agent')
+    expect(parseScreen(footer('3 background tasks'), 100).background).toBe('3 background tasks')
   })
 })

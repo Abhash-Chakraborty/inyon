@@ -39,7 +39,8 @@ const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }
   // chips stay neutral and the dot carries the state: ink with a ring while working, colour only
   // when something needs you
   working: { label: 'Working', dot: 'bg-fg live-ring', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03] text-fg' },
-  background: { label: 'Background', dot: 'bg-fg-3 pulse-soft', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
+  // work still going on behind an idle prompt: ink, pulsing, so it isn't taken for idle
+  background: { label: 'Background', dot: 'bg-fg-2 pulse-soft', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
   waiting: { label: 'Needs you', dot: 'bg-warn', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03] text-fg' },
   idle: { label: 'Idle', dot: 'bg-fg-3', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },
   unknown: { label: 'Running', dot: 'bg-fg-3', pill: 'border-line bg-white/45 text-fg-2 dark:bg-white/[0.03]' },

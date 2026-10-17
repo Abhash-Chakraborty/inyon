@@ -11,8 +11,12 @@ const INPUT = /^\s*[❯>!](\s|$)/
 const SPINNER = /^\s*([^\s\w])\s+([A-Z][\w'’ -]*…)\s*(?:\((.*)\))?\s*$/u
 const MODE = /(?:⏵⏵|⏸|⏵)\s+([a-z][a-z ]*?)(?: mode)? on\b/
 const FOOTER = /(Esc to|Enter to|to cancel|to navigate|to select|to confirm)/i
-/** "1 shell", "2 monitors", "← 1 agent" in the footer: background work owned by the Claude process */
-const BACKGROUND = /\b\d+ (?:shells?|monitors?|agents?|tasks?|background (?:tasks?|terminals?)|bash)\b/g
+/**
+ * "1 shell", "2 monitors", "← 1 agent", "1 local agent", "1 background dynamic workflow" in the
+ * footer: background work owned by the Claude process (2.1.299 names each kind, and "N background
+ * tasks" for a mix)
+ */
+const BACKGROUND = /\b\d+ (?:local |background |remote |MCP |Artifact comment )?(?:shells?|monitors?|agents?|tasks?|terminals?|teams?|cloud sessions?|(?:dynamic )?workflows?|bash)\b/g
 /** The agent list under the footer (toggled with ↓): "● main", "◯ general-purpose  Sleep briefly  6s · ↓ 37.9k tokens" */
 const AGENT_ROW = /^\s*[●◯]\s/
 const TABS = /^\s*←\s+(.+?)\s+→\s*$/
@@ -67,6 +71,9 @@ export function unstyle(line: string): { text: string; ghost: boolean } {
   return { text, ghost: dimChars > 0 && solid === 0 }
 }
 
+/** What a Claude pane's footer lists as running in the background: null for nothing, undefined when the footer isn't visible. */
+export const backgroundOnScreen = (lines: string[]) => parseScreen(lines).background
+
 /** Parses a captured Claude Code screen into what the UI needs. */
 export function parseScreen(captured: string[], paneWidth?: number, agent: AgentKind = 'claude'): ScreenState {
   const styled = captured.map(unstyle)
@@ -110,7 +117,8 @@ export function parseScreen(captured: string[], paneWidth?: number, agent: Agent
         if (m) state.mode = m[1].trim()
         background.push(...(l.match(BACKGROUND) ?? []))
       }
-      if (background.length) state.background = background.join(', ')
+      // the footer was read: nothing listed means nothing running (a hidden footer says nothing)
+      state.background = background.length ? background.join(', ') : null
       break
     }
   }
@@ -758,6 +766,8 @@ function parseCodex(raw: string[], ghost: boolean[], paneWidth?: number): Screen
     const bg = tail.match(/(\d+) background terminals? running/)
     if (bg) state.background = `${bg[1]} background ${+bg[1] === 1 ? 'terminal' : 'terminals'}`
   }
+  // the composer was read: nothing listed means nothing running
+  state.background ??= null
   return state
 }
 

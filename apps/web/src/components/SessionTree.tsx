@@ -2,7 +2,7 @@ import { memo, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, SquareTerminal } from 'lucide-react'
-import type { HostState } from '@inyon/protocol'
+import { isBusy, type HostState } from '@inyon/protocol'
 import { paneHref, paneTitle, terminalName, type PaneRef } from '../lib/overview.ts'
 import { groupPanes, loadFolded, saveFolded, tmuxTarget } from '../lib/groups.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -105,7 +105,7 @@ const TreeRow = memo(
           active ? 'bg-elev font-medium text-fg shadow-card ring-1 ring-line' : 'text-fg-2 hover:bg-hover/70 hover:text-fg',
         )}
       >
-        {r.pane.agent ? <AgentLogo kind={r.pane.agent.kind} size={16} active={r.pane.agent.state === 'working'} /> : <SquareTerminal className="size-4 shrink-0 text-fg-3" />}
+        {r.pane.agent ? <AgentLogo kind={r.pane.agent.kind} size={16} active={isBusy(r.pane.agent)} /> : <SquareTerminal className="size-4 shrink-0 text-fg-3" />}
         <span className="min-w-0 flex-1 truncate">{r.pane.agent ? paneTitle(r) : (terminalName(r) ?? r.pane.command)}</span>
         <span className="shrink-0 font-mono text-[12px] text-fg-3">:{r.window.index}</span>
         {r.pane.agent && <StateDot state={shownState(r.pane.agent, r.host)} />}

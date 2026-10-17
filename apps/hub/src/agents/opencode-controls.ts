@@ -61,10 +61,13 @@ export async function setOpenCodeSelection(host: Host, uri: string, change: Open
 }
 
 const liveCache = new Map<string, { at: number; pending: Promise<ReturnType<typeof liveValue>> }>()
-function liveValue(states: any, permissions: any, selection: OpenCodeSelection, session: string) {
-  const pending = (Array.isArray(permissions) ? permissions : []).find((p: any) => p.sessionID === session)
+/** `children` are the session's subagent sessions: their work shows as background, their questions as waiting. */
+export function liveValue(states: any, permissions: any, selection: OpenCodeSelection, session: string, children: Set<string> = new Set()) {
+  const pending = (Array.isArray(permissions) ? permissions : []).find((p: any) => p.sessionID === session || children.has(p.sessionID))
+  const busy = (type?: string) => type === 'busy' || type === 'retry'
   const state = states?.[session]?.type
-  return { working: state === 'busy' || state === 'retry', retrying: state === 'retry', permission: pending, selection }
+  const agents = [...children].filter((id) => busy(states?.[id]?.type)).length
+  return { working: busy(state), retrying: state === 'retry', permission: pending, selection, background: agents ? `${agents} ${agents === 1 ? 'agent' : 'agents'}` : null }
 }
 /** Coalesce screen redraw bursts; one authoritative status refresh per second per session. */
 export function opencodeLive(host: Host, uri: string, directory?: string) {
@@ -76,7 +79,11 @@ export function opencodeLive(host: Host, uri: string, directory?: string) {
     client.request('/session/status', 'GET', undefined, 3),
     client.request('/permission', 'GET', undefined, 3),
     client.session ? opencodeSelection(host, uri, directory) : Promise.resolve({}),
-  ]).then(([states, permissions, selection]) => liveValue(states, permissions, selection, client.session))
+    client.session ? client.request('/session', 'GET', undefined, 3).catch(() => []) : Promise.resolve([]),
+  ]).then(([states, permissions, selection, sessions]) => {
+    const children = new Set<string>((Array.isArray(sessions) ? sessions : []).filter((s: any) => s?.parentID === client.session && typeof s.id === 'string').map((s: any) => s.id))
+    return liveValue(states, permissions, selection, client.session, children)
+  })
   liveCache.set(key, { at: Date.now(), pending })
   if (liveCache.size > 100) for (const [id, entry] of liveCache) if (Date.now() - entry.at > 60_000) liveCache.delete(id)
   return pending

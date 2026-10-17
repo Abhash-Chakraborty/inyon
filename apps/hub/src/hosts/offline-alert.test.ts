@@ -45,11 +45,15 @@ test('back from an outage, a turn that finished meanwhile is reported and a wait
   off()
 })
 
-test('a turn that ends with agents still running is reported finished once they are done', () => {
-  const state = (agent: string, background?: string) => ({ config: { id: 'bg-test', name: 'Box', kind: 'ssh' }, status: 'online', sessions: [{ name: 'main', windows: [{ index: 0, panes: [{ id: '%1', title: 'Fix login', agent: { kind: 'claude', state: agent, background } }] }] }] })
+test('a turn that ends with agents still running is reported finished once they are done', async () => {
+  const state = (agent: string, background?: string) => ({ config: { id: 'bg-test', name: 'Box', kind: 'ssh' }, status: 'online', sessions: [{ name: 'main', windows: [{ index: 0, panes: [{ id: '%1', title: 'Fix login', agent: { kind: 'claude', pid: 7, state: agent, background } }] }] }] })
   const rt: any = { host: { id: 'bg-test', config: { id: 'bg-test', name: 'Box', kind: 'ssh' } }, state: state('working') }
   const got: string[] = []
   const off = registry.on((e) => void (e.type === 'notify' && e.host === 'bg-test' && got.push(e.kind)))
+  // the grace after the last agent is gone, shortened for the test
+  const grace = registry.doneGrace
+  registry.doneGrace = 20
+  const settle = () => new Promise((r) => setTimeout(r, 40))
   const step = (agent: string, background?: string) => {
     const prev = rt.state
     rt.state = state(agent, background)
@@ -61,12 +65,24 @@ test('a turn that ends with agents still running is reported finished once they 
   step('idle', '1 agent')
   expect(got).toEqual([])
   step('idle')
+  // not at once: when a subagent reports back, the main turn often goes on a moment later
+  expect(got).toEqual([])
+  await settle()
   expect(got).toEqual(['done'])
   // a new turn while an agent runs: the finish belongs to that turn's end
   step('working', '1 agent')
   step('working')
   step('idle')
   expect(got).toEqual(['done', 'done'])
+  // the agent is gone, Claude picks the result up within the grace: one finish, at the real end
+  step('working', '1 agent')
+  step('idle', '1 agent')
+  step('idle')
+  step('working')
+  await settle()
+  expect(got).toEqual(['done', 'done'])
+  step('idle')
+  expect(got).toEqual(['done', 'done', 'done'])
   // a question still comes through while agents run, and a plain turn still finishes as before
   step('working', '1 agent')
   step('waiting', '1 agent')
@@ -74,6 +90,7 @@ test('a turn that ends with agents still running is reported finished once they 
   step('idle', '1 agent')
   step('working')
   step('idle')
-  expect(got).toEqual(['done', 'done', 'waiting', 'done'])
+  expect(got).toEqual(['done', 'done', 'done', 'waiting', 'done'])
+  registry.doneGrace = grace
   off()
 })
