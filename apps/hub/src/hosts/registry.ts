@@ -484,8 +484,9 @@ class Registry {
         let cached = rt.cwdMap.get(proc.pid)
         // re-check often until the session's first transcript appears, then occasionally (for /clear)
         // an OpenCode TUI that hasn't started a conversation yet ("opencode-db:") is checked often too
-        // OpenCode puts the conversation's title in the terminal title, so a change there is a switch
-        if (!cached || Date.now() - cached.at > (cached.path && cached.path !== OCDB ? 15000 : 2000) || (proc.kind === 'opencode' && cached.title !== p.title)) {
+        // OpenCode and Codex put the conversation's name in the terminal title, so a change there is
+        // a switch (/new, /resume), found at once rather than at the next 15 s check
+        if (!cached || Date.now() - cached.at > (cached.path && cached.path !== OCDB ? 15000 : 2000) || ((proc.kind === 'opencode' || proc.kind === 'codex') && cached.title !== p.title)) {
           const path =
             proc.kind === 'claude' ? await guessTranscript(rt.host, pr.home, proc)
             : proc.kind === 'codex' ? await guessCodexRollout(rt.host, pr.home, { ...proc, title: p.title }, codexProcs)
@@ -851,7 +852,8 @@ export function backgroundAfter(screen: string | null | undefined, was: { pid: n
 function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState, was?: AgentPaneInfo) {
   const info = p.agent!
   if (isDriving(host.id, p.id)) sc = { ...sc, prompt: undefined }
-  const shown = sc.prompt ? 'waiting' : sc.working ? 'working' : 'idle'
+  // a question Codex asked mid-turn waits for you like a prompt does, even while it keeps working
+  const shown = sc.prompt || sc.questions ? 'waiting' : sc.working ? 'working' : 'idle'
   info.state = info.kind === 'claude' ? turns.state(turnKey(host.id, p.id), shown, lines.join('\n'), hook) : shown
   info.mode = sc.mode ?? info.mode
   // a session without live numbers still shows its model and effort on screen
@@ -875,7 +877,10 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
   if (info.kind === 'claude') info.ultracode = sc.ultracode ?? (was?.pid === info.pid ? was?.ultracode : undefined)
   info.options = undefined
   info.waitingFor = undefined
-  if (!sc.prompt) return
+  if (!sc.prompt) {
+    if (sc.questions) info.waitingFor = sc.questions === 1 ? 'A question is waiting for your answer' : `${sc.questions} questions are waiting for your answer`
+    return
+  }
   if (!sc.prompt.multi && !sc.prompt.tabs?.length && !sc.prompt.input) {
     info.options = sc.prompt.options.filter((o) => o.n !== sc.prompt!.freeTextOption).slice(0, 4).map((o) => ({ n: o.n, label: o.label }))
   }

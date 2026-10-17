@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
-import { parseScreen, promptSummary, unstyle } from './screen.ts'
+import { codexBrowsing, parseScreen, promptSummary, unstyle } from './screen.ts'
 
 // Real captures from Claude Code 2.1.296 at 100 columns.
 const R = '─'.repeat(100)
@@ -295,6 +295,117 @@ describe('other agents', () => {
     const s = codex('codex-bg-idle')
     expect(s.working).toBe(false)
     expect(s.background).toBe('1 background terminal')
+  })
+
+  test('a Codex footer that lists nothing in the background says so', () => {
+    expect(codex('codex-question-pending').background).toBeNull()
+    expect(codex('codex-working-empty').background).toBe('1 background terminal')
+    // a menu replaces the footer, so there is nothing to read
+    expect(codex('codex-approval').background).toBeUndefined()
+  })
+
+  // Real captures from Codex 0.162.1 at 120 columns (its app-server 0.163.0), paths shortened.
+
+  test('the time Codex has worked so far is read off the working line', () => {
+    const s = codex('codex-question-pending')
+    expect(s.working).toBe(true)
+    // "Working (39s • esc to interrupt)": 39 s ago, to the second
+    expect(Date.now() - s.since!).toBeGreaterThanOrEqual(38_500)
+    expect(Date.now() - s.since!).toBeLessThan(41_000)
+    expect(s.since! % 1000).toBe(0)
+  })
+
+  test('a question Codex asked mid-turn waits under the working line', () => {
+    const s = codex('codex-question-pending')
+    expect(s.working).toBe(true)
+    expect(s.questions).toBe(1)
+    expect(s.queue).toBeUndefined()
+    expect(s.prompt).toBeUndefined()
+  })
+
+  test('the opened question (shift+←) is a menu of its options', () => {
+    const s = codex('codex-question')
+    expect(s.model).toBeUndefined()
+    const p = s.prompt!
+    expect(p.body).toEqual(['Colour'])
+    expect(p.options).toEqual([
+      { n: 1, label: 'Red', detail: undefined, selected: true },
+      { n: 2, label: 'Blue', detail: undefined, selected: false },
+      { n: 3, label: 'Other', detail: undefined, selected: false },
+    ])
+    expect(p.footer).toBe('enter submit   ^] skip   shift+→ main prompt')
+    expect(p.navigate).toBe(true)
+  })
+
+  test('the plan-mode question once a plan is written', () => {
+    const s = codex('codex-plan-implement')
+    const p = s.prompt!
+    expect(p.body).toEqual(['Implement this plan?'])
+    expect(p.options.map((o) => [o.label, o.detail])).toEqual([
+      ['Yes, implement this plan', 'Switch to Default and start coding'],
+      ['Yes, clear context and implement', 'Start a fresh thread (current context: 2% used)'],
+      ['No, stay in Plan mode', 'Continue planning with the model'],
+    ])
+    expect(p.options[0].selected).toBe(true)
+    expect(p.footer).toBe('enter select · esc back')
+  })
+
+  test('a command approval, with its reason, in a read-only workspace', () => {
+    const s = codex('codex-command-approval')
+    const p = s.prompt!
+    expect(p.body[0]).toBe('Would you like to run the following command?')
+    expect(p.body).toContain('Reason: May I create hello.txt in the workspace containing the word hi?')
+    expect(p.body).toContain("$ printf 'hi\\n' > hello.txt")
+    expect(p.options.map((o) => o.label)).toEqual(['Yes, proceed', "Yes, and don't ask again for commands that start with `printf 'hi\\n' > hello.txt`", 'No, and tell Codex what to do differently'])
+    // the alert and the overview say what would run
+    expect(promptSummary(p)).toBe("Run printf 'hi\\n' > hello.txt")
+  })
+
+  test('a file change approval names the file', () => {
+    const s = codex('codex-patch-approval')
+    const p = s.prompt!
+    expect(p.body[0]).toBe('Would you like to make the following edits?')
+    expect(p.body).toContain('Description: Apply proposed file edits')
+    expect(p.options.map((o) => o.label)).toEqual(['Yes, proceed', "Yes, and don't ask again for these files", 'No, and tell Codex what to do differently'])
+    expect(p.options[0].selected).toBe(true)
+    // the path was wrapped by the terminal ("…/notes2" and ".txt"); the file is still named
+    expect(promptSummary(p)).toBe('Edit notes2.txt?')
+  })
+
+  test('the review presets', () => {
+    const p = codex('codex-review').prompt!
+    expect(p.body).toEqual(['Select a review preset'])
+    expect(p.options.map((o) => o.label)).toEqual(['Review against a base branch', 'Review uncommitted changes', 'Review a commit', 'Custom review instructions'])
+    expect(p.options[0].detail).toBe('(PR Style)')
+  })
+
+  test('the model list marks the model in use, and the reasoning step marks the default', () => {
+    const models = codex('codex-model').prompt!
+    expect(models.body).toEqual(['Select Model and Effort'])
+    expect(models.options.map((o) => [o.label, o.current ?? false])).toEqual([['GPT-6-Luna', true], ['GPT-5.6-Terra', false], ['GPT-5.6-Luna', false]])
+    expect(models.options[0].detail).toBe('Fast and affordable model for easier tasks.')
+    const levels = codex('codex-reasoning').prompt!
+    expect(levels.body).toEqual(['Select Reasoning Level for GPT-6-Luna'])
+    expect(levels.options.map((o) => o.label)).toEqual(['Low', 'Medium (default)', 'High', 'Extra high', 'More reasoning…'])
+    expect(levels.options[1].selected).toBe(true)
+    expect(levels.footer).toBe('enter default · s session · esc back')
+  })
+
+  test('the permission presets, each with what it allows', () => {
+    const p = codex('codex-permissions').prompt!
+    expect(p.body).toEqual(['Update Model Permissions'])
+    expect(p.options.map((o) => o.label)).toEqual(['Ask for approval', 'Approve for me', 'Full Access', 'Read Only'])
+    expect(p.options[0].detail).toBe('Read and edit workspace files and run commands, with approval required for internet access or edits outside the workspace')
+    expect(p.options[3].detail).toBe('Read workspace files, with approval required for edits or internet access')
+  })
+
+  test('browsing the transcript to rewind: the highlighted message is known', () => {
+    const cap = readFileSync(new URL('./fixtures/codex-rewind.txt', import.meta.url), 'utf8').split('\n')
+    expect(codexBrowsing(cap)).toEqual({ selected: '> Colour', screen: cap.join('\n') })
+    // not browsing: the composer is there as usual
+    expect(codexBrowsing(readFileSync(new URL('./fixtures/codex-working-empty.txt', import.meta.url), 'utf8').split('\n'))).toBeUndefined()
+    const s = parseScreen(cap, 120, 'codex')
+    expect(s.prompt).toBeUndefined()
   })
 
   test('a numbered list in a reply is not a prompt', () => {

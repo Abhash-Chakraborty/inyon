@@ -13,7 +13,7 @@ export const KEEP = 300
  * Bumped when reading a transcript changes how the summary is built (tasks, queue, subagents), so
  * a chat saved by an older reader is read again from the start instead of carrying its mistakes on
  */
-export const READER = 2
+export const READER = 3
 const storeKey = (key: string) => `chats/${keyPart(key)}`
 
 export interface CachedChat {

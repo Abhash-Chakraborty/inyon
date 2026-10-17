@@ -492,9 +492,9 @@ export const coreRoutes: Routes = {
   },
   '/api/hosts/:id/panes/:pane/send': {
     POST: api(async (req) => {
-      const { text, requestId, setting } = await body<{ text: string; requestId?: string; setting?: boolean }>(req)
+      const { text, requestId, setting, steer } = await body<{ text: string; requestId?: string; setting?: boolean; steer?: boolean }>(req)
       if (requestId !== undefined && (typeof requestId !== 'string' || !/^[\w-]{1,128}$/.test(requestId))) throw new HttpError(400, 'Invalid send id')
-      const submit = () => sendMessage(req.params.id, paneParam(req.params.pane), String(text ?? ''), !!requestId, requestId, setting === true)
+      const submit = () => sendMessage(req.params.id, paneParam(req.params.pane), String(text ?? ''), !!requestId, requestId, setting === true, steer === true)
       if (requestId) await sendOnce(JSON.stringify([req.params.id, req.params.pane, requestId]), String(text ?? ''), submit)
       else await submit()
       return ok()

@@ -242,7 +242,8 @@ export const api = {
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
   launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; model?: string; mode?: string; prompt?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
-  send: (host: string, pane: string, text: string, requestId?: string) => request('POST', `${panePath(host, pane)}/send`, { text, requestId }, 310_000),
+  /** `steer`: while Codex works, hand it the message now (Enter) instead of queueing it for after the turn (Tab) */
+  send: (host: string, pane: string, text: string, requestId?: string, steer?: boolean) => request('POST', `${panePath(host, pane)}/send`, { text, requestId, ...(steer && { steer }) }, 310_000),
   /** a model, effort or goal change from the app's controls: sent like a message, never shown as one */
   setting: (host: string, pane: string, text: string) => request('POST', `${panePath(host, pane)}/send`, { text, setting: true }, 310_000),
   /** `question` is the promptKey of the question shown, so an answer that arrives late isn't taken for the next one */

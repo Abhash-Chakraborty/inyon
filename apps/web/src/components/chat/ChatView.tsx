@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type HostStatus } from '@inyon/protocol'
+import { AGENTS, chatKey, type AgentKind, type HostStatus, type LiveItem } from '@inyon/protocol'
 import { lastAsk } from '../../lib/lastAsk.ts'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
@@ -11,7 +11,7 @@ import { buildRows } from '../../lib/chat.ts'
 import { api, isTransient, withRetries } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
 import { Button, Empty, openMenu, Pulse, Waiting } from '../ui/primitives.tsx'
-import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
+import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, LiveTurn, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
 import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
@@ -24,6 +24,7 @@ const NO_AGENTS: AgentKind[] = []
 const AWAY_MS = 5 * 60_000
 const NO_QUEUE: string[] = []
 const NO_PENDING: PendingMessage[] = []
+const NO_LIVE: LiveItem[] = []
 
 export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }: { host: string; pane: string; agent?: AgentKind; onTerminal: () => void; controls?: React.ReactNode; ultracode?: boolean }) {
   const key = chatKey(host, pane)
@@ -62,6 +63,12 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const reconnecting = useReconnecting(machine?.status)
   const queue = chat?.info?.queue ?? NO_QUEUE
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
+  // what the agent is writing right now, and the running command's output for the working line
+  const live = chat?.live ?? NO_LIVE
+  const liveOutput = working ? live.findLast((l) => l.kind === 'output')?.text : undefined
+  const liveShown = live.some((l) => l.kind !== 'output' && l.text.trim())
+  // when the turn started: the agent's own record first, else read off its screen
+  const since = working ? (chat?.info?.turn?.startedAt ?? screen?.since) : undefined
   // the hub follows every send into the agent's record (info.sends); a bubble lasts until it's there.
   // One waiting in the agent's queue shows once, as a queued bubble, until the agent takes it.
   const stored = chat?.pending ?? NO_PENDING
@@ -137,7 +144,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
     if (fresh) stick.current = true
   }, [stored])
 
-  useLayoutEffect(settle, [rows, working, prompt, pending.length, queue.length, stored])
+  useLayoutEffect(settle, [rows, working, prompt, pending.length, queue.length, stored, live])
 
   // older messages arrived (they're prepended; settle() kept the reading position)
   const firstSeq = chat?.items[0]?.seq
@@ -352,9 +359,10 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                       </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}
+                    {liveShown && chat.catchingUp === undefined && <LiveTurn items={live} />}
                     {working && !prompt && chat.catchingUp === undefined && (
-                      <div className={lastOpen ? '-mt-3' : ''}>
-                        <WorkingIndicator activity={screen?.activity} />
+                      <div className={lastOpen || liveShown ? '-mt-3' : ''}>
+                        <WorkingIndicator activity={screen?.activity} since={since} output={liveOutput} />
                       </div>
                     )}
                     {!working && !prompt && screen?.background && (

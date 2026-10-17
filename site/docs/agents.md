@@ -10,7 +10,9 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | | Claude Code | Codex | Gemini CLI | OpenCode | Copilot | Antigravity CLI |
 |---|---|---|---|---|---|---|
 | Chat view | Full | Full | Beta | Beta | Beta | Yes |
+| Reply shown as it's written | No | From 0.17.6 | No | No | No | No |
 | Prompts as buttons | Yes | Yes | Yes | Yes | Yes | Yes |
+| Sub-agents listed | Yes | From 0.17.6 | No | No | No | No |
 | Model | Yes | Yes | No | Live list | Live list | Yes |
 | Effort | Yes | Yes | No | Yes | No | Yes |
 | Mode | Yes | Yes | No | Build / Plan | Yes | Yes |
@@ -30,6 +32,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 |---|---|
 | Panes and agents | tmux and the process tree; live changes through a read-only tmux control client |
 | Conversations | Each agent's own session files or local server |
+| Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
 | Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex and Antigravity: their own status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; the others' own events |
@@ -44,6 +47,10 @@ Read from its transcripts in `~/.claude`. With the optional integration (turned 
 ## Codex
 
 Read from its session files in `~/.codex/sessions`. Model and effort go through Codex's own picker. It shows plan limits and credits, every message of yours can **Rewind to here**, and `$` lists skills. Codex runs its hooks inside a background process that can't tell which pane it belongs to, so Inyon reads Codex's prompts from the screen.
+
+From 0.17.6 the chat shows Codex's reply while it is being written, the way the terminal does, with its thinking folded above it. Codex's terminal is a client of a background process on the machine (its app-server), which other clients may join; Inyon joins the open conversation from the machine with a small `node` script and listens, without sending anything. It needs `node` on the machine, which an npm install of Codex has; without it the reply still appears when it's complete. Joining also brings the turn's timer, token usage the moment Codex reports it, and sub-agents as they start and finish.
+
+The same release reads more of Codex's record: a question Codex asks mid-turn shows as a card with its choices and your answer, a plan written in Plan mode shows as a plan card, a script that ran several tools lists each step with the diffs of its patches, sub-agents appear under **Running** with what they reported back, and each turn carries how long it took. While Codex works, the switch by the send button decides whether a message is queued or steered in; see [Writing messages](sessions.md#writing-messages).
 
 ## Gemini CLI (beta)
 

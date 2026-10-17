@@ -390,6 +390,18 @@ export function promptSummary(prompt: ScreenPrompt): string {
   const body = raw.filter(keep)
   const question = body.find((l) => /\?$/.test(l))
   const title = body[0]
+  // Codex's approvals: the command ("$ …") or the file ("Destination:" and the path under it,
+  // which may be wrapped) is the useful part, not the question around it
+  if (question && /run the following command\?$/i.test(question)) {
+    const cmd = body.find((l) => /^\$ \S/.test(l))
+    if (cmd) return `Run ${cmd.slice(2)}`.slice(0, 200)
+  }
+  if (question && /make the following edits\?$/i.test(question)) {
+    const at = body.indexOf('Destination:')
+    const path = at >= 0 ? body.slice(at + 1).filter((l) => !/^[A-Z][a-z]+:/.test(l)).join('') : ''
+    const file = path.split('/').pop()
+    if (file) return `Edit ${file}?`
+  }
   if (framed && title) {
     const about = raw.slice(raw.indexOf(title) + 1, sep).filter(keep).join(' ')
     // "Bash command" / "PowerShell command", then a line saying what it's for
@@ -703,9 +715,20 @@ function parseAgyMenu(lines: string[]): ScreenPrompt | undefined {
 
 /** "GPT-6-Luna high · ~/project" under the composer; the effort reads "default" until you pick one */
 const CX_FOOTER = /^ {2}(\S.*?) (default|none|minimal|low|medium|high|xhigh|max|ultra) · [~/]/
-const CX_WORKING = /^•\s+(.+?)\s+\((?:\d+[hms][^•)]*)•\s*esc to interrupt\)(.*)$/
-const CX_NAV = /^\s*(Press enter to confirm|enter (select|default|continue|confirm)|.*\besc (back|to cancel)\b)/
-const CX_OPTION = /^(›| ) (\d{1,2})\. (.*)$/
+/** "• Working (1m 16s • esc to interrupt) · 1 background terminal running": the verb, the time so far, the rest */
+const CX_WORKING = /^•\s+(.+?)\s+\(((?:\d+h ?)?(?:\d+m ?)?(?:\d+s)?)[^•)]*•\s*esc to interrupt\)(.*)$/
+const CX_NAV = /^\s*(Press enter to confirm|enter (select|default|continue|confirm|submit)|.*\besc (back|to cancel)\b)/
+/** a menu row, "› 1. Yes" highlighted; a question's rows sit indented under "Queued follow-up inputs" */
+const CX_OPTION = /^ {0,4}(›)? ?(\d{1,2})\. (.*)$/
+/** "? 1 question" under the working line: Codex asked something and waits (shift+← opens it) */
+const CX_QUESTIONS = /^ {2}\? (\d+) questions?$/
+
+/** "1m 16s" → milliseconds */
+function elapsedMs(s: string) {
+  let ms = 0
+  for (const [, n, unit] of s.matchAll(/(\d+)([hms])/g)) ms += Number(n) * (unit === 'h' ? 3_600_000 : unit === 'm' ? 60_000 : 1000)
+  return ms
+}
 
 /**
  * Codex 0.16x: transcript lines start with "•" (or "›" for your messages), then the composer
@@ -760,20 +783,25 @@ function parseCodex(raw: string[], ghost: boolean[], paneWidth?: number): Screen
     if (w) {
       state.working = true
       state.activity = w[1]
-      const bg = w[2].match(/(\d+) background terminals? running/)
+      // the time so far, whole seconds: when the turn started, give or take the redraw
+      if (w[2]) state.since = Math.round((Date.now() - elapsedMs(w[2])) / 1000) * 1000
+      const bg = w[3].match(/(\d+) background terminals? running/)
       if (bg) state.background = `${bg[1]} background ${+bg[1] === 1 ? 'terminal' : 'terminals'}`
       break
     }
     const q = l.match(/^ {2}↳ (.*)$/)
-    if (q) {
+    const asked = l.match(CX_QUESTIONS)
+    if (asked) state.questions = Number(asked[1])
+    else if (q) {
       queue.unshift(`${q[1].trim()}${wrap}`)
       wrap = ''
     } else if (/^ {4}\S/.test(l)) {
-      if (!/edit last queued/.test(l)) wrap = ` ${l.trim()}${wrap}`
+      if (!/edit last queued|to answer$/.test(l)) wrap = ` ${l.trim()}${wrap}`
     } else if (/^[›»•] /.test(l) && l !== '• Queued follow-up inputs') break
   }
   if (state.working && queue.length) state.queue = queue
   if (!state.working) {
+    state.questions = undefined
     // idle, with shells still running in the background
     const tail = lines.slice(Math.max(0, box - 6), box).join(' ')
     const bg = tail.match(/(\d+) background terminals? running/)
@@ -806,7 +834,8 @@ function parseCodexMenu(lines: string[]): ScreenPrompt | undefined {
       wrap = ''
       continue
     }
-    if (/^ {4,}\S/.test(l)) {
+    // a wrapped label, deeper than the rows (a question's rows are themselves indented by four)
+    if (/^ {4,}\S/.test(l) && !(options.length && options.some((o) => o.selected) && /^ {4}\d{1,2}\. /.test(l))) {
       wrap = ` ${l.trim()}${wrap}`
       continue
     }
@@ -814,31 +843,37 @@ function parseCodexMenu(lines: string[]): ScreenPrompt | undefined {
   }
   // a submenu can have a single row ("Advanced Reasoning": Max)
   if (!options.length || !options.some((o) => o.selected)) return undefined
-  // the body: lines above the options up to the last transcript entry ("• Running …" stays as context)
+  // the body: the dialog's own lines above the options. Codex leaves two blank lines between the
+  // transcript and a dialog (and between a dialog's text and its options), one at most inside it;
+  // a turn's "Worked for 8s • 22:42" trailer and transcript entries ("• …", "› …") end it too
   const body: string[] = []
-  for (let j = i; j >= Math.max(0, i - 14); j--) {
+  let blanks = 0
+  for (let j = i; j >= Math.max(0, i - 24); j--) {
     const l = tail[j]
-    if (/^[›•] /.test(l)) {
-      if (/^• (Running|Ran) /.test(l)) body.unshift(l.replace(/^• /, '').trim())
-      break
+    if (!l.trim()) {
+      if (body.length && ++blanks >= 2) break
+      continue
     }
+    blanks = 0
+    if (/^[›•] /.test(l) || /^\s*Worked for \d/.test(l)) break
     // a dialog on a fresh screen sits under Codex's banner (">_ OpenAI Codex (v…)" and the folder)
     if (/^\s*>_ OpenAI Codex\b/.test(l)) {
       body.splice(0, body.length && /^[~/]/.test(body[0]) ? 1 : 0)
       break
     }
-    if (l.trim()) body.unshift(l.trim())
+    body.unshift(l.trim())
   }
   return { body, options, footer: tail[navAt].trim(), multi: false, navigate: true }
 }
 
 /**
- * Codex's rewind browser (Esc Esc: "Browsing · ↑↓ · ↵ rewind · esc") shows the chosen past message
- * in reverse video after its "›". Returns that message's first line, or undefined when not browsing.
+ * Codex's rewind browser (Esc Esc: "Browsing transcript · ↑↓/jk scroll · ←→/hl prompts · ↵ rewind
+ * · esc back"; older versions say "Browsing ·") shows the chosen past message in reverse video
+ * after its "›". Returns that message's first line, or undefined when not browsing.
  */
 export function codexBrowsing(captured: string[]): { selected?: string; screen?: string } | undefined {
   const text = captured.map((l) => unstyle(l).text.replace(/\s+$/, ''))
-  if (!text.slice(-4).some((l) => /^\s*Browsing · /.test(l))) return undefined
+  if (!text.slice(-4).some((l) => /^\s*Browsing(?: transcript)? · /.test(l))) return undefined
   for (let i = captured.length - 1; i >= 0; i--) {
     const m = captured[i].match(/^(?:\x1b\[[\d;]*m)*[›»] (?:\x1b\[[\d;]*m)*\x1b\[(?:0;)?7m/)
     if (m) return { selected: text[i].replace(/^[›»]\s?/, '').trim(), screen: captured.join('\n') }

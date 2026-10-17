@@ -60,12 +60,13 @@ function inLane<T>(hostId: string, paneId: string, fn: () => Promise<T>): Promis
  * (the app passes its own, so a retry is the same send); its state is in the chat info's `sends`.
  * `fromComposer`: the text came out of the app's message box, so the saved draft goes with it.
  * `setting`: a change made with the app's controls, which no device shows as a message.
+ * `steer`: while Codex works, hand it the message in the middle of its turn rather than queueing it.
  */
-export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`, setting = false) {
+export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`, setting = false, steer = false) {
   const w = watchers.get(hostId, paneId)
   w.trackSend(id, text, setting)
   try {
-    await inLane(hostId, paneId, () => sendMessageToPane(hostId, paneId, text, fromComposer))
+    await inLane(hostId, paneId, () => sendMessageToPane(hostId, paneId, text, fromComposer, steer))
     await confirmDelivery(hostId, paneId, id, text)
   } catch (err) {
     w.settleSend(id, { state: 'failed', error: (err as Error).message })
@@ -122,8 +123,12 @@ async function emptyInput(hostId: string, paneId: string, draft: string) {
  * Types a message into the agent's input box and submits it. For Claude we confirm on screen that
  * the text arrived before pressing Enter (a fast Enter can be swallowed while Claude is still
  * taking in the typing), then confirm the box emptied, retrying Enter if it didn't.
+ *
+ * While Codex works, Enter steers: the message goes into the turn under way. Tab queues it for
+ * after the turn (the TUI's own hint, "tab to queue message"), which is what a message sent
+ * without `steer` does.
  */
-export async function sendMessageToPane(hostId: string, paneId: string, text: string, fromComposer: boolean) {
+export async function sendMessageToPane(hostId: string, paneId: string, text: string, fromComposer: boolean, steer = false) {
   const { host, found } = agentPane(hostId, paneId)
   if (!found.pane.agent) throw new HttpError(409, 'No agent is running in this pane')
   if (!text.trim()) throw new HttpError(400, 'Message is empty')
@@ -261,7 +266,7 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
       if (beforeSubmit && (beforeSubmit.prompt || !(beforeSubmit.model || beforeSubmit.inputVisible) || !arrived(beforeSubmit.draft))) {
         throw new HttpError(409, `${AGENTS[found.pane.agent.kind].name} input changed before sending. Open the terminal to check before retrying.`)
       }
-      await sendKeys(host, paneId, [isCodex && beforeSubmit?.working && !text.trimStart().startsWith('!') ? 'Tab' : 'Enter'])
+      await sendKeys(host, paneId, [isCodex && beforeSubmit?.working && !steer && !text.trimStart().startsWith('!') ? 'Tab' : 'Enter'])
       for (let i = 0; i < 8; i++) {
         await sleep(140)
         const s = await currentScreen(hostId, paneId)

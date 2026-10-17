@@ -361,6 +361,62 @@ test('a long conversation opens on its last stretch and reads earlier messages a
   watchers.stop(third.key)
 }, 60_000)
 
+test('a long Codex thread opens on its last stretch too, with its summary, and pages back to the start', async () => {
+  const file = join(dir, 'long-codex.jsonl')
+  const at = () => new Date(1_800_000_000_000 + ++n * 1000).toISOString()
+  const rec = (type: string, payload: any) => JSON.stringify({ timestamp: at(), type, payload }) + '\n'
+  const say = (role: 'user' | 'assistant', text: string) => rec('response_item', { type: 'message', id: `msg_${n}`, role, content: [{ type: role === 'user' ? 'input_text' : 'output_text', text }] })
+  const lines = [
+    rec('session_meta', { id: 'thread', cwd: '/home/me/play', cli_version: '0.163.0' }),
+    rec('event_msg', { type: 'thread_goal_updated', goal: { objective: 'early goal', status: 'active' } }),
+    rec('event_msg', { type: 'item_completed', item: { type: 'FileChange', id: 'fc-early', status: 'completed', changes: { '/home/me/play/a.txt': { type: 'add', content: 'one\ntwo\n' } } } }),
+  ]
+  for (let i = 0; i < 600; i++) {
+    lines.push(say('user', `msg ${i} ${'x'.repeat(1100)}`), say('assistant', `reply ${i}`))
+    lines.push(rec('event_msg', { type: 'task_complete', turn_id: `t${i}`, duration_ms: 1000 }))
+  }
+  writeFileSync(file, lines.join(''))
+  expect(statSync(file).size).toBeGreaterThan(600_000)
+
+  const pane = { id: '%7', title: 'codex', agent: { kind: 'codex', transcriptPath: file, sessionId: 'thread' } }
+  const config = { id: 'tail-test', name: 'Remote', kind: 'ssh' as const, ssh: 'nowhere' }
+  spyOn(registry, 'get').mockReturnValue({ host: new Host(config as any), state: { status: 'online' } } as any)
+  spyOn(registry, 'host').mockReturnValue(new Host({ ...config, kind: 'local' } as any))
+  spyOn(registry, 'findPane').mockReturnValue({ pane } as any)
+  const streams = spyOn(Host.prototype, 'stream')
+  streams.mockClear()
+  const got: ServerMsg[] = []
+  const sub = { send: (m: ServerMsg) => got.push(m) }
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 400 && !ok(); i++) await Bun.sleep(25)
+    expect(ok()).toBe(true)
+  }
+  const num = (i: any) => Number(/^msg (\d+)/.exec(i.text)?.[1])
+
+  const w = watchers.get('tail-test', '%7')
+  w.subscribe(sub)
+  await until(() => got.some((m) => m.t === 'chat.reset'))
+  const reset = got.find((m) => m.t === 'chat.reset') as Extract<ServerMsg, { t: 'chat.reset' }>
+  const cmds = streams.mock.calls.map((c) => String(c[0]))
+  // the last stretch and a grep for the summary lines, never the whole file; no live helper for a
+  // file outside Codex's own folder
+  expect(cmds.some((c) => c.includes('tail -c +1 '))).toBe(false)
+  expect(cmds.some((c) => c.includes('grep -E') && c.includes('thread_goal_updated'))).toBe(true)
+  expect(cmds.some((c) => c.includes('node -e'))).toBe(false)
+  expect(reset.items.filter((i) => i.kind === 'user').map(num).at(-1)).toBe(599)
+  expect(reset.hasMore).toBe(true)
+  const latest = () => (got.findLast((m) => m.t === 'chat.info' || m.t === 'chat.reset') as any)?.info
+  await until(() => latest()?.goal?.condition === 'early goal')
+  expect(latest().stats.turns).toBe(600)
+  expect(latest().stats.linesAdded).toBe(2)
+  expect(w.items.length).toBeLessThan(1200)
+
+  for (let more: any; (more = got.findLast((m) => m.t === 'chat.more')), !more || more.hasMore; ) await w.more(sub, w.items[0]!.seq)
+  expect(w.items.filter((i) => i.kind === 'user').map(num)).toEqual(Array.from({ length: 600 }, (_, i) => i))
+  expect(w.items.every((it, i) => i === 0 || it.seq > w.items[i - 1]!.seq)).toBe(true)
+  watchers.stop(w.key)
+}, 60_000)
+
 test('a scroll-back read cut short keeps nothing, and the next scroll up reads that piece again', async () => {
   const file = join(dir, 'drop.jsonl')
   const lines: string[] = []

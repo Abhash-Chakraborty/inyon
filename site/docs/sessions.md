@@ -11,9 +11,9 @@ Tap a session to open it. If an agent is running in the pane, it opens as a chat
 
 The chat is the agent's own record of the conversation, read from its session files, not a copy of the screen. It shows:
 
-- **Replies**, formatted: headings, lists, tables and code with syntax highlighting and a copy button.
-- **Tool calls**, one line each with a verb (*Ran*, *Read*, *Edited*, *Searched the web*…), the target, `+`/`−` line counts and how long it took. Tap one to expand it: a command and its output, an edit as a diff, a file read, or the raw input and result.
-- **Plans, to-dos and questions** as cards: a proposed plan and whether it was approved, a checklist, or the questions the agent asked and your answers.
+- **Replies**, formatted: headings, lists, tables and code with syntax highlighting and a copy button. With Codex, from 0.17.6, a reply appears as it is written and settles into place when it's complete.
+- **Tool calls**, one line each with a verb (*Ran*, *Read*, *Edited*, *Searched the web*…), the target, `+`/`−` line counts and how long it took. Tap one to expand it: a command and its output, an edit as a diff, a file read, or the raw input and result. A Codex script that ran several tools reads *Ran a script* with each step, its diffs and the script itself behind **Script**.
+- **Plans, to-dos and questions** as cards: a proposed plan and whether it was approved, a checklist, or the questions the agent asked and your answers. Codex's plans (Plan mode) and questions are cards too, from 0.17.6.
 - **Thinking**, collapsed.
 - **Goals**, as *Goal set*, *Goal met* or *Goal cleared*.
 - **Notices**: compaction, Remote Control turned on, and a *While you were away* recap when you come back.
@@ -24,7 +24,7 @@ Settings → Appearance → **Tool calls in chat** switches between *Everything*
 
 The chat follows new replies as they arrive, unless you've scrolled up to read; then it keeps your place and offers **Jump to latest**. Scroll up to load earlier messages. If you've been away for more than five minutes, it opens at the newest reply.
 
-While the agent works, a line under the last message says what it's doing. Background work (shells, monitors, subagents) shows under it too, and stays after the reply until it's done; see [Background work](controls.md#background-work).
+While the agent works, a line under the last message says what it's doing; for Codex it counts how long the turn has run and, from 0.17.6, shows the last line a running command printed. Background work (shells, monitors, subagents) shows under it too, and stays after the reply until it's done; see [Background work](controls.md#background-work).
 
 ### Images
 
@@ -44,6 +44,8 @@ When the agent asks something, the composer is replaced by the question:
 
 Each answer is tied to the question it was shown for. If the agent has already moved on, an old card can't answer the wrong question.
 
+Codex can ask a question without stopping its turn: the terminal shows *1 question* with a hint to press `shift+←`. From 0.17.6, Inyon presses it for you as soon as nothing is being typed in the terminal, so the question shows here with its choices, and the session reads *A question is waiting for your answer* on the overview until you pick one. Codex's approvals say what they're for in the alert and on the overview: *Run `printf 'hi' > hello.txt`*, or *Edit notes.txt?*
+
 If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers.
 
 You can also answer straight from the [overview](overview.md#whats-on-it) or from a notification, without opening the session.
@@ -53,6 +55,8 @@ You can also answer straight from the [overview](overview.md#whats-on-it) or fro
 Type in the box at the bottom and press `Enter` to send. `Shift Enter` adds a line. On a phone, `Enter` adds a line and the send button sends.
 
 While the agent is working, sending queues the message instead: the box says *Queue a message for Claude…*, and the agent reads it at its next step. With nothing typed, the button becomes **Stop**, which sends `Esc`.
+
+Codex takes a message two ways while it works, and from 0.17.6 a switch next to the send button picks one. **Queue** (the default, `Tab` in the terminal) holds the message for after this turn; it shows as a queued bubble until Codex takes it. **Steer now** (`Enter` in the terminal) hands it to Codex in the middle of the turn, so it changes course without finishing first. The switch goes back to Queue when Codex stops working.
 
 ### Commands and skills
 

@@ -147,6 +147,35 @@ describe('Composer send button', () => {
     expect(screen.getByText(/Shell command/)).toBeTruthy()
   })
 
+  test('while Codex works, a message is queued unless you switch to steering it in', async () => {
+    const user = userEvent.setup()
+    const pane = nextPane()
+    const { rerender } = await render(<Composer host="box" pane={pane} agent="codex" working={false} />)
+    // idle: no choice to make
+    expect(screen.queryByRole('switch')).toBeNull()
+    rerender(<Composer host="box" pane={pane} agent="codex" working />)
+    const toggle = screen.getByRole('switch') as HTMLButtonElement
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(toggle.textContent).toBe('Queue')
+    await user.type(box(), 'also check the tests')
+    expect(sendButton().getAttribute('aria-label')).toBe('Queue follow-up')
+    await user.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(toggle.textContent).toBe('Steer now')
+    expect(screen.getByLabelText('Steer now')).toBeTruthy()
+    expect(box().placeholder).toBe('Steer Codex now…')
+    await user.click(screen.getByLabelText('Steer now'))
+    await flush()
+    const [call] = api.send.mock.calls
+    expect(call.slice(0, 3)).toEqual(['box', pane, 'also check the tests'])
+    expect(call[4]).toBe(true)
+    // a shell command runs as itself whichever way; other agents never see the switch
+    await user.type(box(), '!ls')
+    expect(screen.queryByRole('switch')).toBeNull()
+    rerender(<Composer host="box" pane={nextPane()} agent="claude" working />)
+    expect(screen.queryByRole('switch')).toBeNull()
+  })
+
   test("agents without shell commands send '!' text as a message", async () => {
     const user = userEvent.setup()
     await render(<Composer host="box" pane={nextPane()} agent="gemini" working={false} />)

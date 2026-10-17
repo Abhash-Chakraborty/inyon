@@ -1,10 +1,11 @@
 import { OpenCodeClient } from '../agents/opencode-api.ts'
 import { opencodeSelection, opencodeLive } from '../agents/opencode-controls.ts'
-import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg } from '@inyon/protocol'
+import type { AgentKind, ChatInfo, ChatItem, ScreenState, SendState, ServerMsg, SubagentInfo } from '@inyon/protocol'
 import { isDriving, startDriving } from './driving.ts'
 import { SendLedger } from './delivery.ts'
 import { chatKey } from '@inyon/protocol'
 import { codexHistory, normalizeCodex } from '../agents/codex.ts'
+import { CodexLiveState, codexLiveCommand, codexThreadId } from '../agents/codex-live.ts'
 import { normalizeCopilot } from '../agents/copilot.ts'
 import { AntigravityDoc } from '../agents/antigravity.ts'
 import { GeminiDoc } from '../agents/gemini.ts'
@@ -12,13 +13,13 @@ import { opencodeItems, opencodePost, parseEndpoint } from '../agents/opencode.t
 import { OcdbCache, isOcdb, ocdbRows, ocdbSession, ocdbShape, ocdbStamp } from '../agents/opencode-db.ts'
 import { shq } from '../hosts/host.ts'
 import { paneTitle, registry } from '../hosts/registry.ts'
-import { capturePanes } from '../tmux/tmux.ts'
+import { capturePanes, sendKeys } from '../tmux/tmux.ts'
 import { loadMeta, newMeta, normalize, saveMeta, type TranscriptMeta } from './transcript.ts'
 import { parseScreen } from './screen.ts'
 import { hasPastePreview, inputContains } from './delivery.ts'
 import { getDraft, mirrorToTerminal, setDraft, squash } from './drafts.ts'
 import { KEEP as CACHE_KEEP, READER, loadChat, saveChat } from './chat-cache.ts'
-import { metaCommand, parseSize, rangeCommand, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
+import { codexMetaCommand, metaCommand, parseSize, rangeCommand, sizeCommand, tailCommand, TranscriptReader } from './transcript-tail.ts'
 
 const DEBUG = typeof process !== 'undefined' && !!process.env?.INYON_DEBUG
 
@@ -110,6 +111,11 @@ class ChatWatcher {
    */
   private replay?: any[]
   private codex = false
+  /**
+   * A Codex thread rewound earlier continues an older segment file. Opened on its last stretch,
+   * those earlier lines wait here until scrolling back reaches the start of this file.
+   */
+  private heldHistory?: string[]
   private ready = false
   /**
    * Reading a backlog (what was said while nobody watched): updates are held back and one reset
@@ -132,6 +138,16 @@ class ChatWatcher {
   /** agy Remote Control, as last seen on screen */
   private remote?: { url: string; ts: string }
   private generation = 0
+  /** Codex's reply as it's being written, from its app-server's live events (codex-live.ts) */
+  private live = new CodexLiveState()
+  private liveTail?: { kill(): void; exited?: Promise<number> }
+  private liveTimer?: ReturnType<typeof setTimeout>
+  private liveExpiry?: ReturnType<typeof setTimeout>
+  private liveRetryTimer?: ReturnType<typeof setTimeout>
+  private liveRetries = 0
+  private liveJson = ''
+  /** when a question Codex asked mid-turn was last opened on its screen */
+  private questionOpenedAt = 0
 
   constructor(public hostId: string, public paneId: string, parked?: Parked) {
     this.key = chatKey(hostId, paneId)
@@ -236,6 +252,8 @@ class ChatWatcher {
     else s.send({ t: 'chat.info', key: this.key, info: this.info })
     if (this.progress) s.send(this.progress)
     s.send({ t: 'chat.screen', key: this.key, screen: this.screen })
+    const live = this.live.list()
+    if (live.length) s.send({ t: 'chat.live', key: this.key, items: live })
     const d = getDraft(this.key)
     if (d) s.send({ t: 'chat.draft', key: this.key, text: d.text, source: d.source, at: d.at })
   }
@@ -450,9 +468,14 @@ class ChatWatcher {
   /** Messages before the first one held (a saved copy, or a long session trimmed) are still in the file. */
   private olderInFile() {
     if (!this.reader || !this.transcript) return false
-    if (this.olderFrom !== undefined) return this.olderFrom > 0
+    if (this.olderFrom !== undefined) return this.olderFrom > 0 || !!this.heldHistory?.length
     const first = this.items[0]?.seq ?? 0
     return first > 0 && first < TAIL_SEQ
+  }
+
+  /** One line of the agent's record → chat items, by the agent whose record it is. */
+  private normalizeEntry(e: any, meta: TranscriptMeta) {
+    return this.codex ? normalizeCodex(e, meta) : this.agent === 'copilot' ? normalizeCopilot(e, meta) : normalize(e, meta)
   }
 
   /**
@@ -485,10 +508,11 @@ class ChatWatcher {
     const host = registry.host(this.hostId)
     const reader = new TranscriptReader(from)
     let watchdog: ReturnType<typeof setTimeout> | undefined
+    const cmd = this.codex ? codexMetaCommand(path, to, this.onRemoteHost(), from) : metaCommand(path, to, this.onRemoteHost(), from)
     await new Promise<void>((done) => {
-      const t = host.stream(metaCommand(path, to, this.onRemoteHost(), from), (line) => {
+      const t = host.stream(cmd, (line) => {
         const r = reader.line(line)
-        if (r?.entry) normalize(r.entry, meta)
+        if (r?.entry) this.normalizeEntry(r.entry, meta)
       })
       t.exited ? t.exited.then(() => done(), () => done()) : done()
       watchdog = setTimeout(() => (t.kill(), done()), 30_000)
@@ -521,9 +545,21 @@ class ChatWatcher {
         // tool calls and their results sit close together, so a piece's own summary links them
         const meta = newMeta()
         const got: typeof older = []
-        for (const { entry, at } of lines) for (const d of normalize(entry, meta)) got.push({ item: d as Omit<ChatItem, 'seq'>, at })
+        for (const { entry, at } of lines) for (const d of this.normalizeEntry(entry, meta)) got.push({ item: d as Omit<ChatItem, 'seq'>, at })
         older.unshift(...got)
         end = lines[0]!.at
+      }
+      // the start of a Codex segment file: what the thread said before its rewind comes first
+      if (end === 0 && this.heldHistory?.length) {
+        const meta = newMeta()
+        const got: typeof older = []
+        for (const line of this.heldHistory) {
+          try {
+            for (const d of normalizeCodex(JSON.parse(line), meta)) got.push({ item: d as Omit<ChatItem, 'seq'>, at: 0 })
+          } catch {}
+        }
+        older.unshift(...got)
+        this.heldHistory = undefined
       }
       if (this.stopped || path !== this.transcript || (this.items[0]?.seq ?? TAIL_SEQ) !== first) return
       let seq = first - older.length
@@ -615,6 +651,7 @@ class ChatWatcher {
   private forget() {
     this.tail?.kill()
     this.tail = undefined
+    this.stopLive()
     this.generation++
     Object.assign(this, { transcript: undefined, reader: undefined, items: [], meta: newMeta(), pending: [], behind: undefined, olderFrom: undefined, replay: undefined, goalUnsure: false, ready: true })
     this.lineAt.clear()
@@ -654,9 +691,10 @@ class ChatWatcher {
       goal: this.goalUnsure ? undefined : m.goal,
       rc: m.rc ?? this.remote,
       queue: [...this.currentQueue()],
+      turn: this.live.turn ?? m.turn,
       sends: this.ledger.list(),
       tasks: [...m.tasks.values()].slice(-40),
-      subagents: [...m.subagents.values()].slice(-40),
+      subagents: mergedAgents(m, this.live).slice(-40),
       artifacts: [...m.artifacts.values()].slice(-40),
       stats: { ...m.stats, startedAt: m.stats.startedAt ?? (agent?.startedAt ? new Date(agent.startedAt).toISOString() : undefined) },
       error: !found ? 'This pane no longer exists' : undefined,
@@ -833,6 +871,8 @@ class ChatWatcher {
       this.tailStart = false
       this.replay = undefined
       this.goalUnsure = false
+      this.heldHistory = undefined
+      this.stopLive()
     }
     if (!again) restart()
     if (path.startsWith('opencode://')) return this.followOpenCode(path, gen)
@@ -853,8 +893,8 @@ class ChatWatcher {
     // away a long while (a saved copy from hours ago): rather than read everything said since, keep
     // the saved chat on screen and read only the last stretch, while the summary catches up from
     // the lines in between
-    const claude = !this.codex && this.agent !== 'copilot' && this.olderFrom !== undefined
-    const jump = again && claude && size - this.reader!.offset > TAIL_BYTES
+    const tailFirst = this.agent !== 'copilot' && this.olderFrom !== undefined
+    const jump = again && tailFirst && size - this.reader!.offset > TAIL_BYTES
     if (jump) {
       const saved = this.reader!.offset
       const from = size - TAIL_BYTES
@@ -864,7 +904,7 @@ class ChatWatcher {
       const prefix = loadMeta(saveMeta(this.meta))
       void this.readMeta(path, from, prefix, saved).then(() => {
         if (gen !== this.generation || this.stopped || this.replay !== replay) return
-        for (const e of replay) normalize(e, prefix)
+        for (const e of replay) this.normalizeEntry(e, prefix)
         this.meta = prefix
         this.replay = undefined
         this.settleGoal()
@@ -886,7 +926,10 @@ class ChatWatcher {
       this.seq = 0
       this.reader = new TranscriptReader()
       this.codex = this.agent === 'codex' || /\/\.codex\/sessions\//.test(path)
-      if (!this.codex && this.agent !== 'copilot') {
+      // a Codex segment file starts after a rewind: the history it continues comes first
+      const history = this.codex ? await codexHistory(host, path).catch(() => [] as string[]) : []
+      if (gen !== this.generation || this.stopped) return
+      if (this.agent !== 'copilot') {
         this.olderFrom = 0
         if (size > TAIL_BYTES) {
           // a long conversation: only its last stretch, shown as soon as it's in, while what's
@@ -896,7 +939,7 @@ class ChatWatcher {
           const prefix = newMeta()
           void this.readMeta(path, from, prefix).then(() => {
             if (gen !== this.generation || this.stopped || this.replay !== replay) return
-            for (const e of replay) normalize(e, prefix)
+            for (const e of replay) this.normalizeEntry(e, prefix)
             this.meta = prefix
             this.replay = undefined
             this.settleGoal()
@@ -909,19 +952,21 @@ class ChatWatcher {
           this.reader = new TranscriptReader(from)
           this.olderFrom = size
           this.tailStart = true
+          // the earlier segments' lines are read in once scrolling back reaches this file's start
+          if (history.length) this.heldHistory = history
         }
       }
-      // a Codex segment file starts after a rewind: show the history it continues first
-      if (this.codex) {
-        for (const line of await codexHistory(host, path).catch(() => [] as string[])) {
+      if (this.codex && !this.heldHistory) {
+        for (const line of history) {
           try {
             this.items.push(...normalizeCodex(JSON.parse(line), this.meta).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem))
             this.trim()
           } catch {}
         }
-        if (gen !== this.generation || this.stopped) return
       }
     }
+    // Codex: join the thread's live events too, for the reply as it's written and the turn under way
+    if (this.codex && !this.liveTail) this.startLive(path, gen)
     const reader = this.reader!
     const total = size - reader.offset
     let remaining = total
@@ -983,12 +1028,14 @@ class ChatWatcher {
           this.tailStart = false
         }
         this.replay?.push(e)
-        const items = (this.codex ? normalizeCodex(e, this.meta) : this.agent === 'copilot' ? normalizeCopilot(e, this.meta) : normalize(e, this.meta)).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem)
+        const items = this.normalizeEntry(e, this.meta).map((d) => ({ ...d, seq: this.seq++ }) as ChatItem)
         if (this.olderFrom !== undefined) for (const it of items) this.lineAt.set(it.seq, at)
         if (items.length) {
           this.items.push(...items)
           this.trim()
           if (!reading()) this.queue(items)
+          // the record of something that was being written live: the live copy can go
+          if (this.codex && this.live.settle(items.flatMap(recordIds))) this.liveSoon()
         }
       }
       if (reading()) {
@@ -1003,6 +1050,90 @@ class ChatWatcher {
       }
     }, { keepStdin: remote })
     this.watchTail(gen)
+  }
+
+  // ---------- Codex live events (the reply as it's written) ----------
+
+  /**
+   * Joins the thread on Codex's app-server through a helper on the machine (codex-live.ts). The
+   * helper needs node and the daemon's socket; without them it ends at once, and is tried again
+   * later rather than at once.
+   */
+  private startLive(path: string, gen: number) {
+    this.stopLive()
+    const id = codexThreadId(path)
+    // only a real rollout under Codex's own folder names a thread its daemon has
+    if (!/\/\.codex\/sessions\//.test(path) || !/^[0-9a-f-]{36}$/.test(id)) return
+    const host = registry.host(this.hostId)
+    const t = host.stream(codexLiveCommand(id), (line) => {
+      if (gen === this.generation && this.liveTail === t) this.onLiveLine(line)
+    }, { keepStdin: true })
+    this.liveTail = t
+    t.exited?.then((code) => {
+      if (this.liveTail !== t || this.stopped || gen !== this.generation) return
+      this.liveTail = undefined
+      // no node on the machine (127), or nothing listening: not worth asking every few seconds
+      const wait = code === 127 || this.liveRetries >= 8 ? 10 * 60_000 : Math.min(60_000, 2000 * 2 ** this.liveRetries++)
+      clearTimeout(this.liveRetryTimer)
+      this.liveRetryTimer = setTimeout(() => {
+        if (gen === this.generation && !this.stopped && this.transcript === path) this.startLive(path, gen)
+      }, wait)
+    })
+  }
+
+  private stopLive() {
+    clearTimeout(this.liveRetryTimer)
+    clearTimeout(this.liveTimer)
+    clearTimeout(this.liveExpiry)
+    this.liveTimer = this.liveExpiry = undefined
+    const t = this.liveTail
+    this.liveTail = undefined
+    t?.kill()
+    const had = this.live.items.size > 0
+    this.live.clear()
+    this.liveJson = ''
+    if (had && !this.stopped) this.broadcast({ t: 'chat.live', key: this.key, items: [] })
+  }
+
+  private onLiveLine(line: string) {
+    const ch = this.live.apply(line)
+    if (line.startsWith('{"e":"resumed"')) this.liveRetries = 0
+    if (ch.live) {
+      this.liveSoon()
+      this.armLiveExpiry()
+    }
+    if (ch.turn || ch.agents) this.scheduleInfo()
+    // the screen shows the change a moment later; read it now rather than at the next poll
+    if (ch.turn || ch.status || ch.queue || ch.ask) this.pollScreen()
+    if (ch.turn || ch.status || ch.name !== undefined) registry.refresh(this.hostId, 150)
+    if (ch.usage) {
+      // the numbers are in the rollout by now; the 8 s cache would show the old ones meanwhile
+      registry.forgetStatus(this.hostId)
+      registry.refresh(this.hostId, 400)
+    }
+  }
+
+  /** Sends the live text to everyone watching, a few times a second at most. */
+  private liveSoon() {
+    if (this.liveTimer) return
+    this.liveTimer = setTimeout(() => {
+      this.liveTimer = undefined
+      const items = this.live.list()
+      const json = JSON.stringify(items)
+      if (json === this.liveJson) return
+      this.liveJson = json
+      this.broadcast({ t: 'chat.live', key: this.key, items })
+    }, 80)
+  }
+
+  /** A finished item whose record never shows up (ids that don't match) is dropped after a while. */
+  private armLiveExpiry() {
+    if (this.liveExpiry) return
+    this.liveExpiry = setTimeout(() => {
+      this.liveExpiry = undefined
+      if (this.live.expire(6000)) this.liveSoon()
+      if (this.live.done.size) this.armLiveExpiry()
+    }, 1500)
   }
 
   private infoTimer?: ReturnType<typeof setTimeout>
@@ -1074,6 +1205,12 @@ class ChatWatcher {
             api: true,
           }
         }
+        // a question Codex asked mid-turn sits behind shift+← in its terminal: open it, so it
+        // shows here as a card with buttons (not while something is being typed there)
+        if (pane.agent.kind === 'codex' && screen.questions && !screen.prompt && !screen.draft && !isDriving(this.hostId, this.paneId) && Date.now() - this.questionOpenedAt > 8000) {
+          this.questionOpenedAt = Date.now()
+          sendKeys(host, this.paneId, ['S-Left']).then(() => setTimeout(() => this.pollScreen(), 400), () => {})
+        }
         const json = JSON.stringify(screen)
         if (json !== this.screenJson) {
           this.screenJson = json
@@ -1106,6 +1243,7 @@ class ChatWatcher {
     clearTimeout(this.retryTimer)
     if (registry.get(this.hostId)?.state.status === 'online') this.save()
     this.tail?.kill()
+    this.stopLive()
     clearTimeout(this.screenTimer)
     clearTimeout(this.flushTimer)
     clearTimeout(this.idleTimer)
@@ -1114,6 +1252,23 @@ class ChatWatcher {
     clearTimeout(this.infoTimer)
     clearTimeout(this.changeTimer)
   }
+}
+
+/** The ids a conversation item is known by, for matching it to the live copy written before it. */
+const recordIds = (it: ChatItem): (string | undefined)[] => [
+  it.uuid,
+  it.kind === 'assistant' ? it.msgId : undefined,
+  it.kind === 'assistant' && it.block.type === 'tool_use' ? it.block.id : undefined,
+  it.kind === 'tool_result' ? it.toolUseId : undefined,
+]
+
+/** The record's sub-agents, plus any the live events know about that the record hasn't written yet. */
+function mergedAgents(m: TranscriptMeta, live: CodexLiveState): SubagentInfo[] {
+  const out = new Map(m.subagents)
+  for (const a of live.agents.values()) {
+    if (!out.has(a.threadId)) out.set(a.threadId, { toolUseId: a.threadId, type: 'codex', description: a.description, status: a.status, startedAt: a.startedAt })
+  }
+  return [...out.values()]
 }
 
 class Watchers {

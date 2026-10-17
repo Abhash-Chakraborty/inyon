@@ -7,7 +7,7 @@ description: Hear about it when an agent needs you or finishes, and when a machi
 
 | Event | When | Can be turned off |
 |---|---|---|
-| **Needs you** | An agent is waiting on a prompt. For a command, the alert says what it's for and shows its first line; for an edit, which file | No |
+| **Needs you** | An agent is waiting on a prompt, or Codex asked a question while it works (from 0.17.6). For a command, the alert says what it's for and shows its first line; for an edit, which file | No |
 | **Finished** | An agent finished working, with the start of its reply. If its turn ended with subagents or shells still running, the alert waits until those have finished too, and a few seconds more, since the agent often goes on once a subagent reports back | Yes: *When an agent finishes* |
 | **Offline** | A machine has been unreachable for a minute | No |
 | **Back online** | A machine that was reported offline reconnected, and how long it was away | No |

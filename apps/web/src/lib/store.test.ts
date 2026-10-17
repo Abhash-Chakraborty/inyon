@@ -37,6 +37,23 @@ describe('hub messages', () => {
     expect(chat('k')).toMatchObject({ loaded: true, hasMore: true, items, info: { title: 'T' } })
   })
 
+  test('live text is kept until the record with the same id arrives, then goes with it', () => {
+    reset('live', [item.user('say hi')])
+    emit({ t: 'chat.live', key: 'live', items: [{ id: 'msg_1', kind: 'text', text: 'Hi ag' }] })
+    emit({ t: 'chat.live', key: 'live', items: [{ id: 'msg_1', kind: 'text', text: 'Hi again!' }, { id: 'rs_1', kind: 'thinking', text: 'brief' }] })
+    expect(chat('live').live).toEqual([{ id: 'msg_1', kind: 'text', text: 'Hi again!' }, { id: 'rs_1', kind: 'thinking', text: 'brief' }])
+    // the message lands in the record: its live copy is dropped in the same update, the other stays
+    const recorded: ChatItem = { ...(item.text('Hi again!') as Extract<ChatItem, { kind: 'assistant' }>), uuid: 'msg_1', msgId: 'msg_1' }
+    emit({ t: 'chat.append', key: 'live', items: [recorded] })
+    expect(chat('live').live).toEqual([{ id: 'rs_1', kind: 'thinking', text: 'brief' }])
+    // a live list that names something already recorded never shows it
+    emit({ t: 'chat.live', key: 'live', items: [{ id: 'msg_1', kind: 'text', text: 'Hi again!' }] })
+    expect(chat('live').live).toEqual([])
+    // the hub says nothing is being written
+    emit({ t: 'chat.live', key: 'live', items: [] })
+    expect(chat('live').live).toEqual([])
+  })
+
   test('a resent latest page keeps the earlier messages already loaded', () => {
     const old = [item.user('1'), item.text('2'), item.user('3'), item.text('4')]
     reset('k', old, true)

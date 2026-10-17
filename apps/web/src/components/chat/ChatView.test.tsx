@@ -111,6 +111,46 @@ describe('ChatView', () => {
     send.mockRestore()
   })
 
+  test("Codex's reply shows as it is written, and the finished message takes its place once", async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'codex')] })] })
+    const { container } = render(<ChatView host="box" pane="%1" agent="codex" onTerminal={() => {}} />)
+    load([item.user('say hi again')], chatInfo({ agent: 'codex', turn: { id: 't1', startedAt: Date.now() - 5000 } }))
+    act(() => emit({ t: 'chat.screen', key: 'box:%1', screen: { working: true, activity: 'Working', width: 120 } }))
+    act(() => emit({ t: 'chat.live', key: 'box:%1', items: [{ id: 'rs_1', kind: 'thinking', text: 'Keeping it short' }, { id: 'msg_1', kind: 'text', text: 'Hi ag' }] }))
+    await flush()
+    expect(container.querySelector('[data-live]')).toBeTruthy()
+    expect(screen.getByText('Hi ag')).toBeTruthy()
+    expect(screen.getByText('Thinking')).toBeTruthy()
+    // the working line counts the turn's time from the agent's own record
+    expect(screen.getByText('Working')).toBeTruthy()
+    expect(screen.getByText(/^\s*5s$/)).toBeTruthy()
+    act(() => emit({ t: 'chat.live', key: 'box:%1', items: [{ id: 'rs_1', kind: 'thinking', text: 'Keeping it short' }, { id: 'msg_1', kind: 'text', text: 'Hi again!' }] }))
+    await flush()
+    expect(screen.getAllByText('Hi again!')).toHaveLength(1)
+    // the record arrives with the same id: one copy on screen, from the record, no live bubble left for it
+    const recorded = { ...item.text('Hi again!'), uuid: 'msg_1', msgId: 'msg_1' }
+    act(() => emit({ t: 'chat.append', key: 'box:%1', items: [recorded, { ...item.thinking('Keeping it short'), uuid: 'rs_1' }, item.end(1239)] }))
+    act(() => emit({ t: 'chat.screen', key: 'box:%1', screen: { working: false, width: 120 } }))
+    await flush()
+    expect(screen.getAllByText('Hi again!')).toHaveLength(1)
+    expect(container.querySelector('[data-live]')).toBeNull()
+    expect(screen.queryByText('Working')).toBeNull()
+  })
+
+  test("a question Codex asked mid-turn is told apart from a prompt while it waits", async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'codex')] })] })
+    render(<ChatView host="box" pane="%1" agent="codex" onTerminal={() => {}} />)
+    load([item.user('ask me'), item.tool('call_q', 'AskUserQuestion', { questions: [{ question: 'Colour', options: [{ label: 'Red' }, { label: 'Blue' }] }] })], chatInfo({ agent: 'codex' }))
+    act(() => emit({ t: 'chat.screen', key: 'box:%1', screen: { working: true, activity: 'Working', questions: 1, width: 120 } }))
+    await flush()
+    expect(screen.getByText('Codex is asking')).toBeTruthy()
+    expect(screen.getByText('Red · Blue')).toBeTruthy()
+    act(() => emit({ t: 'chat.append', key: 'box:%1', items: [{ ...item.result('call_q', 'Colour: Red'), meta: { answers: { Colour: 'Red' } } } as ChatItem] }))
+    await flush()
+    expect(screen.getByText('Question answered')).toBeTruthy()
+    expect(screen.getByText('Red')).toBeTruthy()
+  })
+
   test('renders a long conversation without throwing', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     render(view())
