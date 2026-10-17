@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
 import { ArrowRight, CircleX, Download, ExternalLink, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
-import { AGENTS, type HostState } from '@inyon/protocol'
+import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
 import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
 import { RenameSheet } from './session/RenameSheet.tsx'
@@ -100,7 +100,7 @@ export function ActionSheets() {
   if (sheet.kind === 'rename')
     return <RenameSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} current={paneName(sheet.r)} agent={!!sheet.r.pane.agent} open={open} onClose={close} />
   if (sheet.kind === 'conversations' && sheet.r.pane.agent)
-    return <ConversationsSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} agent={sheet.r.pane.agent.kind} working={sheet.r.pane.agent.state === 'working'} open={open} onClose={close} />
+    return <ConversationsSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} agent={sheet.r.pane.agent.kind} working={isBusy(sheet.r.pane.agent)} open={open} onClose={close} />
   if (sheet.kind === 'new') return <NewSessionSheet open={open} hostId={sheet.hostId} onClose={close} />
   if (sheet.kind === 'edit') return <MachineSheet open={open} edit={sheet.host.config} onClose={close} />
   return null

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
-import { AGENTS, type HostState } from '@inyon/protocol'
+import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
 import { api } from '../lib/api.ts'
@@ -117,7 +117,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors [-webkit-touch-callout:none] hover:border-line-strong sm:gap-4 sm:p-5">
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
-        <AgentLogo kind={a.kind} size={26} active={a.state === 'working'} />
+        <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{AGENTS[a.kind].name}</span>
         <StatePill state={shownState(a, r.host)} title={a.background} />
         <span className="pointer-events-auto relative -my-1 -mr-1.5">

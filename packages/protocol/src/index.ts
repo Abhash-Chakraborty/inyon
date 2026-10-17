@@ -48,6 +48,9 @@ export type HostStatus = 'connecting' | 'online' | 'error'
 
 export type AgentState = 'idle' | 'working' | 'waiting' | 'unknown'
 
+/** Working, or idle with shells, monitors or agents still running in the background: something is happening. */
+export const isBusy = (a: { state: AgentState; background?: string | null }) => a.state === 'working' || (a.state === 'idle' && !!a.background)
+
 export interface RateWindow {
   pct: number
   /** unix seconds */
@@ -392,8 +395,11 @@ export interface ScreenState {
   draft?: string
   /** Remote Control as the screen last reported it: its link while on, null once turned off (agy) */
   remote?: string | null
-  /** background shells/monitors listed under the input box, which die if the agent restarts */
-  background?: string
+  /**
+   * background shells, monitors or agents listed under the input box, which die if the agent
+   * restarts: null when the footer was read and lists none, undefined when it wasn't visible
+   */
+  background?: string | null
   /** messages waiting to be sent after the current turn, when only the screen shows them (Antigravity) */
   queue?: string[]
   /** model and effort from the agent's own footer, for sessions that don't report live numbers */

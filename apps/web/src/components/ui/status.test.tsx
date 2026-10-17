@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { render } from '@testing-library/react'
 import { AGENTS } from '@inyon/protocol'
-import { AgentSpinner, backgroundText } from './status.tsx'
+import { AgentSpinner, StateDot, backgroundText, shownState } from './status.tsx'
 
 test('the spinner steps through its frames in CSS, so it never re-renders to animate', () => {
   const { container, rerender } = render(<AgentSpinner kind="claude" active />)
@@ -10,6 +10,16 @@ test('the spinner steps through its frames in CSS, so it never re-renders to ani
   expect(strip.style.animation).toContain(`steps(${AGENTS.claude.spinner.length})`)
   rerender(<AgentSpinner kind="claude" />)
   expect((container.querySelector('span > span') as HTMLElement).style.animation).toBe('')
+})
+
+test('an idle agent with work left running shows as Background, with a dot that moves and is not the idle grey', () => {
+  expect(shownState({ state: 'idle', background: '1 agent' })).toBe('background')
+  expect(shownState({ state: 'idle' })).toBe('idle')
+  expect(shownState({ state: 'working', background: '1 agent' })).toBe('working')
+  const dot = (state: Parameters<typeof StateDot>[0]['state']) => render(<StateDot state={state} />).container.firstElementChild!.className
+  expect(dot('background')).toContain('pulse-soft')
+  expect(dot('background')).not.toContain('bg-fg-3')
+  expect(dot('idle')).not.toContain('pulse-soft')
 })
 
 test('background work reads as a sentence, alone or as a list', () => {

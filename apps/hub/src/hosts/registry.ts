@@ -546,12 +546,14 @@ class Registry {
         if (title && generic) p.title = title
         else if (generic) p.title = ''
       }
+      // the pane as it was last seen, for what the screen doesn't say this time
+      const before = this.findPane(rt.host.id, p.id)?.pane.agent
       p.agent = info
       const lines = screens.get(p.id)
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
         rt.screens.set(p.id, sc)
-        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id))
+        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), before)
         await applyOpenCodeLive(rt.host, p)
       }
       // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
@@ -703,6 +705,14 @@ class Registry {
     this.refresh(cfg.id, 500)
   }
 
+  /**
+   * How long a pane stays idle with nothing left in the background before a turn that ended
+   * with background work counts as finished: when a subagent reports back, the main turn often
+   * goes on a moment later, and that isn't two finishes.
+   */
+  doneGrace = 3000
+  private doneTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
   private diffNotify(rt: Runtime, prev: HostState) {
     const before = new Map<string, PaneInfo>()
     for (const s of prev.sessions) for (const w of s.windows) for (const p of w.panes) before.set(p.id, p)
@@ -722,12 +732,28 @@ class Registry {
           const hadBackground = !!before.get(p.id)?.agent?.background
           const background = !!p.agent?.background
           const title = paneTitle(p) || `${s.name}:${w.index}`
+          const key = turnKey(rt.host.id, p.id)
+          // anything but a bare idle pane means the turn goes on: a finish on hold is off
+          if (now !== 'idle' || background) {
+            clearTimeout(this.doneTimers.get(key))
+            this.doneTimers.delete(key)
+          }
+          const done = () => this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'done', title, body: `${agentName} finished`, agent: p.agent?.kind })
           if (was === now) {
-            if (now === 'idle' && hadBackground && !background) this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'done', title, body: `${agentName} finished`, agent: p.agent?.kind })
+            if (now === 'idle' && hadBackground && !background) {
+              // the last agent or shell is gone: finished, unless the main turn picks up again
+              const pid = p.agent?.pid
+              clearTimeout(this.doneTimers.get(key))
+              this.doneTimers.set(key, setTimeout(() => {
+                this.doneTimers.delete(key)
+                const pane = rt.state.sessions.flatMap((x) => x.windows.flatMap((y) => y.panes)).find((x) => x.id === p.id)
+                if (pane?.agent && pane.agent.state === 'idle' && !pane.agent.background && pane.agent.pid === pid) done()
+              }, this.doneGrace))
+            }
           } else if (now === 'waiting') {
             this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'waiting', title, body: p.agent?.waitingFor ?? `${agentName} needs your input`, agent: p.agent?.kind })
           } else if (was === 'working' && now === 'idle' && !background) {
-            this.emit({ type: 'notify', host: rt.host.id, pane: p.id, kind: 'done', title, body: `${agentName} finished`, agent: p.agent?.kind })
+            done()
           }
         }
   }
@@ -755,7 +781,7 @@ class Registry {
         const lines = screens.get(id)
         if (!pane?.agent || !lines) continue
         const before = JSON.stringify(pane.agent)
-        applyScreen(pane, parseScreen(lines, pane.width, pane.agent.kind), rt.host, lines, rt.probe && liveHook(rt.probe, id))
+        applyScreen(pane, parseScreen(lines, pane.width, pane.agent.kind), rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent)
         await applyOpenCodeLive(rt.host, pane)
         if (JSON.stringify(pane.agent) !== before) changed = true
       }
@@ -809,10 +835,20 @@ const turns = new Turns()
 const turnKey = (host: string, pane: string) => JSON.stringify([host, pane])
 
 /**
+ * What runs in the background after a screen read. The footer that lists it is hidden while a
+ * picker or a dialog is up, so what it last said stands until the footer shows again; a process
+ * other than the one seen before starts clean.
+ */
+export function backgroundAfter(screen: string | null | undefined, was: { pid: number; background?: string } | undefined, pid: number) {
+  if (screen !== undefined) return screen ?? undefined
+  return was?.pid === pid ? was.background : undefined
+}
+
+/**
  * Copies what the screen says (state, mode, prompt summary) onto a pane's agent info. For Claude,
  * an answered prompt or a turn its hooks say is running keeps the state at working.
  */
-function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState) {
+function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState, was?: AgentPaneInfo) {
   const info = p.agent!
   if (isDriving(host.id, p.id)) sc = { ...sc, prompt: undefined }
   const shown = sc.prompt ? 'waiting' : sc.working ? 'working' : 'idle'
@@ -834,7 +870,7 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
     if (sc.effort && (live || !info.status?.effort)) info.status = { ...(info.status ?? { updatedAt: 0 }), effort: sc.effort }
   }
   info.activity = sc.activity
-  info.background = sc.background
+  info.background = backgroundAfter(sc.background, was, info.pid)
   info.options = undefined
   info.waitingFor = undefined
   if (!sc.prompt) return
@@ -866,6 +902,7 @@ async function applyOpenCodeLive(host: Host, pane: PaneInfo) {
     const live = await opencodeLive(host, info.transcriptPath, pane.cwd)
     info.state = live.permission ? 'waiting' : live.working ? 'working' : 'idle'
     info.activity = live.retrying ? 'Retrying' : live.working ? 'Working' : undefined
+    info.background = live.background ?? undefined
     info.mode = live.selection.agent ?? info.mode
     info.status = { ...info.status, model: live.selection.model, modelId: live.selection.model, effort: live.selection.variant, updatedAt: Date.now() }
     if (live.permission) {

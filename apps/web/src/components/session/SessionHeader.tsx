@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import {
   ChevronLeft, Layers, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, Shrink, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
 } from 'lucide-react'
+import { isBusy } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
 import { ConversationsSheet } from './ConversationsSheet.tsx'
@@ -110,7 +111,7 @@ export function SessionHeader({
           <ChevronLeft className="size-5" />
         </Link>
         {/* phones name the agent in the subtitle; the title gets the room */}
-        <AgentLogo kind={agent} size={26} active={s.screen?.working ?? ref?.pane.agent?.state === 'working'} className="max-sm:hidden" />
+        <AgentLogo kind={agent} size={26} active={s.screen ? s.screen.working || !!s.screen.background : !!ref?.pane.agent && isBusy(ref.pane.agent)} className="max-sm:hidden" />
         <div className="min-w-0 flex-1 pl-1">
           <h1 className="flex items-center gap-1.5 text-[16px] font-semibold leading-tight tracking-[-0.03em]">
             {ref?.pane.agent && <StateDot state={shownState(ref.pane.agent, ref.host)} className="sm:hidden" />}

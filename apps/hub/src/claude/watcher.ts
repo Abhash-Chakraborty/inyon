@@ -1055,6 +1055,7 @@ class ChatWatcher {
           if (live) {
             screen.working = live.working
             screen.activity = live.retrying ? 'Retrying' : live.working ? 'Working' : undefined
+            screen.background = live.background
             screen.model = live.selection.model
             screen.effort = live.selection.variant
             screen.mode = live.selection.agent

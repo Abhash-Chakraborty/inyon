@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { deliver, followEvents, forgetPushes, noticeFor, readEntries, setEntries } from './push.ts'
+import { deliver, followEvents, forgetPushes, noticeFor, readEntries, setEntries, startPush } from './push.ts'
 import { nodeDir } from './paths.ts'
 
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-push-'))
@@ -78,6 +78,35 @@ test('a forgotten phone gets nothing, and forget removes what it gave', async ()
   expect(await deliver({ kind: 'waiting', pane: '%1', title: 't', body: 'b' }, { send })).toBe(0)
   forgetPushes(phoneB)
   expect(readEntries()).toEqual([])
+})
+
+test('a finish with agents still running waits for them, and a question meanwhile takes over', async () => {
+  const log = path.join(home, 'events-bg.jsonl')
+  writeFileSync(log, '')
+  writeFileSync(path.join(nodeDir(), 'phones.json'), JSON.stringify({ [phoneA]: { name: 'Pixel', pairedAt: 1 } }))
+  setEntries({ phone: phoneA, host: 'laptop', registrations: [reg(1)] })
+  const sent: string[] = []
+  const send = (async (_s: unknown, payload: any) => (sent.push(`${payload.kind} ${payload.tag}`), { ok: true, status: 201 })) as any
+  let footer: string | null = '1 agent'
+  const stop = startPush({ events: log, everyMs: 20, checkMs: 30, background: async () => footer, send })
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  // the main turn ends while a subagent runs: not finished yet
+  appendFileSync(log, line('%5', { hook_event_name: 'Stop' }) + '\n')
+  await wait(150)
+  expect(sent).toEqual([])
+  footer = null
+  await wait(150)
+  expect(sent).toEqual(['done laptop:%5'])
+  // another turn ends with an agent running, then Claude asks something: the question is the news
+  footer = '1 agent'
+  appendFileSync(log, line('%6', { hook_event_name: 'Stop' }) + '\n')
+  await wait(80)
+  appendFileSync(log, line('%6', { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }) + '\n')
+  await wait(80)
+  footer = null
+  await wait(150)
+  expect(sent).toEqual(['done laptop:%5', 'waiting laptop:%6'])
+  stop()
 })
 
 test('follows the hook log from its end, across the 2 MB move', async () => {
