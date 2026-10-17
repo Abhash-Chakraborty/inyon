@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ChatInfo, ChatItem, HostState, ScreenState, ServerMsg } from '@inyon/protocol'
 import { socket, type Tagged } from './socket.ts'
-import { tellApart } from './hubs.ts'
+import { splitHostId, tellApart } from './hubs.ts'
 import { haptic } from './haptics.ts'
 import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
 import { appHref, publicFile, routeOf } from './base.ts'
@@ -207,6 +207,21 @@ export function hidePane(host: string, pane: string, hide = true) {
  */
 const sources = new Map<string, HostState[]>()
 const allHosts = () => tellApart([...sources.values()].flat())
+
+/**
+ * The remembered machines go back to where they came from, so the first live overview (on a
+ * phone, its own core's, which answers at once) replaces only its own part: a paired hub that
+ * hasn't answered yet keeps its machines on the list instead of leaving a blank page.
+ */
+export function rememberSources(hosts: HostState[]) {
+  sources.clear()
+  for (const h of hosts) {
+    const hub = splitHostId(h.config.id).hub
+    const key = hub ? `hub:${hub.id}` : 'main'
+    sources.set(key, [...(sources.get(key) ?? []), h])
+  }
+}
+if (remembered) rememberSources(remembered)
 
 function onMessage(m: Tagged) {
   switch (m.t) {

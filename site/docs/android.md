@@ -34,7 +34,7 @@ A code works once, for 10 minutes, and five wrong tries cancel it.
 
 If you run a [hub](hub.md), sign in to its web app and choose **Open on your phone** (on the overview, under Machines, or in Settings). In the app tap **Connect to a hub**, then scan the code, or type the hub's address and the ID and code it shows.
 
-The hub's machines then appear next to the phone's own computers. The phone talks to the hub with a token of its own. A hub that's out of reach shows its machines as connecting until it answers, and one that forgets the phone drops out with a message. **Settings → Hubs** lists them, each with **Forget**.
+The hub's machines then appear next to the phone's own computers. The phone talks to the hub with a token of its own. A hub that's out of reach shows its machines as connecting until it answers, even when the app opens that way (off your VPN, say): the list stays as it was the last time the hub answered, and before it ever has, the Computers page says it's connecting to the hub. One that forgets the phone drops out with a message. **Settings → Hubs** lists them, each with **Forget**.
 
 The phone has to reach the hub's address: over your VPN, your LAN, or an HTTPS address. Plain `http://` addresses work from the app (0.13.3 and later).
 

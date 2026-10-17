@@ -18,6 +18,7 @@ import { SetupPanel } from '../components/SetupPanel.tsx'
 import { SignInSheet } from '../components/SignInSheet.tsx'
 import { isPhone } from '../lib/phone.ts'
 import { forgetPairFragment, pairFragment } from '../lib/native.ts'
+import { listHubs } from '../lib/hubs.ts'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { refreshAll } from '../lib/refresh.ts'
 import { AgentBadges } from '../components/Overview.tsx'
@@ -99,6 +100,9 @@ function MachineRow({ h, hosts, i }: { h: HostState; hosts: HostState[]; i: numb
 
 export function MachinesPage() {
   const hosts = useStore((s) => s.hosts)
+  const loaded = useStore((s) => s.hostsLoaded) || hosts.length > 0
+  // nothing listed, but a hub is paired: the phone can't reach it right now (off its VPN, say)
+  const hubs = loaded && !hosts.length ? listHubs() : []
   const [q, setQ] = useState('')
   const shown = useMemo(() => onlineFirst(hosts).filter((h) => !q || matchesQuery(`${h.config.name} ${h.hostname ?? ''} ${h.machineKind ?? ''} ${h.os ?? ''} ${h.agents.join(' ')}`, q)), [hosts, q])
   // a pairing link opened from outside (a QR code scanned with the camera) lands here
@@ -133,12 +137,45 @@ export function MachinesPage() {
       />
       <div className="mx-auto max-w-[880px] px-4 py-6 lg:px-7">
         {hosts.length > SEARCH_FROM && <FilterInput value={q} onChange={setQ} placeholder={`Search ${hosts.length} ${isPhone() ? 'computers' : 'machines'}`} className="mb-3" />}
-        {shown.length > 0 && (
-          <div className="stagger divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
-            {shown.map((h, i) => (
-              <MachineRow key={h.config.id} h={h} hosts={hosts} i={i} />
+        {!loaded ? (
+          // rows in the list's shape, until the first answer
+          <div role="status" aria-label={`Loading ${isPhone() ? 'computers' : 'machines'}`} className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="flex min-h-[56px] items-center gap-3 px-4 py-2.5">
+                <div className="skeleton size-9 rounded-xl" />
+                <div className="flex-1">
+                  <div className="skeleton h-3.5 w-28 rounded" />
+                  <div className="skeleton mt-2 h-3 w-44 rounded" />
+                </div>
+              </div>
             ))}
           </div>
+        ) : !hosts.length ? (
+          <div className="rounded-3xl border border-dashed border-line-strong">
+            <Empty
+              icon={<Logo className="size-7 mark-drawn" />}
+              title={hubs.length ? `Connecting to ${hubs.map((h) => h.name).join(' and ')}…` : isPhone() ? 'Connect your computer' : 'No machines yet'}
+              action={
+                <Button variant="primary" onClick={() => setSheet(true)}>
+                  <Plus className="size-3.5" /> {isPhone() ? 'Add a computer' : 'Add a machine'}
+                </Button>
+              }
+            >
+              {hubs.length
+                ? `${hubs.length === 1 ? 'Its computers appear as soon as it answers.' : 'Their computers appear as soon as they answer.'} On a VPN, make sure this ${isPhone() ? 'phone' : 'device'} is connected to it too.`
+                : isPhone()
+                ? 'See the coding agents on your laptop or server and talk to them from here. Run one command on it, then scan the code it shows.'
+                : 'Pair a machine or add one over SSH to see the coding agents running in tmux on it.'}
+            </Empty>
+          </div>
+        ) : (
+          shown.length > 0 && (
+            <div className="stagger divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
+              {shown.map((h, i) => (
+                <MachineRow key={h.config.id} h={h} hosts={hosts} i={i} />
+              ))}
+            </div>
+          )
         )}
         {q && !shown.length && <p className="px-1 py-6 text-center text-[13px] text-fg-3">No {isPhone() ? 'computer' : 'machine'} matches “{q}”</p>}
       </div>
