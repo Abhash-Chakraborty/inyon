@@ -115,7 +115,7 @@ export function Select<T extends string>({
         )}
       >
         <span className="min-w-0 flex-1 truncate">{current?.label ?? ''}</span>
-        <ChevronDown className={clsx('size-4 shrink-0 text-fg-3 transition-transform duration-200 ease-out-soft', open && 'rotate-180')} />
+        <ChevronDown className={clsx('size-4 shrink-0 text-fg-3 transition-transform', open && 'rotate-180')} />
       </button>
       {open &&
         (sheet ? (
@@ -137,9 +137,10 @@ type ListProps<T extends string> = {
   listRef: React.RefObject<HTMLDivElement | null>
 }
 
-function Options<T extends string>({ id, options, value, active, onPick, listRef, setActive, roomy }: ListProps<T> & { setActive?: (i: number) => void; roomy?: boolean }) {
+/** `stagger`: the rows come in one after another (the phone sheet; a list by a mouse is up at once) */
+function Options<T extends string>({ id, options, value, active, onPick, listRef, setActive, roomy, stagger }: ListProps<T> & { setActive?: (i: number) => void; roomy?: boolean; stagger?: boolean }) {
   return (
-    <div ref={listRef} id={id} role="listbox" className="stagger">
+    <div ref={listRef} id={id} role="listbox" className={clsx(stagger && 'stagger')}>
       {options.map((o, i) => (
         <button
           key={o.value}
@@ -160,7 +161,7 @@ function Options<T extends string>({ id, options, value, active, onPick, listRef
             <span className="block truncate">{o.label}</span>
             {o.hint && <span className="block truncate text-[12px] text-fg-3">{o.hint}</span>}
           </span>
-          <Check className={clsx('size-4 shrink-0 transition-[opacity,transform] duration-200 ease-out-soft', o.value === value ? 'scale-100 opacity-100' : 'scale-50 opacity-0')} />
+          <Check className={clsx('size-4 shrink-0 transition-[opacity,transform]', o.value === value ? 'scale-100 opacity-100' : 'scale-[0.97] opacity-0')} />
         </button>
       ))}
     </div>
@@ -179,7 +180,7 @@ function PickerSheet<T extends string>(props: ListProps<T> & { title?: string })
       <div className={clsx('pb-safe-2 relative max-h-[70dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-elev px-2 pt-2 shadow-float', closing ? 'animate-sheet-out' : 'animate-sheet-in')}>
         <div className="mx-auto mb-1 h-1 w-9 rounded-full bg-line-strong" />
         {props.title && <p className="px-3.5 pt-2 pb-1.5 text-[12.5px] font-medium text-fg-3">{props.title}</p>}
-        <Options {...props} roomy onPick={(o) => leave(() => props.onPick(o))} />
+        <Options {...props} roomy stagger onPick={(o) => leave(() => props.onPick(o))} />
       </div>
     </div>,
     document.body,
@@ -197,7 +198,11 @@ function PickerList<T extends string>(props: ListProps<T> & { anchor: React.RefO
   return createPortal(
     <>
       <div className="fixed inset-0 z-[80]" onClick={props.onClose} />
-      <div className="animate-pop fixed z-[81] max-h-[min(320px,60dvh)] overflow-y-auto rounded-2xl border border-line bg-elev p-1 shadow-float" style={pos}>
+      {/* it opens out of the field: down from under it, or up from over it when there is no room below */}
+      <div
+        className={clsx('fixed z-[81] max-h-[min(320px,60dvh)] overflow-y-auto rounded-2xl border border-line bg-elev p-1 shadow-float', pos.bottom !== undefined ? 'animate-pop-up origin-bottom' : 'animate-pop origin-top')}
+        style={pos}
+      >
         <Options {...props} />
       </div>
     </>,

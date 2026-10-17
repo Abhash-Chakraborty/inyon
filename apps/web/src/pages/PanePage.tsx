@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { LEAVE_MS } from '../components/ui/AnimatedList.tsx'
 import { socket } from '../lib/socket.ts'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
@@ -97,6 +98,13 @@ export function PanePage() {
   }
 
   const showPanel = !!agent && wide && sidePanel
+  // the panel stays a moment after it is closed, fading, before it goes (as a sheet does)
+  const [panelShown, setPanelShown] = useState(showPanel)
+  useEffect(() => {
+    if (showPanel) return setPanelShown(true)
+    const t = setTimeout(() => setPanelShown(false), LEAVE_MS)
+    return () => clearTimeout(t)
+  }, [showPanel])
 
   return (
     <ChatActionsContext.Provider value={actions}>
@@ -126,18 +134,21 @@ export function PanePage() {
               {!ref && !info ? (
                 <Loading />
               ) : view === 'chat' ? (
-                <ChatView key={`${host}${pane}`} host={host} pane={pane} agent={agent} onTerminal={() => setView('terminal')} controls={agent ? <ComposerControls s={s} /> : undefined} ultracode={s.ultracode} />
+                // each view rises in over the one it replaces; another session's chat comes in the same way
+                <div key={`chat:${host}${pane}`} className="animate-page flex min-h-0 flex-1 flex-col">
+                  <ChatView host={host} pane={pane} agent={agent} onTerminal={() => setView('terminal')} controls={agent ? <ComposerControls s={s} /> : undefined} ultracode={s.ultracode} />
+                </div>
               ) : (
-                // the terminal rises in over the chat it came from
                 <div key="terminal" className="animate-page flex min-h-0 flex-1 flex-col">
                   <TerminalView key={`${host}${pane}`} host={host} pane={pane} agent={agent} />
                 </div>
               )}
             </Suspense>
           </div>
-          {showPanel && (
-            <Suspense fallback={null}>
-              <SidePanel s={s} items={items} tab={tab} setTab={setTab} onTask={setTask} onSubagent={setSub} />
+          {panelShown && (
+            // an empty panel holds the room while the real one loads, so the chat doesn't get wider and narrower again
+            <Suspense fallback={<aside className="w-[420px] shrink-0 border-l border-line bg-sidebar 2xl:w-[480px]" />}>
+              <SidePanel s={s} items={items} tab={tab} setTab={setTab} onTask={setTask} onSubagent={setSub} closing={!showPanel} />
             </Suspense>
           )}
         </div>

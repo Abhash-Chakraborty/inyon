@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import clsx from 'clsx'
 
 export interface Keyed {
@@ -11,13 +11,16 @@ export const LEAVE_MS = 120
 
 /**
  * A grid whose items arrive, leave and move without jumping. A new item fades in and rises a
- * little; one that goes fades out first, then the others slide to their new places (measured
- * before and after, moved with a transform only). Nothing here changes layout on its own.
+ * little (the first batch one row after another); one that goes fades out where it was, then the
+ * others slide to their new places (measured before and after, moved with a transform only).
+ * Nothing here changes layout on its own. `enter` is the class a new item arrives with.
  */
-export function AnimatedList({ items, className }: { items: Keyed[]; className?: string }) {
+export function AnimatedList({ items, className, enter = 'animate-slide-up' }: { items: Keyed[]; className?: string; enter?: string }) {
   const box = useRef<HTMLDivElement>(null)
   /** keys shown last time, to tell a new item from one that was already there */
   const seen = useRef<Set<string>>(new Set())
+  /** keys in the order they were shown last time, so one that leaves keeps its place while it fades */
+  const order = useRef<string[]>([])
   /** where each item was last time, by key */
   const rects = useRef<Map<string, DOMRect>>(new Map())
   /** the list's own width last time: when it changes (the window settling at launch, a tablet turning) items reflow, they didn't move */
@@ -29,6 +32,21 @@ export function AnimatedList({ items, className }: { items: Keyed[]; className?:
   const current = new Set(items.map((i) => i.key))
   const gone = [...seen.current].filter((k) => !current.has(k))
   for (const i of items) last.current.set(i.key, i.node)
+
+  // which items are arriving is decided when the set of keys changes, not on every render: a
+  // refresh that brings the same items must not take the class off a row still rising, which
+  // would snap it into place. The first batch is also the one that comes in staggered
+  const keys = items.map((i) => i.key).join('\u0000')
+  const { entering, first } = useMemo(
+    () => ({ entering: new Set(items.filter((i) => !seen.current.has(i.key)).map((i) => i.key)), first: seen.current.size === 0 && items.length > 0 }),
+    [keys],
+  )
+
+  // a leaving item goes back in at the index it had, so it fades out in its own place and not in
+  // the last cell of the grid
+  const shown = items.map((i) => ({ ...i, entering: entering.has(i.key), leaving: false }))
+  const out = leaving.filter((l) => !current.has(l.key)).map((l) => ({ ...l, entering: false, leaving: true, at: order.current.indexOf(l.key) }))
+  for (const l of out.sort((a, b) => a.at - b.at)) shown.splice(l.at < 0 ? shown.length : Math.min(l.at, shown.length), 0, l)
 
   // an item that disappeared stays for a moment, marked, then goes for good. Its timer lives on
   // its own: the next render changes what counts as gone, and must not cancel it
@@ -74,16 +92,20 @@ export function AnimatedList({ items, className }: { items: Keyed[]; className?:
     }
     rects.current = next
     seen.current = current
+    // not while something has just gone: this commit lacks it, the next one shows it leaving in place
+    if (!gone.length) order.current = shown.map((s) => s.key)
   })
 
-  const shown = [
-    ...items.map((i) => ({ ...i, entering: !seen.current.has(i.key), leaving: false })),
-    ...leaving.filter((l) => !current.has(l.key)).map((l) => ({ ...l, entering: false, leaving: true })),
-  ]
   return (
     <div ref={box} className={className}>
-      {shown.map((i) => (
-        <div key={i.key} data-key={i.key} data-leaving={i.leaving || undefined} className={clsx('flip', i.entering && 'animate-slide-up', i.leaving && 'leave')}>
+      {shown.map((i, n) => (
+        <div
+          key={i.key}
+          data-key={i.key}
+          data-leaving={i.leaving || undefined}
+          style={first ? ({ '--i': n } as CSSProperties) : undefined}
+          className={clsx('flip', i.entering && enter, i.entering && first && 'staggered', i.leaving && 'leave')}
+        >
           {i.node}
         </div>
       ))}

@@ -114,7 +114,8 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
         press.onContextMenu(e)
         context.onContextMenu(e)
       }}
-      className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-colors [-webkit-touch-callout:none] hover:border-line-strong sm:gap-4 sm:p-5">
+      // a tap sinks the whole card a touch, as a button sinks under a press
+      className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-[color,background-color,border-color,transform] [-webkit-touch-callout:none] hover:border-line-strong active:scale-[0.99] sm:gap-4 sm:p-5">
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
@@ -248,7 +249,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
       {hosts.map((h) => {
         const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
         return (
-          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className={clsx('flex items-center gap-3 px-4 py-3 transition-opacity duration-200 active:bg-hover', h.status !== 'online' && 'opacity-60')}>
+          <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} {...contextMenu(() => machineMenu(h, nav), { touch: true })} className={clsx('flex items-center gap-3 px-4 py-3 transition-[opacity,background-color] active:bg-hover', h.status !== 'online' && 'opacity-60')}>
             <HostDot status={h.status} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -280,7 +281,7 @@ export function MachinesTable({ hosts }: { hosts: HostState[] }) {
             {hosts.map((h) => {
               const panes = h.sessions.reduce((n, s) => n + s.windows.reduce((m, w) => m + w.panes.length, 0), 0)
               return (
-                <tr key={h.config.id} {...contextMenu(() => machineMenu(h, nav))} className={clsx('transition-opacity duration-200 hover:bg-hover/50', h.status !== 'online' && 'opacity-60')}>
+                <tr key={h.config.id} {...contextMenu(() => machineMenu(h, nav))} className={clsx('transition-[opacity,background-color] hover:bg-hover/50', h.status !== 'online' && 'opacity-60')}>
                   <td className="border-b border-line/60 px-5 py-3.5">
                     <Link to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-2.5">
                       <HostDot status={h.status} />

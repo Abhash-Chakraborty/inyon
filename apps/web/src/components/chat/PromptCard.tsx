@@ -249,7 +249,7 @@ export function PromptCard({ prompt, host, pane, disabled }: { prompt: ScreenPro
               disabled={locked}
               onClick={() => pick(o.n)}
               className={clsx(
-                'flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition-[background,border,transform] active:scale-[0.99] disabled:opacity-60',
+                'flex w-full items-start gap-3 rounded-2xl border px-3.5 py-3 text-left transition-[background-color,border-color,transform] active:scale-[0.99] disabled:opacity-60',
                 o.selected ? 'border-accent/50 bg-accent-soft' : 'border-line bg-bg hover:bg-hover',
                 busy === o.n && 'border-accent bg-accent-soft',
               )}

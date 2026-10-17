@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { useState } from 'react'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Menu, Sheet } from './primitives.tsx'
+import { Menu, Segmented, Sheet } from './primitives.tsx'
 
 const viewport = (width: number, height: number) => act(() => {
   ;(window as any).happyDOM.setViewport({ width, height })
@@ -35,6 +35,9 @@ describe('Menu in a short viewport', () => {
     expect(menu.style.top).toBe('')
     expect(menu.style.bottom).toBe(`${320 - 244}px`)
     expect(parseFloat(menu.style.maxHeight)).toBeLessThanOrEqual(244 - 8)
+    // and it rises out of the button rather than dropping onto it
+    expect(menu.className).toContain('animate-pop-up')
+    expect(menu.className).toContain('origin-bottom-left')
   })
 
   test('no room for all of it on either side: takes the bigger side and scrolls', async () => {
@@ -43,6 +46,8 @@ describe('Menu in a short viewport', () => {
     // 134px below against 126px above
     expect(menu.style.top).toBe('178px')
     expect(menu.style.maxHeight).toBe('134px')
+    expect(menu.classList.contains('animate-pop')).toBe(true)
+    expect(menu.classList.contains('origin-top-left')).toBe(true)
   })
 
   test('moves when the viewport changes while it is open', async () => {
@@ -52,6 +57,15 @@ describe('Menu in a short viewport', () => {
     viewport(568, 320)
     expect(menu.style.top).toBe('')
     expect(menu.style.bottom).toBe('76px')
+  })
+})
+
+describe('Segmented', () => {
+  test('an option that is only an icon still has a name, and the group says what it chooses', () => {
+    render(<Segmented label="View" value="chat" onChange={() => {}} options={[{ v: 'chat', name: 'Chat', label: <svg /> }, { v: 'terminal', name: 'Terminal', label: <svg /> }]} />)
+    expect(screen.getByRole('radiogroup', { name: 'View' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Chat' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('false')
   })
 })
 

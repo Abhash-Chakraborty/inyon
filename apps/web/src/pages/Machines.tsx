@@ -260,11 +260,13 @@ export function MachinePage() {
             <Segmented value={tab} onChange={setTab} options={[{ v: 'sessions', label: 'Sessions' }, { v: 'setup', label: needsSetup ? 'Setup ·' : 'Setup' }, { v: 'config', label: 'Config' }, { v: 'uploads', label: 'Uploads' }, { v: 'integration', label: 'Integration' }]} />
           </div>
         </div>
-        {tab === 'sessions' && <SessionsTab host={host} onNew={() => setNewOpen(true)} />}
-        {tab === 'setup' && <SetupPanel host={host} />}
-        {tab === 'config' && <ConfigTab host={host} />}
-        {tab === 'uploads' && <UploadsCard host={host} />}
-        {tab === 'integration' && <IntegrationCard host={host} />}
+        <div key={tab} className="animate-fade-in">
+          {tab === 'sessions' && <SessionsTab host={host} onNew={() => setNewOpen(true)} />}
+          {tab === 'setup' && <SetupPanel host={host} />}
+          {tab === 'config' && <ConfigTab host={host} />}
+          {tab === 'uploads' && <UploadsCard host={host} />}
+          {tab === 'integration' && <IntegrationCard host={host} />}
+        </div>
         </>
         )}
       </div>

@@ -3,6 +3,7 @@ import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { VERSION } from '@inyon/protocol'
 import { UpdatePrompt } from './UpdatePrompt.tsx'
+import { LEAVE_MS } from './ui/AnimatedList.tsx'
 import { forgetHub } from '../lib/updates.ts'
 import { api, setSocketUp } from '../test/fakes.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
@@ -34,7 +35,11 @@ test('a hub that comes back with a new version offers a reload, once', async () 
   await hubRestarts('99.0.0')
   expect(prompt()).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Reload' })).toBeTruthy()
+  expect(screen.getByRole('status').className).toContain('animate-toast-in')
   await user.click(screen.getByRole('button', { name: 'Not now' }))
+  // it fades out first, then goes
+  expect(screen.getByRole('status').className).toContain('animate-fade-out')
+  await act(() => new Promise((r) => setTimeout(r, LEAVE_MS + 20)))
   expect(prompt()).toBeNull()
   // the same new version again, even after a page load: no nagging
   await hubRestarts('99.0.0')

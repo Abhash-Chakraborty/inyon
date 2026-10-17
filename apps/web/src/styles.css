@@ -110,10 +110,16 @@
   --dur-small: 200ms;
   --dur-move: 320ms;
   --dur-sheet: 480ms;
+  /* a bare transition-colors or transition-transform runs on these, not Tailwind's 150ms ease */
+  --default-transition-duration: var(--dur-small);
+  --default-transition-timing-function: var(--ease-out-soft);
   --animate-fade-in: fade-in var(--dur-small) var(--ease-out-soft);
   --animate-fade-out: fade-out var(--dur-exit) ease-in forwards;
   --animate-slide-up: slide-up var(--dur-move) var(--ease-out-soft);
+  --animate-row-in: row-in var(--dur-small) var(--ease-out-soft);
   --animate-pop: pop var(--dur-small) var(--ease-out-soft);
+  --animate-pop-up: pop-up var(--dur-small) var(--ease-out-soft);
+  --animate-panel-in: panel-in var(--dur-move) var(--ease-out-soft);
   --animate-sheet-in: sheet-in var(--dur-sheet) var(--ease-spring);
   --animate-sheet-out: sheet-out var(--dur-exit) ease-in forwards;
   --animate-page: page-in var(--dur-small) var(--ease-out-soft);
@@ -131,8 +137,23 @@
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
 }
+/* a tool call or step joining a reply that is already on screen: a shorter rise than a new message */
+@keyframes row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+/* a menu opening below its button settles down from it; one opening above rises from it */
 @keyframes pop {
   from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop-up {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+/* the side panel comes in from its edge */
+@keyframes panel-in {
+  from { opacity: 0; transform: translateX(8px); }
   to { opacity: 1; transform: none; }
 }
 @keyframes sheet-in {
@@ -157,10 +178,6 @@
 @keyframes pulse-soft {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
-}
-@keyframes shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
 }
 
 html,
@@ -217,12 +234,14 @@ select:focus-visible {
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
 .pb-safe-2 { padding-bottom: max(0.5rem, env(safe-area-inset-bottom)); }
 .pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }
-/* a working agent: solid ink dot plus an expanding ring, visible without waiting for a blink */
+/* a working agent: solid ink dot plus a ring in its colour that spreads and fades, visible without
+   waiting for a blink. The ring is a copy of the dot scaled up, so only transform and opacity move */
+.live-ring { position: relative; }
+.live-ring::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: inherit; animation: live-ring 1.4s ease-out infinite; }
 @keyframes live-ring {
-  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fg) 45%, transparent); }
-  100% { box-shadow: 0 0 0 5px transparent; }
+  from { opacity: 0.45; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.6); }
 }
-.live-ring { animation: live-ring 1.4s ease-out infinite; }
 /*
  * Claude Code's ultracode, on: the label it draws on its input box's rule sits on the message
  * box the same way, breathing slowly, with a faint ink ring that shares the beat; the header's
@@ -262,7 +281,7 @@ select:focus-visible {
 }
 .ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 /* with reduced motion the 1ms rule below would make looping animations flicker: stop them instead */
-@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .ultracode-box::after, .ultracode-label, .ultracode-mark, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .live-ring::after, .pulse-soft, .skeleton, .ultracode-box::after, .ultracode-label, .ultracode-mark, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
 /* the mark's line draws itself while the hub is out of reach (Logo in AppShell.tsx) */
 @keyframes mark-draw {
   from { stroke-dashoffset: 40; }
@@ -447,23 +466,34 @@ html.intro-running [data-intro-target] { opacity: 0; }
 
 /* ---------- micro-interactions ---------- */
 
-/* a press sinks a little and springs back */
-.press { transition: transform var(--dur-small) var(--ease-out-soft), background-color 0.15s, color 0.15s, border-color 0.15s, opacity 0.15s; }
-.press:active:not(:disabled) { transform: scale(0.97); transition-duration: 0.1s; }
+/* a press sinks a little, quickly, and springs back */
+.press { transition: transform var(--dur-small) var(--ease-out-soft), background-color var(--dur-small) var(--ease-out-soft), color var(--dur-small) var(--ease-out-soft), border-color var(--dur-small) var(--ease-out-soft), opacity var(--dur-small) var(--ease-out-soft); }
+.press:active:not(:disabled) { transform: scale(0.97); transition-duration: var(--dur-exit); }
 /* lists come in one row after another, the first few only */
 .stagger > * { animation: slide-up var(--dur-move) var(--ease-out-soft) both; animation-delay: calc(min(var(--i, 0), 4) * 40ms); }
+/* the same delays for an item that brings its own entrance (AnimatedList's first batch) */
+.staggered { animation-delay: calc(min(var(--i, 0), 4) * 40ms); animation-fill-mode: both; }
 /* a list item that moves slides to its new place; one that leaves fades first (AnimatedList) */
 .flip { transition: transform var(--dur-move) var(--ease-out-soft); }
 .leave { opacity: 0; pointer-events: none; transition: opacity var(--dur-exit) ease-in; }
-/* expanding rows: grid rows from 0fr to 1fr, on the spring */
-.expand { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-sheet) var(--ease-spring); }
-.expand[data-open='true'] { grid-template-rows: 1fr; }
-.expand > * { overflow: hidden; min-height: 0; }
+/*
+ * expanding rows: grid rows from 0fr to 1fr on the spring, the content fading in with them, and
+ * closing quicker. One that mounts already open (a tool body on its first tap) grows from nothing
+ * too, through @starting-style.
+ */
+.expand { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--dur-exit) ease-in; }
+.expand[data-open='true'] { grid-template-rows: 1fr; transition-duration: var(--dur-move); transition-timing-function: var(--ease-spring); }
+.expand > * { overflow: hidden; min-height: 0; opacity: 0; transition: opacity var(--dur-exit) ease-in; }
+.expand[data-open='true'] > * { opacity: 1; transition-duration: var(--dur-move); transition-timing-function: var(--ease-out-soft); }
+@starting-style {
+  .expand[data-open='true'] { grid-template-rows: 0fr; }
+  .expand[data-open='true'] > * { opacity: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
   .press:active { transform: none; }
-  /* sheets, menus and dialogs still show that they opened or closed: a short fade, no movement */
-  .animate-sheet-in, .animate-pop, .animate-fade-in { animation-name: fade-in !important; animation-duration: 120ms !important; animation-timing-function: ease-out !important; }
+  /* sheets, menus, dialogs and the side panel still show that they opened or closed: a short fade, no movement */
+  .animate-sheet-in, .animate-pop, .animate-pop-up, .animate-panel-in, .animate-fade-in { animation-name: fade-in !important; animation-duration: 120ms !important; animation-timing-function: ease-out !important; }
   .animate-sheet-out, .animate-fade-out { animation-name: fade-out !important; animation-duration: 120ms !important; animation-timing-function: ease-in !important; }
 }

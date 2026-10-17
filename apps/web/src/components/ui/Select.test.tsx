@@ -27,11 +27,34 @@ test('draws its own list instead of the system picker, and picks with a tap', as
   expect(document.querySelector('select')).toBeNull()
   await user.click(screen.getByRole('combobox', { name: 'Model' }))
   expect(screen.getByRole('listbox')).toBeTruthy()
+  // the tick on the chosen row only fades, it never shrinks away
+  expect(screen.getByRole('option', { name: 'Opus' }).querySelector('svg')!.getAttribute('class')).not.toMatch(/scale-50/)
   await user.click(screen.getByRole('option', { name: 'Opus' }))
   // the phone sheet slides away before it reports the choice
   await new Promise((r) => setTimeout(r, 250))
   expect(screen.getByText('opus')).toBeTruthy()
   expect(screen.queryByRole('listbox')).toBeNull()
+})
+
+test('by a mouse the list opens out of the field, all at once; on a phone the sheet brings its rows in one after another', async () => {
+  const user = userEvent.setup()
+  const first = await render(<Pick />)
+  await user.click(screen.getByRole('combobox', { name: 'Model' }))
+  const list = screen.getByRole('listbox')
+  expect(list.className).not.toContain('stagger')
+  expect(list.parentElement!.className).toContain('animate-pop')
+  expect(list.parentElement!.className).toContain('origin-top')
+  await user.keyboard('{Escape}')
+  first.unmount()
+  ;(window as any).happyDOM.setViewport({ width: 390, height: 844 })
+  try {
+    await render(<Pick />)
+    await user.click(screen.getByRole('combobox', { name: 'Model' }))
+    expect(screen.getByRole('listbox').className).toContain('stagger')
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  } finally {
+    ;(window as any).happyDOM.setViewport({ width: 1024, height: 768 })
+  }
 })
 
 test('works from the keyboard: arrows move, Enter picks, Escape closes only the list', async () => {

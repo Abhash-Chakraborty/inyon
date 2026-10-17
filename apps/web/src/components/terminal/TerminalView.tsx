@@ -303,7 +303,7 @@ function KeyBtn({ children, onClick, active, label }: { children: React.ReactNod
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={clsx(
-        'flex h-9 min-w-10 shrink-0 items-center justify-center rounded-lg border px-2.5 font-mono text-[13px] transition-colors active:scale-95',
+        'press flex h-9 min-w-10 shrink-0 items-center justify-center rounded-lg border px-2.5 font-mono text-[13px]',
         active ? 'border-accent bg-accent text-accent-fg' : 'border-line bg-elev text-fg-2 hover:text-fg',
       )}
     >

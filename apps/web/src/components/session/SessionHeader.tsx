@@ -12,7 +12,7 @@ import { contextOf, UsageSummary, useTick } from './Usage.tsx'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { liveWindow, openLink, shortPath, tokens } from '../../lib/format.ts'
 import { paneHref, paneTitle, terminalName } from '../../lib/overview.ts'
-import { IconButton, Menu } from '../ui/primitives.tsx'
+import { IconButton, Menu, Segmented } from '../ui/primitives.tsx'
 import { StateDot, StatePill, shownState } from '../ui/status.tsx'
 
 /** Tiny ring showing how full the context window is. */
@@ -52,7 +52,8 @@ function UsageChip({ s, onOpen }: { s: SessionModel; onOpen: () => void }) {
         <span className="tabular hidden sm:inline">{ctx.pct !== undefined ? `${Math.round(ctx.pct)}%` : tokens(ctx.used)}</span>
         {five && <span className="tabular hidden text-fg-3 lg:inline">· 5h {Math.round(five.pct)}%</span>}
       </button>
-      <div className="pointer-events-none invisible absolute right-0 top-full z-30 w-[290px] pt-2 opacity-0 transition-opacity duration-150 group-hover/usage:pointer-events-auto group-hover/usage:visible group-hover/usage:opacity-100 group-focus-within/usage:visible group-focus-within/usage:opacity-100 max-md:hidden">
+      {/* visibility goes with the opacity, so the card fades out as well as in; leaving is the quicker of the two */}
+      <div className="pointer-events-none invisible absolute right-0 top-full z-30 w-[290px] pt-2 opacity-0 transition-[opacity,visibility] duration-(--dur-exit) ease-in group-hover/usage:pointer-events-auto group-hover/usage:visible group-hover/usage:opacity-100 group-hover/usage:duration-(--dur-small) group-hover/usage:ease-out-soft group-focus-within/usage:visible group-focus-within/usage:opacity-100 group-focus-within/usage:duration-(--dur-small) group-focus-within/usage:ease-out-soft max-md:hidden">
         <div className="rounded-3xl border border-line bg-elev p-4 shadow-float">
           <UsageSummary status={status} info={info} agentInfo={s.ref?.pane.agent} />
         </div>
@@ -157,20 +158,17 @@ export function SessionHeader({
             )}
           />
         )}
-        <div role="group" aria-label="View" className="flex shrink-0 rounded-full border border-line bg-sunken p-0.5">
-          {(['chat', 'terminal'] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => setView(v)}
-              aria-label={v === 'chat' ? 'Chat' : 'Terminal'}
-              className={clsx('flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[12.5px] font-medium transition-colors', view === v ? 'bg-elev text-fg shadow-card ring-1 ring-line' : 'text-fg-3 hover:text-fg-2')}
-            >
-              {v === 'chat' ? <MessageSquare className="size-3.5" /> : <SquareTerminal className="size-3.5" />}
-              <span className="hidden lg:inline">{v === 'chat' ? 'Chat' : 'Terminal'}</span>
-            </button>
-          ))}
-        </div>
+        {/* the pill slides between the two views; on a small screen each is its icon alone */}
+        <Segmented
+          size="sm"
+          label="View"
+          value={view}
+          onChange={setView}
+          options={[
+            { v: 'chat', name: 'Chat', label: <><MessageSquare className="size-3.5" /><span className="hidden lg:inline">Chat</span></> },
+            { v: 'terminal', name: 'Terminal', label: <><SquareTerminal className="size-3.5" /><span className="hidden lg:inline">Terminal</span></> },
+          ]}
+        />
         {agent && (
           <span className="min-[1180px]:hidden">
             <IconButton label="Running tasks, subagents and changes" onClick={() => openSheet('activity')}>

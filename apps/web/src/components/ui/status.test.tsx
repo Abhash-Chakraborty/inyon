@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { render } from '@testing-library/react'
 import { AGENTS } from '@inyon/protocol'
-import { AgentSpinner, StateDot, backgroundText, shownState } from './status.tsx'
+import { AgentSpinner, StateDot, StatePill, backgroundText, shownState } from './status.tsx'
 
 test('the spinner steps through its frames in CSS, so it never re-renders to animate', () => {
   const { container, rerender } = render(<AgentSpinner kind="claude" active />)
@@ -20,6 +20,20 @@ test('an idle agent with work left running shows as Background, with a dot that 
   expect(dot('background')).toContain('pulse-soft')
   expect(dot('background')).not.toContain('bg-fg-3')
   expect(dot('idle')).not.toContain('pulse-soft')
+})
+
+test('a state chip changes colour in place and brings in the new word with a fade', () => {
+  const { container, rerender } = render(<StatePill state="working" />)
+  const pill = container.firstElementChild as HTMLElement
+  const word = () => pill.lastElementChild as HTMLElement
+  expect(pill.className).toContain('transition-colors')
+  expect(pill.firstElementChild!.className).toContain('transition-colors')
+  const was = word()
+  rerender(<StatePill state="waiting" />)
+  expect(container.firstElementChild).toBe(pill)
+  expect(word()).not.toBe(was)
+  expect(word().textContent).toBe('Needs you')
+  expect(word().className).toContain('animate-fade-in')
 })
 
 test('background work reads as a sentence, alone or as a list', () => {

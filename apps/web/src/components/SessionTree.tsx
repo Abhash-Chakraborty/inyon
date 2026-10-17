@@ -128,7 +128,7 @@ function Group({ open, onToggle, depth, label, count, waiting, menu, children }:
         aria-expanded={open}
         className={clsx('flex h-8 w-full items-center gap-1.5 rounded-full pr-3 text-left text-[13px] text-fg-2 hover:bg-hover/70 hover:text-fg', depth ? 'pl-5' : 'pl-2')}
       >
-        <ChevronRight className={clsx('size-3.5 shrink-0 text-fg-3 transition-transform duration-200', open && 'rotate-90')} />
+        <ChevronRight className={clsx('size-3.5 shrink-0 text-fg-3 transition-transform', open && 'rotate-90')} />
         <span className="flex min-w-0 flex-1 items-center gap-2">{label}</span>
         {waiting > 0 && !open && <span className="size-1.5 shrink-0 rounded-full bg-warn" aria-label={`${waiting} waiting for you`} />}
         <span className="tabular shrink-0 font-mono text-[12px] text-fg-3">{count}</span>

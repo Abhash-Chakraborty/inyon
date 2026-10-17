@@ -9,9 +9,22 @@ import { duration, shortPath } from '../../lib/format.ts'
 import { useStore } from '../../lib/store.ts'
 import { Diff, useHunks } from './Diff.tsx'
 import { CopyButton, Markdown } from './Markdown.tsx'
+import { Fold, useFold } from '../ui/Fold.tsx'
 
 /** Background jobs of the session, so a tool row can show the live state of the job it started. */
 export const ChatJobs = createContext<{ tasks: Map<string, BackgroundTask>; subagents: Map<string, SubagentInfo> }>({ tasks: new Map(), subagents: new Map() })
+
+/**
+ * Whether the reply this part belongs to was already on screen (AssistantTurn sets it after its
+ * first paint). A step that joins a reply later comes in rising; the steps drawn with the reply,
+ * or with the whole conversation, hold still.
+ */
+export const TurnSettled = createContext<() => boolean>(() => false)
+export function useArrived() {
+  const settled = useContext(TurnSettled)
+  const [arrived] = useState(() => settled())
+  return arrived
+}
 
 function Status({ call, live, detail }: { call: ToolCall; live: boolean; detail?: boolean }) {
   if (call.result?.isError) return <AlertCircle className="size-3.5 text-danger" />
@@ -191,7 +204,8 @@ function Details({ call }: { call: ToolCall }) {
 }
 
 export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
-  const [open, setOpen] = useState(false)
+  const [open, mounted, toggle] = useFold()
+  const arrived = useArrived()
   const detail = useStore((st) => st.settings.toolDetail) !== 'compact'
   const s = summarize(call)
   const Icon = s.icon
@@ -201,10 +215,11 @@ export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
   // the command itself, under its description
   const command = detail && (call.name === 'Bash' || call.name === 'Monitor') && call.input?.description && typeof call.input.command === 'string' ? call.input.command.split('\n')[0] : undefined
   return (
-    <div className={clsx('rounded-xl transition-colors', open && 'border border-line bg-elev')}>
+    // the border is there all along, clear until the row opens, so opening doesn't shift the text
+    <div className={clsx('rounded-xl border transition-colors', open ? 'border-line bg-elev' : 'border-transparent', arrived && 'animate-row-in')}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={toggle}
         className={clsx(
           'group flex w-full min-w-0 items-center gap-2.5 rounded-xl px-2 py-[6px] text-left text-[13.5px] transition-colors',
           !open && 'hover:bg-hover',
@@ -232,11 +247,11 @@ export function ToolRow({ call, live }: { call: ToolCall; live: boolean }) {
           <ChevronRight className={clsx('size-3.5 text-fg-3 transition-transform', open && 'rotate-90')} />
         </span>
       </button>
-      {open && (
-        <div className="animate-fade-in overflow-hidden border-t border-line">
+      <Fold open={open} mounted={mounted}>
+        <div className="border-t border-line">
           <Details call={call} />
         </div>
-      )}
+      </Fold>
     </div>
   )
 }
@@ -247,7 +262,8 @@ export function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean })
   const collapsible = !all && calls.length > 6
   const visible = collapsible && !expanded ? calls.slice(-4) : calls
   return (
-    <div className="my-1.5 -mx-2 space-y-0.5">
+    // a pixel further out than the rows' padding, for the border each row keeps around itself
+    <div className="my-1.5 -mx-[9px] space-y-0.5">
       {collapsible && !expanded && (
         <button
           type="button"
@@ -268,8 +284,9 @@ export function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean })
 // ---------- special tools ----------
 
 function Card({ icon, title, children, tone = 'default' }: { icon: React.ReactNode; title: string; children: React.ReactNode; tone?: 'default' | 'accent' }) {
+  const arrived = useArrived()
   return (
-    <div className={clsx('my-3 overflow-hidden rounded-2xl border bg-elev', tone === 'accent' ? 'border-accent/40' : 'border-line')}>
+    <div className={clsx('my-3 overflow-hidden rounded-2xl border bg-elev', tone === 'accent' ? 'border-accent/40' : 'border-line', arrived && 'animate-row-in')}>
       <div className="flex items-center gap-2 border-b border-line px-4 py-2.5 text-[13px] font-semibold text-fg-2">
         {icon}
         {title}

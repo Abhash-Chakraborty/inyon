@@ -42,9 +42,43 @@ test('no transition animates a layout property', () => {
 
 test('with reduced motion, sheets fade for about 120ms instead of sliding', () => {
   const block = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'))
-  for (const cls of ['animate-sheet-in', 'animate-sheet-out']) expect(block).toContain('.' + cls)
+  for (const cls of ['animate-sheet-in', 'animate-sheet-out', 'animate-pop', 'animate-pop-up', 'animate-panel-in']) expect(block).toContain('.' + cls)
   expect(block).toMatch(/\.animate-sheet-in[^{]*\{[^}]*animation-name: fade-in !important;[^}]*animation-duration: 120ms !important/)
   expect(block).toMatch(/\.animate-sheet-out[^{]*\{[^}]*animation-name: fade-out !important;[^}]*animation-duration: 120ms !important/)
+})
+
+// every duration is one of the four tokens: a bare transition-* runs on the defaults set in
+// @theme, anything else names a token. Nothing picks its own milliseconds
+test('durations come from the tokens', () => {
+  expect(offenders(/\b(duration|delay)-\d/)).toEqual([])
+  expect(offenders(/\bease-\[/)).toEqual([])
+  expect(css).toMatch(/--default-transition-duration: var\(--dur-small\)/)
+  expect(css).toMatch(/--default-transition-timing-function: var\(--ease-out-soft\)/)
+  // the helpers after the intro, up to the reduced-motion block: no raw seconds, only tokens
+  const helpers = css.slice(css.indexOf('/* ---------- micro-interactions'), css.lastIndexOf('@media (prefers-reduced-motion: reduce)'))
+  expect(helpers).toContain('.press')
+  for (const m of helpers.matchAll(/transition[^;]*:\s*([^;]+);/g)) expect(m[1], m[0]).not.toMatch(/\d\s*m?s\b/)
+  expect(css).not.toMatch(/shimmer/)
+})
+
+// a press sinks to 0.97 and nothing shrinks further: a check icon or key that scales to half
+// its size reads as a jump. The intro's mark, which grows into place once, is its own piece
+test('nothing scales below 0.97', () => {
+  expect(offenders(/\bscale-(0|[1-8]\d|9[0-6])\b/)).toEqual([])
+  for (const [f, src] of files) for (const m of src.matchAll(/scale-\[0?\.(\d+)\]/g)) expect(Number(`0.${m[1]}`) >= 0.97, `${f}: ${m[0]}`).toBe(true)
+  const intro = [css.indexOf('/* ---------- the cold-start intro'), css.indexOf('/* ---------- micro-interactions')]
+  const outside = css.slice(0, intro[0]) + css.slice(intro[1])
+  for (const m of outside.matchAll(/scale\(([\d.]+)\)/g)) expect(Number(m[1]) >= 0.97, m[0]).toBe(true)
+})
+
+// the loops that show state move only transform and opacity, like everything else
+test('no keyframe animates a shadow or a size', () => {
+  const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{([\s\S]*?)\n\}/g)]
+  expect(frames.length).toBeGreaterThan(5)
+  for (const [, name, body] of frames) {
+    if (name.startsWith('intro-') || name.startsWith('mark-')) continue
+    expect(body, name).not.toMatch(/box-shadow|\bwidth|\bheight|margin|padding/)
+  }
 })
 
 // the motion rules from the 0.11.1 pass: nothing overshoots, nothing but a sheet takes longer

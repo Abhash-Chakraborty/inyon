@@ -87,7 +87,7 @@ export function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boo
       onClick={() => onChange(!on)}
       className={clsx('relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors after:absolute after:-inset-2.5', on ? 'bg-accent' : 'bg-field')}
     >
-      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-300 ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
+      <span className={clsx('absolute top-[3px] left-0 size-4 rounded-full shadow-sm transition-transform duration-(--dur-move) ease-spring', on ? 'translate-x-[19px] bg-accent-fg' : 'translate-x-[3px] bg-white')} />
     </button>
   )
 }
@@ -98,12 +98,16 @@ export function Segmented<T extends string>({
   onChange,
   size = 'md',
   full,
+  label,
 }: {
   value: T
-  options: { v: T; label: ReactNode; title?: string }[]
+  /** `name` is what a screen reader calls an option whose label is an icon */
+  options: { v: T; label: ReactNode; title?: string; name?: string }[]
   onChange: (v: T) => void
   size?: 'sm' | 'md'
   full?: boolean
+  /** what the group as a whole chooses ("View") */
+  label?: string
 }) {
   // one pill slides under the chosen option instead of each option lighting up on its own. It moves
   // by transform only: the round ends slide, and a strip between them slides and stretches, so the
@@ -126,9 +130,9 @@ export function Segmented<T extends string>({
     if (pill) moved.current = true
   }, [pill?.left])
   const r = pill ? pill.height / 2 : 0
-  const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-[transform] duration-300 ease-out-soft')
+  const part = clsx('absolute inset-y-0 left-0 border-y border-line bg-elev shadow-card', moved.current && 'transition-transform duration-(--dur-move) ease-out-soft')
   return (
-    <div ref={box} role="radiogroup" className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
+    <div ref={box} role="radiogroup" aria-label={label} className={clsx('relative flex gap-0.5 rounded-full border border-line bg-sunken p-0.5', full ? 'w-full' : 'w-max')}>
       <span aria-hidden className={clsx('pointer-events-none absolute inset-x-0 top-0.5 bottom-0.5', !pill && 'hidden')}>
         {pill && (
           <>
@@ -145,7 +149,8 @@ export function Segmented<T extends string>({
           type="button"
           role="radio"
           aria-checked={value === o.v}
-          title={o.title}
+          aria-label={o.name}
+          title={o.title ?? o.name}
           onClick={() => onChange(o.v)}
           className={clsx(
             'press relative flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full font-medium after:absolute after:-inset-y-1.5 after:inset-x-0',
@@ -435,7 +440,12 @@ export function MenuPopup({
       <div
         ref={menu}
         role="menu"
-        className="animate-pop fixed z-[71] overflow-y-auto rounded-2xl border border-line bg-elev p-1 text-fg shadow-float"
+        // it grows out of its anchor: down from a button above it, up from one below it
+        className={clsx(
+          'fixed z-[71] overflow-y-auto rounded-2xl border border-line bg-elev p-1 text-fg shadow-float',
+          pos.bottom !== undefined ? 'animate-pop-up' : 'animate-pop',
+          pos.bottom !== undefined ? (align === 'end' ? 'origin-bottom-right' : 'origin-bottom-left') : align === 'end' ? 'origin-top-right' : 'origin-top-left',
+        )}
         style={pos}
         onContextMenu={(e) => e.preventDefault()}
       >
@@ -541,7 +551,7 @@ export function Meter({ value, tone = 'fg', className }: { value: number; tone?:
   const color = tone === 'accent' ? 'var(--accent)' : tone === 'auto' ? (v >= 85 ? 'var(--danger)' : v >= 60 ? 'var(--warn)' : 'var(--fg)') : 'var(--fg)'
   return (
     <div className={clsx('h-1.5 overflow-hidden rounded-full bg-line', className)}>
-      <div className="h-full origin-left rounded-full transition-transform duration-300" style={{ transform: `scaleX(${v / 100})`, background: color }} />
+      <div className="h-full origin-left rounded-full transition-transform duration-(--dur-move)" style={{ transform: `scaleX(${v / 100})`, background: color }} />
     </div>
   )
 }

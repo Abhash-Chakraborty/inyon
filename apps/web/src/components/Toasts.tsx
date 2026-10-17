@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { AlertCircle, CheckCircle2, Info, MessageCircleQuestion, X } from 'lucide-react'
 import { useStore, type Toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
+import { AnimatedList } from './ui/AnimatedList.tsx'
 
 const icons = { info: Info, success: CheckCircle2, warn: MessageCircleQuestion, error: AlertCircle }
 const tones = { info: 'text-fg-2', success: 'text-fg', warn: 'text-warn', error: 'text-danger' }
@@ -12,12 +13,15 @@ const FLING = 70
 
 export function Toasts() {
   const toasts = useStore((s) => s.toasts)
+  // a stack: a new one drops in at the top, one that goes (dismissed or timed out) fades where it
+  // was while the others glide into its place. One column, as wide as a toast, at the right on a
+  // wide screen
   return (
-    <div className="pt-safe pointer-events-none fixed inset-x-0 top-0 z-[60] flex flex-col items-center gap-2 px-3 pt-3 sm:items-end sm:px-5">
-      {toasts.map((t) => (
-        <ToastCard key={t.id} t={t} />
-      ))}
-    </div>
+    <AnimatedList
+      enter="animate-toast-in"
+      className="pt-safe pointer-events-none fixed inset-x-0 top-0 z-[60] grid grid-cols-[minmax(0,24rem)] justify-center gap-2 px-3 pt-3 sm:justify-end sm:px-5"
+      items={toasts.map((t) => ({ key: String(t.id), node: <ToastCard t={t} /> }))}
+    />
   )
 }
 
@@ -30,9 +34,10 @@ function ToastCard({ t }: { t: Toast }) {
   const moved = useRef(false)
   const [drag, setDrag] = useState({ x: 0, y: 0 })
   const [leaving, setLeaving] = useState<{ x: number; y: number } | null>(null)
+  // it flies while the list fades it out
   const go = (x: number, y: number) => {
     setLeaving({ x, y })
-    setTimeout(() => dismiss(t.id), 120)
+    dismiss(t.id)
   }
   const offset = leaving ?? drag
   return (
@@ -66,11 +71,15 @@ function ToastCard({ t }: { t: Toast }) {
       style={{
         transform: offset.x || offset.y ? `translate(${offset.x}px, ${offset.y}px)` : undefined,
         opacity: leaving ? 0 : 1 - Math.min(0.6, Math.abs(offset.x) / 300),
-        transition: start.current ? 'none' : leaving ? 'transform 0.12s ease-in, opacity 0.12s ease-in' : 'transform 0.32s var(--ease-spring), opacity 0.2s',
+        transition: start.current
+          ? 'none'
+          : leaving
+            ? 'transform var(--dur-exit) ease-in, opacity var(--dur-exit) ease-in'
+            : 'transform var(--dur-move) var(--ease-spring), opacity var(--dur-small) var(--ease-out-soft)',
         touchAction: 'pan-y',
       }}
       className={clsx(
-        'animate-toast-in pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-2xl border border-line bg-elev px-3.5 py-3 shadow-float select-none',
+        'pointer-events-auto flex w-full items-start gap-3 rounded-2xl border border-line bg-elev px-3.5 py-3 shadow-float select-none',
         t.href && 'cursor-pointer',
       )}
     >
