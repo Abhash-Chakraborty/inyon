@@ -685,6 +685,39 @@ ${D}
   expect(promptSummary(s.prompt!)).toBe('Edit file: test\\cart.test.js')
 })
 
+describe('ultracode in Claude Code 2.1.299', () => {
+  // captured with `claude --effort ultracode`: the box's top rule carries the label, and the
+  // effort line above the box names it too
+  const box = (rule: string, above = '') => screen(`❯ /clear
+${above}
+${rule}
+❯
+${R}
+  ⚠ Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker · restart with CLAUDE_CODE_FORCE_…
+  ⏵⏵ auto mode on (shift+tab to cycle)`)
+  const labelled = `${'─'.repeat(98)} ultracode ─`
+
+  test('on: the rule says so, and the effort line names the level', () => {
+    const s = parseScreen(box(labelled, '               ◉ xhigh · ultracode · /effort · current: 2.1.299 · lates… ✔ Update installed · Restart to up…'), 110)
+    expect(s).toMatchObject({ inputVisible: true, ultracode: true, effort: 'xhigh', mode: 'auto', working: false })
+    expect(s.draft).toBeUndefined()
+    // the label alone is enough (the effort line comes and goes)
+    const bare = parseScreen(box(labelled, '                                    0 tokens · current: 2.1.299 · lates… ✔ Update installed · Restart to up…'), 110)
+    expect(bare.ultracode).toBe(true)
+    expect(bare.effort).toBeUndefined()
+  })
+
+  test('off: a bare rule, with or without the effort line; a renamed session is not ultracode', () => {
+    expect(parseScreen(box(R, '                           ◉ xhigh · /effort · current: 2.1.299 · lates… ✔ Update installed · Restart to up…'), 110)).toMatchObject({ ultracode: false, effort: 'xhigh' })
+    expect(parseScreen(box(R), 110)).toMatchObject({ ultracode: false })
+    expect(parseScreen(box(`${'─'.repeat(90)} Abhash Website ─`), 110)).toMatchObject({ ultracode: false, inputVisible: true })
+  })
+
+  test('unknown while a dialog covers the box', () => {
+    expect(parseScreen(['▔'.repeat(40), '   Effort', '   ←/→ to adjust · Enter to confirm · Esc to cancel'], 100).ultracode).toBeUndefined()
+  })
+})
+
 describe('background agents in the Claude footer', () => {
   // the ← is the hint to expand the agent list; the two rows under it are that list, opened
   const footer = (status: string, ...rows: string[]) => screen(`● Started the agent in the background.

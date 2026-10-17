@@ -126,7 +126,7 @@ export function PanePage() {
               {!ref && !info ? (
                 <Loading />
               ) : view === 'chat' ? (
-                <ChatView key={`${host}${pane}`} host={host} pane={pane} agent={agent} onTerminal={() => setView('terminal')} controls={agent ? <ComposerControls s={s} /> : undefined} />
+                <ChatView key={`${host}${pane}`} host={host} pane={pane} agent={agent} onTerminal={() => setView('terminal')} controls={agent ? <ComposerControls s={s} /> : undefined} ultracode={s.ultracode} />
               ) : (
                 // the terminal rises in over the chat it came from
                 <div key="terminal" className="animate-page flex min-h-0 flex-1 flex-col">

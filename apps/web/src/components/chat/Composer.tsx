@@ -106,6 +106,7 @@ export function Composer({
   working,
   disabled,
   controls,
+  ultracode,
 }: {
   host: string
   pane: string
@@ -114,6 +115,8 @@ export function Composer({
   disabled?: boolean
   /** model, effort, mode and goal pickers for this agent */
   controls?: React.ReactNode
+  /** Claude Code's ultracode is on: the box carries the label Claude draws on its own */
+  ultracode?: boolean
 }) {
   const key = chatKey(host, pane)
   const serverDraft = useStore((s) => s.chats[key]?.draft)
@@ -527,8 +530,10 @@ export function Composer({
           'rounded-3xl border bg-elev shadow-card transition-colors',
           dragging ? 'border-accent' : 'border-line focus-within:border-line-strong',
           disabled && 'opacity-60',
+          ultracode && 'ultracode-box',
         )}
       >
+        {ultracode && <span className="ultracode-label" aria-hidden>ultracode</span>}
         {files.length > 0 && (
           <div className="no-scrollbar flex gap-2 overflow-x-auto px-2.5 pt-2.5 pb-0.5">
             {files.map((f) => (

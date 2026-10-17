@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { CircleX, Copy, GitFork, History, LogOut, Shrink, RadioTower, RotateCcw, Target, Trash2 } from 'lucide-react'
+import { CircleX, Copy, GitFork, History, LogOut, Shrink, RadioTower, RotateCcw, Sparkles, Target, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
@@ -87,6 +87,16 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
                   <div className="truncate text-[12px] text-fg-3">{goalOn ? info!.goal!.condition : info?.goal?.met ? 'Last goal met' : 'Keep working until a condition is met'}</div>
                 </button>
                 <Toggle on={goalOn} onChange={(v) => (v ? setGoalOpen(true) : actions.clearGoal())} label="Goal" />
+              </div>
+            )}
+            {def.set.ultracode && (
+              <div className="flex items-center gap-3 px-3.5 py-3">
+                <Sparkles className={clsx('size-4', s.ultracode ? 'ultracode-mark text-fg' : 'text-fg-3')} />
+                <div className="min-w-0 flex-1">
+                  <div className="text-[14px] font-medium">Ultracode</div>
+                  <div className="truncate text-[12px] text-fg-3">{s.ultracode ? 'On · a dynamic workflow for every task' : 'Off'}</div>
+                </div>
+                <Toggle on={!!s.ultracode} onChange={(v) => actions.ultracode(v)} label="Ultracode" />
               </div>
             )}
             {def.set.rc && (

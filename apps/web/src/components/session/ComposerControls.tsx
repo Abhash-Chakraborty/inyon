@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import clsx from 'clsx'
-import { ChevronDown, Shield, Target } from 'lucide-react'
+import { ChevronDown, Shield, Sparkles, Target } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
@@ -71,16 +71,21 @@ export function ComposerControls({ s }: { s: SessionModel }) {
         <Menu
           name="effort"
           header="Reasoning effort"
-          width={220}
+          width={260}
           items={[
             // OpenCode runs a model without a variant unless one is picked
             ...(agent === 'opencode' ? [{ key: 'default', label: 'Default', selected: !status?.effort, onSelect: () => actions.setEffort('default') }] : []),
             ...s.efforts.map((e) => ({ key: e, label: EFFORT_LABEL[e] ?? e, selected: status?.effort === e, onSelect: () => actions.setEffort(e) })),
+            // Claude Code keeps its ultracode switch next to the levels; so does this menu
+            ...(def.set.ultracode
+              ? [{ key: 'ultracode', separated: true, label: `Ultracode: ${s.ultracode ? 'on' : 'off'}`, hint: 'A dynamic workflow for every task', icon: <Sparkles className="size-4" />, selected: !!s.ultracode, onSelect: () => actions.ultracode(!s.ultracode) }]
+              : []),
           ]}
           trigger={({ toggle, ref, open }) => (
-            <Chip innerRef={ref} onClick={toggle} open={open} title={`Reasoning effort${status?.effort ? `: ${EFFORT_LABEL[status.effort] ?? status.effort}` : ''}`}>
+            <Chip innerRef={ref} onClick={toggle} open={open} title={`Reasoning effort${status?.effort ? `: ${EFFORT_LABEL[status.effort] ?? status.effort}` : ''}${s.ultracode ? ' · Ultracode on' : ''}`}>
               <EffortBars level={status?.effort} levels={s.efforts} />
               <span>{status?.effort ? EFFORT_LABEL[status.effort] ?? status.effort : 'Default'}</span>
+              {s.ultracode && <Sparkles className="ultracode-mark size-3.5 shrink-0" aria-label="Ultracode on" />}
             </Chip>
           )}
         />

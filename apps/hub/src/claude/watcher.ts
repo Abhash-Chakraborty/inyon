@@ -650,6 +650,7 @@ class ChatWatcher {
       gitBranch: m.gitBranch,
       version: m.version,
       mode: this.screen.mode ?? agent?.mode ?? m.mode,
+      ultracode: this.screen.ultracode ?? agent?.ultracode,
       goal: this.goalUnsure ? undefined : m.goal,
       rc: m.rc ?? this.remote,
       queue: [...this.currentQueue()],

@@ -24,7 +24,7 @@ const AWAY_MS = 5 * 60_000
 const NO_QUEUE: string[] = []
 const NO_PENDING: PendingMessage[] = []
 
-export function ChatView({ host, pane, agent, onTerminal, controls }: { host: string; pane: string; agent?: AgentKind; onTerminal: () => void; controls?: React.ReactNode }) {
+export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }: { host: string; pane: string; agent?: AgentKind; onTerminal: () => void; controls?: React.ReactNode; ultracode?: boolean }) {
   const key = chatKey(host, pane)
   const chat = useStore((s) => s.chats[key])
   const hubUp = useStore((s) => s.connected)
@@ -372,7 +372,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls }: { host: st
                 ) : machineDown ? (
                   <div className="mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
                 ) : null}
-                {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} />}
+                {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} ultracode={ultracode} />}
               </div>
             )}
           </div>

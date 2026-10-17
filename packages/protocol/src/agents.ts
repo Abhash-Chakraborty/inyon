@@ -100,6 +100,8 @@ export interface AgentDef {
     compact?: string
     clear?: string
     rc?: string
+    /** Claude Code's ultracode switch: the command that turns it on or off for the session */
+    ultracode?: (on: boolean) => string
   }
 }
 
@@ -350,6 +352,7 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       compact: '/compact',
       clear: '/clear',
       rc: '/remote-control',
+      ultracode: (on) => `/effort ultracode ${on ? 'on' : 'off'}`,
     },
   },
   codex: {
