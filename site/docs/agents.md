@@ -20,6 +20,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | [Past conversations](sessions.md#past-conversations) | Yes | Yes | No | Yes | Yes | Yes |
 | `!` shell commands | Yes | Yes | No | Yes | Yes | No |
 | Remote Control | Yes | No | No | No | No | Yes |
+| [Ultracode](controls.md#ultracode) | Yes | No | No | No | No | No |
 | Cost | Yes | No | No | Yes | No | No |
 | Plan limits | 5-hour and weekly | 5-hour, weekly, credits | No | No | No | 5-hour and weekly |
 
@@ -38,7 +39,7 @@ The agents never know Inyon is there. Close it and nothing breaks.
 
 ## Claude Code
 
-Read from its transcripts in `~/.claude`. With the optional integration (turned on from a machine's Integration tab), a hook gives exact session matching and the status line gives live context, cost and limits. Models, effort, permission modes, goals, Remote Control, compact, clear and `/rewind` all work.
+Read from its transcripts in `~/.claude`. With the optional integration (turned on from a machine's Integration tab), a hook gives exact session matching and the status line gives live context, cost and limits. Models, effort, permission modes, goals, Remote Control, [ultracode](controls.md#ultracode), compact, clear and `/rewind` all work.
 
 ## Codex
 

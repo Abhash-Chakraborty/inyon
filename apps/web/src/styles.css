@@ -223,8 +223,46 @@ select:focus-visible {
   100% { box-shadow: 0 0 0 5px transparent; }
 }
 .live-ring { animation: live-ring 1.4s ease-out infinite; }
+/*
+ * Claude Code's ultracode, on: the label it draws on its input box's rule sits on the message
+ * box the same way, breathing slowly, with a faint ink ring that shares the beat; the header's
+ * mark and the sheet's row breathe with it. Opacity only, nothing moves.
+ */
+@keyframes ultracode-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes ultracode-ring {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+.ultracode-box { position: relative; border-color: var(--line-strong); }
+.ultracode-box::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--fg) 9%, transparent);
+  animation: ultracode-ring 2.4s ease-in-out infinite;
+}
+.ultracode-label {
+  position: absolute;
+  top: -9px;
+  right: 18px;
+  z-index: 1;
+  padding: 0 6px;
+  background: var(--panel);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  color: var(--fg-2);
+  animation: ultracode-breathe 2.4s ease-in-out infinite;
+}
+.ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 /* with reduced motion the 1ms rule below would make looping animations flicker: stop them instead */
-@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .live-ring, .pulse-soft, .skeleton, .ultracode-box::after, .ultracode-label, .ultracode-mark, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
 /* the mark's line draws itself while the hub is out of reach (Logo in AppShell.tsx) */
 @keyframes mark-draw {
   from { stroke-dashoffset: 40; }

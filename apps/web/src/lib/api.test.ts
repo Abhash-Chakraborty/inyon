@@ -198,6 +198,7 @@ describe("a paired hub's machines", () => {
       ['keys', () => api.keys(machine, '%3', ['Escape']), 'POST /panes/3/keys', { keys: ['Escape'] }],
       ['rewind', () => api.rewind(machine, '%3', 'that one'), 'POST /panes/3/rewind', { text: 'that one' }],
       ['remote control', () => api.rc(machine, '%3', true), 'POST /panes/3/rc', { on: true }],
+      ['ultracode', () => api.ultracode(machine, '%3', true), 'POST /panes/3/ultracode', { on: true }],
       ['rename', () => api.rename(machine, '%3', 'Login fix'), 'PUT /panes/3/name', { name: 'Login fix' }],
       ['start', () => api.start(machine, '%3', 'claude'), 'POST /panes/3/start', { agent: 'claude' }],
       ['stop a task', () => api.stopTask(machine, { id: 't1' }), 'POST /tasks/stop', { id: 't1' }],

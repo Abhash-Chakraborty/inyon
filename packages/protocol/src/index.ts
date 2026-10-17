@@ -106,6 +106,8 @@ export interface AgentPaneInfo {
   activity?: string
   /** background shells or tasks still running while the agent itself waits, e.g. "1 shell" */
   background?: string
+  /** Claude Code: ultracode (a dynamic workflow for every task) is on for the session */
+  ultracode?: boolean
   status?: AgentStatus
   /**
    * The integration is on but this session stopped sending live numbers (its settings changed
@@ -336,6 +338,8 @@ export interface ChatInfo {
   artifacts: ArtifactInfo[]
   stats: SessionStats
   mode?: string
+  /** Claude Code: ultracode is on for the session */
+  ultracode?: boolean
 }
 
 export interface PromptOption {
@@ -405,6 +409,8 @@ export interface ScreenState {
   /** model and effort from the agent's own footer, for sessions that don't report live numbers */
   model?: string
   effort?: string
+  /** Claude Code's ultracode switch, as its input box shows it; undefined while the box isn't visible */
+  ultracode?: boolean
   width: number
 }
 

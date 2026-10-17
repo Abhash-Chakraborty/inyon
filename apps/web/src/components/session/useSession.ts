@@ -37,6 +37,8 @@ export function useSession(host: string, pane: string) {
   }, [reported, selectedModel])
   const screen = chat?.screen
   const efforts = def?.set.effort || selectedModel?.variants ? selectedModel?.efforts ?? def?.efforts ?? [] : []
+  // the switch as the screen shows it, else as the hub last read it
+  const ultracode = screen?.ultracode ?? ref?.pane.agent?.ultracode ?? info?.ultracode
 
   const selectModel = (id: string) => {
     const model = def?.models.find((m) => m.id === id)
@@ -71,6 +73,11 @@ export function useSession(host: string, pane: string) {
       run(on ? 'Could not turn on Remote Control' : 'Could not turn off Remote Control', async () => {
         await api.rc(host, pane, on)
         toast({ title: on ? 'Remote Control on' : 'Remote Control off', tone: 'success' })
+      }),
+    ultracode: (on: boolean) =>
+      run(on ? 'Could not turn on Ultracode' : 'Could not turn off Ultracode', async () => {
+        await api.ultracode(host, pane, on)
+        toast({ title: on ? 'Ultracode on' : 'Ultracode off', body: on ? 'A dynamic workflow for every task, in this session.' : undefined, tone: 'success' })
       }),
     rewind: async () => {
       if (agent === 'claude' || agent === 'antigravity') return send('/rewind')
@@ -110,7 +117,7 @@ export function useSession(host: string, pane: string) {
     },
   }
 
-  return { ref, agent, def, status, info, screen, chat, actions, efforts, catalog }
+  return { ref, agent, def, status, info, screen, chat, actions, efforts, catalog, ultracode }
 }
 
 export type SessionModel = ReturnType<typeof useSession>

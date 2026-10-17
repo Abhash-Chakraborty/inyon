@@ -1227,6 +1227,33 @@ export async function remoteControl(hostId: string, paneId: string, on: boolean)
   }
 }
 
+/** Claude's answer to `/effort ultracode` when it can't: dynamic workflows are off in its /config, or the model has none. */
+const ULTRACODE_REFUSED = /⎿\s+(Ultracode (?:needs|isn't|is not|keyword)[^\n]*?)\s*$/
+
+/**
+ * Claude Code's ultracode (a dynamic workflow for every task): `/effort ultracode on|off`, for
+ * this session only. The box's rule shows the switch once Claude has taken it; when it can't,
+ * Claude says why under the command, and that is the error the app shows.
+ */
+export async function setUltracode(hostId: string, paneId: string, on: boolean) {
+  const { host, found } = agentPane(hostId, paneId)
+  if (found.pane.agent?.kind !== 'claude') throw new HttpError(400, 'Ultracode is a Claude Code setting')
+  const before = await currentScreen(hostId, paneId)
+  if (before.prompt) throw new HttpError(409, 'Answer the open question first')
+  if (before.ultracode === on) return
+  await sendMessageToPane(hostId, paneId, `/effort ultracode ${on ? 'on' : 'off'}`, false)
+  for (let t = 0; t < 3000; t += 150) {
+    await sleep(150)
+    const lines = (await capturePanes(host, [paneId])).get(paneId) ?? []
+    const s = parseScreen(lines, found.pane.width, 'claude')
+    if (s.ultracode === on) return
+    const why = lines.map((l) => l.match(ULTRACODE_REFUSED)?.[1]).find(Boolean)
+    if (why) throw new HttpError(409, why.replace(/\s+/g, ' ').trim())
+  }
+  // no word from Claude yet (a slow redraw): the next screen read says where it stands
+  nudge(hostId, paneId)
+}
+
 /** Claude writes background task output to /tmp/claude-<uid>/<project>/<session>/tasks/<id>.output. */
 export async function findTaskOutput(hostId: string, id: string): Promise<string | undefined> {
   if (!/^[\w-]{4,40}$/.test(id)) throw new HttpError(400, 'Bad task id')

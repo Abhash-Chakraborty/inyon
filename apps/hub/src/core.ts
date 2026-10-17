@@ -2,7 +2,7 @@ import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protoco
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
-import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
+import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, setUltracode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
@@ -480,6 +480,13 @@ export const coreRoutes: Routes = {
     POST: api(async (req) => {
       const b = await body<{ mode: string }>(req)
       await setMode(req.params.id, paneParam(req.params.pane), String(b.mode))
+      return ok()
+    }),
+  },
+  '/api/hosts/:id/panes/:pane/ultracode': {
+    POST: api(async (req) => {
+      const b = await body<{ on: boolean }>(req)
+      await setUltracode(req.params.id, paneParam(req.params.pane), !!b.on)
       return ok()
     }),
   },

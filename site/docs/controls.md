@@ -32,6 +32,10 @@ Goals work with Claude Code and Codex, and with Antigravity (which can't clear o
 
 Claude Code and Antigravity can hand a session to their own apps. **Turn on Remote Control** in the menu starts it; an icon in the header then offers **Open on claude.ai** (or **Open in Antigravity**) and **Turn off**.
 
+## Ultracode
+
+Claude Code has a switch next to its effort levels: with **ultracode** on, it runs a dynamic workflow, many agents working in parallel, for every substantial task. From 0.17.6 the switch is in Inyon too, for the session only, the way `/effort ultracode on` is. On a computer it's the last row of the **Effort** menu; on a phone it's **Ultracode** in the controls sheet. While it's on, the message box carries the same *ultracode* label that Claude Code draws on its input box, and the header shows a mark that turns it off. Claude Code says when it can't: dynamic workflows have to be enabled in its `/config`, and not every model has them. Inyon shows that answer.
+
 ## Compact, clear, rewind
 
 | Action | What it does | Agents |

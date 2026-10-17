@@ -871,6 +871,8 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
   }
   info.activity = sc.activity
   info.background = backgroundAfter(sc.background, was, info.pid)
+  // like the footer, the switch on the box can't be read while a dialog covers it
+  if (info.kind === 'claude') info.ultracode = sc.ultracode ?? (was?.pid === info.pid ? was?.ultracode : undefined)
   info.options = undefined
   info.waitingFor = undefined
   if (!sc.prompt) return

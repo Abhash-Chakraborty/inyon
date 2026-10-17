@@ -10,6 +10,10 @@ const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s(.*)$/
 const INPUT = /^\s*[❯>!](\s|$)/
 const SPINNER = /^\s*([^\s\w])\s+([A-Z][\w'’ -]*…)\s*(?:\((.*)\))?\s*$/u
 const MODE = /(?:⏵⏵|⏸|⏵)\s+([a-z][a-z ]*?)(?: mode)? on\b/
+/** Claude Code 2.1.29x labels the input box's top rule "ultracode ─" while ultracode is on */
+const ULTRACODE_RULE = /(?:^|\s)ultracode ─{1,12}\s*$/
+/** its effort line above the box: "◉ xhigh · ultracode · /effort" (older builds drew ● and no ultracode) */
+const EFFORT_LINE = /[◉●]\s+(low|medium|high|xhigh|max|auto)(\s+·\s+ultracode)?\s+·\s+\/effort\b/
 const FOOTER = /(Esc to|Enter to|to cancel|to navigate|to select|to confirm)/i
 /**
  * "1 shell", "2 monitors", "← 1 agent", "1 local agent", "1 background dynamic workflow" in the
@@ -108,6 +112,15 @@ export function parseScreen(captured: string[], paneWidth?: number, agent: Agent
       draft = draft.trim()
       // a dimmed suggestion is not something you typed
       if (draft && !styled[top + 1]?.ghost && !/^Try "/.test(draft)) state.draft = draft
+      // the switch is on the box itself, so it's known whenever the box is
+      state.ultracode = ULTRACODE_RULE.test(lines[top])
+      for (let i = top - 1; i >= Math.max(0, top - 4); i--) {
+        const e = lines[i].match(EFFORT_LINE)
+        if (!e) continue
+        state.effort ??= e[1]
+        if (e[2]) state.ultracode = true
+        break
+      }
       // every kind of background work in the footer, in order: "1 shell, 1 agent"; an agent's
       // description in the list under it could say anything, so those rows are skipped
       const background: string[] = []
