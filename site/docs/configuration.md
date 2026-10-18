@@ -37,6 +37,7 @@ These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
 | `INYON_NO_MODIFY_PATH` | Set to `1` before running `get.sh` or `get.ps1` to keep them from putting `inyon` on your `PATH` (from 0.17.1). See [Put inyon on your PATH](install.md#put-inyon-on-your-path) |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
 | `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on a public address. Don't |
+| `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust as well as the usual ones, for a hub on a certificate from your organisation's own authority. The Bun engine always read it; from 0.19 `inyon` does too |
 | `NO_COLOR` | Turn colour off in the terminal |
 
 Every `TETHER_*` name from before the rename is still read as its `INYON_*` twin.

@@ -61,6 +61,7 @@ The app explains what it found:
 ## A machine shows as offline
 
 - A joined machine: is it on, and is `inyon service status` showing `node` running? `inyon logs --role node` shows why it can't connect.
+- The log says the hub's certificate isn't trusted, and the hub's certificate comes from your organisation's own authority: put that authority's certificate in a PEM file and set `NODE_EXTRA_CA_CERTS` to its path, for the service too (see [Computer settings](configuration.md#computer-settings)).
 - The hub removed it, or its pairing command expired unused (after 24 hours): use **New pairing command** on its page.
 - An SSH server: check you can `ssh` to it from the hub's machine as the hub's user, without a password prompt.
 

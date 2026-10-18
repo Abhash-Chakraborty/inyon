@@ -22,10 +22,13 @@ fn agent(follow: bool, insecure: bool) -> ureq::Agent {
         .max_redirects_will_error(false)
         .timeout_global(Some(Duration::from_secs(600)))
         .user_agent(format!("inyon/{}", env!("CARGO_PKG_VERSION")));
-    if insecure {
+    c = c.tls_config(if insecure {
         // the hub on this machine may use a certificate it issued itself
-        c = c.tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
-    }
+        ureq::tls::TlsConfig::builder().disable_verification(true).build()
+    } else {
+        // Mozilla's roots, and the ones NODE_EXTRA_CA_CERTS adds
+        ureq::tls::TlsConfig::builder().root_certs(inyon_engine::http::ureq_roots()).build()
+    });
     c.build().new_agent()
 }
 

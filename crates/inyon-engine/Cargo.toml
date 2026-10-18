@@ -29,6 +29,8 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 url = "2.5"
 webpki-roots = "1.0"
+# Mozilla's roots as whole certificates, which ureq needs when NODE_EXTRA_CA_CERTS adds to them
+webpki-root-certs = "1.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

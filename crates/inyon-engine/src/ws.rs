@@ -55,7 +55,8 @@ fn tls() -> Arc<rustls::ClientConfig> {
     let config = if crate::http::insecure_tls() {
         builder.dangerous().with_custom_certificate_verifier(Arc::new(NoCheck(provider))).with_no_client_auth()
     } else {
-        let roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+        let mut roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+        roots.add_parsable_certificates(crate::http::extra_roots());
         builder.with_root_certificates(roots).with_no_client_auth()
     };
     Arc::new(config)
@@ -83,6 +84,33 @@ pub async fn connect(url: &str, headers: &[(&str, &str)]) -> Result<Socket, (u16
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_hub_on_a_certificate_from_node_extra_ca_certs_is_trusted_over_websockets_too() {
+        use std::io::{Read, Write};
+        let _env = crate::http::test_tls::env_lock();
+        let dir = std::env::temp_dir().join(format!("inyon-extra-ca-ws-{}", std::process::id()));
+        let (ca, port) = crate::http::test_tls::server(&dir);
+        let get = || -> Result<String, String> {
+            let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+            let conn = rustls::ClientConnection::new(tls(), "localhost".try_into().unwrap()).map_err(|e| e.to_string())?;
+            let mut s = rustls::StreamOwned::new(conn, tcp);
+            s.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").map_err(|e| e.to_string())?;
+            let mut out = String::new();
+            let _ = s.read_to_string(&mut out);
+            out.ends_with("ok").then_some(out).ok_or_else(|| "no answer".to_string())
+        };
+        // SAFETY: the tests that touch NODE_EXTRA_CA_CERTS hold env_lock
+        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        let unknown = get();
+        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", &ca) };
+        let trusted = get();
+        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(unknown.is_err());
+        assert!(trusted.is_ok(), "{trusted:?}");
+    }
 
     #[tokio::test]
     async fn keys_go_out_at_once_without_nagle() {
