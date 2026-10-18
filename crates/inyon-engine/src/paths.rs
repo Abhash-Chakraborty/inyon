@@ -35,15 +35,16 @@ pub fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty()).or_else(|| old.and_then(|o| std::env::var(o).ok()).filter(|v| !v.is_empty()))
 }
 
-/// The user's home folder: HOME (what a test sets), else USERPROFILE on Windows. The same rule as
-/// the inyon command's, so both read the same files.
+/// The user's home folder. On Windows that's USERPROFILE, where the installer puts ~/.inyon and
+/// where the Bun engine (Node's os.homedir()) kept the node's keys and pairings, whatever HOME a
+/// Git or MSYS shell sets; elsewhere HOME. The inyon command uses this too, so both read the same files.
 pub fn home() -> PathBuf {
-    for k in ["HOME", "USERPROFILE"] {
-        if let Some(h) = std::env::var_os(k).filter(|h| !h.is_empty()) {
-            return PathBuf::from(h);
-        }
-    }
-    PathBuf::from(".")
+    home_from(cfg!(windows), |k| std::env::var_os(k))
+}
+
+fn home_from(windows: bool, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> PathBuf {
+    let order = if windows { ["USERPROFILE", "HOME"] } else { ["HOME", "USERPROFILE"] };
+    order.into_iter().find_map(|k| var(k).filter(|h| !h.is_empty())).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn bin_dir() -> PathBuf {
@@ -237,17 +238,22 @@ pub(crate) mod testing {
 
     pub struct Home {
         pub dir: PathBuf,
-        old: Option<std::ffi::OsString>,
+        old: [Option<std::ffi::OsString>; 2],
         _lock: MutexGuard<'static, ()>,
     }
+
+    /// Both, so a test points the home somewhere on every system (Windows reads USERPROFILE).
+    const VARS: [&str; 2] = ["HOME", "USERPROFILE"];
 
     impl Drop for Home {
         fn drop(&mut self) {
             // SAFETY: tests that touch HOME hold HOME_LOCK, so nothing reads it meanwhile
             unsafe {
-                match &self.old {
-                    Some(h) => std::env::set_var("HOME", h),
-                    None => std::env::remove_var("HOME"),
+                for (k, old) in VARS.iter().zip(&self.old) {
+                    match old {
+                        Some(h) => std::env::set_var(k, h),
+                        None => std::env::remove_var(k),
+                    }
                 }
             }
             let _ = std::fs::remove_dir_all(&self.dir);
@@ -259,9 +265,11 @@ pub(crate) mod testing {
         let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("inyon-engine-{name}-{}-{}", std::process::id(), crate::now_ms()));
         std::fs::create_dir_all(&dir).unwrap();
-        let old = std::env::var_os("HOME");
-        // SAFETY: as above
-        unsafe { std::env::set_var("HOME", &dir) };
+        let old = VARS.map(std::env::var_os);
+        for k in VARS {
+            // SAFETY: as above
+            unsafe { std::env::set_var(k, &dir) };
+        }
         Home { dir, old, _lock: lock }
     }
 }
@@ -269,6 +277,21 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_finds_the_home_where_the_installer_and_the_bun_engine_did() {
+        // a Git or MSYS shell sets HOME elsewhere; ~/.inyon with the keys and pairings is under USERPROFILE
+        let vars = |k: &str| match k {
+            "HOME" => Some("/c/Users/me/msys".into()),
+            "USERPROFILE" => Some(r"C:\Users\me".into()),
+            _ => None,
+        };
+        assert_eq!(home_from(true, vars), PathBuf::from(r"C:\Users\me"));
+        assert_eq!(home_from(false, vars), PathBuf::from("/c/Users/me/msys"));
+        // whichever is set, when the other isn't
+        let only_home = |k: &str| (k == "HOME").then(|| "/home/me".into());
+        assert_eq!(home_from(true, only_home), PathBuf::from("/home/me"));
+    }
 
     #[test]
     fn tether_nodes_folder_moves_once_with_a_link_left_at_the_old_path() {

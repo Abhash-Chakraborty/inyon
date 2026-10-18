@@ -135,6 +135,8 @@ The role is `link` for a computer paired with your phone, `node` for one that jo
 
 From 0.17.1 the task starts `inyon-engine.exe` itself. It has no console, so no window opens when you sign in, and its output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub). An install from an earlier version moves to this the next time it updates.
 
+Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell sets `HOME` to another folder. Before 0.19 the `inyon` command followed `HOME` there, while the engine kept the keys and pairings under `%USERPROFILE%`.
+
 From 0.19 `inyon-engine.exe` is a copy of `inyon.exe` marked as a program without a console, so the task, the firewall rule "Inyon link" and older commands keep the name they know. Setup and `inyon update` write it. A computer updated from 0.18 runs the old engine once more after the update; when its tray icon starts, it waits for the update to finish, then moves the task to the copy by itself (in a task of its own, "Inyon engine hand-over") and restarts it.
 
 While it runs, the Inyon icon sits in the notification area of the taskbar. Click it for a menu:

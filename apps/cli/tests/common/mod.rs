@@ -37,6 +37,8 @@ impl Home {
             h.fake(name);
         }
         std::env::set_var("HOME", &h.dir);
+        // what Windows reads as the home
+        std::env::set_var("USERPROFILE", &h.dir);
         std::env::set_var("PATH", &h.fakes);
         std::env::set_var("FAKE_LOG", &h.log);
         std::env::set_var("FAKE_CRONTAB", &h.crontab);
