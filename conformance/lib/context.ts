@@ -225,8 +225,9 @@ export class Context {
 
   /**
    * A snapshot identical (after normalization) to the last one written for the same socket and
-   * stream tells the app nothing new. The hub re-sends some on every poll (the overview carries
-   * lastSeen), so whether a step catches one depends on timing: those are left out.
+   * stream tells the app nothing new. The hub sends a new one when a value changes that the
+   * normalizer hides (a clock reading, say), so whether a step catches one depends on timing:
+   * those are left out.
    */
   private dropRepeats(s: AppSocket, got: Folded): Folded {
     const same = (path: string, v: unknown) => {

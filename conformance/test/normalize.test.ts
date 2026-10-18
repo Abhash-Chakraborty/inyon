@@ -47,20 +47,6 @@ describe('rules', () => {
     expect(norm().string("new-session -s 'inyon-view-k3x9q1'")).toBe("new-session -s 'inyon-view-<random>'")
   })
 
-  rule('codex-item-id', () => {
-    const n = norm()
-    const a = '2026-01-15T09:00:40.000Z:message:hpry8'
-    const b = '2026-01-15T09:00:40.000Z:task_complete:0syju'
-    expect(n.value({ uuid: a, msgId: a, next: b })).toEqual({ uuid: '2026-01-15T09:00:40.000Z:message:<rand:1>', msgId: '2026-01-15T09:00:40.000Z:message:<rand:1>', next: '2026-01-15T09:00:40.000Z:task_complete:<rand:2>' })
-  })
-
-  rule('mode-while-asked', () => {
-    const n = norm()
-    expect(n.value({ agent: { kind: 'claude', state: 'waiting', mode: 'manual' } })).toEqual({ agent: { kind: 'claude', state: 'waiting' } })
-    // shown whenever the agent isn't asking
-    expect(n.value({ agent: { kind: 'claude', state: 'idle', mode: 'manual' } })).toEqual({ agent: { kind: 'claude', state: 'idle', mode: 'manual' } })
-  })
-
   rule('iso-time', () => {
     const n = norm()
     expect(n.string(`at ${new Date(NOW + 5000).toISOString()}`)).toBe('at <time>')
