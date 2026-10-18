@@ -249,7 +249,7 @@ test("without gzip, the website's release takes the plain file from GitHub, chec
   expect(existsSync(installed())).toBe(false)
 })
 
-test('on musl (Alpine) the engine is the musl build, and setup is told what it needs', async () => {
+test('on musl (Alpine) only a hub is told what the musl engine needs', async () => {
   release.split = true
   // an ldd that answers as musl's does, in front of everything else
   const bin = tools([])
@@ -257,8 +257,13 @@ test('on musl (Alpine) the engine is the musl build, and setup is told what it n
   const r = await run({ PATH: `${bin}:${process.env.PATH}` })
   expect(r.code).toBe(0)
   expect(started()).toBe('started with setup\n')
+  // from 0.19 a computer that isn't a hub runs on the static inyon alone
+  expect(r.out).not.toContain('libstdc++')
+  const hub = await run({ PATH: `${bin}:${process.env.PATH}` }, ['--hub'])
+  expect(hub.code).toBe(0)
+  expect(started()).toBe('started with setup --role hub\n')
   // Alpine's libstdc++ lives in /usr/lib; elsewhere the line is the hint setup repeats
-  if (!existsSync('/usr/lib/libstdc++.so.6')) expect(r.out).toContain('apk add libstdc++ libgcc')
+  if (!existsSync('/usr/lib/libstdc++.so.6')) expect(hub.out).toContain('apk add libstdc++ libgcc')
   // a release without a musl engine is taken for one from before the split
   release.sums = `${sha(PROGRAM)}  ${NAME}\n${sha('engine')}  ${ENGINE_NAME}\n`
   expect((await run({ PATH: `${bin}:${process.env.PATH}` }, ['--hub'])).code).toBe(0)
