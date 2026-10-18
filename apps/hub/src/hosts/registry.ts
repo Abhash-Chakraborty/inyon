@@ -19,6 +19,7 @@ import { opencodeEndpoint, viaOpenCodeApi } from '../agents/opencode.ts'
 import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.ts'
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
+import { HttpError } from './http-error.ts'
 import { nodeUpdates } from './node-update.ts'
 import { bareTitle, nameTaken, ownsTitle, pendingName, sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
@@ -914,11 +915,7 @@ export const publicConfig = ({ tokenHash: _t, ...c }: HostConfig): HostConfig =>
 export const PAIR_TOKEN_MS = 24 * 3600_000
 export const tokenExpired = (c: HostConfig, now = Date.now()) => c.kind === 'node' && !c.pairedAt && !!c.tokenIssuedAt && now - c.tokenIssuedAt > PAIR_TOKEN_MS
 
-export class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-  }
-}
+export { HttpError }
 
 export const registry = new Registry()
 
