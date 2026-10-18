@@ -234,7 +234,7 @@ inyon pair --json | jq -r '.link'
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
-| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`) |
+| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
 | `INYON_LEGACY_ENGINE` | `1` runs everything on the Bun engine, as 0.18 does (from 0.19). See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_DATA_DIR` | Where a hub keeps its records (default `~/.inyon`) |
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |

@@ -61,11 +61,23 @@ pub fn make_copy(program: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Whether `file` is a copy `make_copy` made (of any version), rather than the Bun engine.
-pub fn is_builtin_copy(file: &Path) -> bool {
+/// Whether a program's bytes carry COPY_MARK: inyon 0.19 or later, or its windowless copy.
+fn marked(program: &[u8]) -> bool {
+    program.windows(COPY_MARK.len()).any(|w| w == COPY_MARK.as_bytes())
+}
+
+/// Whether `file` has the engine built in: inyon 0.19 or later, or its windowless copy (both carry
+/// COPY_MARK), rather than the Bun engine or an inyon from before 0.19, which still runs it.
+pub fn has_engine_built_in(file: &Path) -> bool {
     // the Bun engine is upwards of 40 MB; this program is a fraction of that
     let small = std::fs::metadata(file).is_ok_and(|m| m.len() < 40 << 20);
-    small && std::fs::read(file).is_ok_and(|d| d.windows(COPY_MARK.len()).any(|w| w == COPY_MARK.as_bytes()))
+    small && std::fs::read(file).is_ok_and(|d| marked(&d))
+}
+
+/// Whether `file`, where the engine goes, is a copy `make_copy` made (of any version) rather than
+/// the Bun engine.
+pub fn is_builtin_copy(file: &Path) -> bool {
+    has_engine_built_in(file)
 }
 
 /// Writes the windowless copy of `program` next to it (Windows), unless one of this exact
@@ -84,9 +96,12 @@ pub fn refresh_copy(program: &Path) -> Result<PathBuf, String> {
 
 /// Where the Bun engine is: INYON_ENGINE, next to this program, or in ~/.inyon/bin. The
 /// windowless copy of this program that Windows keeps under the same name doesn't count.
+/// INYON_ENGINE on its own counts too, but never inyon itself.
 pub fn find() -> Option<PathBuf> {
-    if let Some(p) = env_var("INYON_ENGINE").map(PathBuf::from).filter(|p| p.is_file()) {
-        return Some(p);
+    match named_engine() {
+        Ok(Some(p)) => return Some(p),
+        Err(_) => return None,
+        Ok(None) => {}
     }
     let bun = |p: &Path| p.is_file() && !is_builtin_copy(p);
     if let Ok(me) = std::env::current_exe() {
@@ -97,6 +112,21 @@ pub fn find() -> Option<PathBuf> {
     }
     let installed = installed_engine();
     bun(&installed).then_some(installed)
+}
+
+/// The engine INYON_ENGINE names, when it names a file. inyon itself (0.19 or later, or its
+/// windowless copy) is refused: asked for the hub, it would hand over to itself forever.
+fn named_engine() -> Result<Option<PathBuf>, String> {
+    let Some(p) = env_var("INYON_ENGINE").map(PathBuf::from).filter(|p| p.is_file()) else {
+        return Ok(None);
+    };
+    if has_engine_built_in(&p) {
+        return Err(format!(
+            "INYON_ENGINE points at {}, which is inyon itself: the engine is built into inyon from 0.19. Point INYON_ENGINE at the Bun engine (inyon-engine from a release), or unset it.",
+            p.display()
+        ));
+    }
+    Ok(Some(p))
 }
 
 /// Makes sure what `first` needs is here: the Bun engine (downloaded when missing) for the hub
@@ -125,6 +155,7 @@ pub fn hub_here() -> bool {
 
 /// The engine, downloaded when it isn't here yet. `say` gets the lines about that.
 pub fn ensure(say: &dyn Fn(&str)) -> Result<PathBuf, String> {
+    named_engine()?;
     if let Some(p) = find() {
         return Ok(p);
     }
@@ -222,7 +253,11 @@ fn engine_command(first: &str, download: bool) -> Result<(Command, PathBuf), Str
         c.arg("engine");
         return Ok((c, me));
     }
-    let engine = if download { ensure(&|l| eprintln!("{l}"))? } else { find().ok_or_else(|| format!("{ENGINE} isn't installed yet. Run `inyon setup`."))? };
+    let engine = if download {
+        ensure(&|l| eprintln!("{l}"))?
+    } else {
+        find().ok_or_else(|| named_engine().err().unwrap_or_else(|| format!("{ENGINE} isn't installed yet. Run `inyon setup`.")))?
+    };
     Ok((command(&engine), engine))
 }
 
@@ -455,6 +490,28 @@ mod tests {
         assert_eq!(copy, fake_exe(2));
         assert_eq!(console.iter().zip(&copy).filter(|(a, b)| a != b).count(), 1);
         assert!(make_copy(b"#!/bin/sh\n").is_err());
+    }
+
+    /// inyon 0.19 or later: a Windows program carrying the mark.
+    fn fake_inyon(subsystem: u16) -> Vec<u8> {
+        let mut exe = fake_exe(subsystem);
+        exe.extend_from_slice(COPY_MARK.as_bytes());
+        exe
+    }
+
+    #[test]
+    fn inyon_engine_naming_inyon_itself_is_refused_rather_than_run_forever() {
+        let dir = std::env::temp_dir().join(format!("inyon-named-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let me = dir.join("inyon");
+        std::fs::write(&me, fake_inyon(3)).unwrap();
+        std::env::set_var("INYON_ENGINE", &me);
+        let found = find();
+        let err = ensure(&|_| {}).unwrap_err();
+        std::env::remove_var("INYON_ENGINE");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(found, None);
+        assert!(err.contains("INYON_ENGINE points at") && err.contains("inyon itself"), "{err}");
     }
 
     #[test]
