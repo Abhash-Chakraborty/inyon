@@ -228,6 +228,14 @@ fn resizes_windows_and_panes() {
 #[test]
 fn a_control_client_does_not_resize_windows() {
     let s = Server::start("size");
+    let before = s.tmux.window_size("main");
+    let shown = s.tmux.run(["display-message", "-p", "-t", "main", "#{window_width}x#{window_height}"]).unwrap();
+    println!(
+        "tmux {:?}: before attaching, list-windows says {before:?}, display-message says {:?} {:?}",
+        s.version(),
+        String::from_utf8_lossy(&shown.stdout),
+        String::from_utf8_lossy(&shown.stderr)
+    );
     let (c, _rx) = s.attach(true);
     c.cmd("refresh-client").unwrap();
     let p = &tmux::list_panes(&c).unwrap()[0];

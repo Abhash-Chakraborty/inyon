@@ -93,12 +93,7 @@ impl Tmux {
     /// takes over as the latest client.
     pub fn attach(&self, session: &str, read_only: bool) -> io::Result<(Control, Receiver<Notification>)> {
         let v = self.version().unwrap_or(Version { major: 3, minor: 2 });
-        let size = if v.sizes_from_control_clients() {
-            let out = self.run(["display-message", "-p", "-t", session, "#{window_width}x#{window_height}"])?;
-            Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| s.contains('x'))
-        } else {
-            None
-        };
+        let size = if v.sizes_from_control_clients() { self.window_size(session) } else { None };
         let mut c = self.command();
         c.args(attach_args(v, session, read_only));
         let (c, rx) = Control::spawn(c)?;
@@ -124,6 +119,15 @@ impl Tmux {
             }
         }
         Ok((c, rx))
+    }
+}
+
+impl Tmux {
+    /// The size of a session's active window as `WxH`, read with a one-off tmux command.
+    pub fn window_size(&self, session: &str) -> Option<String> {
+        let out = self.run(["list-windows", "-t", session, "-F", "#{window_active} #{window_width}x#{window_height}"]).ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.lines().find_map(|l| l.strip_prefix("1 ")).map(|s| s.trim().to_string()).filter(|s| s.contains('x'))
     }
 }
 
