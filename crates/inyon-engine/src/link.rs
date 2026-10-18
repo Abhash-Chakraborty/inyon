@@ -676,8 +676,10 @@ fn listen(id: Arc<Identity>, host: &str, port: u16) -> std::io::Result<tokio::ta
 
 /// Container and VM bridges only reach this machine's own guests, never a phone.
 fn is_virtual(name: &str) -> bool {
-    static VIRTUAL: OnceLock<Regex> = OnceLock::new();
-    VIRTUAL.get_or_init(|| Regex::new(r"(?i)^(docker|br-|veth|virbr|vmnet|vboxnet|cni|flannel|podman|lxc|lxd|kube|cali|vEthernet)").unwrap()).is_match(name)
+    // vEthernet (Windows' Hyper-V switches) starts like veth
+    const VIRTUAL: [&str; 13] = ["docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "cni", "flannel", "podman", "lxc", "lxd", "kube", "cali"];
+    let name = name.to_ascii_lowercase();
+    VIRTUAL.iter().any(|p| name.starts_with(p))
 }
 
 fn lan_urls(port: u16) -> Vec<String> {
@@ -1195,6 +1197,18 @@ pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
 mod tests {
     use super::*;
     use crate::paths::testing;
+
+    #[test]
+    fn container_and_vm_bridges_are_left_out_of_the_addresses_whatever_their_case() {
+        for name in ["docker0", "br-4f2a", "veth12", "vEthernet (WSL)", "virbr0", "VMnet8", "cni0", "lxdbr0", "cali9"] {
+            assert!(is_virtual(name), "{name}");
+        }
+        for name in ["eth0", "en0", "wlan0", "tailscale0", "wt0", "Wi-Fi"] {
+            assert!(!is_virtual(name), "{name}");
+        }
+        // the machine's real interfaces, read without failing
+        let _ = lan_urls(4780);
+    }
 
     #[test]
     fn every_platform_downloads_a_pinned_cloudflared_with_a_checksum() {
