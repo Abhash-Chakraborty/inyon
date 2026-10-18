@@ -58,7 +58,7 @@ Nothing, unless you turn on the Claude Code integration from the machine's Integ
 
 Turning the integration off undoes all of it. The hook's log holds your prompts, so `~/.inyon` is readable only by you.
 
-On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link", once an administrator allows it. It lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN address ranges. From 0.19 that file is the copy of `inyon.exe` without a console, and the link runs from it even when you start it in a terminal. `inyon uninstall` removes it.
+On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link", once an administrator allows it. It lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN address ranges. From 0.19 that file is the copy of `inyon.exe` without a console, and the link runs from it even when you start it in a terminal, or when `inyon pair` starts it because none was running. `inyon uninstall` removes it.
 
 Switching a Claude Code session's model or effort from Inyon touches `settings.json` too, with or without the integration: Claude Code saves the pick there as your default, and from 0.17.1 Inyon puts the old `model`, `effortLevel` and `modelSettings` values back (see [Controls](controls.md#model-effort-and-mode)). It only replaces the file if it hasn't changed since Inyon read it, and leaves every other byte as it was.
 

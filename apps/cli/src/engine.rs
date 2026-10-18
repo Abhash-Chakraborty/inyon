@@ -265,10 +265,16 @@ fn command(engine: &Path) -> Command {
     c
 }
 
+/// The engine commands that may run the link: `link`, and `pair`, which starts the link itself
+/// when none is running and stays on as it.
+fn may_run_link(first: &str) -> bool {
+    matches!(first, "link" | "pair")
+}
+
 /// On Windows the link runs from the windowless copy, `inyon-engine.exe`, even when started from a
 /// terminal: the firewall rule "Inyon link" lets that program in, and only that one.
 fn windows_copy(first: &str) -> Option<PathBuf> {
-    if !cfg!(windows) || first != "link" {
+    if !cfg!(windows) || !may_run_link(first) {
         return None;
     }
     let me = std::env::current_exe().ok()?;
@@ -575,6 +581,15 @@ mod tests {
         assert!(is_builtin_copy(&copy));
         assert!(!is_builtin_copy(&bun));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pairing_runs_where_the_link_does_as_it_may_start_the_link() {
+        // on Windows that's the windowless copy, the one program the firewall rule lets in
+        assert!(may_run_link("link"));
+        assert!(may_run_link("pair"));
+        assert!(!may_run_link("forget"));
+        assert!(!may_run_link("push"));
     }
 
     #[test]
