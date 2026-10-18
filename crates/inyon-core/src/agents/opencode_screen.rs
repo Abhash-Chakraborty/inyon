@@ -193,7 +193,7 @@ pub fn parse_opencode_screen(lines: &[String], width: Option<u32>, styled: Optio
         let body: Vec<String> =
             texts[permission + 1..option_row.unwrap_or(texts.len())].iter().map(|r| re!(r"^[\s←→↳]+").replacen(r, 1, "").jtrim().to_owned()).filter(|s| !s.is_empty()).collect();
         let head = if always { "Always allow this until OpenCode restarts?" } else { "OpenCode needs permission" };
-        let mut p = prompt(std::iter::once(head.to_owned()).chain(body).collect(), labels.into_iter().enumerate().map(|(i, l)| opt(i as u32 + 1, l, i == 0)).collect());
+        let mut p = prompt(std::iter::once(head.to_owned()).chain(body).collect(), labels.into_iter().enumerate().map(|(i, l)| opt(i as u64 + 1, l, i == 0)).collect());
         p.navigate = Some(true);
         state.prompt = Some(p);
         return state;
@@ -239,7 +239,8 @@ pub fn parse_opencode_screen(lines: &[String], width: Option<u32>, styled: Optio
                 let mut multi = false;
                 for r in &body[first_option..] {
                     if let Some(m) = OPTION!().captures(r) {
-                        let mut option = opt(m[1].parse().unwrap_or(0), m[3].jtrim(), options.is_empty());
+                        // Number(m[1]): a long run of digits is still its number
+                        let mut option = opt(crate::js::to_number(&m[1]) as u64, m[3].jtrim(), options.is_empty());
                         if let Some(c) = m.get(2) {
                             option.checked = Some(c.as_str() != " ");
                             multi = true;

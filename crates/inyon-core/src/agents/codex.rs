@@ -125,7 +125,11 @@ pub fn codex_rollouts(stdout: &str) -> (Vec<CodexRollout>, HashMap<String, Strin
         let Some(e) = crate::js::json::parse(l) else { continue };
         let e = Some(&e);
         if let (Some(id), true) = (e.at("id").str().filter(|i| !i.is_empty()), e.at("thread_name").truthy()) {
-            names.insert(id.to_owned(), e.at("thread_name").to_js_string());
+            // the TS keeps the name as it is, and a number is never `===` a pane title
+            match e.at("thread_name").str() {
+                Some(name) => names.insert(id.to_owned(), name.to_owned()),
+                None => names.remove(id),
+            };
         }
     }
     (rows, names)
@@ -245,8 +249,9 @@ pub fn codex_status(stdout: &str) -> (Option<AgentStatus>, Option<String>) {
     if let Some(st) = status.as_mut() {
         st.model_id = ctx.model.clone().or(st.model_id.take());
         st.effort = ctx.effort.clone().or(st.effort.take());
-        if let Some(t) = &tier {
-            st.fast = Some(FAST_TIERS.contains(&t.as_str()));
+        // `if (tier)`: an empty tier says nothing about speed
+        if let Some(t) = tier.as_deref().filter(|t| !t.is_empty()) {
+            st.fast = Some(FAST_TIERS.contains(&t));
         }
         if auth_at > st.updated_at as f64 && (st.five_hour.is_some() || st.seven_day.is_some() || st.credits.is_some()) {
             st.five_hour = None;
@@ -316,40 +321,43 @@ fn shell_command(cmd: Option<&Value>) -> String {
     words.join(" ")
 }
 
-/// The JS string literal ("…", '…' or `…`) starting at byte `at` of `src`.
+/// The JS string literal ("…", '…' or `…`) starting at byte `at` of `src`. Read in UTF-16 units
+/// as the TS reads it, so a `\u` takes the four units after it whatever they are.
 fn js_string(src: &str, at: usize) -> Option<String> {
-    let q = src[at..].chars().next()?;
-    if !matches!(q, '"' | '\'' | '`') {
+    let src: Vec<u16> = src[at..].encode_utf16().collect();
+    let q = *src.first()?;
+    if !b"\"'`".iter().any(|&c| u16::from(c) == q) {
         return None;
     }
+    let unit = |c: char| c as u16;
     let mut out: Vec<u16> = vec![];
-    let mut it = src[at + 1..].char_indices();
-    while let Some((i, c)) = it.next() {
+    let mut i = 1;
+    while i < src.len() {
+        let c = src[i];
         if c == q {
             return Some(String::from_utf16_lossy(&out));
         }
-        if c != '\\' {
-            out.extend(c.encode_utf16(&mut [0; 2]).iter());
+        if c != unit('\\') {
+            out.push(c);
+            i += 1;
             continue;
         }
-        let (_, n) = it.next()?;
-        if n == 'u' {
-            let start = at + 1 + i + 2;
-            let hex = src.get(start..(start + 4).min(src.len())).unwrap_or("");
-            let code = crate::js::num::parse_int(hex, 16);
+        i += 1;
+        let n = *src.get(i)?;
+        if n == unit('u') {
+            let hex = String::from_utf16_lossy(&src[(i + 1).min(src.len())..(i + 5).min(src.len())]);
+            let code = crate::js::num::parse_int(&hex, 16);
             out.push(if code.is_nan() { 0 } else { code as u16 });
-            for _ in 0..4 {
-                it.next();
-            }
+            i += 4;
         } else {
-            let c = match n {
-                'n' => '\n',
-                't' => '\t',
-                'r' => '\r',
+            out.push(match n {
+                x if x == unit('n') => unit('\n'),
+                x if x == unit('t') => unit('\t'),
+                x if x == unit('r') => unit('\r'),
                 x => x,
-            };
-            out.extend(c.encode_utf16(&mut [0; 2]).iter());
+            });
         }
+        i += 1;
     }
     None
 }
@@ -515,8 +523,8 @@ pub fn unified_hunks(diff: &str) -> Vec<PatchHunk> {
     let mut hunks: Vec<PatchHunk> = vec![];
     for line in diff.split('\n') {
         if let Some(h) = re!(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@").captures(line) {
-            let n = |i: usize, default: u32| h.get(i).map_or(default, |m| to_number(m.as_str()) as u32);
-            hunks.push(PatchHunk { old_start: n(1, 0), old_lines: n(2, 1), new_start: n(3, 0), new_lines: n(4, 1), lines: vec![] });
+            let n = |i: usize, default: f64| Num(h.get(i).map_or(default, |m| to_number(m.as_str())));
+            hunks.push(PatchHunk { old_start: n(1, 0.0), old_lines: n(2, 1.0), new_start: n(3, 0.0), new_lines: n(4, 1.0), lines: vec![] });
         } else if let Some(last) = hunks.last_mut().filter(|_| re!(r"^[ +-]").is_match(line)) {
             last.lines.push(line.to_owned());
         }
@@ -553,7 +561,7 @@ fn file_change(item: Option<&Value>, meta: &mut TranscriptMeta) {
         } else if let Some(content) = c.at("content").str() {
             let body = content.strip_suffix('\n').unwrap_or(content);
             let lines: Vec<String> = body.split('\n').map(|l| format!("+{l}")).collect();
-            hunks.push(PatchHunk { old_start: 0, old_lines: 0, new_start: 1, new_lines: lines.len() as u32, lines });
+            hunks.push(PatchHunk { old_start: Num(0.0), old_lines: Num(0.0), new_start: Num(1.0), new_lines: Num(lines.len() as f64), lines });
         }
     }
     if !hunks.is_empty() {
@@ -662,8 +670,10 @@ fn questions(args: Option<&Value>) -> Value {
     )
 }
 
-/// `{ answers }`, with the text the tool result shows for them.
+/// `{ answers }`, with the text the tool result shows for them. The TS builds a plain object, so
+/// a question named "2" comes before one named "1. Colour" whatever order they were answered in.
 fn answers_result(answers: StringMap) -> (String, ToolResultMeta) {
+    let answers = crate::js::json::js_object_order(answers);
     let text = answers.iter().map(|(q, a)| format!("{q}: {a}")).collect::<Vec<_>>().join("\n");
     (text, ToolResultMeta { answers: Some(answers), ..result_meta() })
 }
@@ -777,7 +787,7 @@ pub fn normalize_codex(e: &Value, meta: &mut TranscriptMeta) -> Vec<ChatItem> {
                     Some(s) => s * 1000.0,
                     None => ms_or_now(&ts),
                 };
-                meta.turn = Some(Turn { id: string_of(p.at("turn_id")), started_at: started_at as u64 });
+                meta.turn = Some(Turn { id: string_of(p.at("turn_id")), started_at: Num(started_at) });
                 vec![]
             }
             Some("item_completed") if item_type == Some("CommandExecution") && item.at("source").str() == Some("user_shell") => {
@@ -976,7 +986,8 @@ fn function_call_output(p: Option<&Value>, meta: &mut TranscriptMeta, base: &Bas
         let mut answers = StringMap::new();
         let asked = Some(&call.input).at("questions").arr().map(|a| a.as_slice()).unwrap_or(&[]);
         if let Some(given) = out.at("answers").obj() {
-            for (id, a) in given {
+            // Object.entries: integer-like ids first
+            for (id, a) in crate::js::json::ordered(given) {
                 let q = asked.iter().find(|x| Some(*x).at("id").str() == Some(id.as_str()));
                 let key = q.and_then(|q| Some(q).at("question").present()).map(value_string).unwrap_or_else(|| id.clone());
                 let list: Vec<String> = match Some(a).at("answers").arr() {

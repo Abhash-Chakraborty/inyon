@@ -134,7 +134,36 @@ const GOAL_DONE: &str = "<!-- GOAL_COMPLETE -->";
 /// Holds an Antigravity conversation in memory; later lines for the same step replace earlier ones.
 #[derive(Debug, Clone, Default)]
 pub struct AntigravityDoc {
-    steps: BTreeMap<i64, Value>,
+    steps: BTreeMap<StepIndex, Value>,
+}
+
+/// A `step_index` as the TS's `Map<number, …>` keys it: any number, 3.5 apart from 3, -0 the same
+/// as 0, and in numeric order once sorted.
+#[derive(Debug, Clone, Copy)]
+struct StepIndex(f64);
+
+impl PartialEq for StepIndex {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+impl Eq for StepIndex {}
+impl PartialOrd for StepIndex {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for StepIndex {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // + 0.0 turns -0 into 0
+        (self.0 + 0.0).total_cmp(&(other.0 + 0.0))
+    }
+}
+
+impl std::fmt::Display for StepIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::js::fmt_number(self.0))
+    }
 }
 
 impl AntigravityDoc {
@@ -143,9 +172,8 @@ impl AntigravityDoc {
     }
 
     pub fn apply(&mut self, rec: &Value) {
-        // the TS keys steps by any number; the transcript only ever writes whole ones
         if let Some(i) = Some(rec).at("step_index").num() {
-            self.steps.insert(i as i64, rec.clone());
+            self.steps.insert(StepIndex(i), rec.clone());
         }
     }
 
@@ -350,7 +378,8 @@ pub fn agy_status(statuses: &IndexMap<String, AgyStatusPane>, integration: Optio
     let empty = Value::Object(Map::new());
     let data = Some(&st.data).present().unwrap_or(&empty);
     let d = Some(data);
-    if let (Some(c), true) = (conversation, d.at("conversation_id").truthy()) {
+    // an empty conversation id checks nothing, as `conversation &&` doesn't in the TS
+    if let (Some(c), true) = (conversation.filter(|c| !c.is_empty()), d.at("conversation_id").truthy()) {
         if d.at("conversation_id").and_then(Value::as_str) != Some(c) {
             return None;
         }

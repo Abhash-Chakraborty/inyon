@@ -259,7 +259,11 @@ export type PaneInfo = {
 /**
  * tmux pane id, e.g. "%12"
  */
-id: string, index: number, active: boolean, command: string, cwd: string, title: string, 
+id: string, 
+/**
+ * tmux's numbers as JavaScript reads them: NaN (null on the wire) where tmux printed no number
+ */
+index: number, active: boolean, command: string, cwd: string, title: string, 
 /**
  * the name you gave this session in Inyon
  */
@@ -450,7 +454,11 @@ export type RemoteControl = { url: string, ts: string, };
 /**
  * The turn under way, for the working timer.
  */
-export type Turn = { id?: string, startedAt: number, };
+export type Turn = { id?: string, 
+/**
+ * unix ms, fractional when the agent wrote it so
+ */
+startedAt: number, };
 
 export type ChatInfo = { 
 /**

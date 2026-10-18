@@ -200,7 +200,7 @@ pub fn top_members(text: &str) -> Option<TopMembers> {
         s.ws();
         let start = s.i;
         s.string()?;
-        let key: String = serde_json::from_str(&text[start..s.i]).ok()?;
+        let key = crate::js::json::parse(&text[start..s.i])?.as_str()?.to_owned();
         s.ws();
         if s.peek() != Some(':') {
             return None;
@@ -321,6 +321,13 @@ mod tests {
     fn adds_a_key_back_in_front_indented_like_the_rest() {
         assert_eq!(set_key("{\n  \"theme\": \"dark\"\n}", "model", Some("\"opus\"")).as_deref(), Some("{\n  \"model\": \"opus\",\n  \"theme\": \"dark\"\n}"));
         assert_eq!(set_key("{}", "model", Some("\"opus\"")).as_deref(), Some("{\n  \"model\": \"opus\"\n}"));
+    }
+
+    /// review: a key holding half a surrogate pair still leaves the file editable, as in the TS
+    #[test]
+    fn a_lone_surrogate_in_a_key_leaves_the_file_editable() {
+        let text = "{\n  \"note \\ud83d\": 1,\n  \"model\": \"opus\"\n}\n";
+        assert_eq!(set_key(text, "model", Some("\"sonnet\"")).as_deref(), Some("{\n  \"note \\ud83d\": 1,\n  \"model\": \"sonnet\"\n}\n"));
     }
 
     /// puts back only the keys that changed

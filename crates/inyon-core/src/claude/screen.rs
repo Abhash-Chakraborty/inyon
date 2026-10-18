@@ -135,7 +135,7 @@ pub(crate) fn new_state(width: u32) -> ScreenState {
 }
 
 /// `{ n, label, selected }`
-pub(crate) fn opt(n: u32, label: impl Into<String>, selected: bool) -> PromptOption {
+pub(crate) fn opt(n: u64, label: impl Into<String>, selected: bool) -> PromptOption {
     PromptOption { n, label: label.into(), detail: None, selected, checked: None, current: None }
 }
 
@@ -507,7 +507,7 @@ fn parse_cursor_menu(lines: &[String]) -> Option<ScreenPrompt> {
         let parts = split_plain(text, re!(r"\s{3,}| — "));
         let label = parts[0];
         let rest = parts[1..].join(" ");
-        let mut o = opt(options.len() as u32 + 1, label, i == cur);
+        let mut o = opt(options.len() as u64 + 1, label, i == cur);
         if !rest.is_empty() {
             o.detail = Some(rest);
         }
@@ -580,7 +580,7 @@ fn parse_prompt(lines: &[String], rules: &[usize], width: u32) -> Option<ScreenP
                 checked = Some(&cb[1] != " ");
                 label = label[cb[0].len()..].to_owned();
             }
-            let mut o = opt(om[3].parse().unwrap(), label.clone(), om.get(2).is_some());
+            let mut o = opt(crate::js::to_number(&om[3]) as u64, label.clone(), om.get(2).is_some());
             o.checked = checked;
             opt_indent = om[1].len16() + group(&om, 2).map_or(0, |s| s.len16());
             options.push(o);
@@ -997,7 +997,7 @@ fn parse_agy_picker(tail: &[String], nav_at: usize) -> Option<ScreenPrompt> {
         }
     }
     for (i, o) in rows.iter_mut().enumerate() {
-        o.n = i as u32 + 1;
+        o.n = i as u64 + 1;
     }
     if rows.is_empty() || !rows.iter().any(|o| o.selected) {
         return None;
@@ -1035,14 +1035,14 @@ fn agy_remote(lines: &[String], width: u32) -> Option<Option<String>> {
 
 struct Row {
     indent: usize,
-    n: Option<u32>,
+    n: Option<u64>,
     label: String,
     selected: bool,
     full: bool,
 }
 
 /// `r.n` as JavaScript tests it: 0 and undefined are both false.
-fn has_n(n: Option<u32>) -> bool {
+fn has_n(n: Option<u64>) -> bool {
     n.is_some_and(|n| n != 0)
 }
 
@@ -1068,7 +1068,7 @@ fn parse_agy_menu(lines: &[String]) -> Option<ScreenPrompt> {
         let m = AGY_ITEM!().captures(l)?;
         Some(Row {
             indent: m[1].len16() + group(&m, 2).map_or(0, |s| s.len16()),
-            n: group(&m, 3).filter(|s| !s.is_empty()).map(|s| s.parse().unwrap()),
+            n: group(&m, 3).filter(|s| !s.is_empty()).map(|s| crate::js::to_number(s) as u64),
             label: m[4].jtrim().to_owned(),
             selected: m.get(2).is_some(),
             full: l.len16() as i64 >= width - 1,
@@ -1110,7 +1110,7 @@ fn parse_agy_menu(lines: &[String]) -> Option<ScreenPrompt> {
         } else if numbered && !has_n(r.n) {
             continue;
         } else {
-            let n = r.n.unwrap_or(options.len() as u32 + 1);
+            let n = r.n.unwrap_or(options.len() as u64 + 1);
             options.push(opt(n, r.label.clone(), r.selected));
         }
     }
@@ -1321,7 +1321,7 @@ fn parse_codex_menu(lines: &[String]) -> Option<ScreenPrompt> {
             let current = parts[0].contains("(current)");
             let label = re!(r"\s*\((?:y|p|a|n|esc)\)\s*$", "i").replacen(parts[0], 1, "");
             let label = re!(r"\s*\(current\)").replacen(&label, 1, "");
-            let mut o = opt(m[2].parse().unwrap(), label.jtrim(), m.get(1).is_some_and(|g| g.as_str() == "›"));
+            let mut o = opt(crate::js::to_number(&m[2]) as u64, label.jtrim(), m.get(1).is_some_and(|g| g.as_str() == "›"));
             if !detail.is_empty() {
                 o.detail = Some(detail);
             }

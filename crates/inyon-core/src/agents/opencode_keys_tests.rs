@@ -86,3 +86,21 @@ mod opencodes_key_bindings {
         assert_eq!(Some(opencode_keys("").agent_cycle), k(&["Tab"]));
     }
 }
+
+#[test]
+fn a_binding_stacking_thousands_of_leaders_falls_back_like_the_ts_without_overflowing() {
+    // 12,000 still resolve in Bun: the leader's keys that many times, then the key
+    let deep = format!("{}m", "<leader>".repeat(MAX_LEADERS));
+    let keys = tmux_keys(&deep, None).unwrap();
+    assert_eq!((keys.len(), keys[0].as_str(), keys.last().unwrap().as_str()), (MAX_LEADERS + 1, "C-x", "m"));
+    // 20,000 overflow Bun's stack; opencodeKeys catches it and uses the defaults for every key.
+    // On a small stack: the recursive version ran out of it long before
+    let config = format!("@@FILE\n{{\"keybinds\":{{\"variant_cycle\":\"f3\",\"agent_cycle\":\"{}m\"}}}}\n", "<leader>".repeat(20_000));
+    let keys = std::thread::Builder::new().stack_size(256 * 1024).spawn(move || opencode_keys(&config)).unwrap().join().unwrap();
+    assert_eq!(keys, keys_from(&IndexMap::new()));
+    // a leader that is itself stacked counts towards the same limit
+    let leader = "<leader>".repeat(MAX_LEADERS);
+    assert_eq!(keys_from(&binds(&[("leader", &format!("{leader}a")), ("agent_cycle", "<leader>m")])), keys_from(&IndexMap::new()));
+    assert_eq!(tmux_keys("<leader> m", None), k(&["C-x", "m"]));
+    assert_eq!(tmux_keys("<leader>none,f2", None), k(&["F2"]));
+}

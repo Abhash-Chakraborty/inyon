@@ -353,25 +353,33 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         if hidden_session(sname) {
             continue;
         }
-        let s = sessions.entry(sid.to_owned()).or_insert_with(|| SessionInfo { id: sid.into(), name: sname.into(), attached: num(sattached) as u32, windows: vec![] });
+        let s =
+            sessions.entry(sid.to_owned()).or_insert_with(|| SessionInfo { id: sid.into(), name: sname.into(), attached: inyon_protocol::Num(num(sattached)), windows: vec![] });
         // windows are keyed by session and window id, and each session holds its own
         let w = match s.windows.iter().position(|w| w.id == wid) {
             Some(i) => &mut s.windows[i],
             None => {
-                s.windows.push(WindowInfo { id: wid.into(), index: num(widx) as u32, name: wname.into(), active: wactive == "1", activity: num(wact) as u64, panes: vec![] });
+                s.windows.push(WindowInfo {
+                    id: wid.into(),
+                    index: inyon_protocol::Num(num(widx)),
+                    name: wname.into(),
+                    active: wactive == "1",
+                    activity: inyon_protocol::Num(num(wact)),
+                    panes: vec![],
+                });
                 s.windows.last_mut().expect("window")
             }
         };
         w.panes.push(PaneInfo {
             id: pid.into(),
-            index: num(pidx) as u32,
+            index: inyon_protocol::Num(num(pidx)),
             active: pactive == "1",
             command: pcmd.into(),
             cwd: pcwd.into(),
             title: ptitle.into(),
             label: None,
-            width: num(pw) as u32,
-            height: num(ph) as u32,
+            width: inyon_protocol::Num(num(pw)),
+            height: inyon_protocol::Num(num(ph)),
             dead: pdead == "1",
             agent: None,
         });
@@ -393,7 +401,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
     }
     if sections.contains_key("CLIENTS") {
         for s in sessions.values_mut() {
-            s.attached = people.get(s.id.as_str()).copied().unwrap_or(0);
+            s.attached = inyon_protocol::Num(f64::from(people.get(s.id.as_str()).copied().unwrap_or(0)));
         }
     }
     res.sessions = sessions.into_values().collect();
@@ -637,7 +645,13 @@ mod tests {
         assert_eq!(r.signed_in, vec![AgentKind::Claude, AgentKind::Codex]);
         assert_eq!(r.integration, IntegrationState::Installed);
         assert_eq!(r.sessions.len(), 1);
-        assert_eq!(r.sessions[0].attached, 1);
+        assert_eq!(r.sessions[0].attached, inyon_protocol::Num(1.0));
+        // review: a width tmux didn't print as a number is NaN, null on the wire, as Number() gives
+        assert_eq!(out.matches("120").count(), 2);
+        let odd = parse_probe(&out.replacen("120", "wide", 1), "", 0, 12.0).unwrap();
+        let pane = &odd.sessions[0].windows[0].panes[0];
+        assert!(pane.width.0.is_nan());
+        assert_eq!(serde_json::to_value(pane).unwrap()["width"], serde_json::Value::Null);
         let a = &r.agent_procs["%1"];
         assert_eq!((a.kind, a.pid, a.started_at, a.cwd.as_deref()), (AgentKind::Claude, 101.0, 1960.0, Some("/home/u/p/sub")));
         assert_eq!(a.resume.as_deref(), Some("7409eef9-d507-4808-a592-0bfabe896e3a"));

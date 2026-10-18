@@ -28,9 +28,10 @@ impl Serialize for Num {
     }
 }
 
+// null back as NaN, which is what JSON.stringify wrote it for (an Option<Num> reads null as None)
 impl<'de> Deserialize<'de> for Num {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        f64::deserialize(d).map(Num)
+        Option::<f64>::deserialize(d).map(|v| Num(v.unwrap_or(f64::NAN)))
     }
 }
 

@@ -1,6 +1,7 @@
 //! The time, for the few readers that compare against it (Codex's elapsed-time spinner, the send
 //! ledger). Native builds read the system clock; wasm has none of its own, so the host that embeds
-//! the core sets it (`set_now`), and tests pin it the same way.
+//! the core sets it (`set_now`) before every call that may read it, and tests pin it the same way.
+//! A wasm build that reads the clock without it panics in debug builds and reads 0 in release.
 
 use std::cell::Cell;
 
@@ -28,5 +29,21 @@ fn system_ms() -> u64 {
 
 #[cfg(target_arch = "wasm32")]
 fn system_ms() -> u64 {
+    missing_clock()
+}
+
+/// What a read of a clock nobody set gives: loud while developing, 0 (1970) in a release build.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn missing_clock() -> u64 {
+    debug_assert!(false, "inyon-core read the time on wasm before the host called clock::set_now");
     0
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg_attr(debug_assertions, should_panic(expected = "clock::set_now"))]
+    fn a_wasm_clock_nobody_set_is_loud_in_debug_builds() {
+        assert_eq!(super::missing_clock(), 0);
+    }
 }

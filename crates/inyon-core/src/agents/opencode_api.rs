@@ -62,7 +62,7 @@ pub fn open_code_catalog_from_providers(payload: &Value, now: u64) -> AgentCatal
                 id: format!("{pid}/{id}"),
                 label: format!("{pname} · {mname}"),
                 note: None,
-                context: model.at("limit").at("context").num().map(|c| c as u64),
+                context: model.at("limit").at("context").num().map(inyon_protocol::Num),
                 efforts: Some(variant_names(model.at("variants"))),
                 default_effort: None,
                 variants: None,

@@ -2,7 +2,7 @@
 //! TUI footer's "Model Name Provider Name" to them. The command is built here and run by the
 //! caller, which keeps the answer as long as it likes.
 
-use std::cell::RefCell;
+use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
 use indexmap::IndexMap;
 use inyon_protocol::{AgentCatalog, AgentModel, CatalogSource, ModeOption};
@@ -57,24 +57,27 @@ const PROVIDER_NAMES: &[(&str, &str)] = &[
 /// names older OpenCode versions printed, kept so their footers still read
 const OLD_NAMES: &[&str] = &["OpenCode Zen"];
 
-thread_local! {
-    static LEARNED: RefCell<IndexMap<String, String>> = RefCell::new(IndexMap::new());
+/// Provider names machines reported, for the whole process as the TS module's Map is: a hub
+/// running readers on several threads learns a name once for all of them.
+static LEARNED: LazyLock<Mutex<IndexMap<String, String>>> = LazyLock::new(|| Mutex::new(IndexMap::new()));
+
+fn learned() -> MutexGuard<'static, IndexMap<String, String>> {
+    // a panic while holding the lock leaves the map whole (inserts only), so keep using it
+    LEARNED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Remembers provider names a machine reported, so footers naming them read right.
 pub fn note_provider_names<'a>(names: impl IntoIterator<Item = (&'a str, &'a str)>) {
-    LEARNED.with(|l| {
-        let mut l = l.borrow_mut();
-        for (id, name) in names {
-            if !id.is_empty() && !name.is_empty() {
-                l.insert(id.to_owned(), name.to_owned());
-            }
+    let mut l = learned();
+    for (id, name) in names {
+        if !id.is_empty() && !name.is_empty() {
+            l.insert(id.to_owned(), name.to_owned());
         }
-    });
+    }
 }
 
 pub fn provider_name(id: &str) -> String {
-    if let Some(n) = LEARNED.with(|l| l.borrow().get(id).cloned()) {
+    if let Some(n) = learned().get(id).cloned() {
         return n;
     }
     if let Some((_, n)) = PROVIDER_NAMES.iter().find(|(k, _)| *k == id) {
@@ -84,7 +87,7 @@ pub fn provider_name(id: &str) -> String {
 }
 
 fn all_names() -> Vec<String> {
-    let mut names: Vec<String> = LEARNED.with(|l| l.borrow().values().cloned().collect());
+    let mut names: Vec<String> = learned().values().cloned().collect();
     for n in PROVIDER_NAMES.iter().map(|(_, n)| *n).chain(OLD_NAMES.iter().copied()) {
         if !names.iter().any(|x| x == n) {
             names.push(n.to_owned());
@@ -121,7 +124,7 @@ pub fn parse_open_code_models(text: &str) -> Vec<AgentModel> {
             id: id.to_owned(),
             label: format!("{} · {name}", provider_name(provider)),
             note: None,
-            context: m.at("limit").at("context").num().map(|c| c as u64),
+            context: m.at("limit").at("context").num().map(inyon_protocol::Num),
             efforts: Some(variant_names(m.at("variants"))),
             default_effort: None,
             variants: None,

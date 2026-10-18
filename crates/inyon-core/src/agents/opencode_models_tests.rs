@@ -50,9 +50,11 @@ mod opencode_models {
         assert_eq!(
             models,
             vec![
-                AgentModel { context: Some(200000), efforts: Some(vec![]), ..model("opencode/big-pickle", "OpenCode · Big Pickle") },
+                AgentModel { context: Some(inyon_protocol::Num(200000.0)), efforts: Some(vec![]), ..model("opencode/big-pickle", "OpenCode · Big Pickle") },
                 AgentModel {
-                    context: Some(262144), efforts: Some(vec!["low".into(), "medium".into()]), ..model("opencode/ling-3.1-flash-free", "OpenCode · Ling 3.1 Flash Free")
+                    context: Some(inyon_protocol::Num(262144.0)),
+                    efforts: Some(vec!["low".into(), "medium".into()]),
+                    ..model("opencode/ling-3.1-flash-free", "OpenCode · Ling 3.1 Flash Free")
                 },
             ]
         );
@@ -115,4 +117,29 @@ fn unknown_providers_are_named_from_their_id_and_the_catalog_reads_both_lists() 
     assert_eq!((cat.models.len(), cat.modes.map(|m| m.len()), cat.updated_at), (2, Some(1), 7));
     assert!(opencode_cli_catalog("", 7).error.is_some());
     assert!(opencode_cli_models_command().contains("opencode agent list"));
+}
+
+#[test]
+fn a_provider_name_learned_on_one_thread_is_known_on_every_other() {
+    std::thread::spawn(|| note_provider_names([("thread-cloud-9", "Thread Cloud Nine")])).join().unwrap();
+    assert_eq!(provider_name("thread-cloud-9"), "Thread Cloud Nine");
+    assert_eq!(std::thread::spawn(|| without_provider("Some Model Thread Cloud Nine")).join().unwrap(), "Some Model");
+}
+
+#[test]
+fn crlf_output_reads_like_lf_output() {
+    // JavaScript's multiline ^ and $ break at "\r" too, so a CRLF listing still splits per model
+    let crlf = OUTPUT.replace('\n', "\r\n");
+    let ids = |text: &str| parse_open_code_models(text).into_iter().map(|m| m.id).collect::<Vec<_>>();
+    assert_eq!(ids(&crlf), ["opencode/big-pickle", "opencode/ling-3.1-flash-free"]);
+    assert_eq!(ids(&crlf), ids(OUTPUT));
+    let agents = parse_open_code_agents("build (primary)\r\n  []\r\nplan (primary)\r\n");
+    assert_eq!(agents.len(), 2);
+}
+
+#[test]
+fn a_context_size_passes_through_as_the_number_it_is() {
+    let out = "x/a\n{ \"limit\": { \"context\": 1.5 } }\nx/b\n{ \"limit\": { \"context\": -1 } }\n";
+    let got: Vec<_> = parse_open_code_models(out).into_iter().map(|m| m.context).collect();
+    assert_eq!(got, [Some(inyon_protocol::Num(1.5)), Some(inyon_protocol::Num(-1.0))]);
 }

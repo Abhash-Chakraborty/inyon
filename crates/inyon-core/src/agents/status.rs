@@ -5,6 +5,7 @@ use indexmap::IndexMap;
 use inyon_protocol::{AgentStatus, Credits, IntegrationState, Num, RateWindow, Stale, StaleContext, StaleLimits};
 use serde_json::Value;
 
+use crate::claude::transcript::string_of;
 use crate::js::json::Js;
 use crate::js::{date, js_round};
 use crate::tmux::tmux::StatusPane;
@@ -68,11 +69,11 @@ pub fn status_from_claude(d: &Value, ts: f64) -> AgentStatus {
         |w: Option<&Value>| if w.truthy() { num(w.at("used_percentage")).map(|pct| RateWindow { pct: Num(pct), resets_at: to_unix(w.at("resets_at")).map(Num) }) } else { None };
     let n = |v: Option<&Value>| num(v).map(Num);
     let mut s = empty_status(ts * 1000.0);
-    s.model = d.at("model").at("display_name").str().map(str::to_owned);
-    s.model_id = d.at("model").at("id").str().map(str::to_owned);
-    s.effort = d.at("effort").at("level").str().map(str::to_owned);
+    s.model = string_of(d.at("model").at("display_name"));
+    s.model_id = string_of(d.at("model").at("id"));
+    s.effort = string_of(d.at("effort").at("level"));
     s.fast = Some(d.at("fast_mode").truthy());
-    s.version = d.at("version").str().map(str::to_owned);
+    s.version = string_of(d.at("version"));
     s.context_pct = n(cw.at("used_percentage"));
     s.context_used = used.map(Num);
     s.context_size = n(cw.at("context_window_size"));
@@ -83,7 +84,7 @@ pub fn status_from_claude(d: &Value, ts: f64) -> AgentStatus {
     s.lines_removed = n(d.at("cost").at("total_lines_removed"));
     s.five_hour = win(rl.at("five_hour"));
     s.seven_day = win(rl.at("seven_day"));
-    s.output_style = d.at("output_style").at("name").str().map(str::to_owned);
+    s.output_style = string_of(d.at("output_style").at("name"));
     s
 }
 
@@ -163,7 +164,7 @@ pub fn status_from_codex(ev: &Value, ctx: &CodexContext, ts_ms: f64) -> AgentSta
     };
     let credits = rl.at("credits");
     let credits = if credits.truthy() && (credits.at("has_credits").truthy() || credits.at("unlimited").truthy()) {
-        Some(Credits { balance: credits.at("balance").present().str().map(str::to_owned), unlimited: Some(credits.at("unlimited").truthy()) })
+        Some(Credits { balance: string_of(credits.at("balance")), unlimited: Some(credits.at("unlimited").truthy()) })
     } else {
         None
     };
@@ -193,6 +194,20 @@ pub fn status_from_codex(ev: &Value, ctx: &CodexContext, ts_ms: f64) -> AgentSta
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// review: numbers where the TS expects strings pass through (as text), not dropped
+    #[test]
+    fn numbers_in_string_fields_pass_through_as_text() {
+        let s = status_from_claude(&json!({ "model": { "display_name": 5, "id": 7 }, "effort": { "level": 2 }, "version": 2.1, "output_style": { "name": 0 } }), 1.0);
+        assert_eq!(
+            (s.model.as_deref(), s.model_id.as_deref(), s.effort.as_deref(), s.version.as_deref(), s.output_style.as_deref()),
+            (Some("5"), Some("7"), Some("2"), Some("2.1"), Some("0"))
+        );
+        let c = status_from_codex(&json!({ "rate_limits": { "credits": { "has_credits": true, "balance": 12.5 } } }), &CodexContext::default(), 0.0);
+        assert_eq!(c.credits.unwrap().balance.as_deref(), Some("12.5"));
+        let none = status_from_codex(&json!({ "rate_limits": { "credits": { "has_credits": true, "balance": null } } }), &CodexContext::default(), 0.0);
+        assert_eq!(none.credits.unwrap().balance, None);
+    }
 
     /// Codex weekly-only primary quota is not labeled a five-hour window (codex.test.ts)
     #[test]

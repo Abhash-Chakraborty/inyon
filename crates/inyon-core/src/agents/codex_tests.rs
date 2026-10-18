@@ -309,7 +309,7 @@ mod codex_turns {
             normalize_codex(&rec("event_msg", json!({ "type": "task_started", "turn_id": "turn-1", "started_at": 1792256430u64, "model_context_window": 258400 })), &mut meta),
             vec![]
         );
-        assert_eq!(meta.turn, Some(Turn { id: Some("turn-1".into()), started_at: 1792256430000 }));
+        assert_eq!(meta.turn, Some(Turn { id: Some("turn-1".into()), started_at: Num(1792256430000.0) }));
         let out = normalize_codex(
             &rec(
                 "event_msg",
@@ -610,4 +610,75 @@ fn rollouts_and_names_are_read_from_the_listing() {
         codex_history_base("{\"payload\":{\"history_base\":{\"thread_id\":\"01a1255b-fbc5-7371-ab05-ee0aa808a95d\",\"end_ordinal_exclusive\":1,\"end_byte_offset\":42}}}"),
         Some(("01a1255b-fbc5-7371-ab05-ee0aa808a95d".into(), 42))
     );
+}
+
+/// review: `if (tier)` in the TS: an empty service tier leaves `fast` unset
+#[test]
+fn an_empty_service_tier_says_nothing_about_speed() {
+    let line = |v: Value| stringify(&v);
+    let status = |tier: &str| {
+        let out = [
+            "0".to_owned(),
+            line(json!({ "type": "event_msg", "timestamp": "2026-10-17T17:00:00.000Z", "payload": { "type": "thread_settings_applied", "thread_settings": { "service_tier": tier } } })),
+            line(json!({ "type": "event_msg", "timestamp": "2026-10-17T17:00:30.000Z", "payload": { "type": "token_count", "info": { "model_context_window": 1000 } } })),
+        ]
+        .join("\n");
+        codex_status(&out).0.unwrap().fast
+    };
+    assert_eq!(status(""), None);
+    assert_eq!(status("default"), Some(false));
+    assert_eq!(status(FAST_TIERS[0]), Some(true));
+}
+
+/// review: a thread name that isn't a string is kept as it is in the TS and never equals a title
+#[test]
+fn a_thread_name_that_is_not_a_string_never_matches_the_pane_title() {
+    let out = "1700000100\t/s/rollout-a.jsonl\t{\"payload\":{\"id\":\"a\",\"cwd\":\"/w\"\n1700000100\t/s/rollout-b.jsonl\t{\"payload\":{\"id\":\"b\",\"cwd\":\"/w\"\n---\n{\"id\":\"a\",\"thread_name\":\"5\"}\n{\"id\":\"a\",\"thread_name\":5}\n{\"id\":\"b\",\"thread_name\":7}";
+    let (rows, names) = codex_rollouts(out);
+    assert_eq!((names.get("a"), names.get("b")), (None, None));
+    let proc = |title: &str| CodexProc { pid: 1, cwd: Some("/w".into()), started_at: 1_700_000_000.0, resume: None, title: Some(title.into()) };
+    // with no name to go by, the title picks what any other title would
+    let by_title = pick_codex_rollout(&rows, &proc("5"), &[], &names);
+    assert_eq!(by_title, pick_codex_rollout(&rows, &proc("nothing"), &[], &names));
+}
+
+/// review: hunk numbers and turn starts keep the TS number, past u32 and fractional
+#[test]
+fn hunk_numbers_past_u32_and_fractional_turn_starts_keep_their_value() {
+    let h = &unified_hunks("@@ -99999999999,2 +5000000000 @@\n ctx")[0];
+    assert_eq!((h.old_start, h.old_lines, h.new_start, h.new_lines), (Num(99_999_999_999.0), Num(2.0), Num(5_000_000_000.0), Num(1.0)));
+    let mut meta = new_meta();
+    normalize_codex(&rec("event_msg", json!({ "type": "task_started", "turn_id": "t", "started_at": 1792256430.1234 })), &mut meta);
+    assert_eq!(meta.turn.unwrap().started_at, Num(1792256430123.4));
+}
+
+/// review: answers are a plain object in the TS, so integer-like keys come first (from bun)
+#[test]
+fn answers_keep_the_order_a_javascript_object_gives_them() {
+    let mut meta = new_meta();
+    let args = stringify(&json!({ "questions": [{ "id": "q", "question": "Name?" }, { "id": "7", "question": "3" }] }));
+    normalize_codex(&rec("response_item", json!({ "type": "function_call", "id": "fc", "name": "request_user_input", "arguments": args, "call_id": "call_b" })), &mut meta);
+    let output = r#"{"answers":{"q":{"answers":["A"]},"7":{"answers":["B"]}}}"#;
+    let r = normalize_codex(&rec("response_item", json!({ "type": "function_call_output", "id": "fco", "call_id": "call_b", "output": output })), &mut meta);
+    let r = serde_json::to_value(&r[0]).unwrap();
+    assert_eq!(stringify(&json!([r["text"], r["meta"]["answers"]])), r#"["3: B\nName?: A",{"3":"B","Name?":"A"}]"#);
+    let list = stringify(&json!([
+        { "answer": "A", "question": "Name?", "questionItemId": "[\"request_user_input_async\",\"call_x\",0]" },
+        { "answer": "B", "question": "2", "questionItemId": "[\"request_user_input_async\",\"call_x\",1]" },
+    ]));
+    let reply = format!("<send_user_message_question_reply>\n{list}\n</send_user_message_question_reply>");
+    let o = normalize_codex(&rec("response_item", json!({ "type": "message", "id": "m", "role": "user", "content": [{ "type": "input_text", "text": reply }] })), &mut meta);
+    let o = serde_json::to_value(&o[0]).unwrap();
+    // serde_json keeps insertion order, so the wire order is the map's own
+    assert_eq!(serde_json::to_string(&json!([o["text"], o["meta"]["answers"]])).unwrap(), r#"["2: B\nName?: A",{"2":"B","Name?":"A"}]"#);
+}
+
+/// review: `\u` takes four UTF-16 units, so an astral character after it counts as two
+#[test]
+fn a_u_escape_takes_four_utf16_units() {
+    // parseInt("😀ab", 16) is NaN, which fromCharCode writes as "\0"; the quote after is the end
+    assert_eq!(js_string("\"\\u😀ab\" tail", 0).as_deref(), Some("\0"));
+    assert_eq!(js_string("x = '\\u00e9t\\u00E9'", 4).as_deref(), Some("été"));
+    assert_eq!(js_string("\"a\\nb\\\"c\"", 0).as_deref(), Some("a\nb\"c"));
+    assert_eq!(js_string("\"open", 0), None);
 }

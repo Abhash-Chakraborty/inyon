@@ -199,3 +199,11 @@ fn the_open_tab_is_the_one_on_its_own_background_without_colours_nothing_is_pick
     assert_eq!(current_tab(Some("┃  One   Two   Confirm"), &three), -1);
     assert_eq!(current_tab(None, &["One".to_owned()]), -1);
 }
+
+/// review: an option number past u32 stays its number, as Number() keeps it in the TS
+#[test]
+fn a_long_option_number_stays_its_number() {
+    let lines: Vec<String> = screen_fixture("opencode", "question").into_iter().map(|l| l.replacen("m2.\u{1b}[", "m99999999999.\u{1b}[", 1)).collect();
+    let p = parse_screen(&lines, Some(110), AgentKind::Opencode).prompt.unwrap();
+    assert_eq!(p.options.iter().map(|o| o.n).collect::<Vec<_>>(), vec![1, 99_999_999_999, 3]);
+}

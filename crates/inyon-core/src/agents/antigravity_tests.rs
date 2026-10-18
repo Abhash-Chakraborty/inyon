@@ -185,3 +185,30 @@ fn tags_without_a_request_are_dropped_and_an_unclosed_one_stays() {
     assert_eq!(user_text("<OPEN>left <C>z</C>there"), "<OPEN>left there");
     assert_eq!(agy_model_name(Some("Claude Sonnet 4.6 (Thinking)")).as_deref(), Some("Claude Sonnet 4.6 (Thinking)"));
 }
+
+/// review: steps keyed by the number itself, as the TS's Map is: 3.5 stays apart from 3, -0 is 0
+#[test]
+fn fractional_and_huge_step_indexes_keep_their_own_place() {
+    let mut doc = AntigravityDoc::new();
+    for (i, text) in [(json!(1e300), "huge"), (json!(3.5), "half"), (json!(3), "three"), (json!(-0.0), "minus zero"), (json!(0), "zero")] {
+        doc.apply(&json!({ "step_index": i, "type": "PLANNER_RESPONSE", "content": text }));
+    }
+    let items = doc.items(&mut new_meta());
+    assert_match(
+        &items,
+        json!([
+            { "msgId": "s0", "block": { "text": "zero" } },
+            { "msgId": "s3", "block": { "text": "three" } },
+            { "msgId": "s3.5", "block": { "text": "half" } },
+            { "msgId": "s1e+300", "block": { "text": "huge" } },
+        ]),
+    );
+}
+
+/// review: an empty conversation id checks nothing, as in the TS
+#[test]
+fn an_empty_conversation_id_checks_nothing() {
+    let pane = IndexMap::from([("%7".to_owned(), AgyStatusPane { ts: 1000.0, data: json!({ "conversation_id": "c1" }) })]);
+    assert!(agy_status(&pane, None, "%7", 990.0, Some("")).is_some());
+    assert!(agy_status(&pane, None, "%7", 990.0, Some("c2")).is_none());
+}

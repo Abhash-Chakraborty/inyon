@@ -208,15 +208,16 @@ pub struct AgentPaneInfo {
 pub struct PaneInfo {
     /// tmux pane id, e.g. "%12"
     pub id: String,
-    pub index: u32,
+    /// tmux's numbers as JavaScript reads them: NaN (null on the wire) where tmux printed no number
+    pub index: Num,
     pub active: bool,
     pub command: String,
     pub cwd: String,
     pub title: String,
     /// the name you gave this session in Inyon
     pub label: Option<String>,
-    pub width: u32,
-    pub height: u32,
+    pub width: Num,
+    pub height: Num,
     pub dead: bool,
     pub agent: Option<AgentPaneInfo>,
 }
@@ -225,10 +226,10 @@ pub struct PaneInfo {
 pub struct WindowInfo {
     /// "@3"
     pub id: String,
-    pub index: u32,
+    pub index: Num,
     pub name: String,
     pub active: bool,
-    pub activity: u64,
+    pub activity: Num,
     pub panes: Vec<PaneInfo>,
 }
 
@@ -237,7 +238,7 @@ pub struct SessionInfo {
     /// "$1"
     pub id: String,
     pub name: String,
-    pub attached: u32,
+    pub attached: Num,
     pub windows: Vec<WindowInfo>,
 }
 
@@ -343,13 +344,13 @@ pub enum AssistantBlock {
 }
 
 /// One unified hunk of an Edit/Write/MultiEdit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct PatchHunk {
-    pub old_start: u32,
-    pub old_lines: u32,
-    pub new_start: u32,
-    pub new_lines: u32,
+    pub old_start: Num,
+    pub old_lines: Num,
+    pub new_start: Num,
+    pub new_lines: Num,
     pub lines: Vec<String>,
 }
 
@@ -604,7 +605,8 @@ pub struct RemoteControl {
 #[ts(optional_fields)]
 pub struct Turn {
     pub id: Option<String>,
-    pub started_at: u64,
+    /// unix ms, fractional when the agent wrote it so
+    pub started_at: Num,
 }
 
 #[skip_serializing_none]
@@ -651,7 +653,7 @@ pub struct ChatInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
 pub struct PromptOption {
-    pub n: u32,
+    pub n: u64,
     pub label: String,
     pub detail: Option<String>,
     pub selected: bool,
@@ -690,7 +692,7 @@ pub struct ScreenPrompt {
     pub footer: Option<String>,
     pub multi: bool,
     /// the option number of a free-text "Type something" entry
-    pub free_text_option: Option<u32>,
+    pub free_text_option: Option<u64>,
     /// options aren't numbered on screen: answer by moving the cursor (↑/↓) and pressing Enter
     pub navigate: Option<bool>,
     /// the dialog asks for typed input (e.g. "Paste code here if prompted >")

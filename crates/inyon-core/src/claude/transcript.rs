@@ -5,7 +5,7 @@
 //! The TS returns `Draft`s, chat items without their `seq`; these return `ChatItem`s with `seq` 0,
 //! which the caller numbers as the TS caller does.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use indexmap::IndexMap;
 use inyon_protocol::{
@@ -105,29 +105,81 @@ pub struct TranscriptMeta {
     pub subagents: IndexMap<String, SubagentInfo>,
     #[serde(default, with = "pairs")]
     pub artifacts: IndexMap<String, ArtifactInfo>,
-    #[serde(default, serialize_with = "latest_tools", deserialize_with = "pairs::deserialize")]
-    pub tools: IndexMap<String, ToolCall>,
+    #[serde(default)]
+    pub tools: ToolCalls,
     #[serde(skip)]
     pub codex: CodexScratch,
 }
 
-/// A map as the list of its entries, `[...map]` in TS.
+/// A map as the list of its entries, `[...map]` in TS. Keys made by `map_key` (undefined, null)
+/// are written as JSON writes those values.
 mod pairs {
     use super::*;
+    use crate::js::json::{key_of, key_value};
 
     pub fn serialize<V: Serialize, S: Serializer>(m: &IndexMap<String, V>, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_seq(m.iter())
+        s.collect_seq(m.iter().map(|(k, v)| (key_value(k), v)))
     }
 
     pub fn deserialize<'de, V: Deserialize<'de>, D: Deserializer<'de>>(d: D) -> Result<IndexMap<String, V>, D::Error> {
-        let v: Vec<(String, V)> = Vec::deserialize(d)?;
-        Ok(v.into_iter().collect())
+        let v: Vec<(Value, V)> = Vec::deserialize(d)?;
+        Ok(v.into_iter().map(|(k, v)| (key_of(&k), v)).collect())
+    }
+}
+
+/// The tool calls a session made, oldest first, as the TS's `Map`: setting a call again keeps its
+/// place, and dropping the oldest takes constant time however many there are.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ToolCalls {
+    calls: HashMap<String, ToolCall>,
+    order: VecDeque<String>,
+}
+
+impl ToolCalls {
+    pub fn insert(&mut self, id: String, call: ToolCall) {
+        if let Some(cur) = self.calls.get_mut(&id) {
+            *cur = call;
+            return;
+        }
+        self.order.push_back(id.clone());
+        self.calls.insert(id, call);
+    }
+    pub fn get(&self, id: &str) -> Option<&ToolCall> {
+        self.calls.get(id)
+    }
+    pub fn len(&self) -> usize {
+        self.order.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+    /// Drops the call made first.
+    pub fn remove_oldest(&mut self) {
+        if let Some(id) = self.order.pop_front() {
+            self.calls.remove(&id);
+        }
+    }
+    /// The calls, oldest first.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (&String, &ToolCall)> + ExactSizeIterator {
+        self.order.iter().map(|id| (id, &self.calls[id]))
     }
 }
 
 // a tool's result follows its call closely, so only the latest calls can still be answered
-fn latest_tools<S: Serializer>(m: &IndexMap<String, ToolCall>, s: S) -> Result<S::Ok, S::Error> {
-    s.collect_seq(m.iter().skip(m.len().saturating_sub(200)))
+impl Serialize for ToolCalls {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.iter().skip(self.len().saturating_sub(200)).map(|(k, v)| (crate::js::json::key_value(k), v)))
+    }
+}
+
+impl<'de> Deserialize<'de> for ToolCalls {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let mut out = ToolCalls::default();
+        for (k, v) in Vec::<(Value, ToolCall)>::deserialize(d)? {
+            out.insert(crate::js::json::key_of(&k), v);
+        }
+        Ok(out)
+    }
 }
 
 pub fn new_stats() -> SessionStats {
@@ -166,7 +218,7 @@ pub fn new_meta() -> TranscriptMeta {
         tasks: IndexMap::new(),
         subagents: IndexMap::new(),
         artifacts: IndexMap::new(),
-        tools: IndexMap::new(),
+        tools: ToolCalls::default(),
         codex: CodexScratch::default(),
     }
 }
@@ -332,16 +384,18 @@ pub fn tag<'a>(s: &'a str, name: &str) -> Option<&'a str> {
     Some(&s[start..end])
 }
 
-fn k_tokens(n: Option<f64>) -> String {
+/// `kTokens(n)`: the count as "5k", "?" when there is none, and anything else as `String(n)`
+/// prints it (a null `postTokens` reads "null", as in the TS).
+fn k_tokens(n: Option<&Value>) -> String {
     match n {
         None => "?".into(),
-        Some(n) if n >= 1000.0 => format!("{}k", crate::js::fmt_number(crate::js::js_round(n / 1000.0))),
-        Some(n) => crate::js::fmt_number(n),
+        Some(v) if crate::js::json::value_number(v) >= 1000.0 => format!("{}k", crate::js::fmt_number(crate::js::js_round(crate::js::json::value_number(v) / 1000.0))),
+        Some(v) => value_string(v),
     }
 }
 
-fn u32_of(v: Option<&Value>) -> u32 {
-    v.num().unwrap_or(0.0) as u32
+fn num_of(v: Option<&Value>) -> Num {
+    Num(v.num().unwrap_or(0.0))
 }
 
 fn result_meta_of(tur: Option<&Value>) -> Option<ToolResultMeta> {
@@ -354,10 +408,10 @@ fn result_meta_of(tur: Option<&Value>) -> Option<ToolResultMeta> {
                 .map(|h| {
                     let h = Some(h);
                     PatchHunk {
-                        old_start: u32_of(h.at("oldStart")),
-                        old_lines: u32_of(h.at("oldLines")),
-                        new_start: u32_of(h.at("newStart")),
-                        new_lines: u32_of(h.at("newLines")),
+                        old_start: num_of(h.at("oldStart")),
+                        old_lines: num_of(h.at("oldLines")),
+                        new_start: num_of(h.at("newStart")),
+                        new_lines: num_of(h.at("newLines")),
                         lines: h.at("lines").arr().map(|l| l.iter().take(400).map(value_string).collect()).unwrap_or_default(),
                     }
                 })
@@ -587,6 +641,8 @@ pub fn normalize(e: &Value, meta: &mut TranscriptMeta, sidechain: bool) -> Vec<C
 fn track_tool_use(meta: &mut TranscriptMeta, b: Option<&Value>, ts: &str) {
     let input = b.at("input");
     let prompt = input.at("prompt").str().map(|p| Value::String(p.to16(4000).to_owned()));
+    // the TS keys its maps by `b.id` as it is; an Agent call without one is under undefined
+    let key = crate::js::json::map_key(b.at("id"));
     let id = b.at("id").string_or_empty();
     let name = b.at("name").string_or_empty();
     let kept = crate::js::json::obj([
@@ -598,14 +654,14 @@ fn track_tool_use(meta: &mut TranscriptMeta, b: Option<&Value>, ts: &str) {
         ("prompt", prompt.clone()),
         ("name", input.at("name").cloned()),
     ]);
-    meta.tools.insert(id.clone(), ToolCall { name: name.clone(), input: kept });
+    meta.tools.insert(key.clone(), ToolCall { name: name.clone(), input: kept });
     if meta.tools.len() > 4000 {
-        meta.tools.shift_remove_index(0);
+        meta.tools.remove_oldest();
     }
     if name == "Agent" || name == "Task" {
-        let description = input.at("description").or(input.at("subagent_type")).map(value_string).unwrap_or_else(|| "Subagent".into());
+        let description = input.at("description").or(input.at("subagent_type")).string_or("Subagent");
         meta.subagents.insert(
-            id.clone(),
+            key,
             SubagentInfo {
                 tool_use_id: id,
                 r#type: string_of(input.at("subagent_type")),
@@ -647,7 +703,7 @@ fn track_tool_result(meta: &mut TranscriptMeta, tool_use_id: &str, is_error: boo
                     "Monitor" => TaskType::Monitor,
                     _ => TaskType::Workflow,
                 },
-                description: input.at("description").or(input.at("name")).map(value_string).unwrap_or(task_id),
+                description: input.at("description").or(input.at("name")).present().map_or(task_id, value_string),
                 command: input.at("command").str().map(str::to_owned),
                 status: TaskStatus::Running,
                 output_file: None,
@@ -767,8 +823,11 @@ fn system_item(e: Option<&Value>, base: &Base, meta: &mut TranscriptMeta) -> Vec
             let post = m.at("postTokens").num();
             meta.stats.context_tokens = post.map(Num);
             let how = if m.at("trigger").str() == Some("auto") { "Auto-compacted" } else { "Compacted" };
-            let text =
-                if m.at("preTokens").truthy() { format!("{how} · {} → {} tokens", k_tokens(m.at("preTokens").num()), k_tokens(post)) } else { "Conversation compacted".into() };
+            let text = if m.at("preTokens").truthy() {
+                format!("{how} · {} → {} tokens", k_tokens(m.at("preTokens")), k_tokens(m.at("postTokens")))
+            } else {
+                "Conversation compacted".into()
+            };
             vec![base.notice(NoticeLevel::Info, "compact", text)]
         }
         Some("bridge_status") => {
@@ -827,7 +886,7 @@ fn user_items(e: Option<&Value>, base: &Base, meta: &mut TranscriptMeta, sidecha
             let (text, truncated) = clip(&block_text(b.at("content")), 8000);
             let id = b.at("tool_use_id").string_or_empty();
             let is_error = b.at("is_error").truthy();
-            track_tool_result(meta, &id, is_error, e.at("toolUseResult"), &base.ts);
+            track_tool_result(meta, &crate::js::json::map_key(b.at("tool_use_id")), is_error, e.at("toolUseResult"), &base.ts);
             out.push(base.with_uuid(format!("{}:{}", base.uuid, out.len())).tool_result(id, is_error, text, Some(truncated), result_meta_of(e.at("toolUseResult"))));
         }
         return out;
@@ -985,5 +1044,87 @@ mod tests {
         assert_eq!(saved["subagents"][0][0], "x");
         assert_eq!(saved["tools"][0][1]["input"], json!({ "description": "d" }));
         assert_eq!(load_meta(&saved).unwrap(), meta);
+    }
+
+    /// review: a null description falls through to the default, as `??` does in the TS
+    #[test]
+    fn a_null_description_falls_through_to_the_default() {
+        let mut meta = new_meta();
+        let line = |meta: &mut TranscriptMeta, e: Value| {
+            let mut v = json!({ "uuid": "u", "timestamp": "2026-10-10T10:00:00Z" });
+            v.as_object_mut().unwrap().extend(e.as_object().unwrap().clone());
+            normalize(&v, meta, false)
+        };
+        let tool = |id: &str, name: &str, input: Value| json!({ "type": "assistant", "message": { "role": "assistant", "content": [{ "type": "tool_use", "id": id, "name": name, "input": input }] } });
+        line(&mut meta, tool("t1", "Agent", json!({ "description": null, "subagent_type": null, "prompt": "go" })));
+        assert_eq!(meta.subagents["t1"].description, "Subagent");
+        line(&mut meta, tool("t2", "Bash", json!({ "command": "make", "description": null, "name": null })));
+        line(
+            &mut meta,
+            json!({ "type": "user", "message": { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "t2", "content": "ok" }] }, "toolUseResult": { "backgroundTaskId": "b7" } }),
+        );
+        assert_eq!(meta.tasks["b7"].description, "b7");
+    }
+
+    /// review: past 4000 calls the oldest goes in constant time, in the TS's order
+    #[test]
+    fn the_oldest_tool_call_goes_in_constant_time_and_the_order_is_the_tss() {
+        let call = |n: &str| ToolCall { name: n.into(), input: json!({}) };
+        let mut tools = ToolCalls::default();
+        let start = std::time::Instant::now();
+        // shifting an IndexMap of 4000 a million times moved four billion entries
+        for i in 0..1_000_000 {
+            tools.insert(format!("t{i}"), call("Bash"));
+            if tools.len() > 4000 {
+                tools.remove_oldest();
+            }
+        }
+        assert!(start.elapsed() < std::time::Duration::from_secs(20), "{:?}", start.elapsed());
+        assert_eq!(tools.len(), 4000);
+        assert_eq!(tools.iter().next().unwrap().0, "t996000");
+        // setting a call again keeps its place, as Map.set does
+        tools.insert("t996000".into(), call("Read"));
+        assert_eq!(tools.iter().next().unwrap().1.name, "Read");
+        assert_eq!(tools.iter().last().unwrap().0, "t999999");
+        let saved = save_meta(&TranscriptMeta { tools, ..new_meta() });
+        let pairs = saved["tools"].as_array().unwrap();
+        assert_eq!((pairs.len(), pairs[0][0].as_str()), (200, Some("t999800")));
+        assert_eq!(load_meta(&saved).unwrap().tools.iter().next().unwrap().0, "t999800");
+    }
+
+    /// review: "5k → null tokens", as String(null) prints it
+    #[test]
+    fn a_null_token_count_after_compacting_prints_as_the_ts_prints_it() {
+        let mut meta = new_meta();
+        let line = |m: Value| json!({ "type": "system", "subtype": "compact_boundary", "uuid": "c", "timestamp": "2026-10-10T10:00:00Z", "compactMetadata": m });
+        assert_match(
+            &normalize(&line(json!({ "trigger": "manual", "preTokens": 5000, "postTokens": null })), &mut meta, false),
+            json!([{ "text": "Compacted · 5k → null tokens" }]),
+        );
+        assert_match(&normalize(&line(json!({ "trigger": "auto", "preTokens": "12000" })), &mut meta, false), json!([{ "text": "Auto-compacted · 12k → ? tokens" }]));
+    }
+
+    /// review: an Agent call without an id is under undefined, which a notification without a
+    /// tool-use-id ('') doesn't find
+    #[test]
+    fn an_agent_call_without_an_id_is_not_found_by_a_notification_without_one() {
+        let mut meta = new_meta();
+        normalize(
+            &json!({ "type": "assistant", "uuid": "a", "timestamp": "2026-10-10T10:00:00Z", "message": { "role": "assistant", "content": [{ "type": "tool_use", "name": "Agent", "input": { "description": "look" } }] } }),
+            &mut meta,
+            false,
+        );
+        let out = normalize(
+            &json!({ "type": "user", "uuid": "n", "timestamp": "2026-10-10T10:01:00Z", "message": { "role": "user", "content": "<task-notification><task-id>x1</task-id><status>completed</status></task-notification>" } }),
+            &mut meta,
+            false,
+        );
+        assert_match(&out, json!([{ "kind": "notice", "text": "Background shell \"x1\" finished" }]));
+        assert_eq!(meta.subagents.values().next().unwrap().status, SubagentStatus::Running);
+        // saved as [...map] writes it: the key undefined as null
+        let saved = save_meta(&meta);
+        assert_eq!(saved["subagents"][0][0], Value::Null);
+        assert_eq!(saved["tools"][0][0], Value::Null);
+        assert_eq!(load_meta(&saved).unwrap().subagents.len(), 1);
     }
 }

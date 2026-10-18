@@ -35,8 +35,12 @@ pub trait JsStr {
     fn index_of16(&self, needle: &str, from: usize) -> Option<usize>;
     /// `s[i]` (a whole character where JS would give half a surrogate pair)
     fn at16(&self, i: usize) -> Option<char>;
-    /// the byte offset of UTF-16 index `i` (clamped to the end)
+    /// the byte offset of UTF-16 index `i` (clamped to the end); inside a surrogate pair, the
+    /// offset after it
     fn byte_at16(&self, i: usize) -> usize;
+    /// the byte offset of UTF-16 index `i` (clamped to the end); inside a surrogate pair, the
+    /// offset before it
+    fn byte_floor16(&self, i: usize) -> usize;
     /// the UTF-16 index of byte offset `b`
     fn idx16(&self, b: usize) -> usize;
     /// `l.length - l.trimStart().length`
@@ -73,8 +77,9 @@ impl JsStr for str {
         if from >= to {
             return "";
         }
+        // half a pair at the start is skipped, half a pair at the end left off
         let a = self.byte_at16(from);
-        let b = self.byte_at16(to);
+        let b = self.byte_floor16(to);
         &self[a..b.max(a)]
     }
     fn index_of16(&self, needle: &str, from: usize) -> Option<usize> {
@@ -98,12 +103,19 @@ impl JsStr for str {
                 return at;
             }
             units += c.len_utf16();
-            // inside a pair: the cut goes after it, as the end of a slice would keep it out
+            // inside a pair: after it (`byte_floor16` gives the offset before it)
             if units > i {
                 return at + c.len_utf8();
             }
         }
         self.len()
+    }
+    fn byte_floor16(&self, i: usize) -> usize {
+        let b = self.byte_at16(i);
+        if self.idx16(b) == i.min(self.len16()) {
+            return b;
+        }
+        self[..b].char_indices().next_back().map_or(0, |(at, _)| at)
     }
     fn idx16(&self, b: usize) -> usize {
         self[..b.min(self.len())].len16()
@@ -184,5 +196,18 @@ mod tests {
         assert_eq!("❯ x".index_of16("x", 0), Some(2));
         assert_eq!("\u{feff} a \u{85}".jtrim(), "a \u{85}");
         assert_eq!(locale_compare("prt_a", "prt_B"), std::cmp::Ordering::Less);
+    }
+
+    #[test]
+    fn a_pair_cut_in_half_is_left_out_never_over_the_limit() {
+        // JavaScript keeps the high half ("a\uD83D"); no Rust string can, so the pair goes
+        assert_eq!("a😀b".to16(2), "a");
+        assert_eq!("a😀b".slice16(2, None), "b");
+        assert_eq!("a😀b".slice16(2, Some(3)), "");
+        assert_eq!("😀😀".to16(3), "😀");
+        assert_eq!(("a😀b".byte_at16(2), "a😀b".byte_floor16(2), "a😀b".byte_floor16(3), "a😀b".byte_floor16(9)), (5, 1, 5, 6));
+        for n in 0..12 {
+            assert!("x😀y😀😀z".to16(n).len16() <= n as usize);
+        }
     }
 }

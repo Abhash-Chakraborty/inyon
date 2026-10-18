@@ -53,6 +53,17 @@ fn index_key(k: &str) -> Option<u32> {
     k.parse::<u32>().ok().filter(|n| *n < u32::MAX)
 }
 
+/// A map as a JavaScript object built by assigning its keys in this order would hold them:
+/// integer-like keys first, ascending, then the rest as they came.
+pub fn js_object_order<V>(m: indexmap::IndexMap<String, V>) -> indexmap::IndexMap<String, V> {
+    if !m.keys().any(|k| index_key(k).is_some()) {
+        return m;
+    }
+    let (mut ints, rest): (Vec<_>, Vec<_>) = m.into_iter().partition(|(k, _)| index_key(k).is_some());
+    ints.sort_by_key(|(k, _)| index_key(k));
+    ints.into_iter().chain(rest).collect()
+}
+
 /// An object's keys in the order JavaScript enumerates them.
 pub fn ordered(o: &Map<String, Value>) -> Vec<(&String, &Value)> {
     let mut ints: Vec<(u32, (&String, &Value))> = Vec::new();
@@ -85,15 +96,104 @@ fn quote(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// `JSON.parse(s)`, or None where it throws. JavaScript also takes a `\uD83D` escape without the other
-/// half of its pair (a transcript line cut in the middle of an emoji has one); a Rust string can't
-/// hold half a pair, so it reads as U+FFFD here.
+/// How deeply arrays and objects may nest in what [`parse`] reads. `JSON.parse` takes any depth
+/// (Bun reads a million); serde_json and dropping a `Value` both recurse, so past this the text
+/// reads as not JSON instead of running out of stack.
+pub const MAX_DEPTH: usize = 1000;
+
+/// `JSON.parse(s)`, or None where it throws. Three things JavaScript takes that serde_json alone
+/// refuses are read the way the TS goes on to see them:
+/// - a `\uD83D` escape without the other half of its pair (a transcript line cut in the middle of
+///   an emoji has one): a Rust string can't hold half a pair, so it reads as U+FFFD;
+/// - a number too big for a double (`1e400`): JavaScript reads Infinity, which a JSON value can't
+///   hold, so it reads as null, which is what `JSON.stringify` writes for it;
+/// - nesting deeper than serde_json's 128 levels, up to [`MAX_DEPTH`].
 pub fn parse(s: &str) -> Option<Value> {
     match serde_json::from_str(s) {
         Ok(v) => Some(v),
-        Err(_) if s.contains("\\u") => serde_json::from_str(&lone_surrogates(s)).ok(),
-        Err(_) => None,
+        Err(_) => parse_lenient(s),
     }
+}
+
+/// The second try, for text serde_json refused.
+fn parse_lenient(s: &str) -> Option<Value> {
+    if depth(s) > MAX_DEPTH {
+        return None;
+    }
+    let s = if s.contains("\\u") { lone_surrogates(s) } else { s.to_owned() };
+    let s = infinities(&s);
+    let mut de = serde_json::Deserializer::from_str(&s);
+    de.disable_recursion_limit();
+    let v = serde::Deserialize::deserialize(&mut de).ok()?;
+    de.end().ok()?;
+    Some(v)
+}
+
+/// The deepest any array or object in the text nests, strings skipped.
+fn depth(s: &str) -> usize {
+    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for b in s.bytes() {
+        if in_string {
+            match b {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
+}
+
+/// The text with every number outside a string that overflows a double written as null.
+fn infinities(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let (mut i, mut last, mut in_string, mut escaped) = (0, 0, false, false);
+    while i < b.len() {
+        let c = b[i];
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                b'\\' => escaped = true,
+                b'"' => in_string = false,
+                _ => {}
+            }
+            i += 1;
+            continue;
+        }
+        if c == b'"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if c == b'-' || c.is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < b.len() && (b[i].is_ascii_digit() || matches!(b[i], b'.' | b'e' | b'E' | b'+' | b'-')) {
+                i += 1;
+            }
+            if s[start..i].parse::<f64>().is_ok_and(f64::is_infinite) {
+                out.push_str(&s[last..start]);
+                out.push_str("null");
+                last = i;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    out.push_str(&s[last..]);
+    out
 }
 
 /// The text with every `\uXXXX` escape of an unpaired surrogate written as `\uFFFD`.
@@ -138,7 +238,9 @@ pub trait Js<'a> {
     fn at(self, key: &str) -> Option<&'a Value>;
     /// `v?.[i]`
     fn idx(self, i: usize) -> Option<&'a Value>;
-    /// `v ?? other`: undefined and null fall through
+    /// `v ?? other`: undefined and null fall through. A null `other` stays null, so a chain ending
+    /// in a default goes through [`Js::string_or`] or [`Js::string_or_empty`], never
+    /// `.map(value_string)`, which would print it as "null".
     fn or(self, other: Option<&'a Value>) -> Option<&'a Value>;
     /// neither undefined nor null
     fn present(self) -> Option<&'a Value>;
@@ -162,6 +264,8 @@ pub trait Js<'a> {
     fn to_js_string(self) -> String;
     /// `String(v ?? '')`
     fn string_or_empty(self) -> String;
+    /// `String(v ?? default)`: the default wins over undefined and null alike
+    fn string_or(self, default: &str) -> String;
     /// the value as it would be copied into another object (`{ x: v }`), dropped when undefined
     fn cloned_value(self) -> Option<Value>;
 }
@@ -229,6 +333,9 @@ impl<'a> Js<'a> for Option<&'a Value> {
             Some(v) => value_string(v),
         }
     }
+    fn string_or(self, default: &str) -> String {
+        self.present().map_or_else(|| default.to_owned(), value_string)
+    }
     fn cloned_value(self) -> Option<Value> {
         self.cloned()
     }
@@ -244,6 +351,55 @@ pub fn value_string(v: &Value) -> String {
         Value::Array(a) => a.iter().map(|x| if x.is_null() { String::new() } else { value_string(x) }).collect::<Vec<_>>().join(","),
         Value::Object(_) => "[object Object]".into(),
     }
+}
+
+/// `a === b` for two JSON values: numbers by value (1 and 1.0 are one number), and two objects or
+/// arrays never, as two parsed ones are never the same object.
+pub fn strict_equals(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(x), Value::Bool(y)) => x == y,
+        (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
+        (Value::String(x), Value::String(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// `Number(v)` for a JSON value (`+v`, and what `v >= 1000` compares).
+pub fn value_number(v: &Value) -> f64 {
+    match v {
+        Value::Null => 0.0,
+        Value::Bool(b) => f64::from(u8::from(*b)),
+        Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        Value::String(s) => super::num::to_number(s),
+        Value::Array(_) => super::num::to_number(&value_string(v)),
+        Value::Object(_) => f64::NAN,
+    }
+}
+
+/// A JavaScript `Map` key as a string: a string is itself, anything else (undefined, null, a
+/// number) gets a key no string read from a record holds, so `map.get('')` misses a value set
+/// under undefined as it does in JavaScript. [`key_value`] turns it back for saving.
+pub fn map_key(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        None => "\0undefined".into(),
+        Some(v) => format!("\0{}", stringify(v)),
+    }
+}
+
+/// The key as `JSON.stringify([...map])` writes it: undefined as null.
+pub fn key_value(k: &str) -> Value {
+    match k.strip_prefix('\0') {
+        Some("undefined") => Value::Null,
+        Some(json) => parse(json).unwrap_or_else(|| Value::String(k.to_owned())),
+        None => Value::String(k.to_owned()),
+    }
+}
+
+/// A key back from what [`key_value`] wrote.
+pub fn key_of(v: &Value) -> String {
+    map_key(Some(v))
 }
 
 /// A JSON number from an f64, written as JavaScript would (whole values as integers).
@@ -275,6 +431,23 @@ pub fn s(v: impl Into<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_deep_nesting_and_overflowing_numbers_as_javascript_goes_on_to_see_them() {
+        let nested = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse(&nested(900)).is_some());
+        assert!(parse(&format!("{{\"a\":{}}}", nested(500))).is_some());
+        // far past the limit: refused, on a worker-sized stack, without running out of it
+        let deep = nested(1_000_000);
+        let got = std::thread::Builder::new().stack_size(2 << 20).spawn(move || parse(&deep).is_none()).unwrap().join().unwrap();
+        assert!(got);
+        assert_eq!(
+            parse(r#"{"a":1e400,"b":-1e400,"c":1e-400,"d":"1e400","e":[2e308]}"#).unwrap(),
+            serde_json::json!({ "a": null, "b": null, "c": 0.0, "d": "1e400", "e": [null] })
+        );
+        assert_eq!(parse("[1e400] x"), None);
+        assert_eq!(parse(r#"["\ud83d", 1e999]"#).unwrap(), serde_json::json!(["\u{fffd}", null]));
+    }
 
     #[test]
     fn half_a_surrogate_pair_still_parses() {

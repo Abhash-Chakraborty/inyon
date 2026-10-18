@@ -59,14 +59,14 @@ pub fn parse_copilot_screen(lines: &[String], width: Option<u32>) -> ScreenState
         let mut options: Vec<PromptOption> = Vec::new();
         for line in menu {
             if let Some(numbered) = re!(r"^\s*(❯\s*)?(\d+)\.\s+(.+?)\s*$").captures(line) {
-                options.push(opt(numbered[2].parse().unwrap_or(0), label(&numbered[3]), numbered.get(1).is_some()));
+                options.push(opt(crate::js::to_number(&numbered[2]) as u64, label(&numbered[3]), numbered.get(1).is_some()));
             }
         }
         // Model menus are unnumbered and include a search composer. Only expose selectable rows.
         if options.is_empty() && re!(r"Search models|group: recommended|routing profile", "i").is_match(&tail.join("\n")) {
             for line in menu {
                 if let Some(m) = re!(r"^\s*(❯\s*)?(Auto|(?:gpt|claude|gemini|o\d)[\w. -]*?)(?:\s+✓)?(?:\s{2,}.*)?\s*$").captures(line) {
-                    let mut o = opt(options.len() as u32 + 1, m[2].jtrim(), m.get(1).is_some());
+                    let mut o = opt(options.len() as u64 + 1, m[2].jtrim(), m.get(1).is_some());
                     o.current = Some(line.contains('✓'));
                     options.push(o);
                 }

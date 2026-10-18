@@ -214,7 +214,7 @@ pub fn opencode_items(messages: &[Value], meta: &mut TranscriptMeta) -> Vec<Chat
         if error.at("name").str() == Some("MessageAbortedError") {
             out.push(base.with_uuid(format!("{id}:error")).notice(NoticeLevel::Info, "interrupted", "Stopped"));
         } else if error.truthy() {
-            let text = error.at("data").at("message").or(error.at("message")).or(error.at("name")).map_or_else(|| "OpenCode request failed".into(), value_string);
+            let text = error.at("data").at("message").or(error.at("message")).or(error.at("name")).string_or("OpenCode request failed");
             out.push(base.with_uuid(format!("{id}:error")).notice(NoticeLevel::Error, "api_error", text));
         }
         if let Some(c) = info.at("cost").num() {
@@ -252,7 +252,7 @@ pub fn opencode_items(messages: &[Value], meta: &mut TranscriptMeta) -> Vec<Chat
                     out.push(pb.assistant(&id, None, tool_block(&call_id, &mapped.name, mapped.input.clone())));
                     let status = st.at("status").str();
                     if matches!(status, Some("completed" | "error")) {
-                        let text = st.at("output").or(st.at("error")).map_or_else(String::new, value_string);
+                        let text = st.at("output").or(st.at("error")).string_or_empty();
                         let text = text.slice16(0, Some(8000)).to_owned();
                         let meta = (mapped.name == "Bash").then(|| stdout_meta(text.clone()));
                         out.push(base.with_uuid(format!("{uuid}:r")).tool_result(&call_id, status == Some("error"), text, None, meta));

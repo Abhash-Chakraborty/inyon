@@ -30,13 +30,23 @@ pub struct OpenCodeQuestion {
 const FREE_TEXT: &str = "Type your own answer";
 
 /// A single choice moves on to the next question, checkboxes are toggled and sent with Confirm,
-/// and the last answer sends them all (`answers`, one list of labels per question).
+/// and the last answer sends them all (`answers`, one list of labels per question). The fields
+/// are read-only from outside, as the TS class's are: the per-question state is sized to the
+/// questions when the flow starts.
+///
+/// ```compile_fail
+/// use inyon_core::agents::opencode_questions::OpenCodeQuestionFlow;
+/// // replacing the questions would leave the checkboxes sized for the old ones
+/// fn clear(flow: &mut OpenCodeQuestionFlow) {
+///     flow.questions.clear();
+/// }
+/// ```
 #[derive(Debug, Clone)]
 pub struct OpenCodeQuestionFlow {
-    pub id: String,
-    pub questions: Vec<OpenCodeQuestion>,
-    pub index: usize,
-    pub answers: Vec<Vec<String>>,
+    id: String,
+    questions: Vec<OpenCodeQuestion>,
+    index: usize,
+    answers: Vec<Vec<String>>,
     checked: Vec<BTreeSet<u32>>,
     typed: Vec<Option<String>>,
 }
@@ -48,6 +58,22 @@ impl OpenCodeQuestionFlow {
         }
         let n = questions.len();
         Ok(Self { id: id.into(), questions, index: 0, answers: vec![], checked: vec![BTreeSet::new(); n], typed: vec![None; n] })
+    }
+
+    /// the request id the answers go back under
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+    pub fn questions(&self) -> &[OpenCodeQuestion] {
+        &self.questions
+    }
+    /// which question is open
+    pub fn index(&self) -> usize {
+        self.index
+    }
+    /// the labels chosen so far, one list per question answered
+    pub fn answers(&self) -> &[Vec<String>] {
+        &self.answers
     }
 
     pub fn done(&self) -> bool {
@@ -64,7 +90,7 @@ impl OpenCodeQuestionFlow {
             .iter()
             .enumerate()
             .map(|(i, o)| PromptOption {
-                n: i as u32 + 1,
+                n: i as u64 + 1,
                 label: o.label.clone(),
                 detail: o.description.clone().filter(|d| !d.is_empty() && *d != o.label),
                 selected: i == 0,
@@ -75,13 +101,13 @@ impl OpenCodeQuestionFlow {
         let custom = q.custom != Some(false);
         if custom {
             let typed = self.typed.get(self.index).is_some_and(Option::is_some);
-            options.push(PromptOption { n: options.len() as u32 + 1, label: FREE_TEXT.into(), detail: None, selected: false, checked: multi.then_some(typed), current: None });
+            options.push(PromptOption { n: options.len() as u64 + 1, label: FREE_TEXT.into(), detail: None, selected: false, checked: multi.then_some(typed), current: None });
         }
         let more = self.index + 1 < self.questions.len();
         ScreenPrompt {
             body: vec![q.question.clone()],
             whole_lines: None,
-            free_text_option: custom.then_some(options.len() as u32),
+            free_text_option: custom.then_some(options.len() as u64),
             options,
             tabs: (self.questions.len() > 1)
                 .then(|| self.questions.iter().enumerate().map(|(i, x)| PromptTab { label: x.header.clone(), done: i < self.index, current: i == self.index }).collect()),

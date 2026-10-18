@@ -37,11 +37,11 @@ fn an_opencode_sessions_subagents_count_as_background_work_and_their_questions_a
     assert_eq!(live_value(&states, &json!([{ "id": "p2", "sessionID": "ses_other" }]), "ses_root", &children).permission, None);
 }
 
-/// OpenCode async prompts preserve provider, model slash, reasoning variant and directory
-///
-/// (the request is the client's; this is the model id it splits)
+/// From "OpenCode async prompts preserve provider, model slash, reasoning variant and directory":
+/// only the model id split ported. The request body, the variant and the directory belong to the
+/// HTTP client, which stays in TS (its test there still checks them).
 #[test]
-fn opencode_async_prompts_preserve_provider_model_slash_reasoning_variant_and_directory() {
+fn a_model_id_splits_at_its_first_slash_into_provider_and_model() {
     assert_eq!(open_code_model("openrouter/vendor/model"), Ok(OpenCodeModel { provider_id: "openrouter".into(), model_id: "vendor/model".into() }));
     assert_eq!(serde_json::to_value(open_code_model("opencode/big-pickle").unwrap()).unwrap(), json!({ "providerID": "opencode", "modelID": "big-pickle" }));
     assert!(open_code_model("ambiguous").is_err());
@@ -65,7 +65,7 @@ fn catalog_exposes_only_connected_provider_models_and_does_not_leak_provider_cre
             id: "one/m".into(),
             label: "First · Model".into(),
             note: None,
-            context: Some(123),
+            context: Some(Num(123.0)),
             efforts: Some(vec!["low".into(), "high".into()]),
             default_effort: None,
             variants: None
@@ -215,4 +215,17 @@ fn the_endpoint_is_found_from_the_sockets_the_process_and_its_children_hold() {
     assert!(via_open_code_api(Some("opencode://127.0.0.1:1/")));
     assert!(!via_open_code_api(Some("opencode-db:ses_a")));
     assert_eq!(live_children(&json!([{ "id": "c1", "parentID": "ses_abc" }, { "id": "c2", "parentID": "x" }, { "parentID": "ses_abc" }]), "ses_abc"), set(&["c1"]));
+}
+
+/// review: a null at the end of a `??` chain falls through to the default, as in the TS
+#[test]
+fn a_null_error_or_output_reads_as_the_default_not_as_null() {
+    let rows = opencode_items(
+        &list(json!([
+            { "info": { "id": "a", "role": "assistant", "time": { "created": 1100 }, "error": { "name": null } }, "parts": [{ "id": "p", "type": "tool", "tool": "bash", "state": { "input": { "command": "false" }, "status": "error", "error": null } }] },
+        ])),
+        &mut new_meta(),
+    );
+    let rows = serde_json::to_value(&rows).unwrap();
+    assert_match(&rows, json!([{ "kind": "notice", "text": "OpenCode request failed" }, { "kind": "assistant" }, { "kind": "tool_result", "text": "", "isError": true }]));
 }

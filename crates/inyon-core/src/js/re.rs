@@ -54,14 +54,26 @@ pub fn escape(s: &str) -> String {
 }
 
 /// The Rust syntax for a JavaScript pattern.
+///
+/// The `m` flag becomes Rust's CRLF mode, so `^` and `$` see "\r", "\n" and "\r\n" as line ends as
+/// JavaScript does. Two gaps are left: JavaScript also ends lines at U+2028 and U+2029, and it
+/// finds an empty line between the "\r" and the "\n" of a CRLF, where Rust finds none. Neither
+/// shows in what the readers match.
+///
+/// The `i` flag without `u` matches as JavaScript's does: two characters are the same when they
+/// upper-case to the same single character, except that a non-ASCII one never matches an ASCII
+/// one. So "ſ" (long s) is not "s" and the Kelvin sign is not "k", which Rust's `(?i)` (Unicode
+/// case folding) would allow. Each letter becomes the class of the characters it matches. With
+/// `u` as well, JavaScript folds case as Rust does, and `(?i)` stays.
 pub fn translate(src: &str, flags: &str) -> String {
     let dot_all = flags.contains('s');
+    let fold = flags.contains('i') && !flags.contains('u');
     let mut out = String::with_capacity(src.len() + 16);
-    if flags.contains('i') {
+    if flags.contains('i') && !fold {
         out.push_str("(?i)");
     }
     if flags.contains('m') {
-        out.push_str("(?m)");
+        out.push_str("(?Rm)");
     }
     let c: Vec<char> = src.chars().collect();
     let mut i = 0;
@@ -89,26 +101,30 @@ pub fn translate(src: &str, flags: &str) -> String {
                 }
                 '0' => out.push_str(r"\x00"),
                 '1'..='9' => panic!("back reference in /{src}/"),
-                'x' => {
-                    let hex: String = c[i..(i + 2).min(c.len())].iter().collect();
-                    out.push_str(&format!(r"\x{{{hex}}}"));
-                    i += 2;
-                }
-                'u' => {
-                    if c.get(i) == Some(&'{') {
+                'x' | 'u' => {
+                    let hex: String = if n == 'u' && c.get(i) == Some(&'{') {
                         let end = c[i..].iter().position(|&x| x == '}').map(|p| i + p).expect("\\u{…}");
-                        let hex: String = c[i + 1..end].iter().collect();
-                        out.push_str(&format!(r"\x{{{hex}}}"));
+                        let hex = c[i + 1..end].iter().collect();
                         i = end + 1;
+                        hex
                     } else {
-                        let hex: String = c[i..(i + 4).min(c.len())].iter().collect();
-                        out.push_str(&format!(r"\x{{{hex}}}"));
-                        i += 4;
+                        let len = if n == 'x' { 2 } else { 4 };
+                        let hex = c[i..(i + len).min(c.len())].iter().collect();
+                        i += len;
+                        hex
+                    };
+                    out.push_str(&format!(r"\x{{{hex}}}"));
+                    // a letter written as a code: its other cases, unless it starts a range
+                    if let Some(ch) = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).filter(|_| fold && !(class && c.get(i) == Some(&'-'))) {
+                        push_others(&mut out, ch, class);
                     }
                 }
-                'p' | 'P' => {
+                'p' | 'P' if flags.contains('u') && c.get(i) == Some(&'{') => {
+                    let end = c[i..].iter().position(|&x| x == '}').map_or(c.len() - 1, |p| i + p);
                     out.push('\\');
                     out.push(n);
+                    out.extend(&c[i..=end]);
+                    i = end + 1;
                 }
                 // `\<` is a word boundary in Rust, a plain "<" in JavaScript
                 '<' | '>' => out.push(n),
@@ -117,6 +133,8 @@ pub fn translate(src: &str, flags: &str) -> String {
                     out.push(x);
                 }
                 // an identity escape ("\a" is "a" in a non-unicode JS regex)
+                x if fold && class => push_folded_member(&mut out, x),
+                x if fold => push_folded(&mut out, x),
                 x => push_literal(&mut out, x, class),
             }
             if class && class_open_at != usize::MAX {
@@ -142,6 +160,22 @@ pub fn translate(src: &str, flags: &str) -> String {
                     out.push(ch);
                 }
                 '-' if c.get(i + 1) == Some(&'-') || out.ends_with('-') => out.push_str(r"\-"),
+                // a range of plain characters: the range, then the other cases of what's in it
+                lo if fold && c.get(i + 1) == Some(&'-') && c.get(i + 2).is_some_and(|&h| h != ']' && h != '\\' && h >= lo) => {
+                    let hi = c[i + 2];
+                    push_class_char(&mut out, lo);
+                    out.push('-');
+                    push_class_char(&mut out, hi);
+                    for x in lo..=hi {
+                        for o in equivalents(x) {
+                            if !(lo..=hi).contains(&o) {
+                                push_class_char(&mut out, o);
+                            }
+                        }
+                    }
+                    i += 2;
+                }
+                x if fold => push_folded_member(&mut out, x),
                 _ => out.push(ch),
             }
             class_open_at = usize::MAX;
@@ -166,7 +200,11 @@ pub fn translate(src: &str, flags: &str) -> String {
                 if next == Some('=') || next == Some('!') || (next == Some('<') && (after == Some('=') || after == Some('!'))) {
                     panic!("lookaround in /{src}/ has no translation");
                 }
-                out.push('(');
+                // "(?:" and "(?<name>" as they are: a group's name is not text to match
+                let end = if next == Some('<') { c[i..].iter().position(|&x| x == '>').map_or(i + 2, |p| i + p) } else { i + 2 };
+                out.extend(&c[i..=end.min(c.len() - 1)]);
+                i = end + 1;
+                continue;
             }
             '{' => {
                 if let Some(len) = quantifier(&c[i..]) {
@@ -177,11 +215,104 @@ pub fn translate(src: &str, flags: &str) -> String {
                 out.push_str(r"\{");
             }
             '}' => out.push_str(r"\}"),
+            x if fold && equivalents(x).len() > 1 => push_folded(&mut out, x),
             _ => out.push(ch),
         }
         i += 1;
     }
     out
+}
+
+/// JavaScript's `Canonicalize` for a non-unicode `i` pattern.
+fn canonicalize(ch: char) -> char {
+    let mut up = ch.to_uppercase();
+    match (up.next(), up.next()) {
+        (Some(u), None) if !(ch as u32 >= 128 && (u as u32) < 128) => u,
+        _ => ch,
+    }
+}
+
+/// Every character that canonicalizes as `ch` does, `ch` among them.
+fn equivalents(ch: char) -> Vec<char> {
+    let canon = canonicalize(ch);
+    if ch.is_ascii() {
+        return if ch.is_ascii_alphabetic() { vec![ch.to_ascii_lowercase(), ch.to_ascii_uppercase()] } else { vec![ch] };
+    }
+    // neither upper- nor lower-cases to anything else: punctuation, symbols, CJK
+    if canon == ch && ch.to_lowercase().eq(std::iter::once(ch)) {
+        return vec![ch];
+    }
+    let mut out = classes().get(&canon).cloned().unwrap_or_default();
+    for x in [canon, ch] {
+        if !out.contains(&x) {
+            out.push(x);
+        }
+    }
+    out
+}
+
+/// The characters that canonicalize to another, keyed by what they canonicalize to. Built on the
+/// first non-ASCII letter an `i` pattern holds, by trying every character once.
+fn classes() -> &'static HashMap<char, Vec<char>> {
+    static CLASSES: std::sync::OnceLock<HashMap<char, Vec<char>>> = std::sync::OnceLock::new();
+    CLASSES.get_or_init(|| {
+        let mut map: HashMap<char, Vec<char>> = HashMap::new();
+        for ch in (0..=0x10FFFF).filter_map(char::from_u32) {
+            let canon = canonicalize(ch);
+            if canon != ch {
+                map.entry(canon).or_default().push(ch);
+            }
+        }
+        map
+    })
+}
+
+/// A letter outside a class as the class of every character it matches.
+fn push_folded(out: &mut String, ch: char) {
+    let all = equivalents(ch);
+    if all.len() == 1 {
+        return push_literal(out, ch, false);
+    }
+    out.push('[');
+    for x in all {
+        push_class_char(out, x);
+    }
+    out.push(']');
+}
+
+/// A letter inside a class, with the other characters it matches.
+fn push_folded_member(out: &mut String, ch: char) {
+    for x in equivalents(ch) {
+        push_class_char(out, x);
+    }
+}
+
+/// The other cases of a character already written.
+fn push_others(out: &mut String, ch: char, class: bool) {
+    let others: Vec<char> = equivalents(ch).into_iter().filter(|&x| x != ch).collect();
+    if others.is_empty() {
+        return;
+    }
+    if class {
+        others.into_iter().for_each(|x| push_class_char(out, x));
+    } else {
+        // "\x{41}" becomes "(?:\x{41}|[a])"
+        let start = out.rfind(r"\x{").unwrap_or(out.len());
+        let first = out.split_off(start);
+        out.push_str("(?:");
+        out.push_str(&first);
+        out.push_str("|[");
+        others.into_iter().for_each(|x| push_class_char(out, x));
+        out.push_str("])");
+    }
+}
+
+/// One character inside a Rust class, escaped when it means something there.
+fn push_class_char(out: &mut String, ch: char) {
+    if matches!(ch, '\\' | '[' | ']' | '^' | '-' | '&' | '~') {
+        out.push('\\');
+    }
+    out.push(ch);
 }
 
 fn push_class(out: &mut String, in_class: bool, set: &str, negated: bool) {
@@ -295,6 +426,35 @@ mod tests {
         assert!(compile(r"^\x1b\[[0-?]*[ -/]*[@-~]", "").is_match("\x1b[0m"));
         assert!(compile(r"esc TO", "i").is_match("Esc to"));
         assert!(compile(r"\<a\>", "").is_match("<a>"));
+    }
+
+    #[test]
+    fn multiline_sees_crlf_and_a_lone_cr_as_line_ends() {
+        let re = compile(r"^(\w+)[ \t]*$", "gm");
+        let found: Vec<&str> = re.captures_iter("one\r\ntwo \r\nthree").map(|c| c.get(1).unwrap().as_str()).collect();
+        assert_eq!(found, ["one", "two", "three"]);
+        assert!(compile(r"^b$", "m").is_match("a\rb\rc"));
+    }
+
+    #[test]
+    fn ignore_case_matches_as_javascript_without_u() {
+        let esc = compile(r"esc to", "i");
+        assert!(esc.is_match("ESC TO") && esc.is_match("Esc to"));
+        // long s upper-cases to "S", but a non-ASCII letter never matches an ASCII one
+        assert!(!esc.is_match("E\u{17F}c to"));
+        assert!(!compile(r"^[k]$", "i").is_match("\u{212A}"));
+        assert!(!compile(r"^k$", "i").is_match("\u{212A}"));
+        assert!(compile(r"^[a-z]+$", "i").is_match("AbC"));
+        assert!(!compile(r"^[a-z]+$", "i").is_match("\u{17F}"));
+        assert!(compile(r"^[^a-c]$", "i").is_match("d") && !compile(r"^[^a-c]$", "i").is_match("B"));
+        // other scripts still match their own other case, sigma all three ways
+        assert!(compile(r"^é$", "i").is_match("É"));
+        assert!(compile(r"^σ$", "i").is_match("ς") && compile(r"^ς$", "i").is_match("Σ"));
+        assert!(compile(r"^\x41\u0062$", "i").is_match("aB"));
+        assert!(compile(r"^(?<word>ab)$", "i").captures("AB").unwrap().name("word").is_some());
+        assert!(compile(r"^(?:x)+$", "i").is_match("xX"));
+        // with u, JavaScript folds case as Rust does
+        assert!(compile(r"^k$", "iu").is_match("\u{212A}"));
     }
 
     #[test]

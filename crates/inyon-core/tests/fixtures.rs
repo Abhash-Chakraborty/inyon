@@ -49,7 +49,14 @@ fn first_difference(path: &str, a: &Value, b: &Value) -> Option<String> {
             let mut keys: Vec<&String> = x.keys().chain(y.keys()).collect();
             keys.sort();
             keys.dedup();
-            keys.into_iter().find_map(|k| first_difference(&format!("{path}.{k}"), x.get(k).unwrap_or(&Value::Null), y.get(k).unwrap_or(&Value::Null)))
+            // a field one side leaves out and the other has, even as null, is a difference: on the
+            // wire null and missing mean different things (ScreenState.background, .remote)
+            keys.into_iter().find_map(|k| match (x.get(k), y.get(k)) {
+                (Some(a), Some(b)) => first_difference(&format!("{path}.{k}"), a, b),
+                (Some(a), None) => Some(format!("{path}.{k}: rust {a} · ts missing")),
+                (None, Some(b)) => Some(format!("{path}.{k}: rust missing · ts {b}")),
+                (None, None) => None,
+            })
         }
         (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x.iter().zip(y).enumerate().find_map(|(i, (p, q))| first_difference(&format!("{path}[{i}]"), p, q)),
         _ if a == b => None,
@@ -129,4 +136,13 @@ fn chat_screen_samples_come_out_of_their_captures() {
         }
     }
     assert!(failures.is_empty(), "{} of {} samples differ:\n{}", failures.len(), sources.len(), failures.join("\n"));
+}
+
+#[test]
+fn a_null_on_one_side_and_nothing_on_the_other_is_a_difference() {
+    let a = serde_json::json!({ "screen": { "background": null, "remote": false } });
+    let b = serde_json::json!({ "screen": { "remote": false } });
+    assert_eq!(first_difference("", &a, &b).as_deref(), Some(".screen.background: rust null · ts missing"));
+    assert_eq!(first_difference("", &b, &a).as_deref(), Some(".screen.background: rust missing · ts null"));
+    assert_eq!(first_difference("", &a, &a), None);
 }

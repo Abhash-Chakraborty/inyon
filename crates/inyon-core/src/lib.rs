@@ -17,8 +17,9 @@
 //! | `tmux/tmux.ts`, `tmux/machine-kind.ts` | [`tmux::tmux`], [`tmux::machine_kind`] |
 //!
 //! The core does no I/O: it takes the bytes a command printed or a file held and returns what
-//! they mean. Running commands, reading files and the HTTP side stay with the caller. It is
-//! single-threaded like the Bun hub and builds for wasm32 as well as natively.
+//! they mean. Running commands, reading files and the HTTP side stay with the caller. It builds for
+//! wasm32 as well as natively, and any thread may call it: the one thing it keeps between calls,
+//! the provider names OpenCode reported, is shared by all of them, as the hub's module state is.
 
 pub mod js;
 
@@ -33,3 +34,15 @@ pub mod tmux;
 
 #[cfg(test)]
 pub(crate) mod test_support;
+
+#[cfg(test)]
+mod build {
+    /// regex without its `perf` features runs every pattern on its slowest engine
+    #[test]
+    fn native_builds_get_the_fast_regex_engines() {
+        let manifest = include_str!("../Cargo.toml");
+        let native = manifest.split("[target.'cfg(not(target_arch = \"wasm32\"))'.dependencies]").nth(1).expect("a native-only dependency table");
+        let regex = native.lines().find(|l| l.starts_with("regex ")).expect("regex in it");
+        assert!(regex.contains("\"perf\""), "{regex}");
+    }
+}

@@ -59,7 +59,7 @@ mod codex_live_state {
             s.apply(&line("turn/started", json!({ "threadId": T, "turn": { "id": TURN, "startedAt": 1792256430u64, "status": "inProgress" } }))),
             change(json!({ "turn": true }))
         );
-        assert_eq!(s.turn, Some(Turn { id: Some(TURN.into()), started_at: 1792256430000 }));
+        assert_eq!(s.turn, Some(Turn { id: Some(TURN.into()), started_at: inyon_protocol::Num(1792256430000.0) }));
         assert_eq!(
             s.apply(&line(
                 "item/started",
@@ -196,4 +196,49 @@ fn the_script_and_paths_are_the_ones_in_the_ts() {
     assert_eq!(&live[start..end], CODEX_LIVE_SCRIPT);
     let setup = std::fs::read_to_string(format!("{root}/features/setup.ts")).unwrap();
     assert!(setup.contains(&format!("export const PATHS = '{PATHS}'\n")));
+}
+
+/// review: a fractional turn start stays fractional on the wire
+#[test]
+fn a_fractional_turn_start_stays_fractional() {
+    let mut s = CodexLiveState::new();
+    s.apply(&line("turn/started", json!({ "threadId": T, "turn": { "id": TURN, "startedAt": 1792256430.1234 } })));
+    assert_eq!(s.turn.unwrap().started_at, inyon_protocol::Num(1792256430.1234 * 1000.0));
+}
+
+/// review: summary indexes compare as `!==` does: 1 and 1.0 are the same paragraph
+#[test]
+fn a_summary_index_written_as_1_0_is_the_same_paragraph_as_1() {
+    let mut s = CodexLiveState::new();
+    let raw = |delta: &str, index: &str| {
+        format!(r#"{{"m":"item/reasoning/summaryTextDelta","p":{{"threadId":"{T}","turnId":"{TURN}","itemId":"rs_1","delta":"{delta}","summaryIndex":{index}}}}}"#)
+    };
+    s.apply(&raw("One", "1"));
+    s.apply(&raw(" two", "1.0"));
+    s.apply(&raw("Three", "2"));
+    assert_eq!(s.list(), vec![live("rs_1", LiveKind::Thinking, "One two\n\nThree")]);
+}
+
+/// review: an item/completed for an id that never streamed changes nothing, and a turn/completed
+/// without a turn id ends the items that have none (the TS's `undefined === undefined`, kept);
+/// compared with the TS CodexLiveState's output for the same lines (from bun)
+#[test]
+fn a_completion_for_an_unknown_item_and_a_turn_end_without_an_id_go_as_in_the_ts() {
+    let mut s = CodexLiveState::new();
+    let l = |m: &str, p: Value| stringify(&json!({ "m": m, "p": p }));
+    let mut out: Vec<Value> = vec![];
+    out.push(serde_json::to_value(s.apply(&l("item/agentMessage/delta", json!({ "threadId": "T", "itemId": "a", "delta": "no turn" })))).unwrap());
+    out.push(serde_json::to_value(s.apply(&l("item/agentMessage/delta", json!({ "threadId": "T", "turnId": "t1", "itemId": "b", "delta": "in t1" })))).unwrap());
+    out.push(
+        serde_json::to_value(
+            s.apply(&l("item/completed", json!({ "threadId": "T", "item": { "type": "agentMessage", "id": "ghost", "text": "never streamed" }, "completedAtMs": 5 }))),
+        )
+        .unwrap(),
+    );
+    out.push(serde_json::to_value(s.list()).unwrap());
+    out.push(serde_json::to_value(s.apply(&l("turn/completed", json!({ "threadId": "T", "turn": { "status": "completed" } })))).unwrap());
+    out.push(json!(s.expire(1.0, 9e15)));
+    out.push(serde_json::to_value(s.list()).unwrap());
+    let ts = r#"[{"live":true},{"live":true},{},[{"id":"a","kind":"text","text":"no turn"},{"id":"b","kind":"text","text":"in t1","turnId":"t1"}],{"turn":true,"live":true},true,[{"id":"b","kind":"text","text":"in t1","turnId":"t1"}]]"#;
+    assert_eq!(Value::Array(out), serde_json::from_str::<Value>(ts).unwrap());
 }

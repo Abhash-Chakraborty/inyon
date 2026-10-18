@@ -30,14 +30,14 @@ mod opencodes_questions_through_its_api {
         let mut flow = OpenCodeQuestionFlow::new("que_1", vec![tabs()]).unwrap();
         let p = flow.prompt();
         assert_eq!(p.body, ["Do you prefer tabs or spaces?"]);
-        let rows: Vec<(u32, &str, Option<&str>)> = p.options.iter().map(|o| (o.n, o.label.as_str(), o.detail.as_deref())).collect();
+        let rows: Vec<(u64, &str, Option<&str>)> = p.options.iter().map(|o| (o.n, o.label.as_str(), o.detail.as_deref())).collect();
         assert_eq!(rows, [(1, "Tabs", Some("Indent with tab characters")), (2, "Spaces", Some("Indent with spaces")), (3, "Type your own answer", None)]);
         assert_eq!(p.free_text_option, Some(3));
         assert_eq!(p.tabs, None);
         assert!(!p.multi);
         assert_eq!(p.api, Some(true));
         assert_eq!(flow.answer(2, None), Ok(true));
-        assert_eq!(flow.answers, strs(&[&["Spaces"]]));
+        assert_eq!(flow.answers(), strs(&[&["Spaces"]]));
         assert!(flow.done());
         assert!(flow.answer(1, None).unwrap_err().contains("answered already"));
     }
@@ -48,7 +48,7 @@ mod opencodes_questions_through_its_api {
         let mut flow = OpenCodeQuestionFlow::new("que_1", vec![tabs()]).unwrap();
         assert!(flow.answer(3, None).unwrap_err().contains("Type an answer first"));
         assert_eq!(flow.answer(3, Some("  two spaces ")), Ok(true));
-        assert_eq!(flow.answers, strs(&[&["two spaces"]]));
+        assert_eq!(flow.answers(), strs(&[&["two spaces"]]));
         let mut strict = OpenCodeQuestionFlow::new("que_2", vec![OpenCodeQuestion { custom: Some(false), ..tabs() }]).unwrap();
         assert_eq!(strict.prompt().free_text_option, None);
         assert!(strict.answer(3, None).unwrap_err().contains("not in the question"));
@@ -73,7 +73,7 @@ mod opencodes_questions_through_its_api {
         let rows: Vec<(&str, Option<bool>)> = p.options.iter().map(|o| (o.label.as_str(), o.checked)).collect();
         assert_eq!(rows, [("Red", Some(false)), ("Green", Some(true)), ("Blue", Some(true)), ("Type your own answer", Some(false))]);
         assert_eq!(flow.answer(CONFIRM_OPTION, None), Ok(true));
-        assert_eq!(flow.answers, strs(&[&["Tabs"], &["Green", "Blue"]]));
+        assert_eq!(flow.answers(), strs(&[&["Tabs"], &["Green", "Blue"]]));
     }
 
     /// a checkbox question that is not the last says Next, and a typed answer joins the ticks
@@ -85,10 +85,10 @@ mod opencodes_questions_through_its_api {
         flow.answer(1, None).unwrap();
         assert_eq!(flow.prompt().options[3].checked, Some(true));
         assert_eq!(flow.answer(CONFIRM_OPTION, None), Ok(false));
-        assert_eq!(flow.answers[0], ["Red", "Teal"]);
+        assert_eq!(flow.answers()[0], ["Red", "Teal"]);
         assert!(flow.answer(CONFIRM_OPTION, None).unwrap_err().contains("one answer"));
         assert_eq!(flow.answer(2, None), Ok(true));
-        assert_eq!(flow.answers, strs(&[&["Red", "Teal"], &["Spaces"]]));
+        assert_eq!(flow.answers(), strs(&[&["Red", "Teal"], &["Spaces"]]));
     }
 
     /// a request with no questions is refused

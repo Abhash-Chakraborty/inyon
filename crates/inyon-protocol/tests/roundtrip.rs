@@ -51,3 +51,13 @@ fn record_keys_keep_their_order() {
     let meta: ToolResultMeta = serde_json::from_str(r#"{"answers":{"Colour":"Red","Animal":"Cat","Ber":"x"}}"#).unwrap();
     assert_eq!(serde_json::to_string(&meta).unwrap(), r#"{"answers":{"Colour":"Red","Animal":"Cat","Ber":"x"}}"#);
 }
+
+#[test]
+fn a_number_written_as_null_reads_back_as_nan() {
+    // JSON.stringify writes NaN (a tmux field that wasn't a number) as null
+    assert!(serde_json::from_str::<Num>("null").unwrap().0.is_nan());
+    assert_eq!(serde_json::from_str::<Option<Num>>("null").unwrap(), None);
+    let pane: PaneInfo =
+        serde_json::from_value(json!({ "id": "%1", "index": 0, "active": true, "command": "zsh", "cwd": "/", "title": "t", "width": null, "height": 40, "dead": false })).unwrap();
+    assert!(pane.width.0.is_nan());
+}

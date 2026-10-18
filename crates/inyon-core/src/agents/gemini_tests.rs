@@ -44,3 +44,19 @@ fn the_session_is_the_newest_one_for_the_folder_since_the_process_started() {
     assert_eq!(guess_gemini_session(&out, &GeminiProc { cwd: None, started_at: 1000.0 }).as_deref(), Some("/h/.gemini/tmp/y/chats/session-other.jsonl"));
     assert!(guess_gemini_session_command("/h", &proc, 1000.0 + 600.0).contains("-mmin -12 "));
 }
+
+/// review: `$set.messages`, `removeIds` and a `$rewindTo` naming no message, against the TS GeminiDoc's
+/// output for the same records (from bun)
+#[test]
+fn set_messages_remove_ids_and_a_rewind_to_nothing_read_as_the_ts_reads_them() {
+    const RECORDS: &str = r#"[{"id":"old","type":"user","timestamp":"2026-10-10T07:00:00Z","content":"replaced by $set"},{"$set":{"messages":[{"id":"u1","type":"user","timestamp":"2026-10-10T08:00:01Z","content":"first"},{"id":"g1","type":"gemini","timestamp":"2026-10-10T08:00:02Z","model":"gemini-3-flash","content":"one"},{"id":"u2","type":"user","timestamp":"2026-10-10T08:00:03Z","content":"second"},{"id":"g2","type":"gemini","timestamp":"2026-10-10T08:00:04Z","content":"two"}]}},{"$patch":{"removeIds":["u2","missing"]}},{"$rewindTo":"not-there"},{"id":"i1","type":"info","content":"Note"}]"#;
+    const ITEMS: &str = r#"[{"kind":"user","uuid":"u1","ts":"2026-10-10T08:00:01Z","text":"first","images":0,"seq":0},{"kind":"assistant","uuid":"g1:x","ts":"2026-10-10T08:00:02Z","msgId":"g1","model":"gemini-3-flash","block":{"type":"text","text":"one"},"seq":1},{"kind":"assistant","uuid":"g2:x","ts":"2026-10-10T08:00:04Z","msgId":"g2","block":{"type":"text","text":"two"},"seq":2},{"kind":"notice","uuid":"i1","ts":"","level":"info","subtype":"info","text":"Note","seq":3}]"#;
+    let mut doc = GeminiDoc::new();
+    for r in serde_json::from_str::<Vec<Value>>(RECORDS).unwrap() {
+        doc.apply(&r);
+    }
+    let mut meta = new_meta();
+    let items = doc.items(&mut meta);
+    assert_eq!(serde_json::to_value(&items).unwrap(), serde_json::from_str::<Value>(ITEMS).unwrap());
+    assert_eq!((meta.model.as_deref(), meta.stats.turns), (Some("gemini-3-flash"), 2));
+}

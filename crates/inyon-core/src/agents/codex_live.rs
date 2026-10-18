@@ -192,7 +192,9 @@ impl CodexLiveState {
                 let key = p.at("itemId").to_js_string();
                 let index = p.at("summaryIndex").cloned();
                 let prev = self.summary_index.get(&key);
-                let gap = prev.is_some() && index.as_ref() != prev && self.items.contains_key(&key);
+                // `p.summaryIndex !== prev`
+                let same = matches!((index.as_ref(), prev), (Some(a), Some(b)) if crate::js::json::strict_equals(a, b));
+                let gap = prev.is_some() && !same && self.items.contains_key(&key);
                 match index {
                     Some(i) => self.summary_index.insert(key, i),
                     None => self.summary_index.remove(&key),
@@ -230,7 +232,7 @@ impl CodexLiveState {
             }
             "turn/started" => {
                 let started = p.at("turn").at("startedAt").num().unwrap_or(now_ms() as f64 / 1000.0);
-                self.turn = Some(Turn { id: string_of(p.at("turn").at("id")), started_at: (started * 1000.0) as u64 });
+                self.turn = Some(Turn { id: string_of(p.at("turn").at("id")), started_at: inyon_protocol::Num(started * 1000.0) });
                 LiveChange { turn: yes(), ..Default::default() }
             }
             "turn/completed" => {

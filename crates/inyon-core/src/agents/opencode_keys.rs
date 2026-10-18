@@ -55,53 +55,93 @@ fn named(key: &str) -> Option<&'static str> {
     })
 }
 
+/// How many `<leader>` prefixes one binding may stack. The TS resolves each with a recursive call,
+/// and Bun runs out of stack somewhere between 12,000 and 15,000 of them; the RangeError ends in
+/// `opencodeKeys`'s catch, which falls back to the default keys. Past this many, so does the Rust.
+pub const MAX_LEADERS: usize = 12_000;
+
+/// A binding stacking more than [`MAX_LEADERS`] `<leader>` prefixes (the TS throws on it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TooDeep;
+
 /// One binding as OpenCode writes it ("ctrl+t", "shift+tab", `<leader>m`, "f2"; alternatives
 /// separated by commas) as the keys `tmux send-keys` takes, or None when none of its alternatives
-/// can be sent that way (super, shift with most keys).
+/// can be sent that way (super, shift with most keys), or when it stacks so many `<leader>`
+/// prefixes that the TS would throw.
 pub fn tmux_keys(binding: &str, leader: Option<&str>) -> Option<Vec<String>> {
-    let leader = leader.unwrap_or(DEFAULT_LEADER);
+    binding_keys(binding, leader.unwrap_or(DEFAULT_LEADER), 0).ok().flatten()
+}
+
+/// `tmuxKeys`, without its recursion: a run of `<leader>` prefixes is counted, and the leader's
+/// keys repeated that many times before the key itself. `depth` is how deep the TS would be
+/// already (the leader's own binding is resolved under the bindings that use it).
+fn binding_keys(binding: &str, leader: &str, depth: usize) -> Result<Option<Vec<String>>, TooDeep> {
     for alt in binding.split(',').map(|s| crate::js::text::lower(crate::js::JsStr::jtrim(s))).filter(|s| !s.is_empty()) {
         if alt == "none" {
             continue;
         }
-        if let Some(rest) = alt.strip_prefix("<leader>") {
-            if let (Some(first), Some(rest)) = (tmux_keys(leader, None), tmux_keys(rest, Some(leader))) {
-                return Some([first, rest].concat());
+        let mut leaders = 0;
+        let mut rest = alt.as_str();
+        while let Some(r) = rest.strip_prefix("<leader>") {
+            leaders += 1;
+            if depth + leaders > MAX_LEADERS {
+                return Err(TooDeep);
+            }
+            // each level splits, trims and lower-cases what's left, as the recursive call would
+            rest = crate::js::JsStr::jtrim(r);
+        }
+        if leaders > 0 {
+            let first = binding_keys(leader, DEFAULT_LEADER, depth + leaders)?;
+            let key = if rest.is_empty() || rest == "none" { None } else { plain_key(rest) };
+            if let (Some(first), Some(key)) = (first, key) {
+                let mut out = Vec::with_capacity(first.len() * leaders + key.len());
+                for _ in 0..leaders {
+                    out.extend(first.iter().cloned());
+                }
+                out.extend(key);
+                return Ok(Some(out));
             }
             continue;
         }
-        let mut parts: Vec<&str> = alt.split('+').collect();
-        let key = parts.pop().unwrap_or("");
-        let has = |m: &str| parts.contains(&m);
-        if has("super") || has("cmd") || has("meta") {
-            continue;
+        if let Some(keys) = plain_key(&alt) {
+            return Ok(Some(keys));
         }
-        let mut name = if let Some(n) = named(key) {
-            n.to_owned()
-        } else if re!(r"^f([1-9]|1[0-2])$").is_match(key) {
-            key.to_uppercase()
-        } else if re!(r"^[a-z0-9]$").is_match(key) {
-            key.to_owned()
-        } else {
-            continue;
-        };
-        if has("shift") {
-            if name == "Tab" {
-                name = "BTab".into();
-            } else if re!(r"^[a-z]$").is_match(&name) {
-                name = name.to_uppercase();
-            } else {
-                continue;
-            }
-        }
-        let ctrl = has("ctrl") || has("control");
-        let alt_ = has("alt") || has("option");
-        if (ctrl || alt_) && !re!(r"^[a-zA-Z0-9]$").is_match(&name) {
-            continue;
-        }
-        return Some(vec![format!("{}{}{name}", if ctrl { "C-" } else { "" }, if alt_ { "M-" } else { "" })]);
     }
-    None
+    Ok(None)
+}
+
+/// One alternative without a `<leader>` ("ctrl+t", "shift+tab", "f2").
+fn plain_key(alt: &str) -> Option<Vec<String>> {
+    let mut parts: Vec<&str> = alt.split('+').collect();
+    let key = parts.pop().unwrap_or("");
+    let has = |m: &str| parts.contains(&m);
+    if has("super") || has("cmd") || has("meta") {
+        return None;
+    }
+    let mut name = if let Some(n) = named(key) {
+        n.to_owned()
+    } else if re!(r"^f([1-9]|1[0-2])$").is_match(key) {
+        key.to_uppercase()
+    } else if re!(r"^[a-z0-9]$").is_match(key) {
+        key.to_owned()
+    } else {
+        return None;
+    };
+    if has("shift") {
+        if name == "Tab" {
+            name = "BTab".into();
+        } else if re!(r"^[a-z]$").is_match(&name) {
+            name = name.to_uppercase();
+        } else {
+            return None;
+        }
+    }
+    let ctrl = has("ctrl") || has("control");
+    let alt_ = has("alt") || has("option");
+    if (ctrl || alt_) && !re!(r"^[a-zA-Z0-9]$").is_match(&name) {
+        return None;
+    }
+    Some(vec![format!("{}{}{name}", if ctrl { "C-" } else { "" }, if alt_ { "M-" } else { "" })])
 }
 
 /// `keybinds` from the files OpenCode reads (user, then the project's), later ones winning.
@@ -149,16 +189,25 @@ pub fn parse_jsonc(text: &str) -> Option<Value> {
 }
 
 /// The keys to press for each action, from the bindings (defaults filled in).
+///
+/// A binding stacking too many `<leader>` prefixes makes `keysFrom` throw in the TS, and
+/// `opencodeKeys` then uses the defaults for every key; so does this.
 pub fn keys_from(binds: &IndexMap<String, String>) -> OpenCodeKeys {
     let leader = binds.get("leader").map_or(DEFAULT_LEADER, String::as_str);
-    let keys = |name: &str| tmux_keys(binds.get(name).map_or(default_key(name), String::as_str), Some(leader)).or_else(|| tmux_keys(default_key(name), None)).unwrap_or_default();
-    OpenCodeKeys {
-        agent_cycle: keys("agent_cycle"),
-        agent_cycle_reverse: keys("agent_cycle_reverse"),
-        variant_cycle: keys("variant_cycle"),
-        model_list: keys("model_list"),
-        session_interrupt: keys("session_interrupt"),
-    }
+    let keys = |name: &str| -> Result<Vec<String>, TooDeep> {
+        let set = binding_keys(binds.get(name).map_or(default_key(name), String::as_str), leader, 0)?;
+        Ok(set.or_else(|| tmux_keys(default_key(name), None)).unwrap_or_default())
+    };
+    let read = || -> Result<OpenCodeKeys, TooDeep> {
+        Ok(OpenCodeKeys {
+            agent_cycle: keys("agent_cycle")?,
+            agent_cycle_reverse: keys("agent_cycle_reverse")?,
+            variant_cycle: keys("variant_cycle")?,
+            model_list: keys("model_list")?,
+            session_interrupt: keys("session_interrupt")?,
+        })
+    };
+    read().unwrap_or_else(|TooDeep| keys_from(&IndexMap::new()))
 }
 
 /// The command printing the user's and the project's config files, each after "@@FILE".
