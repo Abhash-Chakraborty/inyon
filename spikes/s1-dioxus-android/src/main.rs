@@ -140,7 +140,10 @@ fn App() -> Element {
         log(&format!("sent: {text}"));
         messages.write().push(Msg { user: true, text });
         draft.set(String::new());
-        document::eval("requestAnimationFrame(() => { const c = document.querySelector('.chat'); c.scrollTop = c.scrollHeight })");
+        document::eval(
+            "document.querySelector('[aria-label=Message]').value = ''; \
+             requestAnimationFrame(() => { const c = document.querySelector('.chat'); c.scrollTop = c.scrollHeight })",
+        );
     };
 
     rsx! {
@@ -212,7 +215,8 @@ fn App() -> Element {
                         aria_label: "Message",
                         placeholder: "Message the agent",
                         rows: "1",
-                        value: "{draft}",
+                        // not bound to `draft`: writing the value back from Rust raced fast typing
+                        // and dropped keys ("hello from the keyboard" arrived as "hm the keyrd")
                         oninput: move |e| {
                             let v = e.value();
                             log(&format!("composer: {v}"));

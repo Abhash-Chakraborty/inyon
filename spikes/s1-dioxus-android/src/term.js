@@ -53,6 +53,7 @@ window.__spike = Object.assign(window.__spike || {}, {
   renderer, webglError, lines: LINES, cols: term.cols, rows: term.rows,
   writeMs: Math.round(parsed), paintedMs: Math.round(painted),
   sinceNavigationMs: Math.round(performance.now()),
+  monoFont: document.fonts.check("11px 'Geist Mono'"), sansFont: document.fonts.check("15px 'Geist'"),
   origin: location.origin, dpr: devicePixelRatio, viewport: [innerWidth, innerHeight],
   ua: navigator.userAgent,
 })
