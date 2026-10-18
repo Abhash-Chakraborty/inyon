@@ -12,12 +12,16 @@
 pub mod connect;
 pub mod hub;
 pub mod http;
+pub mod link;
+pub mod networks;
 pub mod ops;
 pub mod output;
 pub mod paths;
+pub mod push;
 pub mod qr;
 pub mod screen;
 pub mod tidy;
+pub mod webpush;
 mod ws;
 
 /// Inyon's version, the same for every part of a release.
