@@ -16,3 +16,11 @@ test("a $patch whose lists aren't lists is skipped, and the session reads on", (
     { kind: 'tool_result', uuid: 'g1:c1:r', toolUseId: 'c1', text: 'a.ts' },
   ])
 })
+
+test('an update with no tool call id gives its result to no call', () => {
+  const doc = new GeminiDoc()
+  doc.apply({ id: 'g1', type: 'gemini', content: '', toolCalls: [{ name: 'run_shell_command', args: { command: 'ls' } }, { id: null, name: 'read_file', args: { file_path: 'a.ts' } }] })
+  doc.apply({ $patch: { id: 'g1', toolCalls: [{ result: [{ text: 'not for the shell' }] }, { id: null, result: [{ text: 'not for the read' }] }] } })
+  const items = doc.items(newMeta())
+  expect(items.map((i) => i.kind)).toEqual(['assistant', 'assistant'])
+})

@@ -194,9 +194,10 @@ impl GeminiDoc {
                     o.insert("content".into(), c.clone());
                 }
                 for tc in u.at("toolCalls").arr().map(Vec::as_slice).unwrap_or_default() {
-                    let Some(result) = tc.get("result") else { continue };
+                    // an update without an id belongs to no call (two missing ids would look equal)
+                    let (Some(id), Some(result)) = (tc.get("id").filter(|v| !v.is_null()), tc.get("result")) else { continue };
                     let calls = m.get_mut("toolCalls").and_then(Value::as_array_mut);
-                    if let Some(t) = calls.and_then(|c| c.iter_mut().find(|x| x.get("id") == tc.get("id"))) {
+                    if let Some(t) = calls.and_then(|c| c.iter_mut().find(|x| x.get("id").is_some_and(|x| json::strict_equals(x, id)))) {
                         if let Some(o) = t.as_object_mut() {
                             o.insert("result".into(), result.clone());
                         }

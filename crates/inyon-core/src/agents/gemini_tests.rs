@@ -79,3 +79,13 @@ fn a_patch_whose_lists_arent_lists_is_skipped_and_the_session_reads_on() {
     let items = doc.items(&mut new_meta());
     assert_eq!(serde_json::to_value(&items).unwrap(), serde_json::from_str::<Value>(ITEMS).unwrap());
 }
+
+/// an update with no tool call id gives its result to no call
+#[test]
+fn an_update_with_no_tool_call_id_gives_its_result_to_no_call() {
+    let mut doc = GeminiDoc::new();
+    doc.apply(&json!({ "id": "g1", "type": "gemini", "content": "", "toolCalls": [{ "name": "run_shell_command", "args": { "command": "ls" } }, { "id": null, "name": "read_file", "args": { "file_path": "a.ts" } }] }));
+    doc.apply(&json!({ "$patch": { "id": "g1", "toolCalls": [{ "result": [{ "text": "not for the shell" }] }, { "id": null, "result": [{ "text": "not for the read" }] }] } }));
+    let kinds: Vec<Value> = serde_json::to_value(doc.items(&mut new_meta())).unwrap().as_array().unwrap().iter().map(|i| i["kind"].clone()).collect();
+    assert_eq!(kinds, [json!("assistant"), json!("assistant")]);
+}
