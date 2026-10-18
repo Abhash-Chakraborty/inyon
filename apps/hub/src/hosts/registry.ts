@@ -565,7 +565,7 @@ class Registry {
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
         rt.screens.set(p.id, sc)
-        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), was)
+        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), was, info.mode)
         await applyOpenCodeLive(rt.host, p, sc)
       }
       // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
@@ -795,7 +795,7 @@ class Registry {
         const before = JSON.stringify(pane.agent)
         const sc = parseScreen(lines, pane.width, pane.agent.kind)
         rt.screens.set(id, sc)
-        applyScreen(pane, sc, rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent)
+        applyScreen(pane, sc, rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent, this.offScreenMode(rt, id, pane.agent))
         await applyOpenCodeLive(rt.host, pane, sc)
         if (JSON.stringify(pane.agent) !== before) changed = true
       }
@@ -805,6 +805,17 @@ class Registry {
         this.emit({ type: 'overview' })
       }
     } catch {}
+  }
+
+  /**
+   * A pane's mode as far as it's known without its screen, which is what the poll starts from:
+   * Codex's permission preset, Antigravity's own status line.
+   */
+  private offScreenMode(rt: Runtime, paneId: string, agent: AgentPaneInfo) {
+    if (agent.kind === 'codex') return rt.statusCache.get(agent.pid)?.permission
+    const proc = rt.probe?.agentProcs.get(paneId)
+    if (agent.kind === 'antigravity' && proc) return agyStatus(rt.probe!, paneId, proc.startedAt, agent.sessionId)?.mode
+    return undefined
   }
 
   /** Follows the hook event log on the machine for instant updates. */
@@ -861,16 +872,19 @@ export function backgroundAfter(screen: string | null | undefined, was: { pid: n
 /**
  * Copies what the screen says (state, mode, prompt summary) onto a pane's agent info. For Claude,
  * an answered prompt or a turn its hooks say is running keeps the state at working.
+ * `base` is the mode known without the screen (see offScreenMode).
  */
-function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState, was?: AgentPaneInfo) {
+function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[], hook: HookPaneState | undefined, was: AgentPaneInfo | undefined, base: string | undefined) {
   const info = p.agent!
+  // a prompt covers the footer that names the mode, so the last one seen stands until it's back
+  const kept = sc.prompt && was?.pid === info.pid ? was.mode : undefined
   if (isDriving(host.id, p.id)) sc = { ...sc, prompt: undefined }
   // a question Codex asked mid-turn waits for you like a prompt does, even while it keeps working
   const shown = sc.prompt || sc.questions ? 'waiting' : sc.working ? 'working' : 'idle'
   info.state = info.kind === 'claude' ? turns.state(turnKey(host.id, p.id), shown, lines.join('\n'), hook) : shown
   if (info.kind === 'opencode') applyOpenCodeScreen(info, sc, host, was)
   else {
-    info.mode = sc.mode ?? info.mode
+    info.mode = sc.mode ?? kept ?? base
     // a session without live numbers still shows its model and effort on screen
     // agy's and Codex's footers are redrawn the moment you switch, so they beat numbers written earlier
     const live = info.kind === 'antigravity' || info.kind === 'codex'
