@@ -105,12 +105,7 @@ pub fn link_options(args: &[String]) -> LinkConfig {
             "--url" if next.is_some() => {
                 i += 1;
                 let u = &args[i];
-                let ok = (u.starts_with("ws://") || u.starts_with("wss://")) && u.ends_with("/link") && {
-                    let rest = u.split_once("://").map(|(_, r)| r).unwrap_or("");
-                    let host = &rest[..rest.len() - "/link".len()];
-                    !host.is_empty() && !host.contains('/')
-                };
-                if !ok {
+                if !link_url(u) {
                     fail(&format!("--url needs a WebSocket address ending in /link, like wss://laptop.tail1234.ts.net:8443/link, not {u}"), 2);
                 }
                 if !urls_given {
@@ -144,6 +139,12 @@ pub fn link_options(args: &[String]) -> LinkConfig {
     }
     link::save_config(&c);
     c
+}
+
+/// An address you publish yourself: `^wss?://[^/]+/link$`, as the Bun engine checked it.
+fn link_url(u: &str) -> bool {
+    let rest = u.strip_prefix("wss://").or_else(|| u.strip_prefix("ws://"));
+    rest.and_then(|r| r.strip_suffix("/link")).is_some_and(|host| !host.is_empty() && !host.contains('/'))
 }
 
 /// What `pair` found: its answer (as `pair --json` prints it), and whether a link runs elsewhere,
@@ -402,6 +403,16 @@ pub fn run(args: &[String], hub: impl FnOnce(&[String]) -> i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_own_address_must_be_a_websocket_ending_in_link() {
+        for good in ["wss://laptop.tail1234.ts.net:8443/link", "ws://10.0.0.2:4780/link"] {
+            assert!(link_url(good), "{good}");
+        }
+        for bad in ["wss://link", "ws:///link", "wss://h/x/link", "https://h/link", "wss://h/links", "wss://"] {
+            assert!(!link_url(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn the_usage_names_every_command_and_the_version() {
