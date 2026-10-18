@@ -121,7 +121,10 @@ jobs:
         run: |
           files=("$RUNNER_TEMP"/dist/*)
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Inyon ${GITHUB_REF_NAME#v}" --generate-notes
+            # a tag with a hyphen (v0.19.0-rc.1) is a test build: a pre-release, so GitHub's
+            # "latest" and the website (which lists only vX.Y.Z) keep pointing at the last release
+            pre=(); [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" "${pre[@]}" --title "Inyon ${GITHUB_REF_NAME#v}" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
           else
             gh release delete node-latest --yes --cleanup-tag 2>/dev/null || true

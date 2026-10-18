@@ -69,7 +69,7 @@ function connectMode(hubArg?: string, tokenArg?: string) {
   if (tokenArg) console.error('Note: a token given as an argument shows in the process list. Prefer INYON_TOKEN=<token> inyon join <hub-url>.')
 
   const url = hubUrl(hub)
-  const wsUrl = `${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}/node`
+  const wsUrl = `${secure(url) ? 'wss' : 'ws'}://${url.host}/node`
   // who's running, for `inyon update` and the hub's update script: they wait for this file to name
   // the new version, and stop the copy it names when there's no service manager
   try {
@@ -79,7 +79,7 @@ function connectMode(hubArg?: string, tokenArg?: string) {
 
   /** A hub answers 410 to a machine removed while it was off (a token it never knew gets 403). */
   const removedThere = () =>
-    fetch(`${url.protocol}//${url.host}/node`, { headers: { authorization: `Bearer ${token}` } }).then(
+    fetch(`${secure(url) ? 'https' : 'http'}://${url.host}/node`, { headers: { authorization: `Bearer ${token}` } }).then(
       (r) => r.status === 410,
       () => false,
     )
@@ -157,6 +157,9 @@ function showTray(role: 'link' | 'node') {
 }
 
 /** Checks a hub address; refuses to send a token over plain http to a public address. */
+/** Whether the hub is reached with TLS: https and wss are, http and ws aren't. */
+const secure = (url: URL) => url.protocol === 'https:' || url.protocol === 'wss:'
+
 function hubUrl(hub: string) {
   let url: URL
   try {
@@ -164,7 +167,7 @@ function hubUrl(hub: string) {
   } catch {
     fail(`${hub} isn't a web address.`)
   }
-  if (url.protocol === 'http:' && !privateHost(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
+  if (!secure(url) && !privateHost(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
   return url
 }
 

@@ -58,7 +58,7 @@ Nothing, unless you turn on the Claude Code integration from the machine's Integ
 
 Turning the integration off undoes all of it. The hook's log holds your prompts, so `~/.inyon` is readable only by you.
 
-On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link", once an administrator allows it. It lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN address ranges. `inyon uninstall` removes it.
+On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link", once an administrator allows it. It lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN address ranges. From 0.19 that file is the copy of `inyon.exe` without a console, and the link runs from it even when you start it in a terminal, or when `inyon pair` starts it because none was running. `inyon uninstall` removes it.
 
 Switching a Claude Code session's model or effort from Inyon touches `settings.json` too, with or without the integration: Claude Code saves the pick there as your default, and from 0.17.1 Inyon puts the old `model`, `effortLevel` and `modelSettings` values back (see [Controls](controls.md#model-effort-and-mode)). It only replaces the file if it hasn't changed since Inyon read it, and leaves every other byte as it was.
 
@@ -88,6 +88,7 @@ RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 - Installs and updates download from this site. Its `latest.json`, which names the newest version, isn't signed, so it only chooses what to fetch: `inyon update` also checks that the signed list names that version's APK, and refuses an old or altered copy. This ties each release to its Android build: if that build fails, machines stay on the version they have until the release is complete, rather than take one that isn't.
 - The installers check the signature when `minisign` is installed, and say so when it isn't. Either way they check every download against the list before running it.
 - A hub hands its own version's files to its machines with their sha256 in the command, so a machine always runs what its hub runs.
+- From 0.19 a computer that isn't a hub downloads one program, `inyon`, and no longer the Bun engine. On Windows, `inyon-engine.exe` is made on the computer from the checked `inyon.exe`, with one header field changed so it opens no console.
 - The files on this site are copied from the release. The site's build checks the signature and every program's checksum, and publishes nothing if one fails. A new release appears here only once its APK is listed in the signed list.
 - The npm packages (`@abhash-chakraborty/inyon` and one per system) are published only by the release workflow on GitHub, through npm's trusted publishing, so no npm token is stored for them. The workflow copies the programs from the release after checking the signature and every checksum, and each version carries a provenance statement naming the run that published it. `npm audit signatures` checks that after installing.
 - `cloudflared` is pinned to one version and checked against a known hash.

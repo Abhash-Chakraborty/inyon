@@ -2,13 +2,14 @@ import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { ENGINE } from './engine-under-test.ts'
 import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Channel } from '@inyon/link'
 
 // the real CLI in a throwaway home, reached the way a phone on the same network would
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-test-'))
 const port = 4790 + Math.floor(Math.random() * 100)
 const env = { ...process.env, HOME: home, USERPROFILE: home }
-const cli = (...args: string[]) => Bun.spawn([process.execPath, path.join(import.meta.dir, 'inyon.ts'), ...args], { env, stdout: 'pipe', stderr: 'pipe' })
+const cli = (...args: string[]) => Bun.spawn([...ENGINE, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
 const service = cli('link', '--no-tunnel', '--no-vpn', '--lan', '--port', String(port))
 afterAll(() => {
   service.kill()

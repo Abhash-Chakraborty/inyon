@@ -101,9 +101,13 @@ enum Command {
     },
     /// Print the version
     Version,
-    /// Move services set up as tether-node to inyon's own
+    /// Move services set up as tether-node to inyon's own, and off the Bun engine
     #[command(hide = true)]
-    Migrate,
+    Migrate {
+        /// Run on its own and return at once (how the tray icon asks for it)
+        #[arg(long)]
+        background: bool,
+    },
     /// The old `inyon install [role]` form
     #[command(hide = true)]
     Install { role: Option<String> },
@@ -205,12 +209,18 @@ enum ServiceAction {
     Status,
 }
 
-/// What goes straight to the engine, before the arguments are read here.
+/// What goes straight to the engine, before the arguments are read here: built in, or the Bun
+/// engine with INYON_LEGACY_ENGINE=1.
 const FORWARDED: [&str; 2] = ["link", "connect"];
 const HUB_OWN: [&str; 7] = ["start", "stop", "restart", "install", "uninstall", "code", "reset-password"];
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
+    // started as inyon-engine (Windows' logon tasks run a windowless copy of this program under
+    // that name, and older inyon commands and hubs ask for it): the engine's commands, as it answered them
+    if argv.first().is_some_and(|a| inyon_engine::paths::started_as_engine(a)) {
+        std::process::exit(engine::run_builtin(&argv[1..]));
+    }
     // copies an earlier update renamed aside (a running .exe can't be deleted until it has
     // stopped): this program's and the engine's, which no longer looks after its own
     if let Ok(me) = std::env::current_exe() {
@@ -219,7 +229,17 @@ fn main() {
         update::cleanup_old(&update::RealFiles, &update::engine_beside(&me), now);
     }
     if let Some(first) = argv.get(1) {
+        // the built-in engine's own command line, which this program runs itself for pair, forget and push
+        if first == "engine" {
+            std::process::exit(engine::run_builtin(&argv[2..]));
+        }
         if FORWARDED.contains(&first.as_str()) || first.starts_with("http://") || first.starts_with("https://") {
+            if !engine::legacy() {
+                if let Some(stale) = engine::stale_engine() {
+                    // the Bun engine an update to 0.19 left here: nothing runs it any more
+                    let _ = std::fs::remove_file(stale);
+                }
+            }
             engine::forward(&argv[1..]);
         }
         if first == "hub" && !argv.get(2).is_some_and(|a| HUB_OWN.contains(&a.as_str()) || a == "--json") {
@@ -315,9 +335,15 @@ fn main() {
             json,
         ),
         Some(Command::Version) => commands::finish(commands::version(json), json),
-        Some(Command::Migrate) => commands::finish(commands::migrate(&sys), json),
+        Some(Command::Migrate { background }) => commands::finish(commands::migrate(&sys, background), json),
         Some(Command::Tray { role, pid }) => match Role::parse(&role) {
-            Some(r) => inyon_cli::tray::run(r, pid),
+            Some(r) => {
+                // a logon task that still starts the Bun engine (from 0.18) moves to the built-in one
+                if commands::wants_hand_over(&sys) {
+                    let _ = commands::migrate(&sys, true);
+                }
+                inyon_cli::tray::run(r, pid)
+            }
             None => {
                 eprintln!("{role} isn't link, node or hub");
                 2

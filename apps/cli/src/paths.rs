@@ -9,15 +9,10 @@ use std::path::{Path, PathBuf};
 pub const NAME: &str = "inyon";
 pub const ENGINE: &str = "inyon-engine";
 
-/// The user's home folder: HOME on Unix (what a test sets), USERPROFILE on Windows.
+/// The user's home folder, as the engine works it out: USERPROFILE on Windows, HOME elsewhere
+/// (what a test sets).
 pub fn home() -> PathBuf {
-    if let Some(h) = env::var_os("HOME").filter(|h| !h.is_empty()) {
-        return PathBuf::from(h);
-    }
-    if let Some(h) = env::var_os("USERPROFILE").filter(|h| !h.is_empty()) {
-        return PathBuf::from(h);
-    }
-    PathBuf::from(".")
+    inyon_engine::paths::home()
 }
 
 /// Where the hub keeps its records (hub.env, setup-code): INYON_DATA_DIR, else ~/.inyon.

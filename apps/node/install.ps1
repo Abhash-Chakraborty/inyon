@@ -81,6 +81,14 @@ if ($old -and -not ($old.Attributes -band [IO.FileAttributes]::ReparsePoint) -an
 }
 New-Item -ItemType Directory -Force -Path $Bin, $Dir | Out-Null
 
+# A phone link may be running the file being replaced: it can't be replaced, but it can be renamed.
+function Move-Into([string]$New, [string]$Out) {
+  if (Test-Path $Out) {
+    try { Remove-Item -Force $Out } catch { Move-Item -Force $Out "$Out.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
+  }
+  Move-Item -Force $New $Out
+}
+
 # A program from the hub: it comes gzipped (the engine is about half the size that way) and is
 # checked against the hub's checksum before it goes in place.
 function Install-Program([string]$Name, [string]$Route, [string]$Want) {
@@ -91,11 +99,7 @@ function Install-Program([string]$Name, [string]$Route, [string]$Want) {
     Expand-Gzip "$out.gz" "$out.new"
     Remove-Item -Force "$out.gz"
     if ((Get-FileHash -Algorithm SHA256 "$out.new").Hash.ToLower() -eq $Want) {
-      # a phone link may be running this same file: it can't be replaced, but it can be renamed
-      if (Test-Path $out) {
-        try { Remove-Item -Force $out } catch { Move-Item -Force $out "$out.old-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())" }
-      }
-      Move-Item -Force "$out.new" $out
+      Move-Into "$out.new" $out
       return
     }
     Remove-Item -Force "$out.new"
@@ -106,15 +110,29 @@ function Install-Program([string]$Name, [string]$Route, [string]$Want) {
 function Hub-Sum([string]$Route) { ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/$Route.sha256?os=windows&arch=$arch")).Trim().ToLower() }
 
 # 1. inyon itself. From 0.13 the hub hands out two files: inyon.exe is the small command that
-#    services run, and the engine it starts (Bun inside, nothing else to install) comes apart as
-#    inyon-engine.exe. A hub from before lists one program, which is both.
+#    services run, and the engine (Bun inside) comes apart as inyon-engine.exe. A hub from before
+#    lists one program, which is both. From 0.19 inyon.exe does the engine's work itself, and
+#    inyon-engine.exe is a copy of it marked as a windowed program, so no console opens when the
+#    task starts it. INYON_LEGACY_ENGINE=1 takes the Bun engine from the hub instead.
 $exe = Join-Path $Bin 'inyon.exe'
+$engine = Join-Path $Bin 'inyon-engine.exe'
 $engineSum = try { Hub-Sum 'inyon-engine' } catch { '' }
+$legacy = ($env:INYON_LEGACY_ENGINE, $env:TETHER_LEGACY_ENGINE | Where-Object { $_ } | Select-Object -First 1) -eq '1'
 if ($engineSum -match '^[0-9a-f]{64}$') {
   Write-Host 'Downloading inyon...'
   Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
-  Write-Host 'Downloading the Inyon engine (about 40 MB)...'
-  Install-Program 'inyon-engine.exe' 'inyon-engine' $engineSum
+  if ($legacy) {
+    Write-Host 'Downloading the Inyon engine (about 40 MB)...'
+    Install-Program 'inyon-engine.exe' 'inyon-engine' $engineSum
+  } else {
+    # the subsystem field of the PE header: 2 is a windowed program, 3 a console one
+    $bytes = [IO.File]::ReadAllBytes($exe)
+    $at = [BitConverter]::ToInt32($bytes, 0x3c) + 4 + 20 + 68
+    $bytes[$at] = 2
+    $bytes[$at + 1] = 0
+    [IO.File]::WriteAllBytes("$engine.new", $bytes)
+    Move-Into "$engine.new" $engine
+  }
 } else {
   Write-Host 'Downloading inyon (about 40 MB)...'
   Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
@@ -167,10 +185,9 @@ if (-not $mux -and -not $NoPsmux) {
 }
 
 # 5. Start at sign-in and keep running. A scheduled task can restart it if it ever crashes; if task
-#    creation is blocked by policy, fall back to the Startup folder. It starts the engine directly:
-#    the hub builds it with no console, so no window shows at sign-in, and the Inyon icon sits in
-#    the notification area while it runs.
-$engine = Join-Path $Bin 'inyon-engine.exe'
+#    creation is blocked by policy, fall back to the Startup folder. It starts inyon-engine.exe
+#    directly: it has no console, so no window shows at sign-in, and the Inyon icon sits in the
+#    notification area while it runs.
 $runner = if (Test-Path $engine) { $engine } else { $exe }
 $started = $false
 try {

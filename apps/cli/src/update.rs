@@ -1,11 +1,14 @@
 //! `inyon update`: replaces the installed programs with the newest release and restarts each job
 //! they run as (the phone link, the hub connection, the hub). The release comes from the website,
-//! which keeps a copy of the newest one (RELEASES; INYON_DOWNLOAD points elsewhere). It is two
-//! files, the engine and this program, checked against the release's SHA256SUMS like get.sh does
-//! (the gzipped copy of each first); the list itself must carry a signature by Inyon's release
-//! key. Nothing is replaced until both downloads match, and the old copies come back if the new
-//! version doesn't start. A machine added to a hub takes the engine that hub serves, checked
-//! against the sha256 the hub publishes, so it always matches its hub.
+//! which keeps a copy of the newest one (RELEASES; INYON_DOWNLOAD points elsewhere). It checks
+//! each file against the release's SHA256SUMS like get.sh does (the gzipped copy first); the list
+//! itself must carry a signature by Inyon's release key. Nothing is replaced until every download
+//! matches, and the old copies come back if the new version doesn't start. A machine added to a
+//! hub takes what that hub serves, checked against the sha256 the hub publishes.
+//!
+//! From 0.19 the engine is built into this program, so only a machine that runs a hub (or has
+//! INYON_LEGACY_ENGINE=1) takes the Bun engine too. Windows keeps a windowless copy of this
+//! program under the engine's name for its logon tasks, made here from the new download.
 
 use std::fmt;
 use std::fs;
@@ -579,7 +582,14 @@ pub trait Host {
     fn libc(&self) -> Libc {
         Libc::current()
     }
+    /// whether this machine needs the Bun engine: it runs a hub, or INYON_LEGACY_ENGINE is set
+    fn wants_engine(&self) -> bool {
+        true
+    }
 }
+
+/// What the windowless copy of the program is called in progress lines (Windows).
+const COPY: &str = "the windowless copy";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -594,10 +604,31 @@ struct Swap {
     name: String,
 }
 
+/// Writes the windowless copy of `program` to the copy swap's download file (Windows).
+fn make_copy_swap(program: &Path, s: &Swap) -> Result<(), Error> {
+    let bytes = crate::engine::make_copy(&fs::read(program)?).map_err(err)?;
+    fs::write(&s.tmp, bytes)?;
+    Ok(())
+}
+
 /// Updates the install this program belongs to. The error says what went wrong.
 pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<Outcome, Error> {
+    let need_engine = host.wants_engine();
+    let r = update_files(install, host, files, need_engine)?;
+    // a Bun engine no hub needs any more goes (Windows keeps the windowless copy under its name),
+    // unless the inyon now in place is one from before 0.19 (an older hub's), which still runs it
+    let engine = engine_beside(&install.file);
+    if r.changed && !need_engine && host.platform() != Platform::Windows && files.exists(&engine) && crate::engine::has_engine_built_in(&install.file) {
+        let _ = files.remove(&engine);
+    }
+    Ok(r)
+}
+
+fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engine: bool) -> Result<Outcome, Error> {
     let platform = host.platform();
     let engine = engine_beside(&install.file);
+    // without the Bun engine, Windows still needs the windowless copy made from the new program
+    let copy = (!need_engine && platform == Platform::Windows).then(|| Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: COPY.into() });
     match &install.kind {
         Kind::Binary => {
             let base = host.download_base();
@@ -614,23 +645,31 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
                 check_listed_version(&sums, &version)?;
             }
             // a release from before 0.13 has no engine: there is nothing this program can install
-            if sum_for(&sums, &names.engine).is_none() {
+            if need_engine && sum_for(&sums, &names.engine).is_none() {
                 return Ok(Outcome {
                     changed: false,
                     message: format!("Release {version} has no {} in it (it's from before the engine and inyon were split), so nothing was changed.", names.engine),
                     version: Some(mine),
                 });
             }
-            let swaps = [
-                Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() },
-                Swap { file: install.file.clone(), tmp: with_suffix(&install.file, ".download"), name: names.cli.clone() },
-            ];
+            let program = Swap { file: install.file.clone(), tmp: with_suffix(&install.file, ".download"), name: names.cli.clone() };
+            let mut swaps = Vec::new();
+            if need_engine {
+                swaps.push(Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() });
+            }
+            swaps.extend(copy);
+            // the program last: it's the one the restarts run
+            swaps.push(program);
             let fetched: Result<(), Error> = (|| {
-                for s in &swaps {
+                for s in swaps.iter().filter(|s| s.name != COPY) {
                     files.remove(&s.tmp)?;
                     host.log(&format!("Downloading inyon {version} ({})…", s.name));
                     fetch_release(&base, &s.name, &sums, &s.tmp, &|l| host.log(l))?;
                     runnable(&s.tmp, platform);
+                }
+                let fresh = &swaps[swaps.len() - 1].tmp;
+                for s in swaps.iter().filter(|s| s.name == COPY) {
+                    make_copy_swap(fresh, s)?;
                 }
                 Ok(())
             })();
@@ -639,7 +678,7 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
                     let _ = files.remove(&s.tmp);
                 }
                 return Err(match e {
-                    Error::Update(m) => {
+                    Error::Update(m) if swaps.len() > 1 => {
                         err(format!("{m} Inyon {version} comes as two files, and this copy couldn't put both in place. Install it with:\n  {}", reinstall_command(platform)))
                     }
                     other => other,
@@ -656,39 +695,71 @@ pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<O
             let q = format!("?os={}&arch={}", t.os, t.arch);
             // a hub from before 0.13 hands out one program under /node/inyon, which this
             // program can't run as its engine
-            let engine_sum = hub_sum(hub, "inyon-engine", &q)?
-                .ok_or_else(|| err(format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first, then this machine.")))?;
+            let engine_sum = || -> Result<String, Error> {
+                hub_sum(hub, "inyon-engine", &q)?
+                    .ok_or_else(|| err(format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first, then this machine.")))
+            };
+            let wanted_engine = if need_engine { Some(engine_sum()?) } else { None };
             let cli_sum = hub_sum(hub, "inyon", &q)?.ok_or_else(|| err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")))?;
             let mine = host.version();
             let same = |file: &Path, want: &str| -> Result<bool, Error> { Ok(files.exists(file) && sha256_file(file)? == want) };
-            let mut wanted: Vec<(Swap, &str, String)> = Vec::new();
-            if !same(&engine, &engine_sum)? {
-                wanted.push((Swap { tmp: with_suffix(&engine, ".download"), file: engine.clone(), name: "the hub's engine".into() }, "inyon-engine", engine_sum));
-            }
-            if !same(&install.file, &cli_sum)? {
-                wanted.push((Swap { tmp: with_suffix(&install.file, ".download"), file: install.file.clone(), name: "the hub's inyon".into() }, "inyon", cli_sum));
-            }
-            if wanted.is_empty() {
-                return Ok(Outcome { changed: false, message: format!("inyon {mine} is the same as the hub's."), version: Some(mine) });
-            }
-            host.log(&format!("Downloading inyon from {hub}…"));
+            let new_program = !same(&install.file, &cli_sum)?;
+            let (program_tmp, engine_tmp) = (with_suffix(&install.file, ".download"), with_suffix(&engine, ".download"));
+            let said = std::cell::Cell::new(false);
             // it comes gzipped (about half the size), which matters over a VPN
-            let fetched: Result<(), Error> = (|| {
-                for (s, route, want) in &wanted {
-                    files.remove(&s.tmp)?;
-                    fetch_hub_file(hub, route, &q, want, &s.tmp, &|l| host.log(l))?;
-                    runnable(&s.tmp, platform);
+            let fetch = |route: &str, want: &str, to: &Path| -> Result<(), Error> {
+                if !said.replace(true) {
+                    host.log(&format!("Downloading inyon from {hub}…"));
                 }
+                files.remove(to)?;
+                fetch_hub_file(hub, route, &q, want, to, &|l| host.log(l))?;
+                runnable(to, platform);
                 Ok(())
-            })();
-            if let Err(e) = fetched {
-                for (s, _, _) in &wanted {
-                    let _ = files.remove(&s.tmp);
+            };
+            let hubs_engine = |want: &str| -> Result<Option<Swap>, Error> {
+                if same(&engine, want)? {
+                    return Ok(None);
                 }
-                return Err(e);
+                fetch("inyon-engine", want, &engine_tmp)?;
+                Ok(Some(Swap { tmp: engine_tmp.clone(), file: engine.clone(), name: "the hub's engine".into() }))
+            };
+            let fetched = (|| -> Result<Vec<Swap>, Error> {
+                let mut swaps = Vec::new();
+                if let Some(want) = &wanted_engine {
+                    swaps.extend(hubs_engine(want)?);
+                }
+                if new_program {
+                    fetch("inyon", &cli_sum, &program_tmp)?;
+                }
+                let program = if new_program { &program_tmp } else { &install.file };
+                if wanted_engine.is_none() {
+                    if crate::engine::has_engine_built_in(program) {
+                        // the copy follows the program; one that isn't there yet (a Bun engine in its place) is made now
+                        if platform == Platform::Windows && (new_program || !crate::engine::is_builtin_copy(&engine)) {
+                            let c = Swap { file: engine.clone(), tmp: engine_tmp.clone(), name: COPY.into() };
+                            make_copy_swap(program, &c)?;
+                            swaps.push(c);
+                        }
+                    } else {
+                        // an older hub's inyon, from before 0.19, still runs the Bun engine: the hub's
+                        // goes next to it, never a copy of a program that doesn't answer as the engine
+                        swaps.extend(hubs_engine(&engine_sum()?)?);
+                    }
+                }
+                if new_program {
+                    swaps.push(Swap { tmp: program_tmp.clone(), file: install.file.clone(), name: "the hub's inyon".into() });
+                }
+                Ok(swaps)
+            })();
+            match fetched {
+                Err(e) => {
+                    let _ = files.remove(&program_tmp);
+                    let _ = files.remove(&engine_tmp);
+                    Err(e)
+                }
+                Ok(swaps) if swaps.is_empty() => Ok(Outcome { changed: false, message: format!("inyon {mine} is the same as the hub's."), version: Some(mine) }),
+                Ok(swaps) => put(install, host, files, &swaps, None),
             }
-            let swaps: Vec<Swap> = wanted.into_iter().map(|(s, _, _)| s).collect();
-            put(install, host, files, &swaps, None)
         }
     }
 }
@@ -869,6 +940,15 @@ pub fn wait_started(proc: &dyn Proc, role: Role, version: Option<&str>, before: 
         proc.sleep_ms(o.every_ms);
     }
     false
+}
+
+/// Whether an update is under way: the status file says running and was written in the last 30
+/// minutes, as long as the update's task may run (one that stopped without a word doesn't count
+/// for ever).
+pub fn under_way() -> bool {
+    let file = status_file();
+    let fresh = fs::metadata(&file).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() < 30 * 60);
+    fresh && fs::read_to_string(&file).is_ok_and(|t| t.trim() == "running")
 }
 
 /// Records how the update went, for the app (and appends to update.log).

@@ -4,7 +4,7 @@ nav: inyon command
 description: Every command and flag, the setup screens, the status dashboard and JSON output.
 ---
 
-`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. The work happens in `inyon-engine`, which `inyon` starts and talks to for you.
+`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. From 0.19 it also runs the link to your phone and the connection to a hub itself; only a hub runs on `inyon-engine`, which `inyon` downloads, starts and talks to for you. Before 0.19 all of the work happened in `inyon-engine`.
 
 If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` on your `PATH` from 0.17.1. Before that, or with `INYON_NO_MODIFY_PATH=1`, see [Put inyon on your PATH](install.md#put-inyon-on-your-path).
 
@@ -77,7 +77,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
 
-While you answer, setup downloads and checks `inyon-engine` in the background, with the progress in the footer.
+For a hub, setup downloads and checks `inyon-engine` before it starts the hub. Before 0.19 every computer needed it, and setup downloaded it in the background while you answered, with the progress in the footer.
 
 After the screens, from 0.17.2, setup installs tmux (psmux on Windows) if it's missing: it asks first, then runs winget (or cargo) on Windows, Homebrew on macOS, or your package manager with `sudo` on Linux. With `--yes` it doesn't ask; without a terminal on Linux it prints the command to run instead, since `sudo` needs one. On Windows it also lists Inyon under Settings → Apps.
 
@@ -156,7 +156,7 @@ INYON_TOKEN=… inyon join https://hub.example.ts.net
 inyon disconnect
 ```
 
-`join` saves the hub's address and this machine's token (readable only by you), fetches the matching engine from the hub, and installs the `node` service. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
+`join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
 
 ## Notifications to browsers
 
@@ -192,7 +192,7 @@ On Linux the service's output is in the systemd journal, and `inyon logs` reads 
 inyon doctor
 ```
 
-Checks, one line each: the engine and the command, tmux (psmux on Windows), which agents are on the `PATH`, each service, leftovers from tether-node, the link's and the hub's ports, the private networks found, `cloudflared`, the clock and the last update. A line starting with `!` needs attention. With `--json`, `ok` is `false` when any check failed.
+Checks, one line each: the engine (from 0.19 "built in", plus the hub's engine on a hub) and the command, tmux (psmux on Windows), which agents are on the `PATH`, each service, leftovers from tether-node, the link's and the hub's ports, the private networks found, `cloudflared`, the clock and the last update. A line starting with `!` needs attention. With `--json`, `ok` is `false` when any check failed.
 
 ## Update and uninstall
 
@@ -234,7 +234,8 @@ inyon pair --json | jq -r '.link'
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
-| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one |
+| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
+| `INYON_LEGACY_ENGINE` | `1` runs everything on the Bun engine, as 0.18 does (from 0.19). See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_DATA_DIR` | Where a hub keeps its records (default `~/.inyon`) |
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |
 | `NO_COLOR` | Turn colour off |

@@ -136,10 +136,10 @@ Checked against their docs in October 2026.
 
 3. In the app, tap *Add a computer* and scan it.
 
-Since 0.13 that line installs `inyon`, a 2 MB command, and its setup fetches the engine (about
-85 MB, with Bun inside) next to it as `inyon-engine`. The command draws the setup, the status
-screen and the pairing code; the engine runs the link and the hub. A 0.11 or 0.12 install crosses
-over on its next update, and an older one needs the line above again.
+From 0.19 that line installs one program, `inyon`, about 3.5 MB and written in Rust. It draws
+the setup, the status screen and the pairing code, and runs the link to your phone. Only a hub
+also fetches the engine (about 85 MB, with Bun inside) as `inyon-engine`. A 0.11 or 0.12 install
+crosses over on its next update, and an older one needs the line above again.
 
 **From a browser**, run a hub on a machine that stays on, then open the address it prints:
 

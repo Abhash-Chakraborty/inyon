@@ -3,9 +3,9 @@
 #   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
 # It downloads the inyon command for this system into ~/.inyon/bin from the website's copy of the
 # newest release, checks it against the release's checksums (and their signature, when minisign
-# is installed), and runs its setup, which fetches the engine behind it, starts it in the
-# background at login, and shows a code to scan with the app. With --hub it sets up an Inyon
-# hub instead (the server the app signs in to):
+# is installed), and runs its setup, which starts it in the background at login and shows a code
+# to scan with the app. With --hub it sets up an Inyon hub instead (the server the app signs in
+# to), and setup also fetches the engine the hub runs on:
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
 BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://inyon.abhashchakraborty.tech/download}}"
@@ -41,7 +41,8 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   *) echo "There's no inyon build for $(uname -m) yet." >&2; exit 1 ;;
 esac
-# Alpine and other musl systems run the engine built against musl; the command is static and the same
+# Alpine and other musl systems run the hub's engine built against musl; the command is static and
+# the same everywhere
 libc=""
 if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then libc=-musl; fi
 
@@ -130,15 +131,16 @@ if [ -z "${INYON_NO_MODIFY_PATH:-}" ] && [ -z "$on_path" ]; then
   fi
 fi
 
-# the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default
-if [ -n "$libc" ] && [ ! -e /usr/lib/libstdc++.so.6 ]; then
+# the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default.
+# From 0.19 only a hub (or INYON_LEGACY_ENGINE=1) runs that engine; the inyon command needs neither
+if [ -n "$libc" ] && { [ "$ROLE" = hub ] || [ "${INYON_LEGACY_ENGINE:-}" = 1 ]; } && [ ! -e /usr/lib/libstdc++.so.6 ]; then
   if [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add -q libstdc++ libgcc >/dev/null 2>&1; then :
   else echo "The engine needs libstdc++ and libgcc on Alpine: apk add libstdc++ libgcc" >&2
   fi
 fi
 
-# from 0.13 a release is two files: this one is the inyon command, and its setup gets the engine
-# ($engine) that runs behind it. Before that, this one file was the whole program
+# from 0.13 a release is two files: this one is the inyon command, and the engine ($engine),
+# which from 0.19 only a hub needs. Before 0.13, this one file was the whole program
 if [ -n "$(sum_for "$engine")" ]; then
   if [ "$ROLE" = hub ]; then exec "$dir/inyon" setup --role hub; fi
   exec "$dir/inyon" setup

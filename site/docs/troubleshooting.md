@@ -9,6 +9,10 @@ Start with `inyon doctor` on the computer. It checks the engine, tmux, the agent
 
 The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
 
+## Something stopped working after updating to 0.19
+
+From 0.19 the link and the hub connection run inside `inyon` rather than in the Bun engine. If a computer did something in 0.18 that it doesn't in 0.19, set `INYON_LEGACY_ENGINE=1` and run `inyon service install` to go back to the Bun engine while it gets fixed. On Linux and macOS that writes the variable into the service, and the Bun engine downloads when the service starts; on Windows `inyon service install` downloads it. [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) has the steps for each system, and `inyon doctor` shows which engine runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
+
 ## The phone reached the computer once, then couldn't
 
 Before 0.17.2, `inyon pair` on Windows could miss the link already running in the background and start a second one. The second one published its own address, and when it ended with the terminal, the phone was left pointing at it. Update both sides; from 0.17.2 `pair` sees a running link by its port too. Until then, `inyon service install link` restarts the background link, which publishes the right address again.
@@ -57,6 +61,7 @@ The app explains what it found:
 ## A machine shows as offline
 
 - A joined machine: is it on, and is `inyon service status` showing `node` running? `inyon logs --role node` shows why it can't connect.
+- The log says the hub's certificate isn't trusted, and the hub's certificate comes from your organisation's own authority: put that authority's certificate in a PEM file and set `NODE_EXTRA_CA_CERTS` to its path, for the service too (see [Computer settings](configuration.md#computer-settings)).
 - The hub removed it, or its pairing command expired unused (after 24 hours): use **New pairing command** on its page.
 - An SSH server: check you can `ssh` to it from the hub's machine as the hub's user, without a password prompt.
 

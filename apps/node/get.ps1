@@ -1,9 +1,9 @@
 # Gets inyon for this PC and sets it up for the Inyon phone app. In PowerShell:
 #   irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
 # It downloads the inyon command into %USERPROFILE%\.inyon\bin from the website's copy of the
-# newest release, checks it against the release's checksums, and runs its setup, which fetches
-# the engine behind it, starts it in the background when you sign in, and shows a code to scan
-# with the app. No admin rights needed.
+# newest release, checks it against the release's checksums, and runs its setup, which starts it
+# in the background when you sign in and shows a code to scan with the app. From 0.19 nothing
+# else is downloaded. No admin rights needed.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
@@ -40,7 +40,7 @@ $lines = Get-Content $sums
 Remove-Item -Force $sums
 function Sum-For($file) { ($lines | Where-Object { $_ -match "^([0-9a-f]{64})\s+\*?$([regex]::Escape($file))$" } | ForEach-Object { $Matches[1] }) | Select-Object -First 1 }
 function Sum-Of($file) { (Get-FileHash -Algorithm SHA256 $file).Hash.ToLower() }
-# Windows on ARM gets its own inyon command from 0.13 on (the engine behind it stays x64); a
+# Windows on ARM gets its own inyon command from 0.13 on (the old engine behind it stays x64); a
 # release without one, and every x64 PC, takes the x64 build
 $name = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -and (Sum-For 'inyon-windows-arm64.exe')) { 'inyon-windows-arm64.exe' } else { 'inyon-windows-x64.exe' }
 function Mismatch {

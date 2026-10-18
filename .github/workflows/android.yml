@@ -284,7 +284,9 @@ jobs:
           apk="$RUNNER_TEMP/inyon-$VERSION.apk"
           cp "$RUNNER_TEMP/apk/inyon.apk" "$apk"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "Inyon $VERSION" --generate-notes
+            # a tag with a hyphen is a test build, published as a pre-release (as in node.yml)
+            pre=(); [[ "$GITHUB_REF_NAME" == *-* ]] && pre=(--prerelease)
+            gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" "${pre[@]}" --title "Inyon $VERSION" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
             # list the APK in SHA256SUMS too, next to the files node.yml attached, and sign the
             # list again, as node.yml did: the installers and `inyon update` check the signature

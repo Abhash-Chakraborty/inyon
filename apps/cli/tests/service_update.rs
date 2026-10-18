@@ -94,6 +94,17 @@ fn windows_the_logon_task_is_stopped_and_started_and_the_old_copy_stopped_never_
     std::env::remove_var("FAKE_PS_NO");
 }
 
+/// A Windows program's first bytes: the DOS header pointing at a PE header with its subsystem.
+fn fake_exe(subsystem: u16) -> Vec<u8> {
+    let mut exe = vec![0u8; 512];
+    exe[..2].copy_from_slice(b"MZ");
+    exe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    exe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    let at = 0x80 + 4 + 20 + 68;
+    exe[at..at + 2].copy_from_slice(&subsystem.to_le_bytes());
+    exe
+}
+
 #[test]
 #[cfg_attr(windows, ignore)]
 fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_console() {
@@ -101,14 +112,19 @@ fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_conso
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
-    // the command and the engine next to it, as an install leaves them
+    // the command and the Bun engine next to it, as an install by 0.18 leaves them
     let bin = home.dir.join(".inyon").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("inyon"), "").unwrap();
-    std::fs::write(bin.join("inyon-engine"), "").unwrap();
+    // inyon 0.19 or later: it carries the mark of the engine built in
+    let mut program = fake_exe(3);
+    program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
+    std::fs::write(bin.join("inyon"), &program).unwrap();
+    std::fs::write(bin.join("inyon-engine"), "the Bun engine").unwrap();
     let cli = bin.join("inyon").to_string_lossy().into_owned();
     let engine = bin.join("inyon-engine").to_string_lossy().into_owned();
     assert!(restart_service(&sys, Role::Link, &v(&[&cli])).ok);
+    // from 0.19 the task's engine is the windowless copy of the command, made in the Bun engine's place
+    assert_eq!(std::fs::read(bin.join("inyon-engine")).unwrap(), inyon_cli::engine::make_copy(&program).unwrap());
     let calls = home.calls();
     let ps = calls.last().unwrap().last().unwrap().clone();
     assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument 'link'")), "{ps}");
@@ -250,4 +266,87 @@ fn if_inyons_own_unit_will_not_start_tether_nodes_is_started_again_and_kept() {
     assert_eq!(r, Installed { ok: false, how: "Failed to enable".into() });
     assert_eq!(home.calls().last().unwrap(), &v(&["systemctl", "--user", "start", "tether-node.service"]));
     assert!(home.exists(".config/systemd/user/tether-node.service"));
+}
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_the_move_to_the_built_in_engine_runs_in_a_task_of_its_own_never_the_updates() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("inyon.exe").as_path());
+    // registering the update's task again would end an update running in it
+    assert!(inyon_cli::commands::migrate(&sys, true).is_ok());
+    let ps = home.calls()[0].last().unwrap().clone();
+    assert!(ps.contains("Register-ScheduledTask -TaskName 'Inyon engine hand-over'"), "{ps}");
+    assert!(ps.contains("Start-ScheduledTask -TaskName 'Inyon engine hand-over'"), "{ps}");
+    assert!(!ps.contains("Inyon update"), "{ps}");
+    // and when it's done it removes its own task, never the update's
+    home.clear_calls();
+    assert!(inyon_cli::commands::migrate(&sys, false).is_ok());
+    let all: Vec<String> = home.calls().iter().map(|c| c.join(" ")).collect();
+    assert!(all.iter().any(|c| c.contains("Unregister-ScheduledTask -TaskName 'Inyon engine hand-over'")), "{all:?}");
+    assert!(!all.iter().any(|c| c.contains("Inyon update")), "{all:?}");
+}
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_the_move_to_the_built_in_engine_waits_while_an_update_restarts_the_jobs() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("inyon.exe").as_path());
+    // what 0.18's update leaves: the Bun engine under the engine's name, and it's still checking the restart
+    home.put(&format!(".inyon/bin/inyon-engine{}", std::env::consts::EXE_SUFFIX), "the Bun engine");
+    home.put(".inyon/node/update-status", "running\n");
+    // no tether-node tasks to move: only the engine's move is left
+    std::env::set_var("FAKE_PS_NO", "Tether");
+    assert!(inyon_cli::commands::wants_hand_over(&sys));
+    // the link's icon and the hub connection's start together: one of them asks
+    assert!(!inyon_cli::commands::wants_hand_over(&sys));
+    let said = inyon_cli::commands::migrate(&sys, false).unwrap()["message"].as_str().unwrap().to_string();
+    assert!(said.contains("an update is still running"), "{said}");
+    let all: Vec<String> = home.calls().iter().map(|c| c.join(" ")).collect();
+    assert!(!all.iter().any(|c| c.contains("Register-ScheduledTask") || c.contains("Stop-ScheduledTask")), "nothing restarted: {all:?}");
+    // it didn't run, so the next start of a tray icon tries again rather than an hour later
+    assert!(!home.exists(".inyon/node/engine-hand-over"));
+    // the update said it's done, but the link it restarted still answers as the old version
+    home.put(".inyon/node/update-status", "done 0.19.0\n");
+    proc.set(4242, &["inyon-engine.exe", "link"]);
+    home.put(".inyon/node/state.json", r#"{"pid":4242,"version":"0.6.3"}"#);
+    let said = inyon_cli::commands::migrate(&sys, false).unwrap()["message"].as_str().unwrap().to_string();
+    std::env::remove_var("FAKE_PS_NO");
+    assert!(said.contains("an update is still running"), "{said}");
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn the_kill_switch_set_at_service_install_holds_for_what_starts_without_it() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    let unit = ".config/systemd/user/inyon-link.service";
+    std::env::set_var("INYON_LEGACY_ENGINE", "1");
+    assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
+    std::env::remove_var("INYON_LEGACY_ENGINE");
+    assert!(home.read(unit).contains("Environment=INYON_LEGACY_ENGINE=1"));
+    // a link started from a terminal without the variable leaves the Bun engine the service runs
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    assert!(inyon_cli::engine::legacy());
+    assert_eq!(inyon_cli::engine::stale_engine(), None);
+    // an update started on its own takes the variable along, under its old name too
+    for name in ["INYON_LEGACY_ENGINE", "TETHER_LEGACY_ENGINE"] {
+        std::env::set_var(name, "1");
+        home.clear_calls();
+        assert!(detach_update(&sys, &v(&[BIN])).ok);
+        std::env::remove_var(name);
+        let last = home.calls().last().unwrap().clone();
+        assert!(last.contains(&"--setenv=INYON_LEGACY_ENGINE=1".to_string()), "{name}: {last:?}");
+    }
+    // going back: service install without the variable
+    assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
+    assert!(!inyon_cli::engine::legacy());
+    assert!(!home.read(unit).contains("LEGACY"));
+    assert!(inyon_cli::engine::stale_engine().is_some());
 }

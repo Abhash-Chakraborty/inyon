@@ -82,14 +82,22 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
     } else {
         "none"
     };
-    let engine = jobs.iter().find_map(|j| if j.running { j.version.clone() } else { None }).or_else(|| crate::engine::find().map(|_| "installed".to_string()));
+    // from 0.19 the engine is built into this program; only a hub (or the kill switch) needs the Bun one
+    let bun = crate::engine::needs_bun(role);
+    let engine = jobs.iter().find_map(|j| if j.running { j.version.clone() } else { None }).or_else(|| {
+        if bun {
+            crate::engine::find().map(|_| "installed".to_string())
+        } else {
+            Some(VERSION.to_string())
+        }
+    });
     let phones = state::phones()
         .into_iter()
         .map(|(key, p)| PairedPhone { key: key.chars().take(12).collect(), name: p.name, paired: state::format_date(p.paired_at), last_seen: p.last_seen.map(state::format_time) })
         .collect();
     let nodes = (role == "hub").then(hub_nodes).flatten();
     let agents = if with_agents { running_agents() } else { Vec::new() };
-    let note = (!crate::engine::find().is_some()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string());
+    let note = (bun && crate::engine::find().is_none()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string());
     Status {
         v: 1,
         cli: VERSION.to_string(),

@@ -264,6 +264,9 @@ struct FakeHost {
     platform: Platform,
     arch: Arch,
     libc: Libc,
+    /// whether the machine needs the Bun engine (a hub, or the kill switch); the tests from before
+    /// 0.19 check that path, so it's on unless a test turns it off
+    engine: bool,
 }
 
 impl FakeHost {
@@ -281,6 +284,7 @@ impl FakeHost {
             platform: Platform::current(),
             arch: Arch::current(),
             libc: Libc::Glibc,
+            engine: true,
         }
     }
     fn restarted_roles(&self) -> Vec<Role> {
@@ -328,6 +332,9 @@ impl Host for FakeHost {
     }
     fn libc(&self) -> Libc {
         self.libc
+    }
+    fn wants_engine(&self) -> bool {
+        self.engine
     }
 }
 
@@ -1082,4 +1089,147 @@ fn the_restarted_copy_counts_once_it_names_the_new_version_is_a_new_process_and_
     assert!(!wait_started(&RealProc, Role::Link, Some("9.9.10"), None, &fast));
     fs::write(&state, format!(r#"{{"pid":{},"version":"9.9.9"}}"#, (1u32 << 22) + 12345)).unwrap();
     assert!(!wait_started(&RealProc, Role::Link, Some("9.9.9"), None, &fast));
+}
+
+/// A Windows program's first bytes, as text the mock release can carry: the DOS header pointing
+/// at a PE header, its subsystem a console program's.
+fn fake_exe_text() -> String {
+    let mut exe = vec![b' '; 512];
+    exe[..2].copy_from_slice(b"MZ");
+    // the PE header right after the DOS one, at 0x40, so every byte is plain ASCII
+    exe[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+    exe[0x40..0x44].copy_from_slice(b"PE\0\0");
+    let at = 0x40 + 4 + 20 + 68;
+    exe[at..at + 2].copy_from_slice(&3u16.to_le_bytes());
+    String::from_utf8(exe).unwrap()
+}
+
+/// inyon 0.19 or later for Windows: the engine is built in, and it carries the mark that says so.
+fn fake_inyon_text() -> String {
+    format!("{}{}", fake_exe_text(), inyon_cli::engine::COPY_MARK)
+}
+
+// Linux and macOS; Windows swaps in the windowless copy instead (below)
+#[cfg(not(windows))]
+#[test]
+fn from_0_19_a_machine_without_a_hub_takes_inyon_alone_and_drops_the_bun_engine() {
+    let _g = lock();
+    let f = Fixture::new();
+    // what an update by 0.18 left: the Bun engine next to inyon
+    fs::write(f.engine(), "old engine").unwrap();
+    let cli = f.cli_name.clone();
+    f.server.release(move |r| {
+        r.files.insert(cli, format!("cli build {}", inyon_cli::engine::COPY_MARK));
+    });
+    let mut host = FakeHost::new(&f.server, &[Role::Link, Role::Node]);
+    host.engine = false;
+    let r = f.run(&host).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert!(f.read(&f.installed()).starts_with("cli build"));
+    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.cli_name)]);
+    assert!(!f.engine().exists(), "the engine nothing needs went");
+    assert_eq!(f.bin_names(), vec!["inyon"]);
+    assert_eq!(host.restarted_roles(), vec![Role::Link, Role::Node]);
+}
+
+// Linux and macOS; Windows swaps in the windowless copy instead (below)
+#[cfg(not(windows))]
+#[test]
+fn from_0_19_a_release_without_an_engine_still_updates_a_machine_that_needs_none() {
+    let _g = lock();
+    let f = Fixture::new();
+    let engine = f.engine_name.clone();
+    f.server.release(|r| {
+        r.files.remove(&engine);
+    });
+    let mut host = FakeHost::new(&f.server, &[Role::Link]);
+    host.engine = false;
+    assert!(f.run(&host).unwrap().changed);
+    assert_eq!(f.read(&f.installed()), "cli build");
+    // a hub still needs it, so nothing changes there
+    let hub = FakeHost::new(&f.server, &[Role::Hub]);
+    let r = f.run(&hub).unwrap();
+    assert!(!r.changed && r.message.contains("has no"), "{}", r.message);
+}
+
+#[test]
+fn from_0_19_windows_gets_the_windowless_copy_of_the_new_inyon_in_place_of_the_bun_engine() {
+    let _g = lock();
+    let f = Fixture::new();
+    fs::write(f.engine(), "the Bun engine").unwrap();
+    let program = fake_inyon_text();
+    let p = program.clone();
+    f.server.release(move |r| {
+        r.files = [("inyon-windows-x64.exe", p.as_str()), ("inyon-engine-windows-x64.exe", "engine")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    });
+    let mut win = FakeHost::new(&f.server, &[Role::Link]);
+    win.platform = Platform::Windows;
+    win.arch = Arch::X64;
+    win.engine = false;
+    let r = f.run(&win).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert_eq!(f.server.downloads(), vec!["inyon-windows-x64.exe.gz".to_string()]);
+    assert_eq!(fs::read(f.installed()).unwrap(), program.as_bytes());
+    assert_eq!(fs::read(f.engine()).unwrap(), inyon_cli::engine::make_copy(program.as_bytes()).unwrap());
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
+    // and if the new version won't start, the Bun engine comes back with the old inyon
+    let f = Fixture::new();
+    fs::write(f.engine(), "the Bun engine").unwrap();
+    let p = program.clone();
+    f.server.release(move |r| {
+        r.files = [("inyon-windows-x64.exe", p.as_str())].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    });
+    let mut win = FakeHost::new(&f.server, &[Role::Link]);
+    win.platform = Platform::Windows;
+    win.arch = Arch::X64;
+    win.engine = false;
+    win.started_ok.set(false);
+    assert!(f.run(&win).is_err());
+    assert_eq!(f.read(&f.installed()), "old build");
+    assert_eq!(f.read(&f.engine()), "the Bun engine");
+}
+
+/// A machine added to a hub that still hands out an inyon from before 0.19 (Windows x64 here),
+/// with no hub and no kill switch of its own.
+fn older_hub(platform: Platform, program: &str) -> (Fixture, update::Install, FakeHost) {
+    let f = Fixture::new();
+    let (os, arch) = if platform == Platform::Windows { ("windows", Arch::X64) } else { ("linux", Arch::X64) };
+    f.server.hub.lock().unwrap().commands.insert(format!("{os}-x64"), program.to_string());
+    let install = find_install(&f.installed(), Some(f.server.base.clone()));
+    let mut host = FakeHost::new(&f.server, &[Role::Link]);
+    host.platform = platform;
+    host.arch = arch;
+    host.engine = false;
+    (f, install, host)
+}
+
+#[test]
+fn windows_takes_the_hubs_engine_with_an_older_hubs_inyon_never_a_copy_of_it() {
+    let _g = lock();
+    // 0.18 doesn't answer to the engine's name: as its own windowless copy it would start itself forever
+    let old = fake_exe_text();
+    let (f, install, win) = older_hub(Platform::Windows, &old);
+    fs::write(f.engine(), inyon_cli::engine::make_copy(fake_inyon_text().as_bytes()).unwrap()).unwrap();
+    let r = update::update(&install, &win, &RealFiles).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert_eq!(f.read(&f.installed()), old);
+    assert_eq!(f.read(&f.engine()), "new exe", "the hub's Bun engine, which 0.18 runs");
+    // and a hub with 0.19 on it: the copy of that one again
+    let new = fake_inyon_text();
+    f.server.hub.lock().unwrap().commands.insert("windows-x64".into(), new.clone());
+    assert!(update::update(&install, &win, &RealFiles).unwrap().changed);
+    assert_eq!(fs::read(f.engine()).unwrap(), inyon_cli::engine::make_copy(new.as_bytes()).unwrap());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn linux_keeps_the_bun_engine_when_an_older_hubs_inyon_comes_back() {
+    let _g = lock();
+    let (f, install, linux) = older_hub(Platform::Linux, "an inyon from 0.18");
+    fs::write(f.engine(), "old engine").unwrap();
+    let r = update::update(&install, &linux, &RealFiles).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert_eq!(f.read(&f.installed()), "an inyon from 0.18");
+    assert_eq!(f.read(&f.engine()), "new linux build", "0.18 still runs the Bun engine, so it stays, as the hub's");
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
 }
