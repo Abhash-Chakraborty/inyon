@@ -1,4 +1,4 @@
-import { fetchLatestRelease, newerRelease, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@inyon/protocol'
+import { fetchLatestRelease, newerRelease, parseRelease, TEST_BUILD, VERSION, type HostConfig, type HostState, type NodeUpdate } from '@inyon/protocol'
 import type { Host } from './host.ts'
 import { nodeLinks } from './node-link.ts'
 
@@ -21,6 +21,21 @@ const LAST_WITHOUT_UPDATE = '0.6.3'
 /** The first version that's the inyon program, which updates itself from its hub too. */
 const FIRST_INYON = '0.7.0'
 const isInyon = (version: string) => !newerRelease(FIRST_INYON, version)
+
+/**
+ * Whether `target` is newer than a machine's `version`. The target is the newest release or this
+ * hub's own version, which can be a test build ("0.19.0-rc.1"): that counts as the release it
+ * leads to, so a hub on a test build still offers it to machines on the release before.
+ */
+export function newerTarget(target: string, version: string): boolean {
+  if (!TEST_BUILD.test(target)) return newerRelease(target, version)
+  const base = (v: string) => v.trim().replace(/[-+].*$/, '')
+  const rc = (v: string) => Number(/-rc\.(\d+)$/.exec(v.trim())?.[1])
+  if (newerRelease(base(target), base(version))) return true
+  // the same release: only an earlier test build of it is older
+  const same = !newerRelease(base(version), base(target)) && parseRelease(base(version)) !== undefined
+  return same && TEST_BUILD.test(version.trim()) && rc(target) > rc(version)
+}
 
 /**
  * For a Windows machine still on tether-node: writes the script the hub sent and starts it as a
@@ -93,11 +108,11 @@ export class NodeUpdates {
   view(s: HostState): NodeUpdate | undefined {
     const job = this.jobs.get(s.config.id)
     // updated by other means meanwhile: the old failure no longer matters
-    if (job && !(job.state === 'failed' && s.nodeVersion && !newerRelease(job.target, s.nodeVersion))) {
+    if (job && !(job.state === 'failed' && s.nodeVersion && !newerTarget(job.target, s.nodeVersion))) {
       return { latest: job.target, supported: true, state: job.state, ...(job.error ? { error: job.error } : {}) }
     }
     const latest = this.latest(s.config)
-    if (!latest || !s.nodeVersion || !newerRelease(latest, s.nodeVersion)) return undefined
+    if (!latest || !s.nodeVersion || !newerTarget(latest, s.nodeVersion)) return undefined
     return { latest, supported: canUpdate(s.config, s.nodeVersion, nodeLinks.info.get(s.config.id)?.os?.split(' ')[0]) }
   }
 
@@ -112,7 +127,7 @@ export class NodeUpdates {
     const latest = this.latest(c)
     const [platform = '', arch = ''] = (info?.os ?? '').split(' ')
     if (!latest) return "The newest inyon version isn't known yet. Try again in a minute."
-    if (!version || !newerRelease(latest, version)) return `inyon on ${c.name} is already up to date.`
+    if (!version || !newerTarget(latest, version)) return `inyon on ${c.name} is already up to date.`
     if (!canUpdate(c, version, platform)) {
       return c.kind === 'node'
         ? `${c.name} runs tether-node from before the rename to Inyon. Copy the "Add a machine" command again and run it there.`
@@ -143,7 +158,7 @@ export class NodeUpdates {
       if (this.jobs.get(id) !== job || job.state !== 'updating') return
       const up = nodeLinks.isUp(id)
       const version = up ? nodeLinks.info.get(id)?.version : undefined
-      if (version && !newerRelease(job.target, version)) return this.finish(id, job, 'updated')
+      if (version && !newerTarget(job.target, version)) return this.finish(id, job, 'updated')
       if (up) {
         const line = (await host.exec(READ_STATUS, { timeoutMs: 10_000 }).catch(() => undefined))?.stdout.trim() ?? ''
         if (this.jobs.get(id) !== job) return
