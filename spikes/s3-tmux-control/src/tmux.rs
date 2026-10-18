@@ -32,6 +32,11 @@ impl Version {
     pub fn has_client_flags(self) -> bool {
         self >= Version { major: 3, minor: 2 }
     }
+
+    /// 3.2 can size windows from a control client (see [`Tmux::attach`]); 3.3 stopped that.
+    pub fn sizes_from_control_clients(self) -> bool {
+        self == Version { major: 3, minor: 2 }
+    }
 }
 
 /// How to start tmux: which binary, which server.
@@ -79,16 +84,44 @@ impl Tmux {
     /// Attaches a control client to a session and waits until tmux has attached it.
     /// `ignore-size` keeps it out of window sizing where tmux would otherwise count it; tmux
     /// before 3.2 has no client flags, so there only `-r` is passed for a read-only client
-    /// (those versions never size windows from a control client anyway).
+    /// (those versions never size windows from a control client).
+    ///
+    /// tmux 3.2 still can: in CI a session nobody had a terminal on shrank to 80x23 a moment
+    /// after the attach (not every run), and windows made through the client came out 80x24.
+    /// So on 3.2 the active window's size is read first, and once the attach has answered the
+    /// size is watched for 600 ms and the client given it with `refresh-client -C` if it moved.
+    /// The client then sizes windows like a terminal of that size would, until a real terminal
+    /// attaches and becomes the latest client.
     pub fn attach(&self, session: &str, read_only: bool) -> io::Result<(Control, Receiver<Notification>)> {
         let v = self.version().unwrap_or(Version { major: 3, minor: 2 });
+        let size = if v.sizes_from_control_clients() { self.window_size(session) } else { None };
         let mut c = self.command();
         c.args(attach_args(v, session, read_only));
         let (c, rx) = Control::spawn(c)?;
         if !c.wait_ready(std::time::Duration::from_secs(5)) {
             return Err(io::Error::other(format!("could not attach to {session}: {}", c.exit_reason().unwrap_or_default())));
         }
+        if let Some(size) = size {
+            let err = |e: Error| io::Error::other(e.to_string());
+            // sizing the client up front also makes windows created through it that size
+            c.cmd(format!("refresh-client -C {size}")).map_err(err)?;
+            let q = format!("display-message -p -t {} '#{{window_width}}x#{{window_height}}'", quote(session));
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(600);
+            while std::time::Instant::now() < end {
+                if c.cmd(q.as_str()).map_err(err)?.text().trim() != size {
+                    c.cmd(format!("refresh-client -C {size}")).map_err(err)?;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
         Ok((c, rx))
+    }
+
+    /// The size of a session's active window as `WxH`, read with a one-off tmux command.
+    pub fn window_size(&self, session: &str) -> Option<String> {
+        let out = self.run(["list-windows", "-t", session, "-F", "#{window_active} #{window_width}x#{window_height}"]).ok()?;
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        text.lines().find_map(|l| l.strip_prefix("1 ")).map(|s| s.trim().to_string()).filter(|s| s.contains('x'))
     }
 }
 
