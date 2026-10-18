@@ -9,6 +9,7 @@
 //! command sees stays as the Bun engine had it: the `/node` frames, the link's bytes, the `--json`
 //! answers and the files under `~/.inyon`.
 
+pub mod connect;
 pub mod hub;
 pub mod http;
 pub mod ops;
@@ -17,6 +18,7 @@ pub mod paths;
 pub mod qr;
 pub mod screen;
 pub mod tidy;
+mod ws;
 
 /// Inyon's version, the same for every part of a release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
