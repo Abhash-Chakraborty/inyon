@@ -103,6 +103,18 @@ export function offlineAlertDue(o: { since?: number; notified?: boolean; now: nu
   if (!o.since || o.notified || o.held || !o.online) return false
   return o.now - Math.max(o.since, o.heldUntil) >= OFFLINE_NOTIFY_MS
 }
+
+/**
+ * Whether a poll changed anything the apps show, so they're sent a new overview. Every poll moves
+ * the clock (`updatedAt`, `lastSeen`) and the response time; sent for that alone, each app got a
+ * full overview every 4 s. `lastSeen` only shows while a machine is offline, and the overview
+ * sent when it goes offline carries the latest one.
+ */
+export function overviewChanged(prev: HostState, next: HostState) {
+  const still = (s: HostState) => JSON.stringify({ ...s, updatedAt: 0, latencyMs: 0, lastSeen: s.lastSeen ? 1 : 0 })
+  return still(prev) !== still(next)
+}
+
 const snapshotKey = (id: string) => `snapshots/${keyPart(id)}`
 
 /** The last state seen from a machine, so it still shows its sessions while it's unreachable. */
@@ -382,9 +394,7 @@ class Registry {
       this.healIntegration(rt, pr).catch((e) => console.error('integration heal:', e?.message ?? e))
       // live updates for every tmux session that has an agent in it
       rt.live?.sync(pr.sessions.filter((s) => s.windows.some((w) => w.panes.some((p) => p.agent))).map((s) => s.id))
-      if (JSON.stringify({ ...prev, updatedAt: 0, latencyMs: 0 }) !== JSON.stringify({ ...rt.state, updatedAt: 0, latencyMs: 0 })) {
-        this.emit({ type: 'overview' })
-      }
+      if (overviewChanged(prev, rt.state)) this.emit({ type: 'overview' })
     } catch (err) {
       rt.failures++
       next = Math.min(Math.max(MAX_BACKOFF_MS, pollMs), pollMs * 2 ** Math.min(rt.failures, 4))
