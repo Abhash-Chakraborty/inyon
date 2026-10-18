@@ -56,7 +56,7 @@ fn subsystem_at(exe: &[u8]) -> Option<usize> {
 /// the firewall rule and older inyon commands keep the path they know.
 pub fn make_copy(program: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = program.to_vec();
-    let at = subsystem_at(&out).ok_or("inyon isn't a Windows program, so there's no copy to make")?;
+    let at = subsystem_at(&out).ok_or("inyon isn't a Windows program, so there's no copy to make.")?;
     out[at..at + 2].copy_from_slice(&2u16.to_le_bytes());
     Ok(out)
 }

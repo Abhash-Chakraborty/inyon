@@ -1104,6 +1104,8 @@ fn fake_exe_text() -> String {
     String::from_utf8(exe).unwrap()
 }
 
+// Linux and macOS; Windows swaps in the windowless copy instead (below)
+#[cfg(not(windows))]
 #[test]
 fn from_0_19_a_machine_without_a_hub_takes_inyon_alone_and_drops_the_bun_engine() {
     let _g = lock();
@@ -1121,6 +1123,8 @@ fn from_0_19_a_machine_without_a_hub_takes_inyon_alone_and_drops_the_bun_engine(
     assert_eq!(host.restarted_roles(), vec![Role::Link, Role::Node]);
 }
 
+// Linux and macOS; Windows swaps in the windowless copy instead (below)
+#[cfg(not(windows))]
 #[test]
 fn from_0_19_a_release_without_an_engine_still_updates_a_machine_that_needs_none() {
     let _g = lock();
