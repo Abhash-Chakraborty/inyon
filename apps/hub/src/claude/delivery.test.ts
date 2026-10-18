@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { codexAccepted, inputContains, sameMessage, SendLedger } from './delivery.ts'
 import { parseScreen } from './screen.ts'
 import { draftRows } from './drafts.ts'
-import { readFileSync } from 'node:fs'
+import { screenFixture } from '../fixtures.ts'
 
 test('missing composer and approval screens do not confirm delivery', () => {
   expect(codexAccepted({ width: 100, working: false }, 'hello')).toBe(false)
@@ -29,15 +29,14 @@ test('a long dictated line needs a clear for every row it wraps onto', () => {
 })
 
 test('real Codex queue confirms only the queued message, despite another draft', () => {
-  const capture = readFileSync(new URL('./fixtures/codex-queued.txt', import.meta.url), 'utf8')
-  const screen = parseScreen(capture.split('\n'), 100, 'codex')
+  const screen = parseScreen(screenFixture('codex', 'queued'), 100, 'codex')
   expect(screen.working).toBe(true)
   expect(codexAccepted(screen, 'second message queued')).toBe(true)
   expect(codexAccepted(screen, 'different message')).toBe(false)
 })
 
 test('Antigravity identifies each permission mode, including returning to default', () => {
-  const capture = (name: string) => parseScreen(readFileSync(new URL(`./fixtures/agy-${name}.txt`, import.meta.url), 'utf8').split('\n'), 150, 'antigravity')
+  const capture = (name: string) => parseScreen(screenFixture('antigravity', name), 150, 'antigravity')
   expect(capture('accept-edits').mode).toBe('accept-edits')
   expect(capture('plan').mode).toBe('plan')
   expect(capture('idle').mode).toBe('default')

@@ -8,7 +8,8 @@ name: inyon cli
 on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
-    paths: ['apps/cli/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    # the protocol crate's tests also read packages/protocol and fixtures/
+    paths: ['apps/cli/**', 'crates/**', 'packages/protocol/**', 'fixtures/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -32,6 +33,8 @@ jobs:
       - run: rustup component add clippy rustfmt
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # the wire types against the TypeScript ones, the protocol samples and the shared fixtures
+      - run: cargo test -p inyon-protocol
 
   build:
     strategy:

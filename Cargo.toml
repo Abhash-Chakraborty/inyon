@@ -3,7 +3,7 @@
 [workspace]
 resolver = "2"
 # each crate is listed by hand, so a half-made folder under crates/ never breaks the build
-members = ["apps/cli"]
+members = ["apps/cli", "crates/inyon-protocol"]
 
 [workspace.package]
 edition = "2021"

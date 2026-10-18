@@ -100,6 +100,10 @@
     },
     "packages/protocol": {
       "name": "@inyon/protocol",
+      "devDependencies": {
+        "@types/bun": "^1.4.2",
+        "typescript": "^7.0.2",
+      },
     },
   },
   "packages": {

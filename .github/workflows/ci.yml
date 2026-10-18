@@ -25,6 +25,8 @@ jobs:
       - run: bun test
         working-directory: packages/link
       - run: bun test
+        working-directory: packages/protocol
+      - run: bun test
         working-directory: apps/node
       - run: bun run build
 

@@ -5,5 +5,13 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "license": "MIT"
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
+  }
 }
