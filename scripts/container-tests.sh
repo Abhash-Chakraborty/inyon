@@ -1,6 +1,6 @@
 #!/bin/sh
-# Installs inyon in fresh Linux containers from a mock of this release, and upgrades a real 0.12.0
-# install to it. Needs docker and minisign (apt-get install minisign / brew install minisign);
+# Installs inyon in fresh Linux containers from a mock of this release, sets up a hub, and
+# upgrades a real 0.12.0 install to it. From 0.19 only the hub gets the Bun engine. Needs docker and minisign (apt-get install minisign / brew install minisign);
 # nothing else is installed on this machine.
 #
 #   scripts/container-tests.sh                 builds the command (cargo, static musl) and the
@@ -8,7 +8,7 @@
 #                                              against glibc and against musl for Alpine
 #   INYON_DIST=<dir> scripts/container-tests.sh  takes inyon-linux-<arch>[.gz] and
 #                                              inyon-engine-linux-<arch>[-musl][.gz] from <dir> (CI)
-#   INYON_TEST_SYSTEMS="alpine upgrade" …       runs only those (ubuntu debian alpine fedora upgrade)
+#   INYON_TEST_SYSTEMS="alpine upgrade" …       runs only those (ubuntu debian alpine fedora hub upgrade)
 #
 # The release is served from a container on a network with no way out, so a test that reached
 # the website or GitHub would fail. Fresh installs read it the way the website serves it (/download,
@@ -95,8 +95,8 @@ image() {
   case "$1" in
     ubuntu) from=ubuntu:24.04; add='RUN apt-get update -q && apt-get install -y -q --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*' ;;
     debian) from=debian:bookworm-slim; add='RUN apt-get update -q && apt-get install -y -q --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*' ;;
-    # the musl engine needs libstdc++ and libgcc; get.sh would apk add them as root, but the
-    # test network has no way out, so the image brings them
+    # a hub's musl engine needs libstdc++ and libgcc; get.sh would apk add them as root, but the
+    # test network has no way out, so the image brings them (the inyon command needs neither)
     alpine) from=alpine:3.20; add='RUN apk add --no-cache curl libstdc++ libgcc' ;;
     fedora) from=fedora:40; add='RUN dnf install -y -q curl && dnf clean all' ;;
   esac
@@ -110,11 +110,12 @@ fresh='set -e
 curl -fsSL http://release:8000/get.sh | sh
 echo "--- after setup"
 ls -l ~/.inyon/bin
-test -x ~/.inyon/bin/inyon-engine
+# from 0.19 a computer that is not a hub runs on inyon alone
+test ! -e ~/.inyon/bin/inyon-engine || { echo "the Bun engine was downloaded for a computer that is not a hub"; exit 1; }
 ~/.inyon/bin/inyon version
 ~/.inyon/bin/inyon status --plain
 ~/.inyon/bin/inyon status --plain | grep -q "^link: running" || { echo "the link is not running"; cat ~/.inyon/node/link.log 2>/dev/null; exit 1; }
-~/.inyon/bin/inyon-engine version
+~/.inyon/bin/inyon engine version
 echo "--- the newest version, from latest.json"
 ~/.inyon/bin/inyon update | tee /tmp/update.out
 grep -q "is up to date" /tmp/update.out || { echo "inyon update did not find itself up to date"; exit 1; }
@@ -128,7 +129,7 @@ echo "--- uninstall --purge leaves nothing behind"
 ~/.inyon/bin/inyon uninstall --purge
 if grep -q "added by Inyon" "$rc"; then echo "the PATH line is still in $rc"; exit 1; fi
 test ! -e ~/.inyon || { echo "~/.inyon is still there"; ls -la ~/.inyon; exit 1; }'
-systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora upgrade}
+systems=${INYON_TEST_SYSTEMS:-ubuntu debian alpine fedora hub upgrade}
 has() { case " $systems " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 for sys in ubuntu debian alpine fedora; do
   has "$sys" || continue
@@ -141,6 +142,30 @@ for sys in ubuntu debian alpine fedora; do
     failed="$failed $sys"
   fi
 done
+
+# ---------- a hub, the one role that still runs on the Bun engine ----------
+hub='set -e
+curl -fsSL http://release:8000/get.sh | sh -s -- --hub
+echo "--- after setup"
+ls -l ~/.inyon/bin
+test -x ~/.inyon/bin/inyon-engine || { echo "the hub has no engine"; exit 1; }
+~/.inyon/bin/inyon-engine version
+~/.inyon/bin/inyon status --plain
+~/.inyon/bin/inyon status --plain | grep -q "^hub: running" || { echo "the hub is not running"; cat ~/.inyon/node/hub.log 2>/dev/null; exit 1; }
+curl -fsS http://127.0.0.1:4777/ >/dev/null || { echo "the hub does not answer"; exit 1; }
+echo "--- an update keeps the engine a hub needs"
+~/.inyon/bin/inyon update | tee /tmp/update.out
+grep -q "is up to date" /tmp/update.out
+test -x ~/.inyon/bin/inyon-engine'
+if has hub; then
+  say "a hub on ubuntu"
+  if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$site" -e "INYON_SIGNING_KEY=$pubkey" "$(image ubuntu)" sh -c "$hub"; then
+    echo "== hub: ok"
+  else
+    echo "== hub: FAILED"
+    failed="$failed hub"
+  fi
+fi
 
 # ---------- an upgrade from a real 0.12.0 install ----------
 if has upgrade; then
@@ -172,12 +197,16 @@ echo "--- after the update"
 ls -l ~/.inyon/bin
 test "$before" = "$(sha256sum ~/.inyon/node/phones.json)" || { echo "phones.json changed"; exit 1; }
 ~/.inyon/bin/inyon version | grep -q "^inyon '"$version"'" || { echo "~/.inyon/bin/inyon is not the new command"; ~/.inyon/bin/inyon version; exit 1; }
-~/.inyon/bin/inyon-engine version
+~/.inyon/bin/inyon engine version
 ~/.inyon/bin/inyon phones | grep "Pixel 9"
 ~/.inyon/bin/inyon status --plain | grep -q "machine k7m2p9x4w1q8z3v6"
 # the old program keeps its copy aside (inyon.old-<time>) while nothing restarted on the new
 # one; the next start removes it. No download may be left behind
-test -z "$(ls ~/.inyon/bin | grep download)" || { echo "a download was left in bin"; exit 1; }'
+test -z "$(ls ~/.inyon/bin | grep download)" || { echo "a download was left in bin"; exit 1; }
+echo "--- the link starts on inyon alone and drops the Bun engine the old program fetched"
+timeout 10 ~/.inyon/bin/inyon link --no-tunnel --no-vpn > /tmp/link.out 2>&1 || true
+grep -q "link service for" /tmp/link.out || { echo "the link did not start"; cat /tmp/link.out; exit 1; }
+test ! -e ~/.inyon/bin/inyon-engine || { echo "the Bun engine is still there"; exit 1; }'
 if timeout 300 docker run --rm --network "$net" -e "INYON_DOWNLOAD=$github" -e "INYON_SIGNING_KEY=$pubkey" -v "$work/old:/old:ro" "$(image ubuntu)" sh -c "$upgrade"; then
   echo "== upgrade: ok"
 else

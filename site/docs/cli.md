@@ -77,7 +77,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
 
-For a hub, setup downloads and checks `inyon-engine` while you answer, with the progress in the footer. From 0.19 nothing else needs downloading.
+For a hub, setup downloads and checks `inyon-engine` before it starts the hub. Before 0.19 every computer needed it, and setup downloaded it in the background while you answered, with the progress in the footer.
 
 After the screens, from 0.17.2, setup installs tmux (psmux on Windows) if it's missing: it asks first, then runs winget (or cargo) on Windows, Homebrew on macOS, or your package manager with `sudo` on Linux. With `--yes` it doesn't ask; without a terminal on Linux it prints the command to run instead, since `sudo` needs one. On Windows it also lists Inyon under Settings → Apps.
 

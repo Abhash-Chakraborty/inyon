@@ -870,6 +870,10 @@ pub fn uninstall_all(sys: &Sys, purge: bool, ask: bool) -> Outcome {
                 let _ = fs::remove_dir_all(&p);
             }
         }
+        // the folder itself, now empty (on Windows it goes with bin once this command has ended)
+        if sys.platform != Platform::Windows {
+            let _ = fs::remove_dir(home_inyon());
+        }
         lines.push("removed the pairings, keys, uploads and logs".into());
     } else {
         lines.push(format!("Your pairings stay in {}; add --purge to remove them too.", node_dir().display()));
