@@ -38,9 +38,9 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true })
 })
 
-async function run(cmd: string) {
+async function run(cmd: string, env: Record<string, string> = {}) {
   const home = mkdtempSync(join(root, 'home-'))
-  const p = Bun.spawn(['sh', '-c', cmd], { env: { HOME: home, PATH: '/usr/local/bin:/usr/bin:/bin' }, stdout: 'ignore', stderr: 'pipe' })
+  const p = Bun.spawn(['sh', '-c', cmd], { env: { HOME: home, PATH: '/usr/local/bin:/usr/bin:/bin', ...env }, stdout: 'ignore', stderr: 'pipe' })
   const [err, code] = await Promise.all([new Response(p.stderr).text(), p.exited])
   const ran = existsSync(join(home, 'ran')) ? readFileSync(join(home, 'ran'), 'utf8') : undefined
   return { code, err, ran, bin: join(home, '.inyon', 'bin') }
@@ -78,12 +78,28 @@ test('a swapped install.sh, checksum list or program is refused, and nothing run
   expect(existsSync(join(swappedProgram.bin, 'inyon'))).toBe(false)
 })
 
-test('a hub from 0.13 on hands out the engine too, checked the same way, and the command joins', async () => {
+test('from 0.19 a machine joins with the command alone, though the hub lists the engine', async () => {
   split = true
   fixedList = undefined
   program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'
   try {
-    const r = await run(unixPairCommand(hub, 'tok_456', sha(installSh), sha(sums())))
+    const r = await run(unixPairCommand(hub, 'tok_789', sha(installSh), sha(sums())))
+    expect(r.code).toBe(0)
+    expect(readFileSync(join(r.bin, 'inyon'), 'utf8')).toBe(program)
+    expect(existsSync(join(r.bin, 'inyon-engine'))).toBe(false)
+    expect(r.ran).toBe(`join ${hub}\ntok_789\n`)
+  } finally {
+    split = false
+  }
+})
+
+test('with INYON_LEGACY_ENGINE=1 the engine comes from the hub too, checked the same way, and the command joins', async () => {
+  split = true
+  fixedList = undefined
+  program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'
+  const legacy = { INYON_LEGACY_ENGINE: '1' }
+  try {
+    const r = await run(unixPairCommand(hub, 'tok_456', sha(installSh), sha(sums())), legacy)
     expect(r.err).not.toContain('checksum')
     expect(r.code).toBe(0)
     expect(readFileSync(join(r.bin, 'inyon'), 'utf8')).toBe(program)
@@ -93,7 +109,7 @@ test('a hub from 0.13 on hands out the engine too, checked the same way, and the
 
     // an engine swapped on the way is refused before anything joins
     fixedList = sums().replace(sha(ENGINE), sha('other engine'))
-    const swapped = await run(unixPairCommand(hub, 'tok', sha(installSh), sha(fixedList)))
+    const swapped = await run(unixPairCommand(hub, 'tok', sha(installSh), sha(fixedList)), legacy)
     expect(swapped.code).not.toBe(0)
     expect(swapped.err).toContain('engine did not match its checksum')
     expect(swapped.ran).toBeUndefined()

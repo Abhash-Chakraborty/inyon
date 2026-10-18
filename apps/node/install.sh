@@ -1,6 +1,6 @@
 #!/bin/sh
-# Adds this machine to an Inyon hub: gets the inyon command and the engine it runs from the hub,
-# and runs its connection to the hub in the background, as the current user.
+# Adds this machine to an Inyon hub: gets the inyon command from the hub and runs its connection
+# to the hub in the background, as the current user.
 # Usage: INYON_TOKEN=<token> INYON_SUMS_SHA256=<sha256> sh install.sh <hub-url>
 # (the hub's "Add a machine" command does this; `sh -s -- <hub-url> <token>` still works)
 # The token comes from the environment so it doesn't show in the process list. With
@@ -43,11 +43,12 @@ mv -f "$tmp" "$DIR/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
 [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$DIR/inyon" >/dev/null 2>&1 || true
 
-# from 0.13 the hub hands out two files: inyon is the command, and the engine it runs comes apart
-# (a hub from before lists one program, which is both). It's fetched here, from the hub, so the
-# machine never needs GitHub; `inyon join` would fetch it the same way if it were missing
+# from 0.13 the hub hands out two files: inyon is the command, and the engine comes apart (a hub
+# from before lists one program, which is both). From 0.19 the command does the engine's work
+# itself, so the engine is fetched only with INYON_LEGACY_ENGINE=1, from the hub, so the machine
+# never needs GitHub; `inyon join` would fetch it the same way if it were missing
 want_engine="$(awk -v f="inyon-engine-$os-$arch" '$2 == f || $2 == "*" f { print $1 }' "$tmp.sums")"
-if [ -n "$want_engine" ]; then
+if [ -n "$want_engine" ] && [ "${INYON_LEGACY_ENGINE:-${TETHER_LEGACY_ENGINE:-}}" = 1 ]; then
   echo "Downloading the Inyon engine from the hub…"
   curl -fL --progress-bar "$HUB/node/inyon-engine?os=$os&arch=$arch" -o "$tmp"
   if [ "$(sum "$tmp")" != "$want_engine" ]; then
