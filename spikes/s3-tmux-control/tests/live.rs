@@ -189,7 +189,8 @@ fn pause_after_pauses_instead_of_buffering() {
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(s.version(), "main", false));
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
-    let stall = Stall { inner: child.stdout.take().unwrap(), after: 1 << 20, stall: Duration::from_secs(3), seen: 0, done: false };
+    // a 5 s stall against pause-after=1; 3 s was not always enough on a CI runner
+    let stall = Stall { inner: child.stdout.take().unwrap(), after: 256 << 10, stall: Duration::from_secs(5), seen: 0, done: false };
     let (c, rx) = Control::over(stall, child.stdin.take().unwrap());
     assert!(c.wait_ready(T));
     c.cmd("refresh-client -f pause-after=1").unwrap();
@@ -256,10 +257,12 @@ fn windows_made_over_control_mode() {
 fn the_hubs_attach_today() {
     // five fresh servers: on 3.2 the shrink did not happen every time
     let mut sizes = Vec::new();
+    let mut before = Vec::new();
     let mut v = None;
     for round in 0..5 {
         let s = Server::start(&format!("hubattach{round}"));
         v = Some(s.version());
+        before.push(s.tmux.window_size("main"));
         let mut cmd = s.tmux.command();
         cmd.args(attach_args(s.version(), "main", true));
         let (c, _rx) = Control::spawn(cmd).unwrap();
@@ -269,7 +272,7 @@ fn the_hubs_attach_today() {
         sizes.push((p.width, p.height));
     }
     let v = v.unwrap();
-    println!("tmux {v:?}: after the hub's attach the window was {sizes:?}");
+    println!("tmux {v:?}: before the hub's attach the window was {before:?}, after {sizes:?}");
     if !v.sizes_from_control_clients() {
         assert!(sizes.iter().all(|&s| s == (120, 40)));
     }

@@ -49,6 +49,12 @@ impl Server {
         }
         let out = out.unwrap();
         assert!(out.status.success(), "new-session: {}", String::from_utf8_lossy(&out.stderr));
+        // tmux 3.2 left a session made without a terminal at 80x23 whatever -x/-y said; set the
+        // size the way the hub's psmux mirror does (resize, then back to automatic sizing)
+        for args in [&["resize-window", "-t", "main:", "-x", "120", "-y", "40"][..], &["set-option", "-w", "-t", "main:", "-u", "window-size"]] {
+            let o = s.tmux.run(args).unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        }
         s
     }
 
