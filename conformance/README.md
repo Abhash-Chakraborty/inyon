@@ -45,8 +45,8 @@ the messages pushed during it are written down, folded:
 
 - The overview, `chat.info`, `chat.screen`, `chat.live`, `chat.draft` and `chat.progress` are
   snapshots: only the last one in a step counts. One equal (after normalization) to the snapshot
-  written before it is left out, since the hub re-sends the overview on every 4 s poll (see hub
-  bugs below) and whether a step catches one is timing.
+  written before it is left out: the hub sends a new overview when a value changes that the
+  normalizer hides (a clock reading, say), and whether a step catches one is timing.
 - `chat.append` messages in a row are one; `term.data` chunks of one terminal are one string.
 - Notices, `chat.reset`, `term.exit` and anything unknown are kept in order.
 - What the fake machine was told to do is written per pane, in order.
@@ -66,8 +66,6 @@ exactly. Each rule says why it exists:
 | uuid | random UUIDs, numbered by first appearance so identity is kept |
 | sha256 | checksums of build outputs and of the install script inside pairing commands (not the harness's own `contentSha256` of a long body) |
 | view-name | the random name of a terminal's view session |
-| codex-item-id | the random suffix the hub gives Codex records without an id |
-| mode-while-asked | an agent's `mode` while it waits for an answer: the poll drops it, a refresh keeps it, and which ran last is timing |
 | iso-time | ISO timestamps from this run (fixtures are dated January 2026 and stay) |
 | epoch | clock readings in ms or s from two days before the run to 40 days after |
 | latency | `latencyMs` |

@@ -59,7 +59,7 @@ When a new version of Inyon changes these scripts, it updates them on the machin
 
 ## When a machine goes offline
 
-The hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back. When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.
+The hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back; trying says *This machine is not connected. Is inyon running on it?* When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.
 
 ## Updating machines
 

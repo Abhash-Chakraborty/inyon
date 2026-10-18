@@ -1,3 +1,5 @@
+import { HttpError } from './http-error.ts'
+
 /**
  * Machines running `inyon` keep one outbound WebSocket to the hub. Commands travel over it
  * as JSON frames, so the machine never has to accept incoming connections.
@@ -105,7 +107,8 @@ class NodeLinks {
   /** Starts an operation; `onMsg` receives its frames until you call the returned `done`. */
   start(hostId: string, op: Record<string, unknown>, onMsg: Handler) {
     const ws = this.sockets.get(hostId)
-    if (!ws) throw new Error('This machine is not connected. Is inyon running on it?')
+    // the hub is fine, the machine isn't there: 503, which the app shows and may retry
+    if (!ws) throw new HttpError(503, 'This machine is not connected. Is inyon running on it?')
     const id = String(++this.seq)
     const key = `${hostId}:${id}`
     this.handlers.set(key, { ws, onMsg })

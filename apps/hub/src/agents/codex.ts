@@ -2,6 +2,7 @@ import type { AgentStatus, ChatItem } from '@inyon/protocol'
 import { Host, shq } from '../hosts/host.ts'
 import { statusFromCodex } from './status.ts'
 import type { TranscriptMeta } from '../claude/transcript.ts'
+import { sha256Hex } from '../platform/store.ts'
 
 type Draft = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, 'seq'> : never) : never
 
@@ -509,8 +510,10 @@ export function normalizeCodex(e: any, meta: TranscriptMeta): Draft[] {
   if (!p) return []
   const ts = e.timestamp ?? ''
   // the record's own id where it has one: the live copy of a reply (streamed before it's written
-  // down) carries the same id, so the app can tell the two apart
-  const uuid = typeof p.id === 'string' && p.id ? p.id : `${ts}:${p.call_id ?? p.type}:${Math.random().toString(36).slice(2, 7)}`
+  // down) carries the same id, so the app can tell the two apart. Without one, the id comes from
+  // what the record says (the first 8 hex digits of SHA-256 over the payload as JSON), so every
+  // read of the file names it the same
+  const uuid = typeof p.id === 'string' && p.id ? p.id : `${ts}:${p.call_id ?? p.type}:${sha256Hex(JSON.stringify(p)).slice(0, 8)}`
   const base = { uuid, ts }
   if (e.type === 'session_meta') {
     meta.cwd = p.cwd

@@ -45,3 +45,8 @@ test('the same holds when the old socket reports its close straight away', async
   expect(nodeLinks.isUp(config.id)).toBe(true)
   nodeLinks.detach(config.id, next)
 })
+
+test("acting on a machine that isn't connected answers 503 with a sentence the app can show", async () => {
+  const config: any = { id: 'not-connected', kind: 'node' }
+  await expect(nodeBackend.exec(config, 'true', {})).rejects.toMatchObject({ status: 503, message: 'This machine is not connected. Is inyon running on it?' })
+})

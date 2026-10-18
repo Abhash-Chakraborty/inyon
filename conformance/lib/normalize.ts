@@ -21,8 +21,6 @@ const SHA256 = /\b[0-9a-f]{64}\b/g
 const ISO_TIME = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b/g
 /** Terminal views are named inyon-view-<6 random characters> (apps/hub/src/terminal/terminal.ts). */
 const VIEW = /\binyon-view-[a-z0-9]{1,8}\b/g
-/** "<timestamp>:<record type>:<up to 5 random characters>" (apps/hub/src/agents/codex.ts normalizeCodex) */
-const CODEX_ID = /\b(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z:[\w.-]+):[a-z0-9]{1,5}\b/g
 /** Paste buffers are named inyon-<uuid> (apps/hub/src/tmux/tmux.ts typeText); the uuid rule numbers them. */
 
 /**
@@ -52,20 +50,6 @@ export const RULES: Rule[] = [
     name: 'view-name',
     why: 'Terminal view sessions get a random name (Math.random in terminal.ts).',
     string: (s) => s.replace(VIEW, 'inyon-view-<random>'),
-  },
-  {
-    name: 'codex-item-id',
-    why: 'A Codex record without an id of its own gets one made of its time, its type and 5 random characters, new on every read (apps/hub/src/agents/codex.ts:513). Numbered, so identity is kept.',
-    string: (s, n) => s.replace(CODEX_ID, (m, head) => `${head}:${n.placeholder('rand', m)}`),
-  },
-  {
-    name: 'mode-while-asked',
-    why: "While Claude asks something its footer is hidden, so the screen doesn't say the mode. A refresh after output keeps the last mode, the 4 s poll drops it (apps/hub/src/hosts/registry.ts:863 against :552), and which of the two ran last before a step settles is timing. Left out of an agent that is waiting.",
-    object: (o) => {
-      if (o.state !== 'waiting' || typeof o.kind !== 'string' || !('mode' in o)) return
-      const { mode: _m, ...rest } = o
-      return rest
-    },
   },
   {
     name: 'iso-time',

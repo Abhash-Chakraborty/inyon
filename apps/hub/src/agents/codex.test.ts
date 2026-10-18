@@ -326,3 +326,15 @@ describe('codex sub-agents', () => {
     expect(msg).toMatchObject({ kind: 'notice', subtype: 'task', level: 'info', text: 'pong_only: pong' })
   })
 })
+
+test('a record without an id gets the same id on every read, and two records get two', () => {
+  const said = (text: string, timestamp = '2026-01-12T09:00:00.000Z') => ({ timestamp, type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] } })
+  const idOf = (e: any) => normalizeCodex(e, newMeta())[0]?.uuid
+  const first = idOf(said('Done.'))
+  expect(first).toBeDefined()
+  expect(idOf(said('Done.'))).toBe(first!)
+  expect(idOf(said('Done, and the tests pass.'))).not.toBe(first!)
+  expect(idOf(said('Done.', '2026-01-12T09:00:01.000Z'))).not.toBe(first!)
+  // a record with its own id keeps it
+  expect(idOf({ ...said('Done.'), payload: { ...said('Done.').payload, id: 'msg_1' } })).toBe('msg_1')
+})

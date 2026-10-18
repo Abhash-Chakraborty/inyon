@@ -65,6 +65,9 @@ function inLane<T>(hostId: string, paneId: string, fn: () => Promise<T>): Promis
  * `steer`: while Codex works, hand it the message in the middle of its turn rather than queueing it.
  */
 export async function sendMessage(hostId: string, paneId: string, text: string, fromComposer = false, id = `hub-${crypto.randomUUID()}`, setting = false, steer = false) {
+  // refused before it's followed: an empty send that was would be matched to whatever the agent
+  // writes next and show as delivered
+  checkSend(hostId, paneId, text)
   const w = watchers.get(hostId, paneId)
   w.trackSend(id, text, setting)
   try {
@@ -119,6 +122,13 @@ async function emptyInput(hostId: string, paneId: string, draft: string) {
     }
   }
   throw new HttpError(409, "Couldn't clear what was already in the agent's input box, so nothing was sent. Open the terminal to check.")
+}
+
+/** What makes a message unsendable before anything is typed (sendMessageToPane checks the same). */
+function checkSend(hostId: string, paneId: string, text: string) {
+  const { found } = agentPane(hostId, paneId)
+  if (!found.pane.agent) throw new HttpError(409, 'No agent is running in this pane')
+  if (!text.trim()) throw new HttpError(400, 'Message is empty')
 }
 
 /**

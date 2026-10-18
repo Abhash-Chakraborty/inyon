@@ -19,6 +19,7 @@ import { opencodeEndpoint, viaOpenCodeApi } from '../agents/opencode.ts'
 import { OCDB, guessOpenCodeSession, ocdbSession } from '../agents/opencode-db.ts'
 import { LiveTmux } from '../tmux/live.ts'
 import { nodeLinks } from './node-link.ts'
+import { HttpError } from './http-error.ts'
 import { nodeUpdates } from './node-update.ts'
 import { bareTitle, nameTaken, ownsTitle, pendingName, sessionName } from './names.ts'
 import { pruneChats } from '../claude/chat-cache.ts'
@@ -103,6 +104,18 @@ export function offlineAlertDue(o: { since?: number; notified?: boolean; now: nu
   if (!o.since || o.notified || o.held || !o.online) return false
   return o.now - Math.max(o.since, o.heldUntil) >= OFFLINE_NOTIFY_MS
 }
+
+/**
+ * Whether a poll changed anything the apps show, so they're sent a new overview. Every poll moves
+ * the clock (`updatedAt`, `lastSeen`) and the response time; sent for that alone, each app got a
+ * full overview every 4 s. `lastSeen` only shows while a machine is offline, and the overview
+ * sent when it goes offline carries the latest one.
+ */
+export function overviewChanged(prev: HostState, next: HostState) {
+  const still = (s: HostState) => JSON.stringify({ ...s, updatedAt: 0, latencyMs: 0, lastSeen: s.lastSeen ? 1 : 0 })
+  return still(prev) !== still(next)
+}
+
 const snapshotKey = (id: string) => `snapshots/${keyPart(id)}`
 
 /** The last state seen from a machine, so it still shows its sessions while it's unreachable. */
@@ -382,9 +395,7 @@ class Registry {
       this.healIntegration(rt, pr).catch((e) => console.error('integration heal:', e?.message ?? e))
       // live updates for every tmux session that has an agent in it
       rt.live?.sync(pr.sessions.filter((s) => s.windows.some((w) => w.panes.some((p) => p.agent))).map((s) => s.id))
-      if (JSON.stringify({ ...prev, updatedAt: 0, latencyMs: 0 }) !== JSON.stringify({ ...rt.state, updatedAt: 0, latencyMs: 0 })) {
-        this.emit({ type: 'overview' })
-      }
+      if (overviewChanged(prev, rt.state)) this.emit({ type: 'overview' })
     } catch (err) {
       rt.failures++
       next = Math.min(Math.max(MAX_BACKOFF_MS, pollMs), pollMs * 2 ** Math.min(rt.failures, 4))
@@ -555,7 +566,7 @@ class Registry {
       if (lines) {
         const sc = parseScreen(lines, p.width, proc.kind)
         rt.screens.set(p.id, sc)
-        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), was)
+        applyScreen(p, sc, rt.host, lines, liveHook(pr, p.id), was, info.mode)
         await applyOpenCodeLive(rt.host, p, sc)
       }
       // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
@@ -785,7 +796,7 @@ class Registry {
         const before = JSON.stringify(pane.agent)
         const sc = parseScreen(lines, pane.width, pane.agent.kind)
         rt.screens.set(id, sc)
-        applyScreen(pane, sc, rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent)
+        applyScreen(pane, sc, rt.host, lines, rt.probe && liveHook(rt.probe, id), pane.agent, this.offScreenMode(rt, id, pane.agent))
         await applyOpenCodeLive(rt.host, pane, sc)
         if (JSON.stringify(pane.agent) !== before) changed = true
       }
@@ -795,6 +806,17 @@ class Registry {
         this.emit({ type: 'overview' })
       }
     } catch {}
+  }
+
+  /**
+   * A pane's mode as far as it's known without its screen, which is what the poll starts from:
+   * Codex's permission preset, Antigravity's own status line.
+   */
+  private offScreenMode(rt: Runtime, paneId: string, agent: AgentPaneInfo) {
+    if (agent.kind === 'codex') return rt.statusCache.get(agent.pid)?.permission
+    const proc = rt.probe?.agentProcs.get(paneId)
+    if (agent.kind === 'antigravity' && proc) return agyStatus(rt.probe!, paneId, proc.startedAt, agent.sessionId)?.mode
+    return undefined
   }
 
   /** Follows the hook event log on the machine for instant updates. */
@@ -851,16 +873,19 @@ export function backgroundAfter(screen: string | null | undefined, was: { pid: n
 /**
  * Copies what the screen says (state, mode, prompt summary) onto a pane's agent info. For Claude,
  * an answered prompt or a turn its hooks say is running keeps the state at working.
+ * `base` is the mode known without the screen (see offScreenMode).
  */
-function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[] = [], hook?: HookPaneState, was?: AgentPaneInfo) {
+function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host, lines: string[], hook: HookPaneState | undefined, was: AgentPaneInfo | undefined, base: string | undefined) {
   const info = p.agent!
+  // a prompt covers the footer that names the mode, so the last one seen stands until it's back
+  const kept = sc.prompt && was?.pid === info.pid ? was.mode : undefined
   if (isDriving(host.id, p.id)) sc = { ...sc, prompt: undefined }
   // a question Codex asked mid-turn waits for you like a prompt does, even while it keeps working
   const shown = sc.prompt || sc.questions ? 'waiting' : sc.working ? 'working' : 'idle'
   info.state = info.kind === 'claude' ? turns.state(turnKey(host.id, p.id), shown, lines.join('\n'), hook) : shown
   if (info.kind === 'opencode') applyOpenCodeScreen(info, sc, host, was)
   else {
-    info.mode = sc.mode ?? info.mode
+    info.mode = sc.mode ?? kept ?? base
     // a session without live numbers still shows its model and effort on screen
     // agy's and Codex's footers are redrawn the moment you switch, so they beat numbers written earlier
     const live = info.kind === 'antigravity' || info.kind === 'codex'
@@ -890,11 +915,7 @@ export const publicConfig = ({ tokenHash: _t, ...c }: HostConfig): HostConfig =>
 export const PAIR_TOKEN_MS = 24 * 3600_000
 export const tokenExpired = (c: HostConfig, now = Date.now()) => c.kind === 'node' && !c.pairedAt && !!c.tokenIssuedAt && now - c.tokenIssuedAt > PAIR_TOKEN_MS
 
-export class HttpError extends Error {
-  constructor(public status: number, message: string) {
-    super(message)
-  }
-}
+export { HttpError }
 
 export const registry = new Registry()
 
