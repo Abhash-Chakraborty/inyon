@@ -198,8 +198,10 @@ From 0.19 the link and the hub connection run inside `inyon`. If something works
 
 ```sh
 export INYON_LEGACY_ENGINE=1    # in your shell's startup file, for the commands you type
-inyon service install           # downloads the engine and writes the variable into the service
+inyon service install           # writes the variable into the service and restarts it
 ```
+
+The service downloads the Bun engine when it starts, if it isn't there yet.
 
 On Windows set it for your user, so the logon task sees it too:
 
@@ -208,5 +210,7 @@ On Windows set it for your user, so the logon task sees it too:
 $env:INYON_LEGACY_ENGINE = "1"
 inyon service install
 ```
+
+Here `inyon service install` downloads the Bun engine itself and puts it in place of the copy.
 
 `inyon service install` also leaves a note, `~/.inyon/node/legacy-engine`, so a link you start from a terminal and an update that runs on its own stay on the Bun engine even where the variable isn't set. `inyon doctor` says which engine is in use. To go back to the built-in one, remove the variable and run `inyon service install` again, which removes the note.
