@@ -43,6 +43,10 @@ jobs:
       - run: cargo check --target wasm32-unknown-unknown -p inyon-link
       # the machine side (from 0.19): files, answers and wire messages as the Bun engine had them
       - run: cargo test -p inyon-engine
+      # the hub's readers (from 0.20): every shared screen capture read as the TS hub reads it
+      # (fixtures/expected), plus the TS tests ported; like the link, they build as wasm too
+      - run: cargo test -p inyon-core
+      - run: cargo check --target wasm32-unknown-unknown -p inyon-core
 
   # the Rust engine as old phones, hubs and scripts meet it: apps/node's tests that run the engine
   # as a program, pointed at this build under the name inyon-engine, against the real Bun hub

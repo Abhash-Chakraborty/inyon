@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use ts_rs::TS;
 
+use crate::js::Num;
 use crate::types::StringMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, TS)]
@@ -86,14 +87,14 @@ pub struct SlashCommand {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
 pub struct AgentModel {
     pub id: String,
     pub label: String,
     pub note: Option<String>,
-    pub context: Option<u64>,
+    pub context: Option<Num>,
     /// Advertised choices for this model; empty means there is no adjustable effort.
     pub efforts: Option<Vec<String>>,
     /// The level the CLI uses when none is chosen.
@@ -117,7 +118,7 @@ pub struct ModeOption {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
 pub struct AgentCatalog {
@@ -201,7 +202,7 @@ pub struct AgentSet {
 /// Everything Inyon knows about one coding agent. `args` holds the sources of the TypeScript
 /// regular expressions (no flags), and `set` the templates of its functions.
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(optional_fields)]
 pub struct AgentDef {
