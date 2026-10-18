@@ -41,3 +41,12 @@ test.skipIf(shellFakes)('a token the hub doesn\'t know (a hub that lost its data
   const r = await run(() => new Response('Unknown token', { status: 403 }), 4_000)
   expect(r).toEqual({ code: 'still running', cli: '' })
 }, 10_000)
+
+test('a ws:// hub on a public address is refused like http://, before the token goes anywhere', () => {
+  const home = fs.mkdtempSync(path.join(dir, 'home-'))
+  for (const hub of ['ws://hub.example.com', 'http://hub.example.com']) {
+    const p = Bun.spawnSync([...ENGINE, 'connect'], { env: { ...process.env, HOME: home, INYON_HUB: hub, INYON_TOKEN: 'tok', INYON_ALLOW_INSECURE: '' }, stdout: 'pipe', stderr: 'pipe' })
+    expect(p.exitCode).toBe(2)
+    expect(p.stderr.toString()).toContain('Refusing to send the token over plain http to hub.example.com')
+  }
+})

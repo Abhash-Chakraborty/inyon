@@ -17,11 +17,27 @@ use crate::{ops, VERSION, WIN};
 
 /// Checks a hub address; refuses to send a token over plain http to a public address.
 pub fn hub_url(hub: &str) -> Url {
-    let Ok(url) = Url::parse(hub) else { fail(&format!("{hub} isn't a web address."), 2) };
-    if url.scheme() == "http" && !crate::hub::private_host(&url) && env_var("INYON_ALLOW_INSECURE").is_none() {
-        fail(&format!("Refusing to send the token over plain http to {}. Use https, or a private network address.", url.host_str().unwrap_or("")), 2);
+    checked_hub(hub, env_var("INYON_ALLOW_INSECURE").is_some()).unwrap_or_else(|e| fail(&e, 2))
+}
+
+/// Whether the hub is reached with TLS: https and wss are, http and ws aren't.
+fn secure(url: &Url) -> bool {
+    matches!(url.scheme(), "https" | "wss")
+}
+
+fn checked_hub(hub: &str, insecure_ok: bool) -> Result<Url, String> {
+    let url = Url::parse(hub).map_err(|_| format!("{hub} isn't a web address."))?;
+    if !secure(&url) && !crate::hub::private_host(&url) && !insecure_ok {
+        return Err(format!("Refusing to send the token over plain http to {}. Use https, or a private network address.", url.host_str().unwrap_or("")));
     }
-    url
+    Ok(url)
+}
+
+/// The hub's WebSocket and its plain address for `/node`, from any of http, https, ws or wss.
+fn node_urls(url: &Url) -> (String, String) {
+    let host = host_of(url);
+    let (ws, http) = if secure(url) { ("wss", "https") } else { ("ws", "http") };
+    (format!("{ws}://{host}/node"), format!("{http}://{host}/node"))
 }
 
 /// `host[:port]` as `URL.host` gives it (no port when it's the scheme's own).
@@ -55,7 +71,7 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
     }
     let url = hub_url(&hub);
     let host = host_of(&url);
-    let ws_url = format!("{}://{host}/node", if url.scheme() == "https" { "wss" } else { "ws" });
+    let (ws_url, http_url) = node_urls(&url);
     // who's running, for `inyon update` and the hub's update script: they wait for this file to name
     // the new version, and stop the copy it names when there's no service manager
     if std::fs::create_dir_all(node_dir()).is_ok() {
@@ -65,7 +81,7 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
     let mut attempt: u32 = 0;
     loop {
         let (code, opened) = session(&ws_url, &host, &bearer, &mut attempt).await;
-        if code == 4001 || (!opened && removed_there(&url, &host, &bearer).await) {
+        if code == 4001 || (!opened && removed_there(&http_url, &bearer).await) {
             leave(&format!("This machine was removed from {host}.")).await;
         }
         if code == 4003 {
@@ -137,9 +153,8 @@ async fn session(ws_url: &str, host: &str, bearer: &str, attempt: &mut u32) -> (
 }
 
 /// A hub answers 410 to a machine removed while it was off (a token it never knew gets 403).
-async fn removed_there(url: &Url, host: &str, bearer: &str) -> bool {
-    let target = format!("{}://{host}/node", url.scheme());
-    crate::http::fetch("GET", target, vec![("authorization".into(), bearer.to_string())], None, Duration::from_secs(30)).await.is_ok_and(|r| r.status == 410)
+async fn removed_there(target: &str, bearer: &str) -> bool {
+    crate::http::fetch("GET", target.to_string(), vec![("authorization".into(), bearer.to_string())], None, Duration::from_secs(30)).await.is_ok_and(|r| r.status == 410)
 }
 
 /// The hub removed this machine. `inyon disconnect` takes the background service down and forgets
@@ -223,4 +238,22 @@ pub fn write_private(file: &std::path::Path, data: &[u8]) -> std::io::Result<()>
     }
     use std::io::Write;
     o.open(file)?.write_all(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_ws_address_is_plain_and_a_wss_one_is_tls_like_http_and_https() {
+        let urls = |h: &str| node_urls(&checked_hub(h, false).unwrap());
+        assert_eq!(urls("https://hub.example.com"), ("wss://hub.example.com/node".into(), "https://hub.example.com/node".into()));
+        assert_eq!(urls("wss://hub.example.com"), ("wss://hub.example.com/node".into(), "https://hub.example.com/node".into()));
+        assert_eq!(urls("ws://100.64.1.2:4777"), ("ws://100.64.1.2:4777/node".into(), "http://100.64.1.2:4777/node".into()));
+        // plain ws to a public address carries the token in the clear, as http would
+        for plain in ["http://hub.example.com", "ws://hub.example.com"] {
+            assert!(checked_hub(plain, false).unwrap_err().starts_with("Refusing to send the token over plain http"), "{plain}");
+            assert!(checked_hub(plain, true).is_ok());
+        }
+    }
 }
