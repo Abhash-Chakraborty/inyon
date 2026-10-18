@@ -33,6 +33,7 @@
     <h2 id="files" style="margin-top:0">Every file</h2>
     <p>Each system needs two files: <code>inyon</code>, the small command you run, and <code>inyon-engine</code>, which does the work behind it. Most people never download these by hand; the installer does it.</p>
     {{downloads}}
+    <p>The <code>inyon-skill-*.tar.gz</code> files are <a href="/docs/skills/">agent skills</a>, such as Blueprint for plan pages. Install one with <code>inyon skill add &lt;name&gt;</code>, or unpack it into your agent's skills folder.</p>
     <h2 id="verify">Checking a download</h2>
     <p>The release's list of checksums is signed with <a class="ext" href="https://jedisct1.github.io/minisign/">minisign</a>. Check the list's signature against Inyon's release key, then the files you downloaded against the list:</p>
     <div class="code"><span class="lang">shell</span><button class="copy" type="button" aria-label="Copy">Copy</button><pre><code>curl -fsSLO https://inyon.abhashchakraborty.tech/download/SHA256SUMS

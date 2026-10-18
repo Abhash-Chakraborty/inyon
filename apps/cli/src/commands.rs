@@ -1027,6 +1027,82 @@ fn write_secret(file: &std::path::Path, content: &str) -> std::io::Result<()> {
     o.open(file)?.write_all(content.as_bytes())
 }
 
+// ---------- skill ----------
+
+/// `~/…` for a path under the home folder, so the lines stay short.
+fn home_short(p: &std::path::Path) -> String {
+    let home = paths::home();
+    match p.strip_prefix(&home) {
+        Ok(rest) => format!("~/{}", rest.display()).replace('\\', "/"),
+        Err(_) => p.display().to_string(),
+    }
+}
+
+fn skill_dirs(to: Option<PathBuf>) -> Vec<PathBuf> {
+    to.map(|d| vec![d]).unwrap_or_else(|| crate::skills::targets(&paths::home()))
+}
+
+pub fn skill_list() -> Outcome {
+    let (_, sums) = crate::skills::release(Platform::current())?;
+    let dirs = skill_dirs(None);
+    let names = crate::skills::available(&sums);
+    if names.is_empty() {
+        return Ok(json!({ "skills": [], "message": "This release has no skills to install." }));
+    }
+    let rows: Vec<Value> = names
+        .iter()
+        .map(|n| {
+            let at: Vec<String> = crate::skills::installed(&dirs, n).iter().map(|p| home_short(p)).collect();
+            json!({ "name": n, "installed": at })
+        })
+        .collect();
+    let lines: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            let at: Vec<&str> = r["installed"].as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+            format!("  {:<12} {}", r["name"].as_str().unwrap_or(""), if at.is_empty() { "not installed".to_string() } else { format!("in {}", at.join(", ")) })
+        })
+        .collect();
+    Ok(json!({ "skills": rows, "message": format!("Skills in this release:\n{}\nInstall one with: inyon skill add <name>", lines.join("\n")) }))
+}
+
+pub fn skill_add(name: &str, to: Option<PathBuf>, force: bool, json: bool) -> Outcome {
+    if !crate::skills::valid_name(name) {
+        return Err(format!("\"{name}\" isn't a skill name. See them with: inyon skill list"));
+    }
+    let (base, sums) = crate::skills::release(Platform::current())?;
+    let log = |l: &str| {
+        if !json {
+            eprint!("{l}");
+        }
+    };
+    let gz = crate::skills::download(&base, &sums, name, &log)?;
+    let files = crate::skills::read_tarball(&gz, name)?;
+    let version = update::latest_version(&base).unwrap_or_default();
+    let mut done = Vec::new();
+    for dir in skill_dirs(to) {
+        done.push(home_short(&crate::skills::install(&dir, name, &files, &version, force)?));
+    }
+    Ok(json!({
+        "name": name,
+        "installed": done,
+        "message": format!("Installed the {name} skill in:\n  {}\nYour agents pick it up in their next session.", done.join("\n  ")),
+    }))
+}
+
+pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
+    let mut gone = Vec::new();
+    for dir in skill_dirs(to) {
+        if crate::skills::remove(&dir, name)? {
+            gone.push(home_short(&dir.join(name)));
+        }
+    }
+    if gone.is_empty() {
+        return Err(format!("No copy of {name} that Inyon installed was found. A skill you added yourself stays where you put it."));
+    }
+    Ok(json!({ "name": name, "removed": gone, "message": format!("Removed {name} from:\n  {}", gone.join("\n  ")) }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
