@@ -23,15 +23,16 @@ fn log(msg: &str) {
     eprintln!("InyonSpike: {msg}");
 }
 
-/// Milliseconds since this process started (from /proc), so cold start can be read from inside.
-fn since_process_start() -> Option<u64> {
-    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
-    // the command name may hold spaces; fields after the closing paren are fixed
-    let after = &stat[stat.rfind(')')? + 2..];
-    let start_ticks: f64 = after.split_whitespace().nth(19)?.parse().ok()?;
-    let uptime: f64 = std::fs::read_to_string("/proc/uptime").ok()?.split_whitespace().next()?.parse().ok()?;
-    // USER_HZ is 100 on Android and Linux
-    Some(((uptime - start_ticks / 100.0) * 1000.0).max(0.0) as u64)
+/// Milliseconds since Android started this process, so cold start can be read from inside.
+fn since_process_start() -> Option<i64> {
+    #[cfg(target_os = "android")]
+    {
+        android::ms_since_process_start()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        None
+    }
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -51,7 +52,7 @@ fn base64(bytes: &[u8]) -> String {
 }
 
 fn main() {
-    log(&format!("main started {} ms after the process", since_process_start().unwrap_or(0)));
+    log(&format!("main started {} ms after the process", since_process_start().unwrap_or(-1)));
     let fonts = format!(
         "@font-face{{font-family:'Geist';font-weight:100 900;font-display:block;src:url(data:font/woff2;base64,{})format('woff2')}}\
          @font-face{{font-family:'Geist Mono';font-weight:100 900;font-display:block;src:url(data:font/woff2;base64,{})format('woff2')}}",
@@ -111,7 +112,7 @@ fn App() -> Element {
     // after the first render: open the terminal, then start the keep-alive service
     use_hook(|| {
         spawn(async move {
-            log(&format!("first render {} ms after the process", since_process_start().unwrap_or(0)));
+            log(&format!("first render {} ms after the process", since_process_start().unwrap_or(-1)));
             let mut ev = document::eval(TERM_JS);
             loop {
                 let Ok(line) = ev.recv::<String>().await else {
@@ -119,7 +120,7 @@ fn App() -> Element {
                     break;
                 };
                 if line.contains("\"term-ready\"") {
-                    log(&format!("terminal ready {} ms after the process: {line}", since_process_start().unwrap_or(0)));
+                    log(&format!("terminal ready {} ms after the process: {line}", since_process_start().unwrap_or(-1)));
                     keep_alive();
                 } else if line.contains("\"term-input\"") {
                     log(&format!("terminal input: {line}"));

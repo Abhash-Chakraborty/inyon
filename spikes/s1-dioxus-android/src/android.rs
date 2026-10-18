@@ -16,6 +16,17 @@ pub fn log(msg: &str) {
     unsafe { __android_log_write(4, c"InyonSpike".as_ptr(), text.as_ptr()) };
 }
 
+/// Process.getStartUptimeMillis() against SystemClock.uptimeMillis(): reading /proc/uptime is
+/// denied to apps.
+pub fn ms_since_process_start() -> Option<i64> {
+    let ctx = ndk_context::android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.ok()?;
+    let mut env = vm.attach_current_thread().ok()?;
+    let start = env.call_static_method("android/os/Process", "getStartUptimeMillis", "()J", &[]).ok()?.j().ok()?;
+    let now = env.call_static_method("android/os/SystemClock", "uptimeMillis", "()J", &[]).ok()?.j().ok()?;
+    Some(now - start)
+}
+
 /// Starts KeepAliveService (android/MainActivity.kt) as a foreground service: the same call
 /// InyonDevicePlugin makes today, built here from Rust.
 pub fn start_keep_alive(text: &str) -> Result<(), String> {

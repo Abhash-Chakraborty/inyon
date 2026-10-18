@@ -12,7 +12,10 @@ mkdir -p "$out"
 sum="$out/summary.md"
 : > "$sum"
 note() { echo "$*" | tee -a "$sum"; }
-shot() { adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true; }
+shot() {
+  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1
+  adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true
+}
 spike_log() { adb logcat -d -s InyonSpike:I; }
 wait_log() { # pattern seconds
   for _ in $(seq 1 "$2"); do spike_log | grep -q "$1" && return 0; sleep 1; done
@@ -20,6 +23,9 @@ wait_log() { # pattern seconds
 }
 
 adb wait-for-device
+# a slow emulator often shows "Pixel Launcher isn't responding" over everything; hide such dialogs
+adb shell settings put global hide_error_dialogs 1
+adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null
 adb install -r "$apk" || { note "install failed"; exit 1; }
 adb shell pm grant $pkg android.permission.POST_NOTIFICATIONS || true
 note "## Emulator (API 34, x86_64, pixel_6, swiftshader)"
@@ -63,50 +69,64 @@ shot 01-chat
 
 # DevTools for clicks and reading the page
 adb forward tcp:9333 localabstract:webview_devtools_remote_$pid > /dev/null
-cdp() { bun "$here/cdp.ts" 9333 "$@"; }
+cdp() { timeout 25 bun "$here/cdp.ts" 9333 "$@"; }
+click() { cdp eval "document.querySelector('$1').click()" > /dev/null; }
 for _ in $(seq 1 20); do curl -s http://127.0.0.1:9333/json > /dev/null && break; sleep 1; done
 note "page metrics: \`$(cdp eval 'JSON.stringify(window.__spike)')\`"
 note ""
+# where the WebView sits on screen, so a page position becomes an `input tap` position
+adb shell uiautomator dump /sdcard/ui.xml > /dev/null 2>&1
+origin=$(adb shell cat /sdcard/ui.xml | tr -d '\r' | grep -o 'class="android.webkit.WebView"[^>]*bounds="\[[0-9]*,[0-9]*\]' | grep -o '\[[0-9]*,[0-9]*\]' | head -1 | tr -d '[]' | tr ',' ' ')
+origin=${origin:-0 0}
+note "WebView top-left on screen: $origin"
+tap() { # a real finger tap on the element, through the input system
+  local r ox oy
+  r=$(cdp rect "$1") || return 1
+  read -r ox oy <<< "$origin"
+  set -- $r
+  adb shell input tap $(( ox + $1 )) $(( oy + $2 ))
+}
 
-cdp eval "document.querySelector('[aria-label=Terminal]').click()" > /dev/null
-sleep 2
+click '[aria-label=Terminal]'
+sleep 5
+note "terminal pane visible: $(cdp eval "getComputedStyle(document.querySelector('.term')).visibility")"
 shot 02-terminal
-cdp eval "document.querySelector('[aria-label=Chat]').click()" > /dev/null
-cdp eval "document.querySelector('[aria-label=\"Open sidebar\"]').click()" > /dev/null
-sleep 1.5
+click '[aria-label=Chat]'
+click '[aria-label="Open sidebar"]'
+sleep 2
 shot 03-sidebar
-cdp eval "document.querySelector('.scrim').click()" > /dev/null
+click '.scrim'
 sleep 1
 
-# soft keyboard: a real touch on the composer should bring it up
+# soft keyboard: a real tap on the composer should bring it up and type through the IME
 adb logcat -c
-cdp tap 'textarea' | tee -a "$sum"
+tap 'textarea'
 sleep 3
 kb=$(adb shell dumpsys input_method | tr -d '\r' | grep -oE 'mInputShown=(true|false)' | head -1)
 note "keyboard after a tap on the composer: ${kb:-unknown}"
+note "focused element: $(cdp eval 'document.activeElement.tagName')"
 adb shell input text 'hello%sfrom%sthe%skeyboard'
 sleep 2
 shot 04-keyboard
 typed=$(spike_log | grep -o 'composer: .*' | tail -1)
 note "Rust saw: \`${typed:-nothing}\`"
-cdp eval "document.querySelector('[aria-label=Send]').click()" > /dev/null
+tap '[aria-label=Send]'
 sleep 1
 sent=$(spike_log | grep -o 'sent: .*' | tail -1)
 note "after Send: \`${sent:-nothing}\`"
-adb shell input keyevent KEYCODE_BACK
-sleep 1
+cdp eval 'document.activeElement.blur()' > /dev/null
 
 # typing into the terminal (xterm's own hidden textarea)
-cdp eval "document.querySelector('[aria-label=Terminal]').click()" > /dev/null
-sleep 1
-cdp tap '#term' > /dev/null
+click '[aria-label=Terminal]'
+sleep 3
+tap '.term'
 sleep 2
 adb shell input text 'ls%s-la'
 adb shell input keyevent KEYCODE_ENTER
 sleep 2
 shot 05-terminal-typing
-note "terminal input seen by Rust: \`$(spike_log | grep -o 'terminal input: .*' | head -3 | tr '\n' ' ')\`"
-adb shell input keyevent KEYCODE_BACK
+note "terminal input seen by Rust: \`$(spike_log | grep -o 'terminal input: .*' | head -4 | tr '\n' ' ')\`"
+cdp eval 'document.activeElement.blur()' > /dev/null
 
 # the keep-alive service, started from Rust over JNI
 fgs=$(adb shell dumpsys activity services $pkg | tr -d '\r')
