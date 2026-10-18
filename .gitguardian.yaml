@@ -6,3 +6,7 @@ secret:
   ignored_paths:
     - fixtures/link/**
     - spikes/s4-wasm/src/identity.rs
+    # Web Push: the tests use the keys published in RFC 8291 Appendix A, the standard's own
+    # example, so the encryption can be checked byte for byte. Nothing private to anyone.
+    - crates/inyon-engine/src/webpush.rs
+    - crates/inyon-engine/src/push.rs
