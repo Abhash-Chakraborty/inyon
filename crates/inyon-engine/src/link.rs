@@ -266,13 +266,14 @@ pub fn exited(pid: u32) -> bool {
     stat.rfind(") ").is_some_and(|at| stat[at + 2..].starts_with('Z')) && stat.starts_with(&format!("{pid} ("))
 }
 
-/// Whether a process with this pid runs (kill(pid, 0) as Node does it).
+/// Whether a process with this pid runs and is ours to signal (kill(pid, 0) as Node does it). A
+/// pid owned by someone else (EPERM) counts as gone, as Node's throw did: a stale pid that now
+/// belongs to root mustn't keep the link from starting; the port check after it still sees a link.
 pub fn alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         // SAFETY: signal 0 only checks that the process exists
-        let r = unsafe { libc::kill(pid as i32, 0) };
-        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        unsafe { libc::kill(pid as i32, 0) == 0 }
     }
     #[cfg(windows)]
     {
@@ -1420,6 +1421,17 @@ mod tests {
             forget_phone(&key);
             seen.join().unwrap();
             assert!(!list_phones().contains_key(&key), "the phone came back after it was forgotten");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_pid_that_belongs_to_someone_else_is_not_a_running_link() {
+        assert!(alive(std::process::id()));
+        // pid 1 is root's; as anyone else, kill(1, 0) says EPERM
+        // SAFETY: geteuid only reads this process's user
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(!alive(1));
         }
     }
 
