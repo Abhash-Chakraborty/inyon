@@ -88,7 +88,9 @@ impl Tmux {
     /// tmux 3.2 shrinks the session's window to the control client's 80x24 when no terminal is
     /// attached (ignore-size only counts while another client is there, and 3.3 stopped control
     /// clients from sizing windows at all). On 3.2 the window's size is read first and the client
-    /// then given that size with `refresh-client -C`, which puts the window back.
+    /// then given that size with `refresh-client -C`, which puts the window back. That holds the
+    /// session's windows at one size while the client is attached; a terminal that attaches later
+    /// takes over as the latest client.
     pub fn attach(&self, session: &str, read_only: bool) -> io::Result<(Control, Receiver<Notification>)> {
         let v = self.version().unwrap_or(Version { major: 3, minor: 2 });
         let size = if v.sizes_from_control_clients() {
@@ -101,7 +103,23 @@ impl Tmux {
         c.args(attach_args(v, session, read_only));
         let (c, rx) = Control::spawn(c)?;
         if let Some(size) = size {
-            c.cmd(format!("refresh-client -C {size}")).map_err(|e| io::Error::other(e.to_string()))?;
+            // the shrink lands a moment after the attach, and a -C sent before it is undone, so
+            // watch the size for a little while and put it back whenever it differs
+            let q = format!("display-message -p -t {} '#{{window_width}}x#{{window_height}}'", quote(session));
+            let mut steady = 0;
+            for _ in 0..20 {
+                let now = c.cmd(q.as_str()).map(|r| r.text()).map_err(|e| io::Error::other(e.to_string()))?;
+                if now.trim() == size {
+                    steady += 1;
+                    if steady == 3 {
+                        break;
+                    }
+                } else {
+                    steady = 0;
+                    c.cmd(format!("refresh-client -C {size}")).map_err(|e| io::Error::other(e.to_string()))?;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(30));
+            }
         }
         Ok((c, rx))
     }
