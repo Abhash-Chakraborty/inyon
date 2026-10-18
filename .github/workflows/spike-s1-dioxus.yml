@@ -53,8 +53,8 @@ jobs:
           base="https://github.com/DioxusLabs/dioxus/releases/download/v$DX_VERSION"
           curl -fsSLO "$base/dx-x86_64-unknown-linux-gnu.tar.gz"
           curl -fsSLO "$base/dx-x86_64-unknown-linux-gnu.sha256"
-          want=$(grep -o '^[0-9a-f]\{64\}' dx-x86_64-unknown-linux-gnu.sha256)
-          echo "$want  dx-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c
+          # the file lists the .tar.gz and the .zip
+          grep ' dx-x86_64-unknown-linux-gnu.tar.gz$' dx-x86_64-unknown-linux-gnu.sha256 | sha256sum -c
           mkdir -p dx && tar xzf dx-x86_64-unknown-linux-gnu.tar.gz -C dx
           echo "$RUNNER_TEMP/dx" >> "$GITHUB_PATH"
       - run: dx --version
