@@ -6,6 +6,8 @@ description: How a computer pairs with your phone, how the phone finds it from a
 
 A paired computer runs `inyon` as a small background service and talks to your phone directly. There's no hub, no account and no open port. Pairing takes one command and one scan; see the [quick start](quick-start.md).
 
+From 0.19 the link runs inside `inyon` itself, so a paired computer has no separate engine to download or keep updated. Phones, pairings and keys from earlier versions keep working unchanged.
+
 ## Pairing
 
 ```sh

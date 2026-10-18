@@ -2,7 +2,7 @@
 //! `--json` (`{"v":1,…}`), so scripts and the app can read it.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -292,8 +292,9 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
             service::move_old_service(sys, role);
         }
     }
-    // the engine comes from the hub just saved, so a machine that can only reach its hub still works
-    engine::ensure(&|l| eprintln!("{l}"))?;
+    // with the kill switch the engine comes from the hub just saved, so a machine that can only
+    // reach its hub still works; otherwise the connection is built in
+    engine::ready("connect", &|l| eprintln!("{l}"))?;
     let mut notes = Vec::new();
     if let Some(m) = service::missing_mux(sys.platform) {
         notes.push(format!("Note: {m}"));
@@ -548,10 +549,24 @@ fn port_open(port: u16) -> bool {
 
 pub fn doctor(sys: &Sys) -> Outcome {
     let mut checks: Vec<(bool, String, String)> = Vec::new();
-    let engine_path = engine::find();
-    match &engine_path {
-        Some(p) => checks.push((true, "engine".into(), format!("{} ({})", p.display(), engine::version().unwrap_or_else(|| "no version".into())))),
-        None => checks.push((false, "engine".into(), "not installed; run `inyon setup`".into())),
+    // the Bun engine, for a hub or with the kill switch; everything else is built in
+    let bun = engine::find();
+    let bun_line = |p: &Path| {
+        format!("{} ({})", p.display(), engine::capture(&["version"]).ok().filter(|(s, _)| s.success()).map(|(_, v)| v.trim().to_string()).unwrap_or_else(|| "no version".into()))
+    };
+    if engine::legacy() {
+        match &bun {
+            Some(p) => checks.push((true, "engine".into(), format!("{}, the Bun engine (INYON_LEGACY_ENGINE is set)", bun_line(p)))),
+            None => checks.push((false, "engine".into(), "INYON_LEGACY_ENGINE is set but the Bun engine isn't here; run `inyon service install`".into())),
+        }
+    } else {
+        checks.push((true, "engine".into(), format!("built in ({VERSION})")));
+        if service::has_service(sys, Role::Hub) || engine::hub_here() {
+            match &bun {
+                Some(p) => checks.push((true, "hub engine".into(), bun_line(p))),
+                None => checks.push((false, "hub engine".into(), "not here yet; `inyon hub start` downloads it".into())),
+            }
+        }
     }
     checks.push((true, "inyon".into(), format!("{VERSION} at {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default())));
     match service::missing_mux(sys.platform) {
@@ -615,6 +630,9 @@ impl update::Host for RealHost<'_> {
     }
     fn roles(&self) -> Vec<Role> {
         service::active_roles(self.sys)
+    }
+    fn wants_engine(&self) -> bool {
+        engine::legacy() || self.roles().contains(&Role::Hub) || engine::hub_here()
     }
     fn restart(&self, role: Role, cmd: &[String]) -> Installed {
         service::restart_service(self.sys, role, cmd)
@@ -686,8 +704,17 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
     }
 }
 
-/// `inyon migrate`: moves every job from its tether-node service to inyon's own.
-pub fn migrate(sys: &Sys) -> Outcome {
+/// `inyon migrate`: moves every job from its tether-node service to inyon's own, and from the Bun
+/// engine to the one built in (0.19): Windows' logon tasks get the windowless copy of this program
+/// in place of the Bun engine, and a Bun engine nothing needs any more goes. With `background` it
+/// runs on its own and returns at once, as the tray icon starts it from inside a service.
+pub fn migrate(sys: &Sys, background: bool) -> Outcome {
+    if background {
+        let mut args = sys.program.clone();
+        args.push("migrate".into());
+        let r = service::detach(sys, &args);
+        return if r.ok { Ok(json!({ "background": true, "message": format!("Moving the services in the background ({}).", r.how) })) } else { Err(r.how) };
+    }
     let dir = paths::ensure_node_dir().map_err(|e| e.to_string())?;
     let lock = dir.join("migrate.lock");
     if fs::OpenOptions::new().write(true).create_new(true).open(&lock).is_err() {
@@ -698,12 +725,67 @@ pub fn migrate(sys: &Sys) -> Outcome {
         let r = service::move_old_service(sys, role);
         lines.push(format!("{role}: {}", if r.ok { format!("moved; it runs as {}", r.how) } else { format!("not moved ({})", r.how) }));
     }
+    lines.extend(to_builtin_engine(sys));
     let _ = fs::remove_file(&lock);
     service::forget_update_task(sys);
     if lines.is_empty() {
         lines.push("nothing to move".into());
     }
     Ok(json!({ "message": lines.join("\n") }))
+}
+
+/// Moves what still runs on the Bun engine to the engine built into this program, unless
+/// INYON_LEGACY_ENGINE asks for the Bun engine. What it did, a line each.
+fn to_builtin_engine(sys: &Sys) -> Vec<String> {
+    if engine::legacy() {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    if sys.platform == Platform::Windows {
+        let installed = paths::installed_engine();
+        if !installed.is_file() || engine::is_builtin_copy(&installed) {
+            return lines;
+        }
+        let program = vec![paths::installed_binary().to_string_lossy().into_owned()];
+        for role in [Role::Link, Role::Node] {
+            if service::has_service(sys, role) {
+                // registered again, the task runs the windowless copy, made in place of the Bun engine
+                let r = service::restart_service(sys, role, &program);
+                lines.push(format!("{role}: {}", if r.ok { "runs on the built-in engine now".to_string() } else { format!("still on the Bun engine ({})", r.how) }));
+            }
+        }
+        if lines.is_empty() {
+            if let Err(e) = engine::refresh_copy(&paths::installed_binary()) {
+                lines.push(format!("engine: couldn't make the windowless copy ({e})"));
+            }
+        }
+    } else if let Some(stale) = engine::stale_engine() {
+        if fs::remove_file(&stale).is_ok() {
+            lines.push(format!("engine: removed {}, which nothing needs any more", stale.display()));
+        }
+    }
+    lines
+}
+
+/// Whether the tray icon should move this machine to the built-in engine: on Windows, when the
+/// logon task still starts the Bun engine (set up by 0.18 or earlier, updated by it). Once an hour
+/// at most, in case moving fails.
+pub fn wants_hand_over(sys: &Sys) -> bool {
+    if sys.platform != Platform::Windows || engine::legacy() {
+        return false;
+    }
+    let installed = paths::installed_engine();
+    if !installed.is_file() || engine::is_builtin_copy(&installed) {
+        return false;
+    }
+    let mark = node_dir().join("engine-hand-over");
+    let now = state::now_ms() as u64;
+    let last = fs::read_to_string(&mark).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
+    if now.saturating_sub(last) < 3_600_000 {
+        return false;
+    }
+    let _ = fs::write(&mark, now.to_string());
+    true
 }
 
 /// Takes inyon off this machine: every service, the programs, and with `purge` the pairings too.
@@ -859,7 +941,8 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
     let fetch = {
         let progress = progress.clone();
         std::thread::spawn(move || {
-            if engine::find().is_some() {
+            // built in from 0.19: only the kill switch wants the Bun engine now (a hub gets it as it starts)
+            if !engine::legacy() || engine::find().is_some() {
                 return Ok(());
             }
             let say = |l: &str| {
@@ -958,7 +1041,7 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
             cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
             cfg.port = Some(plan.port_number());
             state::write_json("link.json", &cfg).map_err(|e| e.to_string())?;
-            engine::ensure(&|l| eprintln!("{l}"))?;
+            engine::ready("link", &|l| eprintln!("{l}"))?;
             if plan.lan || plan.vpn {
                 lines.extend(service::allow_link_through_firewall(sys, plan.port_number()));
             }

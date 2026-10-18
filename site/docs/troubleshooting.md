@@ -9,6 +9,10 @@ Start with `inyon doctor` on the computer. It checks the engine, tmux, the agent
 
 The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
 
+## Something stopped working after updating to 0.19
+
+From 0.19 the link and the hub connection run inside `inyon` rather than in the Bun engine. If a computer did something in 0.18 that it doesn't in 0.19, set `INYON_LEGACY_ENGINE=1` and run `inyon service install` to go back to the Bun engine while it gets fixed. [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) has the steps for each system, and `inyon doctor` shows which engine runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
+
 ## The phone reached the computer once, then couldn't
 
 Before 0.17.2, `inyon pair` on Windows could miss the link already running in the background and start a second one. The second one published its own address, and when it ended with the terminal, the phone was left pointing at it. Update both sides; from 0.17.2 `pair` sees a running link by its port too. Until then, `inyon service install link` restarts the background link, which publishes the right address again.

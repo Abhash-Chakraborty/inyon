@@ -94,6 +94,17 @@ fn windows_the_logon_task_is_stopped_and_started_and_the_old_copy_stopped_never_
     std::env::remove_var("FAKE_PS_NO");
 }
 
+/// A Windows program's first bytes: the DOS header pointing at a PE header with its subsystem.
+fn fake_exe(subsystem: u16) -> Vec<u8> {
+    let mut exe = vec![0u8; 512];
+    exe[..2].copy_from_slice(b"MZ");
+    exe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    exe[0x80..0x84].copy_from_slice(b"PE\0\0");
+    let at = 0x80 + 4 + 20 + 68;
+    exe[at..at + 2].copy_from_slice(&subsystem.to_le_bytes());
+    exe
+}
+
 #[test]
 #[cfg_attr(windows, ignore)]
 fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_console() {
@@ -101,14 +112,17 @@ fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_conso
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
-    // the command and the engine next to it, as an install leaves them
+    // the command and the Bun engine next to it, as an install by 0.18 leaves them
     let bin = home.dir.join(".inyon").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join("inyon"), "").unwrap();
-    std::fs::write(bin.join("inyon-engine"), "").unwrap();
+    let program = fake_exe(3);
+    std::fs::write(bin.join("inyon"), &program).unwrap();
+    std::fs::write(bin.join("inyon-engine"), "the Bun engine").unwrap();
     let cli = bin.join("inyon").to_string_lossy().into_owned();
     let engine = bin.join("inyon-engine").to_string_lossy().into_owned();
     assert!(restart_service(&sys, Role::Link, &v(&[&cli])).ok);
+    // from 0.19 the task's engine is the windowless copy of the command, made in the Bun engine's place
+    assert_eq!(std::fs::read(bin.join("inyon-engine")).unwrap(), inyon_cli::engine::make_copy(&program).unwrap());
     let calls = home.calls();
     let ps = calls.last().unwrap().last().unwrap().clone();
     assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument 'link'")), "{ps}");

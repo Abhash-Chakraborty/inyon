@@ -1,7 +1,9 @@
-//! The engine: today's program, `inyon-engine` next to this one, which runs the link, the hub
-//! connection and the hub, and is the only thing that writes pairings and keys. `link`,
-//! `connect`, `hub` and the old `https://…` form go straight to it; `pair`, `forget`, `push` and
-//! the hub's commands run it with `--json` and draw its answer.
+//! The engine: what runs the link, the hub connection and the hub, and writes pairings and keys.
+//! From 0.19 all of it but the hub is built into this program (the inyon-engine crate): `link`,
+//! `connect` and the old `https://…` form run here, and `pair`, `forget` and `push` run this
+//! program as `inyon engine … --json` and draw its answer. The hub still comes from the Bun
+//! engine, `inyon-engine` next to this one, downloaded the first time a hub needs it.
+//! INYON_LEGACY_ENGINE=1 sends everything to the Bun engine, as 0.18 did.
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -14,19 +16,111 @@ use crate::signing;
 use crate::sys::{quiet, Libc, Platform};
 use crate::update::{self, Arch};
 
-/// Where the engine is: INYON_ENGINE, next to this program, or in ~/.inyon/bin.
+/// The kill switch: INYON_LEGACY_ENGINE=1 runs everything through the downloaded Bun engine, as
+/// 0.18 did, in case the built-in engine misbehaves somewhere.
+pub fn legacy() -> bool {
+    env_var("INYON_LEGACY_ENGINE").is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+/// Whether an engine command needs the Bun engine: the hub always, everything with the kill switch.
+pub fn needs_bun(first: &str) -> bool {
+    legacy() || first == "hub"
+}
+
+/// Answers an engine command with the engine built into this program, as `inyon-engine` would.
+/// `hub` goes on to the Bun engine.
+pub fn run_builtin(args: &[String]) -> i32 {
+    inyon_engine::cli::run(args, |rest| {
+        if cfg!(windows) {
+            eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
+            return 2;
+        }
+        let mut all = vec!["hub".to_string()];
+        all.extend(rest.iter().cloned());
+        forward_bun(&all)
+    })
+}
+
+/// What only the built-in engine's windowless copy holds (see `make_copy`), so it's never taken
+/// for the Bun engine.
+pub const COPY_MARK: &str = "inyon: the built-in engine, windowless copy";
+
+/// The PE header's subsystem field of a Windows program: 3 is a console program, 2 one without.
+fn subsystem_at(exe: &[u8]) -> Option<usize> {
+    let pe = u32::from_le_bytes(exe.get(0x3c..0x40)?.try_into().ok()?) as usize;
+    (exe.get(pe..pe + 4)? == b"PE\0\0").then_some(pe + 4 + 20 + 68).filter(|at| *at + 2 <= exe.len())
+}
+
+/// This program as a Windows program without a console, the bytes of `inyon-engine.exe`: logon
+/// tasks start it with no window, and named inyon-engine it answers the engine's commands. Tasks,
+/// the firewall rule and older inyon commands keep the path they know.
+pub fn make_copy(program: &[u8]) -> Result<Vec<u8>, String> {
+    let mut out = program.to_vec();
+    let at = subsystem_at(&out).ok_or("inyon isn't a Windows program, so there's no copy to make")?;
+    out[at..at + 2].copy_from_slice(&2u16.to_le_bytes());
+    Ok(out)
+}
+
+/// Whether `file` is a copy `make_copy` made (of any version), rather than the Bun engine.
+pub fn is_builtin_copy(file: &Path) -> bool {
+    // the Bun engine is upwards of 40 MB; this program is a fraction of that
+    let small = std::fs::metadata(file).is_ok_and(|m| m.len() < 40 << 20);
+    small && std::fs::read(file).is_ok_and(|d| d.windows(COPY_MARK.len()).any(|w| w == COPY_MARK.as_bytes()))
+}
+
+/// Writes the windowless copy of `program` next to it (Windows), unless one of this exact
+/// program is there already. A running copy is renamed aside first, as an update does.
+pub fn refresh_copy(program: &Path) -> Result<PathBuf, String> {
+    let to = update::engine_beside(program);
+    let fresh = make_copy(&std::fs::read(program).map_err(|e| e.to_string())?)?;
+    if std::fs::read(&to).is_ok_and(|d| d == fresh) {
+        return Ok(to);
+    }
+    let tmp = PathBuf::from(format!("{}.download", to.to_string_lossy()));
+    std::fs::write(&tmp, &fresh).map_err(|e| e.to_string())?;
+    update::swap_in(&update::RealFiles, &to, &tmp, crate::state::now_ms() as u64).map_err(|e| e.to_string())?;
+    Ok(to)
+}
+
+/// Where the Bun engine is: INYON_ENGINE, next to this program, or in ~/.inyon/bin. The
+/// windowless copy of this program that Windows keeps under the same name doesn't count.
 pub fn find() -> Option<PathBuf> {
     if let Some(p) = env_var("INYON_ENGINE").map(PathBuf::from).filter(|p| p.is_file()) {
         return Some(p);
     }
+    let bun = |p: &Path| p.is_file() && !is_builtin_copy(p);
     if let Ok(me) = std::env::current_exe() {
         let beside = update::engine_beside(&me);
-        if beside.is_file() {
+        if bun(&beside) {
             return Some(beside);
         }
     }
     let installed = installed_engine();
-    installed.is_file().then_some(installed)
+    bun(&installed).then_some(installed)
+}
+
+/// Makes sure what `first` needs is here: the Bun engine (downloaded when missing) for the hub
+/// or with the kill switch, nothing otherwise.
+pub fn ready(first: &str, say: &dyn Fn(&str)) -> Result<(), String> {
+    if needs_bun(first) {
+        ensure(say)?;
+    }
+    Ok(())
+}
+
+/// The Bun engine on a machine that doesn't need it any more: neither a hub nor the kill switch
+/// asks for it. Linux and macOS only; on Windows the file under that name is the windowless copy.
+pub fn stale_engine() -> Option<PathBuf> {
+    let file = installed_engine();
+    if cfg!(windows) || legacy() || !file.is_file() || is_builtin_copy(&file) {
+        return None;
+    }
+    (!hub_here()).then_some(file)
+}
+
+/// Whether this machine runs a hub, or did: set up as a service, started by hand, or configured.
+pub fn hub_here() -> bool {
+    crate::paths::data_dir().join("hub.env").exists() || crate::paths::node_dir().join("hub.json").exists() || crate::service::hub_set_up()
 }
 
 /// The engine, downloaded when it isn't here yet. `say` gets the lines about that.
@@ -105,10 +199,55 @@ fn command(engine: &Path) -> Command {
     c
 }
 
-/// Hands the process over to the engine with `args`. On Unix this process becomes the engine
+/// On Windows the link runs from the windowless copy, `inyon-engine.exe`, even when started from a
+/// terminal: the firewall rule "Inyon link" lets that program in, and only that one.
+fn windows_copy(first: &str) -> Option<PathBuf> {
+    if !cfg!(windows) || first != "link" {
+        return None;
+    }
+    let me = std::env::current_exe().ok()?;
+    [update::engine_beside(&me), installed_engine()].into_iter().find(|p| is_builtin_copy(p))
+}
+
+/// The program that answers engine command `first`: this one as `inyon engine` (the windowless
+/// copy for the link on Windows), or the Bun engine (downloaded when missing) for the hub and
+/// with the kill switch.
+fn engine_command(first: &str, download: bool) -> Result<(Command, PathBuf), String> {
+    if let Some(copy) = windows_copy(first).filter(|_| !needs_bun(first)) {
+        return Ok((command(&copy), copy));
+    }
+    if !needs_bun(first) {
+        let me = std::env::current_exe().map_err(|e| e.to_string())?;
+        let mut c = Command::new(&me);
+        c.arg("engine");
+        return Ok((c, me));
+    }
+    let engine = if download { ensure(&|l| eprintln!("{l}"))? } else { find().ok_or_else(|| format!("{ENGINE} isn't installed yet. Run `inyon setup`."))? };
+    Ok((command(&engine), engine))
+}
+
+/// Runs engine command `args` in this process (built in) or hands the process over to the Bun
+/// engine (the hub, the kill switch).
+pub fn forward(args: &[String]) -> ! {
+    let first = args.first().map(String::as_str).unwrap_or("");
+    if !needs_bun(first) {
+        if let Some(copy) = windows_copy(first) {
+            let mut c = command(&copy);
+            c.args(args);
+            match relayed(c) {
+                Ok(s) => std::process::exit(s.code().unwrap_or(1)),
+                Err(err) => eprintln!("Couldn't start {} ({err}); running the link here.", copy.display()),
+            }
+        }
+        std::process::exit(run_builtin(args));
+    }
+    forward_bun(args)
+}
+
+/// Hands the process over to the Bun engine with `args`. On Unix this process becomes the engine
 /// (same pid, same signals, which the service managers count on); on Windows it waits for it
 /// and passes the exit code on.
-pub fn forward(args: &[String]) -> ! {
+pub fn forward_bun(args: &[String]) -> ! {
     let say = |l: &str| eprintln!("{l}");
     let engine = match ensure(&say) {
         Ok(p) => p,
@@ -140,8 +279,7 @@ pub fn forward(args: &[String]) -> ! {
 
 /// Runs the engine with `args`, its output going to this terminal, and returns how it ended.
 pub fn run_through(args: &[String]) -> Result<ExitStatus, String> {
-    let engine = ensure(&|l| eprintln!("{l}"))?;
-    let mut c = command(&engine);
+    let (mut c, engine) = engine_command(args.first().map(String::as_str).unwrap_or(""), true)?;
     c.args(args);
     relayed(c).map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))
 }
@@ -208,16 +346,18 @@ mod job {
 
 /// Runs the engine and collects what it printed.
 pub fn capture(args: &[&str]) -> Result<(ExitStatus, String), String> {
-    let engine = find().ok_or_else(|| format!("{ENGINE} isn't installed yet. Run `inyon setup`."))?;
-    let mut c = command(&engine);
+    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""), false)?;
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     quiet(&mut c);
     let out = c.output().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))?;
     Ok((out.status, format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
 
-/// The engine's version, if it's here and answers.
+/// The engine's version, if it's here and answers: this program's own when it's built in.
 pub fn version() -> Option<String> {
+    if !legacy() {
+        return Some(inyon_engine::VERSION.to_string());
+    }
     let (status, out) = capture(&["version"]).ok()?;
     status.success().then(|| out.trim().to_string()).filter(|v| !v.is_empty())
 }
@@ -233,8 +373,7 @@ fn last_json(text: &str) -> Option<Value> {
 /// Runs an engine command with `--json` (and `envs` in its environment) and returns its answer;
 /// an answer with `ok: false`, or none at all, is the error it gave.
 pub fn ask(args: &[&str], envs: &[(&str, &str)]) -> Result<Value, String> {
-    let engine = ensure(&|l| eprintln!("{l}"))?;
-    let mut c = command(&engine);
+    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""), true)?;
     c.args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in envs {
         c.env(k, v);
@@ -266,8 +405,7 @@ fn answer(v: Option<Value>, status: ExitStatus, stderr: &str, what: &str) -> Res
 /// engine keeps running when it had to start the link itself, so this waits for it to end
 /// afterwards; Ctrl-C reaches both. Nothing shown means the engine failed, and this says why.
 pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String> {
-    let engine = ensure(&|l| eprintln!("{l}"))?;
-    let mut c = command(&engine);
+    let (mut c, engine) = engine_command("pair", true)?;
     c.arg("pair").args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // asked from the Inyon window, which has no console, the engine mustn't open one of its own
     quiet(&mut c);
@@ -298,6 +436,40 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Windows program's first bytes: the DOS header pointing at a PE header, the subsystem in it.
+    fn fake_exe(subsystem: u16) -> Vec<u8> {
+        let mut exe = vec![0u8; 512];
+        exe[..2].copy_from_slice(b"MZ");
+        exe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        exe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        let at = 0x80 + 4 + 20 + 68;
+        exe[at..at + 2].copy_from_slice(&subsystem.to_le_bytes());
+        exe
+    }
+
+    #[test]
+    fn the_windowless_copy_differs_only_in_its_subsystem() {
+        let console = fake_exe(3);
+        let copy = make_copy(&console).unwrap();
+        assert_eq!(copy, fake_exe(2));
+        assert_eq!(console.iter().zip(&copy).filter(|(a, b)| a != b).count(), 1);
+        assert!(make_copy(b"#!/bin/sh\n").is_err());
+    }
+
+    #[test]
+    fn the_copy_is_told_from_the_bun_engine_by_its_mark() {
+        let dir = std::env::temp_dir().join(format!("inyon-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (copy, bun) = (dir.join("copy.exe"), dir.join("bun.exe"));
+        let mut bytes = fake_exe(2);
+        bytes.extend_from_slice(COPY_MARK.as_bytes());
+        std::fs::write(&copy, &bytes).unwrap();
+        std::fs::write(&bun, fake_exe(2)).unwrap();
+        assert!(is_builtin_copy(&copy));
+        assert!(!is_builtin_copy(&bun));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_answer_is_the_last_json_line() {

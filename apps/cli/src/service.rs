@@ -8,8 +8,10 @@
 //! - node: an outbound connection to an Inyon hub (the hub's "Add a machine" command)
 //! - hub: the hub itself (`get.sh --hub`, Linux and macOS)
 //!
-//! The units run `~/.inyon/bin/inyon link|connect|hub`: this program, which hands the job to the
-//! engine. Units written by earlier versions name the same file, so they keep working.
+//! The units run `~/.inyon/bin/inyon link|connect|hub`: this program, which runs the link and the
+//! hub connection itself and hands the hub to the Bun engine. Units written by earlier versions
+//! name the same file, so they keep working. Windows' logon tasks run `inyon-engine.exe`, a
+//! windowless copy of this program (see engine::make_copy).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -253,8 +255,10 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
                 let _ = fs::create_dir_all(dir);
             }
             let exec = args.iter().map(|a| sdq(a)).collect::<Vec<_>>().join(" ");
+            // the kill switch has to reach the service too, which doesn't see your shell's variables
+            let env = if crate::engine::legacy() { "Environment=INYON_LEGACY_ENGINE=1\n" } else { "" };
             let text = format!(
-                "[Unit]\nDescription={}\nAfter=network-online.target\n\n[Service]\nExecStart={exec}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
+                "[Unit]\nDescription={}\nAfter=network-online.target\n\n[Service]\n{env}ExecStart={exec}\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n",
                 s.what
             );
             if let Err(err) = fs::write(&file, text) {
@@ -282,8 +286,9 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
             let _ = fs::create_dir_all(node_dir());
             let log = xml(&path_str(&log_file(role)));
             let program = args.iter().map(|a| format!("<string>{}</string>", xml(a))).collect::<String>();
+            let env = if crate::engine::legacy() { "\n  <key>EnvironmentVariables</key><dict><key>INYON_LEGACY_ENGINE</key><string>1</string></dict>" } else { "" };
             let text = format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>{}</string>\n  <key>ProgramArguments</key><array>{program}</array>\n  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n  <key>StandardOutPath</key><string>{log}</string>\n  <key>StandardErrorPath</key><string>{log}</string>\n</dict></plist>\n",
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n  <key>Label</key><string>{}</string>\n  <key>ProgramArguments</key><array>{program}</array>{env}\n  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n  <key>StandardOutPath</key><string>{log}</string>\n  <key>StandardErrorPath</key><string>{log}</string>\n</dict></plist>\n",
                 s.label
             );
             if let Err(err) = fs::write(&file, text) {
@@ -332,19 +337,34 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
     }
 }
 
-/// The engine next to the installed command, which the logon task runs: copied there from
-/// wherever this program found it (an npm install keeps its own), or downloaded.
+/// The engine next to the installed command, which the logon task runs. From 0.19 that's a
+/// windowless copy of the installed command itself, which answers the engine's commands under
+/// that name. With INYON_LEGACY_ENGINE=1 it's the Bun engine: copied there from wherever this
+/// program found it (an npm install keeps its own), or downloaded over the copy.
 fn engine_for(cmd: &[String]) -> Result<PathBuf, String> {
     let first = cmd.first().map(PathBuf::from).unwrap_or_else(installed_binary);
+    if !crate::engine::legacy() {
+        return crate::engine::refresh_copy(&first);
+    }
     let want = crate::update::engine_beside(&first);
-    if want.is_file() {
+    if want.is_file() && !crate::engine::is_builtin_copy(&want) {
         return Ok(want);
     }
+    // the copy may be running: the Bun engine goes in beside it and is swapped in, as an update does
+    let fresh = PathBuf::from(format!("{}.bun", want.to_string_lossy()));
     match crate::engine::find() {
-        Some(found) if fs::copy(&found, &want).is_ok() => Ok(want),
-        Some(found) => Ok(found),
-        None => crate::engine::download_to(&want, &|_| {}).map(|_| want),
+        Some(found) if fs::copy(&found, &fresh).is_ok() => {}
+        Some(found) => return Ok(found),
+        None => crate::engine::download_to(&fresh, &|_| {})?,
     }
+    crate::update::swap_in(&crate::update::RealFiles, &want, &fresh, crate::state::now_ms() as u64).map_err(|e| e.to_string())?;
+    Ok(want)
+}
+
+/// Whether the hub is set up as a service here (Linux and macOS), from its files alone.
+pub fn hub_set_up() -> bool {
+    let s = spec(Role::Hub);
+    unit_file(s.unit).exists() || plist_file(s.label).exists() || old_unit_for(Role::Hub).is_some()
 }
 
 /// PowerShell that stops the other copies of this program doing `role`'s job (every job when
