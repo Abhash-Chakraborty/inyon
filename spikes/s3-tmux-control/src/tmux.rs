@@ -102,6 +102,9 @@ impl Tmux {
         let mut c = self.command();
         c.args(attach_args(v, session, read_only));
         let (c, rx) = Control::spawn(c)?;
+        if !c.wait_ready(std::time::Duration::from_secs(5)) {
+            return Err(io::Error::other(format!("could not attach to {session}: {}", c.exit_reason().unwrap_or_default())));
+        }
         if let Some(size) = size {
             // the shrink lands a moment after the attach, and a -C sent before it is undone, so
             // watch the size for a little while and put it back whenever it differs

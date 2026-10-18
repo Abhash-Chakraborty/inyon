@@ -10,7 +10,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -47,6 +47,8 @@ struct State {
     pending: VecDeque<Waiter>,
     closed: bool,
     exit: Option<String>,
+    /// the command tmux was started with has answered: the client is attached
+    ready: bool,
 }
 
 /// Counters for the load tests.
@@ -60,6 +62,7 @@ pub struct Stats {
 
 pub struct Control {
     state: Arc<Mutex<State>>,
+    ready: Arc<Condvar>,
     writer: Mutex<Option<Box<dyn Write + Send>>>,
     reader: Option<JoinHandle<()>>,
     child: Mutex<Option<Child>>,
@@ -73,12 +76,13 @@ impl Control {
     pub fn over(reader: impl Read + Send + 'static, writer: impl Write + Send + 'static) -> (Self, Receiver<Notification>) {
         let (tx, rx) = mpsc::channel();
         let state = Arc::new(Mutex::new(State::default()));
+        let ready = Arc::new(Condvar::new());
         let stats = Arc::new(Stats::default());
         let handle = {
-            let (state, stats) = (state.clone(), stats.clone());
-            std::thread::spawn(move || read_loop(BufReader::with_capacity(1 << 16, reader), state, stats, tx))
+            let (state, ready, stats) = (state.clone(), ready.clone(), stats.clone());
+            std::thread::spawn(move || read_loop(BufReader::with_capacity(1 << 16, reader), state, ready, stats, tx))
         };
-        let c = Control { state, writer: Mutex::new(Some(Box::new(writer))), reader: Some(handle), child: Mutex::new(None), stats, timeout: Duration::from_secs(10) };
+        let c = Control { state, ready, writer: Mutex::new(Some(Box::new(writer))), reader: Some(handle), child: Mutex::new(None), stats, timeout: Duration::from_secs(10) };
         (c, rx)
     }
 
@@ -143,6 +147,15 @@ impl Control {
         }
     }
 
+    /// Waits until tmux has answered the command it was started with (`attach-session`). A
+    /// command sent before that can run before the client is attached: tmux 3.3 then answers
+    /// "no current client", and a size read then is the size from before the attach.
+    pub fn wait_ready(&self, timeout: Duration) -> bool {
+        let st = self.state.lock().unwrap();
+        let (st, _) = self.ready.wait_timeout_while(st, timeout, |st| !st.ready && !st.closed).unwrap();
+        st.ready
+    }
+
     pub fn closed(&self) -> bool {
         self.state.lock().unwrap().closed
     }
@@ -180,7 +193,7 @@ impl Drop for Control {
     }
 }
 
-fn read_loop(mut r: impl BufRead, state: Arc<Mutex<State>>, stats: Arc<Stats>, tx: Sender<Notification>) {
+fn read_loop(mut r: impl BufRead, state: Arc<Mutex<State>>, ready: Arc<Condvar>, stats: Arc<Stats>, tx: Sender<Notification>) {
     let mut parser = Parser::new();
     let mut line = Vec::with_capacity(4096);
     loop {
@@ -199,7 +212,13 @@ fn read_loop(mut r: impl BufRead, state: Arc<Mutex<State>>, stats: Arc<Stats>, t
             None => {}
             Some(Event::Reply(reply)) => {
                 // flags 0: the command tmux was started with (attach-session), not one of ours
-                let waiter = if reply.flags == 0 { None } else { state.lock().unwrap().pending.pop_front() };
+                let waiter = if reply.flags == 0 {
+                    state.lock().unwrap().ready = true;
+                    ready.notify_all();
+                    None
+                } else {
+                    state.lock().unwrap().pending.pop_front()
+                };
                 match waiter {
                     Some(w) => {
                         let _ = w.send(Ok(reply));
@@ -222,6 +241,7 @@ fn read_loop(mut r: impl BufRead, state: Arc<Mutex<State>>, stats: Arc<Stats>, t
     }
     let mut st = state.lock().unwrap();
     st.closed = true;
+    ready.notify_all();
     let reason = st.exit.clone();
     for w in st.pending.drain(..) {
         let _ = w.send(Err(Error::Closed(reason.clone())));

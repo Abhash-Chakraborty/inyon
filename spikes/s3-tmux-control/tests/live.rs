@@ -164,6 +164,7 @@ fn a_client_that_stops_reading_loses_nothing() {
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let stall = Stall { inner: child.stdout.take().unwrap(), after: 4096, stall: Duration::from_secs(3), seen: 0, done: false };
     let (c, rx) = Control::over(stall, child.stdin.take().unwrap());
+    assert!(c.wait_ready(T));
     let n = 200_000;
     let pane = s.window(&w, "stall", &format!("sleep 0.3; seq 1 {n}; echo STALL-DONE; exec sleep 60\n"));
     let out = collect(&rx, &pane, Duration::from_secs(60), |b| contains(&b[b.len().saturating_sub(64)..], b"STALL-DONE"));
@@ -187,6 +188,7 @@ fn pause_after_pauses_instead_of_buffering() {
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let stall = Stall { inner: child.stdout.take().unwrap(), after: 1 << 20, stall: Duration::from_secs(3), seen: 0, done: false };
     let (c, rx) = Control::over(stall, child.stdin.take().unwrap());
+    assert!(c.wait_ready(T));
     c.cmd("refresh-client -f pause-after=1").unwrap();
     let pane = s.window(&w, "pause", "sleep 0.3; while :; do seq 1 20000; sleep 0.05; done\n");
     let paused = wait_for(&rx, Duration::from_secs(30), |n| match n {
@@ -243,6 +245,7 @@ fn the_hubs_attach_today() {
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(v, "main", true));
     let (c, rx) = Control::spawn(cmd).unwrap();
+    assert!(c.wait_ready(T));
     let size = |c: &Control| {
         let p = &tmux::list_panes(c).unwrap()[0];
         (p.width, p.height)

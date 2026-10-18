@@ -60,6 +60,8 @@ fn psmux_control_mode() {
         table.push((name, r));
     };
 
+    // tmux answers the attach-session it was started with in a block with flags 0
+    note("attach answered (flags 0 block)", format!("{}", c.wait_ready(Duration::from_secs(3))));
     // replies line up only if psmux sends no block of its own on attach
     let sync = c.cmd("display-message -p S3-SYNC");
     note("reply order", format!("{:?}", sync.as_ref().map(|r| r.text())));
