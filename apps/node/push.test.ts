@@ -90,12 +90,17 @@ test('a finish with agents still running waits for them, and a question meanwhil
   let footer: string | null = '1 agent'
   const stop = startPush({ events: log, everyMs: 20, checkMs: 30, background: async () => footer, send })
   const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+  // a notice goes out after a tmux look-up for the title, which a busy CI runner can take a while over,
+  // so wait for it rather than for a fixed time
+  const until = async (ok: () => boolean, ms = 3000) => {
+    for (const end = Date.now() + ms; !ok() && Date.now() < end; ) await wait(10)
+  }
   // the main turn ends while a subagent runs: not finished yet
   appendFileSync(log, line('%5', { hook_event_name: 'Stop' }) + '\n')
   await wait(150)
   expect(sent).toEqual([])
   footer = null
-  await wait(150)
+  await until(() => sent.length > 0)
   expect(sent).toEqual(['done laptop:%5'])
   // another turn ends with an agent running, then Claude asks something: the question is the news
   footer = '1 agent'
@@ -104,6 +109,8 @@ test('a finish with agents still running waits for them, and a question meanwhil
   appendFileSync(log, line('%6', { hook_event_name: 'PermissionRequest', tool_name: 'Bash' }) + '\n')
   await wait(80)
   footer = null
+  await until(() => sent.length > 1)
+  // and the held finish for %6 never follows
   await wait(150)
   expect(sent).toEqual(['done laptop:%5', 'waiting laptop:%6'])
   stop()
