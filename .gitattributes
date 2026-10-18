@@ -1,1 +1,3 @@
 apps/cli/tests/snapshots/*.txt text eol=lf
+# captures are compared byte for byte, line endings included
+fixtures/** -text
