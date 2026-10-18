@@ -50,6 +50,19 @@ pub fn pretty(value: &impl Serialize) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "null".into())
 }
 
+/// Held around every read, change and write of a file in the node's folder. Phone sessions,
+/// relays and the publisher run on several threads at once, and the phone tries every address
+/// together, so without it two writers would lose each other's change: a guess not counted, a
+/// forgotten phone back, a new pairing gone.
+static NODE_FILES: Mutex<()> = Mutex::new(());
+
+pub fn node_files() -> std::sync::MutexGuard<'static, ()> {
+    NODE_FILES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Each write gets a temporary file of its own, so two threads never rename each other's.
+static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Written whole or not at all, readable only by this user (it holds keys and pairings).
 pub fn write_node_json(name: &str, value: &impl Serialize) {
     let dir = node_dir();
@@ -62,7 +75,8 @@ pub fn write_node_json(name: &str, value: &impl Serialize) {
         }
     }
     let target = file(name);
-    let tmp = PathBuf::from(format!("{}.{}.tmp", target.to_string_lossy(), std::process::id()));
+    let n = TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = PathBuf::from(format!("{}.{}.{n}.tmp", target.to_string_lossy(), std::process::id()));
     if crate::connect::write_private(&tmp, pretty(value).as_bytes()).is_ok() {
         if let Err(e) = std::fs::rename(&tmp, &target) {
             let _ = std::fs::remove_file(&tmp);
@@ -105,11 +119,13 @@ pub fn load_config() -> LinkConfig {
 }
 
 pub fn save_config(c: &LinkConfig) {
+    let _files = node_files();
     write_node_json("link.json", c)
 }
 
 /// This machine's identity, made on first use. Its id is what the phone pairs with.
 pub fn identity() -> Identity {
+    let _files = node_files();
     let saved: Option<Value> = read_node_json("identity.json");
     if let Some(seed) = saved.as_ref().and_then(|s| s.get("seed")).and_then(Value::as_str).filter(|s| !s.is_empty()) {
         let mut bytes = [0u8; 32];
@@ -203,6 +219,7 @@ pub struct Pairing {
 pub fn new_pairing() -> Pairing {
     let secret = URL_SAFE_NO_PAD.encode(crate::random_bytes(24));
     let short = inyon_link::new_short_code().expect("the system has no randomness to give");
+    let _files = node_files();
     write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }));
     Pairing { secret, short }
 }
@@ -283,9 +300,12 @@ pub async fn link_running(port: Option<u16>) -> bool {
 }
 
 pub fn forget_phone(key: &str) {
-    let mut all = phones_raw();
-    all.shift_remove(key);
-    write_node_json("phones.json", &Value::Object(all));
+    {
+        let _files = node_files();
+        let mut all = phones_raw();
+        all.shift_remove(key);
+        write_node_json("phones.json", &Value::Object(all));
+    }
     end_sessions(key);
     crate::push::forget_pushes(key);
 }
@@ -349,6 +369,7 @@ const SHORT_TRIES: u64 = 5;
 /// Who may come in: a phone paired before, or one bringing the secret from the code on screen.
 pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError> {
     let key: String = remote_static.iter().map(|b| format!("{b:02x}")).collect();
+    let _files = node_files();
     let mut all = phones_raw();
     let now = crate::now_ms();
     if let Some(Value::Object(p)) = all.get_mut(&key) {
@@ -1079,7 +1100,10 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         (urls.clone(), json!({ "urls": urls, "relays": config.relays }).to_string(), l.last_seq)
     };
     let state = State { urls: urls.clone(), relays: config.relays.clone(), updated_at: crate::now_ms(), pid: std::process::id(), version: Some(VERSION.into()), last_seq };
-    write_node_json("state.json", &state);
+    {
+        let _files = node_files();
+        write_node_json("state.json", &state);
+    }
     {
         let mut l = live.lock().unwrap_or_else(|e| e.into_inner());
         if key == l.last_published || (urls.is_empty() && config.relays.is_empty()) {
@@ -1093,9 +1117,12 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         match publish(&id, &record, last_seq).await {
             Ok(seq) => {
                 live.lock().unwrap_or_else(|e| e.into_inner()).last_seq = Some(seq);
-                let mut s = current_state().unwrap_or(state);
-                s.last_seq = Some(seq);
-                write_node_json("state.json", &s);
+                {
+                    let _files = node_files();
+                    let mut s = current_state().unwrap_or(state);
+                    s.last_seq = Some(seq);
+                    write_node_json("state.json", &s);
+                }
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
             }
@@ -1326,6 +1353,55 @@ mod tests {
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(node_dir().join("identity.json")).unwrap()).unwrap();
         assert_eq!(saved.as_object().unwrap().keys().collect::<Vec<_>>(), ["seed", "id"]);
         assert_eq!(saved["id"], json!(a.id));
+    }
+
+    #[test]
+    fn wrong_codes_tried_at_once_still_cancel_the_code_after_five() {
+        let _h = testing::home("link-check-race");
+        // the phone tries every address at once, so guesses arrive together
+        for _ in 0..10 {
+            let p = new_pairing();
+            let wrong = json!({ "name": "Guesser", "pair": format!("{}:000000", p.short.id) });
+            let start = Arc::new(std::sync::Barrier::new(12));
+            let tries: Vec<_> = (0..12u8)
+                .map(|i| {
+                    let (wrong, start) = (wrong.clone(), start.clone());
+                    std::thread::spawn(move || {
+                        start.wait();
+                        check(&[i; 32], &wrong).unwrap_err().message().to_string()
+                    })
+                })
+                .collect();
+            let said: Vec<String> = tries.into_iter().map(|t| t.join().unwrap()).collect();
+            let saved: Value = serde_json::from_str(&std::fs::read_to_string(node_dir().join("pairing.json")).unwrap()).unwrap();
+            assert_eq!(saved["failures"], json!(5), "{said:?}");
+            assert!(saved.get("short").is_none());
+            assert_eq!(said.iter().filter(|m| m.starts_with("That code doesn't match.")).count(), 4, "{said:?}");
+            assert_eq!(said.iter().filter(|m| m.starts_with("Too many wrong codes")).count(), 1, "{said:?}");
+        }
+    }
+
+    #[test]
+    fn a_phone_forgotten_while_it_connects_stays_forgotten() {
+        let _h = testing::home("link-forget-race");
+        let key = "09".repeat(32);
+        for _ in 0..40 {
+            write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } }));
+            let start = Arc::new(std::sync::Barrier::new(2));
+            let seen = {
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    for _ in 0..20 {
+                        let _ = check(&[9u8; 32], &json!({}));
+                    }
+                })
+            };
+            start.wait();
+            forget_phone(&key);
+            seen.join().unwrap();
+            assert!(!list_phones().contains_key(&key), "the phone came back after it was forgotten");
+        }
     }
 
     #[test]

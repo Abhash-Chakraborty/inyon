@@ -20,7 +20,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::link::{list_phones, read_node_json, write_node_json};
+use crate::link::{list_phones, node_files, read_node_json, write_node_json};
 use crate::output::{emit, error, log};
 use crate::webpush::{self, Keys, Sent, Subscription, Vapid};
 
@@ -100,6 +100,7 @@ pub fn set_entries(input: &Value) -> Result<usize, String> {
         });
     }
     let count = mine.len();
+    let _files = node_files();
     let mut all: Vec<Entry> = read_entries().into_iter().filter(|e| e.phone != phone).collect();
     all.extend(mine);
     write_entries(&all);
@@ -108,6 +109,7 @@ pub fn set_entries(input: &Value) -> Result<usize, String> {
 
 /// A phone that's forgotten gets no more notifications from here.
 pub fn forget_pushes(phone: &str) {
+    let _files = node_files();
     let all = read_entries();
     let kept: Vec<Entry> = all.iter().filter(|e| e.phone != phone).cloned().collect();
     if kept.len() != all.len() {
@@ -214,6 +216,7 @@ pub async fn deliver(n: &Notice, only: Option<&str>, send: &PushSender) -> usize
     }
     // unsubscribed or expired: the browser subscribes again and the app hands it over
     if !gone.is_empty() {
+        let _files = node_files();
         let kept: Vec<Entry> = read_entries().into_iter().filter(|e| !gone.contains(&e.subscription.endpoint)).collect();
         write_entries(&kept);
     }
