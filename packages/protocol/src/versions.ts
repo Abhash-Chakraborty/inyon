@@ -55,15 +55,19 @@ export function parseRelease(v: string): [number, number, number] | undefined {
 
 /**
  * Whether release `next` is newer than the running version `current`. A build between releases
- * ("0.6.3-build.41", from main after 0.6.3) counts as the release it's built on.
+ * ("0.6.3-build.41", from main after 0.6.3) counts as the release it's built on; a test build of
+ * a release ("0.19.0-rc.1") comes before it, so 0.19.0 is an update for it.
  */
 export function newerRelease(next: string, current: string): boolean {
   const a = parseRelease(next)
   const b = parseRelease(current.trim().replace(/[-+].*$/, ''))
   if (!a || !b) return false
   for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i]
-  return false
+  return TEST_BUILD.test(current.trim())
 }
+
+/** A signed test build of a release, published as a GitHub pre-release: "0.19.0-rc.1". */
+export const TEST_BUILD = /^v?\d+\.\d+\.\d+-rc\.\d+$/
 
 /** One file of the newest release, as latest.json lists it. */
 export interface ReleaseFile {

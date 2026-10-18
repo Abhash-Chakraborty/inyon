@@ -2,7 +2,7 @@ import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { newerRelease, VERSION, type HostState } from '@inyon/protocol'
 import type { Host, ExecResult } from './host.ts'
 import { nodeLinks } from './node-link.ts'
-import { LINK_UPDATE, NodeUpdates, nodeUpdates, SELF_UPDATE, WINDOWS_LAUNCHER } from './node-update.ts'
+import { LINK_UPDATE, newerTarget, NodeUpdates, nodeUpdates, SELF_UPDATE, WINDOWS_LAUNCHER } from './node-update.ts'
 import { registry } from './registry.ts'
 
 afterAll(() => mock.restore())
@@ -214,4 +214,17 @@ test('the overview carries the update state', () => {
     hosts.delete('ov')
   }
   expect(nodeUpdates).toBeInstanceOf(NodeUpdates)
+})
+
+test('a hub on a test build offers it to machines on the release before, and only to them', () => {
+  expect(newerTarget('0.19.0-rc.1', '0.18.0')).toBe(true)
+  expect(newerTarget('0.19.0-rc.1', '0.18.0-build.7')).toBe(true)
+  expect(newerTarget('0.19.0-rc.2', '0.19.0-rc.1')).toBe(true)
+  expect(newerTarget('0.19.0-rc.1', '0.19.0-rc.1')).toBe(false)
+  expect(newerTarget('0.19.0-rc.1', '0.19.0-rc.2')).toBe(false)
+  expect(newerTarget('0.19.0-rc.1', '0.19.0')).toBe(false)
+  expect(newerTarget('0.19.0-rc.1', '0.20.0')).toBe(false)
+  // a release target is compared as before
+  expect(newerTarget('0.19.0', '0.19.0-rc.1')).toBe(true)
+  expect(newerTarget('0.18.0', '0.18.0')).toBe(false)
 })
