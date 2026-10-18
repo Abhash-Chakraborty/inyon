@@ -49,8 +49,8 @@ pub fn read_entries() -> Vec<Entry> {
 }
 
 /// The VAPID keys let anyone notify that browser: readable by this user only.
-fn write_entries(all: &[Entry]) {
-    write_node_json(FILE, &all);
+fn write_entries(all: &[Entry]) -> Result<(), String> {
+    write_node_json(FILE, &all)
 }
 
 fn text<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
@@ -103,7 +103,7 @@ pub fn set_entries(input: &Value) -> Result<usize, String> {
     let _files = node_files();
     let mut all: Vec<Entry> = read_entries().into_iter().filter(|e| e.phone != phone).collect();
     all.extend(mine);
-    write_entries(&all);
+    write_entries(&all)?;
     Ok(count)
 }
 
@@ -113,7 +113,9 @@ pub fn forget_pushes(phone: &str) {
     let all = read_entries();
     let kept: Vec<Entry> = all.iter().filter(|e| e.phone != phone).cloned().collect();
     if kept.len() != all.len() {
-        write_entries(&kept);
+        if let Err(e) = write_entries(&kept) {
+            error(&e);
+        }
     }
 }
 
@@ -218,7 +220,9 @@ pub async fn deliver(n: &Notice, only: Option<&str>, send: &PushSender) -> usize
     if !gone.is_empty() {
         let _files = node_files();
         let kept: Vec<Entry> = read_entries().into_iter().filter(|e| !gone.contains(&e.subscription.endpoint)).collect();
-        write_entries(&kept);
+        if let Err(e) = write_entries(&kept) {
+            error(&e);
+        }
     }
     sent
 }

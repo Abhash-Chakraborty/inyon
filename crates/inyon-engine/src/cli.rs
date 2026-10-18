@@ -163,7 +163,7 @@ pub async fn make_pairing(args: &[String]) -> Paired {
         }
         tidy::start_tidying(paths::home());
     }
-    let pairing = link::new_pairing();
+    let pairing = link::new_pairing().unwrap_or_else(|e| fail(&e, 1));
     // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
     // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
     let wanted = config.tunnel || config.lan || config.vpn || !config.urls.is_empty() || !config.relays.is_empty();

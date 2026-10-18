@@ -63,8 +63,9 @@ pub fn node_files() -> std::sync::MutexGuard<'static, ()> {
 /// Each write gets a temporary file of its own, so two threads never rename each other's.
 static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Written whole or not at all, readable only by this user (it holds keys and pairings).
-pub fn write_node_json(name: &str, value: &impl Serialize) {
+/// Written whole or not at all, readable only by this user (it holds keys and pairings). A file
+/// that couldn't be saved is an error the caller acts on, as the Bun engine's throw was.
+pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String> {
     let dir = node_dir();
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
@@ -77,11 +78,18 @@ pub fn write_node_json(name: &str, value: &impl Serialize) {
     let target = file(name);
     let n = TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = PathBuf::from(format!("{}.{}.{n}.tmp", target.to_string_lossy(), std::process::id()));
-    if crate::connect::write_private(&tmp, pretty(value).as_bytes()).is_ok() {
-        if let Err(e) = std::fs::rename(&tmp, &target) {
-            let _ = std::fs::remove_file(&tmp);
-            error(&format!("couldn't save {name}: {e}"));
-        }
+    let saved = crate::connect::write_private(&tmp, pretty(value).as_bytes()).and_then(|()| std::fs::rename(&tmp, &target));
+    saved.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("couldn't save {name}: {e}")
+    })
+}
+
+/// For files whose loss only costs a moment (the state the link shows, addresses, settings):
+/// said in the log, and the work goes on.
+fn save_or_say(name: &str, value: &impl Serialize) {
+    if let Err(e) = write_node_json(name, value) {
+        error(&e);
     }
 }
 
@@ -120,7 +128,7 @@ pub fn load_config() -> LinkConfig {
 
 pub fn save_config(c: &LinkConfig) {
     let _files = node_files();
-    write_node_json("link.json", c)
+    save_or_say("link.json", c)
 }
 
 /// This machine's identity, made on first use. Its id is what the phone pairs with.
@@ -136,7 +144,10 @@ pub fn identity() -> Identity {
     }
     let id = Identity::generate().expect("the system has no randomness to give");
     let seed: String = id.seed.iter().map(|b| format!("{b:02x}")).collect();
-    write_node_json("identity.json", &json!({ "seed": seed, "id": id.id }));
+    // an identity that isn't kept would be a new computer to every paired phone next time
+    if let Err(e) = write_node_json("identity.json", &json!({ "seed": seed, "id": id.id })) {
+        crate::output::fail(&e, 1);
+    }
     id
 }
 
@@ -216,12 +227,12 @@ pub struct Pairing {
 }
 
 /// Starts a pairing, good for a few minutes.
-pub fn new_pairing() -> Pairing {
+pub fn new_pairing() -> Result<Pairing, String> {
     let secret = URL_SAFE_NO_PAD.encode(crate::random_bytes(24));
     let short = inyon_link::new_short_code().expect("the system has no randomness to give");
     let _files = node_files();
-    write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }));
-    Pairing { secret, short }
+    write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }))?;
+    Ok(Pairing { secret, short })
 }
 
 /// What the running link last wrote: its addresses, pid and version.
@@ -304,7 +315,7 @@ pub fn forget_phone(key: &str) {
         let _files = node_files();
         let mut all = phones_raw();
         all.shift_remove(key);
-        write_node_json("phones.json", &Value::Object(all));
+        save_or_say("phones.json", &Value::Object(all));
     }
     end_sessions(key);
     crate::push::forget_pushes(key);
@@ -374,7 +385,7 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
     let now = crate::now_ms();
     if let Some(Value::Object(p)) = all.get_mut(&key) {
         p.insert("lastSeen".into(), json!(now));
-        write_node_json("phones.json", &Value::Object(all));
+        save_or_say("phones.json", &Value::Object(all));
         return Ok(welcome());
     }
     let host = crate::hostname();
@@ -391,7 +402,11 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
     if pair.is_some() && live && (matches(pairing.get("secret")) || matches(pairing.get("short"))) {
         let name = phone_name(hello.get("name"));
         all.insert(key, json!({ "name": name, "pairedAt": now, "lastSeen": now }));
-        write_node_json("phones.json", &Value::Object(all));
+        // not saved, not paired: the phone is told, and the code stays good for another try
+        if let Err(e) = write_node_json("phones.json", &Value::Object(all)) {
+            error(&e);
+            return Err(LinkError::Refused(format!("{host} couldn't save the pairing ({e}). Check the space and permissions of ~/.inyon/node, then try again.")));
+        }
         // one code, one phone
         let _ = std::fs::remove_file(file("pairing.json"));
         log(&format!("paired with {name}"));
@@ -405,7 +420,11 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
             pairing.shift_remove("short");
         }
         pairing.insert("failures".into(), json!(failures));
-        write_node_json("pairing.json", &Value::Object(pairing));
+        // a guess that can't be counted mustn't be free: the code stops working
+        if let Err(e) = write_node_json("pairing.json", &Value::Object(pairing)) {
+            error(&e);
+            let _ = std::fs::remove_file(file("pairing.json"));
+        }
         if failures >= SHORT_TRIES {
             return Err(LinkError::NotPaired(format!("Too many wrong codes, so that one no longer works. Run `inyon pair` on {host} for a new one.")));
         }
@@ -1102,7 +1121,7 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
     let state = State { urls: urls.clone(), relays: config.relays.clone(), updated_at: crate::now_ms(), pid: std::process::id(), version: Some(VERSION.into()), last_seq };
     {
         let _files = node_files();
-        write_node_json("state.json", &state);
+        save_or_say("state.json", &state);
     }
     {
         let mut l = live.lock().unwrap_or_else(|e| e.into_inner());
@@ -1121,7 +1140,7 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
                     let _files = node_files();
                     let mut s = current_state().unwrap_or(state);
                     s.last_seq = Some(seq);
-                    write_node_json("state.json", &s);
+                    save_or_say("state.json", &s);
                 }
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
@@ -1360,7 +1379,7 @@ mod tests {
         let _h = testing::home("link-check-race");
         // the phone tries every address at once, so guesses arrive together
         for _ in 0..10 {
-            let p = new_pairing();
+            let p = new_pairing().unwrap();
             let wrong = json!({ "name": "Guesser", "pair": format!("{}:000000", p.short.id) });
             let start = Arc::new(std::sync::Barrier::new(12));
             let tries: Vec<_> = (0..12u8)
@@ -1386,7 +1405,7 @@ mod tests {
         let _h = testing::home("link-forget-race");
         let key = "09".repeat(32);
         for _ in 0..40 {
-            write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } }));
+            write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
             let start = Arc::new(std::sync::Barrier::new(2));
             let seen = {
                 let start = start.clone();
@@ -1405,9 +1424,23 @@ mod tests {
     }
 
     #[test]
+    fn a_pairing_that_cannot_be_saved_is_refused_and_keeps_its_code() {
+        let _h = testing::home("link-unsaved");
+        let p = new_pairing().unwrap();
+        // something in the way of phones.json (a folder where the file goes), as a full disk would be
+        std::fs::create_dir_all(node_dir().join("phones.json")).unwrap();
+        let e = check(&[3u8; 32], &json!({ "name": "Pixel 9", "pair": p.secret })).unwrap_err();
+        assert_eq!(e.code(), "REFUSED", "{e}");
+        assert!(e.message().contains("couldn't save the pairing"), "{e}");
+        assert!(node_dir().join("pairing.json").exists(), "the code is still good for another try");
+        std::fs::remove_dir(node_dir().join("phones.json")).unwrap();
+        assert_eq!(check(&[3u8; 32], &json!({ "name": "Pixel 9", "pair": p.secret })).unwrap()["ok"], json!(true));
+    }
+
+    #[test]
     fn a_wrong_code_counts_and_the_fifth_cancels_it() {
         let _h = testing::home("link-check");
-        let p = new_pairing();
+        let p = new_pairing().unwrap();
         let phone = [7u8; 32];
         let wrong = json!({ "name": "Guesser", "pair": format!("{}:000000", p.short.id) });
         for i in 1..=4 {
