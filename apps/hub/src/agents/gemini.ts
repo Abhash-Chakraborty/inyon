@@ -107,8 +107,10 @@ export class GeminiDoc {
         if (!m) continue
         if (u.content !== undefined) m.content = u.content
         for (const tc of list(u.toolCalls)) {
-          const t = list(m.toolCalls).find((x: any) => x?.id === tc?.id)
-          if (t && tc?.result !== undefined) t.result = tc.result
+          // an update without an id belongs to no call (two missing ids would look equal)
+          if (tc?.id == null || tc.result === undefined) continue
+          const t = list(m.toolCalls).find((x: any) => x?.id === tc.id)
+          if (t) t.result = tc.result
         }
       }
       for (const id of list(p.removeIds)) {
