@@ -20,3 +20,9 @@ test('a build from main counts as the release it was built on', () => {
   expect(newerRelease('0.6.3', '0.6.3-build.41')).toBe(false)
   expect(newerRelease('0.6.4', '0.6.3-build.41')).toBe(true)
 })
+
+test('a test build comes before the release it leads to', () => {
+  expect(newerRelease('0.19.0', '0.19.0-rc.1')).toBe(true)
+  expect(newerRelease('0.18.1', '0.19.0-rc.1')).toBe(false)
+  expect(newerRelease('0.19.0', '0.19.0-build.3')).toBe(false)
+})
