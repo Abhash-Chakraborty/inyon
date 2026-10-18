@@ -49,13 +49,18 @@ impl Server {
         }
         let out = out.unwrap();
         assert!(out.status.success(), "new-session: {}", String::from_utf8_lossy(&out.stderr));
-        // tmux 3.2 left a session made without a terminal at 80x23 whatever -x/-y said; set the
-        // size the way the hub's psmux mirror does (resize, then back to automatic sizing)
-        for args in [&["resize-window", "-t", "main:", "-x", "120", "-y", "40"][..], &["set-option", "-w", "-t", "main:", "-u", "window-size"]] {
-            let o = s.tmux.run(args).unwrap();
+        s.fit("main:");
+        s
+    }
+
+    /// tmux 3.2 sizes a window made without a terminal from the client that made it (80x24
+    /// for a one-off command or a control client), whatever new-session's -x/-y said. This sets
+    /// 120x40 the way the hub's psmux mirror does: resize, then back to automatic sizing.
+    pub fn fit(&self, target: &str) {
+        for args in [&["resize-window", "-t", target, "-x", "120", "-y", "40"][..], &["set-option", "-w", "-t", target, "-u", "window-size"]] {
+            let o = self.tmux.run(args).unwrap();
             assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
         }
-        s
     }
 
     pub fn version(&self) -> Version {
@@ -74,13 +79,14 @@ impl Server {
     }
 
     /// Opens a window in `main` running a script; returns its pane id. Made with a one-off tmux
-    /// command, as the hub does: on tmux 3.2 a window made through a control client takes the
-    /// client's 80x24 (see windows_made_over_control_mode).
+    /// command, as the hub does, and sized with `fit`.
     pub fn window(&self, name: &str, body: &str) -> String {
         let script = self.script(&format!("{name}.sh"), body);
         let out = self.tmux.run(["new-window", "-d", "-t", "main:", "-n", name, "-P", "-F", "#{pane_id}", &format!("sh {}", script.display())]).unwrap();
         assert!(out.status.success(), "new-window: {}", String::from_utf8_lossy(&out.stderr));
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        let pane = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        self.fit(&pane);
+        pane
     }
 }
 

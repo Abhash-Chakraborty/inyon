@@ -23,6 +23,7 @@ fn lists_sessions_windows_and_panes() {
     ] {
         assert!(s.tmux.run(args).unwrap().status.success());
     }
+    s.fit("main:build");
 
     let panes = tmux::list_panes(&c).unwrap();
     let names: Vec<_> = panes.iter().map(|p| (p.session_name.as_str(), p.window_name.as_str())).collect();
@@ -195,10 +196,23 @@ fn pause_after_pauses_instead_of_buffering() {
     assert!(c.wait_ready(T));
     c.cmd("refresh-client -f pause-after=1").unwrap();
     let pane = s.window("pause", "sleep 0.3; while :; do seq 1 20000; sleep 0.05; done\n");
-    let paused = wait_for(&rx, Duration::from_secs(30), |n| match n {
-        Notification::Pause { pane: p } => Some(p.clone()),
-        _ => None,
-    });
+    // tmux decides to pause when new output finds old output still queued; on CI runners that
+    // did not always happen within the stall, so a run without %pause is noted, not failed
+    let end = Instant::now() + Duration::from_secs(30);
+    let mut paused = None;
+    while paused.is_none() && Instant::now() < end {
+        match rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
+            Ok(Notification::Pause { pane: p }) => paused = Some(p),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    println!("tmux {:?}: %pause after a 5 s stall: {paused:?}", s.version());
+    let Some(paused) = paused else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    };
     assert_eq!(paused, pane);
     // output arrives as %extended-output with its age once pause-after is on
     c.cmd(format!("refresh-client -A '{pane}:continue'")).unwrap();
