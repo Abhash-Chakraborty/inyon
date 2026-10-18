@@ -16,9 +16,13 @@ const T: Duration = Duration::from_secs(10);
 fn lists_sessions_windows_and_panes() {
     let s = Server::start("list");
     let (c, _rx) = s.attach(false);
-    c.cmd("new-session -d -s \"rød økt\" -n \"vindu ø\" -x 90 -y 20").unwrap();
-    c.cmd("new-window -d -t main: -n build").unwrap();
-    c.cmd("split-window -d -t main:build").unwrap();
+    for args in [
+        &["new-session", "-d", "-s", "rød økt", "-n", "vindu ø", "-x", "90", "-y", "20"][..],
+        &["new-window", "-d", "-t", "main:", "-n", "build"],
+        &["split-window", "-d", "-t", "main:build"],
+    ] {
+        assert!(s.tmux.run(args).unwrap().status.success());
+    }
 
     let panes = tmux::list_panes(&c).unwrap();
     let names: Vec<_> = panes.iter().map(|p| (p.session_name.as_str(), p.window_name.as_str())).collect();
@@ -46,7 +50,7 @@ fn lists_sessions_windows_and_panes() {
 fn captures_the_screen_with_styles() {
     let s = Server::start("capture");
     let (c, rx) = s.attach(false);
-    let pane = s.window(&c, "cap", "printf '\\033[31mred\\033[0m plain rød\\n'; exec sleep 60\n");
+    let pane = s.window("cap", "printf '\\033[31mred\\033[0m plain rød\\n'; exec sleep 60\n");
     collect(&rx, &pane, T, |b| contains(b, b"plain"));
     let rows = tmux::capture(&c, &pane).unwrap();
     let first = &rows[0];
@@ -64,8 +68,7 @@ fn captures_the_screen_with_styles() {
 fn streams_output_and_decodes_escapes() {
     let s = Server::start("output");
     let (c, rx) = s.attach(true);
-    let (w, _) = s.attach(false);
-    let pane = s.window(&w, "out", "printf 'back\\\\slash\\ttab\\001ctl rød\\033[1mbold\\n'; exec sleep 60\n");
+    let pane = s.window("out", "printf 'back\\\\slash\\ttab\\001ctl rød\\033[1mbold\\n'; exec sleep 60\n");
     let out = collect(&rx, &pane, T, |b| contains(b, b"bold"));
     assert!(contains(&out, "back\\slash\ttab\x01ctl rød\x1b[1mbold".as_bytes()), "{:?}", String::from_utf8_lossy(&out));
     drop(c);
@@ -76,7 +79,7 @@ fn types_keys_and_literal_text() {
     let s = Server::start("keys");
     let (c, rx) = s.attach(false);
     let file = s.dir.join("typed");
-    let pane = s.window(&c, "keys", &format!("stty raw -echo; printf ready; exec cat > {}\n", file.display()));
+    let pane = s.window("keys", &format!("stty raw -echo; printf ready; exec cat > {}\n", file.display()));
     collect(&rx, &pane, T, |b| contains(b, b"ready"));
 
     let text = "a \"b\" $HOME ; \\ ~ #{pane_id} 'q' -- rød\nnext";
@@ -93,7 +96,7 @@ fn pastes_as_one_bracketed_paste() {
     let s = Server::start("paste");
     let (c, rx) = s.attach(false);
     let file = s.dir.join("pasted");
-    let pane = s.window(&c, "paste", &format!("stty raw -echo; printf '\\033[?2004h'; exec cat > {}\n", file.display()));
+    let pane = s.window("paste", &format!("stty raw -echo; printf '\\033[?2004h'; exec cat > {}\n", file.display()));
     // paste-buffer -p only wraps when the program has asked for it, so wait until it has
     collect(&rx, &pane, T, |b| contains(b, b"\x1b[?2004h"));
 
@@ -105,7 +108,7 @@ fn pastes_as_one_bracketed_paste() {
     // a long paste goes over in many set-buffer chunks and still arrives as one paste
     let big: String = (0..4000).map(|i| format!("{i:05} the quick brown fox ø\n")).collect();
     let file = s.dir.join("pasted-big");
-    let pane = s.window(&c, "big", &format!("stty raw -echo; printf '\\033[?2004h'; exec cat > {}\n", file.display()));
+    let pane = s.window("big", &format!("stty raw -echo; printf '\\033[?2004h'; exec cat > {}\n", file.display()));
     collect(&rx, &pane, T, |b| contains(b, b"\x1b[?2004h"));
     let t0 = Instant::now();
     tmux::paste(&c, &pane, &big).unwrap();
@@ -124,7 +127,7 @@ fn pastes_without_brackets_when_not_asked() {
     let s = Server::start("plainpaste");
     let (c, rx) = s.attach(false);
     let file = s.dir.join("pasted");
-    let pane = s.window(&c, "paste", &format!("stty raw -echo; printf ready; exec cat > {}\n", file.display()));
+    let pane = s.window("paste", &format!("stty raw -echo; printf ready; exec cat > {}\n", file.display()));
     collect(&rx, &pane, T, |b| contains(b, b"ready"));
     tmux::paste(&c, &pane, "one\ntwo").unwrap();
     let got = wait_file(&file, T, |b| b.ends_with(b"two"));
@@ -144,10 +147,9 @@ fn strip_cr(b: &[u8]) -> Vec<u8> {
 fn keeps_every_byte_under_load() {
     let s = Server::start("load");
     let (c, rx) = s.attach(true);
-    let (w, _) = s.attach(false);
     let n = 300_000;
     let t0 = Instant::now();
-    let pane = s.window(&w, "load", &format!("sleep 0.3; seq 1 {n}; echo LOAD-DONE; exec sleep 60\n"));
+    let pane = s.window("load", &format!("sleep 0.3; seq 1 {n}; echo LOAD-DONE; exec sleep 60\n"));
     let out = collect(&rx, &pane, Duration::from_secs(60), |b| contains(&b[b.len().saturating_sub(64)..], b"LOAD-DONE"));
     let el = t0.elapsed();
     let got = strip_cr(&out);
@@ -160,7 +162,6 @@ fn keeps_every_byte_under_load() {
 #[test]
 fn a_client_that_stops_reading_loses_nothing() {
     let s = Server::start("stall");
-    let (w, _) = s.attach(false);
     // our own spawn, so the reader can be made to fall behind for 3 s
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(s.version(), "main", true));
@@ -169,7 +170,7 @@ fn a_client_that_stops_reading_loses_nothing() {
     let (c, rx) = Control::over(stall, child.stdin.take().unwrap());
     assert!(c.wait_ready(T));
     let n = 200_000;
-    let pane = s.window(&w, "stall", &format!("sleep 0.3; seq 1 {n}; echo STALL-DONE; exec sleep 60\n"));
+    let pane = s.window("stall", &format!("sleep 0.3; seq 1 {n}; echo STALL-DONE; exec sleep 60\n"));
     let out = collect(&rx, &pane, Duration::from_secs(60), |b| contains(&b[b.len().saturating_sub(64)..], b"STALL-DONE"));
     assert!(strip_cr(&out).starts_with(&seq_lines(n)), "lost output after a 3 s stall");
     assert!(!c.closed());
@@ -185,7 +186,6 @@ fn pause_after_pauses_instead_of_buffering() {
         println!("tmux {:?}: no pause-after before 3.2, skipped", s.version());
         return;
     }
-    let (w, _) = s.attach(false);
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(s.version(), "main", false));
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
@@ -193,7 +193,7 @@ fn pause_after_pauses_instead_of_buffering() {
     let (c, rx) = Control::over(stall, child.stdin.take().unwrap());
     assert!(c.wait_ready(T));
     c.cmd("refresh-client -f pause-after=1").unwrap();
-    let pane = s.window(&w, "pause", "sleep 0.3; while :; do seq 1 20000; sleep 0.05; done\n");
+    let pane = s.window("pause", "sleep 0.3; while :; do seq 1 20000; sleep 0.05; done\n");
     let paused = wait_for(&rx, Duration::from_secs(30), |n| match n {
         Notification::Pause { pane: p } => Some(p.clone()),
         _ => None,
@@ -232,10 +232,24 @@ fn resizes_windows_and_panes() {
 fn a_control_client_does_not_resize_windows() {
     let s = Server::start("size");
     let (c, _rx) = s.attach(true);
-    c.cmd("refresh-client").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
     let p = &tmux::list_panes(&c).unwrap()[0];
     println!("tmux {:?}: window is {}x{} with a control client attached", s.version(), p.width, p.height);
     assert_eq!((p.width, p.height), (120, 40), "the control client changed the window size");
+}
+
+/// A window made by a command from the control client: 3.2 sizes it from that client (80x24,
+/// less a status line); 3.3 stopped counting control clients there.
+#[test]
+fn windows_made_over_control_mode() {
+    let s = Server::start("ctlwindow");
+    let (c, _rx) = s.attach(false);
+    let id = c.cmd("new-window -d -t main: -P -F '#{pane_id}'").unwrap().text().trim().to_string();
+    let p = tmux::list_panes(&c).unwrap().into_iter().find(|p| p.pane_id == id).unwrap();
+    println!("tmux {:?}: a window made over control mode is {}x{}", s.version(), p.width, p.height);
+    if s.version() != (Version { major: 3, minor: 2 }) {
+        assert_eq!((p.width, p.height), (120, 40));
+    }
 }
 
 /// The hub's attach as it is today (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`)
@@ -252,6 +266,19 @@ fn the_hubs_attach_today() {
     let p = &tmux::list_panes(&c).unwrap()[0];
     println!("tmux {v:?}: the hub's attach leaves the window at {}x{}", p.width, p.height);
     assert_eq!((p.width, p.height), (120, 40));
+}
+
+/// The hub's arguments word for word, whatever the version: tmux before 3.2 has no `-f` on
+/// attach-session, so there the hub's live client never attaches.
+#[test]
+fn the_hubs_exact_arguments() {
+    let s = Server::start("hubargs");
+    let mut cmd = s.tmux.command();
+    cmd.args(["-C", "attach-session", "-t", "main", "-f", "read-only,ignore-size"]);
+    let (c, _rx) = Control::spawn(cmd).unwrap();
+    let attached = c.wait_ready(T);
+    println!("tmux {:?}: `-C attach-session -t main -f read-only,ignore-size` attached: {attached}", s.version());
+    assert_eq!(attached, s.version().has_client_flags());
 }
 
 #[test]

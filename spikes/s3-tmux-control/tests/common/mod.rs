@@ -67,11 +67,14 @@ impl Server {
         p
     }
 
-    /// Opens a window in `main` running a script; returns its pane id.
-    pub fn window(&self, c: &Control, name: &str, body: &str) -> String {
+    /// Opens a window in `main` running a script; returns its pane id. Made with a one-off tmux
+    /// command, as the hub does: on tmux 3.2 a window made through a control client takes the
+    /// client's 80x24 (see windows_made_over_control_mode).
+    pub fn window(&self, name: &str, body: &str) -> String {
         let script = self.script(&format!("{name}.sh"), body);
-        let r = c.cmd(format!("new-window -d -t main: -n {name} -P -F '#{{pane_id}}' \"sh {}\"", script.display())).unwrap();
-        r.text().trim().to_string()
+        let out = self.tmux.run(["new-window", "-d", "-t", "main:", "-n", name, "-P", "-F", "#{pane_id}", &format!("sh {}", script.display())]).unwrap();
+        assert!(out.status.success(), "new-window: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 }
 
