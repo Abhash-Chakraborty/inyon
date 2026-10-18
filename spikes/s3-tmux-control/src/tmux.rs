@@ -106,8 +106,22 @@ impl Tmux {
             return Err(io::Error::other(format!("could not attach to {session}: {}", c.exit_reason().unwrap_or_default())));
         }
         if let Some(size) = size {
-            // only once tmux has attached the client: sent earlier, it is undone by the shrink
-            c.cmd(format!("refresh-client -C {size}")).map_err(|e| io::Error::other(e.to_string()))?;
+            // The shrink lands a moment after the attach answers (the client's first resize
+            // message gives it tmux's default 80x24), and a -C sent before then is undone. So
+            // watch the size for up to 600 ms and put it back when it changes.
+            let q = format!("display-message -p -t {} '#{{window_width}}x#{{window_height}}'", quote(session));
+            let err = |e: Error| io::Error::other(e.to_string());
+            let end = std::time::Instant::now() + std::time::Duration::from_millis(600);
+            let mut fixed = false;
+            while std::time::Instant::now() < end {
+                if c.cmd(q.as_str()).map_err(err)?.text().trim() != size {
+                    c.cmd(format!("refresh-client -C {size}")).map_err(err)?;
+                    fixed = true;
+                } else if fixed {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
         }
         Ok((c, rx))
     }
