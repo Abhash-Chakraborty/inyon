@@ -1,6 +1,6 @@
-//! The pairing code as a QR code in the terminal, drawn the way the engine drew it: two modules
-//! per character with the half blocks, light modules as full blocks (a terminal is usually dark),
-//! and a quiet zone of two modules.
+//! The pairing code as a QR code in the terminal, drawn the way the Bun engine drew it (uqr's
+//! renderUnicodeCompact): two modules per character with the half blocks, light modules as full
+//! blocks (a terminal is usually dark), and a quiet zone of two modules.
 
 use qrcode::{Color, EcLevel, QrCode};
 
