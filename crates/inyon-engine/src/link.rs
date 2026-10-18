@@ -408,6 +408,22 @@ pub trait WireOut: Send + Sync {
     fn close(&self, code: u16, reason: &str);
 }
 
+/// What a session answers with: each message sealed and queued in one go. Every sealed frame
+/// takes the next Noise nonce, so the frames must reach the wire in the order they were sealed;
+/// they're queued while the channel is still held, or two senders (a terminal's output, a
+/// command's result, a pong) could swap them and the phone would drop the connection.
+fn sealing_sender(channel: Arc<Mutex<inyon_link::Channel>>, out: Arc<dyn WireOut>, open: Arc<std::sync::atomic::AtomicBool>) -> ops::Sender {
+    Arc::new(move |m: Value| {
+        if !open.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let mut channel = channel.lock().unwrap_or_else(|e| e.into_inner());
+        for f in channel.seal(m.to_string().as_bytes()).unwrap_or_default() {
+            out.send(f);
+        }
+    })
+}
+
 /// One phone session: the encrypted handshake, then the same commands the hub sends.
 pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>, out: Arc<dyn WireOut>, via: String) {
     let first = match tokio::time::timeout(Duration::from_millis(inyon_link::channel::HANDSHAKE_MS), rx.recv()).await {
@@ -453,18 +469,7 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
     }
     let channel = Arc::new(Mutex::new(channel));
     let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
-    let send: ops::Sender = {
-        let (channel, out, open) = (channel.clone(), out.clone(), open.clone());
-        Arc::new(move |m: Value| {
-            if !open.load(std::sync::atomic::Ordering::Relaxed) {
-                return;
-            }
-            let frames = channel.lock().unwrap_or_else(|e| e.into_inner()).seal(m.to_string().as_bytes());
-            for f in frames.unwrap_or_default() {
-                out.send(f);
-            }
-        })
-    };
+    let send = sealing_sender(channel.clone(), out.clone(), open.clone());
     let ops = ops::Ops::new(send.clone());
     let end = Arc::new(tokio::sync::Notify::new());
     let me = NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1197,6 +1202,55 @@ pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
 mod tests {
     use super::*;
     use crate::paths::testing;
+
+    struct Collect(Mutex<Vec<Vec<u8>>>);
+
+    impl WireOut for Collect {
+        fn send(&self, data: Vec<u8>) {
+            self.0.lock().unwrap().push(data);
+        }
+        fn close(&self, _code: u16, _reason: &str) {}
+    }
+
+    #[test]
+    fn frames_from_many_senders_reach_the_phone_in_the_order_they_were_sealed() {
+        let machine = inyon_link::KeyPair::generate().unwrap();
+        let phone = inyon_link::KeyPair::generate().unwrap();
+        let (connecting, msg1) = inyon_link::connect(&phone, &machine.public, b"{}").unwrap();
+        let (channel, msg2) = inyon_link::accept(&machine, &msg1).unwrap().welcome(b"{\"ok\":true}").unwrap();
+        let (mut theirs, _) = connecting.finish(&msg2).unwrap();
+        let out = Arc::new(Collect(Mutex::new(Vec::new())));
+        let send = sealing_sender(Arc::new(Mutex::new(channel)), out.clone(), Arc::new(std::sync::atomic::AtomicBool::new(true)));
+        // a terminal's output, command results and pongs, all at once; some bigger than one Noise message
+        let senders: Vec<_> = (0..8u64)
+            .map(|t| {
+                let send = send.clone();
+                std::thread::spawn(move || {
+                    for i in 0..150u64 {
+                        let body = if i % 15 == 0 { "x".repeat(130_000) } else { format!("{t}-{i}") };
+                        send(json!({ "t": t, "i": i, "b": body }));
+                    }
+                })
+            })
+            .collect();
+        for s in senders {
+            s.join().unwrap();
+        }
+        let mut next = [0u64; 8];
+        for f in out.0.lock().unwrap().iter() {
+            match theirs.open(f) {
+                Ok(Some(whole)) => {
+                    let m: Value = serde_json::from_slice(&whole).unwrap();
+                    let t = m["t"].as_u64().unwrap() as usize;
+                    assert_eq!(m["i"].as_u64(), Some(next[t]), "messages from one sender stay in order");
+                    next[t] += 1;
+                }
+                Ok(None) => {}
+                Err(e) => panic!("the phone would close the connection: {e}"),
+            }
+        }
+        assert_eq!(next, [150; 8]);
+    }
 
     #[test]
     fn container_and_vm_bridges_are_left_out_of_the_addresses_whatever_their_case() {
