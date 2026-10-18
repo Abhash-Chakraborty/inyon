@@ -54,7 +54,12 @@ fn subsystem_at(exe: &[u8]) -> Option<usize> {
 /// This program as a Windows program without a console, the bytes of `inyon-engine.exe`: logon
 /// tasks start it with no window, and named inyon-engine it answers the engine's commands. Tasks,
 /// the firewall rule and older inyon commands keep the path they know.
+/// Only inyon 0.19 or later can be the copy: an older one doesn't answer to the engine's name and
+/// would start itself again and again.
 pub fn make_copy(program: &[u8]) -> Result<Vec<u8>, String> {
+    if !marked(program) {
+        return Err("That inyon is from before 0.19 and has no engine built in, so it can't stand in for the engine.".into());
+    }
     let mut out = program.to_vec();
     let at = subsystem_at(&out).ok_or("inyon isn't a Windows program, so there's no copy to make.")?;
     out[at..at + 2].copy_from_slice(&2u16.to_le_bytes());
@@ -485,11 +490,25 @@ mod tests {
 
     #[test]
     fn the_windowless_copy_differs_only_in_its_subsystem() {
-        let console = fake_exe(3);
+        let console = fake_inyon(3);
         let copy = make_copy(&console).unwrap();
-        assert_eq!(copy, fake_exe(2));
+        assert_eq!(copy, fake_inyon(2));
         assert_eq!(console.iter().zip(&copy).filter(|(a, b)| a != b).count(), 1);
-        assert!(make_copy(b"#!/bin/sh\n").is_err());
+        assert!(make_copy(format!("#!/bin/sh\n{COPY_MARK}").as_bytes()).is_err());
+    }
+
+    #[test]
+    fn an_inyon_from_before_0_19_is_never_made_the_copy() {
+        // it doesn't know the engine's name, so as the engine it would start itself again and again
+        let err = make_copy(&fake_exe(3)).unwrap_err();
+        assert!(err.contains("before 0.19"), "{err}");
+        let dir = std::env::temp_dir().join(format!("inyon-old-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = dir.join("inyon.exe");
+        std::fs::write(&old, fake_exe(3)).unwrap();
+        assert!(refresh_copy(&old).is_err());
+        assert!(!update::engine_beside(&old).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// inyon 0.19 or later: a Windows program carrying the mark.
