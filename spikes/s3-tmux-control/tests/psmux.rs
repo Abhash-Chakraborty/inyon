@@ -87,6 +87,14 @@ fn psmux_control_mode() {
         format!("{:?}", cap.as_ref().map(|rows| (rows.len(), rows.iter().any(|r| String::from_utf8_lossy(r).contains("S3-42")), rows.iter().any(|r| r.contains(&0x1b))))),
     );
     note("paste (set-buffer + paste-buffer -p)", format!("{:?}", tmux::paste(&c, &pane, "# pasted\nline two")));
+    // the hub's way on Windows: load-buffer from a file, then paste-buffer -p
+    let file = std::env::temp_dir().join("inyon-s3-paste.txt");
+    std::fs::write(&file, "# loaded\nline two").unwrap();
+    let loaded = c.cmd(format!("load-buffer -b s3 {}", s3_tmux_control::escape::quote(&file.to_string_lossy())));
+    note("load-buffer <file>", format!("{:?}", loaded.as_ref().map(|r| r.text())));
+    note("paste-buffer -p", format!("{:?}", c.cmd(format!("paste-buffer -d -p -b s3 -t {pane}")).map(|r| r.text())));
+    // a paste could also go in as raw bytes with the brackets written by hand
+    note("send-keys -H", format!("{:?}", c.cmd(format!("send-keys -t {pane} -H 23 20 68 65 78")).map(|r| r.text())));
     note("resize-window", format!("{:?}", tmux::resize_window(&c, &pane, 100, 30)));
     note("resize-pane", format!("{:?}", tmux::resize_pane(&c, &pane, 100, 25)));
     note("refresh-client -C 120,30", format!("{:?}", c.cmd("refresh-client -C 120,30").map(|r| r.text())));

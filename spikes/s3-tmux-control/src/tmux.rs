@@ -21,7 +21,8 @@ pub struct Version {
 
 impl Version {
     pub fn parse(s: &str) -> Option<Self> {
-        let v = s.split_whitespace().last()?;
+        // the word after the program's name: "psmux 3.4.0 (20aa1d7 2026-10-13)" has more after it
+        let v = s.split_whitespace().nth(1)?;
         let v = v.trim_start_matches(|c: char| !c.is_ascii_digit());
         let mut it = v.split(|c: char| !c.is_ascii_digit());
         Some(Version { major: it.next()?.parse().ok()?, minor: it.next().and_then(|m| m.parse().ok()).unwrap_or(0) })
@@ -30,6 +31,11 @@ impl Version {
     /// `attach-session -f` (client flags: read-only, ignore-size, pause-after...) arrived in 3.2.
     pub fn has_client_flags(self) -> bool {
         self >= Version { major: 3, minor: 2 }
+    }
+
+    /// Only 3.2 lets a lone control client set a window's size (see [`Tmux::attach`]).
+    pub fn sizes_from_control_clients(self) -> bool {
+        self == Version { major: 3, minor: 2 }
     }
 }
 
@@ -78,11 +84,26 @@ impl Tmux {
     /// Attaches a control client to a session. `ignore-size` keeps it from shrinking windows to
     /// its own 80x24; tmux before 3.2 has no client flags, so there only `-r` is passed for a
     /// read-only client.
+    ///
+    /// tmux 3.2 shrinks the session's window to the control client's 80x24 when no terminal is
+    /// attached (ignore-size only counts while another client is there, and 3.3 stopped control
+    /// clients from sizing windows at all). On 3.2 the window's size is read first and the client
+    /// then given that size with `refresh-client -C`, which puts the window back.
     pub fn attach(&self, session: &str, read_only: bool) -> io::Result<(Control, Receiver<Notification>)> {
         let v = self.version().unwrap_or(Version { major: 3, minor: 2 });
+        let size = if v.sizes_from_control_clients() {
+            let out = self.run(["display-message", "-p", "-t", session, "#{window_width}x#{window_height}"])?;
+            Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|s| s.contains('x'))
+        } else {
+            None
+        };
         let mut c = self.command();
         c.args(attach_args(v, session, read_only));
-        Control::spawn(c)
+        let (c, rx) = Control::spawn(c)?;
+        if let Some(size) = size {
+            c.cmd(format!("refresh-client -C {size}")).map_err(|e| io::Error::other(e.to_string()))?;
+        }
+        Ok((c, rx))
     }
 }
 
@@ -319,6 +340,7 @@ mod tests {
         assert_eq!(v("tmux 3.6\n"), Version { major: 3, minor: 6 });
         assert_eq!(v("tmux next-3.7"), Version { major: 3, minor: 7 });
         assert_eq!(v("psmux 3.4.0"), Version { major: 3, minor: 4 });
+        assert_eq!(v("psmux 3.4.0 (20aa1d7 2026-10-13)"), Version { major: 3, minor: 4 });
         assert!(!v("tmux 3.1c").has_client_flags());
         assert!(v("tmux 3.2a").has_client_flags());
     }

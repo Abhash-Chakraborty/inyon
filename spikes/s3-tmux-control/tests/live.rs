@@ -231,6 +231,22 @@ fn a_control_client_does_not_resize_windows() {
     assert_eq!((p.width, p.height), (120, 40), "the control client changed the window size");
 }
 
+/// What the hub's attach (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`) does to
+/// a session nobody has a terminal on. On 3.2 it shrinks the window to 80x23.
+#[test]
+fn the_hubs_attach_today() {
+    let s = Server::start("hubattach");
+    let v = s.version();
+    let mut cmd = s.tmux.command();
+    cmd.args(attach_args(v, "main", true));
+    let (c, _rx) = Control::spawn(cmd).unwrap();
+    let p = &tmux::list_panes(&c).unwrap()[0];
+    println!("tmux {v:?}: the hub's attach leaves the window at {}x{}", p.width, p.height);
+    if !v.sizes_from_control_clients() {
+        assert_eq!((p.width, p.height), (120, 40));
+    }
+}
+
 #[test]
 fn reports_structure_changes() {
     let s = Server::start("structure");
@@ -274,16 +290,18 @@ fn exits_when_its_session_is_killed() {
     let (c, rx) = s.tmux.attach("gone", true).unwrap();
     assert!(tmux::list_panes(&c).is_ok());
     s.tmux.run(["kill-session", "-t", "gone"]).unwrap();
-    let reason = wait_for(&rx, T, |n| match n {
-        Notification::Exit { reason } => Some(reason.clone()),
-        _ => None,
-    });
-    println!("tmux {:?}: %exit reason {reason:?}", s.version());
-    // the channel disconnects once tmux closes the stream
+    // 3.2 and later say %exit first; 3.0 just closes the stream
+    let mut exit = None;
     let end = Instant::now() + T;
-    while !c.closed() && Instant::now() < end {
-        std::thread::sleep(Duration::from_millis(10));
+    loop {
+        match rx.recv_timeout(end.saturating_duration_since(Instant::now())) {
+            Ok(Notification::Exit { reason }) => exit = Some(reason),
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(e) => panic!("still attached: {e:?}"),
+        }
     }
+    println!("tmux {:?}: session killed, %exit: {exit:?}", s.version());
     assert!(c.closed());
     assert!(matches!(c.cmd("list-sessions"), Err(Error::Closed(_))));
 }
