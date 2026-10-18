@@ -86,6 +86,12 @@ export interface LiveAgent {
 
 const OUTPUT_KEEP = 4000
 
+/** `ms` as an ISO time; now when it isn't a number or is out of a Date's range */
+function isoAt(ms: unknown): string {
+  const at = new Date(typeof ms === 'number' ? ms : NaN)
+  return (Number.isNaN(at.getTime()) ? new Date() : at).toISOString()
+}
+
 /**
  * What the live helper has said so far: the items being written (by id, oldest first), the turn
  * under way and the thread's status. `apply` takes one line of the helper's output and says what
@@ -158,8 +164,9 @@ export class CodexLiveState {
         return { turn: true }
       case 'turn/completed': {
         this.turn = undefined
-        // whatever was still being written is over
-        for (const [id, it] of this.items) if (it.turnId === p.turn?.id && !this.done.has(id)) this.done.set(id, Date.now())
+        // whatever was still being written is over; with no turn id there's no telling what
+        const turn = p.turn?.id
+        if (turn != null) for (const [id, it] of this.items) if (it.turnId === turn && !this.done.has(id)) this.done.set(id, Date.now())
         return { turn: true, live: true }
       }
       case 'thread/status/changed': {
@@ -176,7 +183,7 @@ export class CodexLiveState {
       case 'thread/started': {
         const t = p.thread
         if (t?.parentThreadId && !this.agents.has(t.id)) {
-          this.agents.set(t.id, { threadId: t.id, description: t.preview || 'Sub-agent', model: t.model ?? undefined, status: 'running', startedAt: new Date((t.createdAt ?? Date.now() / 1000) * 1000).toISOString() })
+          this.agents.set(t.id, { threadId: t.id, description: t.preview || 'Sub-agent', model: t.model ?? undefined, status: 'running', startedAt: isoAt(typeof t.createdAt === 'number' ? t.createdAt * 1000 : undefined) })
           return { agents: true }
         }
         return {}
@@ -212,7 +219,7 @@ export class CodexLiveState {
     const id = item.agentThreadId
     if (!id) return {}
     const cur = this.agents.get(id)
-    this.agents.set(id, { threadId: id, description: cur?.description ?? item.agentPath ?? 'Sub-agent', model: item.model ?? cur?.model, status: 'running', startedAt: cur?.startedAt ?? new Date(at ?? Date.now()).toISOString() })
+    this.agents.set(id, { threadId: id, description: cur?.description ?? item.agentPath ?? 'Sub-agent', model: item.model ?? cur?.model, status: 'running', startedAt: cur?.startedAt ?? isoAt(at) })
     return { agents: true }
   }
 

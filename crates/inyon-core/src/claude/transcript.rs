@@ -564,7 +564,7 @@ pub fn normalize(e: &Value, meta: &mut TranscriptMeta, sidechain: bool) -> Vec<C
             meta.stats.lines_added = n("totalLinesAdded");
             meta.stats.lines_removed = n("totalLinesRemoved");
             if let Some(st) = e.at("startTime").filter(|v| Some(*v).truthy()) {
-                // an invalid date throws in the TS; the start is left as it was here
+                // an invalid date keeps the start there was
                 if let Some(iso) = date::to_iso(date::time_of(st)) {
                     meta.stats.started_at = Some(iso);
                 }
@@ -1126,5 +1126,20 @@ mod tests {
         assert_eq!(saved["subagents"][0][0], Value::Null);
         assert_eq!(saved["tools"][0][0], Value::Null);
         assert_eq!(load_meta(&saved).unwrap().subagents.len(), 1);
+    }
+
+    /// an invalid startTime keeps the start there was
+    #[test]
+    fn an_invalid_start_time_keeps_the_start_there_was() {
+        let mut meta = new_meta();
+        let cost = |meta: &mut TranscriptMeta, start: Value| {
+            normalize(&json!({ "type": "cost-state", "totalCostUSD": 0.5, "startTime": start, "timestamp": "2026-10-19T10:00:00Z" }), meta, false)
+        };
+        cost(&mut meta, json!("2026-10-19T09:00:00Z"));
+        assert_eq!(meta.stats.started_at.as_deref(), Some("2026-10-19T09:00:00.000Z"));
+        cost(&mut meta, json!("not a date"));
+        cost(&mut meta, json!(1e20));
+        assert_eq!(meta.stats.started_at.as_deref(), Some("2026-10-19T09:00:00.000Z"));
+        assert_eq!(meta.stats.cost_usd, Some(inyon_protocol::Num(0.5)));
     }
 }

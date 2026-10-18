@@ -86,6 +86,29 @@ describe('Codex live state', () => {
     // a thread of someone else's isn't a sub-agent
     expect(s.apply(line('thread/started', { thread: { id: 'other', parentThreadId: null } }))).toEqual({})
   })
+
+  test("a sub-agent whose start time isn't a usable number starts now", () => {
+    const s = new CodexLiveState()
+    const before = Date.now()
+    s.apply(line('thread/started', { thread: { id: 'sub1', parentThreadId: T, preview: 'Look', createdAt: 'soon' } }))
+    s.apply(line('thread/started', { thread: { id: 'sub2', parentThreadId: T, createdAt: 1e20 } }))
+    s.apply(line('item/started', { item: { type: 'subAgentActivity', kind: 'started', agentThreadId: 'sub3' }, startedAtMs: 'later' }))
+    s.apply(line('thread/started', { thread: { id: 'sub4', parentThreadId: T, createdAt: 1792257854 } }))
+    for (const id of ['sub1', 'sub2', 'sub3']) expect(Date.parse(s.agents.get(id)!.startedAt)).toBeGreaterThanOrEqual(before)
+    expect(s.agents.get('sub4')?.startedAt).toBe('2026-10-17T17:24:14.000Z')
+  })
+
+  test('a turn that ends without an id ends no items, not the ones without a turn', () => {
+    const s = new CodexLiveState()
+    s.apply(line('item/agentMessage/delta', { threadId: T, itemId: 'a', delta: 'no turn' }))
+    s.apply(delta('b', 'in the turn'))
+    expect(s.apply(line('turn/completed', { threadId: T, turn: { status: 'completed' } }))).toEqual({ turn: true, live: true })
+    expect(s.expire(1, 9e15)).toBe(false)
+    expect(s.list().map((i) => i.id)).toEqual(['a', 'b'])
+    s.apply(line('turn/completed', { threadId: T, turn: { id: TURN, status: 'completed' } }))
+    expect(s.expire(1, 9e15)).toBe(true)
+    expect(s.list().map((i) => i.id)).toEqual(['a'])
+  })
 })
 
 test('the helper is run with node on the machine, for the thread the rollout file names', () => {

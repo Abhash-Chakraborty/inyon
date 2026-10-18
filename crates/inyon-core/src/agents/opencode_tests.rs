@@ -163,6 +163,25 @@ fn direct_opencode_shell_produces_a_delivery_receipt_and_provider_errors_are_vis
     assert!(rows.as_array().unwrap().iter().any(|r| r["kind"] == "notice" && r["text"] == "Provider is unavailable"));
 }
 
+/// a shell receipt with no id is never paired with a reply that has no parent
+#[test]
+fn a_shell_receipt_with_no_id_is_never_paired_with_a_reply_that_has_no_parent() {
+    let ran = json!({ "type": "text", "synthetic": true, "text": "The following tool was executed by the user" });
+    let reply = |parent: Option<&str>| {
+        let mut info = json!({ "id": format!("msg_r{}", parent.unwrap_or("")), "role": "assistant" });
+        if let Some(p) = parent {
+            info["parentID"] = json!(p);
+        }
+        json!({ "info": info, "parts": [{ "type": "tool", "tool": "bash", "callID": "c1", "state": { "status": "completed", "input": { "command": "ls" }, "output": "a.ts" } }] })
+    };
+    let users = |rows: Vec<ChatItem>| serde_json::to_value(rows).unwrap().as_array().unwrap().iter().filter(|r| r["kind"] == "user").cloned().collect::<Vec<_>>();
+    let mut meta = new_meta();
+    assert_eq!(users(opencode_items(&[json!({ "info": { "role": "user" }, "parts": [ran.clone()] }), reply(None)], &mut meta)), Vec::<Value>::new());
+    // with ids, the receipt still finds its reply
+    let rows = users(opencode_items(&[json!({ "info": { "id": "msg_u", "role": "user" }, "parts": [ran] }), reply(None), reply(Some("msg_u"))], &mut meta));
+    assert_match(&rows, json!([{ "text": "ls", "shell": true }]));
+}
+
 /// what a message runs with comes from the footer first, then the session's record, then the last message
 #[test]
 fn what_a_message_runs_with_comes_from_the_footer_first_then_the_sessions_record_then_the_last_message() {

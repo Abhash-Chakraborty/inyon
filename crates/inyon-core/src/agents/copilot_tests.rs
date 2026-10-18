@@ -143,6 +143,24 @@ fn p(pid: i64, resume: Option<&str>) -> CopilotProc {
     CopilotProc { pid, resume: resume.map(str::to_owned) }
 }
 
+/// Copilot tool calls with null arguments read as calls with no input
+#[test]
+fn copilot_tool_calls_with_null_arguments_read_as_calls_with_no_input() {
+    let mut meta = new_meta();
+    assert_match(
+        &normalize_copilot(&event("tool.execution_start", json!({ "toolCallId": "c1", "toolName": "bash", "arguments": null })), &mut meta),
+        json!([{ "kind": "assistant", "block": { "type": "tool_use", "id": "c1", "name": "Bash", "input": {} } }]),
+    );
+    assert_match(
+        &normalize_copilot(&event("tool.execution_start", json!({ "toolCallId": "c2", "toolName": "mystery", "arguments": null })), &mut meta),
+        json!([{ "block": { "id": "c2", "name": "mystery", "input": {} } }]),
+    );
+    assert_match(
+        &normalize_copilot(&event("tool.user_requested", json!({ "toolCallId": "c3", "toolName": "local_shell", "arguments": null })), &mut meta),
+        json!([{ "kind": "user", "text": "!" }, { "block": { "id": "c3", "name": "Bash" } }]),
+    );
+}
+
 /// Copilot session ownership follows an npm launcher but prefers closest locks
 #[test]
 fn copilot_session_ownership_follows_an_npm_launcher_but_prefers_closest_locks() {

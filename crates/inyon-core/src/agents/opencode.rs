@@ -195,9 +195,12 @@ pub fn opencode_items(messages: &[Value], meta: &mut TranscriptMeta) -> Vec<Chat
                 out.push(base.user(text, parts.iter().filter(|p| kind(p) == "file").count() as u32));
             } else if parts.iter().any(|p| kind(p) == "text" && Some(p).at("synthetic").truthy() && Some(p).at("text").str() == Some("The following tool was executed by the user"))
             {
-                let result = messages.iter().find(|m| {
-                    let m = Some(*m);
-                    m.at("info").at("parentID") == info.at("id") && m.at("parts").arr().is_some_and(|ps| ps.iter().any(|p| is_tool(p, "bash")))
+                // the reply that ran it names this message as its parent; without an id there's none to name
+                let result = info.at("id").present().and_then(|id| {
+                    messages.iter().find(|m| {
+                        let m = Some(*m);
+                        m.at("info").at("parentID") == Some(id) && m.at("parts").arr().is_some_and(|ps| ps.iter().any(|p| is_tool(p, "bash")))
+                    })
                 });
                 let command = result.and_then(|r| r["parts"].as_array()?.iter().find(|p| is_tool(p, "bash"))).and_then(|p| Some(p).at("state").at("input").at("command").str());
                 if let Some(command) = command {

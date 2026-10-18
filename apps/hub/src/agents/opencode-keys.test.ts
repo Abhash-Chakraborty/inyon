@@ -39,6 +39,12 @@ describe("OpenCode's key bindings", () => {
     expect(mergeKeybinds(['{"keybinds":{"leader":"ctrl+a","agent_cycle":"f2"}}', '{"keybinds":{"agent_cycle":"f3"}}', '{"theme":"x"}'])).toEqual({ leader: 'ctrl+a', agent_cycle: 'f3' })
   })
 
+  test('a comma before a brace or bracket inside a string stays', () => {
+    expect(parseJsonc('{ "keybinds": { "leader": ",}", "agent_cycle": "a, ]", "quote": "\\",}", }, "list": [1, 2, ], }'))
+      .toEqual({ keybinds: { leader: ',}', agent_cycle: 'a, ]', quote: '",}' }, list: [1, 2] })
+    expect(parseJsonc('{ "a": "b" , // note\n /* more */ }')).toEqual({ a: 'b' })
+  })
+
   test("reads the user's and the project's files on the machine, and keeps the answer a minute", async () => {
     const cmds: string[] = []
     const host = { id: 'keys-' + Math.random(), exec: async (cmd: string) => { cmds.push(cmd); return { code: 0, stdout: '@@FILE\n{"keybinds":{"agent_cycle":"f2"}}\n@@FILE\n{"keybinds":{"variant_cycle":"f3"}}\n', stderr: '' } } }

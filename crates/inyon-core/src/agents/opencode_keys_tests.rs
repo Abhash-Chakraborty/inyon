@@ -70,6 +70,16 @@ mod opencodes_key_bindings {
         );
     }
 
+    /// a comma before a brace or bracket inside a string stays
+    #[test]
+    fn a_comma_before_a_brace_or_bracket_inside_a_string_stays() {
+        assert_eq!(
+            parse_jsonc(r#"{ "keybinds": { "leader": ",}", "agent_cycle": "a, ]", "quote": "\",}", }, "list": [1, 2, ], }"#),
+            Some(json!({ "keybinds": { "leader": ",}", "agent_cycle": "a, ]", "quote": "\",}" }, "list": [1, 2] }))
+        );
+        assert_eq!(parse_jsonc("{ \"a\": \"b\" , // note\n /* more */ }"), Some(json!({ "a": "b" })));
+    }
+
     /// reads the user's and the project's files on the machine, and keeps the answer a minute
     ///
     /// (the keeping is the caller's now: this checks the command and how its output reads)

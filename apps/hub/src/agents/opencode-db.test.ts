@@ -77,3 +77,18 @@ test('a machine without the database answers with nothing, not an error', async 
   expect(await ocdbSessions(bare, '/work')).toEqual([])
   expect(await ocdbStamp(bare, S)).toBe(0)
 })
+
+test('a row with no time_updated leaves the stamp where it was', () => {
+  const cache = new OcdbCache()
+  cache.merge({
+    messages: [
+      { id: 'msg_1', time_created: 1000, data: '{"role":"user"}' },
+      { id: 'msg_2', time_created: 2000, time_updated: 3000, data: '{"role":"assistant"}' },
+    ],
+    parts: [{ id: 'prt_1', message_id: 'msg_2', time_created: 2000, time_updated: null, data: '{"type":"text","text":"hi"}' }],
+  })
+  expect(cache.stamp).toBe(3000)
+  cache.merge({ messages: [], parts: [{ id: 'prt_2', message_id: 'msg_2', time_created: 2100, time_updated: 4000, data: '{"type":"text","text":"more"}' }] })
+  expect(cache.stamp).toBe(4000)
+  expect(cache.list().map((m) => [m.info.id, m.parts.length])).toEqual([['msg_1', 0], ['msg_2', 2]])
+})
