@@ -257,7 +257,8 @@ fn the_hubs_attach_today() {
         return;
     }
     std::thread::sleep(Duration::from_millis(300));
-    println!("tmux {v:?}: 300 ms later {:?}", size(&c));
+    let reported = c.cmd("display-message -p -t main '#{window_width}x#{window_height}'").map(|r| r.text());
+    println!("tmux {v:?}: 300 ms later {:?}, window size format says {reported:?}", size(&c));
     for remedy in ["refresh-client -C 120x40", "refresh-client -C 120,40", "resize-window -A -t main:"] {
         let r = c.cmd(remedy).map(|r| r.text());
         std::thread::sleep(Duration::from_millis(300));
