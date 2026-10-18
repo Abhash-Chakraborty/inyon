@@ -239,8 +239,9 @@ fn a_control_client_does_not_resize_windows() {
     assert_eq!((p.width, p.height), (120, 40), "the control client changed the window size");
 }
 
-/// A window made by a command from the control client. 3.2 sizes it from the client (80x24
-/// unless Tmux::attach gave the client a size); 3.3 stopped counting control clients there.
+/// A window made by a command from the control client. tmux 3.2's default_window_size still
+/// counts the creating client, control or not (3.3 added the exception), so this records what
+/// size such a window gets.
 #[test]
 fn windows_made_over_control_mode() {
     let s = Server::start("ctlwindow");
@@ -248,14 +249,16 @@ fn windows_made_over_control_mode() {
     let id = c.cmd("new-window -d -t main: -P -F '#{pane_id}'").unwrap().text().trim().to_string();
     let p = tmux::list_panes(&c).unwrap().into_iter().find(|p| p.pane_id == id).unwrap();
     println!("tmux {:?}: a window made over control mode is {}x{}", s.version(), p.width, p.height);
-    assert_eq!((p.width, p.height), (120, 40));
+    if s.version() != (Version { major: 3, minor: 2 }) {
+        assert_eq!((p.width, p.height), (120, 40));
+    }
 }
 
 /// The hub's attach as it is today (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`)
 /// on a session nobody has a terminal on.
 #[test]
 fn the_hubs_attach_today() {
-    // five fresh servers: on 3.2 the shrink did not happen every time
+    // five fresh servers, to catch a shrink that only happens sometimes
     let mut sizes = Vec::new();
     let mut before = Vec::new();
     let mut v = None;
@@ -273,9 +276,7 @@ fn the_hubs_attach_today() {
     }
     let v = v.unwrap();
     println!("tmux {v:?}: before the hub's attach the window was {before:?}, after {sizes:?}");
-    if !v.sizes_from_control_clients() {
-        assert!(sizes.iter().all(|&s| s == (120, 40)));
-    }
+    assert!(sizes.iter().all(|&s| s == (120, 40)));
 }
 
 /// The hub's arguments word for word, whatever the version: tmux before 3.2 has no `-f` on
