@@ -6,6 +6,7 @@
 //!   machine → hub/phone   { id, type: 'exit' | 'line' | 'data' | 'error', … }
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -146,45 +147,53 @@ fn self_exe() -> String {
 
 /// The environment commands run with. On Windows: a Unix-style HOME, the usual per-user install
 /// folders on PATH, and no SHELL (psmux would start new panes in busybox instead of PowerShell).
-pub fn child_env() -> Vec<(String, String)> {
-    let mut env: Vec<(String, String)> = std::env::vars().collect();
+/// Names and values are passed on as they are, so a variable that isn't valid UTF-8 reaches the
+/// command unchanged rather than ending this process.
+pub fn child_env() -> Vec<(OsString, OsString)> {
+    let mut env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     // a TETHER_* variable set before the rename counts as its INYON_* name
-    let olds: Vec<(String, String)> = env.iter().filter_map(|(k, v)| k.strip_prefix("TETHER_").map(|r| (format!("INYON_{r}"), v.clone()))).collect();
+    let olds: Vec<(OsString, OsString)> =
+        env.iter().filter_map(|(k, v)| k.to_str()?.strip_prefix("TETHER_").map(|r| (OsString::from(format!("INYON_{r}")), v.clone()))).collect();
     for (k, v) in olds {
         if !env.iter().any(|(n, _)| *n == k) {
             env.push((k, v));
         }
     }
-    let mut set = |k: &str, v: String| {
-        env.retain(|(n, _)| !(if WIN { n.eq_ignore_ascii_case(k) } else { n == k }));
-        env.push((k.to_string(), v));
+    let same = |n: &OsStr, k: &str| if WIN { n.to_str().is_some_and(|n| n.eq_ignore_ascii_case(k)) } else { n == k };
+    let mut set = |k: &str, v: OsString| {
+        env.retain(|(n, _)| !same(n, k));
+        env.push((k.into(), v));
     };
     for (k, v) in paths::set_vars() {
-        set(&k, v);
+        set(&k, v.into());
     }
     let exe = self_exe();
-    set("INYON_EXE", exe.clone());
-    set("INYON_SCRIPT", String::new());
-    set("TETHER_NODE_EXE", exe);
-    set("TETHER_NODE_SCRIPT", String::new());
+    set("INYON_EXE", exe.clone().into());
+    set("INYON_SCRIPT", OsString::new());
+    set("TETHER_NODE_EXE", exe.into());
+    set("TETHER_NODE_SCRIPT", OsString::new());
     if WIN {
         let home = paths::home();
-        set("HOME", home.to_string_lossy().replace('\\', "/"));
-        env.retain(|(n, _)| !n.eq_ignore_ascii_case("SHELL"));
-        let mut extra: Vec<String> = [home.join(".local").join("bin"), home.join(".bun").join("bin"), home.join("scoop").join("shims"), home.join(".cargo").join("bin")]
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        if let Ok(a) = std::env::var("APPDATA") {
-            extra.push(PathBuf::from(a).join("npm").to_string_lossy().into_owned());
+        set("HOME", home.to_string_lossy().replace('\\', "/").into());
+        env.retain(|(n, _)| !same(n, "SHELL"));
+        let mut extra: Vec<OsString> =
+            [home.join(".local").join("bin"), home.join(".bun").join("bin"), home.join("scoop").join("shims"), home.join(".cargo").join("bin")].into_iter().map(PathBuf::into_os_string).collect();
+        if let Some(a) = std::env::var_os("APPDATA") {
+            extra.push(PathBuf::from(a).join("npm").into_os_string());
         }
-        if let Ok(l) = std::env::var("LOCALAPPDATA") {
-            extra.push(PathBuf::from(l).join("Microsoft").join("WinGet").join("Links").to_string_lossy().into_owned());
+        if let Some(l) = std::env::var_os("LOCALAPPDATA") {
+            extra.push(PathBuf::from(l).join("Microsoft").join("WinGet").join("Links").into_os_string());
         }
-        let key = env.iter().find(|(n, _)| n.eq_ignore_ascii_case("path")).map(|(n, _)| n.clone()).unwrap_or_else(|| "Path".into());
+        let key = env.iter().find(|(n, _)| same(n, "path")).map(|(n, _)| n.clone()).unwrap_or_else(|| "Path".into());
         let current = env.iter().find(|(n, _)| *n == key).map(|(_, v)| v.clone()).unwrap_or_default();
         extra.push(current);
-        let joined = extra.join(";");
+        let mut joined = OsString::new();
+        for (i, part) in extra.iter().enumerate() {
+            if i > 0 {
+                joined.push(";");
+            }
+            joined.push(part);
+        }
         env.retain(|(n, _)| *n != key);
         env.push((key, joined));
     }
@@ -193,7 +202,7 @@ pub fn child_env() -> Vec<(String, String)> {
 
 /// PATH the commands run with, which also covers the usual per-user install folders.
 pub fn child_path() -> String {
-    child_env().into_iter().find(|(k, _)| k.eq_ignore_ascii_case("path")).map(|(_, v)| v).unwrap_or_default()
+    child_env().into_iter().find(|(k, _)| k.to_str().is_some_and(|k| k.eq_ignore_ascii_case("path"))).map(|(_, v)| v.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 /// Ends a command and everything it started. Commands run in sessions of their own, so on Unix
@@ -590,7 +599,7 @@ async fn exec(running: Running, send: Sender, id: Value, m: Value) {
     if WIN && Regex::new(r"\bps -e -o ").unwrap().is_match(&cmd) {
         let file = std::env::temp_dir().join(format!("inyon-ps-{}-{}.txt", std::process::id(), id.as_str().map(String::from).unwrap_or_else(|| id.to_string())));
         let _ = std::fs::write(&file, win_procs().await);
-        env.push(("INYON_PS".into(), file.to_string_lossy().into_owned()));
+        env.push(("INYON_PS".into(), file.clone().into_os_string()));
         snapshot = Some(file);
     }
     let input = m.get("input").filter(|v| truthy(v)).and_then(Value::as_str).map(|s| B64.decode(s.trim()).unwrap_or_default());
@@ -807,10 +816,23 @@ mod tests {
         assert!(out.contains("got hello"), "{out}");
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_variable_that_is_not_utf8_reaches_the_command_unchanged() {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: a name no other test reads, set before anything starts that reads the environment
+        unsafe { std::env::set_var("INYON_TEST_LATIN1", OsStr::from_bytes(b"caf\xe9")) };
+        let (ops, frames) = ops();
+        ops.message(json!({ "op": "exec", "id": "x", "cmd": "printf %s \"$INYON_TEST_LATIN1\" | od -An -tx1" }));
+        let exit = frames.next("x", "exit").await;
+        assert_eq!(exit["code"], json!(0));
+        assert_eq!(exit["stdout"].as_str().unwrap().split_whitespace().collect::<Vec<_>>(), ["63", "61", "66", "e9"]);
+    }
+
     #[test]
     fn commands_get_the_programs_own_address_under_both_names() {
         let env = child_env();
-        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.to_string_lossy().into_owned());
         assert!(get("INYON_EXE").is_some_and(|v| !v.is_empty()));
         assert_eq!(get("INYON_EXE"), get("TETHER_NODE_EXE"));
         assert_eq!(get("INYON_SCRIPT").as_deref(), Some(""));

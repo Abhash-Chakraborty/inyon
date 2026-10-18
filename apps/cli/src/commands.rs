@@ -397,8 +397,11 @@ pub fn hub_env_file() -> PathBuf {
 
 fn hub_env() -> std::collections::BTreeMap<String, String> {
     let mut env = read_env_file(&hub_env_file());
-    for (k, v) in std::env::vars() {
-        env.insert(k, v);
+    // the hub's settings are text; a variable that isn't (in any locale) is none of them
+    for (k, v) in std::env::vars_os() {
+        if let (Ok(k), Ok(v)) = (k.into_string(), v.into_string()) {
+            env.insert(k, v);
+        }
     }
     env
 }
@@ -1193,6 +1196,15 @@ pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_variable_that_is_not_utf8_does_not_stop_the_hub_commands() {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: a name nothing else reads
+        unsafe { std::env::set_var("INYON_TEST_LATIN1", std::ffi::OsStr::from_bytes(b"caf\xe9")) };
+        assert!(!hub_env().contains_key("INYON_TEST_LATIN1"));
+    }
 
     #[test]
     fn private_addresses_may_use_plain_http() {
