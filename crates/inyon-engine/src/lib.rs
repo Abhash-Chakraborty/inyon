@@ -9,9 +9,10 @@
 //! command sees stays as the Bun engine had it: the `/node` frames, the link's bytes, the `--json`
 //! answers and the files under `~/.inyon`.
 
+pub mod cli;
 pub mod connect;
-pub mod hub;
 pub mod http;
+pub mod hub;
 pub mod link;
 pub mod networks;
 pub mod ops;
