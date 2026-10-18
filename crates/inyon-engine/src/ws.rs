@@ -71,10 +71,33 @@ pub async fn connect(url: &str, headers: &[(&str, &str)]) -> Result<Socket, (u16
         req.headers_mut().insert(name, value);
     }
     let config = WebSocketConfig::default().max_message_size(Some(64 << 20)).max_frame_size(Some(64 << 20));
-    let connect = tokio_tungstenite::connect_async_tls_with_config(req, Some(config), false, Some(Connector::Rustls(tls())));
+    // no Nagle: keys typed into a terminal go out at once instead of waiting for more to send
+    let connect = tokio_tungstenite::connect_async_tls_with_config(req, Some(config), true, Some(Connector::Rustls(tls())));
     match tokio::time::timeout(std::time::Duration::from_secs(30), connect).await {
         Ok(Ok((ws, _))) => Ok(ws),
         Ok(Err(e)) => Err((1006, e.to_string())),
         Err(_) => Err((1006, "timed out".into())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn keys_go_out_at_once_without_nagle() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let _ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        });
+        let ws = connect(&format!("ws://127.0.0.1:{port}/node"), &[]).await.unwrap();
+        match ws.get_ref() {
+            MaybeTlsStream::Plain(tcp) => assert!(tcp.nodelay().unwrap()),
+            _ => panic!("a plain socket was expected"),
+        }
+        server.await.unwrap();
     }
 }
