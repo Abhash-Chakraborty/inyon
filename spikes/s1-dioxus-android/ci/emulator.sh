@@ -52,7 +52,7 @@ for run in 1 2 3 4; do
   fi
 done
 note ""
-note "Run 1 is the first start after install; the times after it are from process start (read in Rust from /proc)."
+note "Run 1 is the first start after install; the other columns count from process start (Process.getStartUptimeMillis, read over JNI)."
 note ""
 
 pid=$(adb shell pidof $pkg | tr -d '\r')
@@ -100,7 +100,7 @@ sleep 1
 
 # soft keyboard: a real tap on the composer should bring it up and type through the IME
 adb logcat -c
-tap 'textarea'
+tap '[aria-label=Message]'
 sleep 3
 kb=$(adb shell dumpsys input_method | tr -d '\r' | grep -oE 'mInputShown=(true|false)' | head -1)
 note "keyboard after a tap on the composer: ${kb:-unknown}"
