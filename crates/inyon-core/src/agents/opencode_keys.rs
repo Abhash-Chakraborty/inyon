@@ -163,6 +163,8 @@ pub fn merge_keybinds(files: &[&str]) -> IndexMap<String, String> {
 pub fn parse_jsonc(text: &str) -> Option<Value> {
     let c: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
+    // where in `out` the last comma outside a string is, while only whitespace has followed it
+    let mut comma: Option<usize> = None;
     let mut i = 0;
     while i < c.len() {
         let ch = c[i];
@@ -172,6 +174,7 @@ pub fn parse_jsonc(text: &str) -> Option<Value> {
                 j += if c[j] == '\\' { 2 } else { 1 };
             }
             out.extend(&c[i..(j + 1).min(c.len())]);
+            comma = None;
             i = j + 1;
         } else if ch == '/' && c.get(i + 1) == Some(&'/') {
             while i < c.len() && c[i] != '\n' {
@@ -181,11 +184,20 @@ pub fn parse_jsonc(text: &str) -> Option<Value> {
             let end = (i + 2..c.len().saturating_sub(1)).find(|&k| c[k] == '*' && c[k + 1] == '/');
             i = end.map_or(c.len(), |e| e + 2);
         } else {
+            // a trailing comma goes; one inside a string stays
+            if let (Some(at), '}' | ']') = (comma, ch) {
+                out.remove(at);
+            }
+            if ch == ',' {
+                comma = Some(out.len());
+            } else if !matches!(ch, ' ' | '\t' | '\n' | '\r') {
+                comma = None;
+            }
             out.push(ch);
             i += 1;
         }
     }
-    json::parse(&re!(r",(\s*[}\]])", "g").replace_all(&out, "$1"))
+    json::parse(&out)
 }
 
 /// The keys to press for each action, from the bindings (defaults filled in).

@@ -76,6 +76,13 @@ test('Copilot direct shell input creates a receipt and matching tool output', ()
 })
 
 
+test('Copilot tool calls with null arguments read as calls with no input', () => {
+  const meta = newMeta()
+  expect(normalizeCopilot(event('tool.execution_start', { toolCallId: 'c1', toolName: 'bash', arguments: null }), meta)).toMatchObject([{ kind: 'assistant', block: { type: 'tool_use', id: 'c1', name: 'Bash', input: {} } }])
+  expect(normalizeCopilot(event('tool.execution_start', { toolCallId: 'c2', toolName: 'mystery', arguments: null }), meta)).toMatchObject([{ block: { id: 'c2', name: 'mystery', input: {} } }])
+  expect(normalizeCopilot(event('tool.user_requested', { toolCallId: 'c3', toolName: 'local_shell', arguments: null }), meta)).toMatchObject([{ kind: 'user', text: '!' }, { block: { id: 'c3', name: 'Bash' } }])
+})
+
 test('Copilot session ownership follows an npm launcher but prefers closest locks', () => {
   const lock = (id: string, pid: number) => `/home/u/.copilot/session-state/${id}/inuse.${pid}.lock`
   const tree = [{pid: 11, ppid: 10}, {pid: 12, ppid: 11}, {pid: 21, ppid: 20}]

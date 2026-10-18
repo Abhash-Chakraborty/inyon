@@ -51,3 +51,14 @@ test('a background subagent leaves the running tasks when it finishes', () => {
   expect(meta.tasks.get('a624')?.status).toBe('completed')
   expect(meta.subagents.get('toolu_1')?.status).toBe('done')
 })
+
+test('an invalid startTime keeps the start there was', () => {
+  const meta = newMeta()
+  const cost = (startTime: unknown) => normalize({ type: 'cost-state', totalCostUSD: 0.5, startTime, timestamp: '2026-10-19T10:00:00Z' } as any, meta)
+  cost('2026-10-19T09:00:00Z')
+  expect(meta.stats.startedAt).toBe('2026-10-19T09:00:00.000Z')
+  cost('not a date')
+  cost(1e20)
+  expect(meta.stats.startedAt).toBe('2026-10-19T09:00:00.000Z')
+  expect(meta.stats.costUsd).toBe(0.5)
+})

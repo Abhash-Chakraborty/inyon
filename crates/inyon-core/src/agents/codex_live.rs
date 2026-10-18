@@ -132,9 +132,9 @@ fn yes() -> Option<bool> {
     Some(true)
 }
 
-/// `new Date(ms).toISOString()`, empty where the TS would throw
-fn iso(ms: f64) -> String {
-    date::to_iso(ms).unwrap_or_default()
+/// `ms` as an ISO time; now when it isn't a number or is out of a Date's range
+fn iso(ms: Option<f64>) -> String {
+    ms.and_then(date::to_iso).or_else(|| date::to_iso(now_ms() as f64)).unwrap_or_default()
 }
 
 fn flags(v: Option<&Value>) -> Vec<String> {
@@ -237,11 +237,11 @@ impl CodexLiveState {
             }
             "turn/completed" => {
                 self.turn = None;
-                // whatever was still being written is over
+                // whatever was still being written is over; with no turn id there's no telling what
                 let turn = string_of(p.at("turn").at("id"));
                 let now = now_ms() as f64;
                 for (id, it) in &self.items {
-                    if it.turn_id == turn && !self.done.contains_key(id) {
+                    if turn.is_some() && it.turn_id == turn && !self.done.contains_key(id) {
                         self.done.insert(id.clone(), now);
                     }
                 }
@@ -266,11 +266,16 @@ impl CodexLiveState {
                 let t = p.at("thread");
                 let id = t.at("id").to_js_string();
                 if t.at("parentThreadId").truthy() && !self.agents.contains_key(&id) {
-                    let created = t.at("createdAt").num().unwrap_or(now_ms() as f64 / 1000.0);
                     let description = t.at("preview").filter(|_| t.at("preview").truthy()).map_or_else(|| "Sub-agent".into(), value_string);
                     self.agents.insert(
                         id.clone(),
-                        LiveAgent { thread_id: id, description, model: string_of(t.at("model")), status: SubagentStatus::Running, started_at: iso(created * 1000.0) },
+                        LiveAgent {
+                            thread_id: id,
+                            description,
+                            model: string_of(t.at("model")),
+                            status: SubagentStatus::Running,
+                            started_at: iso(t.at("createdAt").num().map(|s| s * 1000.0)),
+                        },
                     );
                     return LiveChange { agents: yes(), ..Default::default() };
                 }
@@ -307,7 +312,7 @@ impl CodexLiveState {
             description: cur.map(|c| c.description.clone()).or_else(|| string_of(item.at("agentPath"))).unwrap_or_else(|| "Sub-agent".into()),
             model: string_of(item.at("model")).or_else(|| cur.and_then(|c| c.model.clone())),
             status: SubagentStatus::Running,
-            started_at: cur.map(|c| c.started_at.clone()).unwrap_or_else(|| iso(at.unwrap_or(now_ms() as f64))),
+            started_at: cur.map(|c| c.started_at.clone()).unwrap_or_else(|| iso(at)),
         };
         self.agents.insert(id, agent);
         LiveChange { agents: yes(), ..Default::default() }

@@ -301,7 +301,7 @@ pub fn ocdb_session_info(rows: &[Value]) -> Option<OcdbSessionInfo> {
 pub struct OcdbCache {
     messages: IndexMap<String, Value>,
     parts: IndexMap<String, Value>,
-    /// newest time_updated merged so far
+    /// newest time_updated merged so far (a row without one leaves it as it was)
     pub stamp: f64,
 }
 

@@ -113,3 +113,22 @@ fn a_machine_without_the_database_answers_with_nothing_not_an_error() {
     assert_eq!(ocdb_session("opencode-db:ses_a1"), Some("ses_a1"));
     assert_eq!(ocdb_session("opencode-db:"), None);
 }
+
+/// a row with no time_updated leaves the stamp where it was
+#[test]
+fn a_row_with_no_time_updated_leaves_the_stamp_where_it_was() {
+    let mut cache = OcdbCache::new();
+    cache.merge(
+        &[
+            json!({ "id": "msg_1", "time_created": 1000, "data": "{\"role\":\"user\"}" }),
+            json!({ "id": "msg_2", "time_created": 2000, "time_updated": 3000, "data": "{\"role\":\"assistant\"}" }),
+        ],
+        &[json!({ "id": "prt_1", "message_id": "msg_2", "time_created": 2000, "time_updated": null, "data": "{\"type\":\"text\",\"text\":\"hi\"}" })],
+    );
+    assert_eq!(cache.stamp, 3000.0);
+    cache.merge(&[], &[json!({ "id": "prt_2", "message_id": "msg_2", "time_created": 2100, "time_updated": 4000, "data": "{\"type\":\"text\",\"text\":\"more\"}" })]);
+    assert_eq!(cache.stamp, 4000.0);
+    let list = cache.list(None);
+    let shape: Vec<(Value, usize)> = list.iter().map(|m| (m["info"]["id"].clone(), m["parts"].as_array().unwrap().len())).collect();
+    assert_eq!(shape, vec![(json!("msg_1"), 0), (json!("msg_2"), 2)]);
+}

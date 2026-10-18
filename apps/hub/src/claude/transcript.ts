@@ -187,7 +187,11 @@ export function normalize(e: any, meta: TranscriptMeta, opts: { sidechain?: bool
       meta.stats.apiDurationMs = e.totalAPIDuration
       meta.stats.linesAdded = e.totalLinesAdded
       meta.stats.linesRemoved = e.totalLinesRemoved
-      if (e.startTime) meta.stats.startedAt = new Date(e.startTime).toISOString()
+      if (e.startTime) {
+        // an invalid date keeps the start there was
+        const at = new Date(e.startTime)
+        if (!Number.isNaN(at.getTime())) meta.stats.startedAt = at.toISOString()
+      }
       return []
     case 'queue-operation': {
       const c = String(e.content ?? '')

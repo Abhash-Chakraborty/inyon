@@ -159,16 +159,16 @@ export async function ocdbSessionInfo(host: Host, session: string): Promise<Ocdb
 export class OcdbCache {
   private messages = new Map<string, any>()
   private parts = new Map<string, any>()
-  /** newest time_updated merged so far */
+  /** newest time_updated merged so far (a row without one leaves it as it was) */
   stamp = 0
   merge(rows: { messages: any[]; parts: any[] }) {
     for (const m of rows.messages) {
       try { this.messages.set(m.id, { ...JSON.parse(m.data), id: m.id, time: { created: m.time_created, ...JSON.parse(m.data).time } }) } catch {}
-      this.stamp = Math.max(this.stamp, m.time_updated)
+      if (typeof m.time_updated === 'number') this.stamp = Math.max(this.stamp, m.time_updated)
     }
     for (const p of rows.parts) {
       try { this.parts.set(p.id, { ...JSON.parse(p.data), id: p.id, messageID: p.message_id, _t: p.time_created }) } catch {}
-      this.stamp = Math.max(this.stamp, p.time_updated)
+      if (typeof p.time_updated === 'number') this.stamp = Math.max(this.stamp, p.time_updated)
     }
   }
   /** drops rows whose message is gone */

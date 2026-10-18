@@ -69,9 +69,13 @@ export function mergeKeybinds(files: string[]): Record<string, string> {
   return out
 }
 
+const JSON_SPACE = new Set([' ', '\t', '\n', '\r'])
+
 /** JSON with comments and trailing commas, as opencode.jsonc allows; undefined when it doesn't parse. */
 export function parseJsonc(text: string): unknown {
   let out = ''
+  // where in `out` the last comma outside a string is, while only whitespace has followed it
+  let comma = -1
   let i = 0
   while (i < text.length) {
     const ch = text[i]
@@ -79,6 +83,7 @@ export function parseJsonc(text: string): unknown {
       let j = i + 1
       while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1
       out += text.slice(i, j + 1)
+      comma = -1
       i = j + 1
     } else if (ch === '/' && text[i + 1] === '/') {
       while (i < text.length && text[i] !== '\n') i++
@@ -86,12 +91,16 @@ export function parseJsonc(text: string): unknown {
       const end = text.indexOf('*/', i + 2)
       i = end < 0 ? text.length : end + 2
     } else {
+      // a trailing comma goes; one inside a string stays
+      if ((ch === '}' || ch === ']') && comma >= 0) out = out.slice(0, comma) + out.slice(comma + 1)
+      if (ch === ',') comma = out.length
+      else if (!JSON_SPACE.has(ch)) comma = -1
       out += ch
       i++
     }
   }
   try {
-    return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'))
+    return JSON.parse(out)
   } catch {
     return undefined
   }

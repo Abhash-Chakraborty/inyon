@@ -164,6 +164,35 @@ mod codex_live_state {
         // a thread of someone else's isn't a sub-agent
         assert_eq!(s.apply(&line("thread/started", json!({ "thread": { "id": "other", "parentThreadId": null } }))), LiveChange::default());
     }
+
+    /// a sub-agent whose start time isn't a usable number starts now
+    #[test]
+    fn a_sub_agent_whose_start_time_isnt_a_usable_number_starts_now() {
+        let mut s = CodexLiveState::new();
+        let before = now_ms() as f64;
+        s.apply(&line("thread/started", json!({ "thread": { "id": "sub1", "parentThreadId": T, "preview": "Look", "createdAt": "soon" } })));
+        s.apply(&line("thread/started", json!({ "thread": { "id": "sub2", "parentThreadId": T, "createdAt": 1e20 } })));
+        s.apply(&line("item/started", json!({ "item": { "type": "subAgentActivity", "kind": "started", "agentThreadId": "sub3" }, "startedAtMs": "later" })));
+        s.apply(&line("thread/started", json!({ "thread": { "id": "sub4", "parentThreadId": T, "createdAt": 1792257854u64 } })));
+        for id in ["sub1", "sub2", "sub3"] {
+            assert!(date::parse(&s.agents[id].started_at) >= before, "{id}: {:?}", s.agents[id].started_at);
+        }
+        assert_eq!(s.agents["sub4"].started_at, "2026-10-17T17:24:14.000Z");
+    }
+
+    /// a turn that ends without an id ends no items, not the ones without a turn
+    #[test]
+    fn a_turn_that_ends_without_an_id_ends_no_items_not_the_ones_without_a_turn() {
+        let mut s = CodexLiveState::new();
+        s.apply(&line("item/agentMessage/delta", json!({ "threadId": T, "itemId": "a", "delta": "no turn" })));
+        s.apply(&delta("b", "in the turn"));
+        assert_eq!(s.apply(&line("turn/completed", json!({ "threadId": T, "turn": { "status": "completed" } }))), change(json!({ "turn": true, "live": true })));
+        assert!(!s.expire(1.0, 9e15));
+        assert_eq!(s.list().iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        s.apply(&line("turn/completed", json!({ "threadId": T, "turn": { "id": TURN, "status": "completed" } })));
+        assert!(s.expire(1.0, 9e15));
+        assert_eq!(s.list().iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["a"]);
+    }
 }
 
 /// the helper is run with node on the machine, for the thread the rollout file names
@@ -220,8 +249,8 @@ fn a_summary_index_written_as_1_0_is_the_same_paragraph_as_1() {
 }
 
 /// review: an item/completed for an id that never streamed changes nothing, and a turn/completed
-/// without a turn id ends the items that have none (the TS's `undefined === undefined`, kept);
-/// compared with the TS CodexLiveState's output for the same lines (from bun)
+/// without a turn id ends no items, not even the ones without a turn; compared with the TS
+/// CodexLiveState's output for the same lines (from bun)
 #[test]
 fn a_completion_for_an_unknown_item_and_a_turn_end_without_an_id_go_as_in_the_ts() {
     let mut s = CodexLiveState::new();
@@ -239,6 +268,6 @@ fn a_completion_for_an_unknown_item_and_a_turn_end_without_an_id_go_as_in_the_ts
     out.push(serde_json::to_value(s.apply(&l("turn/completed", json!({ "threadId": "T", "turn": { "status": "completed" } })))).unwrap());
     out.push(json!(s.expire(1.0, 9e15)));
     out.push(serde_json::to_value(s.list()).unwrap());
-    let ts = r#"[{"live":true},{"live":true},{},[{"id":"a","kind":"text","text":"no turn"},{"id":"b","kind":"text","text":"in t1","turnId":"t1"}],{"turn":true,"live":true},true,[{"id":"b","kind":"text","text":"in t1","turnId":"t1"}]]"#;
+    let ts = r#"[{"live":true},{"live":true},{},[{"id":"a","kind":"text","text":"no turn"},{"id":"b","kind":"text","text":"in t1","turnId":"t1"}],{"turn":true,"live":true},false,[{"id":"a","kind":"text","text":"no turn"},{"id":"b","kind":"text","text":"in t1","turnId":"t1"}]]"#;
     assert_eq!(Value::Array(out), serde_json::from_str::<Value>(ts).unwrap());
 }

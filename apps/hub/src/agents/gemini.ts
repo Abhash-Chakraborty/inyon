@@ -75,6 +75,8 @@ function mapTool(name: string, args: any): { name: string; input: any } {
   }
 }
 
+const list = (v: unknown): any[] => Array.isArray(v) ? v : []
+
 /** Holds a Gemini session in memory, applying records in order. */
 export class GeminiDoc {
   private order: string[] = []
@@ -99,16 +101,17 @@ export class GeminiDoc {
     }
     if (rec.$patch) {
       const p = rec.$patch
-      for (const u of [...(p.updates ?? []), ...(p.id ? [p] : [])]) {
-        const m = this.messages.get(u.id)
+      // a field that should be a list and isn't is skipped
+      for (const u of [...list(p.updates), ...(p.id ? [p] : [])]) {
+        const m = this.messages.get(u?.id)
         if (!m) continue
         if (u.content !== undefined) m.content = u.content
-        for (const tc of u.toolCalls ?? []) {
-          const t = (m.toolCalls ?? []).find((x: any) => x.id === tc.id)
-          if (t && tc.result !== undefined) t.result = tc.result
+        for (const tc of list(u.toolCalls)) {
+          const t = list(m.toolCalls).find((x: any) => x?.id === tc?.id)
+          if (t && tc?.result !== undefined) t.result = tc.result
         }
       }
-      for (const id of p.removeIds ?? []) {
+      for (const id of list(p.removeIds)) {
         this.messages.delete(id)
         this.order = this.order.filter((x) => x !== id)
       }

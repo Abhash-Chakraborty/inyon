@@ -123,7 +123,8 @@ export function opencodeItems(messages: any[], meta: TranscriptMeta): ChatItem[]
       const text = parts.filter((p) => p.type === 'text' && !p.synthetic).map((p) => p.text).join('\n').trim()
       if (text) out.push({ kind: 'user', ...base, text, images: parts.filter((p) => p.type === 'file').length })
       else if (parts.some((p) => p.type === 'text' && p.synthetic && p.text === 'The following tool was executed by the user')) {
-        const result = messages.find((m) => m.info?.parentID === info.id && m.parts?.some((p: any) => p.type === 'tool' && p.tool === 'bash'))
+        // the reply that ran it names this message as its parent; without an id there's none to name
+        const result = info.id == null ? undefined : messages.find((m) => m.info?.parentID === info.id && m.parts?.some((p: any) => p.type === 'tool' && p.tool === 'bash'))
         const command = result?.parts.find((p: any) => p.type === 'tool' && p.tool === 'bash')?.state?.input?.command
         if (typeof command === 'string') out.push({ kind: 'user', ...base, text: command, images: 0, shell: true })
       }

@@ -1,5 +1,6 @@
-//! agents/gemini.ts has no tests in TS. These check the reader against what the TS made of the
-//! same records (printed with bun from agents/gemini.ts), and the session picker.
+//! agents/gemini.test.ts has one test, the last one here. The others check the reader against
+//! what the TS made of the same records (printed with bun from agents/gemini.ts), and the session
+//! picker.
 
 use super::*;
 use crate::claude::transcript::new_meta;
@@ -59,4 +60,22 @@ fn set_messages_remove_ids_and_a_rewind_to_nothing_read_as_the_ts_reads_them() {
     let items = doc.items(&mut meta);
     assert_eq!(serde_json::to_value(&items).unwrap(), serde_json::from_str::<Value>(ITEMS).unwrap());
     assert_eq!((meta.model.as_deref(), meta.stats.turns), (Some("gemini-3-flash"), 2));
+}
+
+/// a $patch whose lists aren't lists is skipped, and the session reads on
+///
+/// (`ITEMS` is the TS GeminiDoc's output for the same records, from bun)
+#[test]
+fn a_patch_whose_lists_arent_lists_is_skipped_and_the_session_reads_on() {
+    const ITEMS: &str = r#"[{"kind":"user","uuid":"u1","ts":"","text":"hi","images":0,"seq":0},{"kind":"assistant","uuid":"g1:x","ts":"","msgId":"g1","block":{"type":"text","text":"two"},"seq":1},{"kind":"assistant","uuid":"g1:c1","ts":"","msgId":"g1","block":{"type":"tool_use","id":"c1","name":"Bash","input":{"command":"ls"}},"seq":2},{"kind":"tool_result","uuid":"g1:c1:r","ts":"","toolUseId":"c1","isError":false,"text":"a.ts","meta":{"stdout":""},"seq":3}]"#;
+    let mut doc = GeminiDoc::new();
+    doc.apply(&json!({ "id": "u1", "type": "user", "content": "hi" }));
+    doc.apply(&json!({ "id": "g1", "type": "gemini", "content": "one", "toolCalls": [{ "id": "c1", "name": "run_shell_command", "args": { "command": "ls" } }] }));
+    for updates in [json!({ "id": "u1", "content": "x" }), json!(7), json!("u1"), json!(null)] {
+        doc.apply(&json!({ "$patch": { "updates": updates } }));
+    }
+    doc.apply(&json!({ "$patch": { "updates": [null, { "id": "g1", "toolCalls": { "id": "c1", "result": "no" } }], "removeIds": "u1" } }));
+    doc.apply(&json!({ "$patch": { "id": "g1", "content": "two", "toolCalls": [null, { "id": "c1", "result": [{ "text": "a.ts" }] }] } }));
+    let items = doc.items(&mut new_meta());
+    assert_eq!(serde_json::to_value(&items).unwrap(), serde_json::from_str::<Value>(ITEMS).unwrap());
 }

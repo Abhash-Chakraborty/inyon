@@ -156,6 +156,15 @@ test('direct OpenCode shell produces a delivery receipt and provider errors are 
   expect(rows.some((r) => r.kind === 'notice' && r.text === 'Provider is unavailable')).toBe(true)
 })
 
+test('a shell receipt with no id is never paired with a reply that has no parent', () => {
+  const meta = newMeta()
+  const ran = { type: 'text', synthetic: true, text: 'The following tool was executed by the user' }
+  const reply = (parentID?: string) => ({ info: { id: `msg_r${parentID ?? ''}`, role: 'assistant', ...(parentID ? { parentID } : {}) }, parts: [{ type: 'tool', tool: 'bash', callID: 'c1', state: { status: 'completed', input: { command: 'ls' }, output: 'a.ts' } }] })
+  expect(opencodeItems([{ info: { role: 'user' }, parts: [ran] }, reply()], meta).filter((i) => i.kind === 'user')).toEqual([])
+  // with ids, the receipt still finds its reply
+  expect(opencodeItems([{ info: { id: 'msg_u', role: 'user' }, parts: [ran] }, reply(), reply('msg_u')], meta).filter((i) => i.kind === 'user')).toMatchObject([{ text: 'ls', shell: true }])
+})
+
 test("what a message runs with comes from the footer first, then the session's record, then the last message", async () => {
   const models = [
     { id: 'opencode/deepseek-v4.1-flash-free', label: 'OpenCode · DeepSeek V4.1 Flash Free', efforts: ['low', 'high', 'max'] },

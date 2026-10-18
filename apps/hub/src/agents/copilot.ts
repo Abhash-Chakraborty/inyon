@@ -42,7 +42,9 @@ export async function guessCopilotSession(host: Host, home: string, proc: { pid:
   return pickCopilotSession(locks.stdout.split('\n').filter(Boolean), processes, proc)
 }
 
-function tool(name: string, a: any = {}) {
+function tool(name: string, args: any) {
+  // Copilot may write `arguments: null`
+  const a = args ?? {}
   switch (name) {
     case 'bash': case 'powershell': case 'local_shell': return { name: 'Bash', input: { command: a.command, description: a.description } }
     case 'view': return { name: 'Read', input: { file_path: a.path } }
