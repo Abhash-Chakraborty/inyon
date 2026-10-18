@@ -53,6 +53,9 @@ function codexImages(s: string) {
 export function sameMessage(recorded: string, sent: string): boolean {
   const a = looseText(recorded)
   const b = looseText(sent)
+  // a message with no words ("?", "...") would match anything else without words, including the
+  // stand-in for items that aren't messages: then the text itself has to agree
+  if (!a || !b) return squash(recorded) !== '' && squash(recorded) === squash(sent)
   return a === b || (a.length >= 2000 && b.startsWith(a))
 }
 
