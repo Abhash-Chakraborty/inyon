@@ -76,6 +76,16 @@ test("an agent's record matches the sent message despite rewrapping, not a short
   expect(sameMessage(long.slice(0, 2500), long)).toBe(true)
 })
 
+test('a message with no words is matched only by the same text', () => {
+  expect(sameMessage('?', '?')).toBe(true)
+  expect(sameMessage(' ...\n', '...')).toBe(true)
+  // the stand-in for items that aren't messages, and other wordless text, never match it
+  expect(sameMessage('\0', '?')).toBe(false)
+  expect(sameMessage('...', '?')).toBe(false)
+  expect(sameMessage('Sure, here it is', '?')).toBe(false)
+  expect(sameMessage('', '?')).toBe(false)
+})
+
 const user = (uuid: string, text: string, extra: object = {}) => ({ kind: 'user', seq: 0, uuid, ts: '2026-10-11T03:00:00Z', text, images: 0, ...extra }) as any
 
 test('the ledger matches a send to the first new record of it, never an older look-alike', () => {
