@@ -12,6 +12,7 @@ fixtures/
   transcripts/<agent>/<name>.jsonl   an agent's own records, one JSON value per line
   protocol/<Type>/<name>.json        messages the hub and the app send each other
   link/<part>.json                   the phone link's bytes, from packages/link/src/vectors.ts
+  expected/                          what the TS readers make of the captures, for the Rust ones
 ```
 
 `<agent>` is the agent's id from `packages/protocol/src/agents.ts`: `claude`, `codex`, `opencode`,
@@ -24,6 +25,14 @@ message or an array of them. Each must read into the Rust type and write back as
 `link/` holds the phone link's test vectors (identity, Noise, channel, codes, pairing links, pkarr,
 relay). `bun packages/link/src/vectors.ts` writes them, and both `packages/link` and `crates/inyon-link`
 check their output against them.
+
+`expected/` holds what the hub's TS readers make of the shared captures:
+`expected/screens/<agent>/<name>.json` for each screen (read at its own width, at 80 and at 120
+columns), and `expected/chat-screen.json`, which ties each `chat.screen` sample in `protocol/` to
+the capture it came from. `bun apps/hub/src/cli/expected.ts` writes them; the hub's
+`expected.test.ts` fails when they no longer match the TS readers, and `crates/inyon-core` checks
+the Rust readers against them. Write them again after a reader changes on purpose or a capture is
+added, and commit them with the change.
 
 There are no transcript captures yet. The reader tests build their records in code, one at a time,
 next to what each one should produce.
