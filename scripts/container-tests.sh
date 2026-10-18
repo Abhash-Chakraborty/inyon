@@ -64,7 +64,7 @@ else
   cc_var="CC_$(printf '%s' "$target" | tr '-' '_')"
   if command -v musl-gcc >/dev/null 2>&1; then cc=musl-gcc; else cc=cc; fi
   (cd "$root/apps/cli" && env "$cc_var=$cc" cargo build --release --target "$target" --quiet)
-  cp "$root/apps/cli/target/$target/release/inyon" "$dist/$cli"
+  cp "$root/target/$target/release/inyon" "$dist/$cli"
   [ -f "$root/apps/web/dist/index.html" ] || (cd "$root" && bun run build >/dev/null)
   bun "$root/apps/node/build.ts" "$work/engine" "linux-$arch" "linux-$arch-musl" >/dev/null
   cp "$work/engine/$engine" "$work/engine/$engine_musl" "$dist/"

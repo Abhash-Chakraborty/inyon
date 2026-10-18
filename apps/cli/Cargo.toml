@@ -43,12 +43,5 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
-[profile.release]
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"
-opt-level = "z"
-
 [dev-dependencies]
 minisign = "0.10"

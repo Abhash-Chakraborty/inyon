@@ -8,7 +8,7 @@ name: inyon cli
 on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
-    paths: ['apps/cli/**', '.github/workflows/cli.yml']
+    paths: ['apps/cli/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -30,8 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup component add clippy rustfmt
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   build:
     strategy:
@@ -70,7 +70,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/out"
-          src="target/${{ matrix.target }}/release/inyon"
+          # the workspace keeps one target/ at the repository root
+          src="$GITHUB_WORKSPACE/target/${{ matrix.target }}/release/inyon"
           [[ "${{ matrix.target }}" == *windows* ]] && src="$src.exe"
           cp "$src" "$RUNNER_TEMP/out/${{ matrix.name }}"
           ls -l "$RUNNER_TEMP/out"

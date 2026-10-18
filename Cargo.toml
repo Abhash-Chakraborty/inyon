@@ -1,0 +1,19 @@
+# One Cargo workspace for every Rust part of Inyon: the inyon command (apps/cli) and the crates
+# that replace the Bun engine and hub (crates/*). One lock file and one target/ for all of them.
+[workspace]
+resolver = "2"
+# each crate is listed by hand, so a half-made folder under crates/ never breaks the build
+members = ["apps/cli"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+publish = false
+
+# Small, self-contained release files (the inyon command ships as one download per system).
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+opt-level = "z"
