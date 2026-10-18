@@ -1,0 +1,81 @@
+---
+name: blueprint
+description: Build a plan site for a product or feature, a static HTML page you open on your phone or laptop instead of a chat artifact. It holds the written plan, clickable phone and desktop mockups in a viewer, a feature matrix, figures and a live progress board that updates while the work runs. Use it whenever someone asks for a plan page, an HTML plan, a roadmap site, mockups of a redesign, "show me what it will look like", or a page to follow progress on, even if they don't name this skill, and when a plan is too big to read in a terminal.
+---
+
+# Blueprint
+
+A blueprint is a folder of plain HTML, CSS and JS with no build step. Serve it on a private address and
+open it on a phone. It has four parts that link to each other:
+
+| Page | What it is |
+|---|---|
+| `index.html` | The plan: a short lede, the live progress board, a contents box, numbered sections, a screen gallery, releases you can open, risks and decisions |
+| `mockups/index.html` | The viewer: every screen framed at 390×844 or 1440×900, light or dark, with design notes |
+| `mockups/screens/*.html` | One clickable screen per page, built on the kit (menus, right-click and long-press, sheets, toasts, tooltips) |
+| `matrix.html` | One row per feature: what's wanted, what exists today, its status and the release that brings it, with search and filters |
+
+`progress.json` drives the board on the plan page. The page polls it every 20 seconds, so updating it with
+`scripts/progress.py` while you work is how the reader follows along.
+
+## Workflow
+
+1. **Research first.** Read the code, the product and anything it's compared with. Write notes into
+   `research/` inside the site (features, how things work today, open bugs). The matrix and the screens
+   are built from these notes, so every claim needs a source.
+2. **Start the site.** Run `node <skill>/scripts/new-site.mjs <dir> --name "Product"`. It copies
+   `assets/site/`, a working sample for a made-up grocery app called Pantry, so you can see each piece in
+   action. Then make it yours:
+   - In `kit/data.js`, set `BRAND` (name, optional SVG logo) and replace the sample nav, groups and people.
+   - In `kit/blueprint.css`, swap the `:root` and dark tokens for the product's palette and fonts, if it
+     has its own. Components read only tokens.
+   - Rebuild `kit/shell.js` to match the product's real layout. Screens only call `K.shell.mount`.
+   - Put shared menus in `kit/menus.js`. Each object gets one menu, used by right-click, long-press and its
+     ⋯ button.
+3. **Write the plan** in `index.html`. Read `references/plan.md` for the section order, the release format
+   and the writing rules. Number the h2s to match the contents box.
+4. **Build the screens.** List them in `mockups/screens.js`, copy `mockups/screens/_template.html` for
+   each, and follow `references/kit.md`. Every visible control has to do something. For more than about
+   six screens, split them across parallel workers using `references/builders.md`.
+5. **Fill the matrix** in `matrix-data.js` from the research notes, one row per feature, then set
+   `MATRIX_RELEASES`, `MATRIX_AREAS` and `MATRIX_LABELS`.
+6. **Figures.** Use a still WebP, or an animated SVG with the still inside it, in `figures/`. Take labels
+   from the real system. Use Mermaid only if nothing better is available.
+7. **Check it.** `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to `shots/` and
+   flags console errors and dead controls on every screen at both sizes. Open the plan, the viewer and the
+   matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture.
+   Fix what you see, then check once more.
+8. **Serve it** where the reader can open it: `node <skill>/scripts/serve.mjs <dir> --host <private-ip>
+   --port 8790`, or any static server. Prefer a VPN or LAN address over a public one, since plans are
+   usually private. Hand over the URL.
+9. **Keep the board live** while you carry out the plan:
+   `python3 <skill>/scripts/progress.py --file <dir>/progress.json task <id> doing "note"`, then `done`,
+   plus `now "<what you're on>"`, `log "<line>"` and `link <id> <PR url>`. Parallel workers can all call it;
+   it locks the file.
+
+## Rules that make it good
+
+- **True or nothing.** Numbers, names and statuses come from the code or the research notes. Mark
+  estimates as estimates and say how they'll be measured.
+- **Phone first.** Every page works at 390 px with no sideways scroll. Menus turn into bottom sheets,
+  long-press does what right-click does, and touch targets are at least 44 px.
+- **Nothing dead.** A control that can't really work in a mockup shows a toast saying what it would do.
+  Destructive actions get an Undo toast.
+- **Quiet design.** Hairlines, tokens, no gradients and no decorative colour. Status colours are only for
+  states that need attention. Use Lucide icons, never sparkles. Nothing smaller than 12 px.
+- **Plain copy.** Short sentences, sentence case, real labels, no filler words. Show the trade-off.
+- **It's a page, not a chat artifact.** Ship it as files on a server the reader controls.
+
+## Files in this skill
+
+- `assets/site/`: the template site (kit, viewer, sample screens, matrix, progress board)
+- `scripts/new-site.mjs`, `serve.mjs`, `shoot.mjs`, `stills.mjs`, `progress.py`, plus `lib.mjs`, which
+  they share
+- `references/kit.md`: the `window.K` API, CSS classes and data shapes
+- `references/plan.md`: plan page structure, releases, matrix rows, progress.json
+- `references/builders.md`: a brief to hand parallel screen builders
+
+The scripts need Node 18+ (or Bun) and Playwright with Chromium: `bun add -d playwright` (or npm) in the
+scripts folder or the project, then `bunx playwright install chromium`. Set `CHROME_PATH` to use a browser
+you already have, or `BLUEPRINT_PLAYWRIGHT` to the folder whose `node_modules` holds Playwright. If sharp
+is installed, stills are WebP; without it they're PNG.

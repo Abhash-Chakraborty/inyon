@@ -94,6 +94,11 @@ enum Command {
         #[arg(long, hide = true)]
         pause: bool,
     },
+    /// Agent skills that come with each release: list, add or remove them
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
     /// Print the version
     Version,
     /// Move services set up as tether-node to inyon's own
@@ -162,6 +167,29 @@ enum HubAction {
     /// The same as stop
     #[command(hide = true)]
     Uninstall,
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// The skills in the newest release, and where each is installed
+    List,
+    /// Download a skill, check it, and install it for each coding agent on this machine
+    Add {
+        name: String,
+        /// Install into this skills folder instead
+        #[arg(long)]
+        to: Option<std::path::PathBuf>,
+        /// Replace a skill of the same name that Inyon didn't install
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove a skill that `inyon skill add` installed
+    Remove {
+        name: String,
+        /// Remove it from this skills folder instead
+        #[arg(long)]
+        to: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -278,6 +306,14 @@ fn main() {
             }
             code
         }
+        Some(Command::Skill { action }) => commands::finish(
+            match action {
+                SkillAction::List => commands::skill_list(),
+                SkillAction::Add { name, to, force } => commands::skill_add(&name, to, force, json),
+                SkillAction::Remove { name, to } => commands::skill_remove(&name, to),
+            },
+            json,
+        ),
         Some(Command::Version) => commands::finish(commands::version(json), json),
         Some(Command::Migrate) => commands::finish(commands::migrate(&sys), json),
         Some(Command::Tray { role, pid }) => match Role::parse(&role) {

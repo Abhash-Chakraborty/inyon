@@ -28,6 +28,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon logs` | Show the service's output |
 | `inyon doctor` | Check that everything is in place |
 | `inyon update` | Update to the newest release |
+| `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
 | `inyon uninstall` | Remove Inyon |
 | `inyon version` | Show the version |
 
@@ -206,6 +207,17 @@ inyon uninstall --yes
 `--purge` removes the pairings, keys and logs too. `--yes` (from 0.17.2) asks nothing: tmux or psmux that setup installed stays.
 
 See [Updating](install.md#updating) and [Uninstalling](install.md#uninstalling).
+
+## Skills
+
+```sh
+inyon skill list
+inyon skill add blueprint
+inyon skill add blueprint --to ./.claude/skills
+inyon skill remove blueprint
+```
+
+From 0.17.7. `add` downloads the skill from the newest release, checks it against the signed SHA256SUMS, and installs it for each coding agent on the computer. `--to` picks one folder instead, and `--force` replaces a skill of the same name that Inyon didn't install. See [Agent skills](skills.md).
 
 ## JSON output
 

@@ -44,6 +44,10 @@ jobs:
         working-directory: apps/web
       - run: bun run e2e
         working-directory: apps/web
+      # the skills each release ships: blueprint's template renders with no errors or dead buttons
+      - run: bash scripts/test-skills.sh
+        env:
+          BLUEPRINT_PLAYWRIGHT: apps/web
       # how fast the built app opens and how smooth it stays under updates, in the job summary. A
       # shared runner's numbers wobble, so this reports and never fails the build
       - name: Speed report

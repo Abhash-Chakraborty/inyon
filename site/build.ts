@@ -29,7 +29,7 @@ const YOUTUBE_ID = "NKEb2Pn6ZvQ";
 // The sidebar, in reading order. Every page in site/docs must be listed here (checked below).
 const NAV: { title: string; pages: string[] }[] = [
   { title: "Start here", pages: ["index", "quick-start", "setups", "install"] },
-  { title: "Using Inyon", pages: ["overview", "sessions", "controls", "terminal", "notifications", "settings"] },
+  { title: "Using Inyon", pages: ["overview", "sessions", "controls", "terminal", "notifications", "settings", "skills"] },
   { title: "Phone", pages: ["android", "browser-copy"] },
   { title: "Machines and hubs", pages: ["computers", "hub", "machines"] },
   { title: "Reference", pages: ["cli", "configuration", "agents", "security", "troubleshooting", "changelog"] },
