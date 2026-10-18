@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { ENGINE } from './engine-under-test.ts'
 
 // `inyon connect` against a stand-in hub; a stand-in `inyon` command records what it was asked
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-connect-'))
@@ -12,7 +13,7 @@ async function run(fetch: (req: Request, srv: any) => Response | undefined, ms: 
   const home = fs.mkdtempSync(path.join(dir, 'home-'))
   const cli = path.join(home, 'inyon')
   fs.writeFileSync(cli, `#!/bin/sh\necho "$*" >> '${home}/cli.log'\n`, { mode: 0o755 })
-  const p = Bun.spawn([process.execPath, path.join(import.meta.dir, 'inyon.ts'), 'connect'], {
+  const p = Bun.spawn([...ENGINE, 'connect'], {
     env: { ...process.env, HOME: home, INYON_HUB: `http://127.0.0.1:${srv.port}`, INYON_TOKEN: 'tok', INYON_CLI: cli },
     stdout: 'pipe',
     stderr: 'pipe',

@@ -2,9 +2,8 @@ import { expect, test } from 'bun:test'
 import path from 'node:path'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
+import { ENGINE } from './engine-under-test.ts'
 import { pairResult } from './output.ts'
-
-const INYON = path.join(import.meta.dir, 'inyon.ts')
 
 test('the pairing answer carries the link, what the QR code holds, the addresses, and the short code only once published', () => {
   const base = { link: 'inyon://pair?m=a', qr: 'https://web/#pair?m=a', short: { id: 'K7Q4MX2T', code: '493812' }, urls: ['wss://x/link'], relays: [], service: true }
@@ -14,7 +13,7 @@ test('the pairing answer carries the link, what the QR code holds, the addresses
 
 // The program run for real with --json, against a throwaway home with one paired phone.
 function run(args: string[], home: string) {
-  const p = Bun.spawnSync([process.execPath, INYON, ...args], { env: { ...process.env, HOME: home }, stdout: 'pipe', stderr: 'pipe' })
+  const p = Bun.spawnSync([...ENGINE, ...args], { env: { ...process.env, HOME: home }, stdout: 'pipe', stderr: 'pipe' })
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() }
 }
 

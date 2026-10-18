@@ -9,7 +9,8 @@ on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
     # the protocol crate's tests also read packages/protocol and fixtures/
-    paths: ['apps/cli/**', 'crates/**', 'packages/protocol/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine
+    paths: ['apps/cli/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -40,6 +41,29 @@ jobs:
       - run: cargo test -p inyon-link
       - run: rustup target add wasm32-unknown-unknown
       - run: cargo check --target wasm32-unknown-unknown -p inyon-link
+      # the machine side (from 0.19): files, answers and wire messages as the Bun engine had them
+      - run: cargo test -p inyon-engine
+
+  # the Rust engine as old phones, hubs and scripts meet it: apps/node's tests that run the engine
+  # as a program, pointed at this build under the name inyon-engine, against the real Bun hub
+  # (apps/hub) and the phone's link (packages/link)
+  interop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+        working-directory: .
+      - run: sudo apt-get update -q > /dev/null && sudo apt-get install -y -q tmux > /dev/null
+      - run: cargo build -p inyon-cli
+      - name: The engine's tests against the Rust build
+        working-directory: apps/node
+        run: |
+          ln -s "$GITHUB_WORKSPACE/target/debug/inyon" "$RUNNER_TEMP/inyon-engine"
+          INYON_TEST_ENGINE="$RUNNER_TEMP/inyon-engine" bun test ./link.test.ts ./link-relay.test.ts ./hub-interop.test.ts ./connect.test.ts ./output.test.ts ./usage.test.ts
 
   build:
     strategy:
@@ -72,7 +96,7 @@ jobs:
         run: sudo softwareupdate --install-rosetta --agree-to-license
       - name: Test
         if: ${{ !matrix.cross }}
-        run: cargo test --target ${{ matrix.target }}
+        run: cargo test --target ${{ matrix.target }} -p inyon-cli -p inyon-engine
       - run: cargo build --release --target ${{ matrix.target }}
       - name: Name the binary
         shell: bash
