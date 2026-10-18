@@ -1,10 +1,10 @@
 [package]
 name = "inyon-cli"
-version = "0.17.6"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "The inyon command: setup, status and services for the Inyon phone app"
-license = "MIT"
-publish = false
+license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "inyon"
@@ -20,6 +20,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.11"
+tar = { version = "0.4", default-features = false }
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
 [target.'cfg(unix)'.dependencies]

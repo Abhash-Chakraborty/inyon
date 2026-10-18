@@ -1,6 +1,6 @@
 [package]
 name = "inyon-protocol"
-version = "0.17.6"
+version.workspace = true
 description = "Inyon's wire types: the JSON the hub, the engine and the app exchange"
 edition.workspace = true
 license.workspace = true

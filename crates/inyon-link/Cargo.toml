@@ -1,6 +1,6 @@
 [package]
 name = "inyon-link"
-version = "0.17.6"
+version.workspace = true
 description = "The phone link: identities, the Noise channel, pairing codes and pkarr records (port of packages/link)"
 edition.workspace = true
 license.workspace = true
