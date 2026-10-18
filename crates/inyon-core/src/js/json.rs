@@ -98,8 +98,9 @@ fn quote(out: &mut String, s: &str) {
 
 /// How deeply arrays and objects may nest in what [`parse`] reads. `JSON.parse` takes any depth
 /// (Bun reads a million); serde_json and dropping a `Value` both recurse, so past this the text
-/// reads as not JSON instead of running out of stack.
-pub const MAX_DEPTH: usize = 1000;
+/// reads as not JSON instead of running out of stack. 256 levels take about 256 KB of stack in a
+/// release build and 1 MB in a debug one, which leaves room on a 2 MB worker thread.
+pub const MAX_DEPTH: usize = 256;
 
 /// `JSON.parse(s)`, or None where it throws. Three things JavaScript takes that serde_json alone
 /// refuses are read the way the TS goes on to see them:
@@ -435,8 +436,9 @@ mod tests {
     #[test]
     fn reads_deep_nesting_and_overflowing_numbers_as_javascript_goes_on_to_see_them() {
         let nested = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
-        assert!(parse(&nested(900)).is_some());
-        assert!(parse(&format!("{{\"a\":{}}}", nested(500))).is_some());
+        assert!(parse(&nested(250)).is_some());
+        assert!(parse(&format!("{{\"a\":{}}}", nested(200))).is_some());
+        assert!(parse(&nested(MAX_DEPTH + 1)).is_none());
         // far past the limit: refused, on a worker-sized stack, without running out of it
         let deep = nested(1_000_000);
         let got = std::thread::Builder::new().stack_size(2 << 20).spawn(move || parse(&deep).is_none()).unwrap().join().unwrap();
