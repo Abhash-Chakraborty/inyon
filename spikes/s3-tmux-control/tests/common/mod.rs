@@ -31,7 +31,15 @@ impl Server {
         // dying one fails with "server exited unexpectedly": try again
         let mut out = None;
         for _ in 0..20 {
-            let o = s.tmux.command().env("SHELL", "/bin/sh").args(["new-session", "-d", "-s", "main", "-x", "120", "-y", "40"]).output().unwrap();
+            // tmux 3.2 resizes a detached session to default-size (80x24) whatever new-session's
+            // -x/-y said, so set that first; -q keeps 3.0 (no such option) quiet
+            let o = s
+                .tmux
+                .command()
+                .env("SHELL", "/bin/sh")
+                .args(["start-server", ";", "set-option", "-gq", "default-size", "120x40", ";", "new-session", "-d", "-s", "main", "-x", "120", "-y", "40"])
+                .output()
+                .unwrap();
             let ok = o.status.success();
             out = Some(o);
             if ok {

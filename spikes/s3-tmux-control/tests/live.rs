@@ -7,7 +7,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use common::{collect, contains, wait_file, wait_for, Server, Stall};
-use s3_tmux_control::tmux::{self, attach_args};
+use s3_tmux_control::tmux::{self, attach_args, Version};
 use s3_tmux_control::{Control, Error, Notification};
 
 const T: Duration = Duration::from_secs(10);
@@ -29,7 +29,10 @@ fn lists_sessions_windows_and_panes() {
     // pane_current_command can still read "tmux" for a pane forked a moment ago, so not checked
     assert!(build.iter().all(|p| p.width == 120 && p.pid > 0 && !p.dead), "{build:#?}");
     let other = panes.iter().find(|p| p.session_name == "rød økt").unwrap();
-    assert_eq!((other.width, other.height), (90, 20));
+    // 3.2 sizes a detached session from default-size, which the test server sets to 120x40
+    if s.version() != (Version { major: 3, minor: 2 }) {
+        assert_eq!((other.width, other.height), (90, 20));
+    }
 
     // the plain listings work too
     let sessions = c.cmd("list-sessions -F '#{session_id} #{session_name}'").unwrap();
@@ -228,14 +231,6 @@ fn resizes_windows_and_panes() {
 #[test]
 fn a_control_client_does_not_resize_windows() {
     let s = Server::start("size");
-    let before = s.tmux.window_size("main");
-    let shown = s.tmux.run(["display-message", "-p", "-t", "main", "#{window_width}x#{window_height}"]).unwrap();
-    println!(
-        "tmux {:?}: before attaching, list-windows says {before:?}, display-message says {:?} {:?}",
-        s.version(),
-        String::from_utf8_lossy(&shown.stdout),
-        String::from_utf8_lossy(&shown.stderr)
-    );
     let (c, _rx) = s.attach(true);
     c.cmd("refresh-client").unwrap();
     let p = &tmux::list_panes(&c).unwrap()[0];
@@ -243,40 +238,20 @@ fn a_control_client_does_not_resize_windows() {
     assert_eq!((p.width, p.height), (120, 40), "the control client changed the window size");
 }
 
-/// What the hub's attach (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`) does to
-/// a session nobody has a terminal on. On 3.2 it shrinks the window to 80x23; the steps after
-/// that record which remedy puts it back.
+/// The hub's attach as it is today (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`)
+/// on a session nobody has a terminal on: the window keeps its size on every version.
 #[test]
 fn the_hubs_attach_today() {
     let s = Server::start("hubattach");
     let v = s.version();
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(v, "main", true));
-    let (c, rx) = Control::spawn(cmd).unwrap();
+    let (c, _rx) = Control::spawn(cmd).unwrap();
     assert!(c.wait_ready(T));
-    let size = |c: &Control| {
-        let p = &tmux::list_panes(c).unwrap()[0];
-        (p.width, p.height)
-    };
-    let first = size(&c);
-    println!("tmux {v:?}: the hub's attach leaves the window at {first:?}");
-    if !v.sizes_from_control_clients() {
-        assert_eq!(first, (120, 40));
-        return;
-    }
     std::thread::sleep(Duration::from_millis(300));
-    let reported = c.cmd("display-message -p -t main '#{window_width}x#{window_height}'").map(|r| r.text());
-    println!("tmux {v:?}: 300 ms later {:?}, window size format says {reported:?}", size(&c));
-    for remedy in ["refresh-client -C 120x40", "refresh-client -C 120,40", "resize-window -A -t main:"] {
-        let r = c.cmd(remedy).map(|r| r.text());
-        std::thread::sleep(Duration::from_millis(300));
-        println!("tmux {v:?}: after {remedy} ({r:?}): {:?}", size(&c));
-    }
-    while let Ok(n) = rx.try_recv() {
-        if !matches!(n, Notification::Output { .. }) {
-            println!("tmux {v:?}: {n:?}");
-        }
-    }
+    let p = &tmux::list_panes(&c).unwrap()[0];
+    println!("tmux {v:?}: the hub's attach leaves the window at {}x{}", p.width, p.height);
+    assert_eq!((p.width, p.height), (120, 40));
 }
 
 #[test]
