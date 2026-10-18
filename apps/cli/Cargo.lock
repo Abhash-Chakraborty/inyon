@@ -609,7 +609,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-cli"
-version = "0.17.6"
+version = "0.17.7"
 dependencies = [
  "clap",
  "crossterm",
