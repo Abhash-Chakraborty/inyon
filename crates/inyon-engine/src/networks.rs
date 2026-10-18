@@ -108,21 +108,11 @@ pub fn interfaces() -> Vec<Iface> {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|i| match i.addr {
-            if_addrs::IfAddr::V4(ref a) => Some(Iface { name: interface_name(&i), ip: a.ip.to_string(), internal: a.ip.is_loopback() }),
+            // on Windows if-addrs names an adapter by its friendly name ("Tailscale", "Ethernet"), as Node does
+            if_addrs::IfAddr::V4(ref a) => Some(Iface { name: i.name.clone(), ip: a.ip.to_string(), internal: a.ip.is_loopback() }),
             _ => None,
         })
         .collect()
-}
-
-#[cfg(windows)]
-fn interface_name(i: &if_addrs::Interface) -> String {
-    // Node lists a Windows adapter under its friendly name ("Tailscale", "Ethernet")
-    i.friendly_name.clone().unwrap_or_else(|| i.name.clone())
-}
-
-#[cfg(not(windows))]
-fn interface_name(i: &if_addrs::Interface) -> String {
-    i.name.clone()
 }
 
 /// The networks the interface list shows, for whatever the programs didn't report.

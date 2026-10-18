@@ -667,11 +667,13 @@ mod tests {
         assert!(win_line(attach, false).is_none());
     }
 
+    #[cfg(unix)]
     /// A sleep only these tests start, so they can tell whether it is still running.
     fn mark(n: u32) -> String {
         format!("{}.{}{n}", 4000 + crate::now_ms() % 999, std::process::id())
     }
 
+    #[cfg(unix)]
     fn left(mark: &str) -> Vec<i32> {
         let out = std::process::Command::new("ps").args(["-eo", "pid=,args="]).output().unwrap();
         String::from_utf8_lossy(&out.stdout)
@@ -683,8 +685,10 @@ mod tests {
             .collect()
     }
 
+    #[cfg(unix)]
     struct Frames(Arc<Mutex<Vec<Value>>>);
 
+    #[cfg(unix)]
     impl Frames {
         async fn next(&self, id: &str, kind: &str) -> Value {
             for _ in 0..100 {
@@ -707,12 +711,14 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     fn ops() -> (Ops, Frames) {
         let frames = Arc::new(Mutex::new(Vec::new()));
         let f = frames.clone();
         (Ops::new(Arc::new(move |m| f.lock().unwrap().push(m))), Frames(frames))
     }
 
+    #[cfg(unix)]
     async fn until(ok: impl Fn() -> bool) {
         for _ in 0..60 {
             if ok() {
