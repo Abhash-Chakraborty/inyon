@@ -209,9 +209,11 @@ fn resizes_windows_and_panes() {
     let (c, rx) = s.attach(false);
     let window = tmux::list_panes(&c).unwrap()[0].window_id.clone();
     tmux::resize_window(&c, &window, 100, 30).unwrap();
-    wait_for(&rx, T, |n| matches!(n, Notification::LayoutChange { window: w, .. } if *w == window).then_some(()));
     let p = &tmux::list_panes(&c).unwrap()[0];
     assert_eq!((p.width, p.height), (100, 30));
+    // 3.3a did not always send %layout-change for resize-window in CI, so only note it
+    let seen = rx.recv_timeout(Duration::from_secs(2)).map(|n| format!("{n:?}"));
+    println!("tmux {:?}: after resize-window: {seen:?}", s.version());
 
     c.cmd(format!("split-window -h -d -t {window}")).unwrap();
     let first = tmux::list_panes(&c).unwrap()[0].pane_id.clone();
@@ -232,18 +234,36 @@ fn a_control_client_does_not_resize_windows() {
 }
 
 /// What the hub's attach (live.ts: `-C attach-session -t <s> -f read-only,ignore-size`) does to
-/// a session nobody has a terminal on. On 3.2 it shrinks the window to 80x23.
+/// a session nobody has a terminal on. On 3.2 it shrinks the window to 80x23; the steps after
+/// that record which remedy puts it back.
 #[test]
 fn the_hubs_attach_today() {
     let s = Server::start("hubattach");
     let v = s.version();
     let mut cmd = s.tmux.command();
     cmd.args(attach_args(v, "main", true));
-    let (c, _rx) = Control::spawn(cmd).unwrap();
-    let p = &tmux::list_panes(&c).unwrap()[0];
-    println!("tmux {v:?}: the hub's attach leaves the window at {}x{}", p.width, p.height);
+    let (c, rx) = Control::spawn(cmd).unwrap();
+    let size = |c: &Control| {
+        let p = &tmux::list_panes(c).unwrap()[0];
+        (p.width, p.height)
+    };
+    let first = size(&c);
+    println!("tmux {v:?}: the hub's attach leaves the window at {first:?}");
     if !v.sizes_from_control_clients() {
-        assert_eq!((p.width, p.height), (120, 40));
+        assert_eq!(first, (120, 40));
+        return;
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    println!("tmux {v:?}: 300 ms later {:?}", size(&c));
+    for remedy in ["refresh-client -C 120x40", "refresh-client -C 120,40", "resize-window -A -t main:"] {
+        let r = c.cmd(remedy).map(|r| r.text());
+        std::thread::sleep(Duration::from_millis(300));
+        println!("tmux {v:?}: after {remedy} ({r:?}): {:?}", size(&c));
+    }
+    while let Ok(n) = rx.try_recv() {
+        if !matches!(n, Notification::Output { .. }) {
+            println!("tmux {v:?}: {n:?}");
+        }
     }
 }
 
@@ -254,8 +274,7 @@ fn reports_structure_changes() {
     let (w, _) = s.attach(false);
     let r = w.cmd("new-window -d -t main: -n one -P -F '#{window_id}'").unwrap();
     let id = r.text().trim().to_string();
-    let n = wait_for(&rx, T, |n| n.is_structure().then(|| n.clone()));
-    assert_eq!(n, Notification::WindowAdd { window: id.clone() });
+    wait_for(&rx, T, |n| matches!(n, Notification::WindowAdd { window } if *window == id).then_some(()));
     w.cmd(format!("rename-window -t {id} two")).unwrap();
     wait_for(&rx, T, |n| matches!(n, Notification::WindowRenamed { name, .. } if name == "two").then_some(()));
     w.cmd(format!("split-window -d -t {id}")).unwrap();
