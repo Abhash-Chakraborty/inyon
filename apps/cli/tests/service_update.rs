@@ -115,7 +115,9 @@ fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_conso
     // the command and the Bun engine next to it, as an install by 0.18 leaves them
     let bin = home.dir.join(".inyon").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    let program = fake_exe(3);
+    // inyon 0.19 or later: it carries the mark of the engine built in
+    let mut program = fake_exe(3);
+    program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
     std::fs::write(bin.join("inyon"), &program).unwrap();
     std::fs::write(bin.join("inyon-engine"), "the Bun engine").unwrap();
     let cli = bin.join("inyon").to_string_lossy().into_owned();
@@ -264,4 +266,55 @@ fn if_inyons_own_unit_will_not_start_tether_nodes_is_started_again_and_kept() {
     assert_eq!(r, Installed { ok: false, how: "Failed to enable".into() });
     assert_eq!(home.calls().last().unwrap(), &v(&["systemctl", "--user", "start", "tether-node.service"]));
     assert!(home.exists(".config/systemd/user/tether-node.service"));
+}
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_the_move_to_the_built_in_engine_runs_in_a_task_of_its_own_never_the_updates() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("inyon.exe").as_path());
+    // registering the update's task again would end an update running in it
+    assert!(inyon_cli::commands::migrate(&sys, true).is_ok());
+    let ps = home.calls()[0].last().unwrap().clone();
+    assert!(ps.contains("Register-ScheduledTask -TaskName 'Inyon engine hand-over'"), "{ps}");
+    assert!(ps.contains("Start-ScheduledTask -TaskName 'Inyon engine hand-over'"), "{ps}");
+    assert!(!ps.contains("Inyon update"), "{ps}");
+    // and when it's done it removes its own task, never the update's
+    home.clear_calls();
+    assert!(inyon_cli::commands::migrate(&sys, false).is_ok());
+    let all: Vec<String> = home.calls().iter().map(|c| c.join(" ")).collect();
+    assert!(all.iter().any(|c| c.contains("Unregister-ScheduledTask -TaskName 'Inyon engine hand-over'")), "{all:?}");
+    assert!(!all.iter().any(|c| c.contains("Inyon update")), "{all:?}");
+}
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_the_move_to_the_built_in_engine_waits_while_an_update_restarts_the_jobs() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("inyon.exe").as_path());
+    // what 0.18's update leaves: the Bun engine under the engine's name, and it's still checking the restart
+    home.put(&format!(".inyon/bin/inyon-engine{}", std::env::consts::EXE_SUFFIX), "the Bun engine");
+    home.put(".inyon/node/update-status", "running\n");
+    // no tether-node tasks to move: only the engine's move is left
+    std::env::set_var("FAKE_PS_NO", "Tether");
+    assert!(inyon_cli::commands::wants_hand_over(&sys));
+    // the link's icon and the hub connection's start together: one of them asks
+    assert!(!inyon_cli::commands::wants_hand_over(&sys));
+    let said = inyon_cli::commands::migrate(&sys, false).unwrap()["message"].as_str().unwrap().to_string();
+    assert!(said.contains("an update is still running"), "{said}");
+    let all: Vec<String> = home.calls().iter().map(|c| c.join(" ")).collect();
+    assert!(!all.iter().any(|c| c.contains("Register-ScheduledTask") || c.contains("Stop-ScheduledTask")), "nothing restarted: {all:?}");
+    // it didn't run, so the next start of a tray icon tries again rather than an hour later
+    assert!(!home.exists(".inyon/node/engine-hand-over"));
+    // the update said it's done, but the link it restarted still answers as the old version
+    home.put(".inyon/node/update-status", "done 0.19.0\n");
+    proc.set(4242, &["inyon-engine.exe", "link"]);
+    home.put(".inyon/node/state.json", r#"{"pid":4242,"version":"0.6.3"}"#);
+    let said = inyon_cli::commands::migrate(&sys, false).unwrap()["message"].as_str().unwrap().to_string();
+    std::env::remove_var("FAKE_PS_NO");
+    assert!(said.contains("an update is still running"), "{said}");
 }

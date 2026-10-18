@@ -78,7 +78,11 @@ const fn spec(role: Role) -> Spec {
     }
 }
 
-const UPDATE_TASK: &str = "Inyon update";
+/// The one-off task an update runs in on Windows (see `detach`).
+pub const UPDATE_TASK: &str = "Inyon update";
+/// The one the tray icon's move to the built-in engine runs in: a name of its own, so it never
+/// replaces an update's task while that update runs, nor an update removes it.
+pub const HAND_OVER_TASK: &str = "Inyon engine hand-over";
 
 /// How each job was set up when this program was tether-node, before the rename to Inyon. Both
 /// of its installers named their systemd unit tether-node.service; what the unit runs says which job.
@@ -1123,8 +1127,8 @@ pub fn missing_mux(platform: Platform) -> Option<String> {
 
 /// Runs `args` (this program and a command) on its own: restarting a service ends everything the
 /// service started, the command that asked included. On Linux it becomes a transient systemd
-/// unit, on Windows a one-off task, elsewhere a process in a session of its own.
-pub fn detach(sys: &Sys, args: &[String]) -> Installed {
+/// unit, on Windows the one-off task `task`, elsewhere a process in a session of its own.
+pub fn detach(sys: &Sys, args: &[String], task: &str) -> Installed {
     if sys.platform == Platform::Linux && which("systemd-run").is_some() && run(&["systemctl", "--user", "show-environment"]).ok {
         let mut cmd: Vec<String> = vec!["systemd-run".into(), "--user".into(), "--collect".into(), "--quiet".into()];
         for k in ["INYON_DOWNLOAD", "INYON_DATA_DIR"] {
@@ -1154,9 +1158,10 @@ pub fn detach(sys: &Sys, args: &[String]) -> Installed {
         };
         let exe = &exe;
         let r = ps(&format!(
-            "$ErrorActionPreference='Stop'\n$a = New-ScheduledTaskAction -Execute {} -Argument {}\n$p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)\nRegister-ScheduledTask -TaskName '{UPDATE_TASK}' -Action $a -Principal $p -Settings $s -Force | Out-Null\nStart-ScheduledTask -TaskName '{UPDATE_TASK}'",
+            "$ErrorActionPreference='Stop'\n$a = New-ScheduledTaskAction -Execute {} -Argument {}\n$p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)\nRegister-ScheduledTask -TaskName {task} -Action $a -Principal $p -Settings $s -Force | Out-Null\nStart-ScheduledTask -TaskName {task}",
             psq(exe),
-            psq(&quoted)
+            psq(&quoted),
+            task = psq(task)
         ));
         if r.ok {
             return ok("a one-off task");
@@ -1173,15 +1178,15 @@ pub fn detach(sys: &Sys, args: &[String]) -> Installed {
 pub fn detach_update(sys: &Sys, cmd: &[String]) -> Installed {
     let mut args = cmd.to_vec();
     args.push("update".into());
-    detach(sys, &args)
+    detach(sys, &args, UPDATE_TASK)
 }
 
-/// The one-off task removes itself when it's done (Windows only).
-pub fn forget_update_task(sys: &Sys) {
+/// A one-off task removes itself when it's done (Windows only).
+pub fn forget_task(sys: &Sys, task: &str) {
     if sys.platform != Platform::Windows {
         return;
     }
-    ps(&format!("Unregister-ScheduledTask -TaskName '{UPDATE_TASK}' -Confirm:$false -ErrorAction SilentlyContinue"));
+    ps(&format!("Unregister-ScheduledTask -TaskName {} -Confirm:$false -ErrorAction SilentlyContinue", psq(task)));
 }
 
 /// Which jobs run in the background here: set up as a service, or started and still running.

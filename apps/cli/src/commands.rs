@@ -686,7 +686,7 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
     let install = update::find_install(&me, saved_hub());
     let host = RealHost { sys, quiet: json };
     let result = update::update(&install, &host, &update::RealFiles);
-    service::forget_update_task(sys);
+    service::forget_task(sys, service::UPDATE_TASK);
     match result {
         Ok(mut r) => {
             update::set_status(&if r.changed { format!("done {}", r.version.clone().unwrap_or_default()).trim().to_string() } else { format!("current {VERSION}") });
@@ -715,7 +715,7 @@ pub fn migrate(sys: &Sys, background: bool) -> Outcome {
     if background {
         let mut args = sys.program.clone();
         args.push("migrate".into());
-        let r = service::detach(sys, &args);
+        let r = service::detach(sys, &args, service::HAND_OVER_TASK);
         return if r.ok { Ok(json!({ "background": true, "message": format!("Moving the services in the background ({}).", r.how) })) } else { Err(r.how) };
     }
     let dir = paths::ensure_node_dir().map_err(|e| e.to_string())?;
@@ -730,7 +730,7 @@ pub fn migrate(sys: &Sys, background: bool) -> Outcome {
     }
     lines.extend(to_builtin_engine(sys));
     let _ = fs::remove_file(&lock);
-    service::forget_update_task(sys);
+    service::forget_task(sys, service::HAND_OVER_TASK);
     if lines.is_empty() {
         lines.push("nothing to move".into());
     }
@@ -749,6 +749,12 @@ fn to_builtin_engine(sys: &Sys) -> Vec<String> {
         if !installed.is_file() || engine::is_builtin_copy(&installed) {
             return lines;
         }
+        // an update from 0.18 checks for a few seconds that the engine it restarted stays up, and
+        // puts the old version back if it has gone: the move waits until no update is restarting anything
+        if !updates_settled(sys, 300, 2000) {
+            lines.push("engine: an update is still running, so the move to the built-in engine waits for the next start".into());
+            return lines;
+        }
         let program = vec![paths::installed_binary().to_string_lossy().into_owned()];
         for role in [Role::Link, Role::Node] {
             if service::has_service(sys, role) {
@@ -762,6 +768,8 @@ fn to_builtin_engine(sys: &Sys) -> Vec<String> {
                 lines.push(format!("engine: couldn't make the windowless copy ({e})"));
             }
         }
+        // it ran: if it didn't take, the tray icon tries again an hour from now at the soonest
+        let _ = fs::write(node_dir().join(HAND_OVER_RAN), state::now_ms().to_string());
     } else if let Some(stale) = engine::stale_engine() {
         if fs::remove_file(&stale).is_ok() {
             lines.push(format!("engine: removed {}, which nothing needs any more", stale.display()));
@@ -770,9 +778,33 @@ fn to_builtin_engine(sys: &Sys) -> Vec<String> {
     lines
 }
 
+/// When the move to the built-in engine last ran, and when a tray icon last asked for it.
+const HAND_OVER_RAN: &str = "engine-hand-over";
+const HAND_OVER_ASKED: &str = "engine-hand-over-asked";
+
+/// Whether no update is under way and the jobs that run are on this version, checked `tries`
+/// times `every_ms` apart until it's so.
+fn updates_settled(sys: &Sys, tries: u32, every_ms: u64) -> bool {
+    let settled = || {
+        !update::under_way()
+            && [Role::Link, Role::Node].into_iter().all(|r| match update::read_running(r) {
+                Some(s) => s.version.as_deref() == Some(VERSION) || !s.pid.is_some_and(|p| sys.proc.alive(p)),
+                None => true,
+            })
+    };
+    for _ in 1..tries {
+        if settled() {
+            return true;
+        }
+        sys.proc.sleep_ms(every_ms);
+    }
+    settled()
+}
+
 /// Whether the tray icon should move this machine to the built-in engine: on Windows, when the
 /// logon task still starts the Bun engine (set up by 0.18 or earlier, updated by it). Once an hour
-/// at most, in case moving fails.
+/// at most after a move that ran, in case it fails, and not twice at once (the link's and the hub
+/// connection's icons start together).
 pub fn wants_hand_over(sys: &Sys) -> bool {
     if sys.platform != Platform::Windows || engine::legacy() {
         return false;
@@ -781,13 +813,13 @@ pub fn wants_hand_over(sys: &Sys) -> bool {
     if !installed.is_file() || engine::is_builtin_copy(&installed) {
         return false;
     }
-    let mark = node_dir().join("engine-hand-over");
     let now = state::now_ms() as u64;
-    let last = fs::read_to_string(&mark).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0);
-    if now.saturating_sub(last) < 3_600_000 {
+    let since = |name: &str| now.saturating_sub(fs::read_to_string(node_dir().join(name)).ok().and_then(|t| t.trim().parse::<u64>().ok()).unwrap_or(0));
+    if since(HAND_OVER_RAN) < 3_600_000 || since(HAND_OVER_ASKED) < 900_000 {
         return false;
     }
-    let _ = fs::write(&mark, now.to_string());
+    let _ = paths::ensure_node_dir();
+    let _ = fs::write(node_dir().join(HAND_OVER_ASKED), now.to_string());
     true
 }
 

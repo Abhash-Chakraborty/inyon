@@ -942,6 +942,15 @@ pub fn wait_started(proc: &dyn Proc, role: Role, version: Option<&str>, before: 
     false
 }
 
+/// Whether an update is under way: the status file says running and was written in the last 30
+/// minutes, as long as the update's task may run (one that stopped without a word doesn't count
+/// for ever).
+pub fn under_way() -> bool {
+    let file = status_file();
+    let fresh = fs::metadata(&file).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() < 30 * 60);
+    fresh && fs::read_to_string(&file).is_ok_and(|t| t.trim() == "running")
+}
+
 /// Records how the update went, for the app (and appends to update.log).
 pub fn set_status(line: &str) {
     let dir = node_dir();
