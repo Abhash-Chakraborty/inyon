@@ -350,6 +350,8 @@ pub fn role_arg(sys: &Sys, arg: Option<&str>, installing: bool) -> Result<Role, 
 
 pub fn service_install(sys: &Sys, role: Option<&str>) -> Outcome {
     let role = role_arg(sys, role, true)?;
+    // run without INYON_LEGACY_ENGINE, this is how the machine goes back to the built-in engine
+    engine::remember_legacy(true);
     let r = service::install_service(sys, role, true);
     if !r.ok {
         return Err(format!("Couldn't install the service: {}", r.how));

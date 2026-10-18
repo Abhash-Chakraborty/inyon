@@ -246,6 +246,7 @@ pub fn has_service(sys: &Sys, role: Role) -> bool {
 
 /// Installs and starts `role` as a user service; `restart` replaces a copy that's already running.
 pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
+    crate::engine::remember_legacy(false);
     let s = spec(role);
     let cmd = settle(&sys.program);
     let args: Vec<String> = cmd.iter().cloned().chain(s.args.iter().map(|a| a.to_string())).collect();
@@ -1131,13 +1132,7 @@ pub fn missing_mux(platform: Platform) -> Option<String> {
 pub fn detach(sys: &Sys, args: &[String], task: &str) -> Installed {
     if sys.platform == Platform::Linux && which("systemd-run").is_some() && run(&["systemctl", "--user", "show-environment"]).ok {
         let mut cmd: Vec<String> = vec!["systemd-run".into(), "--user".into(), "--collect".into(), "--quiet".into()];
-        for k in ["INYON_DOWNLOAD", "INYON_DATA_DIR"] {
-            if let Ok(v) = std::env::var(k) {
-                if !v.is_empty() {
-                    cmd.push(format!("--setenv={k}={v}"));
-                }
-            }
-        }
+        cmd.extend(detached_env());
         cmd.extend(args.iter().cloned());
         let refs: Vec<&str> = cmd.iter().map(String::as_str).collect();
         if run(&refs).ok {
@@ -1172,6 +1167,17 @@ pub fn detach(sys: &Sys, args: &[String], task: &str) -> Installed {
         Ok(()) => ok("a background process"),
         Err(err) => failed(err.to_string()),
     }
+}
+
+/// What a command started by systemd-run takes along, since it gets the service manager's
+/// environment instead of this one: the mirror, the hub's folder and the kill switch (each under
+/// its INYON_ name, also when it was set under its TETHER_ one).
+fn detached_env() -> Vec<String> {
+    let mut v: Vec<String> = ["INYON_DOWNLOAD", "INYON_DATA_DIR"].iter().filter_map(|k| crate::paths::env_var(k).map(|val| format!("--setenv={k}={val}"))).collect();
+    if let Some(legacy) = crate::engine::legacy_asked() {
+        v.push(format!("--setenv=INYON_LEGACY_ENGINE={}", if legacy { 1 } else { 0 }));
+    }
+    v
 }
 
 /// `inyon update`, started on its own (the app asks for it from inside the service it restarts).

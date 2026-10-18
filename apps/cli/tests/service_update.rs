@@ -318,3 +318,35 @@ fn windows_the_move_to_the_built_in_engine_waits_while_an_update_restarts_the_jo
     std::env::remove_var("FAKE_PS_NO");
     assert!(said.contains("an update is still running"), "{said}");
 }
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn the_kill_switch_set_at_service_install_holds_for_what_starts_without_it() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    let unit = ".config/systemd/user/inyon-link.service";
+    std::env::set_var("INYON_LEGACY_ENGINE", "1");
+    assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
+    std::env::remove_var("INYON_LEGACY_ENGINE");
+    assert!(home.read(unit).contains("Environment=INYON_LEGACY_ENGINE=1"));
+    // a link started from a terminal without the variable leaves the Bun engine the service runs
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    assert!(inyon_cli::engine::legacy());
+    assert_eq!(inyon_cli::engine::stale_engine(), None);
+    // an update started on its own takes the variable along, under its old name too
+    for name in ["INYON_LEGACY_ENGINE", "TETHER_LEGACY_ENGINE"] {
+        std::env::set_var(name, "1");
+        home.clear_calls();
+        assert!(detach_update(&sys, &v(&[BIN])).ok);
+        std::env::remove_var(name);
+        let last = home.calls().last().unwrap().clone();
+        assert!(last.contains(&"--setenv=INYON_LEGACY_ENGINE=1".to_string()), "{name}: {last:?}");
+    }
+    // going back: service install without the variable
+    assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
+    assert!(!inyon_cli::engine::legacy());
+    assert!(!home.read(unit).contains("LEGACY"));
+    assert!(inyon_cli::engine::stale_engine().is_some());
+}

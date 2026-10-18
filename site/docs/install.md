@@ -209,4 +209,4 @@ $env:INYON_LEGACY_ENGINE = "1"
 inyon service install
 ```
 
-`inyon doctor` says which engine is in use. To go back to the built-in one, remove the variable and run `inyon service install` again.
+`inyon service install` also leaves a note, `~/.inyon/node/legacy-engine`, so a link you start from a terminal and an update that runs on its own stay on the Bun engine even where the variable isn't set. `inyon doctor` says which engine is in use. To go back to the built-in one, remove the variable and run `inyon service install` again, which removes the note.

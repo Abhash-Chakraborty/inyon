@@ -17,9 +17,39 @@ use crate::sys::{quiet, Libc, Platform};
 use crate::update::{self, Arch};
 
 /// The kill switch: INYON_LEGACY_ENGINE=1 runs everything through the downloaded Bun engine, as
-/// 0.18 did, in case the built-in engine misbehaves somewhere.
+/// 0.18 did, in case the built-in engine misbehaves somewhere. Without the variable, the note
+/// `inyon service install` left when it set the machine up that way still counts: a link started
+/// from a terminal or an update started on its own keeps to the Bun engine the services run.
 pub fn legacy() -> bool {
-    env_var("INYON_LEGACY_ENGINE").is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+    legacy_asked().unwrap_or_else(|| legacy_note().exists())
+}
+
+/// What INYON_LEGACY_ENGINE says when it's set: the Bun engine, or (0, false) the built-in one.
+pub fn legacy_asked() -> Option<bool> {
+    env_var("INYON_LEGACY_ENGINE").map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+}
+
+/// The note that this machine's services run on the Bun engine.
+pub fn legacy_note() -> PathBuf {
+    crate::paths::node_dir().join("legacy-engine")
+}
+
+/// Writes or removes the note as INYON_LEGACY_ENGINE says. With `unset_forgets` (`inyon service
+/// install`, how you go back) the variable not being set removes it too; otherwise that leaves it.
+pub fn remember_legacy(unset_forgets: bool) {
+    match legacy_asked() {
+        Some(true) => {
+            let _ = crate::paths::ensure_node_dir();
+            let _ = std::fs::write(legacy_note(), "INYON_LEGACY_ENGINE=1 when the services were set up\n");
+        }
+        Some(false) => {
+            let _ = std::fs::remove_file(legacy_note());
+        }
+        None if unset_forgets => {
+            let _ = std::fs::remove_file(legacy_note());
+        }
+        None => {}
+    }
 }
 
 /// Whether an engine command needs the Bun engine: the hub always, everything with the kill switch.
