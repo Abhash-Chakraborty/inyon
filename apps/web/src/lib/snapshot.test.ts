@@ -1,6 +1,9 @@
-import { afterEach, expect, setSystemTime, test } from 'bun:test'
+import { afterEach, beforeEach, expect, setSystemTime, test } from 'bun:test'
 import { clearSnapshots, flushSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
+
+// another test file may have left a save behind, written by its timer after it finished
+beforeEach(() => clearSnapshots())
 
 afterEach(() => {
   clearSnapshots()
