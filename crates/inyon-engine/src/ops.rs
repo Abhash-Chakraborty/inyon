@@ -152,8 +152,7 @@ fn self_exe() -> String {
 pub fn child_env() -> Vec<(OsString, OsString)> {
     let mut env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     // a TETHER_* variable set before the rename counts as its INYON_* name
-    let olds: Vec<(OsString, OsString)> =
-        env.iter().filter_map(|(k, v)| k.to_str()?.strip_prefix("TETHER_").map(|r| (OsString::from(format!("INYON_{r}")), v.clone()))).collect();
+    let olds: Vec<(OsString, OsString)> = env.iter().filter_map(|(k, v)| k.to_str()?.strip_prefix("TETHER_").map(|r| (OsString::from(format!("INYON_{r}")), v.clone()))).collect();
     for (k, v) in olds {
         if !env.iter().any(|(n, _)| *n == k) {
             env.push((k, v));
@@ -176,8 +175,10 @@ pub fn child_env() -> Vec<(OsString, OsString)> {
         let home = paths::home();
         set("HOME", home.to_string_lossy().replace('\\', "/").into());
         env.retain(|(n, _)| !same(n, "SHELL"));
-        let mut extra: Vec<OsString> =
-            [home.join(".local").join("bin"), home.join(".bun").join("bin"), home.join("scoop").join("shims"), home.join(".cargo").join("bin")].into_iter().map(PathBuf::into_os_string).collect();
+        let mut extra: Vec<OsString> = [home.join(".local").join("bin"), home.join(".bun").join("bin"), home.join("scoop").join("shims"), home.join(".cargo").join("bin")]
+            .into_iter()
+            .map(PathBuf::into_os_string)
+            .collect();
         if let Some(a) = std::env::var_os("APPDATA") {
             extra.push(PathBuf::from(a).join("npm").into_os_string());
         }
@@ -351,7 +352,9 @@ enum Handle {
 
 struct Pty {
     pid: Option<u32>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    /// keys and pastes, written in order by a thread of the terminal's own: a terminal that isn't
+    /// reading would otherwise hold up everything else the connection asks for
+    input: std::sync::mpsc::Sender<Vec<u8>>,
     master: Mutex<Box<dyn portable_pty::MasterPty + Send>>,
     killer: Mutex<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
 }
@@ -371,7 +374,32 @@ impl Handle {
     }
 }
 
-type Table = Mutex<HashMap<String, Handle>>;
+/// What one connection has running, and whether it has closed: a command that starts after
+/// the connection closed is ended at once rather than left running with nothing to stop it.
+#[derive(Default)]
+struct Jobs {
+    map: HashMap<String, Handle>,
+    closed: bool,
+}
+
+type Table = Mutex<Jobs>;
+
+fn jobs(running: &Table) -> std::sync::MutexGuard<'_, Jobs> {
+    running.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Keeps `h` under `id` so a kill or the connection closing can end it. False (and `h` ended)
+/// when the connection closed first.
+fn register(running: &Table, id: &Value, h: Handle) -> bool {
+    let mut j = jobs(running);
+    if j.closed {
+        drop(j);
+        h.kill();
+        return false;
+    }
+    j.map.insert(key(id), h);
+    true
+}
 type Running = Arc<Table>;
 
 /// Commands run in sessions of their own, so they would outlive inyon: every connection's are
@@ -382,7 +410,7 @@ static EVERY: Mutex<Vec<Weak<Table>>> = Mutex::new(Vec::new());
 pub fn kill_everything() {
     let all: Vec<Running> = EVERY.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(Weak::upgrade).collect();
     for running in all {
-        for h in running.lock().unwrap_or_else(|e| e.into_inner()).values() {
+        for h in jobs(&running).map.values() {
             h.kill();
         }
     }
@@ -404,7 +432,7 @@ fn text(m: &Value, k: &str) -> String {
 
 impl Ops {
     pub fn new(send: Sender) -> Ops {
-        let running: Running = Arc::new(Mutex::new(HashMap::new()));
+        let running: Running = Arc::new(Mutex::new(Jobs::default()));
         let mut every = EVERY.lock().unwrap_or_else(|e| e.into_inner());
         every.retain(|w| w.strong_count() > 0);
         every.push(Arc::downgrade(&running));
@@ -422,14 +450,12 @@ impl Ops {
             "stream" => self.stream(id, &m),
             "pty" => self.pty(id, &m),
             "write" => {
-                if let Some(Handle::Pty(p)) = self.running.lock().unwrap_or_else(|e| e.into_inner()).get(&key(&id)) {
-                    let mut w = p.writer.lock().unwrap_or_else(|e| e.into_inner());
-                    let _ = w.write_all(text(&m, "data").as_bytes());
-                    let _ = w.flush();
+                if let Some(p) = self.pty_of(&id) {
+                    let _ = p.input.send(text(&m, "data").into_bytes());
                 }
             }
             "resize" => {
-                if let Some(Handle::Pty(p)) = self.running.lock().unwrap_or_else(|e| e.into_inner()).get(&key(&id)) {
+                if let Some(p) = self.pty_of(&id) {
                     let size = |k: &str| m.get(k).and_then(Value::as_u64).unwrap_or(0) as u16;
                     let _ = p.master.lock().unwrap_or_else(|e| e.into_inner()).resize(portable_pty::PtySize {
                         rows: size("rows"),
@@ -440,11 +466,19 @@ impl Ops {
                 }
             }
             "kill" => {
-                if let Some(h) = self.running.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(&id)) {
+                let h = jobs(&self.running).map.remove(&key(&id));
+                if let Some(h) = h {
                     h.kill();
                 }
             }
             _ => {}
+        }
+    }
+
+    fn pty_of(&self, id: &Value) -> Option<Arc<Pty>> {
+        match jobs(&self.running).map.get(&key(id)) {
+            Some(Handle::Pty(p)) => Some(p.clone()),
+            _ => None,
         }
     }
 
@@ -467,7 +501,9 @@ impl Ops {
             Err(e) => return (self.send)(json!({ "id": id, "type": "error", "error": e.to_string() })),
         };
         let stdout = child.stdout.take();
-        self.running.lock().unwrap_or_else(|e| e.into_inner()).insert(key(&id), Handle::Process { pid: child.id(), _stdin: child.stdin.take() });
+        if !register(&self.running, &id, Handle::Process { pid: child.id(), _stdin: child.stdin.take() }) {
+            return;
+        }
         let (running, send) = (self.running.clone(), self.send.clone());
         let map = win_line(&cmd, WIN).map(|f| Box::new(f) as Box<dyn Fn(&str) -> String + Send + Sync>);
         let line_send = send.clone();
@@ -505,7 +541,7 @@ impl Ops {
         });
         tokio::spawn(async move {
             let code = child.wait().await.map(|s| exit_code(&s)).unwrap_or(1);
-            running.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(&id));
+            jobs(&running).map.remove(&key(&id));
             // the hub stops listening at exit, so the last lines go first
             let _ = tokio::time::timeout(OUTPUT_GRACE, pumped).await;
             send(json!({ "id": id, "type": "exit", "code": code }));
@@ -538,8 +574,20 @@ impl Ops {
             (Ok(r), Ok(w)) => (r, w),
             _ => return (self.send)(json!({ "id": id, "type": "error", "error": "couldn't open the terminal" })),
         };
-        let pty = Arc::new(Pty { pid: child.process_id(), writer: Mutex::new(writer), master: Mutex::new(pair.master), killer: Mutex::new(child.clone_killer()) });
-        self.running.lock().unwrap_or_else(|e| e.into_inner()).insert(key(&id), Handle::Pty(pty));
+        let (input, keys) = std::sync::mpsc::channel::<Vec<u8>>();
+        std::thread::spawn(move || {
+            let mut writer = writer;
+            // ends when the terminal is gone and its sender with it, or the terminal closed
+            for data in keys {
+                if writer.write_all(&data).and_then(|()| writer.flush()).is_err() {
+                    break;
+                }
+            }
+        });
+        let pty = Arc::new(Pty { pid: child.process_id(), input, master: Mutex::new(pair.master), killer: Mutex::new(child.clone_killer()) });
+        if !register(&self.running, &id, Handle::Pty(pty)) {
+            return;
+        }
         let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
         let send = self.send.clone();
         let data_id = id.clone();
@@ -560,14 +608,18 @@ impl Ops {
             let code = child.wait().map(|s| s.exit_code() as i32).unwrap_or(1);
             // what the terminal printed last goes before the exit
             let _ = done_rx.recv_timeout(Duration::from_millis(300));
-            running.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(&id));
+            jobs(&running).map.remove(&key(&id));
             send(json!({ "id": id, "type": "exit", "code": code }));
         });
     }
 
     /// The connection closed: everything it started ends.
     pub fn close(&self) {
-        let all: Vec<Handle> = self.running.lock().unwrap_or_else(|e| e.into_inner()).drain().map(|(_, h)| h).collect();
+        let all: Vec<Handle> = {
+            let mut j = jobs(&self.running);
+            j.closed = true;
+            j.map.drain().map(|(_, h)| h).collect()
+        };
         for h in &all {
             h.kill();
         }
@@ -592,6 +644,9 @@ fn truthy(v: &Value) -> bool {
 }
 
 async fn exec(running: Running, send: Sender, id: Value, m: Value) {
+    if jobs(&running).closed {
+        return;
+    }
     let cmd = text(&m, "cmd");
     let mut env = child_env();
     let mut snapshot = None;
@@ -619,7 +674,12 @@ async fn exec(running: Running, send: Sender, id: Value, m: Value) {
             return send(json!({ "id": id, "type": "error", "error": e.to_string() }));
         }
     };
-    running.lock().unwrap_or_else(|e| e.into_inner()).insert(key(&id), Handle::Process { pid: child.id(), _stdin: None });
+    if !register(&running, &id, Handle::Process { pid: child.id(), _stdin: None }) {
+        if let Some(f) = &snapshot {
+            let _ = std::fs::remove_file(f);
+        }
+        return;
+    }
     if let (Some(data), Some(mut stdin)) = (input, child.stdin.take()) {
         tokio::spawn(async move {
             let _ = stdin.write_all(&data).await;
@@ -649,7 +709,7 @@ async fn exec(running: Running, send: Sender, id: Value, m: Value) {
         let _ = err_done.await;
     })
     .await;
-    running.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(&id));
+    jobs(&running).map.remove(&key(&id));
     if let Some(f) = &snapshot {
         let _ = std::fs::remove_file(f);
     }
@@ -799,6 +859,43 @@ mod tests {
         o.close();
         until(|| left(&mark).is_empty()).await;
         assert!(left(&mark).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_paste_into_a_terminal_that_is_not_reading_holds_nothing_up() {
+        let (o, f) = ops();
+        let o = Arc::new(o);
+        // raw like a full-screen agent: the terminal keeps every key, so once its buffer is full a write waits for a read that never comes
+        o.message(json!({ "op": "pty", "id": "p", "cmd": "stty raw -echo; sleep 30" }));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let big = "x".repeat(4 << 20);
+        let (done, finished) = std::sync::mpsc::channel();
+        let o2 = o.clone();
+        std::thread::spawn(move || {
+            o2.message(json!({ "op": "write", "id": "p", "data": big }));
+            o2.message(json!({ "op": "kill", "id": "p" }));
+            let _ = done.send(());
+        });
+        assert!(finished.recv_timeout(Duration::from_secs(5)).is_ok(), "the paste held up the kill");
+        f.next("p", "exit").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_command_that_arrives_as_the_connection_closes_is_ended_too() {
+        let mark = mark(5);
+        let (o, _f) = ops();
+        o.message(json!({ "op": "exec", "id": "late", "cmd": format!("sleep {mark}") }));
+        // closed before the command had its turn to start (one thread: it waits for this test to yield)
+        o.close();
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let stray = left(&mark);
+        for pid in &stray {
+            // SAFETY: a sleep this test started
+            unsafe { libc::kill(*pid, libc::SIGKILL) };
+        }
+        assert!(stray.is_empty(), "the command kept running after its connection closed");
     }
 
     #[cfg(unix)]
