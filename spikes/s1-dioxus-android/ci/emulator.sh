@@ -13,7 +13,8 @@ sum="$out/summary.md"
 : > "$sum"
 note() { echo "$*" | tee -a "$sum"; }
 shot() {
-  adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1
+  # the broadcast would also close the notification shade, so that screenshot skips it
+  [ "${2:-}" = keep ] || adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1
   adb exec-out screencap -p > "$out/$1.png" 2>/dev/null || true
 }
 spike_log() { adb logcat -d -s InyonSpike:I; }
@@ -84,13 +85,19 @@ tap() { # a real finger tap on the element, through the input system
   r=$(cdp rect "$1") || return 1
   read -r ox oy <<< "$origin"
   set -- $r
+  echo "tap at $(( ox + $1 )),$(( oy + $2 ))" >> "$out/taps.txt"
   adb shell input tap $(( ox + $1 )) $(( oy + $2 ))
 }
+focus() { adb shell dumpsys window | tr -d '\r' | grep -m1 -oE 'mCurrentFocus=[^ ]+ [^ ]+ [^ }]+'; }
 
 click '[aria-label=Terminal]'
 sleep 5
 note "terminal pane visible: $(cdp eval "getComputedStyle(document.querySelector('.term')).visibility")"
 shot 02-terminal
+# the same screen on xterm's DOM renderer, to tell a WebGL fault from a swiftshader one
+cdp eval 'window.__gl && window.__gl.dispose()' > /dev/null
+sleep 3
+shot 02b-terminal-dom
 click '[aria-label=Chat]'
 click '[aria-label="Open sidebar"]'
 sleep 2
@@ -102,9 +109,18 @@ sleep 1
 adb logcat -c
 tap '[aria-label=Message]'
 sleep 3
+shot 04a-after-tap
+note "after the tap ($(tail -1 "$out/taps.txt")): window $(focus)"
 kb=$(adb shell dumpsys input_method | tr -d '\r' | grep -oE 'mInputShown=(true|false)' | head -1)
 note "keyboard after a tap on the composer: ${kb:-unknown}"
-note "focused element: $(cdp eval 'document.activeElement.tagName')"
+note "focused element: $(cdp eval 'document.activeElement.getAttribute("aria-label")')"
+if [ "$kb" != "mInputShown=true" ]; then
+  # back to the app, focus from script: key events still reach the page, without the keyboard
+  adb shell am start -n $act > /dev/null
+  sleep 2
+  cdp eval "document.querySelector('[aria-label=Message]').focus()" > /dev/null
+  note "no keyboard: focused the composer from script instead"
+fi
 adb shell input text 'hello%sfrom%sthe%skeyboard'
 sleep 2
 shot 04-keyboard
@@ -117,6 +133,8 @@ note "after Send: \`${sent:-nothing}\`"
 cdp eval 'document.activeElement.blur()' > /dev/null
 
 # typing into the terminal (xterm's own hidden textarea)
+adb shell am start -n $act > /dev/null
+sleep 2
 click '[aria-label=Terminal]'
 sleep 3
 tap '.term'
@@ -135,7 +153,7 @@ if grep -q "isForeground=true" <<< "$fgs"; then note "keep-alive service: runnin
 note "$(adb logcat -d -s InyonSpike:I | grep -E 'keep-alive' | sed 's/^.*InyonSpike: //' | sort -u | tr '\n' ';')"
 adb shell cmd statusbar expand-notifications
 sleep 2
-shot 06-notification
+shot 06-notification keep
 adb shell cmd statusbar collapse
 
 mem=$(adb shell dumpsys meminfo $pkg | tr -d '\r' | grep -E 'TOTAL PSS|TOTAL:' | head -1)

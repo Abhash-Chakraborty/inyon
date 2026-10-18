@@ -4,6 +4,10 @@ const LINES = 5000
 const css = getComputedStyle(document.documentElement)
 const v = (n) => css.getPropertyValue(n).trim()
 const el = document.getElementById('term')
+// xterm measures the cell and builds its glyph atlas when it opens: with the font not loaded yet it
+// measures the fallback and draws clipped glyphs
+await document.fonts.load("11px 'Geist Mono'")
+await document.fonts.ready
 const term = new Terminal({
   cols: 200,
   rows: 50,
@@ -21,6 +25,7 @@ try {
   const gl = new WebglAddon.WebglAddon()
   gl.onContextLoss(() => { gl.dispose(); dioxus.send(JSON.stringify({ kind: 'log', text: 'webgl context lost' })) })
   term.loadAddon(gl)
+  window.__gl = gl
   renderer = 'webgl'
 } catch (e) {
   webglError = String(e && e.message || e)
