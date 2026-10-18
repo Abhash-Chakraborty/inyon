@@ -11,6 +11,7 @@ fixtures/
   screens/<agent>/<name>.txt         one terminal capture each
   transcripts/<agent>/<name>.jsonl   an agent's own records, one JSON value per line
   protocol/<Type>/<name>.json        messages the hub and the app send each other
+  link/<part>.json                   the phone link's bytes, from packages/link/src/vectors.ts
 ```
 
 `<agent>` is the agent's id from `packages/protocol/src/agents.ts`: `claude`, `codex`, `opencode`,
@@ -19,6 +20,10 @@ fixtures/
 `protocol/` holds wire samples, made with the hub's own parsers and readers. `<Type>` is the name
 of a type in `packages/protocol` (`ServerMsg`, `ClientMsg`, `AgentCatalog`…), and a file holds one
 message or an array of them. Each must read into the Rust type and write back as the same JSON.
+
+`link/` holds the phone link's test vectors (identity, Noise, channel, codes, pairing links, pkarr,
+relay). `bun packages/link/src/vectors.ts` writes them, and both `packages/link` and `crates/inyon-link`
+check their output against them.
 
 There are no transcript captures yet. The reader tests build their records in code, one at a time,
 next to what each one should produce.

@@ -25,7 +25,7 @@ fn agent_folders(dir: &str) -> Vec<(String, Vec<std::path::PathBuf>)> {
 fn only_known_folders() {
     for e in entries(&fixtures()) {
         let name = e.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(["README.md", "screens", "transcripts", "protocol"].contains(&name.as_str()), "fixtures/{name} isn't part of the layout in fixtures/README.md");
+        assert!(["README.md", "screens", "transcripts", "protocol", "link"].contains(&name.as_str()), "fixtures/{name} isn't part of the layout in fixtures/README.md");
     }
 }
 

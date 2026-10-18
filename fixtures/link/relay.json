@@ -1,0 +1,67 @@
+{
+  "about": "Relay transport: on the machine socket (/m/<id>) binary frames carry a 4-byte big-endian session number then the bytes; phones open /p/<id>. The machine proves its id by signing \"tether-relay-auth:<nonce>\".",
+  "frames": [
+    {
+      "sid": 0,
+      "data": "",
+      "framed": "00000000"
+    },
+    {
+      "sid": 1,
+      "data": "010203",
+      "framed": "00000001010203"
+    },
+    {
+      "sid": 70000,
+      "data": "cdf43ecdd08fb0629d990b57c148ccd4bc1443d5",
+      "framed": "00011170cdf43ecdd08fb0629d990b57c148ccd4bc1443d5"
+    },
+    {
+      "sid": 4294967295,
+      "data": "ff",
+      "framed": "ffffffffff"
+    }
+  ],
+  "auth": [
+    {
+      "seed": "8c0e780902dfd6d338a26b1d95598508d32d0eaf01816072eca3c7dbe91fd317",
+      "id": "foa6ziweemwzu78whep9d993xt8pbi4f9cizpkmzq6aqrmirgato",
+      "nonce": "abc123",
+      "message": "7465746865722d72656c61792d617574683a616263313233",
+      "signature": "fe22d5922b6d9dbcdc40ded738277a616845a6987c0eb41c2846578dbbb43fe640b639601606f2e58d99eca0accff0cce34323a40bd2788b5e076e569103810b"
+    },
+    {
+      "seed": "8c0e780902dfd6d338a26b1d95598508d32d0eaf01816072eca3c7dbe91fd317",
+      "id": "foa6ziweemwzu78whep9d993xt8pbi4f9cizpkmzq6aqrmirgato",
+      "nonce": "b9f7c1d2e3a4f5061728394a5b6c7d8e",
+      "message": "7465746865722d72656c61792d617574683a6239663763316432653361346635303631373238333934613562366337643865",
+      "signature": "4dd479267d279cfe09c5093ef74a0c78eb4f1416a84e3cdda132c66d03f483692a69973e9f0035f5d243fe961913518d548f5bac60a15804ac6475c284ae8a0e"
+    }
+  ],
+  "paths": {
+    "machine": "/m/foa6ziweemwzu78whep9d993xt8pbi4f9cizpkmzq6aqrmirgato",
+    "phone": "/p/foa6ziweemwzu78whep9d993xt8pbi4f9cizpkmzq6aqrmirgato"
+  },
+  "ws_urls": [
+    {
+      "relay": "https://relay.example",
+      "path": "/m/x",
+      "url": "wss://relay.example/m/x"
+    },
+    {
+      "relay": "https://relay.example/",
+      "path": "/p/x",
+      "url": "wss://relay.example/p/x"
+    },
+    {
+      "relay": "http://127.0.0.1:8080//",
+      "path": "/m/x",
+      "url": "ws://127.0.0.1:8080/m/x"
+    },
+    {
+      "relay": "https://relay.example/base/",
+      "path": "/p/x",
+      "url": "wss://relay.example/base/p/x"
+    }
+  ]
+}
