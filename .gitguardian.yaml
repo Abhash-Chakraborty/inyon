@@ -1,0 +1,8 @@
+# Test vectors, not secrets: every key in these files comes from a fixed label ("machine seed",
+# "phone seed") or from all-zero bytes, so the Rust and TypeScript links can be checked against
+# each other. No real identity or password is in them.
+version: 2
+secret:
+  ignored_paths:
+    - fixtures/link/**
+    - spikes/s4-wasm/src/identity.rs

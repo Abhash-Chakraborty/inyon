@@ -1,10 +1,10 @@
 [package]
 name = "inyon-cli"
-version = "0.17.7"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "The inyon command: setup, status and services for the Inyon phone app"
-license = "MIT"
-publish = false
+license.workspace = true
+publish.workspace = true
 
 [[bin]]
 name = "inyon"
@@ -43,13 +43,6 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-
-[profile.release]
-lto = true
-codegen-units = 1
-strip = true
-panic = "abort"
-opt-level = "z"
 
 [dev-dependencies]
 minisign = "0.10"

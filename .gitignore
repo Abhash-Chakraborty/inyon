@@ -20,3 +20,6 @@ playwright-report
 
 # the built site
 site/out
+
+# cargo's build output for the whole workspace
+/target

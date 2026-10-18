@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  ChevronLeft, Layers, Link2, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, RotateCw, Shrink, Sparkles, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
+  ChevronLeft, Layers, Link2, MessageSquare, MoreHorizontal, PanelRight, RadioTower, RotateCcw, RotateCw, Shrink, Gauge, SquareTerminal, Trash2, Copy, ExternalLink, Power, Pencil, LogOut, Shield, CircleX, History, GitFork,
 } from 'lucide-react'
 import { isBusy } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
@@ -137,7 +137,7 @@ export function SessionHeader({
             items={[{ key: 'off', label: 'Turn off', icon: <Power className="size-4" />, danger: true, onSelect: () => actions.ultracode(false) }]}
             trigger={({ toggle, ref: r, open }) => (
               <button ref={r} type="button" onClick={toggle} title="Ultracode is on" className={clsx('flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg', open && 'bg-hover text-fg')}>
-                <Sparkles className="ultracode-mark size-4" />
+                <Gauge className="ultracode-mark size-4" />
               </button>
             )}
           />

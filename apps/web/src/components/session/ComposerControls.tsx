@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { ChevronDown, Plug, Shield, Sparkles, Target } from 'lucide-react'
+import { ChevronDown, Gauge, Plug, Shield, Target } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
@@ -96,14 +96,14 @@ export function ComposerControls({ s }: { s: SessionModel }) {
             ...s.efforts.map((e) => ({ key: e, label: EFFORT_LABEL[e] ?? e, selected: status?.effort === e, onSelect: () => actions.setEffort(e) })),
             // Claude Code keeps its ultracode switch next to the levels; so does this menu
             ...(def.set.ultracode
-              ? [{ key: 'ultracode', separated: true, label: `Ultracode: ${s.ultracode ? 'on' : 'off'}`, hint: 'A dynamic workflow for every task', icon: <Sparkles className="size-4" />, selected: !!s.ultracode, onSelect: () => actions.ultracode(!s.ultracode) }]
+              ? [{ key: 'ultracode', separated: true, label: `Ultracode: ${s.ultracode ? 'on' : 'off'}`, hint: 'A dynamic workflow for every task', icon: <Gauge className="size-4" />, selected: !!s.ultracode, onSelect: () => actions.ultracode(!s.ultracode) }]
               : []),
           ]}
           trigger={({ toggle, ref, open }) => (
             <Chip innerRef={ref} onClick={toggle} open={open} title={`Reasoning effort${status?.effort ? `: ${EFFORT_LABEL[status.effort] ?? status.effort}` : ''}${s.ultracode ? ' · Ultracode on' : ''}`}>
               <EffortBars level={status?.effort} levels={s.efforts} />
               <span>{status?.effort ? EFFORT_LABEL[status.effort] ?? status.effort : 'Default'}</span>
-              {s.ultracode && <Sparkles className="ultracode-mark size-3.5 shrink-0" aria-label="Ultracode on" />}
+              {s.ultracode && <Gauge className="ultracode-mark size-3.5 shrink-0" aria-label="Ultracode on" />}
             </Chip>
           )}
         />

@@ -13,7 +13,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['apps/cli/**', 'apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', 'scripts/**', 'skills/**', '.github/workflows/node.yml', '.github/workflows/cli.yml']
+    paths: ['apps/cli/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', 'scripts/**', 'skills/**', '.github/workflows/node.yml', '.github/workflows/cli.yml']
   workflow_dispatch:
 
 permissions:

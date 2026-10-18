@@ -1,6 +1,6 @@
 import {
   Bot, FileCode2, FilePen, FilePlus2, FileSearch, FileText, FolderSearch, Globe, ListChecks, type LucideIcon,
-  Plug, Search, Sparkles, SquareTerminal, Wrench, Workflow, MessageCircleQuestion, ClipboardList, Bell, Timer,
+  Plug, Search, BookMarked, SquareTerminal, Wrench, Workflow, MessageCircleQuestion, ClipboardList, Bell, Timer,
   Image as ImageIcon, MessageSquare, Hourglass, ScrollText,
 } from 'lucide-react'
 import type { ToolCall } from './chat.ts'
@@ -106,7 +106,7 @@ export function summarize(call: ToolCall): ToolSummary {
     case 'Agent':
       return { icon: Bot, verb: 'Agent', target: i.description || i.subagent_type }
     case 'Skill':
-      return { icon: Sparkles, verb: 'Skill', target: i.skill || i.command }
+      return { icon: BookMarked, verb: 'Skill', target: i.skill || i.command }
     case 'Workflow':
       return { icon: Workflow, verb: 'Workflow', target: i.name || 'script' }
     case 'TaskCreate':
