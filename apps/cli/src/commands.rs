@@ -352,6 +352,7 @@ pub fn service_install(sys: &Sys, role: Option<&str>) -> Outcome {
     let role = role_arg(sys, role, true)?;
     // run without INYON_LEGACY_ENGINE, this is how the machine goes back to the built-in engine
     engine::remember_legacy(true);
+    engine::remember_hub_impl(true);
     let r = service::install_service(sys, role, true);
     if !r.ok {
         return Err(format!("Couldn't install the service: {}", r.how));
@@ -446,7 +447,10 @@ pub fn hub_start(sys: &Sys) -> Outcome {
     if sys.platform == Platform::Windows {
         return Err("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.".into());
     }
-    engine::ensure(&|l| eprintln!("{l}"))?;
+    // the Rust hub is built in; only the Bun one is downloaded
+    if !engine::rust_hub() {
+        engine::ensure(&|l| eprintln!("{l}"))?;
+    }
     let env = hub_env();
     let r = service::install_service(sys, Role::Hub, true);
     if !r.ok {
@@ -566,7 +570,9 @@ pub fn doctor(sys: &Sys) -> Outcome {
         }
     } else {
         checks.push((true, "engine".into(), format!("built in ({VERSION})")));
-        if service::has_service(sys, Role::Hub) || engine::hub_here() {
+        if engine::rust_hub() {
+            checks.push((true, "hub engine".into(), "the Rust hub, built in (INYON_HUB_IMPL=rust)".into()));
+        } else if service::has_service(sys, Role::Hub) || engine::hub_here() {
             match &bun {
                 Some(p) => checks.push((true, "hub engine".into(), bun_line(p))),
                 None => checks.push((false, "hub engine".into(), "not here yet; `inyon hub start` downloads it".into())),
@@ -637,7 +643,7 @@ impl update::Host for RealHost<'_> {
         service::active_roles(self.sys)
     }
     fn wants_engine(&self) -> bool {
-        engine::legacy() || self.roles().contains(&Role::Hub) || engine::hub_here()
+        engine::legacy() || ((self.roles().contains(&Role::Hub) || engine::hub_here()) && !engine::rust_hub())
     }
     fn restart(&self, role: Role, cmd: &[String]) -> Installed {
         service::restart_service(self.sys, role, cmd)

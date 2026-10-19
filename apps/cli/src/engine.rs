@@ -52,18 +52,65 @@ pub fn remember_legacy(unset_forgets: bool) {
     }
 }
 
-/// Whether an engine command needs the Bun engine: the hub always, everything with the kill switch.
+/// The hub in Rust, an opt-in test of what 0.20 makes the default: INYON_HUB_IMPL=rust runs the
+/// hub built into this program instead of the Bun engine's, and `bun` goes back. Set in the
+/// environment or in hub.env; without either, the note `inyon hub start` left when it set the hub
+/// up that way still counts, so the service keeps to the hub it was set up with. Linux and macOS
+/// only, as the hub is.
+pub fn rust_hub() -> bool {
+    cfg!(unix) && hub_impl_asked().unwrap_or_else(|| hub_impl_note().exists())
+}
+
+/// What INYON_HUB_IMPL says when it's set, here or in hub.env: the Rust hub, or (bun) the Bun one.
+pub fn hub_impl_asked() -> Option<bool> {
+    let from_file = || crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env")).remove("INYON_HUB_IMPL").filter(|v| !v.is_empty());
+    env_var("INYON_HUB_IMPL").or_else(from_file).map(|v| says_rust(&v))
+}
+
+/// `rust` (any case) is the Rust hub; `bun`, and anything else, the Bun one.
+fn says_rust(value: &str) -> bool {
+    value.trim().eq_ignore_ascii_case("rust")
+}
+
+/// The note that this machine's hub service runs the Rust hub.
+pub fn hub_impl_note() -> PathBuf {
+    crate::paths::node_dir().join("hub-impl")
+}
+
+/// Writes or removes the note as INYON_HUB_IMPL says, as `remember_legacy` does for the kill switch.
+pub fn remember_hub_impl(unset_forgets: bool) {
+    match hub_impl_asked() {
+        Some(true) => {
+            let _ = crate::paths::ensure_node_dir();
+            let _ = std::fs::write(hub_impl_note(), "INYON_HUB_IMPL=rust when the hub was set up\n");
+        }
+        Some(false) => {
+            let _ = std::fs::remove_file(hub_impl_note());
+        }
+        None if unset_forgets => {
+            let _ = std::fs::remove_file(hub_impl_note());
+        }
+        None => {}
+    }
+}
+
+/// Whether an engine command needs the Bun engine: the hub unless it's the Rust one, everything
+/// with the kill switch.
 pub fn needs_bun(first: &str) -> bool {
-    legacy() || first == "hub"
+    legacy() || (first == "hub" && !rust_hub())
 }
 
 /// Answers an engine command with the engine built into this program, as `inyon-engine` would.
-/// `hub` goes on to the Bun engine.
+/// `hub` goes on to the Bun engine, or runs the Rust hub with INYON_HUB_IMPL=rust.
 pub fn run_builtin(args: &[String]) -> i32 {
     inyon_engine::cli::run(args, |rest| {
         if cfg!(windows) {
             eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
             return 2;
+        }
+        #[cfg(unix)]
+        if rust_hub() {
+            return inyon_hub::run(rest);
         }
         let mut all = vec!["hub".to_string()];
         all.extend(rest.iter().cloned());
@@ -180,7 +227,8 @@ pub fn stale_engine() -> Option<PathBuf> {
     if cfg!(windows) || legacy() || !file.is_file() || is_builtin_copy(&file) {
         return None;
     }
-    (!hub_here()).then_some(file)
+    // a hub on the Rust hub doesn't run it either
+    (!hub_here() || rust_hub()).then_some(file)
 }
 
 /// Whether this machine runs a hub, or did: set up as a service, started by hand, or configured.
@@ -590,6 +638,12 @@ mod tests {
         assert!(may_run_link("pair"));
         assert!(!may_run_link("forget"));
         assert!(!may_run_link("push"));
+    }
+
+    #[test]
+    fn only_rust_picks_the_rust_hub() {
+        assert!(says_rust("rust") && says_rust(" Rust\n"));
+        assert!(!says_rust("bun") && !says_rust("rs") && !says_rust(""));
     }
 
     #[test]

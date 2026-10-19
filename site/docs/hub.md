@@ -38,7 +38,7 @@ bun start
 
 A source install builds the engine it hands to machines from the checkout. For the `inyon` command it serves what `cargo` built into `apps/cli/dist`, if anything. Without that, Windows machines get the release's command from GitHub (from 0.17.1), and Linux and macOS machines get the engine, which also works as the command.
 
-From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. The hub still lists its engine for them, and a machine fetches it only with `INYON_LEGACY_ENGINE=1` set (see [Going back to the Bun engine](install.md#going-back-to-the-bun-engine)). The hub itself still runs on the Bun engine.
+From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. The hub still lists its engine for them, and a machine fetches it only with `INYON_LEGACY_ENGINE=1` set (see [Going back to the Bun engine](install.md#going-back-to-the-bun-engine)). The hub itself still runs on the Bun engine, unless you [try the hub in Rust](#trying-the-hub-in-rust).
 
 ## First sign-in
 
@@ -111,3 +111,19 @@ inyon logs --role hub -f
 ```
 
 The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash, machines, paired phones, settings, drafts, and the last state of each offline machine. [Configuration](configuration.md) lists every setting.
+
+## Trying the hub in Rust
+
+From 0.20 `inyon` carries a second hub, written in Rust, that will replace the Bun one. It's off until you turn it on, so you can test it first. It answers the web app, the Android app and joining machines as the Bun hub does, from the same records in `~/.inyon`: your password, phones and machines carry over both ways. It runs on Linux and macOS.
+
+Turn it on in the hub's settings file and restart:
+
+```sh
+echo INYON_HUB_IMPL=rust >> ~/.inyon/hub.env
+inyon hub restart
+inyon doctor                 # hub engine   the Rust hub, built in (INYON_HUB_IMPL=rust)
+```
+
+With it on, `inyon` doesn't download the Bun engine (`inyon-engine`), and `inyon hub code` and `inyon hub reset-password` work as before. `INYON_HUB_IMPL=rust inyon hub start` turns it on too, and the service keeps it after that.
+
+To go back, change the line to `INYON_HUB_IMPL=bun` and run `inyon hub restart`. Deleting the line isn't enough when `inyon hub start` set the hub up with the Rust one, because the service remembers it; `bun` undoes that. A hub run from source with `bun hub` isn't affected.

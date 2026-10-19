@@ -27,6 +27,8 @@ ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 [target.'cfg(unix)'.dependencies]
 # local time for the dashboard (already built for crossterm)
 libc = "0.2"
+# the hub in Rust (INYON_HUB_IMPL=rust); the hub runs on Linux and macOS only
+inyon-hub = { path = "../../crates/inyon-hub" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
