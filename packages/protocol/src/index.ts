@@ -151,7 +151,7 @@ export interface SessionInfo {
 export type IntegrationState = 'unknown' | 'installed' | 'missing' | 'removed' | 'outdated'
 
 /** Inyon's version, the same for the app, the hub and the inyon program (the root package.json's). */
-export const VERSION = '0.19.0-rc.2'
+export const VERSION = '0.19.0'
 
 /**
  * A machine's inyon that can be updated from the app, or an update the app started. `latest` is the
