@@ -26,10 +26,20 @@ pub type Exec = Rc<dyn Fn(Vec<String>, PathBuf) -> LocalBoxFuture<'static, (i32,
 pub type Spawn = Rc<dyn Fn(Vec<String>, &Path, &Path) -> Option<u32>>;
 pub type Get = Rc<dyn Fn(&str) -> LocalBoxFuture<'static, Result<(u16, String), String>>>;
 
-/// The checkout this program was built in, when it's still there: then the hub runs "from source",
-/// as the Bun hub does from a checkout (its build tag, its update by git pull).
+/// The checkout this program was built in, when it's a development build (`cargo run`) and the
+/// checkout is still there: then the hub runs "from source", as the Bun hub does from a checkout
+/// (its build tag, engines built with Bun, its update by git pull). A release build is always the
+/// program, as a compiled Bun hub always was, even when the folder it was built in is still on
+/// disk: git pull wouldn't rebuild it.
 pub fn checkout() -> Option<PathBuf> {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    checkout_at(Path::new(env!("CARGO_MANIFEST_DIR")), cfg!(debug_assertions))
+}
+
+fn checkout_at(manifest_dir: &Path, development: bool) -> Option<PathBuf> {
+    if !development {
+        return None;
+    }
+    let repo = manifest_dir.join("../..");
     let repo = std::fs::canonicalize(&repo).unwrap_or(repo);
     repo.join("apps/node/targets.ts").is_file().then_some(repo)
 }
@@ -183,7 +193,12 @@ fn spawn_detached(cmd: Vec<String>, cwd: &Path, log: &Path) -> Option<u32> {
             Ok(())
         });
     }
-    c.spawn().ok().map(|child| child.id())
+    let mut child = c.spawn().ok()?;
+    let pid = child.id();
+    // it's still this process's child: waited for when it ends, so it doesn't stay behind as a
+    // zombie that pid_alive would count as a running update
+    let _ = std::thread::Builder::new().name("inyon-update-wait".into()).spawn(move || child.wait());
+    Some(pid)
 }
 
 fn pid_alive(pid: u32) -> bool {

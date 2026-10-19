@@ -313,3 +313,23 @@ fn an_update_that_cant_start_says_why() {
         assert_eq!(u.status(false).await["error"], json!("systemd-run: not found"));
     });
 }
+
+#[test]
+fn an_update_script_that_ends_without_a_word_is_not_counted_as_running() {
+    let dir = std::env::temp_dir().join(format!("inyon-detached-{}", crate::http::random_hex(6)));
+    std::fs::create_dir_all(&dir).unwrap();
+    let pid = spawn_detached(vec!["sh".into(), "-c".into(), "exit 3".into()], &dir, &dir.join("log")).unwrap();
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while pid_alive(pid) && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!pid_alive(pid), "the script ended, yet its pid still answers (a zombie)");
+}
+
+#[test]
+fn a_release_build_is_the_program_even_with_its_checkout_still_on_disk() {
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert!(checkout_at(here, true).is_some(), "a development build in this checkout runs from source");
+    assert_eq!(checkout_at(here, false), None);
+}
