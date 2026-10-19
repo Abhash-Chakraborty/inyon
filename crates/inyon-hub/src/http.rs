@@ -381,8 +381,8 @@ mod tests {
         let e = crate::test_util::block(r.json_body(8 * 1024)).unwrap_err();
         assert_eq!((e.status, e.message.as_str()), (Some(413), "Request too large"));
         // it kept nothing past the limit; the rest is read and dropped so the 413 reaches the
-        // client, never more than 16 MB of it (the Bun hub stopped reading at once instead)
-        assert!(pulled.load(Ordering::SeqCst) <= 10_002);
+        // client (the Bun hub stopped reading at once instead): under 16 MB, all of it, to the end
+        assert_eq!(pulled.load(Ordering::SeqCst), 10_001);
     }
 
     #[test]

@@ -77,6 +77,8 @@ export default {
     await ws.until('pong', (m) => m.t === 'pong')
     await ctx.refusedUpgrade('phone again', `/ws?ticket=${ticket}`)
     await ctx.refusedUpgrade('bad bearer', '/ws', { authorization: 'Bearer not-a-real-token' })
+    // a bearer is judged on its own, even with the browser's good cookie beside it
+    await ctx.refusedUpgrade('bad bearer with a cookie', '/ws', { authorization: 'Bearer not-a-real-token', cookie: ctx.cookie })
     // or with the token itself, from code that can send a header
     const direct = await ctx.connect('phone with its token', phone)
     direct.send({ t: 'ping' })

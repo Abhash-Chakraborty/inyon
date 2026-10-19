@@ -230,7 +230,16 @@ fn a_checkout_without_a_built_command_hands_windows_the_release_command_and_the_
     std::fs::create_dir_all(&d.out).unwrap();
     let release = d.out.join(format!("v{VERSION}-{}", cli_file("windows-x64")));
     std::fs::write(&release, "release").unwrap();
+    // anything that asks the release for its checksums trips this
+    let asked = Rc::new(std::cell::Cell::new(false));
+    let a = asked.clone();
+    let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async move {
+        a.set(true);
+        Err(http(502, "the release was asked"))
+    });
+    *d.sums.borrow_mut() = Some(f.shared());
     let (win, linux) = block(async { (d.source_command("windows-x64").await, d.source_command("linux-x64").await) });
+    assert!(!asked.get(), "Linux, or Windows with the release's command already here, asked the release");
     assert_eq!(win.unwrap(), release);
     // Linux and macOS keep the engine standing in for both (install.sh reads that from SHA256SUMS)
     assert_eq!(linux.unwrap(), d.out.join(format!("{}-{}", d.tag(), engine_file("linux-x64"))));
@@ -254,7 +263,7 @@ fn a_checkout_without_a_built_command_hands_windows_the_release_command_and_the_
         (win, arm)
     });
     let _ = (std::fs::remove_dir_all(&dir), std::fs::remove_dir_all(&dir2));
-    assert!(win.unwrap().to_string_lossy().ends_with("-inyon-engine-windows-x64.exe"));
+    assert_eq!(win.unwrap(), offline.out.join(format!("{}-{}", offline.tag(), engine_file("windows-x64"))));
     assert!(warned.borrow()[0].contains("handing out the engine instead"), "{:?}", warned.borrow());
     let e = arm.unwrap_err();
     assert_eq!(e.status, Some(503));
@@ -273,7 +282,15 @@ fn a_checkouts_build_and_this_release_both_stay_when_their_tags_differ() {
     // a hub run from a checkout: its tag is the source's hash, not the release
     let tag = d.tag().to_owned();
     assert_ne!(tag, format!("v{VERSION}"));
-    let stale = ["v0.12.0-inyon-engine-linux-x64", "v0.12.0-inyon-windows-x64.exe", "0123456789abcdef-inyon-engine-darwin-arm64", "tether-node-0123456789abcdef.js"];
+    let stale = [
+        "v0.12.0-inyon-engine-linux-x64",
+        "v0.12.0-inyon-engine-linux-x64.gz",
+        "v0.12.0-inyon-engine-linux-x64.sha256",
+        "v0.12.0-inyon-windows-x64.exe",
+        "0123456789abcdef-inyon-engine-darwin-arm64",
+        "inyon-0123456789abcdef-inyon-engine-linux-x64",
+        "tether-node-0123456789abcdef.js",
+    ];
     let mut kept = vec![
         format!("{tag}-inyon-engine-linux-x64"),
         format!("{tag}-inyon-engine-linux-x64.gz"),
@@ -371,20 +388,37 @@ struct Ran {
     bin: std::path::PathBuf,
 }
 
+/// Runs `cmd` to its end, killing it and failing the test once it has run `secs` seconds.
+fn run_for(cmd: &mut std::process::Command, secs: u64) -> std::process::Output {
+    let mut child = cmd.spawn().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("{cmd:?} still ran after {secs}s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.wait_with_output().unwrap()
+}
+
 /// Runs a one-liner as a machine would, under a throwaway HOME.
 fn run_pair(cmd: &str, env: &[(&str, &str)]) -> Ran {
     let home = std::env::temp_dir().join(format!("inyon-pair-{}", crate::http::random_hex(6)));
     std::fs::create_dir_all(&home).unwrap();
-    let o = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .env_clear()
-        .env("HOME", &home)
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-        .envs(env.iter().copied())
-        .stdout(std::process::Stdio::null())
-        .output()
-        .unwrap();
+    let o = run_for(
+        std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+            .envs(env.iter().copied())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped()),
+        30,
+    );
     Ran {
         code: o.status.code().unwrap_or(-1),
         err: String::from_utf8_lossy(&o.stderr).into_owned(),
@@ -571,18 +605,20 @@ fn run_ps1(pwsh: &Path, want: Option<&str>, env: &[(&str, &str)], launch: bool) 
     std::fs::write(&script, inyon_core::hosts::node_update::fill_update_script(HUB_UPDATE_PS1, &sum, "0.6.3", "x64").unwrap()).unwrap();
     let q = |p: &Path| p.to_string_lossy().replace('\'', "''");
     let cmd = format!(". '{}'; & '{}'{}", q(&root.join("stubs.ps1")), q(&script), if launch { " -Launch" } else { "" });
-    std::process::Command::new(pwsh)
-        .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("HOME", &home)
-        .env("USERPROFILE", &profile)
-        .env("CALLS", root.join("calls"))
-        .envs(env.iter().copied())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
+    // the TS gives a run 30 s, and the one that restores the old exe 60
+    run_for(
+        std::process::Command::new(pwsh)
+            .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("HOME", &home)
+            .env("USERPROFILE", &profile)
+            .env("CALLS", root.join("calls"))
+            .envs(env.iter().copied())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null()),
+        60,
+    );
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap().trim().to_owned();
     let mut files: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     files.sort();

@@ -1,6 +1,7 @@
 //! hub-update.test.ts, the hub's half ("the hub checks for updates and starts one", "a hub run as
 //! the inyon program", and the checkout checks the status shares with the script). The update
-//! script's own steps stay in TS (apps/hub/src/cli/update.ts), and so do their tests. Every checkout here is a throwaway repository in a temp folder.
+//! script's own steps stay in TS (apps/hub/src/cli/update.ts), and so do their tests. Every
+//! checkout here is a throwaway repository in a temp folder.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};

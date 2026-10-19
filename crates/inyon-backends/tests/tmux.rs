@@ -1,8 +1,8 @@
 //! The core's actions and terminal mirror against a real tmux server: claude/launch-ready.test.ts,
 //! claude/end-session.test.ts, the restart test from claude/integration.test.ts, the end-to-end
-//! half of terminal/mirror.test.ts and tmux/locale.test.ts. Each test has a tmux server of its own, in its own folder
-//! (TMUX_TMPDIR, with $TMUX dropped), refuses to run unless tmux really uses it, and stops it by
-//! its socket path: the user's server is never touched.
+//! half of terminal/mirror.test.ts and tmux/locale.test.ts. Each test has a tmux server of its
+//! own, in its own folder (TMUX_TMPDIR, with $TMUX dropped), refuses to run unless tmux really
+//! uses it, and stops it by its socket path: the user's server is never touched.
 
 #![cfg(unix)]
 
@@ -129,15 +129,15 @@ async fn screen(host: &Host, p: &str) -> String {
 // user's real server
 #[test]
 fn commands_run_by_tests_cant_reach_the_tmux_server_the_tests_were_started_from() {
-    let own = Own::new("isolation");
     run_core(|| async {
-        // as if cargo test ran inside the user's tmux
+        // a plain backend, as if cargo test ran inside the user's tmux
         let started_from = vec![("TMUX".to_owned(), "/tmp/tmux-1000/default,1,0".to_owned()), ("TMUX_PANE".to_owned(), "%0".to_owned())];
-        let b = Rc::new(OwnTmux { prefix: own.prefix(), real: ProcessBackend::new(own.dir.join("cm"), started_from) });
+        let b = ProcessBackend::new("/tmp", started_from);
         set_host_backends(move |_| b.clone() as Rc<dyn HostBackend>);
         let host = Host::new(local_config("iso"));
         let out = host.run(r#"echo "[$TMUX][$TMUX_PANE][$TMUX_TMPDIR]""#).await.unwrap().stdout;
-        assert_eq!(out.trim(), format!("[][][{}]", own.dir.display()));
+        let out = out.trim();
+        assert!(out.starts_with("[][][") && out.contains("inyon-test-tmux-"), "{out}");
     });
 }
 

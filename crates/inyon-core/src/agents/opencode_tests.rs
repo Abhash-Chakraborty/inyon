@@ -163,6 +163,12 @@ fn opencode_http_failures_are_never_accepted_as_a_delivered_message() {
         let err = opencode_request(&h, "http://example.com:80/session", "GET", None, 12).await.unwrap_err().message;
         assert!(err.contains("local loopback"), "{err}");
     });
+    // refused before anything runs on the machine
+    rt::run(|| async {
+        let fake = crate::test_support::fake::Fake::install(|_, _, _| crate::test_support::fake::ok(""));
+        assert!(opencode_request(&host("test-opencode", "local"), "http://example.com:80/session", "GET", None, 12).await.is_err());
+        assert!(fake.cmds().is_empty());
+    });
 }
 
 /// OpenCode async prompts preserve provider, model slash, reasoning variant and directory

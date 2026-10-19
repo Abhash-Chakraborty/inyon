@@ -305,7 +305,7 @@ fn a_codex_conversation_is_found_under_a_home_whose_path_has_a_space() {
     let root = TempDir::new("inyon-find-");
     rt::run(|| async {
         let home = root.path("my home").to_string_lossy().into_owned();
-        Sandbox::install(&home);
+        Sandbox::install(&root.s());
         let started_at = (now_ms() / 1000) as f64 - 60.0;
         let rel = "my home/.codex/sessions/2026/10/12/rollout-2026-10-12T00-00-00-abc.jsonl";
         let ts = date::to_iso(now_ms() as f64).unwrap();

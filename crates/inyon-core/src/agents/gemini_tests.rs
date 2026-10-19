@@ -98,7 +98,7 @@ fn a_gemini_chat_is_found_under_a_home_whose_path_has_a_space() {
     let root = TempDir::new("inyon-find-");
     rt::run(|| async {
         let home = root.path("my home").to_string_lossy().into_owned();
-        Sandbox::install(&home);
+        Sandbox::install(&root.s());
         let started_at = (now_ms() / 1000) as f64 - 60.0;
         let rel = "my home/.gemini/tmp/proj/chats/session-1.json";
         root.write(rel, &(crate::js::stringify(&json!({ "sessionId": "s1", "projectHash": sha256_hex("/work/my app") })) + "\n"));

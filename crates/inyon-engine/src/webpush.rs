@@ -173,9 +173,17 @@ pub fn push_request(sub: &Subscription, payload: &serde_json::Value, v: &Vapid, 
 
 /// Sends one message.
 pub async fn send_push(sub: &Subscription, payload: &serde_json::Value, v: &Vapid) -> Result<Sent, String> {
+    send_push_with(sub, payload, v, |r| async move { Ok(crate::http::fetch("POST", r.url, r.headers, Some(r.body), Duration::from_secs(60)).await?.status) }).await
+}
+
+/// `send_push` with the request made by `fetch` (the TS's `o.fetch`), which answers its status.
+pub async fn send_push_with<F, Fut>(sub: &Subscription, payload: &serde_json::Value, v: &Vapid, fetch: F) -> Result<Sent, String>
+where
+    F: FnOnce(PushRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<u16, String>>,
+{
     let r = push_request(sub, payload, v, 4 * 3600)?;
-    let res = crate::http::fetch("POST", r.url, r.headers, Some(r.body), Duration::from_secs(60)).await?;
-    Ok(Sent::from_status(res.status))
+    Ok(Sent::from_status(fetch(r).await?))
 }
 
 #[cfg(test)]
@@ -246,6 +254,18 @@ mod tests {
 
     #[test]
     fn a_gone_subscription_says_so() {
+        let cell = std::cell::RefCell::new(vec![]);
+        let sent = &cell;
+        let v = Vapid { private_jwk: jwk().0, subject: "mailto:me@example.com".into() };
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let r = rt.block_on(send_push_with(&sub(), &json!({ "title": "x" }), &v, |r| async move {
+            *sent.borrow_mut() = r.headers;
+            Ok(410)
+        }));
+        assert_eq!(r.unwrap(), Sent { ok: false, status: 410, gone: true });
+        let h = |k: &str| sent.borrow().iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map(|(_, v)| v.clone());
+        assert_eq!(h("content-encoding").as_deref(), Some("aes128gcm"));
+        assert_eq!(h("urgency").as_deref(), Some("high"));
         assert_eq!(Sent::from_status(410), Sent { ok: false, status: 410, gone: true });
         assert_eq!(Sent::from_status(404), Sent { ok: false, status: 404, gone: true });
         assert_eq!(Sent::from_status(201), Sent { ok: true, status: 201, gone: false });

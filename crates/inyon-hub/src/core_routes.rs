@@ -802,6 +802,18 @@ mod tests {
     }
 
     #[test]
+    fn a_machines_latest_sessions_are_saved_when_the_hub_is_about_to_close() {
+        crate::test_util::block(async {
+            put(host_state("snap-test", "ssh", json!({ "sessions": [{ "id": "$1", "name": "new one", "attached": 0, "windows": [] }] })));
+            save_everything();
+            let saved: Value = inyon_core::platform::store::kv::get("snapshots/snap-test").unwrap();
+            let names: Vec<&str> = saved["sessions"].as_array().unwrap().iter().filter_map(|s| s["name"].as_str()).collect();
+            registry().remove("snap-test", true).unwrap();
+            assert_eq!(names, ["new one"]);
+        });
+    }
+
+    #[test]
     fn while_the_phone_app_is_in_the_background_every_draft_is_written_straight_away() {
         crate::test_util::block(async {
             inyon_core::claude::drafts::save_drafts_at_once(true);
