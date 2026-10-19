@@ -368,7 +368,9 @@ thread_local! {
 }
 
 /// This thread's registry.
+#[track_caller]
 pub fn registry() -> Rc<Registry> {
+    crate::platform::rt::assert_core_thread("the registry");
     REGISTRY.with(Rc::clone)
 }
 

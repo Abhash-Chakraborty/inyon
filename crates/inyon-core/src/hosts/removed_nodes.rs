@@ -32,19 +32,21 @@ mod tests {
 
     #[test]
     fn a_removed_token_is_remembered_once_and_the_list_is_capped() {
-        remember_removed(Some("aa"));
-        remember_removed(Some("bb"));
-        remember_removed(Some("aa"));
-        remember_removed(None);
-        assert_eq!(list(), vec!["bb", "aa"]);
-        assert!(was_removed("aa"));
-        assert!(!was_removed("a"));
-        assert!(!was_removed(""));
-        for i in 0..600 {
-            remember_removed(Some(&format!("h{i}")));
-        }
-        let l = list();
-        assert_eq!(l.len(), 500);
-        assert_eq!(l.last().map(String::as_str), Some("h599"));
+        crate::test_support::rt::run(|| async {
+            remember_removed(Some("aa"));
+            remember_removed(Some("bb"));
+            remember_removed(Some("aa"));
+            remember_removed(None);
+            assert_eq!(list(), vec!["bb", "aa"]);
+            assert!(was_removed("aa"));
+            assert!(!was_removed("a"));
+            assert!(!was_removed(""));
+            for i in 0..600 {
+                remember_removed(Some(&format!("h{i}")));
+            }
+            let l = list();
+            assert_eq!(l.len(), 500);
+            assert_eq!(l.last().map(String::as_str), Some("h599"));
+        });
     }
 }

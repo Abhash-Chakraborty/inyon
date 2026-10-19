@@ -460,13 +460,15 @@ fn a_footer_naming_another_mode_wins_over_the_one_kept() {
 
 #[test]
 fn the_overview_carries_the_update_state() {
-    let add: HostState = from(
-        json!({ "config": { "id": "ov", "name": "ov", "kind": "node" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0, "nodeVersion": "0.3.0" }),
-    );
-    registry().insert_runtime("ov", runtime("ov", add));
-    let got = registry().overview().into_iter().find(|h| h.config.id == "ov").and_then(|h| h.node_update);
-    registry().hosts.borrow_mut().shift_remove("ov");
-    assert_eq!(serde_json::to_value(got).unwrap(), json!({ "latest": VERSION, "supported": true }));
+    crate::test_support::rt::run(|| async {
+        let add: HostState = from(
+            json!({ "config": { "id": "ov", "name": "ov", "kind": "node" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0, "nodeVersion": "0.3.0" }),
+        );
+        registry().insert_runtime("ov", runtime("ov", add));
+        let got = registry().overview().into_iter().find(|h| h.config.id == "ov").and_then(|h| h.node_update);
+        registry().hosts.borrow_mut().shift_remove("ov");
+        assert_eq!(serde_json::to_value(got).unwrap(), json!({ "latest": VERSION, "supported": true }));
+    });
 }
 
 // Not in the TS tests: the hook log is followed while the integration is installed.
@@ -538,4 +540,19 @@ fn a_machine_list_that_cant_be_saved_fails_the_change_that_needed_it() {
         full(registry().remove("b", true));
         full(registry().update("n", |c| c.name = "Again".into()));
     });
+}
+
+#[test]
+fn the_cores_state_used_off_its_thread_is_caught_in_debug_builds() {
+    let uses: [(&str, fn()); 4] = [
+        ("the registry", || drop(registry())),
+        ("the watchers", || drop(crate::claude::watcher::watchers().peek("h", "%1"))),
+        ("the drafts", || drop(crate::claude::drafts::get_draft("h:%1"))),
+        ("the store", || drop(crate::platform::store::kv::get_value("hosts"))),
+    ];
+    for (what, used) in uses {
+        // a thread with no runtime: an HTTP worker, say, that should have handed the work over
+        let caught = std::thread::spawn(used).join().is_err();
+        assert_eq!(caught, cfg!(debug_assertions), "{what}");
+    }
 }

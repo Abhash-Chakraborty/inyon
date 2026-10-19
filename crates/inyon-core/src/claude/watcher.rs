@@ -2578,13 +2578,16 @@ pub struct Watchers {
 }
 
 /// This thread's watchers.
+#[track_caller]
 pub fn watchers() -> WatchersRef {
-    WatchersRef
+    crate::platform::rt::assert_core_thread("the chat watchers");
+    WatchersRef(std::marker::PhantomData)
 }
 
-/// A handle to this thread's [`Watchers`].
+/// A handle to this thread's [`Watchers`]. It can't be sent to another thread, where it would
+/// reach that thread's (empty) watchers.
 #[derive(Clone, Copy)]
-pub struct WatchersRef;
+pub struct WatchersRef(std::marker::PhantomData<Rc<()>>);
 
 impl WatchersRef {
     fn with<R>(&self, f: impl FnOnce(&Watchers) -> R) -> R {

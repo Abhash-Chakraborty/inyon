@@ -40,6 +40,20 @@ pub fn install(rt: Rc<dyn Runtime>) {
     RT.with(|r| *r.borrow_mut() = Some(rt));
 }
 
+/// Whether this thread runs the stateful core (a runtime was installed on it). The registry, the
+/// watchers, the drafts and the store are this thread's own; on any other thread they'd be empty
+/// copies that nothing else sees.
+pub fn on_core_thread() -> bool {
+    RT.with(|r| r.borrow().is_some())
+}
+
+/// Debug builds stop at the first use of the core's state off its thread: such a call would work
+/// on an empty registry (or store) of its own and quietly do nothing the hub sees.
+#[track_caller]
+pub(crate) fn assert_core_thread(what: &str) {
+    debug_assert!(on_core_thread(), "{what} used on a thread without the core's runtime (platform::rt::install); hand the work to the core's thread instead");
+}
+
 fn runtime() -> Rc<dyn Runtime> {
     RT.with(|r| r.borrow().clone()).expect("inyon-core used on a thread without a runtime (platform::rt::install)")
 }

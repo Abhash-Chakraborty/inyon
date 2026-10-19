@@ -148,38 +148,42 @@ mod tests {
 
     #[test]
     fn the_local_machine_comes_first_unless_the_list_has_one() {
-        set_local_host(Some(serde_json::from_value(serde_json::json!({ "id": "local", "name": "box", "kind": "local" })).unwrap()));
-        kv::set_value("hosts", &serde_json::json!([{ "id": "a", "name": "A", "kind": "ssh", "target": "a" }])).unwrap();
-        let ids: Vec<String> = load_hosts().into_iter().map(|h| h.id).collect();
-        assert_eq!(ids, vec!["local", "a"]);
+        crate::test_support::rt::run(|| async {
+            set_local_host(Some(serde_json::from_value(serde_json::json!({ "id": "local", "name": "box", "kind": "local" })).unwrap()));
+            kv::set_value("hosts", &serde_json::json!([{ "id": "a", "name": "A", "kind": "ssh", "target": "a" }])).unwrap();
+            let ids: Vec<String> = load_hosts().into_iter().map(|h| h.id).collect();
+            assert_eq!(ids, vec!["local", "a"]);
+        });
     }
 
     #[test]
     fn saving_the_machine_list_keeps_what_this_version_cant_read() {
-        kv::set_value(
-            "hosts",
-            &serde_json::json!([
-                { "id": "a", "name": "A", "kind": "ssh", "target": "a", "fromLater": { "x": 1 } },
-                { "id": "odd", "name": "Odd", "kind": "ssh", "target": "o", "port": 2222.5 },
-                { "id": "b", "name": "B", "kind": "ssh", "target": "b", "port": 22 },
-            ]),
-        )
-        .unwrap();
-        let mut hosts = load_hosts();
-        assert_eq!(hosts.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
-        // a renamed and its port cleared, b removed
-        hosts[0].name = "Alpha".into();
-        hosts.pop();
-        save_hosts(&hosts).unwrap();
-        assert_eq!(
-            crate::js::stringify(&kv::get_value("hosts").unwrap()),
-            r#"[{"id":"a","name":"Alpha","kind":"ssh","target":"a","fromLater":{"x":1}},{"id":"odd","name":"Odd","kind":"ssh","target":"o","port":2222.5}]"#
-        );
-        // and a member this version knows, once cleared, stays cleared
-        let mut hosts = load_hosts();
-        hosts[0].target = None;
-        save_hosts(&hosts).unwrap();
-        assert!(!crate::js::stringify(&kv::get_value("hosts").unwrap()).contains(r#""target":"a""#));
+        crate::test_support::rt::run(|| async {
+            kv::set_value(
+                "hosts",
+                &serde_json::json!([
+                    { "id": "a", "name": "A", "kind": "ssh", "target": "a", "fromLater": { "x": 1 } },
+                    { "id": "odd", "name": "Odd", "kind": "ssh", "target": "o", "port": 2222.5 },
+                    { "id": "b", "name": "B", "kind": "ssh", "target": "b", "port": 22 },
+                ]),
+            )
+            .unwrap();
+            let mut hosts = load_hosts();
+            assert_eq!(hosts.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+            // a renamed and its port cleared, b removed
+            hosts[0].name = "Alpha".into();
+            hosts.pop();
+            save_hosts(&hosts).unwrap();
+            assert_eq!(
+                crate::js::stringify(&kv::get_value("hosts").unwrap()),
+                r#"[{"id":"a","name":"Alpha","kind":"ssh","target":"a","fromLater":{"x":1}},{"id":"odd","name":"Odd","kind":"ssh","target":"o","port":2222.5}]"#
+            );
+            // and a member this version knows, once cleared, stays cleared
+            let mut hosts = load_hosts();
+            hosts[0].target = None;
+            save_hosts(&hosts).unwrap();
+            assert!(!crate::js::stringify(&kv::get_value("hosts").unwrap()).contains(r#""target":"a""#));
+        });
     }
 
     #[test]
@@ -199,12 +203,14 @@ mod tests {
 
     #[test]
     fn settings_fill_in_the_defaults_and_keep_what_they_dont_know() {
-        kv::set_value("settings", &serde_json::json!({ "uploads": { "maxMB": 5 }, "autoResume": true, "other": 1 })).unwrap();
-        let s = load_settings();
-        assert_eq!(
-            crate::js::stringify(&Value::Object(s.0.clone())),
-            r#"{"uploads":{"retentionDays":7,"maxMB":5,"maxTotalMB":1024,"longPasteLines":40},"autoResume":true,"other":1}"#
-        );
-        assert_eq!(s.auto_resume(), Some(true));
+        crate::test_support::rt::run(|| async {
+            kv::set_value("settings", &serde_json::json!({ "uploads": { "maxMB": 5 }, "autoResume": true, "other": 1 })).unwrap();
+            let s = load_settings();
+            assert_eq!(
+                crate::js::stringify(&Value::Object(s.0.clone())),
+                r#"{"uploads":{"retentionDays":7,"maxMB":5,"maxTotalMB":1024,"longPasteLines":40},"autoResume":true,"other":1}"#
+            );
+            assert_eq!(s.auto_resume(), Some(true));
+        });
     }
 }

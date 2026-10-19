@@ -58,7 +58,9 @@ pub fn use_store(store: Rc<dyn Store>) {
     CURRENT.with(|c| *c.borrow_mut() = store);
 }
 
+#[track_caller]
 fn current() -> Rc<dyn Store> {
+    crate::platform::rt::assert_core_thread("the store");
     CURRENT.with(|c| c.borrow().clone())
 }
 

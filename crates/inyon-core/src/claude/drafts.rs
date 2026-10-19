@@ -100,11 +100,15 @@ pub fn save_drafts() {
     let _ = kv::set("drafts", &all);
 }
 
+#[track_caller]
 pub fn get_draft(key: &str) -> Option<Draft> {
+    crate::platform::rt::assert_core_thread("the drafts");
     with_drafts(|d| d.get(key).cloned())
 }
 
+#[track_caller]
 pub fn set_draft(key: &str, d: Option<Draft>) {
+    crate::platform::rt::assert_core_thread("the drafts");
     with_drafts(|all| match d {
         Some(d) if keeps_draft(Some(&d)) => {
             all.insert(key.to_owned(), d);
