@@ -16,17 +16,17 @@ pub const SLUG: &str = "inyon";
 pub const OLD_SLUG: &str = "tether";
 pub const SOURCE_REPO: &str = "Abhash-Chakraborty/inyon";
 /// The download page (static, on GitHub Pages at its own domain).
-pub const WEB_URL: &str = "https://inyon.abhashchakraborty.tech/";
+pub const WEB_URL: &str = "https://inyon.tech/";
 /// The short address the one-line installers are typed with: …/get.sh and …/get.ps1
-pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
+pub const INSTALL_URL: &str = "https://inyon.tech";
 /// The Android application id.
 pub const APP_ID: &str = "tech.abhashchakraborty.inyon";
 /// The repository every release is published on.
 pub const RELEASES_REPO: &str = SOURCE_REPO;
 /// The website's copy of the newest release.
-pub const DOWNLOAD_URL: &str = "https://inyon.abhashchakraborty.tech/download";
+pub const DOWNLOAD_URL: &str = "https://inyon.tech/download";
 /// What that copy is: {"version":"0.14.0","tag":"v0.14.0","date":…,"files":[{name,size,sha256}…]}
-pub const LATEST_URL: &str = "https://inyon.abhashchakraborty.tech/download/latest.json";
+pub const LATEST_URL: &str = "https://inyon.tech/download/latest.json";
 /// The engine's name once installed, next to `inyon` in ~/.inyon/bin (plus .exe on Windows).
 pub const ENGINE: &str = "inyon-engine";
 

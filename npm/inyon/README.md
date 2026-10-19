@@ -10,7 +10,7 @@ inyon setup
 ```
 
 `inyon setup` downloads the engine, checks its signature, installs the background service and
-prints a QR code to pair the [Android app](https://inyon.abhashchakraborty.tech/download/).
+prints a QR code to pair the [Android app](https://inyon.tech/download/).
 
 ## What this package installs
 
@@ -23,4 +23,4 @@ workflow on GitHub with provenance, and the programs are the ones in that releas
 To update the command, run `npm install -g @abhash-chakraborty/inyon@latest`. From 0.17.1,
 `inyon update` updates the copy in `~/.inyon/bin` that the background service runs.
 
-Docs: https://inyon.abhashchakraborty.tech/docs/install/ · Source: https://github.com/Abhash-Chakraborty/inyon · MIT
+Docs: https://inyon.tech/docs/install/ · Source: https://github.com/Abhash-Chakraborty/inyon · MIT

@@ -10,20 +10,22 @@ Every computer that runs agents for you gets one program, `inyon` (about 3.5 MB,
 On macOS or Linux:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
+curl -fsSL https://inyon.tech/get.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
+irm https://inyon.tech/get.ps1 | iex
 ```
 
 To make the computer a [hub](hub.md) instead (Linux and macOS):
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
+curl -fsSL https://inyon.tech/get.sh | sh -s -- --hub
 ```
+
+The site's earlier address, inyon.abhashchakraborty.tech, still works and redirects here, so older commands, links and installs keep working.
 
 ### What they do
 
@@ -46,7 +48,7 @@ The installers download from this site's [/download](/download/), which holds th
 Both read `INYON_DOWNLOAD`, a folder URL to fetch from instead. Every release stays on GitHub, so point it at one to pin a version:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh
+curl -fsSL https://inyon.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh
 ```
 
 From 0.20 that needs [minisign](https://jedisct1.github.io/minisign/) (`brew install minisign`, `apt install minisign`, `scoop install minisign`), since the list it fetches isn't the one the site checked. The installers check its signature against Inyon's release key, and that it lists the APK of the version asked for: the tag in a GitHub address, the release GitHub calls latest, or the version in the folder's `latest.json`. An older release's list is refused even though it's signed too.
@@ -111,7 +113,7 @@ Each line ends with `# added by Inyon`, and running the installer again doesn't 
 To leave your shell's files and `Path` alone, set `INYON_NO_MODIFY_PATH=1` before installing:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_NO_MODIFY_PATH=1 sh
+curl -fsSL https://inyon.tech/get.sh | INYON_NO_MODIFY_PATH=1 sh
 ```
 
 Then add it yourself, or run the command by its full path, `~/.inyon/bin/inyon`. With an installer from 0.17.0 or earlier, add it by hand:

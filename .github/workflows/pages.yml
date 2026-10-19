@@ -1,6 +1,6 @@
 name: Site
 
-# Publishes inyon.abhashchakraborty.tech: the home page, the docs (site/docs), the changelog and the
+# Publishes inyon.tech: the home page, the docs (site/docs), the changelog and the
 # latest release's files under /download (each checked against its signed SHA256SUMS), plus get.sh
 # and get.ps1 at the root so the one-line installers can be typed short, with the sha256 of that
 # checked list filled in so they trust no other. site/build.ts does all of it.

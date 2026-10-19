@@ -1400,7 +1400,7 @@ mod tests {
 
     #[test]
     fn the_pairing_code_is_drawn_from_the_engines_answer() {
-        let v = json!({ "link": "inyon://pair?m=abc&s=secret&n=box", "qr": "https://inyon.abhashchakraborty.tech/#pair?m=abc&s=secret&n=box", "short": { "id": "K7Q4MX2T", "code": "493812" }, "urls": ["wss://a.example/link"], "relays": [], "service": true });
+        let v = json!({ "link": "inyon://pair?m=abc&s=secret&n=box", "qr": "https://inyon.tech/#pair?m=abc&s=secret&n=box", "short": { "id": "K7Q4MX2T", "code": "493812" }, "urls": ["wss://a.example/link"], "relays": [], "service": true });
         let out = render_pair(&v);
         assert!(out.contains("Scan this with your phone's camera"));
         assert!(out.contains("    ID    K7Q4-MX2T\n    Code  493 812\n"));

@@ -48,14 +48,20 @@ pub fn key_line(text: &str) -> Option<String> {
     text.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.starts_with("untrusted comment:")).map(String::from)
 }
 
-/// Whether `base` is where real releases come from: anything on the website, or the releases on
-/// GitHub (the newest, or one pinned to a tag).
+/// The website's earlier address. It answers with a redirect to the same path on INSTALL_URL, and
+/// installs from before the move still download from it, so it counts as the website.
+const OLD_SITE_HOST: &str = "inyon.abhashchakraborty.tech";
+
+/// Whether `base` is where real releases come from: anything on the website (at either address),
+/// or the releases on GitHub (the newest, or one pinned to a tag).
 fn official(base: &str) -> bool {
     let base = base.trim().to_ascii_lowercase();
     let host = host_of(&base);
     let host = host.rsplit('@').next().unwrap_or(&host).split(':').next().unwrap_or("");
     let path = base.split_once("://").map_or(base.as_str(), |(_, rest)| rest).split_once('/').map_or("", |(_, p)| p);
-    host == host_of(INSTALL_URL) || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+    host == host_of(INSTALL_URL)
+        || host == OLD_SITE_HOST
+        || (matches!(host, "github.com" | "www.github.com") && path.starts_with(&format!("{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
 }
 
 /// The key releases from `base` must be signed with. Tests and the container runs point
@@ -97,6 +103,11 @@ mod tests {
     #[test]
     fn the_website_and_the_github_releases_are_official_and_nothing_else_is() {
         for base in [
+            "https://inyon.tech/download",
+            "https://inyon.tech/download/",
+            "HTTPS://Inyon.Tech/download",
+            "http://inyon.tech:443/somewhere",
+            // the website's earlier address, which redirects to inyon.tech
             "https://inyon.abhashchakraborty.tech/download",
             "https://inyon.abhashchakraborty.tech/download/",
             "HTTPS://Inyon.AbhashChakraborty.tech/download",
@@ -109,7 +120,11 @@ mod tests {
         for base in [
             "http://127.0.0.1:8000/download",
             "http://release:8000/releases/latest/download",
+            "https://inyon.tech.example.com/download",
+            "https://xinyon.tech/download",
+            "https://www.inyon.tech.evil/download",
             "https://inyon.abhashchakraborty.tech.example.com/download",
+            "https://xinyon.abhashchakraborty.tech/download",
             "https://github.com/someone-else/inyon/releases/latest/download",
             "https://example.com/github.com/Abhash-Chakraborty/inyon/releases/latest/download",
         ] {

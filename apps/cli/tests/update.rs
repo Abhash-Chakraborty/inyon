@@ -687,7 +687,7 @@ fn ignores_the_key_from_the_environment(base: &str) {
 
 #[test]
 fn the_websites_copy_ignores_a_signing_key_from_the_environment() {
-    assert_eq!(update::RELEASES, "https://inyon.abhashchakraborty.tech/download");
+    assert_eq!(update::RELEASES, "https://inyon.tech/download");
     ignores_the_key_from_the_environment(update::RELEASES);
 }
 
@@ -804,8 +804,8 @@ fn a_release_where_either_file_is_bad_changes_nothing_and_says_how_to_install_in
     win.platform = Platform::Windows;
     win.arch = Arch::X64;
     let err = f.run(&win).unwrap_err().to_string();
-    assert!(err.ends_with("\n  irm https://inyon.abhashchakraborty.tech/get.ps1 | iex"), "{err}");
-    assert_eq!(reinstall_command(Platform::Darwin), "curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh");
+    assert!(err.ends_with("\n  irm https://inyon.tech/get.ps1 | iex"), "{err}");
+    assert_eq!(reinstall_command(Platform::Darwin), "curl -fsSL https://inyon.tech/get.sh | sh");
 }
 
 #[test]

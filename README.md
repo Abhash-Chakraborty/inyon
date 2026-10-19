@@ -9,16 +9,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Abhash-Chakraborty/inyon/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="https://inyon.abhashchakraborty.tech/badge/release-dark.svg"><img alt="Latest release" src="https://inyon.abhashchakraborty.tech/badge/release-light.svg"></picture></a>
+  <a href="https://github.com/Abhash-Chakraborty/inyon/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="https://inyon.tech/badge/release-dark.svg"><img alt="Latest release" src="https://inyon.tech/badge/release-light.svg"></picture></a>
   <a href="https://github.com/Abhash-Chakraborty/inyon/actions/workflows/ci.yml"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/ci/Abhash-Chakraborty/inyon.svg?workflow=ci.yml&variant=secondary&mode=dark"><img alt="CI status" src="https://shieldcn.dev/github/ci/Abhash-Chakraborty/inyon.svg?workflow=ci.yml&variant=secondary&mode=light"></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/badge/runs%20on-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows%20%C2%B7%20Android.svg?variant=secondary&mode=dark"><img alt="Runs on Linux, macOS, Windows and Android" src="https://shieldcn.dev/badge/runs%20on-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows%20%C2%B7%20Android.svg?variant=secondary&mode=light"></picture></a>
   <a href="LICENSE"><picture><source media="(prefers-color-scheme: dark)" srcset="https://shieldcn.dev/github/license/Abhash-Chakraborty/inyon.svg?variant=secondary&mode=dark"><img alt="MIT licence" src="https://shieldcn.dev/github/license/Abhash-Chakraborty/inyon.svg?variant=secondary&mode=light"></picture></a>
 </p>
 
 <p align="center">
-  <a href="https://inyon.abhashchakraborty.tech/">Download</a> ·
+  <a href="https://inyon.tech/">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
-  <a href="https://inyon.abhashchakraborty.tech/docs/">Docs</a> ·
+  <a href="https://inyon.tech/docs/">Docs</a> ·
   <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases</a>
 </p>
 
@@ -99,7 +99,7 @@ encrypted with Noise, so nothing needs an open port or an account.
 | GitHub Copilot | Beta | Context and activity | Native CLI prompts |
 | Antigravity CLI | Yes | Plan quotas | Yes |
 
-[Agents](https://inyon.abhashchakraborty.tech/docs/agents/) in the docs has the details for each.
+[Agents](https://inyon.tech/docs/agents/) in the docs has the details for each.
 
 ## Why not Paseo, Happy or Claude Remote Control?
 
@@ -124,12 +124,12 @@ Checked against their docs in October 2026.
 
 **With the Android app**, nothing is hosted anywhere:
 
-1. Install the APK from the [download page](https://inyon.abhashchakraborty.tech/).
+1. Install the APK from the [download page](https://inyon.tech/).
 2. On each computer, run one line. It prints a QR code.
 
    ```sh
-   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh      # macOS, Linux
-   irm https://inyon.abhashchakraborty.tech/get.ps1 | iex           # Windows, PowerShell
+   curl -fsSL https://inyon.tech/get.sh | sh      # macOS, Linux
+   irm https://inyon.tech/get.ps1 | iex           # Windows, PowerShell
    ```
 
    Or with npm: `npm install -g @abhash-chakraborty/inyon`, then `inyon setup`.
@@ -144,23 +144,23 @@ crosses over on its next update, and an older one needs the line above again.
 **From a browser**, run a hub on a machine that stays on, then open the address it prints:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
+curl -fsSL https://inyon.tech/get.sh | sh -s -- --hub
 ```
 
-The hub listens only on localhost until you choose a network. [Running a hub](https://inyon.abhashchakraborty.tech/docs/hub/) covers
+The hub listens only on localhost until you choose a network. [Running a hub](https://inyon.tech/docs/hub/) covers
 the rest, and [SECURITY.md](SECURITY.md) explains why it matters.
 
 ## Docs
 
-The full documentation is at **[inyon.abhashchakraborty.tech/docs](https://inyon.abhashchakraborty.tech/docs/)**, with search. A few
+The full documentation is at **[inyon.tech/docs](https://inyon.tech/docs/)**, with search. A few
 places to start:
 
-- [Quick start](https://inyon.abhashchakraborty.tech/docs/quick-start/) and [choosing a setup](https://inyon.abhashchakraborty.tech/docs/setups/)
-- [Android app](https://inyon.abhashchakraborty.tech/docs/android/): pairing, private networks, servers over SSH
-- [Running a hub](https://inyon.abhashchakraborty.tech/docs/hub/) and [adding machines](https://inyon.abhashchakraborty.tech/docs/machines/)
-- [The inyon command](https://inyon.abhashchakraborty.tech/docs/cli/): every command and flag
-- [Troubleshooting](https://inyon.abhashchakraborty.tech/docs/troubleshooting/)
-- [Security](https://inyon.abhashchakraborty.tech/docs/security/) ([SECURITY.md](SECURITY.md) for reporting a vulnerability)
+- [Quick start](https://inyon.tech/docs/quick-start/) and [choosing a setup](https://inyon.tech/docs/setups/)
+- [Android app](https://inyon.tech/docs/android/): pairing, private networks, servers over SSH
+- [Running a hub](https://inyon.tech/docs/hub/) and [adding machines](https://inyon.tech/docs/machines/)
+- [The inyon command](https://inyon.tech/docs/cli/): every command and flag
+- [Troubleshooting](https://inyon.tech/docs/troubleshooting/)
+- [Security](https://inyon.tech/docs/security/) ([SECURITY.md](SECURITY.md) for reporting a vulnerability)
 - [Contributing](CONTRIBUTING.md): development setup, tests, adding an agent
 
 ## Status

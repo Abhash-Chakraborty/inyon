@@ -267,13 +267,17 @@ test.skipIf(!SIGNED)('a signed list has to be the one for the version asked for'
   await installs('/releases/download/node-latest')
 })
 
-const SITE = 'https://inyon.abhashchakraborty.tech/download/'
+const SITE = 'https://inyon.tech/download/'
+/** the website's earlier address, which now redirects to the same path on inyon.tech */
+const OLD_SITE = 'https://inyon.abhashchakraborty.tech/download/'
 const GITHUB = 'https://github.com/Abhash-Chakraborty/inyon/releases/'
+/** addresses that only look like the website's */
+const LOOKALIKES = ['https://inyon.abhashchakraborty.tech.example.com/download/', 'https://xinyon.tech/download/', 'https://inyon.tech.example.com/download/']
 
 /**
  * A curl in front of the real one (put first on `PATH`, or into `bin`): it notes each address on
- * the website or GitHub and fetches that file from the local server instead, so nothing leaves
- * this machine. Returns the addresses noted so far.
+ * the website (at either address), GitHub or one of the lookalikes and fetches that file from the
+ * local server instead, so nothing leaves this machine. Returns the addresses noted so far.
  */
 function realAddresses(bin = tools([])) {
   const asked = path.join(home, 'asked')
@@ -283,7 +287,7 @@ function realAddresses(bin = tools([])) {
     `#!/bin/sh
 n=$#
 for a in "$@"; do
-  case "$a" in ${SITE}* | ${GITHUB}*) echo "$a" >> "${asked}"; a="http://127.0.0.1:${server.port}/\${a##*/}" ;; esac
+  case "$a" in ${[SITE, OLD_SITE, SITE.replace('https:', 'http:'), OLD_SITE.replace('https:', 'http:'), GITHUB, ...LOOKALIKES].map((p) => `${p}*`).join(' | ')}) echo "$a" >> "${asked}"; a="http://127.0.0.1:${server.port}/\${a##*/}" ;; esac
   set -- "$@" "$a"
 done
 shift $n
@@ -328,6 +332,49 @@ test.skipIf(!SIGNED)('a signing key from the environment is ignored for the webs
   expect((await run({ PATH, INYON_DOWNLOAD: '', TETHER_DOWNLOAD: SITE }, [], 'plain')).code).toBe(1)
   // somewhere else, it counts (run() points INYON_DOWNLOAD at the local server)
   expect((await run({}, [], 'plain')).code).toBe(0)
+})
+
+test.skipIf(!SIGNED)("the website's earlier address is still the website, and lookalikes of either address aren't", async () => {
+  const curl = realAddresses()
+  const PATH = `${curl.bin}:${process.env.PATH}`
+  // INYON_SIGNING_KEY names the test key, which signed this list: ignored for the website at
+  // either address, over https or http
+  for (const INYON_DOWNLOAD of [OLD_SITE, OLD_SITE.slice(0, -1), OLD_SITE.replace('https:', 'http:'), SITE.replace('https:', 'http:')]) {
+    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
+    expect(r.code).toBe(1)
+    expect(r.out).toContain("isn't signed by Inyon's release key, so nothing was installed")
+    expect(existsSync(installed())).toBe(false)
+  }
+  // an address that only looks like the website's is somewhere else, where the key counts
+  for (const INYON_DOWNLOAD of LOOKALIKES.map((l) => l.slice(0, -1))) {
+    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
+    expect(r.code).toBe(0)
+    rmSync(installed())
+  }
+  // and each was asked for the list
+  for (const base of [OLD_SITE, ...LOOKALIKES]) expect(curl.asked()).toContain(`${base}SHA256SUMS`)
+})
+
+test("without gzip, the website's earlier address also takes the plain file from GitHub", async () => {
+  release.apk = '0.14.0'
+  const curl = realAddresses(tools(TOOLS))
+  const r = await run({ PATH: curl.bin, INYON_DOWNLOAD: OLD_SITE.slice(0, -1), TETHER_DOWNLOAD: '' })
+  expect(r.code).toBe(0)
+  expect(readFileSync(installed(), 'utf8')).toBe(PROGRAM)
+  expect(curl.asked()).toEqual([`${OLD_SITE}SHA256SUMS`, `${GITHUB}download/v0.14.0/${NAME}`])
+})
+
+test('get.ps1 takes the website at either address as official, and nothing that only looks like it', () => {
+  // the same check get.ps1 makes; PowerShell's -match ignores case, as the i flag does here
+  const line = readFileSync(path.join(import.meta.dir, 'get.ps1'), 'utf8').match(/^\$official = \$base -match '([^']+)'$/m)
+  expect(line).not.toBeNull()
+  const official = new RegExp(line![1]!, 'i')
+  for (const base of [SITE, SITE.slice(0, -1), 'https://inyon.tech', 'http://inyon.tech/download', 'HTTPS://Inyon.Tech/download', OLD_SITE, 'http://inyon.abhashchakraborty.tech/download', 'https://inyon.abhashchakraborty.tech', `${GITHUB}latest/download`]) {
+    expect(official.test(base)).toBe(true)
+  }
+  for (const base of [...LOOKALIKES, 'http://127.0.0.1:8000/download', 'https://inyon.abhashchakraborty.technology/download', 'https://github.com/someone-else/inyon/releases/latest/download']) {
+    expect(official.test(base)).toBe(false)
+  }
 })
 
 test("without gzip, the website's release takes the plain file from GitHub, checked against the same list", async () => {
