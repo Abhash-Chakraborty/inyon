@@ -15,6 +15,21 @@ Inyon gives whoever reaches it a shell on your machines, as the user your agents
 - **Servers over SSH** use the hub's own `ssh` with your config and keys. The hub stores no SSH keys. It accepts a new server's host key on first contact and refuses one that changes later.
 - **What it asks the internet.** Besides its own update check, from 0.17.4 the hub asks `registry.npmjs.org` for the newest version of each agent's npm package when a machine's Setup tab opens, at most once an hour per package. The request names the package and nothing else; nothing about you or your machines is sent.
 
+## Pages
+
+From 0.20 the hub shows the sites your agents make on its machine, such as a Blueprint plan with its mockups and progress board. An agent wrote that HTML and JavaScript, and an agent can be talked into writing anything, so the hub treats every page as untrusted.
+
+- **Signed in to see one.** Only a signed-in browser or a paired phone can list pages or open one.
+- **A link per page.** A page opens under `/v/<link>/` on the hub's own port. The link is signed with a key made from the hub's session secret, opens one page and nothing else, and lasts 12 hours. The app makes a fresh one each time you open the page.
+- **No cookie under `/v/`.** Those answers never read your sign-in cookie or a phone's token, and never set a cookie. A link that is expired, revoked or altered gets "Link expired" whoever asks.
+- **Ending links.** Revoking a page's links ends every link made for it so far. Removing the page does the same, from the app, with `inyon pages rm` or by editing `pages.json`, even while the hub is stopped, so a page added again under the same name doesn't open old links. Changing the hub's password ends the links of every page. A link made on a phone stops working when you forget that phone.
+- **A sandbox on every answer.** Every answer under `/v/`, errors and redirects too, carries a Content-Security-Policy sandbox without `allow-same-origin`. The page runs with an origin of its own, even opened in its own tab, so it can't read the app's cookies or storage (where the app keeps the tokens of other hubs) or reach into the app's page.
+- **Only its own files.** A page can load scripts, styles, images, fonts and data only from its own link's address, never from the internet or another page, and a form on it can't submit to any address. Names starting with a dot (`.git`, `.env`, the `.inyon-page.json` marker) are never served, folders are never listed, and a file a symlink leads to outside the site's folder isn't served.
+- **The API refuses framed callers.** From 0.20 a call to the hub's API that carries the sign-in cookie is refused when it comes from a page with no origin of its own (`Origin: null`) or from another site (`Sec-Fetch-Site: cross-site`), reads included. A paired phone sends its token instead of a cookie and isn't affected. `INYON_ALLOWED_ORIGINS` names origins that may still call.
+- **Folders that can't be pages.** `/`, your home folder and anything under `~/.ssh` or `~/.inyon` can't be added, judged by the path and by where its symlinks lead. A page's folder needs an `index.html`.
+
+A page can still open a window or move to an outside address with data in the URL. All it has to send that way is its own files, which the agent that wrote them could have sent already.
+
 ## Phones paired with a hub
 
 - Only a browser that signed in within the last 10 minutes can show a pairing code. A code works once, for 10 minutes, and five wrong tries cancel it.
