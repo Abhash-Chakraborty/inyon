@@ -92,9 +92,17 @@ with it. The diff of the golden file is the review.
 `PORT`, `BIND=127.0.0.1`, `INYON_DATA_DIR`, `HOME`, `PATH`, `NODE_ENV=test`,
 `INYON_HUB_NAME="Conformance hub"`, `INYON_CLI_DIST` (an empty folder), `TMUX_TMPDIR`,
 `LANG=C.UTF-8` and `TZ=UTC`. The hub must read the same data files (`hosts.json`, `hub.json`,
-`setup-code`, `local-token`) and answer on `/api/session` within 30 s. For the Bun hub the harness
-also seeds placeholder engine files in `INYON_DATA_DIR/node-dist`, so nothing is built; another hub
-needs its own offline files for the `node-dist` scenario.
+`setup-code`, `local-token`) and answer on `/api/session` within 30 s. The harness also seeds
+placeholder engine files in `INYON_DATA_DIR/node-dist`, named with the build tag a hub run from this
+checkout uses, so nothing is built. A hub that names its build some other way needs its own offline
+files for the `node-dist` scenario.
+
+The Rust hub (`crates/inyon-hub`) is the `inyon` command from this checkout with the switch on:
+
+```sh
+bun run --cwd apps/web build && cargo build -p inyon-cli
+bun conformance/run.ts --hub "env INYON_HUB_IMPL=rust $PWD/target/debug/inyon engine hub"
+```
 
 ## What is covered
 

@@ -86,7 +86,7 @@ export class Hub {
     const noCli = path.join(this.root, 'no-cli-dist')
     fs.mkdirSync(noCli, { recursive: true })
     this.o.seed?.(this.dataDir)
-    if (this.o.command === undefined) seedEngines(this.dataDir)
+    seedEngines(this.dataDir)
     this.port = await freePort()
     this.base = `http://127.0.0.1:${this.port}`
     const env: Record<string, string> = {
@@ -166,10 +166,10 @@ export class Hub {
 }
 
 /**
- * The Bun hub run from a checkout builds the machine programs it hands out on the first "Add a
- * machine" (Bun's runtime for five systems, about 20 s and a download). For the default hub the
- * harness puts small placeholder files where that build lands, named the way the hub names its
- * build (features/node-dist.ts), so pairing answers at once and offline.
+ * A hub run from a checkout builds the machine programs it hands out on the first "Add a machine"
+ * (Bun's runtime for five systems, about 20 s and a download). The harness puts small placeholder
+ * files where that build lands, named the way the hub names its build (features/node-dist.ts; the
+ * Rust hub from this checkout works out the same name), so pairing answers at once and offline.
  */
 function seedEngines(dataDir: string) {
   const script = "import { tag } from './apps/hub/src/features/node-dist.ts'; import { HUB_TARGETS, engineFile } from './apps/node/targets.ts'; console.log(JSON.stringify({ tag: tag(), files: HUB_TARGETS.map(engineFile) }))"

@@ -60,6 +60,38 @@ jobs:
       - if: steps.paths.outputs.run == 'true'
         run: bun conformance/run.ts
 
+  # the same goldens against the hub in Rust (crates/inyon-hub): the inyon command from this
+  # checkout with INYON_HUB_IMPL=rust, serving the web app built here
+  conformance-rust:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Changes the hub?
+        id: paths
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ] || git diff --name-only HEAD^1 HEAD | grep -qE '^(apps/hub|apps/cli|apps/web|packages|crates|conformance|Cargo\.(toml|lock))'; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing the hub depends on changed; skipping."
+            echo run=false >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.paths.outputs.run == 'true'
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - if: steps.paths.outputs.run == 'true'
+        run: bun install --frozen-lockfile
+      - if: steps.paths.outputs.run == 'true'
+        run: bun run build
+        working-directory: apps/web
+      - if: steps.paths.outputs.run == 'true'
+        run: cargo build -p inyon-cli
+      - if: steps.paths.outputs.run == 'true'
+        run: bun conformance/run.ts --hub "env INYON_HUB_IMPL=rust $GITHUB_WORKSPACE/target/debug/inyon engine hub"
+
   # the built app in Chromium at phone widths: text stays inside the composer and chat bubbles
   layout:
     runs-on: ubuntu-24.04
