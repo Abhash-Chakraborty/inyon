@@ -1,6 +1,6 @@
 //! agents/copilot.test.ts, test for test. Each test's name in the TS file is its doc comment. The
-//! screen tests in that file check copilot-screen.ts and run against its port here too; the model
-//! catalog test (copilot-models.ts) stays in TS.
+//! screen tests in that file check copilot-screen.ts and the catalog test copilot-models.ts; they
+//! run against those ports here too.
 
 use super::*;
 use crate::agents::copilot_screen::parse_copilot_screen;
@@ -47,6 +47,29 @@ fn copilot_credits_never_become_dollar_cost_and_session_settings_reflect_recorde
     assert_eq!(meta.stats.cost_usd, None);
     assert_match(&meta.status, json!({ "modelId": "auto", "contextPct": 10 }));
     assert_eq!(meta.mode.as_deref(), Some("default"));
+}
+
+/// Copilot catalog uses model-specific reasoning and excludes disabled models
+#[test]
+fn copilot_catalog_uses_model_specific_reasoning_and_excludes_disabled_models() {
+    use crate::agents::copilot_models::parse_copilot_models;
+    use inyon_protocol::AgentModel;
+    let model = |id: &str, label: &str, note: Option<&str>, context: Option<f64>, efforts: &[&str]| AgentModel {
+        id: id.into(),
+        label: label.into(),
+        note: note.map(str::to_owned),
+        context: context.map(Num),
+        efforts: Some(efforts.iter().map(|e| e.to_string()).collect()),
+        default_effort: None,
+        variants: None,
+    };
+    let payload = json!({ "models": [{ "id": "gpt-test", "name": "Test", "supportedReasoningEfforts": ["low", "high"], "capabilities": { "limits": { "max_context_window_tokens": 1000 } } }, { "id": "blocked", "policy": { "state": "disabled" } }] });
+    assert_eq!(
+        parse_copilot_models(&payload),
+        Ok(vec![model("auto", "Auto", Some("Copilot chooses an available model for each task"), None, &[]), model("gpt-test", "Test", None, Some(1000.0), &["low", "high"])])
+    );
+    assert_eq!(parse_copilot_models(&json!({ "models": [] })).unwrap().len(), 1);
+    assert!(parse_copilot_models(&json!({ "error": "unauthorized" })).is_err());
 }
 
 /// Copilot discovery refuses ambiguous same-process sessions

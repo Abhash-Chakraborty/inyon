@@ -47,6 +47,9 @@ pub fn open(argv: &[String], env: &[(String, String)], cols: u16, rows: u16, mut
     if let Ok(cwd) = std::env::current_dir() {
         cmd.cwd(cwd);
     }
+    for k in crate::process::DROPPED {
+        cmd.env_remove(k);
+    }
     for (k, v) in env {
         cmd.env(k, v);
     }

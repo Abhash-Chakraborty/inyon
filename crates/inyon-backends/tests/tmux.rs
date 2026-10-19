@@ -1,8 +1,8 @@
 //! The core's actions and terminal mirror against a real tmux server: claude/launch-ready.test.ts,
-//! claude/end-session.test.ts, the restart test from claude/integration.test.ts and the end-to-end
-//! half of terminal/mirror.test.ts. Each test has a tmux server of its own, in its own folder
-//! (TMUX_TMPDIR, with $TMUX dropped), refuses to run unless tmux really uses it, and stops it by
-//! its socket path: the user's server is never touched.
+//! claude/end-session.test.ts, the restart test from claude/integration.test.ts, the end-to-end
+//! half of terminal/mirror.test.ts and tmux/locale.test.ts. Each test has a tmux server of its
+//! own, in its own folder (TMUX_TMPDIR, with $TMUX dropped), refuses to run unless tmux really
+//! uses it, and stops it by its socket path: the user's server is never touched.
 
 #![cfg(unix)]
 
@@ -79,7 +79,12 @@ fn local_config(id: &str) -> HostConfig {
 
 /// Plugs in the test's server and checks tmux really uses it.
 async fn own_tmux(own: &Own, id: &str) -> Host {
-    let b = Rc::new(OwnTmux { prefix: own.prefix(), real: ProcessBackend::new(own.dir.join("cm"), vec![]) });
+    own_tmux_with(own, id, "").await
+}
+
+/// The same, with `more` run before every command (after the server's own setup).
+async fn own_tmux_with(own: &Own, id: &str, more: &str) -> Host {
+    let b = Rc::new(OwnTmux { prefix: format!("{}{more}", own.prefix()), real: ProcessBackend::new(own.dir.join("cm"), vec![]) });
     set_host_backends(move |_| b.clone() as Rc<dyn HostBackend>);
     let host = Host::new(local_config(id));
     host.run("tmux -f /dev/null new-session -d -s guard 'sleep 600'").await.unwrap();
@@ -118,6 +123,22 @@ fn rand_id() -> usize {
 
 async fn screen(host: &Host, p: &str) -> String {
     capture_panes(host, &[p.to_owned()]).await.unwrap().get(p).cloned().unwrap_or_default().join("\n")
+}
+
+// test-isolation.test.ts: with $TMUX set, tmux ignores TMUX_TMPDIR, and a test once stopped the
+// user's real server
+#[test]
+fn commands_run_by_tests_cant_reach_the_tmux_server_the_tests_were_started_from() {
+    run_core(|| async {
+        // a plain backend, as if cargo test ran inside the user's tmux
+        let started_from = vec![("TMUX".to_owned(), "/tmp/tmux-1000/default,1,0".to_owned()), ("TMUX_PANE".to_owned(), "%0".to_owned())];
+        let b = ProcessBackend::new("/tmp", started_from);
+        set_host_backends(move |_| b.clone() as Rc<dyn HostBackend>);
+        let host = Host::new(local_config("iso"));
+        let out = host.run(r#"echo "[$TMUX][$TMUX_PANE][$TMUX_TMPDIR]""#).await.unwrap().stdout;
+        let out = out.trim();
+        assert!(out.starts_with("[][][") && out.contains("inyon-test-tmux-"), "{out}");
+    });
 }
 
 #[test]
@@ -377,10 +398,14 @@ fn a_restart_keeps_a_flag_value_with_spaces_in_it_whole_read_from_the_real_argum
         }
         let _ = proc.kill();
         let _ = proc.wait();
-        assert_eq!(
-            resume_command_argv(AgentKind::Claude, Some(id), &args.unwrap()),
-            format!("claude --resume {id} '--settings' '/work/my project/settings.json' '--model' 'sonnet'")
-        );
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                resume_command_argv(AgentKind::Claude, Some(id), &args.unwrap()),
+                format!("claude --resume {id} '--settings' '/work/my project/settings.json' '--model' 'sonnet'")
+            );
+        } else {
+            assert_eq!(args, None);
+        }
     });
 }
 
@@ -486,5 +511,49 @@ fn the_terminal_ends_when_its_pane_goes_away() {
         tokio::time::sleep(Duration::from_millis(200)).await;
         tmux(&host, "kill-session -t gone").await;
         assert!(tokio::time::timeout(Duration::from_secs(5), term.exited.wait()).await.is_ok(), "still open");
+    });
+}
+
+// ---------- locale.test.ts ----------
+
+/// A machine reached over SSH often has no locale at all. tmux then wrote its field separator as
+/// "_" and the machine listed no sessions, though two were running. The locale is taken away as
+/// SSH would, and HOME moved so the probe writes nothing in the real one.
+async fn no_locale(own: &Own) -> Host {
+    let host = own_tmux_with(own, "locale", &format!("unset LANG LC_CTYPE LC_MESSAGES; export LC_ALL=C HOME='{}'; ", own.dir.display())).await;
+    tmux(&host, r#"new-session -d -s 'tëst' -x 80 -y 20 "printf 'räksmörgås ⏺\n'; sleep 600""#).await;
+    tmux(&host, "new-session -d -s second 'sleep 600'").await;
+    host
+}
+
+#[test]
+fn sessions_are_listed_with_their_names_intact_when_the_machine_has_no_locale() {
+    let own = Own::new("locale-names");
+    run_core(|| async {
+        let host = no_locale(&own).await;
+        let r = inyon_core::tmux::tmux::probe(&host).await.unwrap();
+        assert_eq!(r.tmux, TmuxProbe::Ok);
+        let mut names: Vec<String> = r.sessions.iter().map(|s| s.name.clone()).filter(|n| n != "guard").collect();
+        names.sort();
+        assert_eq!(names, ["second", "tëst"]);
+    });
+}
+
+#[test]
+fn a_panes_screen_keeps_its_non_ascii_text() {
+    let own = Own::new("locale-screen");
+    run_core(|| async {
+        let host = no_locale(&own).await;
+        let r = inyon_core::tmux::tmux::probe(&host).await.unwrap();
+        let pane = r.sessions.iter().find(|s| s.name == "tëst").unwrap().windows[0].panes[0].id.clone();
+        let (h, p) = (host.clone(), pane.clone());
+        until(
+            move || {
+                let (h, p) = (h.clone(), p.clone());
+                Box::pin(async move { screen(&h, &p).await.contains("räksmörgås ⏺") })
+            },
+            3000,
+        )
+        .await;
     });
 }

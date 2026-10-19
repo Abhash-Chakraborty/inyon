@@ -17,7 +17,12 @@ tokio = { version = "1.47", features = ["rt", "time", "process", "io-util", "syn
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[features]
+# test runs only: commands never see $TMUX and get a tmux folder of their own (test-setup.ts)
+testing = []
+
 [dev-dependencies]
 indexmap = "2.10"
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl"] }
 inyon-core = { path = "../inyon-core", features = ["testing"] }
+inyon-backends = { path = ".", features = ["testing"] }

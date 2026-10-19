@@ -81,18 +81,50 @@ mod opencodes_key_bindings {
     }
 
     /// reads the user's and the project's files on the machine, and keeps the answer a minute
-    ///
-    /// (the keeping is the caller's now: this checks the command and how its output reads)
     #[test]
     fn reads_the_users_and_the_projects_files_on_the_machine_and_keeps_the_answer_a_minute() {
-        let keys = opencode_keys("@@FILE\n{\"keybinds\":{\"agent_cycle\":\"f2\"}}\n@@FILE\n{\"keybinds\":{\"variant_cycle\":\"f3\"}}\n");
-        assert_eq!(Some(keys.agent_cycle), k(&["F2"]));
-        assert_eq!(Some(keys.variant_cycle), k(&["F3"]));
-        assert_eq!(Some(keys.model_list), k(&["C-x", "m"]));
-        let cmd = opencode_keys_command(Some("/work/a b"));
-        assert!(cmd.contains("opencode/opencode.jsonc"));
-        assert!(cmd.contains("'/work/a b'/.opencode/opencode.json"));
-        // a machine that can't be asked gets the defaults
+        use std::rc::Rc;
+
+        use futures_util::future::LocalBoxFuture;
+        use inyon_protocol::HostConfig;
+
+        use crate::hosts::host::{set_host_backends, ExecResult, HostBackend, OnData, OnLine, PtyHandle, StreamHandle};
+        use crate::hosts::http_error::{HubError, HubResult};
+        use crate::platform::rt::Deferred;
+        use crate::test_support::fake::{ok, Fake};
+        use crate::test_support::{host, rt};
+
+        /// a machine whose every command fails
+        struct Down;
+        impl HostBackend for Down {
+            fn exec(&self, _: &HostConfig, _: &str, _: ExecOptions) -> LocalBoxFuture<'static, HubResult<ExecResult>> {
+                Box::pin(async { Err(HubError::plain("gone")) })
+            }
+            fn stream(&self, _: &HostConfig, _: &str, _: OnLine, _: bool) -> StreamHandle {
+                StreamHandle::new(|| {}, Deferred::resolved(0))
+            }
+            fn pty(&self, _: &HostConfig, _: &str, _: u16, _: u16, _: OnData) -> HubResult<PtyHandle> {
+                Err(HubError::plain("gone"))
+            }
+        }
+
+        rt::run(|| async {
+            let fake = Fake::install(|_, _, _| ok("@@FILE\n{\"keybinds\":{\"agent_cycle\":\"f2\"}}\n@@FILE\n{\"keybinds\":{\"variant_cycle\":\"f3\"}}\n"));
+            let (up, down) = (fake.clone() as Rc<dyn HostBackend>, Rc::new(Down) as Rc<dyn HostBackend>);
+            set_host_backends(move |c| if c.id == "keys-down" { down.clone() } else { up.clone() });
+            let h = host("keys", "local");
+            let keys = opencode_keys_of(&h, Some("/work/a b")).wait().await;
+            assert_eq!(Some(keys.agent_cycle), k(&["F2"]));
+            assert_eq!(Some(keys.variant_cycle), k(&["F3"]));
+            assert_eq!(Some(keys.model_list), k(&["C-x", "m"]));
+            let cmds = fake.cmds();
+            assert!(cmds[0].contains("opencode/opencode.jsonc"));
+            assert!(cmds[0].contains("'/work/a b'/.opencode/opencode.json"));
+            opencode_keys_of(&h, Some("/work/a b")).wait().await;
+            assert_eq!(fake.cmds().len(), 1);
+            // a machine that can't be asked gets the defaults
+            assert_eq!(Some(opencode_keys_of(&host("keys-down", "local"), None).wait().await.agent_cycle), k(&["Tab"]));
+        });
         assert_eq!(Some(opencode_keys("").agent_cycle), k(&["Tab"]));
     }
 }

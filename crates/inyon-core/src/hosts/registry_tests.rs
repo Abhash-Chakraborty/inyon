@@ -567,3 +567,26 @@ fn the_tests_fake_machine_answers_on_a_later_turn_as_a_real_one_does() {
         assert_eq!(answer.await.unwrap().stdout, "x");
     });
 }
+
+// saving.test.ts
+
+#[test]
+fn a_machines_latest_sessions_are_saved_before_closing_even_inside_the_15_s_limit() {
+    run(|| async {
+        let state: HostState = from(json!({
+            "config": { "id": "snap-test", "name": "snap", "kind": "ssh", "target": "me@x" },
+            "status": "online", "integration": "unknown", "tmux": "ok", "sessions": [{ "id": "$1", "name": "new one", "attached": 0, "windows": [] }], "agents": [], "updatedAt": 1,
+        }));
+        // saved a moment ago, before "new one" was started: the limit holds the newer look back
+        let rt = runtime("snap-test", state);
+        rt.borrow_mut().saved_snapshot = Some("[]".into());
+        rt.borrow_mut().saved_at = Some(now_ms());
+        registry().insert_runtime("snap-test", rt);
+        registry().save_all();
+        let saved: Value = kv::get("snapshots/snap-test").unwrap();
+        let names: Vec<&str> = saved["sessions"].as_array().unwrap().iter().filter_map(|s| s["name"].as_str()).collect();
+        assert_eq!(names, ["new one"]);
+        registry().hosts.borrow_mut().shift_remove("snap-test");
+        kv::del("snapshots/snap-test");
+    });
+}

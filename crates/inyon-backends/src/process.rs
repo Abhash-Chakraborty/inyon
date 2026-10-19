@@ -28,8 +28,17 @@ pub struct ProcessBackend {
     env: Vec<(String, String)>,
 }
 
+/// What a test's commands never get (test-setup.ts): with $TMUX set, tmux ignores TMUX_TMPDIR and
+/// talks to the server it runs inside, and a test once stopped the user's real one.
+#[cfg(feature = "testing")]
+pub(crate) const DROPPED: &[&str] = &["TMUX", "TMUX_PANE"];
+#[cfg(not(feature = "testing"))]
+pub(crate) const DROPPED: &[&str] = &[];
+
 impl ProcessBackend {
     pub fn new(control_dir: impl Into<PathBuf>, env: Vec<(String, String)>) -> Rc<ProcessBackend> {
+        #[cfg(feature = "testing")]
+        let env = test_env(env);
         Rc::new(ProcessBackend { control_dir: control_dir.into(), env })
     }
 
@@ -78,10 +87,30 @@ impl ProcessBackend {
 
     fn command(&self, argv: &[String]) -> Command {
         let mut c = Command::new(&argv[0]);
+        for k in DROPPED {
+            c.env_remove(k);
+        }
         c.args(&argv[1..]).envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).kill_on_drop(false);
         own_group(&mut c);
         c
     }
+}
+
+/// A test's commands get a tmux folder of their own (TMUX_TMPDIR, made once per test run) unless
+/// the test gives one.
+#[cfg(feature = "testing")]
+fn test_env(env: Vec<(String, String)>) -> Vec<(String, String)> {
+    static DIR: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let mut env: Vec<(String, String)> = env.into_iter().filter(|(k, _)| !DROPPED.contains(&k.as_str())).collect();
+    if !env.iter().any(|(k, _)| k == "TMUX_TMPDIR") {
+        let dir = DIR.get_or_init(|| {
+            let d = std::env::temp_dir().join(format!("inyon-test-tmux-{}", std::process::id()));
+            let _ = std::fs::create_dir_all(&d);
+            d.to_string_lossy().into_owned()
+        });
+        env.push(("TMUX_TMPDIR".into(), dir.clone()));
+    }
+    env
 }
 
 /// Its own session and process group, so a timeout or a kill reaches the whole pipeline: killing
@@ -260,6 +289,9 @@ impl HostBackend for ProcessBackend {
         args.truncate(args.len() - 2);
         args.extend(["-O".into(), "exit".into(), config.target.clone().unwrap_or_else(|| "undefined".into())]);
         let mut c = Command::new("ssh");
+        for k in DROPPED {
+            c.env_remove(k);
+        }
         c.args(&args).envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
         let spawned = c.spawn();
         Box::pin(async move {

@@ -1,5 +1,5 @@
 //! agents/codex.test.ts, test for test. Each test's name in the TS file is its doc comment. The
-//! tests of codexHistory (it reads files) and of the model list (codex-models.ts) stay in TS.
+//! Codex half of agents/discovery.test.ts is here too; codexHistory and it read real files.
 
 use super::*;
 use crate::claude::transcript::new_meta;
@@ -235,6 +235,84 @@ mod codex_rollout_matching {
         let a = p(1, 100.0);
         assert_eq!(pick_codex_rollout(&[row("x", 101.0, 900.0, "/elsewhere"), row("old", 50.0, 800.0, "/w")], &a, std::slice::from_ref(&a), &names(&[])), None);
     }
+}
+
+/// the model list comes from Codex's cache, without hidden models
+#[test]
+fn the_model_list_comes_from_codexs_cache_without_hidden_models() {
+    use crate::agents::codex_models::parse_codex_models;
+    use inyon_protocol::AgentModel;
+    let cache = stringify(&json!({ "models": [
+        { "slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "description": "Fast and affordable model for easier tasks.", "visibility": "list", "context_window": 272000, "supported_reasoning_levels": [{ "effort": "low" }, { "effort": "max" }], "default_reasoning_level": "low" },
+        { "slug": "gpt-reserve", "display_name": "GPT-Reserve", "visibility": "hide" },
+    ] }));
+    assert_eq!(
+        parse_codex_models(&cache),
+        Ok(vec![AgentModel {
+            id: "gpt-6-luna".into(),
+            label: "GPT-6-Luna".into(),
+            note: Some("Fast and affordable model for easier tasks".into()),
+            context: Some(Num(272000.0)),
+            efforts: Some(vec!["low".into(), "max".into()]),
+            default_effort: Some("low".into()),
+            variants: None,
+        }])
+    );
+}
+
+/// a rewound Codex thread replays the kept part of each earlier segment, oldest first
+#[test]
+fn a_rewound_codex_thread_replays_the_kept_part_of_each_earlier_segment_oldest_first() {
+    use crate::test_support::sandbox::Sandbox;
+    use crate::test_support::{host, rt, TempDir};
+    let root = TempDir::new("codex-");
+    let day = "sessions/2026/10/10";
+    let thread = "01a1255b-fbc5-7371-ab05-ee0aa808a95d";
+    let seg1 = "01a1258a-bf79-74b3-aa15-73114039987c";
+    let seg2 = "01a12590-2495-7421-bf23-e68d82d406bc";
+    let line = |n: &str, base: Option<Value>| {
+        let mut v = json!({ "type": "event_msg", "payload": { "n": n } });
+        if let Some(b) = base {
+            v["history_base"] = b;
+        }
+        stringify(&v) + "\n"
+    };
+    let meta = |id: &str, offset: usize| line("meta", Some(json!({ "thread_id": id, "end_ordinal_exclusive": 1, "end_byte_offset": offset })));
+    let first = line("a", None) + &line("b", None);
+    root.write(&format!("{day}/rollout-2026-10-10T15-59-07-{thread}.jsonl"), &(first.clone() + &line("dropped", None)));
+    let second = meta(thread, first.len()) + &line("c", None);
+    root.write(&format!("{day}/rollout-2026-10-10T16-50-12-{thread}_{seg1}.jsonl"), &(second.clone() + &line("dropped too", None)));
+    let last = format!("{day}/rollout-2026-10-10T16-56-05-{thread}_{seg2}.jsonl");
+    root.write(&last, &(meta(seg1, second.len()) + &line("d", None)));
+    rt::run(|| async {
+        Sandbox::install(&root.s());
+        let last = root.path(&last).to_string_lossy().into_owned();
+        let kept: Vec<String> = codex_history(&host("local", "local"), &last, 0)
+            .await
+            .unwrap()
+            .iter()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap()["payload"]["n"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(kept, ["a", "b", "meta", "c"]);
+    });
+}
+
+/// From agents/discovery.test.ts: a Codex conversation is found under a home whose path has a space
+#[test]
+fn a_codex_conversation_is_found_under_a_home_whose_path_has_a_space() {
+    use crate::test_support::sandbox::Sandbox;
+    use crate::test_support::{host, rt, TempDir};
+    let root = TempDir::new("inyon-find-");
+    rt::run(|| async {
+        let home = root.path("my home").to_string_lossy().into_owned();
+        Sandbox::install(&root.s());
+        let started_at = (now_ms() / 1000) as f64 - 60.0;
+        let rel = "my home/.codex/sessions/2026/10/12/rollout-2026-10-12T00-00-00-abc.jsonl";
+        let ts = date::to_iso(now_ms() as f64).unwrap();
+        root.write(rel, &(stringify(&json!({ "timestamp": ts, "type": "session_meta", "payload": { "id": "abc", "cwd": "/work/my app" } })) + "\n"));
+        let proc = CodexProc { pid: 1, cwd: Some("/work/my app".into()), started_at, ..Default::default() };
+        assert_eq!(find_codex_rollout(&host("find", "local"), &home, &proc, &[]).await.unwrap(), Some(root.path(rel).to_string_lossy().into_owned()));
+    });
 }
 
 /// completed Codex patches accumulate session lines once; failed patches do not

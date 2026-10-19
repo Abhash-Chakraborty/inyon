@@ -345,6 +345,37 @@ fn valid_prefix(b: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    // caches.test.ts
+    #[test]
+    fn watching_a_chat_starts_a_watcher_only_for_a_pane_the_machine_has() {
+        crate::test_util::block(async {
+            let state: inyon_protocol::HostState = serde_json::from_value(serde_json::json!({
+                "config": { "id": "h", "name": "h", "kind": "ssh" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0,
+            }))
+            .unwrap();
+            let rt = Rc::new(RefCell::new(inyon_core::hosts::registry::HostRuntime::new(inyon_core::hosts::host::Host::new(state.config.clone()), state)));
+            rt.borrow_mut().hold_polls();
+            registry().insert_runtime("h", rt.clone());
+            let c = new_client(|_| {});
+            add(&c);
+            client_message(&c, r#"{"t":"sub.chat","host":"h","pane":"%7"}"#);
+            client_message(&c, r#"{"t":"sub.chat","host":"h","pane":"not-a-pane"}"#);
+            assert!(watchers().peek("h", "%7").is_none());
+            assert_eq!(c.chats.borrow().iter().collect::<Vec<_>>(), ["h:%7"]);
+            // the pane shows up (a session that was just launched): now it's watched
+            rt.borrow_mut().state.sessions = serde_json::from_value(
+                serde_json::json!([{ "id": "$1", "name": "work", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+                { "id": "%7", "index": 0, "active": true, "command": "claude", "cwd": "/w", "title": "claude", "width": 100, "height": 30, "dead": false }
+            ] }] }]),
+            )
+            .unwrap();
+            registry().emit_for_test(RegistryEvent::Overview);
+            inyon_core::platform::rt::sleep(300).await;
+            assert_eq!(watchers().peek("h", "%7").expect("a watcher for h/%7").subscribers(), 1);
+            close_client(&c);
+        });
+    }
+
     #[test]
     fn a_character_split_across_chunks_comes_out_whole() {
         let mut d = Utf8Stream::default();

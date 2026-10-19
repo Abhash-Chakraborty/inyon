@@ -968,6 +968,89 @@ mod tests {
         assert_eq!(exit["stdout"].as_str().unwrap().split_whitespace().collect::<Vec<_>>(), ["63", "61", "66", "e9"]);
     }
 
+    // win-prelude.test.ts: the prelude under a plain sh, with a stand-in for psmux's tmux.exe
+    // that logs its argv and answers like psmux would
+    #[cfg(unix)]
+    struct Psmux(std::path::PathBuf);
+
+    #[cfg(unix)]
+    impl Psmux {
+        fn new() -> Psmux {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = std::env::temp_dir().join(format!("psmux-{}-{}", std::process::id(), mark_n()));
+            std::fs::create_dir_all(&bin).unwrap();
+            let tmux = bin.join("tmux");
+            std::fs::write(
+                &tmux,
+                format!(
+                    "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{argv}\"; done; echo >> \"{argv}\"\ncase \"$1\" in\n  list-panes) echo '$14 $14:%1 $14:@1 x'; echo '$16 $16:%1 $16:@1 y'; exit 3 ;;\n  list-sessions) printf '$14\\n$16\\n' ;;\n  list-clients) [ \"$3\" = '$14' ] && echo '/dev/pts/2: a: pwsh [80x24] (utf8) (control mode) [activity=1s ago]' ;;\nesac\n",
+                    argv = bin.join("argv").display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&tmux, std::fs::Permissions::from_mode(0o755)).unwrap();
+            Psmux(bin)
+        }
+
+        /// stdout of `cmd` after the prelude, and the argv log
+        fn run(&self, cmd: &str, env: &[(&str, &str)]) -> (String, String) {
+            std::fs::write(self.0.join("argv"), "").unwrap();
+            let o = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("{WIN_PRELUDE}\n{cmd}"))
+                .env_clear()
+                .env("PATH", format!("{}:/usr/bin:/bin", self.0.display()))
+                .envs(env.iter().copied())
+                .output()
+                .unwrap();
+            (String::from_utf8_lossy(&o.stdout).into_owned(), std::fs::read_to_string(self.0.join("argv")).unwrap())
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Psmux {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[cfg(unix)]
+    fn mark_n() -> u64 {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn psmux_targets_session_pane_and_window_ids_become_qualified_ids() {
+        let (_, argv) = Psmux::new().run("tmux send-keys -t '%14.1' -l -- '%3.4 #{pane_id}' && tmux select-window -t @16.2 && tmux send-keys -t %14.1 Enter", &[]);
+        assert_eq!(argv, "[send-keys][-t][$14:.%1][-l][--][%3.4 #{pane_id}]\n[select-window][-t][$16:@2]\n[send-keys][-t][$14:.%1][Enter]\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pane_and_window_ids_print_as_session_pane_and_the_exit_code_survives() {
+        let (out, argv) = Psmux::new().run("tmux list-panes -a -F '#{session_id} #{pane_id} #{window_id} x'; echo \"rc=$?\"", &[]);
+        assert_eq!(argv, "[list-panes][-a][-F][#{session_id} #{session_id}:#{pane_id} #{session_id}:#{window_id} x]\n");
+        assert_eq!(out, "$14 %14.1 @14.1 x\n$16 %16.1 @16.1 y\nrc=3\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_clients_is_answered_per_session_from_psmux_default_output() {
+        assert_eq!(Psmux::new().run("tmux list-clients -F '#{session_id} #{client_control_mode}'", &[]).0, "$14 1\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ps_reads_the_snapshot_the_node_wrote_pgrep_finds_nothing() {
+        let p = Psmux::new();
+        let snap = p.0.join("ps.txt");
+        std::fs::write(&snap, "4 0 100 claude claude --resume x\n").unwrap();
+        let (out, _) = p.run("ps -e -o pid=; pgrep -f claude || echo none", &[("INYON_PS", &snap.to_string_lossy())]);
+        assert_eq!(out, "4 0 100 claude claude --resume x\nnone\n");
+    }
+
     #[test]
     fn commands_get_the_programs_own_address_under_both_names() {
         let env = child_env();

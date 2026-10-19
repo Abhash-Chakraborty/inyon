@@ -88,8 +88,11 @@ fn the_old_folder_moves_once_and_leaves_a_link() {
     move_old_folder(&d.0).unwrap();
     assert_eq!(std::fs::read_to_string(d.0.join(".inyon/hosts.json")).unwrap(), "[]");
     assert!(std::fs::symlink_metadata(d.0.join(".tether")).unwrap().file_type().is_symlink());
-    // again: the link is left alone
+    assert_eq!(std::fs::read_link(d.0.join(".tether")).unwrap(), d.0.join(".inyon"));
+    // again, or with nothing to move: things are left alone
     move_old_folder(&d.0).unwrap();
+    move_old_folder(&d.0.join("nobody")).unwrap();
+    assert!(!d.0.join("nobody").exists());
     assert!(d.0.join(".inyon/hosts.json").exists());
     // a new folder already there: nothing moves
     let e = Dir::new("move-both");

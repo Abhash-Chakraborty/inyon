@@ -1690,6 +1690,13 @@ impl Registry {
     pub fn insert_runtime(&self, id: &str, rt: Rt) {
         self.hosts.borrow_mut().insert(id.to_owned(), rt);
     }
+
+    /// An event sent as the registry sends its own (the TS tests call its private `emit`).
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn emit_for_test(&self, e: RegistryEvent) {
+        self.emit(e)
+    }
 }
 
 /// A pane's width as the screen reader takes it.

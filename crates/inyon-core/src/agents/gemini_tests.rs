@@ -1,6 +1,6 @@
-//! agents/gemini.test.ts has one test, the last one here. The others check the reader against
+//! agents/gemini.test.ts has one test, the one before last here. The others check the reader against
 //! what the TS made of the same records (printed with bun from agents/gemini.ts), and the session
-//! picker.
+//! picker; the last is the Gemini half of agents/discovery.test.ts.
 
 use super::*;
 use crate::claude::transcript::new_meta;
@@ -88,4 +88,21 @@ fn an_update_with_no_tool_call_id_gives_its_result_to_no_call() {
     doc.apply(&json!({ "$patch": { "id": "g1", "toolCalls": [{ "result": [{ "text": "not for the shell" }] }, { "id": null, "result": [{ "text": "not for the read" }] }] } }));
     let kinds: Vec<Value> = serde_json::to_value(doc.items(&mut new_meta())).unwrap().as_array().unwrap().iter().map(|i| i["kind"].clone()).collect();
     assert_eq!(kinds, [json!("assistant"), json!("assistant")]);
+}
+
+/// From agents/discovery.test.ts: a Gemini chat is found under a home whose path has a space
+#[test]
+fn a_gemini_chat_is_found_under_a_home_whose_path_has_a_space() {
+    use crate::test_support::sandbox::Sandbox;
+    use crate::test_support::{host, rt, TempDir};
+    let root = TempDir::new("inyon-find-");
+    rt::run(|| async {
+        let home = root.path("my home").to_string_lossy().into_owned();
+        Sandbox::install(&root.s());
+        let started_at = (now_ms() / 1000) as f64 - 60.0;
+        let rel = "my home/.gemini/tmp/proj/chats/session-1.json";
+        root.write(rel, &(crate::js::stringify(&json!({ "sessionId": "s1", "projectHash": sha256_hex("/work/my app") })) + "\n"));
+        let proc = GeminiProc { cwd: Some("/work/my app".into()), started_at };
+        assert_eq!(find_gemini_session(&host("find", "local"), &home, &proc).await.unwrap(), Some(root.path(rel).to_string_lossy().into_owned()));
+    });
 }

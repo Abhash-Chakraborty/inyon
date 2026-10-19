@@ -451,6 +451,17 @@ fn resume_keeps_launch_flags_drops_the_old_session_and_any_prompt() {
     assert_eq!(resume_command(AgentKind::Antigravity, None, "agy -c --effort low"), "agy '--effort' 'low'");
 }
 
+/// From "a restart keeps a flag value with spaces in it whole, read from the real argument list":
+/// where there is no /proc to read, there is no argument list
+#[test]
+fn a_machine_without_proc_gives_no_argument_list() {
+    run(|| async {
+        let fake = Fake::install(|_, _, _| ExecResult { code: 1, stdout: String::new(), stderr: String::new() });
+        assert_eq!(argv(&crate::test_support::host("mac", "local"), 4242.0).await, None);
+        assert_eq!(fake.cmds(), [r"tr '\0' '\n' < /proc/4242/cmdline 2>/dev/null"]);
+    });
+}
+
 // ---------- end-session.test.ts: what closing a pane takes ----------
 
 #[test]
@@ -467,8 +478,8 @@ fn what_closing_a_pane_takes_with_it() {
 }
 
 // ---------- hosts/win-prelude.test.ts: psmux ----------
-// The first four check apps/node/win-prelude.sh on its own, with no hub code, and the sign-in one
-// is features/signin.ts; they stay with the TS.
+// The first four check apps/node/win-prelude.sh on its own, with no hub code: they are in
+// inyon-engine's ops.rs, which runs the prelude. The sign-in one is in signin_tests.rs.
 
 const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
 

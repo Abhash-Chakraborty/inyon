@@ -115,6 +115,13 @@ fn opencode_next_login_method_prompt_replaces_the_completed_provider_choice() {
     assert_eq!(parse_open_code_auth_menu(&v(&["◇ Finished", "│ ○ Earlier option"])), None);
 }
 
+/// From win-prelude.test.ts.
+#[test]
+fn a_sign_in_on_windows_is_a_powershell_line_that_prints_the_exit_mark() {
+    assert_eq!(sign_in_windows(AgentKind::Gemini, None), r#"$env:NO_BROWSER='true'; gemini; Write-Output ''; Write-Output "[inyon-exit $([int]$LASTEXITCODE)]""#);
+    assert!(sign_in_windows(AgentKind::Codex, None).starts_with("codex login --device-auth; "));
+}
+
 #[test]
 fn connecting_a_provider_runs_opencodes_own_login_for_that_provider_and_its_error_counts_as_a_failure_even_at_exit_0() {
     run(|| async {

@@ -141,6 +141,13 @@ pub struct Sent {
     pub gone: bool,
 }
 
+impl Sent {
+    /// What the push service's answer means for this subscription.
+    pub fn from_status(status: u16) -> Sent {
+        Sent { ok: (200..300).contains(&status), status, gone: status == 404 || status == 410 }
+    }
+}
+
 /// What a send needs, apart from the network: the request it would make.
 pub struct PushRequest {
     pub url: String,
@@ -166,9 +173,17 @@ pub fn push_request(sub: &Subscription, payload: &serde_json::Value, v: &Vapid, 
 
 /// Sends one message.
 pub async fn send_push(sub: &Subscription, payload: &serde_json::Value, v: &Vapid) -> Result<Sent, String> {
+    send_push_with(sub, payload, v, |r| async move { Ok(crate::http::fetch("POST", r.url, r.headers, Some(r.body), Duration::from_secs(60)).await?.status) }).await
+}
+
+/// `send_push` with the request made by `fetch` (the TS's `o.fetch`), which answers its status.
+pub async fn send_push_with<F, Fut>(sub: &Subscription, payload: &serde_json::Value, v: &Vapid, fetch: F) -> Result<Sent, String>
+where
+    F: FnOnce(PushRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<u16, String>>,
+{
     let r = push_request(sub, payload, v, 4 * 3600)?;
-    let res = crate::http::fetch("POST", r.url, r.headers, Some(r.body), Duration::from_secs(60)).await?;
-    Ok(Sent { ok: res.ok(), status: res.status, gone: res.status == 404 || res.status == 410 })
+    Ok(Sent::from_status(fetch(r).await?))
 }
 
 #[cfg(test)]
@@ -235,5 +250,25 @@ mod tests {
         assert!(h("Authorization").starts_with("vapid t="));
         let insecure = Subscription { endpoint: "http://push.example.net/x".into(), ..sub() };
         assert!(push_request(&insecure, &json!({}), &Vapid { private_jwk: jwk().0, subject: "mailto:a@b".into() }, 1).is_err());
+    }
+
+    #[test]
+    fn a_gone_subscription_says_so() {
+        let cell = std::cell::RefCell::new(vec![]);
+        let sent = &cell;
+        let v = Vapid { private_jwk: jwk().0, subject: "mailto:me@example.com".into() };
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let r = rt.block_on(send_push_with(&sub(), &json!({ "title": "x" }), &v, |r| async move {
+            *sent.borrow_mut() = r.headers;
+            Ok(410)
+        }));
+        assert_eq!(r.unwrap(), Sent { ok: false, status: 410, gone: true });
+        let h = |k: &str| sent.borrow().iter().find(|(n, _)| n.eq_ignore_ascii_case(k)).map(|(_, v)| v.clone());
+        assert_eq!(h("content-encoding").as_deref(), Some("aes128gcm"));
+        assert_eq!(h("urgency").as_deref(), Some("high"));
+        assert_eq!(Sent::from_status(410), Sent { ok: false, status: 410, gone: true });
+        assert_eq!(Sent::from_status(404), Sent { ok: false, status: 404, gone: true });
+        assert_eq!(Sent::from_status(201), Sent { ok: true, status: 201, gone: false });
+        assert_eq!(Sent::from_status(500), Sent { ok: false, status: 500, gone: false });
     }
 }
