@@ -47,12 +47,31 @@ fn a_timeout_ends_the_whole_pipeline_and_says_so() {
 }
 
 #[test]
-fn old_tether_variables_reach_commands_under_their_inyon_names() {
+fn a_timeout_also_covers_output_held_open_by_something_left_in_the_background() {
     run_core(|| async {
-        let b = ProcessBackend::new("/tmp", vec![("INYON_PORT_TEST".into(), "4999".into())]);
-        let r = b.exec(&local(), "echo \"$INYON_PORT_TEST\"", ExecOptions::default()).await.unwrap();
-        assert_eq!(r.stdout, "4999\n");
+        let b = ProcessBackend::new("/tmp", vec![]);
+        let started = Instant::now();
+        // the shell exits at once; the sleep it leaves keeps stdout open
+        let r = b.exec(&local(), "sleep 10 & echo started", ExecOptions::timeout(500)).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert_eq!((r.code, r.stdout.as_str(), r.stderr.as_str()), (124, "started\n", "timed out"));
     });
+}
+
+#[test]
+fn old_tether_variables_reach_commands_under_their_inyon_names() {
+    let home = std::env::temp_dir().join(format!("inyon-tether-env-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let out = run_core(|| async {
+        // the hub as a machine set up under the old name starts it: only TETHER_* is set
+        let env = inyon_backends::env::HubEnv::from_vars([("HOME".to_owned(), home.display().to_string()), ("TETHER_PORT_TEST".to_owned(), "4999".to_owned())]);
+        inyon_backends::env::install_hub(&env, "box").unwrap();
+        // a command on this machine, through whatever backend the hub plugged in
+        let host = inyon_core::hosts::host::Host::new(local());
+        host.run("echo \"$INYON_PORT_TEST\"").await.unwrap().stdout
+    });
+    let _ = std::fs::remove_dir_all(&home);
+    assert_eq!(out, "4999\n");
 }
 
 #[test]

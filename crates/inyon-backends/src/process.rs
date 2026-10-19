@@ -15,7 +15,7 @@ use inyon_core::hosts::http_error::{HubError, HubResult};
 use inyon_core::platform::rt::Deferred;
 use inyon_protocol::{HostConfig, HostKind};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 
 /// How long a command may take when the caller doesn't say (`timeoutMs ?? 20000`).
 const DEFAULT_TIMEOUT_MS: u64 = 20_000;
@@ -98,16 +98,17 @@ fn own_group(c: &mut Command) {
     let _ = c;
 }
 
-/// Signals a process's whole group, else the process alone.
-fn signal_group(child: &mut Child, sig: i32) {
+/// Signals a whole process group (whose leader was `pid`), else the process alone.
+fn kill_group(pid: Option<u32>, sig: i32) {
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        if unsafe { libc::kill(-(pid as i32), sig) } == 0 {
-            return;
+    if let Some(pid) = pid {
+        // SAFETY: plain signals to a group this backend started
+        if unsafe { libc::kill(-(pid as i32), sig) } != 0 {
+            unsafe { libc::kill(pid as i32, sig) };
         }
     }
-    let _ = sig;
-    let _ = child.start_kill();
+    #[cfg(not(unix))]
+    let _ = (pid, sig);
 }
 
 /// What a finished process's status reads as: its exit code, or 128 + the signal that ended it.
@@ -138,25 +139,36 @@ impl HostBackend for ProcessBackend {
         let timeout = opts.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
         Box::pin(async move {
             let mut child = spawned.map_err(|e| HubError::plain(e.to_string()))?;
+            // the group's id, kept: once the process has been waited for, `child.id()` is gone
+            let group = child.id();
             if let (Some(mut stdin), Some(input)) = (child.stdin.take(), opts.input) {
                 tokio::task::spawn_local(async move {
                     let _ = stdin.write_all(&input).await;
                 });
             }
-            let stdout = tokio::task::spawn_local(read_all(child.stdout.take()));
-            let stderr = tokio::task::spawn_local(read_all(child.stderr.take()));
-            let mut timed_out = false;
-            let status = tokio::select! {
-                s = child.wait() => s,
-                _ = tokio::time::sleep(Duration::from_millis(timeout)) => {
-                    timed_out = true;
-                    signal_group(&mut child, 9);
-                    child.wait().await
+            let mut stdout = tokio::task::spawn_local(read_all(child.stdout.take()));
+            let mut stderr = tokio::task::spawn_local(read_all(child.stderr.take()));
+            // the timer covers the exit and both pipes, as the TS's Promise.all does: something the
+            // command left running in the background can hold the output open after it exits
+            let finished = tokio::time::timeout(Duration::from_millis(timeout), async {
+                let status = child.wait().await;
+                (status, (&mut stdout).await.unwrap_or_default(), (&mut stderr).await.unwrap_or_default())
+            })
+            .await;
+            let timed_out = finished.is_err();
+            let (status, stdout, stderr) = match finished {
+                Ok(r) => r,
+                Err(_) => {
+                    kill_group(group, 9);
+                    #[cfg(not(unix))]
+                    let _ = child.start_kill();
+                    let status = child.wait().await;
+                    (status, stdout.await.unwrap_or_default(), stderr.await.unwrap_or_default())
                 }
             };
             let code = status.map(code_of).unwrap_or(1);
-            let stdout = String::from_utf8_lossy(&stdout.await.unwrap_or_default()).into_owned();
-            let mut stderr = String::from_utf8_lossy(&stderr.await.unwrap_or_default()).into_owned();
+            let stdout = String::from_utf8_lossy(&stdout).into_owned();
+            let mut stderr = String::from_utf8_lossy(&stderr).into_owned();
             if timed_out {
                 stderr.push_str("timed out");
             }
