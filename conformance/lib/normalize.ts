@@ -30,6 +30,8 @@ const VIEW = /\binyon-view-[a-z0-9]{1,8}\b/g
 const BEFORE_MS = 2 * 86_400_000
 const AFTER_MS = 40 * 86_400_000
 
+const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+
 export const RULES: Rule[] = [
   {
     name: 'learned',
@@ -63,10 +65,15 @@ export const RULES: Rule[] = [
   },
   {
     name: 'key-order',
-    why: 'The order of an object\'s fields. JSON objects are unordered and every client reads them with JSON.parse; the Bun hub writes fields in the order its code happened to add them (seq last, error after updatedAt, a different order per agent), a Rust struct in the order it declares them. Fields are sorted by their normalized name, before their values, so placeholders are numbered the same either way. Arrays keep their order.',
+    why: 'The order of an object\'s fields. JSON objects are unordered and every client reads them with JSON.parse; the Bun hub writes fields in the order its code happened to add them (seq last, error after updatedAt, a different order per agent), a Rust struct in the order it declares them. Fields are sorted by their normalized name, before their values, so placeholders are numbered the same either way. A key that is an id not seen before (a map keyed by session ids) has no name yet: such keys are numbered in the order of what they hold, so two maps alike but for order still match. Arrays keep their order.',
     object: (o, n) => {
-      const named = Object.entries(o).map(([k, v]) => [n.string(k), k, v] as const)
-      named.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      const keys = Object.keys(o).map((k) => n.peek(k))
+      // what a field holds only matters for keys alike so far, and peeking at it all costs
+      const alike = new Set(keys).size < keys.length
+      const rough = Object.entries(o).map(([k, v], i) => [keys[i], alike ? n.peek(v) : '', k, v] as const)
+      rough.sort(([a, x], [b, y]) => order(a, b) || order(x, y))
+      const named = rough.map(([, , k, v]) => [n.string(k), k, v] as const)
+      named.sort(([a], [b]) => order(a, b))
       return Object.fromEntries(named.map(([, k, v]) => [k, v]))
     },
   },
@@ -83,6 +90,8 @@ export class Normalizer {
   private numbered = new Map<string, Map<string, string>>()
   /** numbering for comparisons made while the run goes on (see key), kept apart from the transcript's */
   private compared = new Map<string, Map<string, string>>()
+  /** while peeking, a value not numbered yet reads as `<kind:?>` and stays unnumbered */
+  private peeking = false
 
   constructor(
     readonly startedAt = Date.now(),
@@ -118,8 +127,20 @@ export class Normalizer {
     let m = this.numbered.get(kind)
     if (!m) this.numbered.set(kind, (m = new Map()))
     let p = m.get(value)
+    if (!p && this.peeking) return `<${kind}:?>`
     if (!p) m.set(value, (p = `<${kind}:${m.size + 1}>`))
     return p
+  }
+
+  /** The normalized JSON of `value` as far as it is known now, numbering nothing: what it holds, apart from ids not seen yet. */
+  peek(value: unknown) {
+    const was = this.peeking
+    this.peeking = true
+    try {
+      return JSON.stringify(this.value(value))
+    } finally {
+      this.peeking = was
+    }
   }
 
   /**

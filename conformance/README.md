@@ -68,7 +68,7 @@ exactly. Each rule says why it exists:
 | view-name | the random name of a terminal's view session |
 | iso-time | ISO timestamps from this run (fixtures are dated January 2026 and stay) |
 | epoch | clock readings in ms or s from two days before the run to 40 days after |
-| key-order | the order of an object's fields (sorted by name); arrays keep theirs. The Bun hub writes fields in the order its code adds them, a Rust struct in the order it declares them, and every client reads them with `JSON.parse` |
+| key-order | the order of an object's fields (sorted by name); arrays keep theirs. The Bun hub writes fields in the order its code adds them, a Rust struct in the order it declares them, and every client reads them with `JSON.parse`. Keys that are ids not seen before (a map keyed by session ids) are numbered in the order of what they hold, so two such maps alike but for order still match |
 | latency | `latencyMs` |
 
 `test/normalize.test.ts` has a test for each rule and fails when a rule has none.
