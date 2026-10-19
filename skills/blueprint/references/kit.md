@@ -49,6 +49,12 @@ Fonts: Geist and Geist Mono ship in `kit/fonts/` (OFL). Replace them with the pr
 
 Theme: `?theme=dark` in the URL, then the viewer's message, then the saved choice, then the system setting.
 
+Messages: a page takes `{type:'theme', value}` (and the viewer's `notes?`) only from the page it is framed
+in, checked with `K.fromParent(e)`. A framed page sends `{type:'theme?'}` to its parent as it starts, and
+Inyon answers with the app's theme. Use the same check for any message a screen listens for, and treat what
+arrives as text. Inyon frames pages the same way the viewer frames screens, in a sandbox with no storage,
+so `localStorage` may throw; the kit already wraps it.
+
 ## Data (kit/data.js)
 
 `window.BRAND = { name, logo? }` and `window.DATA = { nav:[{id,label,icon,href}], groups:[{id,label,items:[{id,title,meta,status,href}]}], people, notifications, statusLabel }`

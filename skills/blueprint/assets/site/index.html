@@ -2,6 +2,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Plan</title>
 <meta name="description" content="One sentence on what this plan changes.">
+<link rel="icon" href="kit/icon.svg">
 <link rel="stylesheet" href="kit/blueprint.css">
 <script src="kit/lucide.min.js"></script><script src="kit/data.js"></script>
 <script src="kit/kit.js"></script><script src="mockups/screens.js"></script>
@@ -213,7 +214,9 @@
   K.$('#brand').textContent = BRAND.name;
   K.$('#footBrand').textContent = `${BRAND.name} plan`;
   document.title = `${BRAND.name} plan`;
-  K.$('#theme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; K.setTheme(t); K.$$('img[data-still]').forEach((i) => (i.src = `shots/${i.dataset.still}-${t === 'dark' ? 'dd' : 'd'}.webp`)); };
+  const stills = (t) => K.$$('img[data-still]').forEach((i) => (i.src = `shots/${i.dataset.still}-${t === 'dark' ? 'dd' : 'd'}.webp`));
+  K.$('#theme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; K.setTheme(t); stills(t); };
+  document.addEventListener('bp:theme', (e) => stills(e.detail));
 
   // Screen gallery from the viewer's list; stills come from scripts/stills.mjs into shots/.
   K.$('#nScreens').textContent = SCREENS.reduce((a, g) => a + g.items.length, 0);
@@ -244,28 +247,43 @@
 </script>
 
 <script>
-/* Live progress: progress.json is rewritten as work moves; poll it. */
+/* Live progress. progress.json is rewritten as the work moves: fetch it every 20 seconds and when the
+   page comes back into view. Inyon can also push a fresh copy with {type:'bp-progress', data}; that
+   message counts only from the page this one is framed in. Everything in the file is shown as text. */
 (() => {
   const open = new Set();
-  const ago = (t) => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(t).toLocaleDateString(); };
+  const esc = K.esc;
+  const ago = (t) => { const d = new Date(t); if (isNaN(d)) return ''; const m = Math.round((Date.now() - d) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : d.toLocaleDateString(); };
   const lbl = { todo: 'To do', doing: 'Working', done: 'Done', blocked: 'Blocked' };
-  async function load() {
-    let d; try { d = await (await fetch('progress.json', { cache: 'no-store' })).json(); } catch { return; }
-    const tasks = d.releases.flatMap((r) => r.tasks), n = tasks.length;
+  const st = (s) => (lbl[s] ? s : 'todo');
+  // Links on tasks: http(s), or relative to the site. Anything with another scheme (javascript:, data:) is dropped.
+  const safeHref = (u) => { if (typeof u !== 'string') return null; const s = u.replace(/[\x00-\x20\x7f]/g, ''); return /^https?:\/\//i.test(s) || !/^[a-z][a-z0-9+.-]*:/i.test(s) ? u : null; };
+  const pct = (a, b) => (b ? (a / b) * 100 : 0);
+  function render(d) {
+    if (!d || !Array.isArray(d.releases)) return;
+    const rels = d.releases.filter((r) => r && typeof r === 'object').map((r) => ({ ...r, tasks: Array.isArray(r.tasks) ? r.tasks.filter((t) => t && typeof t === 'object') : [] }));
+    const tasks = rels.flatMap((r) => r.tasks), n = tasks.length;
     const done = tasks.filter((t) => t.status === 'done').length, doing = tasks.filter((t) => t.status === 'doing').length;
-    K.$('#pgDone').style.width = (done / n * 100) + '%'; K.$('#pgDoing').style.width = (doing / n * 100) + '%';
+    K.$('#pgDone').style.width = pct(done, n) + '%'; K.$('#pgDoing').style.width = pct(doing, n) + '%';
     K.$('#pgCount').textContent = `${done} of ${n} tasks done · ${doing} in progress`;
-    K.$('#pgNow').textContent = d.now; K.$('#pgUpd').textContent = 'Updated ' + ago(d.updated);
+    K.$('#pgNow').textContent = typeof d.now === 'string' ? d.now : ''; K.$('#pgUpd').textContent = d.updated ? 'Updated ' + ago(d.updated) : '';
     K.$$('#pgRels details[open]').forEach((x) => open.add(x.dataset.r)); K.$$('#pgRels details:not([open])').forEach((x) => open.delete(x.dataset.r));
-    K.$('#pgRels').innerHTML = d.releases.map((r) => { const dn = r.tasks.filter((t) => t.status === 'done').length;
-      return `<details class="prog-rel" data-r="${r.r}" ${open.has(r.r) ? 'open' : ''}><summary><span class="v">${r.v}</span><span class="t">${K.esc(r.title)}</span><span class="c"><span class="prog-bar"><i style="width:${dn / r.tasks.length * 100}%"></i></span></span><span class="st ${r.status}">${dn}/${r.tasks.length}</span><i data-lucide="chevron-right" class="chev"></i></summary>
-      <ul class="prog-tasks">${r.tasks.map((t) => `<li><span class="st ${t.status}">${lbl[t.status]}</span><span>${K.esc(t.title)}${t.note ? `<small>${K.esc(t.note)}</small>` : ''}${t.link ? ` <a href="${K.esc(t.link)}" target="_blank" rel="noopener">link</a>` : ''}</span></li>`).join('')}</ul></details>`; }).join('');
-    K.$('#pgLog').innerHTML = d.log.slice(0, 40).map((l) => `<li><time datetime="${l.t}">${ago(l.t)}</time><span>${K.esc(l.text)}</span></li>`).join('');
-    if (!open.size) { const cur = d.releases.find((r) => r.status === 'doing') || d.releases[0]; cur && K.$(`#pgRels details[data-r="${cur.r}"]`)?.setAttribute('open', ''); }
-    K.$('#pgState').textContent = d.releases.every((r) => r.status === 'done') ? 'Done' : d.releases.some((r) => r.status === 'blocked') ? 'Blocked' : 'Working';
-    K.$('#pgState').className = 'st ' + (d.releases.every((r) => r.status === 'done') ? 'done' : 'doing');
+    K.$('#pgRels').innerHTML = rels.map((r) => { const dn = r.tasks.filter((t) => t.status === 'done').length;
+      return `<details class="prog-rel" data-r="${esc(r.r)}" ${open.has(String(r.r ?? '')) ? 'open' : ''}><summary><span class="v">${esc(r.v)}</span><span class="t">${esc(r.title)}</span><span class="c"><span class="prog-bar"><i style="width:${pct(dn, r.tasks.length)}%"></i></span></span><span class="st ${st(r.status)}">${dn}/${r.tasks.length}</span><i data-lucide="chevron-right" class="chev"></i></summary>
+      <ul class="prog-tasks">${r.tasks.map((t) => { const href = safeHref(t.link);
+        return `<li><span class="st ${st(t.status)}">${lbl[st(t.status)]}</span><span>${esc(t.title)}${t.note ? `<small>${esc(t.note)}</small>` : ''}${href ? ` <a href="${esc(href)}" target="_blank" rel="noopener noreferrer">link</a>` : ''}</span></li>`; }).join('')}</ul></details>`; }).join('');
+    K.$('#pgLog').innerHTML = (Array.isArray(d.log) ? d.log : []).slice(0, 40).filter((l) => l && typeof l === 'object').map((l) => `<li><time datetime="${esc(l.t)}">${esc(ago(l.t))}</time><span>${esc(l.text)}</span></li>`).join('');
+    if (!open.size) { const cur = rels.find((r) => r.status === 'doing') || rels[0]; const el = cur && K.$$('#pgRels details').find((x) => x.dataset.r === String(cur.r ?? '')); el && el.setAttribute('open', ''); }
+    const all = rels.length > 0 && rels.every((r) => r.status === 'done');
+    K.$('#pgState').textContent = all ? 'Done' : rels.some((r) => r.status === 'blocked') ? 'Blocked' : 'Working';
+    K.$('#pgState').className = 'st ' + (all ? 'done' : 'doing');
     K.icons(K.$('#progress'));
   }
+  async function load() {
+    let d; try { d = await (await fetch('progress.json', { cache: 'no-store' })).json(); } catch { return; }
+    render(d);
+  }
+  window.addEventListener('message', (e) => { if (K.fromParent(e) && e.data.type === 'bp-progress') render(e.data.data); });
   load(); setInterval(load, 20000); document.addEventListener('visibilitychange', () => !document.hidden && load());
 })();
 </script>

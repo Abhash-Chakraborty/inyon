@@ -49,3 +49,7 @@ Each row is `[area, feature, want, status, today, release, phone, desktop, scree
 Give each task an id that's unique across the file, and end each release with a "Release X" task. Let
 `progress.py` set the release status and the timestamps; don't edit them by hand while workers run. The
 board opens the first release that's in progress. The newest log line goes first, and only 200 are kept.
+
+The board shows everything in the file as text, and a task's `link` only when it is http(s) or relative.
+Inyon can push a fresh copy into the page with `{type:'bp-progress', data}`, which the board accepts only
+from the page it is framed in; keep `render(d)` and that listener if you rework the board.

@@ -15,13 +15,24 @@
 
   /* ---------- theme ---------- */
   const params = new URLSearchParams(location.search);
-  function setTheme(t) { document.documentElement.dataset.theme = t; try { localStorage.setItem('bp-theme', t); } catch {} }
+  const THEMES = ['light', 'dark'];
+  function setTheme(t) { if (!THEMES.includes(t)) return; document.documentElement.dataset.theme = t; try { localStorage.setItem('bp-theme', t); } catch {} }
   let initial = params.get('theme');
-  if (!initial) { try { initial = localStorage.getItem('bp-theme'); } catch {} }
-  if (!initial) initial = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  if (!THEMES.includes(initial)) { try { initial = localStorage.getItem('bp-theme'); } catch {} }
+  if (!THEMES.includes(initial)) initial = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   setTheme(initial);
   K.setTheme = setTheme;
-  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'theme') setTheme(e.data.value); });
+  // Messages count only from the page this one is framed in (the viewer, or Inyon), never from a
+  // frame inside it or another window. K.fromParent(e) is that check, for pages adding their own.
+  K.fromParent = (e) => window.parent !== window && e.source === window.parent && !!e.data && typeof e.data.type === 'string';
+  window.addEventListener('message', (e) => {
+    if (!K.fromParent(e) || e.data.type !== 'theme' || !THEMES.includes(e.data.value)) return;
+    setTheme(e.data.value);
+    document.dispatchEvent(new CustomEvent('bp:theme', { detail: e.data.value }));
+  });
+  // Framed (in Inyon, or in the viewer): ask for the theme now rather than wait for the frame's load
+  // event, since a link followed inside the frame drops ?theme= and the sandbox has no localStorage.
+  if (window.parent !== window) { try { window.parent.postMessage({ type: 'theme?' }, '*'); } catch {} }
 
   /* ---------- marks: letter tiles, or real logos from window.MARKS / window.BRAND ---------- */
   const tile = (letters, size) => `<svg viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true"><rect width="24" height="24" rx="5.5" fill="var(--logo-tile)"/><text x="12" y="16" text-anchor="middle" font-family="Geist Mono, monospace" font-size="${letters.length > 1 ? 9 : 11}" font-weight="600" fill="var(--panel)">${K.esc(letters)}</text></svg>`;
@@ -256,7 +267,7 @@
 
   /* ---------- design notes for the viewer ---------- */
   K.notes = function () { const n = $('template#notes'); return n ? n.innerHTML : ''; };
-  window.addEventListener('message', (e) => { if (e.data && e.data.type === 'notes?') e.source.postMessage({ type: 'notes', html: K.notes(), title: document.title }, '*'); });
+  window.addEventListener('message', (e) => { if (K.fromParent(e) && e.data.type === 'notes?') e.source.postMessage({ type: 'notes', html: K.notes(), title: document.title }, '*'); });
 
   document.addEventListener('DOMContentLoaded', () => { K.enhance(document); });
 })();
