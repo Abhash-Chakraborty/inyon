@@ -13,6 +13,7 @@ pub mod core_routes;
 pub mod hostnames;
 pub mod http;
 pub mod hub_update;
+pub mod idle;
 pub mod index;
 pub mod multipart;
 pub mod node_dist;

@@ -413,14 +413,17 @@ async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Pee
 #[derive(Clone, Copy, Debug)]
 pub struct Peer(pub SocketAddr);
 
-impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, tokio::net::TcpListener>> for Peer {
-    fn connect_info(s: axum::serve::IncomingStream<'_, tokio::net::TcpListener>) -> Self {
+type PlainListener = crate::idle::IdleListener<tokio::net::TcpListener>;
+type SecureListener = crate::idle::IdleListener<crate::tls::TlsListener>;
+
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, PlainListener>> for Peer {
+    fn connect_info(s: axum::serve::IncomingStream<'_, PlainListener>) -> Self {
         Peer(*s.remote_addr())
     }
 }
 
-impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, crate::tls::TlsListener>> for Peer {
-    fn connect_info(s: axum::serve::IncomingStream<'_, crate::tls::TlsListener>) -> Self {
+impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, SecureListener>> for Peer {
+    fn connect_info(s: axum::serve::IncomingStream<'_, SecureListener>) -> Self {
         Peer(*s.remote_addr())
     }
 }
@@ -434,14 +437,15 @@ pub fn serve(listener: tokio::net::TcpListener, tls: Option<std::sync::Arc<rustl
     let app = router(core, tls.is_some()).into_make_service_with_connect_info::<Peer>();
     match tls {
         None => {
+            let l = crate::idle::IdleListener::new(listener, crate::idle::IDLE);
             tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, app).await {
+                if let Err(e) = axum::serve(l, app).await {
                     console::error(&format!("the hub's server stopped: {e}"));
                 }
             });
         }
         Some(cfg) => {
-            let l = crate::tls::TlsListener::new(listener, cfg);
+            let l = crate::idle::IdleListener::new(crate::tls::TlsListener::new(listener, cfg), crate::idle::IDLE);
             tokio::spawn(async move {
                 if let Err(e) = axum::serve(l, app).await {
                     console::error(&format!("the hub's server stopped: {e}"));
