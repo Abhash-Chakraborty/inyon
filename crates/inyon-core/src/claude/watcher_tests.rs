@@ -290,3 +290,30 @@ fn the_same_claude_reopened_still_shows_its_conversation() {
         }
     });
 }
+
+// ---------- review ----------
+
+#[test]
+fn a_tail_that_keeps_ending_waits_at_most_30_seconds_however_often_it_ends() {
+    assert_eq!([0, 1, 4, 5, 60, u32::MAX].map(retry_ms), [1000, 2000, 16_000, 30_000, 30_000, 30_000]);
+}
+
+#[test]
+fn a_clock_that_ticks_between_two_reads_never_trips_up_the_draft_mirror() {
+    run(|| async {
+        let (_fake, w) = draft_box();
+        let t = now_ms();
+        w.st.borrow_mut().sending_until = t + 1;
+        // every read is 2 ms on from the last: the send window is open at the first read, over at a second
+        let tick = Rc::new(std::cell::Cell::new(t));
+        let k = tick.clone();
+        crate::clock::set_source(Some(Rc::new(move || {
+            let v = k.get();
+            k.set(v + 2);
+            v
+        })));
+        w.mirror();
+        crate::clock::set_source(None);
+        watchers().stop(KEY);
+    });
+}

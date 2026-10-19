@@ -654,8 +654,10 @@ impl ChatWatcher {
 
     fn mirror(&self) {
         let until = self.st.borrow().sending_until;
-        if now_ms() < until {
-            let t = self.later(until - now_ms() + 100, |w| w.mirror());
+        // read once: the clock can tick between two reads
+        let now = now_ms();
+        if now < until {
+            let t = self.later(until - now + 100, |w| w.mirror());
             let mut st = self.st.borrow_mut();
             rt::clear(&mut st.mirror_timer);
             st.mirror_timer = Some(t);
@@ -1710,7 +1712,7 @@ impl ChatWatcher {
                 st.retries - 1
             };
             // try again soon rather than at the next poll; backing off if it keeps ending at once
-            let ms = 30_000u64.min(1000 * 2u64.saturating_pow(retries));
+            let ms = retry_ms(retries);
             let timer = w.later(ms, |w| {
                 if !w.st.borrow().stopped {
                     w.sync();
@@ -2651,6 +2653,12 @@ impl WatchersRef {
             }
         });
     }
+}
+
+/// How long to wait before following a transcript again after its tail ended `retries` times in a
+/// row: a second, doubling, never more than 30 s (`Math.min(30_000, 1000 * 2 ** retries)`).
+fn retry_ms(retries: u32) -> u64 {
+    30_000u64.min(1000 * 2u64.pow(retries.min(5)))
 }
 
 /// The registry's events, as the TS Watchers constructor subscribes to them.
