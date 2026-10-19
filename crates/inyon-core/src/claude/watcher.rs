@@ -819,6 +819,12 @@ impl ChatWatcher {
         self.publish_info();
     }
 
+    /// An item the agent wrote, put straight in (the TS tests push onto `w.items`).
+    #[cfg(test)]
+    pub(crate) fn push_item(&self, item: ChatItem) {
+        self.st.borrow_mut().items.push(item);
+    }
+
     pub fn delivery(&self, id: &str) -> Option<inyon_protocol::SendState> {
         let mut st = self.st.borrow_mut();
         let queue = current_queue(&st);

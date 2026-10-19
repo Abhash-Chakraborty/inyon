@@ -230,6 +230,9 @@ fn an_empty_message_is_refused_before_it_counts_as_a_send() {
         assert_eq!((err.status, err.message.as_str()), (Some(400), "Message is empty"));
         // nothing is followed, so the next thing the agent writes isn't taken for it
         let w = watchers().get("empty-send", "%9");
+        w.push_item(
+            serde_json::from_value(json!({ "kind": "assistant", "uuid": "reply-1", "ts": "", "seq": 0, "msgId": "m1", "block": { "type": "text", "text": "Done." } })).unwrap(),
+        );
         assert_eq!(w.delivery("app-empty"), None);
         watchers().stop("empty-send:%9");
     });
