@@ -118,6 +118,51 @@ fn a_terminal_runs_its_command_takes_typing_and_reports_its_exit() {
 }
 
 #[test]
+fn closing_a_terminal_types_nothing_into_it() {
+    // a program that outlives the kill for a moment, like a tmux client on its way out: what
+    // reaches it then reaches the pane it shows, and a newline there is Enter
+    let dir = std::env::temp_dir().join(format!("inyon-pty-close-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (got, pid) = (dir.join("got"), dir.join("pid"));
+    let typed = run_core(|| async {
+        let b = ProcessBackend::new("/tmp", vec![]);
+        let cmd = format!("trap '' TERM HUP; stty raw -echo; echo $$ > '{}'; exec cat > '{}'", pid.display(), got.display());
+        let t = b.pty(&local(), &cmd, 80, 24, Box::new(|_| {})).unwrap();
+        let started = Instant::now();
+        while !std::fs::read_to_string(&pid).is_ok_and(|s| s.ends_with('\n')) {
+            assert!(started.elapsed() < Duration::from_secs(5), "the terminal never started");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        t.kill();
+        drop(t);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        std::fs::read(&got).unwrap_or_default()
+    });
+    let cat: i32 = std::fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+    // SAFETY: the cat this test started, which ignores the polite signals
+    unsafe { libc::kill(cat, libc::SIGKILL) };
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(typed.is_empty(), "closing the terminal typed {typed:?}");
+}
+
+#[test]
+fn a_paste_into_a_terminal_that_is_not_reading_holds_nothing_up() {
+    run_core(|| async {
+        let b = ProcessBackend::new("/tmp", vec![]);
+        // raw like a full-screen agent: the terminal keeps every key, so once its buffer is full a
+        // write waits for a read that never comes
+        let t = b.pty(&local(), "stty raw -echo; sleep 8", 80, 24, Box::new(|_| {})).unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let started = Instant::now();
+        t.write(&"x".repeat(4 << 20));
+        t.kill();
+        assert!(started.elapsed() < Duration::from_secs(2), "the paste held up the core's thread for {:?}", started.elapsed());
+        assert!(tokio::time::timeout(Duration::from_secs(5), t.exited.wait()).await.is_ok(), "the terminal never ended");
+    });
+}
+
+#[test]
 fn a_remote_machine_goes_through_ssh_with_one_shared_connection() {
     let b = ProcessBackend::new("/data/cm", vec![]);
     let c: HostConfig = serde_json::from_value(json!({ "id": "s", "name": "s", "kind": "ssh", "target": "me@box", "port": 2222, "identityFile": "/k/id" })).unwrap();

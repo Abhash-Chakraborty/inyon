@@ -1,11 +1,12 @@
 //! Terminals: a command in a pseudo-terminal (the phone's terminal view), the `pty` half of
-//! hosts/process-backend.ts. The terminal's reads and the wait for its child block, so each runs on
-//! a thread of its own and hands what it gets to the core's thread through a channel.
+//! hosts/process-backend.ts. The terminal's reads, its writes and the wait for its child all block,
+//! so each runs on a thread of its own: a terminal that stops reading (ssh on a dead network, a
+//! stopped program) holds up only its own writer, never the core's thread.
 
 use std::cell::RefCell;
 use std::io::{Read, Write};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc as std_mpsc, Arc, Mutex};
 
 use inyon_core::hosts::host::{OnData, PtyHandle};
 use inyon_core::hosts::http_error::{HubError, HubResult};
@@ -15,6 +16,22 @@ use tokio::sync::{mpsc, oneshot};
 
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize { rows, cols, pixel_width: 0, pixel_height: 0 }
+}
+
+/// Where keys for a terminal go. On Unix not portable-pty's own writer: when that one is dropped it
+/// types a newline and Ctrl-D, which a tmux client or `ssh -tt` still on its way out passes to the
+/// pane as Enter (the engine's `terminal_input`).
+fn terminal_input(master: &dyn MasterPty) -> std::io::Result<Box<dyn Write + Send>> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::BorrowedFd;
+        let fd = master.as_raw_fd().ok_or_else(|| std::io::Error::other("no terminal"))?;
+        // SAFETY: the master is open for this whole call, and the copy is a descriptor of its own
+        let own = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
+        Ok(Box::new(std::fs::File::from(own)))
+    }
+    #[cfg(not(unix))]
+    master.take_writer().map_err(std::io::Error::other)
 }
 
 /// Starts `argv` in a pseudo-terminal of `cols`×`rows`, with TERM=xterm-256color and a UTF-8 LANG
@@ -36,8 +53,18 @@ pub fn open(argv: &[String], env: &[(String, String)], cols: u16, rows: u16, mut
     drop(pair.slave);
     let master: Box<dyn MasterPty + Send> = pair.master;
     let mut reader = master.try_clone_reader().map_err(|e| err(&e))?;
-    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(master.take_writer().map_err(|e| err(&e))?));
+    let mut writer = terminal_input(&*master).map_err(|e| err(&e))?;
     let killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>> = Arc::new(Mutex::new(child.clone_killer()));
+
+    // keys, written in order on a thread of their own; it ends when the terminal closes or is killed
+    let (keys_tx, keys_rx) = std_mpsc::channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        for data in keys_rx {
+            if writer.write_all(&data).and_then(|()| writer.flush()).is_err() {
+                break;
+            }
+        }
+    });
 
     // output, read on a thread of its own and drawn on the core's
     let (data_tx, mut data_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -73,11 +100,12 @@ pub fn open(argv: &[String], env: &[(String, String)], cols: u16, rows: u16, mut
 
     let master = Rc::new(RefCell::new(Some(master)));
     let (rm, km) = (master.clone(), master);
+    let keys = Rc::new(RefCell::new(Some(keys_tx)));
+    let kk = keys.clone();
     Ok(PtyHandle::new(
         move |d: &str| {
-            if let Ok(mut w) = writer.lock() {
-                let _ = w.write_all(d.as_bytes());
-                let _ = w.flush();
+            if let Some(k) = keys.borrow().as_ref() {
+                let _ = k.send(d.as_bytes().to_vec());
             }
         },
         move |c, r| {
@@ -89,7 +117,8 @@ pub fn open(argv: &[String], env: &[(String, String)], cols: u16, rows: u16, mut
             if let Ok(mut k) = killer.lock() {
                 let _ = k.kill();
             }
-            // closes the terminal
+            // closes the terminal; the writer ends with it, whatever it was in the middle of
+            kk.borrow_mut().take();
             km.borrow_mut().take();
         },
         exited,
