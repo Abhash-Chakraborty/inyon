@@ -19,8 +19,8 @@ use std::rc::Rc;
 use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
-    decide_view, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, unique_slug, view_origin, FileStat, VerifyContext, ViewContext, ViewDecision,
-    ViewFs, ViewRequest, BAD_SLUG, LOCAL_HOST, NO_INDEX,
+    decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, unique_slug, view_origin, within, FileStat, VerifyContext,
+    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, LOCAL_HOST, NO_INDEX, TOKEN_TTL_MS,
 };
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::js::text::JsStr;
@@ -46,6 +46,7 @@ pub const UNKNOWN_PAGE: &str = "Unknown page";
 pub const OTHER_MACHINE: &str = "Pages can only be added on the hub's own machine for now";
 pub const BROKEN_FILE: &str = "~/.inyon/pages.json isn't a page list Inyon can read. Fix it or delete it, then try again.";
 pub const LOCKED: &str = "Another program is changing ~/.inyon/pages.json. Try again in a moment.";
+pub const NOT_SAVED: &str = "The hub couldn't write to its data folder, so the old links stay closed only until it restarts. Check the hub's disk, then revoke again.";
 
 /// `~/.inyon/pages.json`: always under the home folder (not INYON_DATA_DIR), where the CLI and Blueprint write it.
 pub fn pages_file(home: &Path) -> PathBuf {
@@ -256,31 +257,29 @@ fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
     r
 }
 
-/// Runs `f` holding `lock`: an exclusive create, waiting up to `wait` ms, taking over a lock older than LOCK_STALE_MS.
+/// Runs `f` holding `lock`: an exclusive create, waiting up to `wait` ms, taking over a lock older
+/// than LOCK_STALE_MS. The lock holds this process's id and a random tag, and is removed afterwards
+/// only while it still holds them. A failure other than "someone else has it" (a folder an agent's
+/// sandbox keeps read-only) is returned at once, never waited on.
 pub async fn with_lock<T>(lock: &Path, wait: u64, f: impl FnOnce() -> HubResult<T>) -> HubResult<T> {
     use std::io::Write;
+    let plain = |e: std::io::Error| HubError::plain(e.to_string());
     if let Some(dir) = lock.parent() {
-        private_dir(dir).map_err(|e| HubError::plain(e.to_string()))?;
+        private_dir(dir).map_err(plain)?;
     }
     let until = now_wall() + wait;
+    let mine = format!("{} {}\n", std::process::id(), crate::http::random_hex(8));
     loop {
         match create_private(lock, true) {
             Ok(mut fd) => {
-                let _ = fd.write_all(format!("{}\n", std::process::id()).as_bytes());
+                let _ = fd.write_all(mine.as_bytes());
                 break;
             }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(HubError::plain(e.to_string())),
+            Err(e) => return Err(plain(e)),
         }
-        match std::fs::metadata(lock).and_then(|m| m.modified()) {
-            Ok(t) => {
-                let age = std::time::SystemTime::now().duration_since(t).map_or(0, |d| d.as_millis() as u64);
-                if age > LOCK_STALE_MS {
-                    let _ = std::fs::remove_file(lock);
-                    continue;
-                }
-            }
-            Err(_) => continue,
+        if take_over_stale(lock).map_err(plain)? {
+            continue;
         }
         if now_wall() >= until {
             return Err(http(503, LOCKED));
@@ -288,8 +287,59 @@ pub async fn with_lock<T>(lock: &Path, wait: u64, f: impl FnOnce() -> HubResult<
         inyon_core::platform::rt::sleep(25).await;
     }
     let r = f();
-    let _ = std::fs::remove_file(lock);
+    release_lock(lock, &mine);
     r
+}
+
+/// The file's identity, to tell a lock judged stale from a new one made in its place.
+fn identity(m: &std::fs::Metadata) -> (u64, Option<std::time::SystemTime>) {
+    (ino(m), m.modified().ok())
+}
+
+/// Removes a lock left by a writer that died (older than LOCK_STALE_MS); true when the caller
+/// should try to take it again at once. The lock is first renamed aside, and removed only if what
+/// was renamed is the file that was judged stale: two writers that both saw it stale can't remove
+/// the fresh lock one of them made in between (that one is put back).
+pub fn take_over_stale(lock: &Path) -> std::io::Result<bool> {
+    use std::io::ErrorKind::NotFound;
+    let old = match std::fs::metadata(lock) {
+        Ok(m) => m,
+        Err(e) if e.kind() == NotFound => return Ok(true),
+        Err(e) => return Err(e),
+    };
+    let age = old.modified().ok().and_then(|t| t.elapsed().ok()).map_or(0, |d| d.as_millis() as u64);
+    if age <= LOCK_STALE_MS {
+        return Ok(false);
+    }
+    remove_judged(lock, &old)?;
+    Ok(true)
+}
+
+/// Removes the lock that was judged stale as `old`, and only that one: renamed aside, then put back
+/// if it turns out to be a new lock another writer made since.
+pub fn remove_judged(lock: &Path, old: &std::fs::Metadata) -> std::io::Result<()> {
+    use std::io::ErrorKind::NotFound;
+    let mut aside = lock.as_os_str().to_owned();
+    aside.push(format!(".{}.{}.stale", std::process::id(), crate::http::random_hex(4)));
+    let aside = PathBuf::from(aside);
+    match std::fs::rename(lock, &aside) {
+        Ok(()) => {}
+        Err(e) if e.kind() == NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    if std::fs::metadata(&aside).map(|m| identity(&m)).ok() != Some(identity(old)) {
+        // another writer's new lock: back where it was, unless a third has made one since
+        let _ = std::fs::hard_link(&aside, lock);
+    }
+    let _ = std::fs::remove_file(&aside);
+    Ok(())
+}
+
+/// Removes the lock if it is still this writer's.
+pub fn release_lock(lock: &Path, mine: &str) {
+    if std::fs::read_to_string(lock).is_ok_and(|t| t == mine) {
+        let _ = std::fs::remove_file(lock);
+    }
 }
 
 // ---------- epochs ----------
@@ -315,7 +365,9 @@ impl Epochs {
         self.0.borrow().get(&format!("{host}/{slug}")).and_then(Value::as_u64).unwrap_or(0)
     }
 
-    pub fn bump(&self, host: &str, slug: &str) -> u64 {
+    /// Moves a site's epoch on. The running hub refuses the old links at once; when the new epoch
+    /// can't be saved (a full disk) it returns NOT_SAVED, since a restart would open them again.
+    pub fn bump(&self, host: &str, slug: &str) -> HubResult<u64> {
         let n = self.of(host, slug) + 1;
         let all = {
             let mut m = self.0.borrow_mut();
@@ -324,8 +376,9 @@ impl Epochs {
         };
         if let Err(e) = kv::set_value(EPOCHS_KEY, &all) {
             inyon_core::platform::console::error(&format!("couldn't save the page epochs: {e}"));
+            return Err(http(500, NOT_SAVED));
         }
-        n
+        Ok(n)
     }
 }
 
@@ -450,25 +503,43 @@ impl ViewFs for DiskFs {
     }
 }
 
-/// The git top level of a folder, or the folder itself.
+/// The project a folder belongs to: its git repo's main working tree, or the folder itself. In a
+/// linked worktree (an agent's `.claude/worktrees/<name>`, removed once its branch merges) git's
+/// common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
+/// Blueprint skill group it. A submodule or a bare repo's worktree keeps its own top level.
 async fn project_of(folder: &str) -> String {
-    let out = tokio::process::Command::new("git")
-        .args(["-C", folder, "rev-parse", "--show-toplevel"])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .output()
-        .await;
-    match out {
-        Ok(o) if o.status.success() => {
-            let top = String::from_utf8_lossy(&o.stdout).jtrim().to_owned();
-            if top.is_empty() {
-                folder.to_owned()
-            } else {
-                top
-            }
+    let git = |args: &'static [&'static str]| async move {
+        let out = tokio::process::Command::new("git")
+            .args(["-C", folder, "rev-parse"])
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .output()
+            .await;
+        match out {
+            Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
+            _ => None,
         }
-        _ => folder.to_owned(),
+    };
+    let Some(out) = git(&["--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"]).await else {
+        // git older than 2.31 has no --path-format: then the top level as it is
+        let top = git(&["--show-toplevel"]).await.unwrap_or_default();
+        let top = top.jtrim();
+        return if top.is_empty() { folder.to_owned() } else { top.to_owned() };
+    };
+    let lines: Vec<&str> = out.lines().map(|l| l.jtrim()).collect();
+    let (top, common, own) = (lines.first().copied().unwrap_or(""), lines.get(1).copied().unwrap_or(""), lines.get(2).copied().unwrap_or(""));
+    let c = Path::new(common);
+    if !common.is_empty() && common != own && c.file_name().is_some_and(|n| n == ".git") {
+        if let Some(parent) = c.parent().and_then(Path::to_str).filter(|p| !p.is_empty()) {
+            return parent.to_owned();
+        }
+    }
+    if top.is_empty() {
+        folder.to_owned()
+    } else {
+        top.to_owned()
     }
 }
 
@@ -491,6 +562,8 @@ pub struct Pages {
     pub epochs: Rc<Epochs>,
     pub progress: ProgressCache,
     pub now: Rc<dyn Fn() -> u64>,
+    /// the disk decide_view looks at (a test swaps folders under it)
+    pub fs: Rc<dyn ViewFs>,
 }
 
 impl Pages {
@@ -498,11 +571,12 @@ impl Pages {
         let epochs = Rc::new(Epochs::load());
         let bump = epochs.clone();
         // a page taken off the list by anyone (the CLI, Blueprint, a hand edit) ends its links
+        // a failed save is logged by bump; the running hub refuses the links all the same
         let listed = Listed::load(Box::new(move |slug| {
-            bump.bump(LOCAL_HOST, slug);
+            let _ = bump.bump(LOCAL_HOST, slug);
         }));
         let registry = Registry::watched(pages_file(&home), &home, Box::new(move |records| listed.saw(records)));
-        Pages { registry, home, epochs, progress: ProgressCache::default(), now }
+        Pages { registry, home, epochs, progress: ProgressCache::default(), now, fs: Rc::new(DiskFs) }
     }
 
     fn entry(&self, r: &Record) -> Value {
@@ -566,13 +640,13 @@ pub async fn open(req: Req) -> HubResult<Resp> {
     let r = p.page(&req.param("host"), &req.param("slug"))?;
     let phone = crate::phones::phone_for(&req).map(|ph| ph.id);
     let (token, expires) = mint_token(&pages_key(&crate::password::session_secret()), LOCAL_HOST, &r.slug, p.epochs.of(LOCAL_HOST, &r.slug), phone.as_deref(), (p.now)());
-    Ok(ok_json(&json!({ "url": format!("/v/{token}/"), "expires": expires })))
+    Ok(ok_json(&json!({ "url": format!("/v/{token}/"), "expires": expires, "ttl": TOKEN_TTL_MS })))
 }
 
 pub async fn revoke(req: Req) -> HubResult<Resp> {
     let p = pages();
     let r = p.page(&req.param("host"), &req.param("slug"))?;
-    p.epochs.bump(LOCAL_HOST, &r.slug);
+    p.epochs.bump(LOCAL_HOST, &r.slug)?;
     Ok(ok())
 }
 
@@ -675,10 +749,11 @@ pub fn add(r: &mut Routes) {
 
 // ---------- /v/ ----------
 
-/// A 200's file, for the axum handler to stream once the answer is off the core thread.
+/// A 200's file, opened and checked, for the axum handler to stream once the answer is off the
+/// core thread. (An extension has to be Clone, so the file sits in a shared slot it is taken from.)
 #[derive(Debug, Clone)]
 pub struct ViewFile {
-    pub path: PathBuf,
+    pub file: std::sync::Arc<std::sync::Mutex<Option<std::fs::File>>>,
     pub size: u64,
 }
 
@@ -704,14 +779,85 @@ pub async fn view(req: Req) -> Resp {
     // read the list first, so a page removed since the last request has its epoch moved on before
     // its token is checked
     p.registry.records();
-    let ctx = ViewContext { verify: VerifyContext { key: &key, now: (p.now)(), epoch_of: &epoch_of, phone_paired: &phone_paired }, site_root: &site_root, fs: &DiskFs };
+    let ctx = ViewContext { verify: VerifyContext { key: &key, now: (p.now)(), epoch_of: &epoch_of, phone_paired: &phone_paired }, site_root: &site_root, fs: p.fs.as_ref() };
     let inm = req.header("if-none-match");
     let method = req.method.as_str().to_owned();
-    let d = decide_view(&ViewRequest { method: &method, target: &target, origin: origin.as_deref(), if_none_match: inm.as_deref() }, &ctx).await;
-    respond(d, req.method == Method::HEAD)
+    let vr = ViewRequest { method: &method, target: &target, origin: origin.as_deref(), if_none_match: inm.as_deref() };
+    let d = decide_view(&vr, &ctx).await;
+    let head = req.method == Method::HEAD;
+    match (&d.file, &d.site) {
+        (Some((path, _)), Some(site)) => match open_within(path, site).await {
+            Some(opened) => respond(d, head, Some(opened)),
+            None => respond(gone_after_open(&vr), head, None),
+        },
+        _ => respond(d, head, None),
+    }
 }
 
-fn respond(d: ViewDecision, head: bool) -> Resp {
+/// Opens a file decide_view checked, then makes sure the open file is still inside the site: a
+/// folder on the way could have been swapped for a symlink since the check (an agent can rename
+/// its own folders). The system says where the open file really is (/proc/self/fd on Linux,
+/// F_GETPATH on macOS); elsewhere the path must still have no symlink in it and lead to the same
+/// file. The file and its size, or None when it can't be opened or isn't the site's.
+pub async fn open_within(path: &Path, site: &Path) -> Option<(std::fs::File, u64)> {
+    let mut o = tokio::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    o.custom_flags(libc::O_NOFOLLOW);
+    let file = o.open(path).await.ok()?.into_std().await;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+    let inside = match opened_path(&file) {
+        Some(at) => within(site, &at),
+        None => {
+            let real = tokio::fs::canonicalize(path).await.ok();
+            let now = tokio::fs::metadata(path).await.ok();
+            real.as_deref() == Some(path) && now.is_some_and(|n| same_file(&n, &meta)) && within(site, path)
+        }
+    };
+    inside.then_some((file, meta.len()))
+}
+
+/// Where an open file really is, as the system tracks it.
+#[cfg(target_os = "linux")]
+fn opened_path(f: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd;
+    std::fs::read_link(format!("/proc/self/fd/{}", f.as_raw_fd())).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn opened_path(f: &std::fs::File) -> Option<PathBuf> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize + 1];
+    // SAFETY: F_GETPATH writes at most MAXPATHLEN (PATH_MAX) bytes and a NUL into buf
+    let r = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
+    if r == -1 {
+        return None;
+    }
+    let len = buf.iter().position(|b| *b == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn opened_path(_: &std::fs::File) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    a.len() == b.len() && a.modified().ok() == b.modified().ok()
+}
+
+fn respond(d: ViewDecision, head: bool, opened: Option<(std::fs::File, u64)>) -> Resp {
     let mut res = Resp::new(Body::empty());
     *res.status_mut() = StatusCode::from_u16(d.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     for (k, v) in &d.headers {
@@ -719,11 +865,12 @@ fn respond(d: ViewDecision, head: bool) -> Resp {
             res.headers_mut().append(HeaderName::from_static(k), v);
         }
     }
-    match d.file {
-        Some((path, size)) => {
+    match opened {
+        // the length of the file that was opened, which an atomic replace since the check doesn't change
+        Some((file, size)) => {
             res.headers_mut().insert(header::CONTENT_LENGTH, HeaderValue::from(size));
             if !head {
-                res.extensions_mut().insert(ViewFile { path, size });
+                res.extensions_mut().insert(ViewFile { file: std::sync::Arc::new(std::sync::Mutex::new(Some(file))), size });
             }
         }
         None if !head && !d.body.is_empty() => *res.body_mut() = Body::from(d.body),
@@ -732,30 +879,24 @@ fn respond(d: ViewDecision, head: bool) -> Resp {
     res
 }
 
-/// A file's bytes as a body, read with tokio::fs in 64 KB pieces, at most `size` of them. A file
-/// that went away or got shorter since it was checked ends the connection, as a failed stream
-/// does in the Bun hub.
-pub fn file_body(path: PathBuf, size: u64) -> Body {
+/// An open file's bytes as a body, read with tokio::fs in 64 KB pieces, at most `size` of them. A
+/// file cut shorter in place since it was opened ends the connection, as a failed stream does in
+/// the Bun hub.
+pub fn file_body(file: std::fs::File, size: u64) -> Body {
     use tokio::io::AsyncReadExt;
-    let s = futures_util::stream::unfold((None::<tokio::fs::File>, path, size), |(f, path, left)| async move {
+    let s = futures_util::stream::unfold((Some(tokio::fs::File::from_std(file)), size), |(f, left)| async move {
+        let mut f = f?;
         if left == 0 {
             return None;
         }
-        let mut f = match f {
-            Some(f) => f,
-            None => match tokio::fs::File::open(&path).await {
-                Ok(f) => f,
-                Err(e) => return Some((Err(e), (None, path, 0))),
-            },
-        };
         let mut buf = vec![0u8; left.min(64 * 1024) as usize];
         match f.read(&mut buf).await {
-            Ok(0) => Some((Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the file got shorter")), (None, path, 0))),
+            Ok(0) => Some((Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "the file got shorter")), (None, 0))),
             Ok(n) => {
                 buf.truncate(n);
-                Some((Ok(Bytes::from(buf)), (Some(f), path, left - n as u64)))
+                Some((Ok(Bytes::from(buf)), (Some(f), left - n as u64)))
             }
-            Err(e) => Some((Err(e), (None, path, 0))),
+            Err(e) => Some((Err(e), (None, 0))),
         }
     });
     Body::from_stream(s)

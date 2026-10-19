@@ -160,9 +160,22 @@ describe('headers', () => {
     expect(viewCsp('http://hub:4777', null)).not.toContain('/v/')
   })
 
-  test('every header list carries the sandbox, CORS *, no-referrer and nosniff', () => {
+  test('every pinned /v/ answer, errors and redirects too, is sandboxed to an opaque origin (no password manager runs there)', () => {
+    const r = JSON.parse(readFileSync(new URL('responses.json', PAGES_FIXTURES), 'utf8'))
+    const statuses = new Set<number>()
+    for (const c of r.cases) {
+      const csp: string = c.response.headers['content-security-policy']
+      expect([c.name, csp.startsWith('sandbox allow-scripts allow-forms allow-popups allow-downloads;')]).toEqual([c.name, true])
+      expect(csp).not.toContain('allow-same-origin')
+      expect(csp).not.toContain('allow-popups-to-escape-sandbox')
+      statuses.add(c.response.status)
+    }
+    expect([...statuses].sort()).toEqual([200, 301, 304, 403, 404, 405, 421])
+  })
+
+  test('every header list carries the sandbox, CORS *, no-referrer, nosniff and no DNS prefetch', () => {
     const names = viewHeaders({ origin: null, token: null, cache: 'no-store' }).map(([n]) => n)
-    expect(names).toEqual(['content-security-policy', 'access-control-allow-origin', 'referrer-policy', 'x-content-type-options', 'cache-control'])
+    expect(names).toEqual(['content-security-policy', 'access-control-allow-origin', 'referrer-policy', 'x-content-type-options', 'x-dns-prefetch-control', 'cache-control'])
   })
 
   test('viewOrigin takes plain hosts only', () => {

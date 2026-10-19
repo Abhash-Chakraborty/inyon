@@ -896,6 +896,8 @@ pub struct PageOpen {
     pub url: String,
     /// unix ms; twelve hours after it was made
     pub expires: u64,
+    /// how long the link lasts from when it was made, in ms; the app counts it on its own clock, which may not agree with the hub's
+    pub ttl: u64,
 }
 
 /// POST /api/pages/:host: add a folder as a page. The slug comes from the folder's name when left out.

@@ -330,6 +330,12 @@ export function viewOrigin(host: string | null | undefined, https: boolean): str
  * The sandbox flags. allow-forms lets a page's own script handle a form (a mockup's "Add" field):
  * without it the browser drops the submit before any handler runs. form-action 'none' in the CSP
  * still stops a form from sending anything anywhere.
+ *
+ * There is no allow-same-origin, and never may be: the opaque origin is also what keeps password
+ * managers away from a page served at the hub's own address. Chrome gives a frame with an opaque
+ * origin no password manager at all (Blink's CanAccessPasswordManager), and Firefox's runs no code
+ * in a document with a null principal, so neither fills or saves the hub password on /v/, framed,
+ * in its own tab or in a popup (a popup keeps the sandbox: no allow-popups-to-escape-sandbox).
  */
 const SANDBOX = 'sandbox allow-scripts allow-forms allow-popups allow-downloads'
 
@@ -384,6 +390,8 @@ export function viewHeaders(o: ViewHeaderInput): HeaderList {
     ['access-control-allow-origin', '*'],
     ['referrer-policy', 'no-referrer'],
     ['x-content-type-options', 'nosniff'],
+    // no DNS lookups for links the page shows: a host name can carry data out
+    ['x-dns-prefetch-control', 'off'],
     ['cache-control', o.cache],
   ]
   if (o.type) h.push(['content-type', o.type])
@@ -440,16 +448,17 @@ export interface ViewContext extends VerifyContext {
 }
 
 /**
- * What to answer. 200 names the file to stream (its real path); the others carry their whole body
- * ("" for 301 and 304). On HEAD the hub sends the same status and headers with no body.
+ * What to answer. 200 names the file to stream (its real path) and the site's real folder it was
+ * checked against; the others carry their whole body ("" for 301 and 304). On HEAD the hub sends
+ * the same status and headers with no body.
  */
 export type ViewDecision =
-  | { status: 200; headers: HeaderList; file: string; size: number }
+  | { status: 200; headers: HeaderList; file: string; size: number; site: string }
   | { status: 301 | 304; headers: HeaderList; body: '' }
   | { status: ViewErrorStatus; headers: HeaderList; body: string }
 
 /** The real path is the site's root or inside it, with no dot-named folder or file on the way. */
-function within(root: string, real: string) {
+export function within(root: string, real: string) {
   const rel = path.relative(root, real)
   if (rel === '') return true
   if (path.isAbsolute(rel)) return false
@@ -464,11 +473,7 @@ function within(root: string, real: string) {
  * file (200).
  */
 export async function decideView(req: ViewRequest, ctx: ViewContext): Promise<ViewDecision> {
-  const fail = (status: ViewErrorStatus, token: string | null = null, extra: Partial<ViewHeaderInput> = {}): ViewDecision => ({
-    status,
-    headers: viewHeaders({ origin: req.origin, token, cache: 'no-store', type: 'text/html;charset=utf-8', ...extra }),
-    body: errorPage(status),
-  })
+  const fail = (status: ViewErrorStatus, token: string | null = null, extra: Partial<ViewHeaderInput> = {}) => failure(req.origin, status, token, extra)
   if (req.origin === null) return fail(421)
   if (req.method !== 'GET' && req.method !== 'HEAD') return fail(405, null, { allow: 'GET, HEAD' })
   const t = splitViewTarget(req.target)
@@ -508,8 +513,21 @@ export async function decideView(req: ViewRequest, ctx: ViewContext): Promise<Vi
   if (!st?.file) return fail(404, token)
 
   const type = contentType(name)
-  if (noStore(name)) return { status: 200, headers: viewHeaders({ origin: req.origin, token, cache: 'no-store', type }), file: real, size: st.size }
+  if (noStore(name)) return { status: 200, headers: viewHeaders({ origin: req.origin, token, cache: 'no-store', type }), file: real, size: st.size, site: siteReal }
   const etag = etagOf(st.size, st.mtimeMs)
   if (etagMatches(req.ifNoneMatch, etag)) return { status: 304, headers: viewHeaders({ origin: req.origin, token, cache: 'no-cache', etag }), body: '' }
-  return { status: 200, headers: viewHeaders({ origin: req.origin, token, cache: 'no-cache', type, etag }), file: real, size: st.size }
+  return { status: 200, headers: viewHeaders({ origin: req.origin, token, cache: 'no-cache', type, etag }), file: real, size: st.size, site: siteReal }
+}
+
+function failure(origin: string | null, status: ViewErrorStatus, token: string | null, extra: Partial<ViewHeaderInput> = {}): ViewDecision {
+  return { status, headers: viewHeaders({ origin, token, cache: 'no-store', type: 'text/html;charset=utf-8', ...extra }), body: errorPage(status) }
+}
+
+/**
+ * The 404 for a 200 whose file, once opened, turned out not to be the one decideView checked: a
+ * folder on the way was swapped for a symlink in between. The hub opens the file and then asks the
+ * system where the open file really is, so a swap can't lead it out of the site.
+ */
+export function goneAfterOpen(req: ViewRequest): Extract<ViewDecision, { status: ViewErrorStatus }> {
+  return failure(req.origin, 404, splitViewTarget(req.target)?.token ?? null) as Extract<ViewDecision, { status: ViewErrorStatus }>
 }

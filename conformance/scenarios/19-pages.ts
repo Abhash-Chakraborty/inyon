@@ -93,6 +93,13 @@ export default {
     await ctx.raw('GET', `${url}sub%2f..%2f..%2fsecret.txt`)
     await ctx.raw('POST', `${url}index.html`)
 
+    // routes match the path as it came (Bun's router does), so a dot segment into /api is no
+    // route at all, cookie or not; only /v/ resolves them
+    await ctx.step('a dot segment into /api is no route')
+    await ctx.raw('GET', '/api/nothing/../pages', { as: 'browser' })
+    await ctx.raw('GET', '/api/%2e%2E/api/pages', { as: 'browser' })
+    await ctx.raw('GET', '/v/x/../../api/pages')
+
     await ctx.step('a bad token, a cookie, a wrong Host')
     await ctx.raw('GET', '/v/v1.bad.token/')
     // the same token with its signature's last character changed

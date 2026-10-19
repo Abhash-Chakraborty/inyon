@@ -58,7 +58,7 @@ export function siteCsp(origin) {
 }
 // Every header an answer carries, lowercase and in this order, for every status.
 export function siteHeaders({ origin, cache, type, etag, location, allow }) {
-  const h = [['content-security-policy', siteCsp(origin)], ['access-control-allow-origin', '*'], ['referrer-policy', 'no-referrer'], ['x-content-type-options', 'nosniff'], ['cache-control', cache]];
+  const h = [['content-security-policy', siteCsp(origin)], ['access-control-allow-origin', '*'], ['referrer-policy', 'no-referrer'], ['x-content-type-options', 'nosniff'], ['x-dns-prefetch-control', 'off'], ['cache-control', cache]];
   if (type) h.push(['content-type', type]);
   if (etag) h.push(['etag', etag]);
   if (location) h.push(['location', location]);

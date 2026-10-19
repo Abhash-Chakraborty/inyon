@@ -377,8 +377,11 @@ pub async fn dispatch(mut req: Req) -> Resp {
     fallback(req).await
 }
 
-/// Bun.serve's `fetch`: what no route took.
-async fn fallback(req: Req) -> Resp {
+/// Bun.serve's `fetch`: what no route took. Routes are matched on the path as it came, as Bun's
+/// router matches them; `fetch` reads `new URL(req.url).pathname`, with its dot segments resolved,
+/// so this does too.
+async fn fallback(mut req: Req) -> Resp {
+    req.path = inyon_core::features::pages_core::normalize_target(&req.path).0;
     if req.path == "/node" {
         return crate::ws::node_upgrade(req).await;
     }
@@ -417,11 +420,9 @@ struct App {
 async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Peer>, req: Request) -> Resp {
     let (mut parts, body) = req.into_parts();
     let upgrade = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
-    // dot segments resolved as Bun's req.url resolves them, so both hubs route the same path
-    let (path, _) = inyon_core::features::pages_core::normalize_target(parts.uri.path());
     let r = Req {
         method: parts.method,
-        path,
+        path: parts.uri.path().to_owned(),
         query: parts.uri.query().unwrap_or("").to_owned(),
         headers: parts.headers,
         peer,
@@ -432,9 +433,9 @@ async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Pee
     };
     match app.core.call(move || dispatch(r)).await {
         // a page's file is read here, off the core's job (pages::view only named it)
-        Ok(mut res) => match res.extensions_mut().remove::<crate::pages::ViewFile>() {
-            Some(f) => {
-                *res.body_mut() = crate::pages::file_body(f.path, f.size);
+        Ok(mut res) => match res.extensions_mut().remove::<crate::pages::ViewFile>().and_then(|f| f.file.lock().ok()?.take().map(|file| (file, f.size))) {
+            Some((file, size)) => {
+                *res.body_mut() = crate::pages::file_body(file, size);
                 res
             }
             None => res,

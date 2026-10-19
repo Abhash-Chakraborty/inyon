@@ -6,8 +6,8 @@ import path from 'node:path'
 import { memoryStore, type Store } from '../platform/store.ts'
 import { HttpError } from '../hosts/http-error.ts'
 import { layOutFixtureSite, NOW, PAGES_FIXTURES, SECRET } from '../cli/pages-vectors.ts'
-import { NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken } from './pages-core.ts'
-import { BROKEN_FILE, EPOCHS_KEY, LOCKED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, withLock } from './pages.ts'
+import { NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
+import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_SAVED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, removeJudged, withLock } from './pages.ts'
 
 // The Bun hub's half of Pages: the list file, epochs, the API handlers, and the /v/ answer
 // checked byte for byte against fixtures/pages/responses.json over a real socket.
@@ -98,6 +98,60 @@ describe('every /v/ request in fixtures/pages/responses.json', () => {
     })
   }
 
+  test('a folder swapped for a symlink after the check is not followed out of the site', async () => {
+    const dir = site('swap', true)
+    const outside = path.join(root, `outside-${++n}`)
+    fs.mkdirSync(outside)
+    fs.writeFileSync(path.join(outside, 'index.html'), 'SECRET KEY')
+    const watch = path.join(fs.realpathSync(dir), 'sub', 'index.html')
+    let swapped = false
+    // the last look decideView takes at sub/index.html swaps sub for a symlink right after, as an
+    // agent renaming its own folders in a loop would
+    const swapFs: ViewFs = {
+      realpath: diskFs.realpath,
+      async stat(p) {
+        const st = await diskFs.stat(p)
+        if (!swapped && p === watch) {
+          swapped = true
+          fs.renameSync(path.join(dir, 'sub'), path.join(dir, 'sub-real'))
+          fs.symlinkSync(outside, path.join(dir, 'sub'))
+        }
+        return st
+      },
+    }
+    const h = hub({ fs: swapFs, now: Date.now })
+    writeList(h.file, [record('swap', dir)])
+    const { url } = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'swap' })).json()
+    const view = (u: string) => h.pages.view(new Request(`http://${RESPONSES.context.host}${u}`, { headers: { host: RESPONSES.context.host } }))
+    const res = await view(`${url}sub/index.html`)
+    expect(swapped).toBe(true)
+    expect(res.status).toBe(404)
+    expect(await res.text()).not.toContain('SECRET')
+    // nothing swapped: served as before
+    expect((await view(`${url}style.css`)).status).toBe(200)
+  })
+
+  test('an answer nobody reads (a client gone before the body) leaves no open file for the collector to trip on', async () => {
+    const dir = site('dropped', true)
+    const h = hub({ now: Date.now })
+    writeList(h.file, [record('dropped', dir)])
+    const { url } = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'dropped' })).json()
+    const view = (u: string) => h.pages.view(new Request(`http://${RESPONSES.context.host}${u}`, { headers: { host: RESPONSES.context.host } }))
+    const errors: unknown[] = []
+    const onError = (e: unknown) => errors.push(e)
+    process.on('uncaughtException', onError)
+    try {
+      for (let i = 0; i < 20; i++) expect((await view(`${url}style.css`)).status).toBe(200)
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true)
+        await Bun.sleep(5)
+      }
+    } finally {
+      process.off('uncaughtException', onError)
+    }
+    expect(errors).toEqual([])
+  })
+
   test('a Range request still gets the whole file with a 200', async () => {
     const c = RESPONSES.cases.find((x: any) => x.name === 'stylesheet')
     const res = await raw(server.port!, 'GET', c.request.target, { ...c.request.headers, range: 'bytes=0-3' })
@@ -157,7 +211,7 @@ describe('tokens', () => {
       const h = hub({ now: () => m.now, phoneOf: () => m.site.p }, store)
       writeList(h.file, [record('fixture', folder)])
       const opened = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'fixture' })).json()
-      expect(opened).toEqual({ url: `/v/${m.token}/`, expires: m.expires })
+      expect(opened).toEqual({ url: `/v/${m.token}/`, expires: m.expires, ttl: 12 * 3600_000 })
     }
   })
 
@@ -188,6 +242,40 @@ describe('tokens', () => {
     expect((await view(after)).status).toBe(200)
     expect(await status(call(h, '/api/pages/:host/:slug/revoke', 'POST', { host: 'local', slug: 'nope' }))).toBe(404)
     expect(await status(call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'laptop', slug: 'plan' }))).toBe(404)
+  })
+
+  test('a revoke that cannot be saved says so, and still ends the links until a restart', async () => {
+    const store = memoryStore()
+    let full = false
+    const set = store.set
+    store.set = (k, v) => {
+      if (full && k === EPOCHS_KEY) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      set(k, v)
+    }
+    const h = hub({ now: Date.now }, store)
+    writeList(h.file, [record('plan', site('plan', true))])
+    const { url } = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'plan' })).json()
+    full = true
+    const err = await call(h, '/api/pages/:host/:slug/revoke', 'POST', { host: 'local', slug: 'plan' }).then(() => null, (e) => e)
+    expect([err?.status, err?.message]).toEqual([500, NOT_SAVED])
+    expect((await h.pages.view(new Request(`http://${RESPONSES.context.host}${url}`, { headers: { host: RESPONSES.context.host } }))).status).toBe(403)
+  })
+
+  test('a list that cannot be saved is still served, not emptied', async () => {
+    const store = memoryStore()
+    const set = store.set
+    store.set = (k, v) => {
+      if (k === LISTED_KEY || k === EPOCHS_KEY) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' })
+      set(k, v)
+    }
+    const h = hub({ now: Date.now }, store)
+    writeList(h.file, [record('plan', site('plan', true)), record('other', site('other', true))])
+    expect((await (await call(h, '/api/pages', 'GET', {})).json()).pages).toHaveLength(2)
+    // one taken off by another program: its links end, the other stays listed and served
+    writeList(h.file, [record('plan', site('plan', true))])
+    expect((await (await call(h, '/api/pages', 'GET', {})).json()).pages.map((p: any) => p.slug)).toEqual(['plan'])
+    const { url } = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'plan' })).json()
+    expect((await h.pages.view(new Request(`http://${RESPONSES.context.host}${url}`, { headers: { host: RESPONSES.context.host } }))).status).toBe(200)
   })
 
   test('a new session secret (a password change) ends every link', async () => {
@@ -292,6 +380,20 @@ describe('adding a page', () => {
     fs.cpSync(new URL('site/', PAGES_FIXTURES), path.join(repo, 'private', 'plans', 'ghostex'), { recursive: true })
     const inRepo = await (await call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: path.join(repo, 'private', 'plans', 'ghostex'), name: 'Inyon plan' })).json()
     expect([inRepo.slug, inRepo.name, inRepo.project]).toEqual(['fixture-2', 'Inyon plan', fs.realpathSync(repo)])
+  })
+
+  test('a folder in a linked git worktree belongs to the main checkout, as the CLI and the skill say', async () => {
+    const h = hub()
+    const repo = path.join(root, `repo-${++n}`)
+    fs.mkdirSync(repo, { recursive: true })
+    const git = (...args: string[]) => expect(Bun.spawnSync(['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdout: 'ignore', stderr: 'ignore' }).exitCode).toBe(0)
+    git('init', '-q')
+    git('commit', '-q', '--allow-empty', '-m', 'first')
+    const tree = path.join(repo, '.claude', 'worktrees', 'pages')
+    git('worktree', 'add', '-q', '--detach', tree)
+    fs.cpSync(new URL('site/', PAGES_FIXTURES), path.join(tree, 'private', 'plans', 'ghostex'), { recursive: true })
+    const entry = await (await call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: path.join(tree, 'private', 'plans', 'ghostex') })).json()
+    expect(entry.project).toBe(fs.realpathSync(repo))
   })
 
   test('without a marker, the slug comes from the folder (whatever the name), and is unique', async () => {
@@ -425,11 +527,50 @@ describe('the lock', () => {
     expect(fs.existsSync(lock)).toBe(true)
     const old = new Date(Date.now() - 11_000)
     fs.utimesSync(lock, old, old)
-    expect(await withLock(lock, () => fs.readFileSync(lock, 'utf8'), 100)).toBe(`${process.pid}\n`)
+    expect(await withLock(lock, () => fs.readFileSync(lock, 'utf8'), 100)).toMatch(new RegExp(`^${process.pid} [0-9a-f]{16}\\n$`))
     expect(fs.existsSync(lock)).toBe(false)
+    // nothing is left beside it from the takeover
+    expect(fs.readdirSync(path.dirname(lock))).toEqual([])
     // released when the change fails, too
     expect(await message(withLock(lock, () => { throw new Error('boom') }))).toBe('boom')
     expect(fs.existsSync(lock)).toBe(false)
+  })
+
+  test('is removed only while it is still this writer\'s', async () => {
+    const lock = path.join(root, `lock-${++n}`, 'pages.json.lock')
+    // another writer took it over (it thought this one had died) and holds it now
+    await withLock(lock, () => fs.writeFileSync(lock, '999 0123456789abcdef\n'))
+    expect(fs.readFileSync(lock, 'utf8')).toBe('999 0123456789abcdef\n')
+  })
+
+  test('a stale lock two writers judged leaves the fresh one made in between in its place', () => {
+    const lock = path.join(root, `lock-${++n}`, 'pages.json.lock')
+    fs.mkdirSync(path.dirname(lock))
+    fs.writeFileSync(lock, '1 stale\n')
+    const old = new Date(Date.now() - 11_000)
+    fs.utimesSync(lock, old, old)
+    const judged = fs.statSync(lock)
+    fs.rmSync(lock)
+    fs.writeFileSync(lock, '2 fresh\n')
+    removeJudged(lock, judged)
+    expect(fs.readFileSync(lock, 'utf8')).toBe('2 fresh\n')
+    expect(fs.readdirSync(path.dirname(lock))).toEqual(['pages.json.lock'])
+  })
+
+  test('a stale lock that cannot be removed is an error at once, not a wait', async () => {
+    if (process.getuid?.() === 0) return // root ignores the folder's mode
+    const dir = path.join(root, `lock-${++n}`)
+    fs.mkdirSync(dir)
+    const lock = path.join(dir, 'pages.json.lock')
+    fs.writeFileSync(lock, '1\n')
+    const old = new Date(Date.now() - 11_000)
+    fs.utimesSync(lock, old, old)
+    fs.chmodSync(dir, 0o500)
+    try {
+      expect(await message(withLock(lock, () => 1, 60_000))).toContain('EACCES')
+    } finally {
+      fs.chmodSync(dir, 0o700)
+    }
   })
 
   test('two writers at once both land', async () => {

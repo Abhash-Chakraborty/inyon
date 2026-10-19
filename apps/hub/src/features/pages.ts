@@ -8,6 +8,7 @@
  * truth. `inyon pages add` and Blueprint's publish script write it with no hub running, and the
  * hub reads it again whenever its mtime changes.
  */
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { PageEntry, PageList, PageOpen, PageRecord, PageRegister } from '@inyon/protocol'
@@ -16,6 +17,7 @@ import type { Store } from '../platform/store.ts'
 import {
   BAD_SLUG,
   decideView,
+  goneAfterOpen,
   isSlug,
   LOCAL_HOST,
   mintToken,
@@ -24,8 +26,10 @@ import {
   progressSummary,
   sitePathProblem,
   slugify,
+  TOKEN_TTL_MS,
   uniqueSlug,
   viewOrigin,
+  within,
   type ViewContext,
   type ViewFs,
 } from './pages-core.ts'
@@ -47,6 +51,7 @@ export const UNKNOWN_PAGE = 'Unknown page'
 export const OTHER_MACHINE = "Pages can only be added on the hub's own machine for now"
 export const BROKEN_FILE = "~/.inyon/pages.json isn't a page list Inyon can read. Fix it or delete it, then try again."
 export const LOCKED = 'Another program is changing ~/.inyon/pages.json. Try again in a moment.'
+export const NOT_SAVED = "The hub couldn't write to its data folder, so the old links stay closed only until it restarts. Check the hub's disk, then revoke again."
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 
@@ -182,35 +187,87 @@ function writeAtomic(file: string, text: string) {
   }
 }
 
-/** Runs `fn` holding `lock`: an exclusive create, waiting up to 3 s, taking over a lock older than LOCK_STALE_MS. */
+/**
+ * Runs `fn` holding `lock`: an exclusive create, waiting up to 3 s, taking over a lock older than
+ * LOCK_STALE_MS. The lock holds this process's id and a random tag, and is removed afterwards only
+ * while it still holds them. A failure other than "someone else has it" (a folder an agent's
+ * sandbox keeps read-only) is thrown at once, never waited on.
+ */
 export async function withLock<T>(lock: string, fn: () => T, wait = 3000): Promise<T> {
   fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 })
   const until = Date.now() + wait
+  const mine = `${process.pid} ${crypto.randomBytes(8).toString('hex')}\n`
   for (;;) {
     try {
       const fd = fs.openSync(lock, 'wx', 0o600)
-      fs.writeSync(fd, `${process.pid}\n`)
-      fs.closeSync(fd)
+      try {
+        fs.writeSync(fd, mine)
+      } finally {
+        fs.closeSync(fd)
+      }
       break
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      if (errno(err) !== 'EEXIST') throw err
     }
-    try {
-      if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) {
-        fs.rmSync(lock, { force: true })
-        continue
-      }
-    } catch {
-      continue
-    }
+    if (takeOverStale(lock)) continue
     if (Date.now() >= until) throw new HttpError(503, LOCKED)
     await Bun.sleep(25)
   }
   try {
     return fn()
   } finally {
-    fs.rmSync(lock, { force: true })
+    releaseLock(lock, mine)
   }
+}
+
+const errno = (err: unknown) => (err as NodeJS.ErrnoException).code
+
+/**
+ * Removes a lock left by a writer that died (older than LOCK_STALE_MS); true when the caller should
+ * try to take it again at once. The lock is first renamed aside, and removed only if what was
+ * renamed is the file that was judged stale: two writers that both saw it stale can't remove the
+ * fresh lock one of them made in between (that one is put back).
+ */
+export function takeOverStale(lock: string): boolean {
+  let old: fs.Stats
+  try {
+    old = fs.statSync(lock)
+  } catch (err) {
+    if (errno(err) === 'ENOENT') return true
+    throw err
+  }
+  if (Date.now() - old.mtimeMs <= LOCK_STALE_MS) return false
+  removeJudged(lock, old)
+  return true
+}
+
+/**
+ * Removes the lock that was judged stale as `old`, and only that one: renamed aside, then put back
+ * if it turns out to be a new lock another writer made since.
+ */
+export function removeJudged(lock: string, old: fs.Stats) {
+  const aside = `${lock}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.stale`
+  try {
+    fs.renameSync(lock, aside)
+  } catch (err) {
+    if (errno(err) === 'ENOENT') return
+    throw err
+  }
+  const got = fs.statSync(aside)
+  if (got.ino !== old.ino || got.mtimeMs !== old.mtimeMs) {
+    // another writer's new lock: back where it was, unless a third has made one since
+    try {
+      fs.linkSync(aside, lock)
+    } catch {}
+  }
+  fs.rmSync(aside, { force: true })
+}
+
+/** Removes the lock if it is still this writer's. */
+export function releaseLock(lock: string, mine: string) {
+  try {
+    if (fs.readFileSync(lock, 'utf8') === mine) fs.rmSync(lock, { force: true })
+  } catch {}
 }
 
 // ---------- epochs ----------
@@ -225,10 +282,19 @@ export function pageEpochs(store: Store) {
   if (isObject(raw)) for (const [k, v] of Object.entries(raw)) if (Number.isSafeInteger(v) && (v as number) >= 0) epochs[k] = v as number
   return {
     of: (host: string, slug: string) => epochs[`${host}/${slug}`] ?? 0,
+    /**
+     * Moves a site's epoch on. The running hub refuses the old links at once; when the new epoch
+     * can't be saved (a full disk) it throws NOT_SAVED, since a restart would open them again.
+     */
     bump(host: string, slug: string) {
       const k = `${host}/${slug}`
       epochs = { ...epochs, [k]: (epochs[k] ?? 0) + 1 }
-      store.set(EPOCHS_KEY, epochs)
+      try {
+        store.set(EPOCHS_KEY, epochs)
+      } catch (err) {
+        console.error(`couldn't save the page epochs: ${(err as Error).message}`)
+        throw new HttpError(500, NOT_SAVED)
+      }
       return epochs[k]!
     },
   }
@@ -255,7 +321,12 @@ export function pageListed(store: Store, gone: (slug: string) => void) {
     }
     if (!changed) return
     last = next
-    store.set(LISTED_KEY, next)
+    // a list that can't be saved is still the list: the hub serves it, and checks it again next time
+    try {
+      store.set(LISTED_KEY, next)
+    } catch (err) {
+      console.error(`couldn't save the pages listed: ${(err as Error).message}`)
+    }
   }
 }
 
@@ -301,14 +372,105 @@ export const diskFs: ViewFs = {
   },
 }
 
-/** The git top level of a folder, or the folder itself. */
-function projectOf(folder: string) {
+/**
+ * Opens a file decideView checked, then makes sure the open file is still inside the site: a
+ * folder on the way could have been swapped for a symlink since the check (an agent can rename
+ * its own folders). On Linux the system says where the open file really is (/proc/self/fd);
+ * elsewhere the path must still have no symlink in it and lead to the same file. Undefined when
+ * it can't be opened or isn't the site's.
+ */
+export async function openWithin(file: string, site: string): Promise<{ fd: number; size: number } | undefined> {
+  let fd: number
   try {
-    const r = Bun.spawnSync(['git', '-C', folder, 'rev-parse', '--show-toplevel'], { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
-    const top = r.exitCode === 0 ? r.stdout.toString().trim() : ''
-    if (top) return top
+    fd = await fdOpen(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+  } catch {
+    return undefined
+  }
+  try {
+    const st = await fdStat(fd)
+    if (st.isFile() && (await openedInside(fd, st, file, site))) return { fd, size: st.size }
   } catch {}
-  return folder
+  closeFd(fd)
+  return undefined
+}
+
+// A plain file descriptor, not a FileHandle: Bun throws when the collector finds an open
+// FileHandle, which an answer whose client went away before its body was read would leave.
+const fdOpen = (file: string, flags: number) => new Promise<number>((ok, no) => fs.open(file, flags, (e, fd) => (e ? no(e) : ok(fd))))
+const fdStat = (fd: number) => new Promise<fs.Stats>((ok, no) => fs.fstat(fd, (e, st) => (e ? no(e) : ok(st))))
+const fdRead = (fd: number, buf: Uint8Array) => new Promise<number>((ok, no) => fs.read(fd, buf, 0, buf.length, null, (e, n) => (e ? no(e) : ok(n))))
+const closeFd = (fd: number) => fs.close(fd, () => {})
+
+async function openedInside(fd: number, st: fs.Stats, file: string, site: string): Promise<boolean> {
+  if (process.platform === 'linux') {
+    try {
+      return within(site, await fs.promises.readlink(`/proc/self/fd/${fd}`))
+    } catch {}
+  }
+  const [real, now] = await Promise.all([fs.promises.realpath(file).catch(() => null), fs.promises.stat(file).catch(() => null)])
+  return real === file && now !== null && now.dev === st.dev && now.ino === st.ino && within(site, real)
+}
+
+/** Closes the file of a stream that was dropped without being read to its end or cancelled. */
+const dropped = new FinalizationRegistry<{ fd: number; closed: boolean }>((held) => {
+  if (!held.closed) closeFd(held.fd)
+})
+
+/**
+ * An open file's bytes to its end, in 64 KB pieces. The file is closed when they're read, when
+ * the answer is cancelled, or, for an answer nobody read, when the stream is collected.
+ */
+function streamOf(fd: number): ReadableStream<Uint8Array> {
+  const held = { fd, closed: false }
+  const close = () => {
+    if (held.closed) return
+    held.closed = true
+    closeFd(fd)
+  }
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(c) {
+      try {
+        const buf = new Uint8Array(64 * 1024)
+        const bytesRead = await fdRead(fd, buf)
+        if (bytesRead === 0) {
+          close()
+          c.close()
+        } else c.enqueue(buf.subarray(0, bytesRead))
+      } catch (err) {
+        close()
+        c.error(err)
+      }
+    },
+    cancel: close,
+  })
+  dropped.register(stream, held)
+  return stream
+}
+
+/**
+ * The project a folder belongs to: its git repo's main working tree, or the folder itself. In a
+ * linked worktree (an agent's `.claude/worktrees/<name>`, removed once its branch merges) git's
+ * common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
+ * Blueprint skill group it. A submodule or a bare repo's worktree keeps its own top level.
+ */
+function projectOf(folder: string) {
+  const git = (...args: string[]) => {
+    try {
+      const r = Bun.spawnSync(['git', '-C', folder, 'rev-parse', ...args], { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
+      return r.exitCode === 0 ? r.stdout.toString() : null
+    } catch {
+      return null
+    }
+  }
+  const out = git('--path-format=absolute', '--show-toplevel', '--git-common-dir', '--git-dir')
+  // git older than 2.31 has no --path-format: then the top level as it is
+  if (out === null) return git('--show-toplevel')?.trim() || folder
+  const [top = '', common = '', own = ''] = out.split(/\r?\n/).map((l) => l.trim())
+  if (common && common !== own && path.basename(common) === '.git') {
+    const parent = path.dirname(common)
+    if (parent) return parent
+  }
+  return top || folder
 }
 
 /** The name and slug in a site's `.inyon-page.json`, when it has a usable one. */
@@ -352,7 +514,17 @@ export function pagesFeature(o: PagesOptions) {
   const now = o.now ?? Date.now
   const epochs = pageEpochs(o.store)
   // a page taken off the list by anyone (the CLI, Blueprint, a hand edit) ends its links
-  const registry = pageRegistry(pagesFile(o.home), o.home, pageListed(o.store, (slug) => epochs.bump(LOCAL_HOST, slug)))
+  const registry = pageRegistry(
+    pagesFile(o.home),
+    o.home,
+    pageListed(o.store, (slug) => {
+      try {
+        epochs.bump(LOCAL_HOST, slug)
+      } catch {
+        // logged by bump; the running hub refuses the links all the same
+      }
+    }),
+  )
   const progress = progressCache(now)
 
   const entry = (r: PageRecord): PageEntry => {
@@ -382,7 +554,7 @@ export function pagesFeature(o: PagesOptions) {
     const r = page(req.params.host!, req.params.slug!)
     const phone = o.phoneOf(req)
     const { token, expires } = mintToken(pagesKey(o.secret()), { h: LOCAL_HOST, s: r.slug, v: epochs.of(LOCAL_HOST, r.slug), ...(phone ? { p: phone } : {}) }, now())
-    return json({ url: `/v/${token}/`, expires } satisfies PageOpen)
+    return json({ url: `/v/${token}/`, expires, ttl: TOKEN_TTL_MS } satisfies PageOpen)
   }
 
   const revoke: Handler = (req) => {
@@ -480,18 +652,24 @@ export function pagesFeature(o: PagesOptions) {
     const names = [host, ...(forwarded?.split(',').map((h) => h.trim()) ?? [])].filter((h): h is string => h !== null)
     const answered = names.length > 0 && names.every(o.knownHost)
     const origin = answered ? viewOrigin(forwarded ?? host, o.secure(req)) : null
-    const d = await decideView({ method: req.method, target: req.url.slice(url.origin.length), origin, ifNoneMatch: req.headers.get('if-none-match') }, context())
-    const headers = new Headers(d.headers)
+    const vr = { method: req.method, target: req.url.slice(url.origin.length), origin, ifNoneMatch: req.headers.get('if-none-match') }
+    let d = await decideView(vr, context())
     if (d.status === 200) {
-      // HEAD: Bun leaves the body out; a plain stream (not the file itself) keeps Bun from
-      // answering Range requests on its own, which the Rust hub doesn't do either
-      if (req.method === 'HEAD') {
-        headers.set('content-length', String(d.size))
-        return new Response(null, { status: 200, headers })
+      const opened = await openWithin(d.file, d.site)
+      if (opened) {
+        const headers = new Headers(d.headers)
+        // HEAD: Bun leaves the body out; a plain stream (not the file itself) keeps Bun from
+        // answering Range requests on its own, which the Rust hub doesn't do either
+        if (req.method === 'HEAD') {
+          closeFd(opened.fd)
+          headers.set('content-length', String(opened.size))
+          return new Response(null, { status: 200, headers })
+        }
+        return new Response(streamOf(opened.fd), { status: 200, headers })
       }
-      return new Response(Bun.file(d.file).stream().pipeThrough(new TransformStream()), { status: 200, headers })
+      d = goneAfterOpen(vr)
     }
-    return new Response(req.method === 'HEAD' || d.body === '' ? null : d.body, { status: d.status, headers })
+    return new Response(req.method === 'HEAD' || d.body === '' ? null : d.body, { status: d.status, headers: new Headers(d.headers) })
   }
 
   return { routes, view, registry, epochs }

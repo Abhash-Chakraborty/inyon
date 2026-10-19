@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import fs from 'node:fs'
+import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import type { PageEntry, PageOpen, PhoneClaimResult, PhonePairCode } from '@inyon/protocol'
@@ -185,6 +186,34 @@ test('cookie /api calls from a framed page (Origin: null) or another site are re
   const { token } = (await claimed.json()) as PhoneClaimResult
   expect((await call('GET', '/api/pages', { token, headers: { origin: 'null' } })).status).toBe(200)
   expect((await call('GET', '/api/pages', { token, headers: { origin: 'http://localhost', 'sec-fetch-site': 'cross-site' } })).status).toBe(200)
+})
+
+/** One request written to the socket as is (fetch would resolve its dot segments first): the status and body. */
+function rawStatus(target: string, headers: Record<string, string>) {
+  const { hostname, port } = new URL(base)
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const sock = net.connect(Number(port), hostname, () => {
+      sock.write([`GET ${target} HTTP/1.1`, `host: ${new URL(base).host}`, ...Object.entries(headers).map(([k, v]) => `${k}: ${v}`), 'connection: close', '', ''].join('\r\n'))
+    })
+    const chunks: Buffer[] = []
+    sock.on('data', (d: Buffer) => chunks.push(d))
+    sock.on('error', reject)
+    sock.on('close', () => {
+      const all = Buffer.concat(chunks).toString('latin1')
+      resolve({ status: Number(all.split(' ')[1]), body: all.slice(all.indexOf('\r\n\r\n') + 4) })
+    })
+  })
+}
+
+test('routes match the path as it came: a dot segment into /api is no route (the Rust hub must agree)', async () => {
+  for (const target of ['/api/nothing/../pages', '/api/%2e%2E/api/pages', '/api/./pages']) {
+    const r = await rawStatus(target, { cookie })
+    expect([target, r.status]).toEqual([target, 404])
+    expect(r.body).toContain('{"error":"Not found"}')
+  }
+  // out of /v/ and into /api: no route either, so no API check runs at all
+  expect((await rawStatus('/v/x/../../api/pages', {})).status).toBe(404)
+  expect((await rawStatus('/api/pages', { cookie })).status).toBe(200)
 })
 
 test('removing a page drops it and its links', async () => {

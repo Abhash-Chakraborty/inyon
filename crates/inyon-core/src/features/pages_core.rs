@@ -522,6 +522,12 @@ pub fn view_origin(host: Option<&str>, https: bool) -> Option<String> {
 /// The sandbox flags. allow-forms lets a page's own script handle a form (a mockup's "Add" field):
 /// without it the browser drops the submit before any handler runs. form-action 'none' in the CSP
 /// still stops a form from sending anything anywhere.
+///
+/// There is no allow-same-origin, and never may be: the opaque origin is also what keeps password
+/// managers away from a page served at the hub's own address. Chrome gives a frame with an opaque
+/// origin no password manager at all (Blink's CanAccessPasswordManager), and Firefox's runs no code
+/// in a document with a null principal, so neither fills or saves the hub password on /v/, framed,
+/// in its own tab or in a popup (a popup keeps the sandbox: no allow-popups-to-escape-sandbox).
 const SANDBOX: &str = "sandbox allow-scripts allow-forms allow-popups allow-downloads";
 
 /// The Content-Security-Policy on every `/v/` answer. With an origin and a verified token, the page
@@ -576,6 +582,8 @@ pub fn view_headers(o: &ViewHeaderInput) -> HeaderList {
         ("access-control-allow-origin", "*".into()),
         ("referrer-policy", "no-referrer".into()),
         ("x-content-type-options", "nosniff".into()),
+        // no DNS lookups for links the page shows: a host name can carry data out
+        ("x-dns-prefetch-control", "off".into()),
         ("cache-control", if o.no_store { "no-store" } else { "no-cache" }.into()),
     ];
     for (k, v) in [("content-type", o.content_type), ("etag", o.etag), ("location", o.location), ("allow", o.allow)] {
@@ -639,19 +647,40 @@ pub struct ViewContext<'a> {
     pub fs: &'a dyn ViewFs,
 }
 
-/// What to answer. A 200 names the file to stream (its real path); the others carry their whole
-/// body ("" for 301 and 304). On HEAD the hub sends the same status and headers with no body.
+/// What to answer. A 200 names the file to stream (its real path) and the site's real folder it
+/// was checked against; the others carry their whole body ("" for 301 and 304). On HEAD the hub
+/// sends the same status and headers with no body.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewDecision {
     pub status: u16,
     pub headers: HeaderList,
     /// the 200's file and its size
     pub file: Option<(PathBuf, u64)>,
+    /// the 200's site folder, as its real path
+    pub site: Option<PathBuf>,
     pub body: String,
 }
 
+fn failure(origin: Option<&str>, status: u16, token: Option<&str>, allow: Option<&str>) -> ViewDecision {
+    ViewDecision {
+        status,
+        headers: view_headers(&ViewHeaderInput { origin, token, no_store: true, content_type: Some("text/html;charset=utf-8"), allow, ..Default::default() }),
+        file: None,
+        site: None,
+        body: error_page(status),
+    }
+}
+
+/// The 404 for a 200 whose file, once opened, turned out not to be the one decide_view checked: a
+/// folder on the way was swapped for a symlink in between. The hub opens the file and then asks the
+/// system where the open file really is, so a swap can't lead it out of the site.
+pub fn gone_after_open(req: &ViewRequest<'_>) -> ViewDecision {
+    let token = split_view_target(req.target).map(|t| t.token);
+    failure(req.origin, 404, token.as_deref(), None)
+}
+
 /// The real path is the site's root or inside it, with no dot-named folder or file on the way.
-fn within(root: &Path, real: &Path) -> bool {
+pub fn within(root: &Path, real: &Path) -> bool {
     match real.strip_prefix(root) {
         Ok(rel) => rel.components().all(|c| matches!(c, Component::Normal(s) if !s.to_string_lossy().starts_with('.'))),
         Err(_) => false,
@@ -664,12 +693,7 @@ fn within(root: &Path, real: &Path) -> bool {
 /// anything whose real path leaves the site or passes a dot name: 404), then the cache (304) or the
 /// file (200).
 pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDecision {
-    let fail = |status: u16, token: Option<&str>, allow: Option<&str>| ViewDecision {
-        status,
-        headers: view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, content_type: Some("text/html;charset=utf-8"), allow, ..Default::default() }),
-        file: None,
-        body: error_page(status),
-    };
+    let fail = |status: u16, token: Option<&str>, allow: Option<&str>| failure(req.origin, status, token, allow);
     if req.origin.is_none() {
         return fail(421, None, None);
     }
@@ -687,6 +711,7 @@ pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDe
             status: 301,
             headers: view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, location: Some(&location), ..Default::default() }),
             file: None,
+            site: None,
             body: String::new(),
         }
     };
@@ -721,15 +746,15 @@ pub async fn decide_view(req: &ViewRequest<'_>, ctx: &ViewContext<'_>) -> ViewDe
     let ty = content_type(&name);
     if no_store(&name) {
         let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, no_store: true, content_type: Some(ty), ..Default::default() });
-        return ViewDecision { status: 200, headers, file: Some((real, st.size)), body: String::new() };
+        return ViewDecision { status: 200, headers, file: Some((real, st.size)), site: Some(site_real), body: String::new() };
     }
     let etag = etag_of(st.size, st.mtime_ms);
     if etag_matches(req.if_none_match, &etag) {
         let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, etag: Some(&etag), ..Default::default() });
-        return ViewDecision { status: 304, headers, file: None, body: String::new() };
+        return ViewDecision { status: 304, headers, file: None, site: None, body: String::new() };
     }
     let headers = view_headers(&ViewHeaderInput { origin: req.origin, token, content_type: Some(ty), etag: Some(&etag), ..Default::default() });
-    ViewDecision { status: 200, headers, file: Some((real, st.size)), body: String::new() }
+    ViewDecision { status: 200, headers, file: Some((real, st.size)), site: Some(site_real), body: String::new() }
 }
 
 #[cfg(test)]

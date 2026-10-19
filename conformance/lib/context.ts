@@ -11,7 +11,7 @@ import type { Normalizer } from './normalize.ts'
 const HEADERS = [
   'content-type', 'set-cookie', 'cache-control', 'content-disposition', 'vary', 'access-control-allow-origin',
   'access-control-allow-headers', 'access-control-allow-methods', 'access-control-max-age', 'content-security-policy',
-  'x-content-type-options', 'referrer-policy', 'location', 'etag', 'allow',
+  'x-content-type-options', 'x-dns-prefetch-control', 'referrer-policy', 'location', 'etag', 'allow',
 ]
 /** bodies longer than this are recorded by size and checksum */
 const MAX_TEXT = 4096

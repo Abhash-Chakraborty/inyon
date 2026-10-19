@@ -736,7 +736,11 @@ export type PageOpen = { url: string,
 /**
  * unix ms; twelve hours after it was made
  */
-expires: number, };
+expires: number, 
+/**
+ * how long the link lasts from when it was made, in ms; the app counts it on its own clock, which may not agree with the hub's
+ */
+ttl: number, };
 
 /**
  * POST /api/pages/:host: add a folder as a page. The slug comes from the folder's name when left out.

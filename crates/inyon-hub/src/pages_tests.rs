@@ -322,7 +322,7 @@ fn every_view_request_in_responses_json_gets_exactly_its_status_headers_and_body
 }
 
 #[test]
-fn dot_segments_are_resolved_before_routing_as_buns_url_parser_does() {
+fn routes_match_the_path_as_it_came_so_a_dot_segment_into_api_is_no_route_as_in_bun() {
     let t = Tmp::new("dots");
     let home = t.join("home");
     crate::test_util::block(async {
@@ -330,13 +330,112 @@ fn dot_segments_are_resolved_before_routing_as_buns_url_parser_does() {
         let addr = listen().await;
         let cookie = crate::auth::issue_cookie(false).split(';').next().unwrap().to_owned();
         let h = |extra: &[(&str, &str)]| -> Vec<(String, String)> { [("host", HOST)].iter().chain(extra).map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect() };
-        let res = raw(addr, "GET", "/api/nothing/../pages", &h(&[("cookie", &cookie)])).await;
-        assert_eq!((res.status, String::from_utf8_lossy(&res.body).into_owned()), (200, r#"{"pages":[]}"#.to_owned()));
-        let res = raw(addr, "GET", "/api/%2e%2E/api/pages", &h(&[("cookie", &cookie)])).await;
-        assert_eq!(res.status, 200);
-        // out of /v/ and back into the API: the API's own checks apply, and no cookie means 401
+        // Bun's router matches the raw path, and its fetch fallback answers /api with a 404
+        for target in ["/api/nothing/../pages", "/api/%2e%2E/api/pages", "/api/./pages"] {
+            let res = raw(addr, "GET", target, &h(&[("cookie", &cookie)])).await;
+            assert_eq!((res.status, String::from_utf8_lossy(&res.body).into_owned()), (404, r#"{"error":"Not found"}"#.to_owned()), "{target}");
+        }
         let res = raw(addr, "GET", "/v/x/../../api/pages", &h(&[])).await;
-        assert_eq!(res.status, 401);
+        assert_eq!(res.status, 404);
+        let res = raw(addr, "GET", "/api/pages", &h(&[("cookie", &cookie)])).await;
+        assert_eq!(res.status, 200);
+    });
+}
+
+/// The disk as it is, except that the last look decide_view takes at `watch` swaps `folder` for a
+/// symlink to `to` right after, as an agent renaming its own folders in a loop would.
+struct SwapFs {
+    watch: PathBuf,
+    folder: PathBuf,
+    to: PathBuf,
+    swapped: Cell<bool>,
+}
+
+impl ViewFs for SwapFs {
+    fn stat<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<FileStat>> {
+        Box::pin(async move {
+            let st = DiskFs.stat(p).await;
+            if !self.swapped.get() && p == self.watch {
+                self.swapped.set(true);
+                let mut aside = self.folder.as_os_str().to_owned();
+                aside.push("-real");
+                std::fs::rename(&self.folder, PathBuf::from(aside)).unwrap();
+                std::os::unix::fs::symlink(&self.to, &self.folder).unwrap();
+            }
+            st
+        })
+    }
+    fn realpath<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<PathBuf>> {
+        DiskFs.realpath(p)
+    }
+}
+
+#[test]
+fn a_folder_swapped_for_a_symlink_after_the_check_is_not_followed_out_of_the_site() {
+    let tmp = Tmp::new("swap");
+    let home = tmp.join("home");
+    let dir = PathBuf::from(site(&tmp, "swap", true));
+    let outside = tmp.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("index.html"), "SECRET KEY").unwrap();
+    write_list(&pages_file(&home), json!([record("swap", &s(&dir))]));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let real = std::fs::canonicalize(&dir).unwrap();
+        let swap = Rc::new(SwapFs { watch: real.join("sub").join("index.html"), folder: dir.join("sub"), to: outside.clone(), swapped: Cell::new(false) });
+        let mut p = Pages::new(home.clone(), Rc::new(now_ms));
+        p.fs = swap.clone();
+        install(p);
+        let addr = listen().await;
+        let url = open_url("swap").await;
+        let res = raw(addr, "GET", &format!("{url}sub/index.html"), &[("host".into(), HOST.into())]).await;
+        assert!(swap.swapped.get());
+        assert_eq!(res.status, 404);
+        assert!(!String::from_utf8_lossy(&res.body).contains("SECRET"));
+        // with nothing swapped the same file is served
+        let res = raw(addr, "GET", &format!("{url}style.css"), &[("host".into(), HOST.into())]).await;
+        assert_eq!(res.status, 200);
+    });
+}
+
+#[test]
+fn a_file_replaced_after_the_check_is_sent_whole_with_the_length_of_the_file_opened() {
+    let tmp = Tmp::new("replace");
+    let home = tmp.join("home");
+    let dir = PathBuf::from(site(&tmp, "replace", false));
+    std::fs::write(dir.join("progress.json"), r#"{"a":1}"#).unwrap();
+    write_list(&pages_file(&home), json!([record("replace", &s(&dir))]));
+    /// progress.py's atomic replace, right after decide_view's last look at the file
+    struct ReplaceFs(PathBuf, Cell<bool>);
+    impl ViewFs for ReplaceFs {
+        fn stat<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<FileStat>> {
+            Box::pin(async move {
+                let st = DiskFs.stat(p).await;
+                if !self.1.get() && p == self.0 {
+                    self.1.set(true);
+                    let tmp = self.0.with_extension("tmp");
+                    std::fs::write(&tmp, r#"{"a":1,"b":"a longer file than before"}"#).unwrap();
+                    std::fs::rename(&tmp, &self.0).unwrap();
+                }
+                st
+            })
+        }
+        fn realpath<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<PathBuf>> {
+            DiskFs.realpath(p)
+        }
+    }
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let mut p = Pages::new(home.clone(), Rc::new(now_ms));
+        p.fs = Rc::new(ReplaceFs(std::fs::canonicalize(&dir).unwrap().join("progress.json"), Cell::new(false)));
+        install(p);
+        let addr = listen().await;
+        let url = open_url("replace").await;
+        let res = raw(addr, "GET", &format!("{url}progress.json"), &[("host".into(), HOST.into())]).await;
+        assert_eq!(res.status, 200);
+        let body = String::from_utf8_lossy(&res.body).into_owned();
+        assert_eq!(body, r#"{"a":1,"b":"a longer file than before"}"#);
+        assert_eq!(res.header("content-length"), Some(body.len().to_string().as_str()));
     });
 }
 
@@ -360,7 +459,7 @@ fn the_hub_mints_the_tokens_in_tokens_json_phone_bound_when_a_phone_asks() {
             let headers: Vec<(&str, &str)> = if m["site"]["p"].is_string() { vec![("authorization", bearer.as_str())] } else { vec![] };
             assert_eq!(m["site"]["p"].as_str().unwrap_or("ph1"), "ph1");
             let opened = call(h_open, "POST", &[("host", "local"), ("slug", "fixture")], None, &headers).await.unwrap();
-            assert_eq!(opened, json!({ "url": format!("/v/{}/", m["token"].as_str().unwrap()), "expires": m["expires"] }));
+            assert_eq!(opened, json!({ "url": format!("/v/{}/", m["token"].as_str().unwrap()), "expires": m["expires"], "ttl": 43_200_000 }));
             n += 1;
         }
         assert_eq!(n, 2);
@@ -406,6 +505,62 @@ fn revoking_moves_the_epoch_on_and_survives_a_restart_links_made_before_stop_wor
         assert_eq!(view_status(&after).await, 200);
         assert_eq!(call(h_revoke, "POST", &[("host", "local"), ("slug", "nope")], None, &[]).await.unwrap_err().0, 404);
         assert_eq!(call(h_open, "POST", &[("host", "laptop"), ("slug", "plan")], None, &[]).await.unwrap_err().0, 404);
+    });
+}
+
+/// The hub's records in memory, with writes to one key failing once `fail` is set (a full disk).
+struct FailingStore {
+    inner: inyon_core::platform::store::MemoryStore,
+    key: &'static str,
+    fail: Cell<bool>,
+}
+
+impl inyon_core::platform::store::Store for FailingStore {
+    fn get(&self, key: &str) -> Option<Value> {
+        self.inner.get(key)
+    }
+    fn set(&self, key: &str, value: &Value) -> Result<(), String> {
+        if self.fail.get() && key == self.key {
+            return Err("No space left on device".into());
+        }
+        self.inner.set(key, value)
+    }
+    fn del(&self, key: &str) {
+        self.inner.del(key)
+    }
+    fn keys(&self, prefix: &str) -> Vec<String> {
+        self.inner.keys(prefix)
+    }
+}
+
+#[test]
+fn a_revoke_that_cannot_be_saved_says_so_and_still_ends_the_links_until_a_restart() {
+    let tmp = Tmp::new("revoke-full");
+    let home = tmp.join("home");
+    write_list(&pages_file(&home), json!([record("plan", &site(&tmp, "plan", true))]));
+    let store = Rc::new(FailingStore { inner: Default::default(), key: EPOCHS_KEY, fail: Cell::new(false) });
+    inyon_core::platform::store::use_store(store.clone());
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let before = open_url("plan").await;
+        store.fail.set(true);
+        assert_eq!(call(h_revoke, "POST", &[("host", "local"), ("slug", "plan")], None, &[]).await, Err((500, NOT_SAVED.to_owned())));
+        assert_eq!(view_status(&before).await, 403);
+    });
+}
+
+#[test]
+fn a_list_that_cannot_be_saved_is_still_served() {
+    let tmp = Tmp::new("listed-full");
+    let home = tmp.join("home");
+    let store = Rc::new(FailingStore { inner: Default::default(), key: LISTED_KEY, fail: Cell::new(false) });
+    inyon_core::platform::store::use_store(store.clone());
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        store.fail.set(true);
+        write_list(&pages_file(&home), json!([record("plan", &site(&tmp, "plan", true))]));
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"].as_array().unwrap().len(), 1);
+        assert_eq!(view_status(&open_url("plan").await).await, 200);
     });
 }
 
@@ -570,6 +725,37 @@ fn adding_takes_the_name_and_slug_from_the_marker_the_project_from_git_and_write
             (in_repo["slug"].clone(), in_repo["name"].clone(), in_repo["project"].clone()),
             (json!("fixture-2"), json!("Inyon plan"), json!(s(&std::fs::canonicalize(&repo).unwrap())))
         );
+    });
+}
+
+#[test]
+fn a_folder_in_a_linked_git_worktree_belongs_to_the_main_checkout_as_the_cli_and_the_skill_say() {
+    let tmp = Tmp::new("worktree");
+    let home = tmp.join("home");
+    let repo = tmp.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    let tree = repo.join(".claude/worktrees/pages");
+    git(&["worktree", "add", "-q", "--detach", &s(&tree)]);
+    copy_dir(&fixtures_dir().join("site"), &tree.join("private/plans/ghostex"));
+    crate::test_util::block(async {
+        hub(&home, clock(1));
+        let entry = add_page(json!({ "path": s(&tree.join("private/plans/ghostex")) })).await.unwrap();
+        assert_eq!(entry["project"], json!(s(&std::fs::canonicalize(&repo).unwrap())));
     });
 }
 
@@ -751,12 +937,65 @@ fn the_lock_waits_for_a_live_writer_and_takes_over_one_left_for_more_than_ten_se
         assert!(lock.exists());
         set_mtime(&lock, std::time::SystemTime::now() - std::time::Duration::from_secs(11));
         let inside = with_lock(&lock, 100, || Ok(std::fs::read_to_string(&lock).unwrap())).await.unwrap();
-        assert_eq!(inside, format!("{}\n", std::process::id()));
+        let (pid, tag) = inside.trim_end().split_once(' ').unwrap();
+        assert_eq!((pid, tag.len(), inside.ends_with('\n')), (std::process::id().to_string().as_str(), 16, true));
         assert!(!lock.exists());
+        // nothing is left beside it from the takeover
+        assert_eq!(std::fs::read_dir(tmp.join("")).unwrap().count(), 0);
         // released when the change fails, too
         assert_eq!(with_lock::<()>(&lock, 100, || Err(http(400, "boom"))).await.unwrap_err().message, "boom");
         assert!(!lock.exists());
     });
+}
+
+#[test]
+fn the_lock_is_removed_only_while_it_is_still_this_writers() {
+    let tmp = Tmp::new("lock-owned");
+    let lock = tmp.join("pages.json.lock");
+    crate::test_util::block(async {
+        // another writer took it over (it thought this one had died) and holds it now
+        with_lock(&lock, 100, || {
+            std::fs::write(&lock, "999 0123456789abcdef\n").unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read_to_string(&lock).unwrap(), "999 0123456789abcdef\n");
+    });
+}
+
+#[test]
+fn a_stale_lock_judged_by_two_writers_leaves_the_fresh_one_in_its_place() {
+    let tmp = Tmp::new("lock-race");
+    let lock = tmp.join("pages.json.lock");
+    std::fs::write(&lock, "1 stale\n").unwrap();
+    set_mtime(&lock, std::time::SystemTime::now() - std::time::Duration::from_secs(11));
+    let judged = std::fs::metadata(&lock).unwrap();
+    // another writer saw it stale too, took it over and made its own before this one acts
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::write(&lock, "2 fresh\n").unwrap();
+    remove_judged(&lock, &judged).unwrap();
+    assert_eq!(std::fs::read_to_string(&lock).unwrap(), "2 fresh\n");
+    assert_eq!(std::fs::read_dir(tmp.join("")).unwrap().count(), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stale_lock_that_cannot_be_removed_is_an_error_not_a_wait() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Tmp::new("lock-ro");
+    let dir = tmp.join("ro");
+    std::fs::create_dir_all(&dir).unwrap();
+    let lock = dir.join("pages.json.lock");
+    std::fs::write(&lock, "1\n").unwrap();
+    set_mtime(&lock, std::time::SystemTime::now() - std::time::Duration::from_secs(11));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let r = crate::test_util::block(async { with_lock(&lock, 60_000, || Ok(1)).await });
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // root ignores the folder's mode; then the takeover just works
+    if unsafe { libc::geteuid() } != 0 {
+        assert!(r.unwrap_err().message.contains("ermission denied"));
+    }
 }
 
 #[test]
