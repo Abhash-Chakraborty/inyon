@@ -1,3 +1,4 @@
+{"atLeast32Characters":true,"file":"local-token","mode":"600"}
 {"step":"box connects"}
 {"node":"connect","result":"open"}
 {"open":"open","ws":"app"}
@@ -9,4 +10,5 @@
 {"step":"without it, with a wrong one, with only the browser sign-in"}
 {"body":{"error":"Only the inyon command on this machine may ask"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"anon","method":"GET","path":"/api/local/nodes"},"status":403}
 {"body":{"error":"Only the inyon command on this machine may ask"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"bearer","method":"GET","path":"/api/local/nodes"},"status":403}
+{"body":{"error":"Only the inyon command on this machine may ask"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"anon","method":"GET","path":"/api/local/nodes?token=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},"status":403}
 {"body":{"error":"Only the inyon command on this machine may ask"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"method":"GET","path":"/api/local/nodes"},"status":403}

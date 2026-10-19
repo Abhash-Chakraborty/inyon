@@ -141,6 +141,13 @@ pub struct Sent {
     pub gone: bool,
 }
 
+impl Sent {
+    /// What the push service's answer means for this subscription.
+    pub fn from_status(status: u16) -> Sent {
+        Sent { ok: (200..300).contains(&status), status, gone: status == 404 || status == 410 }
+    }
+}
+
 /// What a send needs, apart from the network: the request it would make.
 pub struct PushRequest {
     pub url: String,
@@ -168,7 +175,7 @@ pub fn push_request(sub: &Subscription, payload: &serde_json::Value, v: &Vapid, 
 pub async fn send_push(sub: &Subscription, payload: &serde_json::Value, v: &Vapid) -> Result<Sent, String> {
     let r = push_request(sub, payload, v, 4 * 3600)?;
     let res = crate::http::fetch("POST", r.url, r.headers, Some(r.body), Duration::from_secs(60)).await?;
-    Ok(Sent { ok: res.ok(), status: res.status, gone: res.status == 404 || res.status == 410 })
+    Ok(Sent::from_status(res.status))
 }
 
 #[cfg(test)]
@@ -235,5 +242,13 @@ mod tests {
         assert!(h("Authorization").starts_with("vapid t="));
         let insecure = Subscription { endpoint: "http://push.example.net/x".into(), ..sub() };
         assert!(push_request(&insecure, &json!({}), &Vapid { private_jwk: jwk().0, subject: "mailto:a@b".into() }, 1).is_err());
+    }
+
+    #[test]
+    fn a_gone_subscription_says_so() {
+        assert_eq!(Sent::from_status(410), Sent { ok: false, status: 410, gone: true });
+        assert_eq!(Sent::from_status(404), Sent { ok: false, status: 404, gone: true });
+        assert_eq!(Sent::from_status(201), Sent { ok: true, status: 201, gone: false });
+        assert_eq!(Sent::from_status(500), Sent { ok: false, status: 500, gone: false });
     }
 }

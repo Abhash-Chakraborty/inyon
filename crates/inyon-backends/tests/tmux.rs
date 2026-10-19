@@ -125,6 +125,22 @@ async fn screen(host: &Host, p: &str) -> String {
     capture_panes(host, &[p.to_owned()]).await.unwrap().get(p).cloned().unwrap_or_default().join("\n")
 }
 
+// test-isolation.test.ts: with $TMUX set, tmux ignores TMUX_TMPDIR, and a test once stopped the
+// user's real server
+#[test]
+fn commands_run_by_tests_cant_reach_the_tmux_server_the_tests_were_started_from() {
+    let own = Own::new("isolation");
+    run_core(|| async {
+        // as if cargo test ran inside the user's tmux
+        let started_from = vec![("TMUX".to_owned(), "/tmp/tmux-1000/default,1,0".to_owned()), ("TMUX_PANE".to_owned(), "%0".to_owned())];
+        let b = Rc::new(OwnTmux { prefix: own.prefix(), real: ProcessBackend::new(own.dir.join("cm"), started_from) });
+        set_host_backends(move |_| b.clone() as Rc<dyn HostBackend>);
+        let host = Host::new(local_config("iso"));
+        let out = host.run(r#"echo "[$TMUX][$TMUX_PANE][$TMUX_TMPDIR]""#).await.unwrap().stdout;
+        assert_eq!(out.trim(), format!("[][][{}]", own.dir.display()));
+    });
+}
+
 #[test]
 fn waits_for_a_slow_shell_so_the_command_reaches_its_prompt() {
     let own = Own::new("ready-slow");

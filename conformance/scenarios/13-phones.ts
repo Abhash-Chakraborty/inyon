@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import { type Scenario } from '../lib/scenario.ts'
 
 /** where the phone app runs: an origin of its own */
@@ -21,6 +22,14 @@ export default {
     ctx.norm.learn(wrong, 'wrong-digits')
     await ctx.rest('POST', '/api/phones/pair', { origin: ctx.hub.base }, { as: 'anon' })
 
+    await ctx.step('a sign-in from more than ten minutes ago shows no code')
+    // signed with the hub's own secret, eleven minutes ago
+    const then = Date.now() - 11 * 60_000
+    const payload = Buffer.from(JSON.stringify({ exp: Date.now() + 86_400_000, n: 'older', iat: then, at: then })).toString('base64url')
+    const older = { cookie: `inyon_session=${payload}.${crypto.createHmac('sha256', ctx.hub.secret() ?? '').update(payload).digest('base64url')}` }
+    await ctx.rest('GET', '/api/session', undefined, { as: older })
+    await ctx.rest('POST', '/api/phones/pair', { origin: ctx.hub.base }, { as: older, origin: ctx.hub.base })
+
     await ctx.step('the phone asks before claiming (CORS preflight)')
     await ctx.rest('OPTIONS', '/api/phones/claim', undefined, { as: 'anon', origin: APP, headers: { 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } })
 
@@ -38,7 +47,9 @@ export default {
     await ctx.step('the phone signs in with its token')
     const phone = { bearer: token }
     await ctx.rest('OPTIONS', '/api/hosts', undefined, { as: 'anon', origin: APP, headers: { 'access-control-request-method': 'GET', 'access-control-request-headers': 'authorization' } })
+    await ctx.rest('OPTIONS', '/api/hosts', undefined, { as: 'anon', origin: APP, headers: { 'access-control-request-method': 'GET' } })
     await ctx.rest('GET', '/api/session', undefined, { as: phone, origin: APP })
+    await ctx.rest('GET', '/api/session', undefined, { as: 'anon', origin: APP })
     await ctx.rest('GET', '/api/hosts', undefined, { as: phone, origin: APP })
     const list = await ctx.rest('GET', '/api/phones', undefined, { as: phone, origin: APP })
     const phoneId = (list.body as { id: string }[])[0]?.id
@@ -50,7 +61,12 @@ export default {
     await ctx.rest('POST', '/api/phones/pair', { origin: ctx.hub.base }, { as: phone, origin: APP })
     await ctx.rest('DELETE', `/api/phones/${phoneId}`, undefined, { as: phone, origin: APP })
     await ctx.rest('POST', '/api/password', { current: 'x', next: 'y' }, { as: phone, origin: APP })
+    await ctx.rest('POST', '/api/setup', { password: 'x', code: 'x' }, { as: phone, origin: APP })
+    await ctx.rest('POST', '/api/login', { password: 'correct horse battery' }, { as: phone, origin: APP })
     await ctx.rest('POST', '/api/phones/ticket', undefined)
+    // still paired, and the password unchanged
+    await ctx.rest('GET', '/api/session', undefined, { as: phone, origin: APP })
+    await ctx.rest('POST', '/api/login', { password: 'correct horse battery' }, { as: 'anon' })
 
     await ctx.step('a ticket opens a WebSocket once')
     const t = await ctx.rest('POST', '/api/phones/ticket', undefined, { as: phone, origin: APP })
@@ -61,10 +77,15 @@ export default {
     await ws.until('pong', (m) => m.t === 'pong')
     await ctx.refusedUpgrade('phone again', `/ws?ticket=${ticket}`)
     await ctx.refusedUpgrade('bad bearer', '/ws', { authorization: 'Bearer not-a-real-token' })
+    // or with the token itself, from code that can send a header
+    const direct = await ctx.connect('phone with its token', phone)
+    direct.send({ t: 'ping' })
+    await direct.until('pong', (m) => m.t === 'pong')
 
     await ctx.step('the browser removes the phone: its socket closes and its token stops working')
     await ctx.rest('DELETE', `/api/phones/${phoneId}`)
     await ws.untilClosed()
+    await direct.untilClosed()
     await ctx.rest('GET', '/api/hosts', undefined, { as: phone, origin: APP })
     await ctx.rest('DELETE', `/api/phones/${phoneId}`)
   },

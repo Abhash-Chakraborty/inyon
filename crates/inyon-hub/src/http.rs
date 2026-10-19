@@ -386,6 +386,15 @@ mod tests {
     }
 
     #[test]
+    fn a_chunked_body_past_16_mb_stops_being_read() {
+        let (mut r, pulled) = chunked(20_000, 1024);
+        let e = crate::test_util::block(r.json_body(8 * 1024)).unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(413), "Request too large"));
+        let n = pulled.load(Ordering::SeqCst);
+        assert!((16_384..16_500).contains(&n), "{n}");
+    }
+
+    #[test]
     fn small_bodies_still_parse_and_bad_ones_say_so() {
         crate::test_util::block(async {
             let mut ok = crate::server::test_req("POST", "/", &[], r#"{"password":"pw"}"#);

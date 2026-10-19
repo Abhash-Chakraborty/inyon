@@ -90,9 +90,19 @@ mod tests {
     #[test]
     fn addresses_localhost_single_labels_and_private_suffixes_pass() {
         let ok = check(None, None, "127.0.0.1");
-        for h in
-            ["127.0.0.1:4777", "[::1]:4777", "100.64.1.2", "localhost:4777", "my-server", "laptop.tail1234.ts.net", "box.netbird.cloud", "nas.local", "pi.home.arpa", "MY-BOX:4777"]
-        {
+        for h in [
+            "127.0.0.1:4777",
+            "[::1]:4777",
+            "100.64.1.2",
+            "localhost:4777",
+            "my-server",
+            "laptop.tail1234.ts.net",
+            "box.netbird.cloud",
+            "nas.local",
+            "pi.home.arpa",
+            "MY-BOX:4777",
+            "[fd7a:115c:a1e0::1]",
+        ] {
             assert!(ok(Some(h)), "{h}");
         }
     }
@@ -100,7 +110,18 @@ mod tests {
     #[test]
     fn public_names_and_garbage_are_refused() {
         let ok = check(None, None, "127.0.0.1");
-        for h in ["evil.example", "evil.example:4777", "127.0.0.1.evil.example", "", "a b", "user@evil.example", "evil.example/path"] {
+        for h in [
+            "evil.example",
+            "evil.example:4777",
+            "127.0.0.1.evil.example",
+            "",
+            "a b",
+            "user@evil.example",
+            "evil.example/path",
+            "localhost.evil.example",
+            "ts.net.evil.example",
+            "abc/def",
+        ] {
             assert!(!ok(Some(h)), "{h}");
         }
         assert!(!ok(None));
@@ -116,6 +137,35 @@ mod tests {
         found.borrow_mut().insert("box.headscale.example".into());
         assert!(ok(Some("box.headscale.example")));
         assert!(check(Some("*"), None, "127.0.0.1")(Some("anything.example")));
+    }
+
+    #[test]
+    fn a_comma_separated_list_upper_case_names_and_the_bind_address_pass() {
+        let ok = check(Some("Inyon.Example.com, other.example"), Some("https://proxy.example:8443"), "0.0.0.0");
+        assert!(ok(Some("inyon.example.com")));
+        assert!(ok(Some("INYON.example.com:443")));
+        assert!(ok(Some("other.example")));
+        assert!(ok(Some("proxy.example:8443")));
+        assert!(!ok(Some("evil.example")));
+        assert!(check(None, None, "hub.example.org")(Some("hub.example.org:4777")));
+    }
+
+    #[test]
+    fn a_found_name_passes_with_its_port_and_its_neighbours_do_not() {
+        let found = Rc::new(RefCell::new(HashSet::new()));
+        let ok = allowed_hosts(None, None, "my-box", "127.0.0.1", found.clone());
+        assert!(!ok(Some("laptop.hs.example.com")));
+        found.borrow_mut().insert("laptop.hs.example.com".into());
+        assert!(ok(Some("laptop.hs.example.com:4777")));
+        assert!(!ok(Some("other.hs.example.com")));
+    }
+
+    #[test]
+    fn a_long_ipv6_address_passes_with_or_without_its_brackets() {
+        let ok = check(None, None, "127.0.0.1");
+        assert!(ok(Some("[fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402]")));
+        assert!(ok(Some("[fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402]:4777")));
+        assert!(ok(Some("fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402")));
     }
 
     #[test]

@@ -156,14 +156,19 @@ pub async fn detect_networks() -> Vec<Network> {
         None
     };
     let (ts, nb) = tokio::join!(tailscale, json_of(&["netbird", "status", "--json"]));
+    networks_from(ts.as_ref(), nb.as_ref(), &interfaces())
+}
+
+/// What the programs reported, then the interfaces whose address they didn't.
+pub fn networks_from(tailscale: Option<&Value>, netbird: Option<&Value>, ifaces: &[Iface]) -> Vec<Network> {
     let mut nets = Vec::new();
-    if let Some(n) = ts.as_ref().and_then(from_tailscale) {
+    if let Some(n) = tailscale.and_then(from_tailscale) {
         nets.push(n);
     }
-    if let Some(n) = nb.as_ref().and_then(from_netbird) {
+    if let Some(n) = netbird.and_then(from_netbird) {
         nets.push(n);
     }
-    for n in from_interfaces(&interfaces()) {
+    for n in from_interfaces(ifaces) {
         if !nets.iter().any(|m: &Network| m.ip == n.ip) {
             nets.push(n);
         }
@@ -176,6 +181,29 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // networks.test.ts, trimmed from `tailscale status --json` and `netbird status --json`. The
+    // TS's `https` (CertDomains) and `expose` (`netbird expose`) fields aren't ported: nothing reads them.
+    fn tailscale() -> Value {
+        json!({
+            "BackendState": "Running",
+            "Self": { "DNSName": "laptop.tail1234.ts.net.", "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"] },
+            "CertDomains": ["laptop.tail1234.ts.net"],
+            "CurrentTailnet": { "Name": "me@example.com", "MagicDNSSuffix": "tail1234.ts.net", "MagicDNSEnabled": true },
+        })
+    }
+
+    fn netbird() -> Value {
+        json!({ "fqdn": "laptop.netbird.selfhosted", "netbirdIp": "100.71.4.20/16", "management": { "url": "https://nb.example.com:443", "connected": true } })
+    }
+
+    fn net(kind: NetKind, ip: &str, name: Option<&str>) -> Network {
+        Network { kind, ip: ip.into(), name: name.map(Into::into) }
+    }
+
+    fn v4(name: &str, ip: &str) -> Iface {
+        Iface { name: name.into(), ip: ip.into(), internal: false }
+    }
+
     #[test]
     fn tailscale_and_headscale_by_their_dns_suffix() {
         let ts = json!({ "BackendState": "Running", "Self": { "TailscaleIPs": ["fd7a:115c:a1e0::1", "100.101.102.103"], "DNSName": "laptop.tail1234.ts.net." }, "CurrentTailnet": { "MagicDNSSuffix": "tail1234.ts.net" } });
@@ -186,12 +214,42 @@ mod tests {
     }
 
     #[test]
+    fn tailscale_gives_its_name_and_address() {
+        assert_eq!(from_tailscale(&tailscale()), Some(net(NetKind::Tailscale, "100.101.102.103", Some("laptop.tail1234.ts.net"))));
+        let mut no_certs = tailscale();
+        no_certs["CertDomains"] = Value::Null;
+        assert_eq!(from_tailscale(&no_certs), Some(net(NetKind::Tailscale, "100.101.102.103", Some("laptop.tail1234.ts.net"))));
+    }
+
+    #[test]
+    fn a_name_outside_ts_net_is_a_headscale_server() {
+        let mut hs = tailscale();
+        hs["Self"]["DNSName"] = json!("laptop.hs.example.com.");
+        hs["CertDomains"] = json!([]);
+        hs["CurrentTailnet"] = json!({ "MagicDNSSuffix": "hs.example.com" });
+        assert_eq!(from_tailscale(&hs), Some(net(NetKind::Headscale, "100.101.102.103", Some("laptop.hs.example.com"))));
+    }
+
+    #[test]
+    fn tailscale_logged_out_or_stopped_is_no_network() {
+        for state in ["NeedsLogin", "Stopped"] {
+            let mut s = tailscale();
+            s["BackendState"] = json!(state);
+            assert_eq!(from_tailscale(&s), None, "{state}");
+        }
+    }
+
+    #[test]
     fn netbird_when_connected() {
         assert_eq!(
             from_netbird(&json!({ "netbirdIp": "100.97.1.2/16", "fqdn": "box.netbird.cloud." })),
             Some(Network { kind: NetKind::Netbird, ip: "100.97.1.2".into(), name: Some("box.netbird.cloud".into()) })
         );
         assert_eq!(from_netbird(&json!({ "netbirdIp": "100.97.1.2/16", "management": { "connected": false } })), None);
+        assert_eq!(from_netbird(&netbird()), Some(net(NetKind::Netbird, "100.71.4.20", Some("laptop.netbird.selfhosted"))));
+        let mut no_ip = netbird();
+        no_ip["netbirdIp"] = json!("");
+        assert_eq!(from_netbird(&no_ip), None);
     }
 
     #[test]
@@ -212,5 +270,38 @@ mod tests {
         assert_eq!(kind_of("WireGuard Tunnel"), Some(NetKind::Wireguard));
         assert_eq!(kind_of("feth1"), Some(NetKind::Zerotier));
         assert_eq!(kind_of("wlan0"), None);
+    }
+
+    #[test]
+    fn zerotier_and_wireguard_by_their_interfaces_and_everything_else_left_out() {
+        let found = from_interfaces(&[
+            v4("eth0", "192.168.1.20"),
+            v4("ztabcdef12", "10.147.17.5"),
+            v4("wg0", "10.8.0.2"),
+            v4("docker0", "172.17.0.1"),
+            Iface { name: "lo".into(), ip: "127.0.0.1".into(), internal: true },
+        ]);
+        assert_eq!(found, [net(NetKind::Zerotier, "10.147.17.5", None), net(NetKind::Wireguard, "10.8.0.2", None)]);
+        // an interface's loopback address doesn't count, its next one does
+        let wg = from_interfaces(&[Iface { name: "wg0".into(), ip: "127.0.0.2".into(), internal: true }, v4("wg0", "10.8.0.3")]);
+        assert_eq!(wg, [net(NetKind::Wireguard, "10.8.0.3", None)]);
+    }
+
+    #[test]
+    fn the_programs_win_over_the_interface_list_and_each_address_shows_once() {
+        let ifaces = [v4("tailscale0", "100.101.102.103"), v4("wt0", "100.71.4.20"), v4("wg0", "10.8.0.2")];
+        assert_eq!(
+            networks_from(Some(&tailscale()), Some(&netbird()), &ifaces),
+            [
+                net(NetKind::Tailscale, "100.101.102.103", Some("laptop.tail1234.ts.net")),
+                net(NetKind::Netbird, "100.71.4.20", Some("laptop.netbird.selfhosted")),
+                net(NetKind::Wireguard, "10.8.0.2", None),
+            ]
+        );
+    }
+
+    #[test]
+    fn nothing_installed_nothing_found() {
+        assert_eq!(networks_from(None, None, &[v4("eth0", "192.168.1.20")]), Vec::<Network>::new());
     }
 }

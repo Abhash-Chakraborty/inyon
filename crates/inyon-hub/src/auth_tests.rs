@@ -115,3 +115,21 @@ fn a_tampered_or_signed_out_cookie_is_refused_and_a_bearer_is_judged_alone() {
     assert!(issue_cookie(true).ends_with("; Secure"));
     assert_eq!(clear_cookie(), "inyon_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
 }
+
+fn signed_at(at: u64) -> String {
+    let payload = B64U.encode(serde_json::to_string(&json!({ "exp": now_ms() + 86_400_000, "n": "older", "iat": at, "at": at })).unwrap());
+    format!("{COOKIE}={payload}.{}", sign(&payload))
+}
+
+#[test]
+fn pairing_a_phone_takes_a_sign_in_from_the_last_ten_minutes() {
+    crate::test_util::core();
+    setup();
+    let ten = crate::phones::CODE_TTL;
+    let fresh = test_req("POST", "/api/phones/pair", &[("cookie", &cookie_pair())], "");
+    assert!(is_authed(&fresh) && recent_sign_in(&fresh, ten));
+    let old = test_req("POST", "/api/phones/pair", &[("cookie", &signed_at(now_ms() - 11 * 60_000))], "");
+    assert!(is_authed(&old));
+    assert!(!recent_sign_in(&old, ten));
+    assert!(recent_sign_in(&test_req("POST", "/", &[("cookie", &signed_at(now_ms() - 9 * 60_000))], ""), ten));
+}
