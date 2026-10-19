@@ -20,7 +20,7 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
 | `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines |
-| `INYON_HUB_IMPL` | `bun` | `rust` runs the hub built into `inyon` instead of the Bun engine's, and the Bun engine isn't downloaded (from 0.20, an opt-in test). `bun` goes back. See [Trying the hub in Rust](hub.md#trying-the-hub-in-rust) |
+| `INYON_HUB_IMPL` | `bun` | `rust` runs the hub built into `inyon` instead of the Bun engine's, and the Bun engine isn't downloaded (from 0.20, an opt-in test). `bun` goes back, and so does `INYON_LEGACY_ENGINE=1`. See [Trying the hub in Rust](hub.md#trying-the-hub-in-rust) |
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.
 
@@ -56,7 +56,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | Path | What's there |
 |---|---|
 | `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which the logon task starts |
-| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, and `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` |
+| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, and `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell |
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |
 | `~/.inyon/uploads/` | Files you attached, per day and session |

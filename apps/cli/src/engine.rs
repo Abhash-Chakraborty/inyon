@@ -54,17 +54,31 @@ pub fn remember_legacy(unset_forgets: bool) {
 
 /// The hub in Rust, an opt-in test of what 0.20 makes the default: INYON_HUB_IMPL=rust runs the
 /// hub built into this program instead of the Bun engine's, and `bun` goes back. Set in the
-/// environment or in hub.env; without either, the note `inyon hub start` left when it set the hub
-/// up that way still counts, so the service keeps to the hub it was set up with. Linux and macOS
-/// only, as the hub is.
+/// environment or in hub.env; without either, the note `INYON_HUB_IMPL=rust inyon hub start` left
+/// still counts, so the service keeps to the hub it was set up with. Linux and macOS only, as the
+/// hub is. The kill switch (INYON_LEGACY_ENGINE) puts everything back on the Bun engine, the hub
+/// included.
 pub fn rust_hub() -> bool {
-    cfg!(unix) && hub_impl_asked().unwrap_or_else(|| hub_impl_note().exists())
+    picks_rust_hub(cfg!(unix), legacy(), hub_impl_wanted())
+}
+
+fn picks_rust_hub(unix: bool, legacy: bool, wanted: bool) -> bool {
+    unix && !legacy && wanted
+}
+
+/// Whether INYON_HUB_IMPL (or the note) asks for the Rust hub, the kill switch aside.
+pub fn hub_impl_wanted() -> bool {
+    hub_impl_asked().unwrap_or_else(|| hub_impl_note().exists())
+}
+
+/// INYON_HUB_IMPL in hub.env, when it's there.
+fn hub_impl_in_file() -> Option<bool> {
+    crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env")).remove("INYON_HUB_IMPL").filter(|v| !v.is_empty()).map(|v| says_rust(&v))
 }
 
 /// What INYON_HUB_IMPL says when it's set, here or in hub.env: the Rust hub, or (bun) the Bun one.
 pub fn hub_impl_asked() -> Option<bool> {
-    let from_file = || crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env")).remove("INYON_HUB_IMPL").filter(|v| !v.is_empty());
-    env_var("INYON_HUB_IMPL").or_else(from_file).map(|v| says_rust(&v))
+    env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)).or_else(hub_impl_in_file)
 }
 
 /// `rust` (any case) is the Rust hub; `bun`, and anything else, the Bun one.
@@ -77,20 +91,36 @@ pub fn hub_impl_note() -> PathBuf {
     crate::paths::node_dir().join("hub-impl")
 }
 
-/// Writes or removes the note as INYON_HUB_IMPL says, as `remember_legacy` does for the kill switch.
+#[derive(Debug, PartialEq, Eq)]
+enum NoteChange {
+    Write,
+    Remove,
+    Keep,
+}
+
+/// What setting up the hub does to the note. Only the shell's variable is written down: a line in
+/// hub.env is read by the service itself, so deleting it later works as anyone would expect.
+fn note_change(from_env: Option<bool>, from_file: Option<bool>, unset_forgets: bool) -> NoteChange {
+    match (from_env, from_file) {
+        (Some(true), _) => NoteChange::Write,
+        (Some(false), _) | (None, Some(false)) => NoteChange::Remove,
+        (None, None) if unset_forgets => NoteChange::Remove,
+        _ => NoteChange::Keep,
+    }
+}
+
+/// Writes or removes the note as INYON_HUB_IMPL says, as `remember_legacy` does for the kill
+/// switch. Called when the hub's service is set up.
 pub fn remember_hub_impl(unset_forgets: bool) {
-    match hub_impl_asked() {
-        Some(true) => {
+    match note_change(env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)), hub_impl_in_file(), unset_forgets) {
+        NoteChange::Write => {
             let _ = crate::paths::ensure_node_dir();
             let _ = std::fs::write(hub_impl_note(), "INYON_HUB_IMPL=rust when the hub was set up\n");
         }
-        Some(false) => {
+        NoteChange::Remove => {
             let _ = std::fs::remove_file(hub_impl_note());
         }
-        None if unset_forgets => {
-            let _ = std::fs::remove_file(hub_impl_note());
-        }
-        None => {}
+        NoteChange::Keep => {}
     }
 }
 
@@ -638,6 +668,28 @@ mod tests {
         assert!(may_run_link("pair"));
         assert!(!may_run_link("forget"));
         assert!(!may_run_link("push"));
+    }
+
+    #[test]
+    fn only_the_shells_variable_is_written_down_and_bun_anywhere_forgets_it() {
+        use NoteChange::*;
+        assert_eq!(note_change(Some(true), None, false), Write);
+        assert_eq!(note_change(Some(true), Some(false), true), Write);
+        // a hub.env line stays where the service reads it: deleting it later switches back
+        assert_eq!(note_change(None, Some(true), false), Keep);
+        assert_eq!(note_change(None, Some(true), true), Keep);
+        assert_eq!(note_change(None, Some(false), false), Remove);
+        assert_eq!(note_change(Some(false), Some(true), false), Remove);
+        assert_eq!(note_change(None, None, true), Remove);
+        assert_eq!(note_change(None, None, false), Keep);
+    }
+
+    #[test]
+    fn the_kill_switch_puts_the_hub_back_on_bun_too() {
+        assert!(picks_rust_hub(true, false, true));
+        assert!(!picks_rust_hub(true, true, true));
+        assert!(!picks_rust_hub(false, false, true));
+        assert!(!picks_rust_hub(true, false, false));
     }
 
     #[test]

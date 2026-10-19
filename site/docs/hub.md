@@ -124,6 +124,6 @@ inyon hub restart
 inyon doctor                 # hub engine   the Rust hub, built in (INYON_HUB_IMPL=rust)
 ```
 
-With it on, `inyon` doesn't download the Bun engine (`inyon-engine`), and `inyon hub code` and `inyon hub reset-password` work as before. `INYON_HUB_IMPL=rust inyon hub start` turns it on too, and the service keeps it after that.
+With it on, `inyon` doesn't download the Bun engine (`inyon-engine`), and `inyon hub code` and `inyon hub reset-password` work as before. `INYON_HUB_IMPL=rust inyon hub start` turns it on too, and the service keeps it after that, even when you set up the link or a node later.
 
-To go back, change the line to `INYON_HUB_IMPL=bun` and run `inyon hub restart`. Deleting the line isn't enough when `inyon hub start` set the hub up with the Rust one, because the service remembers it; `bun` undoes that. A hub run from source with `bun hub` isn't affected.
+To go back, delete the line from `hub.env` and run `inyon hub restart`, which fetches the Bun engine first if it isn't there. If you turned it on from the shell with `inyon hub start`, the service remembers that, so deleting the line isn't enough: put `INYON_HUB_IMPL=bun` in `hub.env` instead, or run `inyon service install hub` without the variable set. `INYON_LEGACY_ENGINE=1` also puts the hub back on Bun, whatever `INYON_HUB_IMPL` says, and `inyon doctor` tells you so. A hub run from source with `bun hub` isn't affected.

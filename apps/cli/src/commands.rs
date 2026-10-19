@@ -352,12 +352,20 @@ pub fn service_install(sys: &Sys, role: Option<&str>) -> Outcome {
     let role = role_arg(sys, role, true)?;
     // run without INYON_LEGACY_ENGINE, this is how the machine goes back to the built-in engine
     engine::remember_legacy(true);
-    engine::remember_hub_impl(true);
+    if hub_impl_follows(role) {
+        engine::remember_hub_impl(true);
+    }
     let r = service::install_service(sys, role, true);
     if !r.ok {
         return Err(format!("Couldn't install the service: {}", r.how));
     }
     Ok(json!({ "role": role.name(), "service": installed(&r), "message": format!("inyon {role} runs as {}.", r.how) }))
+}
+
+/// Which service's setup decides the hub's INYON_HUB_IMPL note: the hub's only, so putting the
+/// link back in place never undoes how the hub was set up.
+fn hub_impl_follows(role: Role) -> bool {
+    role == Role::Hub
 }
 
 pub fn service_uninstall(sys: &Sys, role: Option<&str>) -> Outcome {
@@ -448,7 +456,7 @@ pub fn hub_start(sys: &Sys) -> Outcome {
         return Err("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.".into());
     }
     // the Rust hub is built in; only the Bun one is downloaded
-    if !engine::rust_hub() {
+    if engine::needs_bun("hub") {
         engine::ensure(&|l| eprintln!("{l}"))?;
     }
     let env = hub_env();
@@ -499,6 +507,11 @@ pub fn hub_stop(sys: &Sys) -> Outcome {
 }
 
 pub fn hub_restart(sys: &Sys) -> Outcome {
+    // back on the Bun hub (INYON_HUB_IMPL=bun), its engine may have been tidied away meanwhile:
+    // fetch it here, where a failure shows, not inside the service
+    if sys.platform != Platform::Windows && engine::needs_bun("hub") {
+        engine::ensure(&|l| eprintln!("{l}"))?;
+    }
     let r = service::restart_service(sys, Role::Hub, &[paths::installed_binary().to_string_lossy().into_owned()]);
     if !r.ok {
         return Err(format!("Couldn't restart the hub: {}.", r.how));
@@ -567,6 +580,9 @@ pub fn doctor(sys: &Sys) -> Outcome {
         match &bun {
             Some(p) => checks.push((true, "engine".into(), format!("{}, the Bun engine (INYON_LEGACY_ENGINE is set)", bun_line(p)))),
             None => checks.push((false, "engine".into(), "INYON_LEGACY_ENGINE is set but the Bun engine isn't here; run `inyon service install`".into())),
+        }
+        if engine::hub_impl_wanted() {
+            checks.push((false, "hub engine".into(), "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
         }
     } else {
         checks.push((true, "engine".into(), format!("built in ({VERSION})")));
@@ -1236,6 +1252,13 @@ pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_setting_up_the_hub_touches_its_inyon_hub_impl_note() {
+        assert!(hub_impl_follows(Role::Hub));
+        assert!(!hub_impl_follows(Role::Link));
+        assert!(!hub_impl_follows(Role::Node));
+    }
 
     #[cfg(unix)]
     #[test]

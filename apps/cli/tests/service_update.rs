@@ -350,3 +350,52 @@ fn the_kill_switch_set_at_service_install_holds_for_what_starts_without_it() {
     assert!(!home.read(unit).contains("LEGACY"));
     assert!(inyon_cli::engine::stale_engine().is_some());
 }
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn the_rust_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line_can_simply_go() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    let note = home.dir.join(".inyon/node/hub-impl");
+    // INYON_HUB_IMPL=rust inyon service install hub: the shell's variable is written down
+    std::env::set_var("INYON_HUB_IMPL", "rust");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    std::env::remove_var("INYON_HUB_IMPL");
+    assert!(note.exists());
+    // putting the link's service back in place later doesn't undo it
+    assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
+    assert!(note.exists() && inyon_cli::engine::rust_hub());
+    // bun in hub.env goes back, and forgets the note
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!note.exists() && !inyon_cli::engine::rust_hub());
+    // turned on in hub.env, as the docs say: the service reads the line, nothing is written down,
+    // so deleting the line switches back
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(inyon_cli::engine::rust_hub() && !note.exists());
+    home.put(".inyon/hub.env", "PORT=4777\n");
+    assert!(!inyon_cli::engine::rust_hub());
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn going_back_to_the_bun_hub_fetches_its_engine_before_restarting_not_inside_the_service() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    home.unit("inyon-hub", &format!("\"{BIN}\" \"hub\""));
+    // the engine was tidied away while the Rust hub ran; the download can't be reached
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
+    std::env::set_var("INYON_DOWNLOAD", "http://127.0.0.1:9/nothing");
+    let r = inyon_cli::commands::hub_restart(&sys);
+    std::env::remove_var("INYON_DOWNLOAD");
+    assert!(r.is_err(), "{r:?}");
+    assert!(home.calls().is_empty(), "nothing restarted: {:?}", home.calls());
+    // on the Rust hub, nothing to fetch
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
+    assert!(inyon_cli::commands::hub_restart(&sys).is_ok());
+}
