@@ -364,6 +364,32 @@ impl ChatWatcher {
         spawn(async move { w.poll_screen().await });
     }
 
+    /// The transcript tail ends as a dropped connection would end it (tests).
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn kill_tail(&self) {
+        let t = self.st.borrow().tail.clone();
+        if let Some(t) = t {
+            t.kill();
+        }
+    }
+
+    /// Its tail ended by itself and waits to be followed again (tests).
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn tail_lost(&self) -> bool {
+        self.st.borrow().tail_lost
+    }
+
+    /// Moves where it thinks it stopped reading, as a file replaced under it would (tests).
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn shift_reader(&self, by: i64) {
+        if let Some(r) = self.st.borrow_mut().reader.as_mut() {
+            r.offset = (r.offset as i64 + by).max(0) as u64;
+        }
+    }
+
     pub fn items(&self) -> Vec<ChatItem> {
         self.st.borrow().items.clone()
     }
@@ -2597,6 +2623,13 @@ impl WatchersRef {
         for w in self.all() {
             w.save();
         }
+    }
+
+    /// Forgets the chats closed a moment ago, as a restart would (tests).
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn clear_parked(&self) {
+        self.with(|w| w.parked.borrow_mut().clear());
     }
 
     pub fn peek(&self, host_id: &str, pane_id: &str) -> Option<Rc<ChatWatcher>> {

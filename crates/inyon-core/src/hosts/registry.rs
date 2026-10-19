@@ -184,8 +184,9 @@ pub type Rt = Rc<RefCell<HostRuntime>>;
 
 impl HostRuntime {
     /// A test's machine that no poll reads again (the TS tests stub `registry.refresh`).
-    #[cfg(test)]
-    pub(crate) fn hold_polls(&mut self) {
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn hold_polls(&mut self) {
         self.stopped = true;
     }
 
@@ -1674,8 +1675,10 @@ impl Registry {
     }
 
     /// For tests and the platform: a machine's runtime as it is, without polling it.
-    #[cfg(test)]
-    pub(crate) fn insert_runtime(&self, id: &str, rt: Rt) {
+    #[cfg(any(test, feature = "testing"))]
+    #[doc(hidden)]
+    /// A test's machine, put in as it is (the TS tests spy on `registry.findPane`).
+    pub fn insert_runtime(&self, id: &str, rt: Rt) {
         self.hosts.borrow_mut().insert(id.to_owned(), rt);
     }
 }

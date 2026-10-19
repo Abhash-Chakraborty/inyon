@@ -19,6 +19,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "unbounded_depth"] }
 sha2 = "0.11"
 
+[features]
+# hooks the hub's tests in other crates use to set a pane up or drop a connection; never in a release
+testing = []
+
 [dev-dependencies]
 # the tests' executor, with paused time as the fake clock
 tokio = { version = "1.47", features = ["rt", "time", "macros", "test-util"] }

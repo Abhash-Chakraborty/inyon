@@ -464,6 +464,8 @@ fn what_closing_a_pane_takes_with_it() {
 }
 
 // ---------- hosts/win-prelude.test.ts: psmux ----------
+// The first four check apps/node/win-prelude.sh on its own, with no hub code, and the sign-in one
+// is features/signin.ts; they stay with the TS.
 
 const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
 
@@ -482,4 +484,25 @@ fn an_agent_that_exits_on_windows_leaves_powershell_behind_and_remain_on_exit_is
         bin.read("argv"),
         "[set-option][-w][-t][$14:.%1][remain-on-exit][on]\n[respawn-pane][-k][-t][$14:.%1][powershell.exe]\n[set-option][-w][-t][$14:.%1][-u][remain-on-exit]\n"
     );
+}
+
+#[test]
+fn a_paste_loads_its_buffer_into_the_panes_own_psmux_server_since_each_session_has_its_own() {
+    let bin = TempDir::new("psmux-");
+    let log = bin.path("argv");
+    bin.write("tmux", &format!("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{}\"; done; echo >> \"{}\"\n", log.display(), log.display()));
+    std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let cmd = crate::tmux::tmux::paste_command("b1", "%14.1");
+    let path = format!("{}:/usr/bin:/bin", bin.s());
+    let tmp = Regex::new(r"\[[^\]]*tmp[^\]]*\]").unwrap();
+    let go = |env: &[(&str, &str)]| {
+        bin.write("argv", "");
+        let mut all = vec![("PATH", path.as_str())];
+        all.extend_from_slice(env);
+        sh(&format!("{PRELUDE}\n{cmd}"), Some(b"x\ny"), &all);
+        tmp.replace(&bin.read("argv"), "[file]").into_owned()
+    };
+    assert_eq!(go(&[("OS", "Windows_NT")]), "[-t][$14:.%1][load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
+    // tmux has one server, and no -t before the command
+    assert_eq!(go(&[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
 }
