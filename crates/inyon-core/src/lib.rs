@@ -32,6 +32,7 @@ pub mod hosts;
 pub mod ids;
 pub mod platform;
 pub mod sha;
+pub mod terminal;
 pub mod tmux;
 
 #[cfg(test)]
