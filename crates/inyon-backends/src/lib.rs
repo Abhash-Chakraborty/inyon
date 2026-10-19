@@ -29,4 +29,4 @@ pub mod process;
 pub mod pty;
 pub mod runtime;
 
-pub use runtime::{core_thread, CoreHandle};
+pub use runtime::{core_here, core_thread, CoreHandle};

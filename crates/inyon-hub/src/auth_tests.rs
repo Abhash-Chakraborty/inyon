@@ -1,0 +1,117 @@
+//! auth.test.ts
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use super::*;
+use crate::server::test_req;
+
+fn block<F: std::future::Future>(f: F) -> F::Output {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    tokio::task::LocalSet::new().block_on(&rt, async {
+        inyon_core::platform::rt::install(Rc::new(inyon_backends::runtime::TokioRuntime));
+        f.await
+    })
+}
+
+fn setup() {
+    crate::password::init();
+    crate::password::set_password("correct horse battery").unwrap();
+}
+
+async fn errors(ip: &str, n: usize) -> Vec<Option<&'static str>> {
+    futures_util::future::join_all((0..n).map(|_| try_login(ip, "wrong guess"))).await.into_iter().map(|r| r.err()).collect()
+}
+
+#[test]
+fn guesses_sent_all_at_once_are_each_counted_and_spread_ones_hit_a_shared_cap() {
+    crate::test_util::core();
+    setup();
+    block(async {
+        let out = errors("203.0.113.1", 20).await;
+        assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 8);
+        assert_eq!(out.iter().filter(|e| e.is_some_and(|e| e.starts_with("Too many"))).count(), 12);
+        // the right password doesn't get through either until the minute is up
+        assert!(try_login("203.0.113.1", "correct horse battery").await.is_err());
+
+        // 8 failures so far; 22 more are allowed across all addresses this minute
+        let all = futures_util::future::join_all((0..10).map(|i| async move { errors(&format!("198.51.100.{i}"), 4).await })).await;
+        let out: Vec<_> = all.into_iter().flatten().collect();
+        assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 22);
+        assert!(try_login("192.0.2.7", "correct horse battery").await.is_err());
+    });
+}
+
+#[test]
+fn the_right_password_signs_in() {
+    crate::test_util::core();
+    setup();
+    assert!(block(try_login("192.0.2.9", "correct horse battery")).is_ok());
+}
+
+#[test]
+fn only_the_hop_the_local_proxy_added_counts_as_the_client() {
+    crate::test_util::core();
+    assert_eq!(client_address("127.0.0.1", Some("1.2.3.4, 100.64.0.9")), "100.64.0.9");
+    assert_eq!(client_address("::1", Some(" 100.64.0.9 ")), "100.64.0.9");
+    assert_eq!(client_address("127.0.0.1", None), "127.0.0.1");
+    // a client that isn't the proxy can't pick its own address
+    assert_eq!(client_address("100.64.0.5", Some("127.0.0.1")), "100.64.0.5");
+}
+
+fn cookie_pair() -> String {
+    issue_cookie(false).split(';').next().unwrap().to_owned()
+}
+
+#[test]
+fn signing_out_closes_the_connections_that_session_already_had_open_and_only_those() {
+    crate::test_util::core();
+    setup();
+    let (ca, cb) = (cookie_pair(), cookie_pair());
+    let a = test_req("GET", "/ws", &[("cookie", &ca)], "");
+    let b = test_req("GET", "/ws", &[("cookie", &cb)], "");
+    let closed = Rc::new(RefCell::new(Vec::<String>::new()));
+    let socket = |name: &'static str| -> Closer {
+        let c = closed.clone();
+        Rc::new(move |code, _| c.borrow_mut().push(format!("{name} {code}")))
+    };
+    let _ = hold_socket(&a, socket("phone"));
+    let _ = hold_socket(&a, socket("laptop"));
+    let release = hold_socket(&b, socket("other"));
+    let _ = hold_socket(&b, socket("another"));
+    revoke_session(&a);
+    assert_eq!(*closed.borrow(), ["phone 4401", "laptop 4401"]);
+    assert!(!is_authed(&a) && is_authed(&b));
+    // a connection that already closed isn't closed again; a new password ends all the rest
+    release();
+    close_sockets(None);
+    assert_eq!(*closed.borrow(), ["phone 4401", "laptop 4401", "another 4401"]);
+}
+
+#[test]
+fn a_cookie_from_before_the_rename_still_signs_you_in_and_comes_back_under_the_new_name() {
+    crate::test_util::core();
+    setup();
+    let value = cookie_pair().split_once('=').unwrap().1.to_owned();
+    let old = test_req("GET", "/api/session", &[("cookie", &format!("tether_session={value}"))], "");
+    assert!(is_authed(&old));
+    assert!(refresh_cookie(&old, false).unwrap().starts_with("inyon_session="));
+    // the new one, fresh, isn't sent again
+    let new = test_req("GET", "/api/session", &[("cookie", &format!("inyon_session={value}"))], "");
+    assert!(refresh_cookie(&new, false).is_none());
+}
+
+#[test]
+fn a_tampered_or_signed_out_cookie_is_refused_and_a_bearer_is_judged_alone() {
+    crate::test_util::core();
+    setup();
+    let c = cookie_pair();
+    let ok = test_req("GET", "/", &[("cookie", &c)], "");
+    assert!(is_authed(&ok));
+    let tampered = format!("{}x", c);
+    assert!(!is_authed(&test_req("GET", "/", &[("cookie", &tampered)], "")));
+    // a cookie sent along with a bad bearer doesn't sign it in
+    assert!(!is_authed(&test_req("GET", "/", &[("cookie", &c), ("authorization", "Bearer nope")], "")));
+    assert!(issue_cookie(true).ends_with("; Secure"));
+    assert_eq!(clear_cookie(), "inyon_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+}

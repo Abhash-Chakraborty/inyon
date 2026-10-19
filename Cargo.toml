@@ -3,7 +3,7 @@
 [workspace]
 resolver = "2"
 # each crate is listed by hand, so a half-made folder under crates/ never breaks the build
-members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends"]
+members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends", "crates/inyon-hub"]
 
 [workspace.package]
 # the release number, the same as package.json; every crate takes it from here
@@ -17,7 +17,10 @@ publish = false
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Unwinding, so a panic in one hub request or job ends that task alone (tokio catches it) instead
+# of the whole hub, as a throw in one Bun handler did. It costs some size; the Windows builds, which
+# have no hub, set CARGO_PROFILE_RELEASE_PANIC=abort in CI and don't pay it.
+panic = "unwind"
 opt-level = "z"
 
 # Crypto the link's tests push megabytes through, and scrypt for short pairing codes, take seconds

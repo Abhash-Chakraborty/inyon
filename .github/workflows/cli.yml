@@ -105,7 +105,20 @@ jobs:
       - name: Test
         if: ${{ !matrix.cross }}
         run: cargo test --target ${{ matrix.target }} -p inyon-cli -p inyon-engine
+      # the hub in Rust (INYON_HUB_IMPL=rust) carries the web app, embedded from apps/web/dist
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
+        with:
+          bun-version: 1.4.2
+      - name: Build the web app
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
+        working-directory: .
+        run: bun install --frozen-lockfile && bun run --cwd apps/web build
       - run: cargo build --release --target ${{ matrix.target }}
+        env:
+          INYON_BUILD_COMMIT: ${{ github.sha }}
+          # Windows has no hub, so no request to survive a panic in: abort is smaller
+          CARGO_PROFILE_RELEASE_PANIC: ${{ startsWith(matrix.runner, 'windows') && 'abort' || 'unwind' }}
       - name: Name the binary
         shell: bash
         run: |
