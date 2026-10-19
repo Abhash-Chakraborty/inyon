@@ -393,18 +393,18 @@ pub enum NoticeLevel {
 #[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase")]
 #[ts(optional_fields)]
 pub enum ChatItem {
-    User { seq: u64, uuid: String, ts: String, text: String, images: u32, queued: Option<bool>, shell: Option<bool> },
-    Assistant { seq: u64, uuid: String, ts: String, msg_id: String, model: Option<String>, block: AssistantBlock },
-    ToolResult { seq: u64, uuid: String, ts: String, tool_use_id: String, is_error: bool, text: String, truncated: Option<bool>, meta: Option<ToolResultMeta> },
-    Command { seq: u64, uuid: String, ts: String, name: String, args: String, output: Option<String> },
-    Notice { seq: u64, uuid: String, ts: String, level: NoticeLevel, subtype: String, text: String },
-    TurnEnd { seq: u64, uuid: String, ts: String, duration_ms: Num },
-    Goal { seq: u64, uuid: String, ts: String, condition: String, met: bool, reason: Option<String>, cleared: Option<bool> },
+    User { seq: i64, uuid: String, ts: String, text: String, images: u32, queued: Option<bool>, shell: Option<bool> },
+    Assistant { seq: i64, uuid: String, ts: String, msg_id: String, model: Option<String>, block: AssistantBlock },
+    ToolResult { seq: i64, uuid: String, ts: String, tool_use_id: String, is_error: bool, text: String, truncated: Option<bool>, meta: Option<ToolResultMeta> },
+    Command { seq: i64, uuid: String, ts: String, name: String, args: String, output: Option<String> },
+    Notice { seq: i64, uuid: String, ts: String, level: NoticeLevel, subtype: String, text: String },
+    TurnEnd { seq: i64, uuid: String, ts: String, duration_ms: Num },
+    Goal { seq: i64, uuid: String, ts: String, condition: String, met: bool, reason: Option<String>, cleared: Option<bool> },
 }
 
 impl ChatItem {
     /// The item's place in the conversation, shared by every kind.
-    pub fn seq(&self) -> u64 {
+    pub fn seq(&self) -> i64 {
         match self {
             ChatItem::User { seq, .. }
             | ChatItem::Assistant { seq, .. }
@@ -858,7 +858,7 @@ pub enum ClientMsg {
     #[serde(rename = "unsub.chat")]
     UnsubChat { host: String, pane: String },
     #[serde(rename = "chat.more")]
-    ChatMore { host: String, pane: String, before: u64 },
+    ChatMore { host: String, pane: String, before: i64 },
     #[serde(rename = "draft")]
     Draft { host: String, pane: String, text: String },
     #[serde(rename = "term.open")]

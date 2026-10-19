@@ -26,7 +26,7 @@ fn store_key(key: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatAt {
     pub offset: u64,
-    pub seq: u64,
+    pub seq: i64,
     pub codex: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<AgentKind>,

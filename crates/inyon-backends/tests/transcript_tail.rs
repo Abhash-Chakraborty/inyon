@@ -241,8 +241,8 @@ fn nums(items: &Value) -> Vec<u64> {
     user_items(items).iter().filter_map(|i| num(i["text"].as_str().unwrap())).collect()
 }
 
-fn first_seq(w: &ChatWatcher) -> u64 {
-    items(w)[0]["seq"].as_u64().unwrap()
+fn first_seq(w: &ChatWatcher) -> i64 {
+    items(w)[0]["seq"].as_i64().unwrap()
 }
 
 /// Scrolls up until the start of the conversation.
@@ -448,7 +448,7 @@ fn a_long_conversation_opens_on_its_last_stretch_and_reads_earlier_messages_as_y
         scroll_to_start(&w, &got, &sub).await;
         let all = items(&w);
         assert_eq!(nums(&all), (0..2000).collect::<Vec<_>>());
-        let seqs: Vec<u64> = all.as_array().unwrap().iter().map(|i| i["seq"].as_u64().unwrap()).collect();
+        let seqs: Vec<i64> = all.as_array().unwrap().iter().map(|i| i["seq"].as_i64().unwrap()).collect();
         assert!(seqs.windows(2).all(|p| p[1] > p[0]));
         let shot = user_items(&all).into_iter().find(|i| num(i["text"].as_str().unwrap()) == Some(1000)).unwrap();
         assert_eq!(shot["images"], 1);
@@ -536,7 +536,7 @@ fn a_long_codex_thread_opens_on_its_last_stretch_too_with_its_summary_and_pages_
         scroll_to_start(&w, &got, &sub).await;
         let all = items(&w);
         assert_eq!(nums(&all), (0..600).collect::<Vec<_>>());
-        let seqs: Vec<u64> = all.as_array().unwrap().iter().map(|i| i["seq"].as_u64().unwrap()).collect();
+        let seqs: Vec<i64> = all.as_array().unwrap().iter().map(|i| i["seq"].as_i64().unwrap()).collect();
         assert!(seqs.windows(2).all(|p| p[1] > p[0]));
         watchers().stop(&w.key);
     });
@@ -651,5 +651,45 @@ fn a_reopened_chat_never_flashes_a_goal_that_was_met_while_it_was_closed() {
         until!(400, got.any("chat.reset"));
         assert!(!got.goals().iter().any(|g| g.is_object() && g["met"] != true));
         watchers().stop("tail-test:%5");
+    });
+}
+
+#[test]
+fn scrolling_back_past_where_numbering_started_keeps_every_message_in_order() {
+    let own = Own::new("negative");
+    run_core(|| async {
+        let l = Lines::default();
+        let file = own.file("neg.jsonl");
+        let lines: Vec<String> = (0..30).map(|i| l.user(&format!("msg {i}"), false)).collect();
+        std::fs::write(&file, lines.concat()).unwrap();
+        setup(&own, agent_pane("%8", "claude", &file, "s8"));
+        let (got, sub) = phone();
+        let w = watchers().get("tail-test", "%8");
+        w.subscribe(sub.clone());
+        until!(400, got.any("chat.reset") && load_chat(&w.key).and_then(|c| c.at).is_some_and(|at| at.offset == size(&file)));
+        watchers().stop(&w.key);
+        watchers().clear_parked();
+
+        // a saved copy whose numbering starts lower than the messages before it (the file was
+        // rewritten, or a newer reader makes more items of the same lines): the last three, from 1
+        let mut saved = load_chat(&w.key).unwrap();
+        let keep: Vec<_> = saved.items.split_off(saved.items.len() - 3);
+        saved.items = keep.into_iter().enumerate().map(|(i, it)| inyon_core::claude::transcript::with_seq(it, i as i64 + 1)).collect();
+        let at = saved.at.as_mut().unwrap();
+        at.older = Some(lines[..27].concat().len() as u64);
+        at.seq = 4;
+        save_chat(&w.key, saved);
+
+        got.clear();
+        let again = watchers().get("tail-test", "%8");
+        again.subscribe(sub.clone());
+        assert_eq!(got.first("chat.reset")["hasMore"], true);
+        scroll_to_start(&again, &got, &sub).await;
+        let all = items(&again);
+        assert_eq!(nums(&all), (0..30).collect::<Vec<_>>());
+        let seqs: Vec<i64> = all.as_array().unwrap().iter().map(|i| i["seq"].as_i64().unwrap()).collect();
+        assert!(seqs.windows(2).all(|p| p[1] > p[0]), "{seqs:?}");
+        assert_eq!(seqs[0], -26);
+        watchers().stop(&again.key);
     });
 }

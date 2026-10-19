@@ -69,7 +69,7 @@ const FIRST_LINE_MS: u64 = 8000;
 /// quickly; a page is filled in from before it once it's on screen.
 const TAIL_BYTES: u64 = 256_000;
 const OLDER_BYTES: u64 = 1_000_000;
-const TAIL_SEQ: u64 = 1_000_000_000;
+const TAIL_SEQ: i64 = 1_000_000_000;
 const QUIET_MS: u64 = 5000;
 
 thread_local! {
@@ -99,7 +99,7 @@ pub struct Parked {
     transcript: String,
     proc: Option<String>,
     reader: TranscriptReader,
-    seq: u64,
+    seq: i64,
     codex: bool,
     agent: Option<AgentKind>,
     items: Vec<ChatItem>,
@@ -182,11 +182,11 @@ struct State {
     proc: Option<String>,
     /// how far into the transcript file it has read, so a dropped tail can carry on from there
     reader: Option<TranscriptReader>,
-    seq: u64,
+    seq: i64,
     /// file offset of the line the first held message came from; 0 when nothing is before it
     older_from: Option<u64>,
     /// each held message's line in the file, so trimming from the front knows where it cut
-    line_at: HashMap<u64, u64>,
+    line_at: HashMap<i64, u64>,
     /// opened on the last stretch and no line read yet: the first one read is where older ones end
     tail_start: bool,
     /// Lines read since a long conversation opened, while the summary of the part before them is
@@ -905,7 +905,7 @@ impl ChatWatcher {
         self.cache_later();
     }
 
-    pub async fn more(&self, s: &Sub, before: u64) {
+    pub async fn more(&self, s: &Sub, before: i64) {
         let find = |st: &State| st.items.iter().position(|i| i.seq() >= before);
         let idx = find(&self.st.borrow());
         let idx = if idx == Some(0) && self.older_in_file() {
@@ -1082,7 +1082,8 @@ impl ChatWatcher {
         if st.stopped || st.transcript.as_deref() != Some(path.as_str()) || st.items.first().map_or(TAIL_SEQ, ChatItem::seq) != first {
             return;
         }
-        let start = first.saturating_sub(older.len() as u64);
+        // below 0 when scrolling back past where numbering started, as the TS goes negative
+        let start = first - older.len() as i64;
         let mut items = Vec::with_capacity(older.len());
         for (seq, (item, at)) in (start..).zip(older) {
             st.line_at.insert(seq, at);
@@ -1117,7 +1118,7 @@ impl ChatWatcher {
         struct Acc {
             meta: TranscriptMeta,
             older: Vec<ChatItem>,
-            seq: u64,
+            seq: i64,
         }
         let acc = Rc::new(RefCell::new(Acc { meta: new_meta(), older: vec![], seq: 0 }));
         let add = {
