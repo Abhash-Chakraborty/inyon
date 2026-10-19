@@ -226,6 +226,21 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
+/// Where keys for a terminal go. On Unix not portable-pty's own writer: when that one is dropped it
+/// types a newline and Ctrl-D, which a tmux client still on its way out passes to the pane as Enter.
+fn terminal_input(master: &dyn portable_pty::MasterPty) -> std::io::Result<Box<dyn Write + Send>> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::BorrowedFd;
+        let fd = master.as_raw_fd().ok_or_else(|| std::io::Error::other("no terminal"))?;
+        // SAFETY: the master is open for this whole call, and the copy is a descriptor of its own
+        let own = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
+        Ok(Box::new(std::fs::File::from(own)))
+    }
+    #[cfg(not(unix))]
+    master.take_writer().map_err(std::io::Error::other)
+}
+
 /// An exit code as Bun reported it: 128 plus the signal for a process a signal ended.
 fn exit_code(s: &std::process::ExitStatus) -> i32 {
     if let Some(c) = s.code() {
@@ -570,7 +585,7 @@ impl Ops {
             Err(e) => return (self.send)(json!({ "id": id, "type": "error", "error": e.to_string() })),
         };
         drop(pair.slave);
-        let (reader, writer) = match (pair.master.try_clone_reader(), pair.master.take_writer()) {
+        let (reader, writer) = match (pair.master.try_clone_reader(), terminal_input(&*pair.master)) {
             (Ok(r), Ok(w)) => (r, w),
             _ => return (self.send)(json!({ "id": id, "type": "error", "error": "couldn't open the terminal" })),
         };
@@ -911,6 +926,33 @@ mod tests {
         let out = String::from_utf8_lossy(&out);
         assert!(out.contains("30 100"), "{out}");
         assert!(out.contains("got hello"), "{out}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn closing_a_terminal_types_nothing_into_it() {
+        // a program that outlives the kill for a moment, like a tmux client on its way out: what
+        // reaches it then reaches the pane it shows, and a newline there is Enter
+        let dir = std::env::temp_dir().join(format!("inyon-pty-close-{}-{}", std::process::id(), crate::now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (got, pid) = (dir.join("got"), dir.join("pid"));
+        let (o, f) = ops();
+        o.message(json!({ "op": "pty", "id": "p", "cmd": format!("trap '' TERM HUP; stty raw -echo; echo $$ > '{}'; exec cat > '{}'", pid.display(), got.display()) }));
+        let started = std::time::Instant::now();
+        while !std::fs::read_to_string(&pid).is_ok_and(|s| s.ends_with('\n')) {
+            assert!(started.elapsed() < Duration::from_secs(5), "the terminal never started");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        o.message(json!({ "op": "kill", "id": "p" }));
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let typed = std::fs::read(&got).unwrap_or_default();
+        let cat: i32 = std::fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+        // SAFETY: the cat this test started, which ignores the polite signals
+        unsafe { libc::kill(cat, libc::SIGKILL) };
+        let _ = f.next("p", "exit").await;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(typed.is_empty(), "closing the terminal typed {typed:?}");
     }
 
     #[cfg(unix)]
