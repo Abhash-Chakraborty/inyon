@@ -2,11 +2,12 @@
 // Copies the Blueprint site template into <dir>, sets the product name and writes .inyon-page.json, the
 // marker Inyon reads. Then replace the sample "Pantry" content: kit/data.js, mockups/screens.js, the
 // screens, matrix-data.js, progress.json, index.html.
-// In a git repo, <dir> defaults to <repo>/private/plans/<slug>, the usual home for a plan.
+// In a git repo, <dir> defaults to <repo>/private/plans/<slug>, the usual home for a plan. In a linked
+// worktree that is the repo's main checkout, so the plan isn't deleted with the worktree.
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { BAD_SLUG, isSlug, slugify, writeMarker } from './pages.mjs';
+import { BAD_SLUG, isSlug, mainTree, slugify, writeMarker } from './pages.mjs';
 
 const a = process.argv.slice(2);
 const opt = (k) => { const i = a.indexOf(k); return i < 0 ? null : a.splice(i, 2)[1]; };
@@ -20,7 +21,9 @@ const git = (...args) => { try { return execFileSync('git', args, { encoding: 'u
 // the repo the new folder will be in: ask git from its nearest folder that exists already
 let probe = dirArg ? resolve(dirArg) : process.cwd();
 while (!existsSync(probe) && probe !== dirname(probe)) probe = dirname(probe);
-const repo = git('-C', probe, 'rev-parse', '--show-toplevel');
+const top = git('-C', probe, 'rev-parse', '--show-toplevel');
+// a linked worktree's plans go to the main checkout
+const repo = top ? (mainTree(probe) ?? top) : null;
 const slug = slugOpt || slugify(name || (dirArg ? basename(resolve(dirArg)) : ''));
 if (!dirArg && (!repo || !name)) { console.error(`${usage}\nOutside a git repo, name the folder; inside one, --name is enough.`); process.exit(2); }
 const out = dirArg ? resolve(dirArg) : join(repo, 'private', 'plans', slug);
@@ -37,6 +40,7 @@ const notes = [];
 if (repo) {
   const plans = join(repo, 'private', 'plans');
   if (relative(plans, out).startsWith('..')) notes.push(`Plans usually live in ${join(plans, slug)}, next to the code they describe.`);
+  if (repo !== top && !relative(top, out).startsWith('..')) notes.push(`${out} is inside the git worktree ${top}: removing the worktree deletes the plan with it.`);
   if (git('-C', repo, 'check-ignore', '-q', out) === null) notes.push(`git would commit ${relative(repo, out)}. Plans often describe unreleased work: add ${relative(repo, out).split('/')[0]}/ to ${resolve(repo, git('-C', repo, 'rev-parse', '--git-path', 'info/exclude') || '.git/info/exclude')} unless the repo should have it.`);
 }
 const here = (f) => new URL(f, import.meta.url).pathname;

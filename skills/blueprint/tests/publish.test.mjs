@@ -5,7 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BAD_SLUG, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, isSlug, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
+import { BAD_SLUG, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
 
 const scripts = new URL('../scripts/', import.meta.url).pathname;
 const tmp = mkdtempSync(join(tmpdir(), 'bp-publish-'));
@@ -28,6 +28,8 @@ const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding:
 beforeEach(() => {
   home = join(tmp, `home${++n}`);
   mkdirSync(join(home, '.inyon'), { recursive: true });
+  // a hub runs on this made-up machine unless a test says otherwise
+  writeFileSync(join(home, '.inyon/hub.env'), '');
 });
 
 describe('publish.mjs', () => {
@@ -55,6 +57,20 @@ describe('publish.mjs', () => {
     expect(Number.isSafeInteger(m.created)).toBe(true);
     expect(statSync(join(home, '.inyon/pages.json')).mode & 0o777).toBe(0o600);
     expect(existsSync(join(home, '.inyon/pages.json.lock'))).toBe(false);
+  });
+
+  test('a site in a linked worktree belongs to the main checkout, not the worktree', () => {
+    const repo = join(home, 'main');
+    mkdirSync(repo);
+    git(repo, 'init', '-q');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+    const wt = join(repo, '.claude/worktrees/feature');
+    expect(git(repo, 'worktree', 'add', '-q', wt).status).toBe(0);
+    const dir = site('main/.claude/worktrees/feature/private/plans/plan');
+    const r = pub([dir, '--name', 'Plan']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(' > main\n');
+    expect(list().pages[0]).toMatchObject({ path: dir, project: repo });
   });
 
   test('outside a git repo, the project is the folder itself', () => {
@@ -151,6 +167,7 @@ describe('publish.mjs', () => {
   test('the list stays in ~/.inyon with INYON_DATA_DIR set, where the hub and the CLI read it', () => {
     const data = join(home, 'data');
     mkdirSync(data);
+    writeFileSync(join(data, 'hub.env'), '');
     expect(pub([site('s')], { INYON_DATA_DIR: data }).status).toBe(0);
     expect(list().pages).toHaveLength(1);
     expect(existsSync(join(data, 'pages.json'))).toBe(false);
@@ -164,6 +181,50 @@ describe('publish.mjs', () => {
       expect(r.status).toBe(4);
       expect(r.stderr).toContain(`inyon pages add ${dir} --name 'Bob'\\''s plan'`);
     } finally { chmodSync(join(home, '.inyon'), 0o700); }
+    // with the program installed, by its full path: it works where inyon isn't on the PATH
+    mkdirSync(join(home, '.inyon/bin'));
+    writeFileSync(join(home, '.inyon/bin/inyon'), '');
+    chmodSync(join(home, '.inyon'), 0o500);
+    try {
+      const r = pub([dir]);
+      expect(r.status).toBe(4);
+      expect(r.stderr).toContain(`\n  ${home}/.inyon/bin/inyon pages add ${dir}\n`);
+    } finally { chmodSync(join(home, '.inyon'), 0o700); }
+  });
+
+  test('on a machine without a hub it lists the page, says the app cannot show it yet, and exits 5', () => {
+    rmSync(join(home, '.inyon/hub.env'));
+    const dir = site('nohub');
+    const r = pub([dir, '--name', 'Laptop plan']);
+    expect(r.status).toBe(5);
+    expect(r.stdout).toContain(`"Laptop plan" is listed on `);
+    expect(r.stdout).toContain("This machine doesn't run a hub.");
+    expect(r.stdout).toContain("The app can't open this page yet.");
+    expect(r.stdout).not.toContain('is in Inyon');
+    expect(r.stdout).toContain(`serve.mjs ${dir} --host <private-ip>`);
+    expect(r.stdout).not.toContain('/pages/local/');
+    expect(list().pages[0]).toMatchObject({ slug: 'nohub', name: 'Laptop plan' });
+  });
+
+  test('a hub is found by its settings, its node record or its service, as the inyon command finds it', () => {
+    const h = join(tmp, `hubs${++n}`);
+    expect(hubHere(h, {})).toBe(false);
+    for (const f of ['.inyon/node/hub.json', '.config/systemd/user/inyon-hub.service', 'Library/LaunchAgents/tech.abhashchakraborty.inyon.hub.plist', 'data/hub.env']) {
+      const one = join(h, f.replace(/\//g, '-'));
+      mkdirSync(join(one, f, '..'), { recursive: true });
+      writeFileSync(join(one, f), '');
+      expect([f, hubHere(one, f === 'data/hub.env' ? { INYON_DATA_DIR: join(one, 'data') } : {})]).toEqual([f, true]);
+    }
+  });
+
+  test('a folder listed under another spelling (a symlink on the way) is the same page', () => {
+    const real = site('work/plan');
+    symlinkSync(join(home, 'work'), join(home, 'w'));
+    expect(pub([real, '--name', 'Plan']).status).toBe(0);
+    const r = pub([join(home, 'w/plan'), '--name', 'Plan']);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain('(already listed)');
+    expect(list().pages.map((p) => [p.slug, p.path])).toEqual([['plan', real]]);
   });
 
   test('a broken list is never overwritten', () => {
@@ -224,6 +285,38 @@ describe('publish.mjs', () => {
     rmSync(lock);
   });
 
+  test('the lock is removed only while it is still this writer\'s', () => {
+    const file = join(home, '.inyon/pages.json');
+    // another writer took it over (it thought this one had died) and holds it now
+    withLock(file, () => writeFileSync(`${file}.lock`, '999 0123456789abcdef\n'));
+    expect(readFileSync(`${file}.lock`, 'utf8')).toBe('999 0123456789abcdef\n');
+  });
+
+  test('a stale lock two writers judged leaves the fresh one made in between in its place', () => {
+    const lock = join(home, '.inyon/pages.json.lock');
+    writeFileSync(lock, '1 stale\n');
+    const old = (Date.now() - 20_000) / 1000;
+    utimesSync(lock, old, old);
+    const judged = statSync(lock);
+    rmSync(lock);
+    writeFileSync(lock, '2 fresh\n');
+    removeJudged(lock, judged);
+    expect(readFileSync(lock, 'utf8')).toBe('2 fresh\n');
+  });
+
+  test.skipIf(process.getuid?.() === 0)('a stale lock that cannot be removed (a sandbox) is exit 4 at once, not a hang', () => {
+    const lock = join(home, '.inyon/pages.json.lock');
+    writeFileSync(lock, '1\n');
+    const old = (Date.now() - 20_000) / 1000;
+    utimesSync(lock, old, old);
+    chmodSync(join(home, '.inyon'), 0o500);
+    try {
+      const r = spawnSync('node', [join(scripts, 'publish.mjs'), site('locked')], { env: env(), encoding: 'utf8', timeout: 10_000 });
+      expect(r.status).toBe(4);
+      expect(r.stderr).toContain('pages add');
+    } finally { chmodSync(join(home, '.inyon'), 0o700); }
+  });
+
   test('eight publishers at once all land, with unique slugs', async () => {
     const dirs = Array.from({ length: 8 }, (_, i) => site(`p${i}/plan`));
     const codes = await Promise.all(dirs.map((d) => new Promise((ok) => spawn('node', [join(scripts, 'publish.mjs'), d, '--name', 'Plan'], { env: env() }).on('exit', ok))));
@@ -268,6 +361,25 @@ describe('new-site.mjs', () => {
     const r3 = run('new-site.mjs', [join(repo, 'private/plans/third'), '--name', 'Third']);
     expect(r3.stdout).not.toContain('git would commit');
     expect(r3.stdout).not.toContain('usually live');
+  });
+
+  test('in a linked worktree the plan goes to the main checkout, which outlives the worktree', () => {
+    const repo = join(home, 'main');
+    mkdirSync(repo);
+    git(repo, 'init', '-q');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+    const wt = join(repo, '.claude/worktrees/feature');
+    expect(git(repo, 'worktree', 'add', '-q', wt).status).toBe(0);
+    const r = spawnSync('node', [join(scripts, 'new-site.mjs'), '--name', 'Feature plan'], { cwd: wt, env: env(), encoding: 'utf8' });
+    expect(r.status).toBe(0);
+    expect(marker(join(repo, 'private/plans/feature-plan'))).toMatchObject({ slug: 'feature-plan' });
+    expect(existsSync(join(wt, 'private'))).toBe(false);
+    // a folder named inside the worktree is used, with a warning
+    const inside = join(wt, 'private/plans/here');
+    const r2 = run('new-site.mjs', [inside, '--name', 'Here']);
+    expect(r2.status).toBe(0);
+    expect(r2.stdout).toContain(`is inside the git worktree ${wt}`);
+    expect(r2.stdout).toContain(`Plans usually live in ${join(repo, 'private/plans/here')}`);
   });
 
   test('refuses a bad slug, a full folder, and no folder outside a repo', () => {

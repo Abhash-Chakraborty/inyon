@@ -10,10 +10,11 @@
 //
 // `added` and `created` are ms since 1970. pages.json is written to a temp file and renamed into place,
 // while holding pages.json.lock (created with O_EXCL, taken over once it is 10 s old).
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // The host id of the machine the hub runs on; app links are /pages/<host>/<slug>.
 export const LOCAL_HOST = 'local';
@@ -61,13 +62,40 @@ export function sitePathProblem(p, home) {
 // the hub, the inyon command and this script all read and write the same file.
 export const inyonDir = () => join(homedir(), '.inyon');
 
-// The git top level of a folder, or the folder itself.
+// Whether this machine runs an Inyon hub, judged as `inyon pages add` judges it: the hub's settings
+// (hub.env in INYON_DATA_DIR or ~/.inyon), a node that runs one (hub.json), or a hub service. For now
+// the app shows pages from the hub's own machine only.
+export function hubHere(home = homedir(), env = process.env) {
+  const data = env.INYON_DATA_DIR || join(home, '.inyon');
+  return [
+    join(data, 'hub.env'),
+    join(home, '.inyon', 'node', 'hub.json'),
+    join(home, '.tether-node', 'hub.json'),
+    join(home, '.config', 'systemd', 'user', 'inyon-hub.service'),
+    join(home, '.config', 'systemd', 'user', 'tether-hub.service'),
+    join(home, 'Library', 'LaunchAgents', 'tech.abhashchakraborty.inyon.hub.plist'),
+  ].some((f) => existsSync(f));
+}
+
+// The main working tree of the git repo a folder is in, when it is in one. In a linked worktree (an
+// agent's .claude/worktrees/<name>, removed once its branch merges) that is the repo's own checkout,
+// so a plan made there outlives the worktree.
+export function mainTree(dir) {
+  const git = (...args) => execFileSync('git', ['-C', dir, 'rev-parse', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  let out;
+  try { out = git('--path-format=absolute', '--show-toplevel', '--git-common-dir', '--git-dir').split(/\r?\n/).map((l) => l.trim()); } catch {
+    // git older than 2.31 has no --path-format: then the top level as it is
+    try { const t = git('--show-toplevel').trim(); return t ? resolve(t) : null; } catch { return null; }
+  }
+  const [top, common, own] = out;
+  if (!top) return null;
+  // in a linked worktree the common dir is the main tree's .git; a submodule or a bare repo's worktree keeps its own
+  return resolve(common && common !== own && basename(common) === '.git' ? dirname(common) : top);
+}
+
+// The project a folder belongs to: its repo's main working tree (see mainTree), or the folder itself.
 export function projectOf(dir) {
-  try {
-    const top = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-    if (top) return resolve(top);
-  } catch {}
-  return dir;
+  return mainTree(dir) ?? dir;
 }
 
 // The agent running this script, from the variables each one sets for its shell.
@@ -108,24 +136,50 @@ export function atomicWrite(file, text, mode = 0o644) {
 
 const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-// Runs fn while holding <file>.lock. A lock older than LOCK_STALE_MS was left by a writer that died.
+// Runs fn while holding <file>.lock. A lock older than LOCK_STALE_MS was left by a writer that died
+// and is taken over. The lock holds this process's id and a random tag, and is removed afterwards
+// only while it still holds them. A failure other than "someone else has it" (a folder an agent's
+// sandbox keeps read-only: EACCES, EPERM, EROFS) is thrown at once, never waited on.
 export function withLock(file, fn, { waitMs = 15_000 } = {}) {
   const lock = `${file}.lock`;
   const until = Date.now() + waitMs;
+  const mine = `${process.pid} ${randomBytes(8).toString('hex')}\n`;
   for (;;) {
     try {
-      closeSync(openSync(lock, 'wx', 0o600));
+      const fd = openSync(lock, 'wx', 0o600);
+      try { writeSync(fd, mine); } finally { closeSync(fd); }
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) { unlinkSync(lock); continue; }
-      } catch { continue; }
-      if (Date.now() > until) throw Object.assign(new Error(`${lock} is held by another writer; try again, or delete it if nothing is running`), { code: 'ELOCKED' });
-      pause(25 + Math.random() * 50);
     }
+    if (takeOverStale(lock)) continue;
+    if (Date.now() > until) throw Object.assign(new Error(`${lock} is held by another writer; try again, or delete it if nothing is running`), { code: 'ELOCKED' });
+    pause(25 + Math.random() * 50);
   }
-  try { return fn(); } finally { try { unlinkSync(lock); } catch {} }
+  try { return fn(); } finally { try { if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock); } catch {} }
+}
+
+// Removes a lock left by a writer that died; true when the caller should try to take it again at once.
+function takeOverStale(lock) {
+  let old;
+  try { old = statSync(lock); } catch (e) { if (e.code === 'ENOENT') return true; throw e; }
+  if (Date.now() - old.mtimeMs <= LOCK_STALE_MS) return false;
+  removeJudged(lock, old);
+  return true;
+}
+
+// Removes the lock that was judged stale as `old`, and only that one: renamed aside, then put back if
+// it turns out to be a new lock another writer made since (two writers can judge one lock stale at
+// once, and the first makes its own before the second acts).
+export function removeJudged(lock, old) {
+  const aside = `${lock}.${process.pid}.${randomBytes(4).toString('hex')}.stale`;
+  try { renameSync(lock, aside); } catch (e) { if (e.code === 'ENOENT') return; throw e; }
+  const got = statSync(aside);
+  if (got.ino !== old.ino || got.mtimeMs !== old.mtimeMs) {
+    // another writer's new lock: back where it was, unless a third has made one since
+    try { linkSync(aside, lock); } catch {}
+  }
+  try { unlinkSync(aside); } catch {}
 }
 
 export function readPages(file) {
@@ -165,7 +219,9 @@ export function publish(dir, opts = {}) {
   return withLock(file, () => {
     const list = readPages(file);
     const pages = list.pages;
-    const at = pages.findIndex((p) => p && p.path === path);
+    // the folder as listed by any writer, under this spelling or another that leads to it (a symlink)
+    const realOf = (p) => { try { return realpathSync(p); } catch { return null; } };
+    const at = pages.findIndex((p) => p && typeof p.path === 'string' && (p.path === path || realOf(p.path) === real));
     const old = at >= 0 ? pages[at] : null;
     const name = (opts.name ?? '').trim() || old?.name || (typeof found?.name === 'string' && found.name.trim()) || basename(path);
     const takenBy = (slug) => pages.find((p, i) => i !== at && p && p.slug === slug);
@@ -183,7 +239,8 @@ export function publish(dir, opts = {}) {
       ...(old || {}),
       slug,
       name,
-      path,
+      // an entry found under another spelling keeps the one it was listed with, as the inyon command does
+      path: typeof old?.path === 'string' ? old.path : path,
       project: old?.project || projectOf(path),
       by: old?.by || opts.by || agentName(),
       added: Number.isSafeInteger(old?.added) ? old.added : now,

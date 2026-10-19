@@ -180,6 +180,32 @@ fn real(p: &Path) -> Option<String> {
     fs::canonicalize(p).ok().and_then(|r| r.to_str().map(strip_verbatim))
 }
 
+/// What is wrong with where a folder really leads. A drive letter that is a mapped network drive
+/// really leads to `\\server\share\…`, which the rules don't take as a path typed by hand. There the
+/// share stands in for the drive (`Z:\…`), and so does the home folder when it is on the same share:
+/// the share itself is too wide, and its home folder's `.ssh` stays private.
+fn real_problem(path: &str, real_path: &str, real_home: &str) -> Option<&'static str> {
+    let b = path.as_bytes();
+    let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
+    if let (true, Some((share, rest))) = (drive, unc_parts(real_path)) {
+        let as_drive = |rest: &str| format!("{}:\\{rest}", b[0] as char);
+        let home = match unc_parts(real_home) {
+            Some((home_share, home_rest)) if home_share.eq_ignore_ascii_case(&share) => as_drive(&home_rest),
+            _ => real_home.to_string(),
+        };
+        return folder_problem(&as_drive(&rest), &home);
+    }
+    folder_problem(real_path, real_home)
+}
+
+/// `\\server\share\rest` as (`\\server\share`, `rest`), for a UNC path.
+fn unc_parts(p: &str) -> Option<(String, String)> {
+    let body = p.strip_prefix(r"\\")?;
+    let mut it = body.splitn(3, ['\\', '/']);
+    let (server, share) = (it.next().filter(|s| !s.is_empty())?, it.next().filter(|s| !s.is_empty())?);
+    Some((format!(r"\\{server}\{share}"), it.next().unwrap_or("").to_string()))
+}
+
 /// `~/.inyon/pages.json`: always under the home folder (not INYON_DATA_DIR), where the hub reads it.
 pub fn pages_file() -> PathBuf {
     paths::home().join(".inyon").join("pages.json")
@@ -237,7 +263,8 @@ fn decode_entities(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let Some(semi) = rest[..rest.len().min(12)].find(';') else {
+        // by bytes: ';' is ASCII, so where it is found is always a character boundary
+        let Some(semi) = rest.as_bytes()[..rest.len().min(12)].iter().position(|b| *b == b';') else {
             out.push('&');
             rest = &rest[1..];
             continue;
@@ -311,11 +338,21 @@ fn write_marker(site: &Path, old: &Marker, slug: &str, name: &str, now: u64) -> 
     write_atomic(&site.join(".inyon-page.json"), &format!("{want}\n"), 0o644).is_ok()
 }
 
-/// The git top level of a folder, or the folder itself.
+/// The git top level of a folder (for a linked worktree, the repo's main checkout), or the folder itself.
 fn project_of(folder: &str) -> String {
-    let mut c = std::process::Command::new("git");
-    c.args(["-C", folder, "rev-parse", "--show-toplevel"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    let top = crate::sys::quiet(&mut c).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let git = |args: &[&str]| {
+        let mut c = std::process::Command::new("git");
+        c.args(["-C", folder, "rev-parse"]).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+        crate::sys::quiet(&mut c).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    };
+    // git older than 2.31 has no --path-format: then the top level as it is
+    let top = match git(&["--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"]) {
+        Some(out) => {
+            let l: Vec<&str> = out.lines().map(str::trim).collect();
+            main_tree(l.first().copied().unwrap_or(""), l.get(1).copied().unwrap_or(""), l.get(2).copied().unwrap_or(""))
+        }
+        None => git(&["--show-toplevel"]).map(|o| o.trim().to_string()).unwrap_or_default(),
+    };
     if top.is_empty() {
         folder.to_string()
     } else if cfg!(windows) {
@@ -325,41 +362,114 @@ fn project_of(folder: &str) -> String {
     }
 }
 
-// ---------- the list file ----------
-
-/// Runs `f` holding `<file>.lock`, made with an exclusive create; a lock older than LOCK_STALE is taken over.
-fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    struct Held(PathBuf);
-    impl Drop for Held {
-        fn drop(&mut self) {
-            let _ = fs::remove_file(&self.0);
+/// The repo's main working tree, from git's top level, common dir and own dir. In a linked worktree
+/// (an agent's `.claude/worktrees/<name>`, removed once its branch merges) the common dir is the
+/// main tree's `.git`, so the page is grouped under the repo, not the worktree. A submodule or a
+/// bare repo's worktree keeps its own top level.
+fn main_tree(top: &str, common: &str, own: &str) -> String {
+    let c = Path::new(common);
+    if !common.is_empty() && common != own && c.file_name().is_some_and(|n| n == ".git") {
+        if let Some(parent) = c.parent().and_then(Path::to_str).filter(|p| !p.is_empty()) {
+            return parent.to_string();
         }
     }
-    let mut name = file.as_os_str().to_owned();
-    name.push(".lock");
-    let lock = PathBuf::from(name);
+    top.to_string()
+}
+
+// ---------- the list file ----------
+
+/// Runs `f` holding `<file>.lock`, made with an exclusive create; a lock older than LOCK_STALE is
+/// taken over. The lock holds this process's id and a random tag, and is removed afterwards only
+/// while it still holds them. A failure other than "someone else has it" (a folder an agent's
+/// sandbox keeps read-only) is reported at once with the sandbox hint, never waited on.
+fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    struct Held(PathBuf, String);
+    impl Drop for Held {
+        fn drop(&mut self) {
+            if fs::read_to_string(&self.0).is_ok_and(|t| t == self.1) {
+                let _ = fs::remove_file(&self.0);
+            }
+        }
+    }
+    let lock = lock_of(file);
     let until = Instant::now() + LOCK_WAIT;
+    let mine = format!("{} {}\n", std::process::id(), random_tag());
     let _held = loop {
         match OpenOptions::new().write(true).create_new(true).open(&lock) {
             Ok(mut fh) => {
-                let _ = writeln!(fh, "{}", std::process::id());
-                break Held(lock);
+                let _ = fh.write_all(mine.as_bytes());
+                break Held(lock, mine);
             }
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
             Err(e) => return Err(cant_write(file, &e)),
         }
-        let stale = fs::metadata(&lock).ok().and_then(|m| m.modified().ok()).and_then(|t| t.elapsed().ok()).is_some_and(|age| age > LOCK_STALE);
-        if stale {
-            let _ = fs::remove_file(&lock);
+        if take_over_stale(&lock).map_err(|e| cant_write(file, &e))? {
+            continue;
         }
         if Instant::now() >= until {
             return Err(LOCKED.into());
         }
-        if !stale {
-            std::thread::sleep(Duration::from_millis(25));
-        }
+        std::thread::sleep(Duration::from_millis(25));
     };
     f()
+}
+
+fn lock_of(file: &Path) -> PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+/// 16 hex digits, different for every lock this program takes.
+fn random_tag() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    format!("{:016x}", h.finish())
+}
+
+/// The file's identity, to tell a lock judged stale from a new one made in its place.
+fn identity(m: &fs::Metadata) -> (u64, Option<std::time::SystemTime>) {
+    #[cfg(unix)]
+    let ino = std::os::unix::fs::MetadataExt::ino(m);
+    #[cfg(not(unix))]
+    let ino = m.len();
+    (ino, m.modified().ok())
+}
+
+/// Removes a lock left by a writer that died (older than LOCK_STALE); true when the caller should
+/// try to take it again at once.
+fn take_over_stale(lock: &Path) -> std::io::Result<bool> {
+    let old = match fs::metadata(lock) {
+        Ok(m) => m,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(true),
+        Err(e) => return Err(e),
+    };
+    if !old.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > LOCK_STALE) {
+        return Ok(false);
+    }
+    remove_judged(lock, &old)?;
+    Ok(true)
+}
+
+/// Removes the lock that was judged stale as `old`, and only that one: renamed aside, then put back
+/// if it turns out to be a new lock another writer made since (two writers can judge one lock stale
+/// at once, and the first makes its own before the second acts).
+pub fn remove_judged(lock: &Path, old: &fs::Metadata) -> std::io::Result<()> {
+    let mut aside = lock.as_os_str().to_owned();
+    aside.push(format!(".{}.{}.stale", std::process::id(), &random_tag()[..8]));
+    let aside = PathBuf::from(aside);
+    match fs::rename(lock, &aside) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    }
+    if fs::metadata(&aside).map(|m| identity(&m)).ok() != Some(identity(old)) {
+        // another writer's new lock: back where it was, unless a third has made one since
+        let _ = fs::hard_link(&aside, lock);
+    }
+    let _ = fs::remove_file(&aside);
+    Ok(())
 }
 
 fn cant_write(file: &Path, e: &std::io::Error) -> String {
@@ -467,7 +577,7 @@ pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Optio
     }
     let real_path = real(&folder).unwrap_or_else(|| path.clone());
     let real_home = real(home).unwrap_or_else(|| home_text.clone());
-    if let Some(p) = folder_problem(&real_path, &real_home) {
+    if let Some(p) = real_problem(&path, &real_path, &real_home) {
         return Err(p.into());
     }
     if !folder.join("index.html").is_file() {
@@ -569,7 +679,7 @@ fn trouble(page: &Value, home: &str, real_home: &str) -> Option<String> {
     if !Path::new(path).is_dir() {
         return Some("the folder is gone".into());
     }
-    if let Some(p) = real(Path::new(path)).and_then(|r| folder_problem(&r, real_home)) {
+    if let Some(p) = real(Path::new(path)).and_then(|r| real_problem(path, &r, real_home)) {
         return Some(p.into());
     }
     if !Path::new(path).join("index.html").is_file() {
@@ -587,6 +697,17 @@ fn not_hub_note() -> &'static str {
     "This machine doesn't run a hub. For now the app shows pages from the hub's own machine only."
 }
 
+/// What `add` says. Without a hub here the app can't open the page, so there's no app path to hand
+/// over: only where it's listed and why it can't be shown yet.
+fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool) -> Vec<String> {
+    let again = if changed { "" } else { " (already listed)" };
+    if hub {
+        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), format!("Open it in the app at {}", app_link(slug))]
+    } else {
+        vec![format!("\"{name}\" is listed on {machine}, under {project}{again}."), format!("{} The app can't open this page yet.", not_hub_note())]
+    }
+}
+
 pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcome {
     let by = agent(|k| std::env::var(k).ok());
     let now = crate::state::now_ms() as u64;
@@ -595,13 +716,7 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
     let slug = field(&a.page, "slug").to_string();
     let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
     let hub = crate::engine::hub_here();
-    let mut lines = vec![
-        format!("\"{}\" is in Inyon: Pages > {machine} > {project}{}", field(&a.page, "name"), if a.changed { "" } else { " (already listed)" }),
-        format!("Open it in the app at {}", app_link(&slug)),
-    ];
-    if !hub {
-        lines.push(not_hub_note().into());
-    }
+    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub);
     Ok(json!({
         "page": a.page,
         "host": LOCAL_HOST,
@@ -691,6 +806,84 @@ mod tests {
         assert_eq!(title_of("<title>never closed"), None);
         assert_eq!(title_of("no title"), None);
         assert_eq!(title_of("<title>a &bogus; b & c</title>").as_deref(), Some("a &bogus; b & c"));
+    }
+
+    #[test]
+    fn an_ampersand_before_text_of_more_than_one_byte_a_character_does_not_panic() {
+        // from the '&', byte 12 falls inside 'の'
+        assert_eq!(title_of("<title>設計 & 日本語の計画</title>").as_deref(), Some("設計 & 日本語の計画"));
+        assert_eq!(title_of("<title>Café &amp; crème brûlée &éé</title>").as_deref(), Some("Café & crème brûlée &éé"));
+        assert_eq!(title_of("<title>&日本語の計画&#x8a08;</title>").as_deref(), Some("&日本語の計画\u{8a08}"));
+    }
+
+    #[test]
+    fn a_mapped_network_drive_is_judged_with_its_share_as_the_drive() {
+        // Z: is \\server\share: canonicalize leads there, and the rules don't take a UNC path typed by hand
+        assert_eq!(real_problem(r"Z:\work\site", r"\\server\share\work\site", r"C:\Users\a"), None);
+        assert_eq!(site_path_problem(r"Z:\work\site", r"C:\Users\a"), None);
+        // the share itself is as wide as a drive
+        assert_eq!(real_problem(r"Z:\", r"\\server\share", r"C:\Users\a"), Some(TOO_WIDE));
+        assert_eq!(real_problem(r"Z:\", r"\\server\share\", r"C:\Users\a"), Some(TOO_WIDE));
+        // a home folder on the same share (a roaming profile) keeps its private folders and itself
+        assert_eq!(real_problem(r"Z:\a\.ssh\x", r"\\server\share\a\.ssh\x", r"\\SERVER\share\a"), Some(PRIVATE_FOLDER));
+        assert_eq!(real_problem(r"Z:\a", r"\\server\share\a", r"\\server\share\a"), Some(TOO_WIDE));
+        assert_eq!(real_problem(r"Z:\a\.ssh", r"\\server\share\a\.ssh", r"\\server\other\a"), None);
+        // a drive letter that leads into the home folder's .ssh is still refused
+        assert_eq!(real_problem(r"D:\x", r"C:\Users\a\.ssh\x", r"C:\Users\a"), Some(PRIVATE_FOLDER));
+        // a UNC path typed as such stays refused, and so does a Unix path that leads somewhere odd
+        assert_eq!(real_problem(r"\\server\share\site", r"\\server\share\site", r"C:\Users\a"), Some(NOT_ABSOLUTE));
+        assert_eq!(real_problem("/home/a/site", "/home/a/.ssh", "/home/a"), Some(PRIVATE_FOLDER));
+        assert_eq!(real_problem(r"Z:\x", r"\\server", r"C:\Users\a"), Some(NOT_ABSOLUTE));
+    }
+
+    #[test]
+    fn a_stale_lock_two_writers_judged_leaves_the_fresh_one_made_in_between_in_its_place() {
+        let dir = std::env::temp_dir().join(format!("inyon-cli-lock-{}-{}", std::process::id(), random_tag()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("pages.json.lock");
+        fs::write(&lock, "1 stale\n").unwrap();
+        let old = std::time::SystemTime::now() - Duration::from_secs(11);
+        OpenOptions::new().write(true).open(&lock).unwrap().set_modified(old).unwrap();
+        let judged = fs::metadata(&lock).unwrap();
+        fs::remove_file(&lock).unwrap();
+        fs::write(&lock, "2 fresh\n").unwrap();
+        remove_judged(&lock, &judged).unwrap();
+        assert_eq!(fs::read_to_string(&lock).unwrap(), "2 fresh\n");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stale_lock_that_cannot_be_removed_says_so_at_once_instead_of_waiting() {
+        use std::os::unix::fs::PermissionsExt;
+        if unsafe { libc::geteuid() } == 0 {
+            return; // root ignores the folder's mode
+        }
+        let dir = std::env::temp_dir().join(format!("inyon-cli-lock-ro-{}-{}", std::process::id(), random_tag()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("pages.json");
+        let lock = dir.join("pages.json.lock");
+        fs::write(&lock, "1\n").unwrap();
+        OpenOptions::new().write(true).open(&lock).unwrap().set_modified(std::time::SystemTime::now() - Duration::from_secs(11)).unwrap();
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o500)).unwrap();
+        let started = Instant::now();
+        let r = with_lock(&file, || Ok(()));
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+        let err = r.unwrap_err();
+        assert!(err.contains("If an agent's sandbox stopped it"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_linked_worktree_belongs_to_the_main_checkout() {
+        assert_eq!(main_tree("/r/.claude/worktrees/x", "/r/.git", "/r/.git/worktrees/x"), "/r");
+        assert_eq!(main_tree("/r", "/r/.git", "/r/.git"), "/r");
+        // a submodule, and a bare repo's worktree, keep their own top level
+        assert_eq!(main_tree("/r/sub", "/r/.git/modules/sub", "/r/.git/modules/sub"), "/r/sub");
+        assert_eq!(main_tree("/w/x", "/w/repo.git", "/w/repo.git/worktrees/x"), "/w/x");
+        assert_eq!(main_tree("/r", "", ""), "/r");
     }
 
     #[test]

@@ -51,7 +51,7 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 
 | Script | What it does |
 |---|---|
-| `new-site.mjs <dir> --name "App"` | Copies the template into a new folder and marks it with `.inyon-page.json`. Inside a git repository the folder can be left out: it's then `private/plans/<slug>` in the repository |
+| `new-site.mjs <dir> --name "App"` | Copies the template into a new folder and marks it with `.inyon-page.json`. Inside a git repository the folder can be left out: it's then `private/plans/<slug>` in the repository's main folder, also from a worktree |
 | `publish.mjs <dir> --name "Plan"` | Puts the site under [Pages](pages.md) on a computer with Inyon set up but no `inyon` command on the path |
 | `serve.mjs <dir> --host <ip> --port 8790` | Serves the site with the same sandbox Inyon puts around a page, so a site that works here works in the app. Use a private address, such as a VPN or home network IP, to open it on your phone |
 | `stills.mjs <dir> --audit` | Saves gallery pictures of every screen and reports errors and dead buttons |
@@ -60,6 +60,6 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 
 The scripts need Node 18 or newer and Playwright with Chromium (`bun add -d playwright`, then `bunx playwright install chromium`). With [sharp](https://sharp.pixelplumbing.com) installed, the pictures are WebP. Without it, they're PNG.
 
-From 0.20 the skill publishes a finished site to Inyon with `inyon pages add`, or `publish.mjs` without the `inyon` command, so it opens in the app under [Pages](pages.md) with no server to run. `serve.mjs` is for a computer without Inyon. Every file a site uses sits in its own folder and is linked with a relative path, because a page in Inyon can't load anything from the internet.
+From 0.20 the skill publishes a finished site to Inyon with `inyon pages add`, or `publish.mjs` without the `inyon` command, so it opens in the app under [Pages](pages.md) with no server to run. `serve.mjs` is for a computer without Inyon, and for one with Inyon but no hub: there the skill still lists the page, says the app can't open it yet, and serves the site instead of handing over an app link. Every file a site uses sits in its own folder and is linked with a relative path, because a page in Inyon can't load anything from the internet.
 
 > **Note:** A plan page often describes unreleased work. Serve it on a private address rather than the open internet, and keep the folder out of public repositories.

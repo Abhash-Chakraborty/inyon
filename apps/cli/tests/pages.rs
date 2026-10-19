@@ -112,12 +112,13 @@ fn adding_a_folder_lists_it_and_marks_it() {
     let site = h.site("work/handy-redesign", "Handy &amp; redesign");
     let (code, stdout, stderr) = h.run(&["pages", "add", "work/handy-redesign/"]);
     assert_eq!(code, 0, "{stderr}");
-    // the app's path, never a link with a token in it
-    assert!(stdout.contains("\"Handy & redesign\" is in Inyon: Pages > "), "{stdout}");
-    assert!(stdout.contains(" > handy-redesign\n"), "{stdout}");
-    assert!(stdout.contains("Open it in the app at /pages/local/handy-redesign"), "{stdout}");
-    assert!(!stdout.contains("/v/"), "{stdout}");
+    // no hub on this machine: where it's listed, and no app path that would open nothing
+    assert!(stdout.contains("\"Handy & redesign\" is listed on "), "{stdout}");
+    assert!(stdout.contains(", under handy-redesign.\n"), "{stdout}");
     assert!(stdout.contains("This machine doesn't run a hub"), "{stdout}");
+    assert!(stdout.contains("The app can't open this page yet."), "{stdout}");
+    assert!(!stdout.contains("/pages/local/"), "{stdout}");
+    assert!(!stdout.contains("/v/"), "{stdout}");
 
     let list = h.list();
     assert_eq!(list["v"], 1);
@@ -157,7 +158,7 @@ fn adding_again_changes_nothing_unless_asked() {
 
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("\"Plan\" is in Inyon") && stdout.contains("(already listed)"), "{stdout}");
+    assert!(stdout.contains("\"Plan\" is listed on ") && stdout.contains("(already listed)"), "{stdout}");
     assert_eq!(fs::read(h.file()).unwrap(), before);
     assert_eq!(fs::read(site.join(".inyon-page.json")).unwrap(), marker_before);
 
@@ -280,7 +281,27 @@ fn the_project_is_the_git_top_level() {
     let site = h.site("my-repo/private/plans/plan", "Plan");
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains(" > my-repo"), "{stdout}");
+    assert!(stdout.contains("under my-repo"), "{stdout}");
+    let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
+    assert_eq!(fs::canonicalize(project).unwrap(), repo);
+}
+
+#[test]
+fn the_project_of_a_folder_in_a_linked_worktree_is_the_main_checkout() {
+    if Command::new("git").arg("--version").output().is_err() {
+        return;
+    }
+    let h = Home::new("worktree");
+    let repo = h.dir.join("my-repo");
+    fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&repo).status().unwrap().success(), "git {args:?}");
+    git(&["init", "-q"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
+    git(&["worktree", "add", "-q", ".claude/worktrees/feature"]);
+    let site = h.site("my-repo/.claude/worktrees/feature/private/plans/plan", "Plan");
+    let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
+    assert_eq!(code, 0, "{stdout}");
+    assert!(stdout.contains("under my-repo."), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
     assert_eq!(fs::canonicalize(project).unwrap(), repo);
 }
@@ -294,7 +315,12 @@ fn on_the_hub_machine_there_is_no_note() {
     let (code, v) = h.json(&["pages", "add", s(&site)]);
     assert_eq!(code, 0);
     assert_eq!(v["hub"], true);
-    assert!(!v["message"].as_str().unwrap().contains("doesn't run a hub"));
+    let m = v["message"].as_str().unwrap();
+    assert!(!m.contains("doesn't run a hub"), "{m}");
+    // the app's path, never a link with a token in it
+    assert!(m.contains("\"S\" is in Inyon: Pages > ") && m.contains(" > s\n"), "{m}");
+    assert!(m.contains("Open it in the app at /pages/local/s"), "{m}");
+    assert!(!m.contains("/v/"), "{m}");
 }
 
 #[test]

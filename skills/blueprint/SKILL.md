@@ -26,6 +26,8 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    are built from these notes, so every claim needs a source.
 2. **Start the site.** Run `node <skill>/scripts/new-site.mjs <dir> --name "Product"`. Inside a git repo
    you can leave out `<dir>`: the site goes to `<repo>/private/plans/<slug>`, which is where plans belong.
+   In a linked worktree (`.claude/worktrees/<name>`, say) that's the main checkout's folder, so the plan
+   isn't deleted with the worktree.
    Keep `private/` out of git (the script tells you when git would commit the folder). It copies
    `assets/site/`, a working sample for a made-up grocery app called Pantry, so you can see each piece in
    action, and writes `.inyon-page.json`. Then make it yours:
@@ -59,13 +61,19 @@ root names the site for Inyon. It's a dot file, so no server shows it.
      `node <skill>/scripts/serve.mjs <dir> --host <private-ip> --port 8790`. Prefer a VPN or LAN address
      over a public one, since plans are usually private. Hand over the URL.
 
+   **No hub on this machine.** For now the app shows pages from the hub's own computer only. When either
+   command says "This machine doesn't run a hub" (publish.mjs exits 5), the page is listed but the app
+   can't open it yet, and neither prints an app link. Serve the folder with serve.mjs as above (the
+   script prints that line too) and hand over the URL.
+
    Publishing a folder again keeps its slug, so do it whenever you like. Never set up a systemd unit,
    launchd job or any other service to keep a site up: Inyon serves pages for as long as its hub runs.
    Never hand over a `/v/...` link either, since those expire after 12 hours.
 
    **In a sandbox.** If `~/.inyon` can't be written from where you run (publish.mjs exits 4), don't look
-   for a way around it. Show the reader the `inyon pages add ...` line the script prints and ask them to
-   run it once. Everything else works as before.
+   for a way around it. Show the reader the `inyon pages add ...` line the script prints (it names the
+   installed program by its full path, so it works where `inyon` isn't on the PATH) and ask them to run
+   it once. Everything else works as before.
 9. **Keep the board live** while you carry out the plan:
    `python3 <skill>/scripts/progress.py --file <dir>/progress.json task <id> doing "note"`, then `done`,
    plus `now "<what you're on>"`, `log "<line>"` and `link <id> <PR url>`. Parallel workers can all call it:
