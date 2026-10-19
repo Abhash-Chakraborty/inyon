@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { LayoutGrid, Monitor, Plus, Search, Settings, WifiOff } from 'lucide-react'
+import { LayoutGrid, Monitor, PanelsTopLeft, Plus, Search, Settings, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import type { HostState } from '@inyon/protocol'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
@@ -14,6 +14,9 @@ import { usePageMenu } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { Waiting } from './ui/primitives.tsx'
 import { LEAVE_MS } from './ui/AnimatedList.tsx'
+import { isChanged, loadPages, usePages } from '../lib/pages.ts'
+import { onHubs } from '../lib/hubs.ts'
+import { PageSheets } from './pages/shared.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
@@ -118,6 +121,8 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
   const hosts = useStore((s) => s.hosts)
   const connected = useStore((s) => s.connected)
   const online = hosts.filter((h) => h.status === 'online').length
+  const changed = usePages(changedCount)
+  const total = usePages((s) => s.pages?.length ?? 0)
   const item = (active: boolean) =>
     clsx(
       'relative flex h-9 items-center gap-2.5 rounded-full px-3 text-[13.5px] transition-colors',
@@ -159,6 +164,16 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
             </span>
           )}
         </NavLink>
+        <NavLink to="/pages" className={({ isActive }) => item(isActive)}>
+          <PanelsTopLeft className="size-4" /> Pages
+          {changed > 0 ? (
+            <span className="tabular animate-pop ml-auto flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-fg px-1.5 font-mono text-[12px] leading-none font-semibold text-bg" title={`${changed} changed since you last opened ${changed === 1 ? 'it' : 'them'}`}>
+              {changed}
+            </span>
+          ) : (
+            total > 0 && <span className="tabular ml-auto font-mono text-[12px] text-fg-3">{total}</span>
+          )}
+        </NavLink>
         <NavLink to="/settings" className={({ isActive }) => item(isActive)}>
           <Settings className="size-4" /> Settings
         </NavLink>
@@ -169,15 +184,27 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
 
 function TabBar({ onNew }: { onNew: () => void }) {
   const waiting = useStore((s) => agentPanes(s.hosts).filter((r) => r.pane.agent!.state === 'waiting').length)
-  const tab = ({ isActive }: { isActive: boolean }) => clsx('flex flex-col items-center gap-0.5 py-1.5 text-[12px] font-medium', isActive ? 'text-fg' : 'text-fg-3')
+  const changed = usePages(changedCount)
+  const tab = ({ isActive }: { isActive: boolean }) => clsx('flex min-w-0 flex-col items-center gap-0.5 py-1.5 text-[12px] font-medium', isActive ? 'text-fg' : 'text-fg-3')
   return (
-    <nav className="pb-safe grid shrink-0 grid-cols-4 items-center border-t border-line bg-bg px-2 pt-1 md:hidden">
+    <nav className="pb-safe grid shrink-0 grid-cols-5 items-center border-t border-line bg-bg px-1 pt-1 md:hidden">
       <NavLink to="/" end className={tab}>
         <span className="relative">
           <LayoutGrid className="size-[21px]" />
           {waiting > 0 && <span className="absolute -top-1 -right-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-warn px-1 text-[12px] leading-none font-semibold text-black">{waiting}</span>}
         </span>
         Overview
+      </NavLink>
+      <NavLink to="/pages" className={tab}>
+        <span className="relative">
+          <PanelsTopLeft className="size-[21px]" />
+          {changed > 0 && (
+            <span aria-label={`${changed} changed`} className="tabular animate-pop absolute -top-1 -right-2.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-fg px-1 font-mono text-[12px] leading-none font-semibold text-bg ring-2 ring-bg">
+              {changed}
+            </span>
+          )}
+        </span>
+        Pages
       </NavLink>
       <button type="button" onClick={onNew} aria-label="New session" className="flex justify-center">
         <span className="press flex h-10 w-14 items-center justify-center rounded-full bg-fg text-bg">
@@ -200,13 +227,36 @@ function TabBar({ onNew }: { onNew: () => void }) {
  * Which page is showing, for the page-in animation. Sessions share one key: moving between them, or
  * between a session's chat and terminal, keeps the page mounted (and its scroll and state).
  */
-export const pageKey = (path: string) => (path.startsWith('/m/') ? 'session' : path.replace(/\/+$/, '') || '/')
+export const pageKey = (path: string) => (path.startsWith('/m/') ? 'session' : /^\/pages(\/|$)/.test(path) ? 'pages' : path.replace(/\/+$/, '') || '/')
+
+/** Pages that changed since they were last opened, for the badges. */
+const changedCount = (s: ReturnType<typeof usePages.getState>) => s.pages?.filter((p) => isChanged(p, s.seen)).length ?? 0
+
+/** Keeps the list of pages fresh while the app is open: every 30 s in view, and when it comes back. */
+function usePagesFeed() {
+  useEffect(() => {
+    void loadPages()
+    const visible = () => document.visibilityState === 'visible'
+    const t = setInterval(() => visible() && void loadPages(), 30_000)
+    const back = () => visible() && void loadPages()
+    document.addEventListener('visibilitychange', back)
+    const off = onHubs(() => void loadPages())
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', back)
+      off()
+    }
+  }, [])
+}
 
 export function AppShell() {
   const [newOpen, setNewOpen] = useState(false)
   const [search, setSearch] = useState(false)
   const loc = useLocation()
   const inSession = /\/p\//.test(loc.pathname)
+  // a page open on a phone takes the whole screen
+  const inPage = /^\/pages\/[^/]+\/[^/]+/.test(loc.pathname)
+  usePagesFeed()
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -237,12 +287,13 @@ export function AppShell() {
             <Outlet />
           </Suspense>
         </div>
-        {!inSession && <TabBar onNew={() => setNewOpen(true)} />}
+        {!inSession && !inPage && <TabBar onNew={() => setNewOpen(true)} />}
       </main>
       {/* nothing to start a session on yet: + adds a machine instead of an empty form */}
       {online ? <NewSessionSheet open={newOpen} onClose={() => setNewOpen(false)} /> : <MachineSheet open={newOpen} onClose={() => setNewOpen(false)} />}
       <QuickSwitch open={search} onClose={() => setSearch(false)} />
       <ActionSheets />
+      <PageSheets />
     </div>
   )
 }

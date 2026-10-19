@@ -88,6 +88,19 @@ function ToastCard({ t }: { t: Toast }) {
         <p className="truncate text-sm font-semibold">{t.title}</p>
         {t.body && <p className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-fg-2">{t.body}</p>}
       </div>
+      {t.action && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            t.action!.onSelect()
+            go(0, -40)
+          }}
+          className="press -my-0.5 shrink-0 rounded-full border border-line px-3 py-1 text-[13px] font-medium text-fg hover:bg-hover"
+        >
+          {t.action.label}
+        </button>
+      )}
       <button
         type="button"
         aria-label="Dismiss"

@@ -46,7 +46,7 @@ export function IconButton({
   children,
   active,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string; active?: boolean; ref?: React.Ref<HTMLButtonElement> }) {
   return (
     <button
       type="button"

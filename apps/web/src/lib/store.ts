@@ -38,6 +38,8 @@ export interface Toast {
   tone: 'info' | 'success' | 'warn' | 'error'
   href?: string
   agent?: string
+  /** one small action on the toast, such as Undo */
+  action?: { label: string; onSelect: () => void }
 }
 
 export interface Settings {
@@ -126,7 +128,8 @@ export const useStore = create<Store>((set, get) => ({
     const id = ++toastId
     // one per session: a newer notice about the same conversation replaces the older one
     set({ toasts: [...get().toasts.filter((x) => !t.href || x.href !== t.href).slice(-2), { ...t, id }] })
-    setTimeout(() => get().dismiss(id), t.tone === 'error' ? 6000 : 4500)
+    // one with an action (Undo) stays a little longer, so there is time to reach it
+    setTimeout(() => get().dismiss(id), t.tone === 'error' || t.action ? 6000 : 4500)
   },
   dismiss: (id) => set({ toasts: get().toasts.filter((t) => t.id !== id) }),
   setSettings: (p) => {

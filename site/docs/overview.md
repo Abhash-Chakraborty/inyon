@@ -63,6 +63,10 @@ Tap **+** (or press `Alt N`, `⌥ N` on a Mac) for a new session:
 
 **Start** opens the new session. If no machine is online, **+** offers to add one instead.
 
+## Pages
+
+Plans and mockups your agents build open under **Pages**, the second tab on a phone and a sidebar item on a desktop. Its badge counts the pages that changed since you last opened them. See [Pages](pages.md).
+
 ## Refreshing
 
 The overview updates live. To check right now, pull down on a phone or press the refresh button on a desktop. When the connection drops, a **Reconnecting** marker shows until it's back.
