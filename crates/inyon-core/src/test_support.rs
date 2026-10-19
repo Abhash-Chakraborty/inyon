@@ -177,7 +177,12 @@ pub mod fake {
             self.calls.borrow_mut().push(Call { host: config.id.clone(), cmd: cmd.clone(), input: input.clone() });
             let answer = self.answer.borrow().clone();
             let r = answer.map_or_else(|| ok(""), |a| a(&config.id, &cmd, input.as_deref()));
-            Box::pin(async move { Ok(r) })
+            // never ready on the first poll: a real command (and the TS's awaited promise) answers
+            // on a later turn of the loop, after whatever else is ready has run
+            Box::pin(async move {
+                crate::platform::rt::yield_now().await;
+                Ok(r)
+            })
         }
         fn stream(&self, config: &HostConfig, cmd: &str, on_line: OnLine, _keep_stdin: bool) -> StreamHandle {
             let cmd = cmd.strip_prefix(UTF8_TMUX).unwrap_or(cmd).to_owned();

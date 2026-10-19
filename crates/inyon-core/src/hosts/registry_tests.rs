@@ -556,3 +556,14 @@ fn the_cores_state_used_off_its_thread_is_caught_in_debug_builds() {
         assert_eq!(caught, cfg!(debug_assertions), "{what}");
     }
 }
+
+#[test]
+fn the_tests_fake_machine_answers_on_a_later_turn_as_a_real_one_does() {
+    run(|| async {
+        let _fake = Fake::install(|_, _, _| ok("x"));
+        let h = host("f", "local");
+        let mut answer = Box::pin(h.run("echo x"));
+        assert!(futures_util::FutureExt::now_or_never(&mut answer).is_none());
+        assert_eq!(answer.await.unwrap().stdout, "x");
+    });
+}
