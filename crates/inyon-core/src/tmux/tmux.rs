@@ -1,18 +1,24 @@
-//! Port of the parsing in tmux/tmux.ts: the pane list, the probe's output, captured screens, and
-//! the commands that type into a pane. Running them (and the probe script itself) stays in TS: the
-//! functions here take what a command printed and return what it means, or build the command.
+//! Port of tmux/tmux.ts and tmux/live.ts: the probe script and what it prints, the pane list,
+//! captured screens, and the commands that type into a pane. The pure functions take what a
+//! command printed and return what it means, or build the command; the async ones run them on a
+//! [`Host`].
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{agents, detect_agent, AgentKind, IntegrationState, MachineKind, PaneInfo, SessionInfo, WindowInfo, AGENT_KINDS};
 use serde_json::Value;
 
 use super::machine_kind::machine_kind;
-use crate::hosts::host::shq;
+use crate::clock::now_ms;
+use crate::hosts::host::{shq, ExecOptions, Host, StreamHandle};
+use crate::hosts::http_error::{HubError, HubResult};
 use crate::js::json::{self, Js};
 use crate::js::num::parse_int;
 use crate::js::{to_number, JsStr};
+use crate::platform::rt::sleep;
 use crate::re;
 
 /// Sessions Inyon creates for terminal views; hidden from listings.
@@ -549,6 +555,282 @@ pub fn guess_transcript(stdout: &str, dir: &str, proc: &TranscriptProc) -> Optio
     match files.iter().find(|f| f.0 >= proc.started_at - 2.0) {
         Some(f) => Some(format!("{dir}/{}", f.1)),
         None => proc.resume.map(|r| format!("{dir}/{r}.jsonl")),
+    }
+}
+
+// The shell the probe runs, byte for byte the TS's (fixtures/expected/scripts.json checks it).
+
+/// Prints whether Claude's integration is installed, missing, removed from settings or outdated.
+pub const HOOK_STATE_SH: &str = r#"t="$HOME/.inyon"
+s="$HOME/.claude/settings.json"
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }
+if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
+# settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
+elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
+elif ! grep -q 'inyon/statusline.sh' "$s" 2>/dev/null || ! grep -q 'inyon/hook.sh' "$s" 2>/dev/null; then echo removed
+elif current "$t/hook.sh" && current "$t/statusline.sh"; then echo installed
+else echo outdated; fi"#;
+/// What every poll runs on a machine: its tmux sessions and panes, the agents running in them, and
+/// what Inyon's hooks and status lines wrote since.
+pub const PROBE: &str = r#"
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+for d in "$HOME"/.nvm/versions/node/*/bin "$HOME"/.local/share/pnpm; do [ -d "$d" ] && PATH="$PATH:$d"; done
+echo "@@HOST $(hostname)"
+echo "@@HOME $HOME"
+echo "@@OS $(uname -s)"
+echo "@@NOW $(date +%s)"
+if [ -d "$HOME/.tether" ] && [ ! -L "$HOME/.tether" ] && [ ! -e "$HOME/.inyon" ]; then mv "$HOME/.tether" "$HOME/.inyon" && { [ -e "$HOME/.tether" ] || ln -s "$HOME/.inyon" "$HOME/.tether"; }; fi
+
+k="$HOME/.inyon/machine-kind"
+if [ ! -s "$k" ] || [ -n "$(find "$k" -mmin +1440 2>/dev/null)" ]; then
+  mkdir -p "$HOME/.inyon" 2>/dev/null
+  os=$(uname -s); ct=; hc=; vt=; g=0; b=0; md=; pt=
+  case "$os" in
+  Linux)
+    ct=$(cat /sys/class/dmi/id/chassis_type 2>/dev/null)
+    hc=$(hostnamectl chassis 2>/dev/null || hostnamectl status 2>/dev/null | sed -n 's/^ *Chassis: *\([a-z-]*\).*/\1/p')
+    vt=$(systemd-detect-virt 2>/dev/null)
+    [ -z "$vt" ] && [ -f /.dockerenv ] && vt=docker
+    { [ -n "$DISPLAY$WAYLAND_DISPLAY" ] || ls /tmp/.X11-unix/X* /run/user/*/wayland-* >/dev/null 2>&1 || pgrep -x 'Xorg|Xwayland|gnome-shell|plasmashell|kwin_wayland|sway|Hyprland|weston|xfwm4|cinnamon' >/dev/null 2>&1; } && g=1
+    for f in /sys/class/power_supply/*/type; do [ "$(cat "$f" 2>/dev/null)" = Battery ] && b=1; done
+    md=$(cat /sys/class/dmi/id/product_name 2>/dev/null) ;;
+  Darwin)
+    g=1
+    pmset -g batt 2>/dev/null | grep -q InternalBattery && b=1
+    md=$(sysctl -n hw.model 2>/dev/null) ;;
+  Windows_NT|MINGW*|MSYS*|CYGWIN*)
+    os=Windows; g=1
+    w=$(powershell.exe -NoProfile -NonInteractive -Command '$e = Get-CimInstance Win32_SystemEnclosure; $c = Get-CimInstance Win32_ComputerSystem; $o = Get-CimInstance Win32_OperatingSystem; ($e.ChassisTypes -join ",") + "|" + @(Get-CimInstance Win32_Battery).Count + "|" + $c.Model + "|" + $o.ProductType' 2>/dev/null | tr -d '\r' | tail -n 1)
+    ct=$(echo "$w" | cut -d '|' -f 1); b=$(echo "$w" | cut -d '|' -f 2); md=$(echo "$w" | cut -d '|' -f 3); pt=$(echo "$w" | cut -d '|' -f 4) ;;
+  *) g=1 ;;
+  esac
+  printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$os" "$ct" "$hc" "$vt" "$g" "${b:-0}" "$(echo "$md" | tr -d '|')" "$pt" > "$k"
+fi
+echo "@@KIND $(head -n 1 "$k" 2>/dev/null)"
+
+echo "@@BINS"
+for b in claude codex opencode copilot gemini agy; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
+if command -v tmux >/dev/null 2>&1; then
+  echo "@@TMUX"
+  tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}' 2>/dev/null || echo "@@NOSERVER"
+else
+  echo "@@NOTMUX"
+fi
+echo "@@CLIENTS"
+tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
+echo "@@PS"
+# etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
+ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{
+  n = split($3, t, /[-:]/); d = 0; h = 0
+  if ($3 ~ /-/) { d = t[1]; h = t[2]; m = t[3]; s = t[4] } else if (n == 3) { h = t[1]; m = t[2]; s = t[3] } else { m = t[1]; s = t[2] }
+  $3 = d * 86400 + h * 3600 + m * 60 + s; print }'
+echo "@@CWD"
+# no /proc on macOS: lsof knows the working directory there
+for p in $(pgrep -f 'claude|codex|opencode|gemini|command-?code|agy' 2>/dev/null); do
+  c=$(readlink /proc/$p/cwd 2>/dev/null) || c=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)
+  echo "$p $c"
+done
+echo "@@AGY"
+# each Antigravity CLI holds ~/.gemini/antigravity-cli/presence/<conversation>.lock open; the newest fd wins
+agy_ids=""
+for p in $(pgrep -x agy 2>/dev/null); do
+  if [ -d /proc/$p/fd ]; then
+    l=$(for fd in /proc/$p/fd/*; do l=$(readlink "$fd" 2>/dev/null); case "$l" in */antigravity-cli/presence/*.lock) echo "${fd##*/} $p $l";; esac; done | sort -n | tail -n 1)
+  else
+    l=$(lsof -p $p 2>/dev/null | awk -v p=$p '/antigravity-cli/presence/.*.lock/ {print 0, p, $NF}' | tail -n 1)
+  fi
+  [ -n "$l" ] && echo "$l" && agy_ids="$agy_ids $(basename "${l##* }" .lock)"
+done
+echo "@@AGYTITLE"
+# titles agy gives its conversations (shown in its /resume list)
+if [ -n "$agy_ids" ] && command -v sqlite3 >/dev/null 2>&1; then
+  for id in $agy_ids; do case "$id" in *[!0-9a-f-]*) continue;; esac
+    echo "$id $(sqlite3 -readonly "$HOME/.gemini/antigravity-cli/conversation_summaries.db" "select title from conversation_summaries where conversation_id='$id'" 2>/dev/null | head -n 1)"
+  done
+fi
+echo "@@AGYSTATUS"
+# status files of panes that closed over an hour ago only pile up
+live=" $(tmux list-panes -a -F '#{pane_id}' 2>/dev/null | tr -d '%' | tr '
+' ' ') "
+for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-status" -maxdepth 1 -type f -mmin +60 2>/dev/null); do
+  n=$(basename "$f"); n=${n%.*}
+  case "$n" in ''|*[!0-9.]*) continue;; esac
+  case "$live" in *" $n "*) ;; *) rm -f "$f";; esac
+done
+for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
+if command -v agy >/dev/null 2>&1; then
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+fi
+echo "@@HOOK"
+t="$HOME/.inyon"
+s="$HOME/.claude/settings.json"
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }
+if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
+# settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
+elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
+elif ! grep -q 'inyon/statusline.sh' "$s" 2>/dev/null || ! grep -q 'inyon/hook.sh' "$s" 2>/dev/null; then echo removed
+elif current "$t/hook.sh" && current "$t/statusline.sh"; then echo installed
+else echo outdated; fi
+t="$HOME/.inyon"
+echo "@@AUTH $(printf '%s' "$({ [ -s "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/.credentials.json ] || grep -q '"oauthAccount"' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null; } && printf 'claude ')$({ [ -e "$HOME"/.codex/auth.json ]; } && printf 'codex ')$({ [ -e "$HOME"/.local/share/opencode/auth.json ] || [ -e "$HOME/.local/share/opencode/opencode.db" ]; } && printf 'opencode ')$({ if [ -f "$HOME/.inyon/.copilot-signed-in" ] && [ -z "$(find "$HOME/.inyon/.copilot-signed-in" -mmin +5 2>/dev/null)" ] && [ ! "$HOME/.copilot/config.json" -nt "$HOME/.inyon/.copilot-signed-in" ]; then [ "$(cat "$HOME/.inyon/.copilot-signed-in")" = 1 ]; elif node -e '
+const {spawn}=require('\''node:child_process'\'');
+const p=spawn('\''copilot'\'',['\''--headless'\'','\''--stdio'\'','\''--no-auto-update'\''],{stdio:['\''pipe'\'','\''pipe'\'','\''ignore'\'']});
+let buffer=Buffer.alloc(0),done=false;
+const timer=setTimeout(()=>finish('\''Copilot model discovery timed out'\''),18000);
+function finish(error,value){if(done)return;done=true;clearTimeout(timer);p.kill();if(error){console.error(error);process.exitCode=1;}else console.log(JSON.stringify(value));}
+function send(id,method){const body=Buffer.from(JSON.stringify({jsonrpc:'\''2.0'\'',id,method,params:{}}));p.stdin.write('\''Content-Length: '\''+body.length+'\''\r\n\r\n'\'');p.stdin.write(body);}
+p.on('\''error'\'',()=>finish('\''Copilot CLI is not installed or could not start'\''));
+p.on('\''exit'\'',()=>{if(!done)finish('\''Copilot model service exited before returning its catalog'\'')});
+p.stdout.on('\''data'\'',chunk=>{buffer=Buffer.concat([buffer,chunk]);while(true){const end=buffer.indexOf('\''\r\n\r\n'\'');if(end<0)return;const length=Number(buffer.subarray(0,end).toString().match(/Content-Length:\s*(\d+)/i)?.[1]);if(!Number.isSafeInteger(length)||length<0||length>10000000)return finish('\''Invalid Copilot response'\'');if(buffer.length<end+4+length)return;let response;try{response=JSON.parse(buffer.subarray(end+4,end+4+length).toString())}catch{return finish('\''Invalid Copilot response'\'')};buffer=buffer.subarray(end+4+length);if(response.id===1){if(response.error)return finish('\''Copilot connection failed'\'');send(2,'\''auth.getStatus'\'')}else if(response.id===2){if(response.error)return finish('\''Copilot catalog unavailable; check CLI sign-in'\'');finish(response.result?.isAuthenticated ? null : '\''Copilot is not signed in'\'',null)}}});
+p.stdin.on('\''error'\'',()=>finish('\''Copilot model service disconnected'\''));
+send(1,'\''connect'\'');
+' >/dev/null 2>&1; then mkdir -p "$HOME/.inyon" && echo 1 > "$HOME/.inyon/.copilot-signed-in"; else mkdir -p "$HOME/.inyon" && echo 0 > "$HOME/.inyon/.copilot-signed-in"; false; fi; } && printf 'copilot ')$({ [ -s "$HOME"/.gemini/oauth_creds.json ] || [ -s "$HOME"/.gemini/google_accounts.json ] || grep -qs GEMINI_API_KEY "$HOME/.gemini/.env"; } && printf 'gemini ')$({ [ -s "$HOME"/.gemini/antigravity-cli/antigravity-oauth-token ] || grep -qs '"modelProvider"' "$HOME/.gemini/antigravity-cli/settings.json"; } && printf 'antigravity ')")"
+echo "@@ACCOUNT $(a() { v=$(tr -d '\n\r' < "$1" 2>/dev/null | grep -o '"oauthAccount": *{[^}]*' | grep -o '"accountUuid": *"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/'); echo "${v:--}"; }; a "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")"
+echo "@@PANES"
+cat "$t"/panes/*.json 2>/dev/null
+echo "@@COMPACT"
+for f in "$t"/panes/*.compact; do [ -f "$f" ] && echo "$(basename "$f" .compact) $(cat "$f")"; done 2>/dev/null
+echo "@@STATUS"
+# pane, mtime, account when written, account now, payload
+for f in "$t"/status/*.json; do
+  [ -f "$f" ] || continue
+  w=-; c=-
+  if [ -f "${f%.json}.acct" ]; then read -r w cfg < "${f%.json}.acct"; c=$(a() { v=$(tr -d '\n\r' < "$1" 2>/dev/null | grep -o '"oauthAccount": *{[^}]*' | grep -o '"accountUuid": *"[^"]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/'); echo "${v:--}"; }; a "$cfg"); fi
+  echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") ${w:--} ${c:--} $(cat "$f")"
+done 2>/dev/null
+echo "@@END"
+"#;
+
+/// Runs the probe on a machine and reads what it printed (`probe()` in tmux.ts).
+pub async fn probe(host: &Host) -> Result<ProbeResult, String> {
+    let t0 = now_ms();
+    let r = host.exec(PROBE, ExecOptions::timeout(15000)).await.map_err(|e| e.message)?;
+    let latency = now_ms().saturating_sub(t0) as f64;
+    parse_probe(&r.stdout, &r.stderr, r.code, latency)
+}
+
+/// Captures the visible screen of several panes in one round trip, with styling.
+pub async fn capture_panes(host: &Host, pane_ids: &[String]) -> HubResult<IndexMap<String, Vec<String>>> {
+    let Some(cmd) = capture_command(pane_ids) else { return Ok(IndexMap::new()) };
+    let r = host.exec(&cmd, ExecOptions::timeout(10000)).await?;
+    Ok(parse_captures(&r.stdout))
+}
+
+/// `typeText(host, pane, text, submit)`: types text into a pane as a person would.
+pub async fn type_into(host: &Host, pane: &str, text: &str, submit: bool) -> HubResult<()> {
+    match type_text(pane, text, submit, &format!("inyon-{}", crate::ids::random_uuid())) {
+        TypeText::Nothing => Ok(()),
+        TypeText::Keys(cmd) => {
+            let r = host.run(&cmd).await?;
+            if r.code != 0 {
+                return Err(HubError::plain(nonempty_or(r.stderr.jtrim(), "send-keys failed")));
+            }
+            Ok(())
+        }
+        TypeText::Paste { command, input, submit } => {
+            let r = host.exec(&command, ExecOptions::input(input)).await?;
+            if r.code != 0 {
+                return Err(HubError::plain(nonempty_or(r.stderr.jtrim(), "Could not paste text into the terminal")));
+            }
+            if submit {
+                sleep(150).await;
+                send_keys(host, pane, &["Enter"]).await?;
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `sendKeys(host, pane, keys)`
+pub async fn send_keys(host: &Host, pane: &str, keys: &[&str]) -> HubResult<()> {
+    let cmd = send_keys_command(pane, keys).map_err(HubError::plain)?;
+    let r = host.run(&cmd).await?;
+    if r.code != 0 {
+        return Err(HubError::plain(nonempty_or(r.stderr.jtrim(), "send-keys failed")));
+    }
+    Ok(())
+}
+
+/// `guessTranscript(host, home, proc)`
+pub async fn find_transcript(host: &Host, home: &str, proc: &TranscriptProc<'_>) -> HubResult<Option<String>> {
+    let Some((dir, cmd)) = guess_transcript_command(home, proc) else { return Ok(None) };
+    let r = host.run(&cmd).await?;
+    Ok(guess_transcript(&r.stdout, &dir, proc))
+}
+
+fn nonempty_or(s: &str, fallback: &str) -> String {
+    if s.is_empty() {
+        fallback.to_owned()
+    } else {
+        s.to_owned()
+    }
+}
+
+/// Real-time pane activity from tmux itself (tmux/live.ts). One control-mode client per tmux
+/// session (read-only, and flagged so it never affects window sizes) reports `%output` for every
+/// pane as it changes, plus structural events (windows/panes opened, closed, renamed).
+pub struct LiveTmux {
+    host: Host,
+    on_output: Rc<dyn Fn(&str)>,
+    on_structure: Rc<dyn Fn()>,
+    clients: Rc<RefCell<IndexMap<String, StreamHandle>>>,
+}
+
+impl LiveTmux {
+    pub fn new(host: Host, on_output: impl Fn(&str) + 'static, on_structure: impl Fn() + 'static) -> Self {
+        LiveTmux { host, on_output: Rc::new(on_output), on_structure: Rc::new(on_structure), clients: Rc::default() }
+    }
+
+    /// Keep exactly one client per session id in `sessions`.
+    pub fn sync(&self, sessions: &[String]) {
+        let want: IndexSet<&str> = sessions.iter().map(String::as_str).collect();
+        let gone: Vec<(String, StreamHandle)> = {
+            let mut c = self.clients.borrow_mut();
+            let ids: Vec<String> = c.keys().filter(|id| !want.contains(id.as_str())).cloned().collect();
+            ids.into_iter().filter_map(|id| c.shift_remove(&id).map(|s| (id, s))).collect()
+        };
+        for (_, s) in gone {
+            s.kill();
+        }
+        for id in want {
+            if !self.clients.borrow().contains_key(id) {
+                self.attach(id);
+            }
+        }
+    }
+
+    fn attach(&self, id: &str) {
+        // exec skips the tmux() function that adds -u, so add it here (not for psmux, where tmux is a function)
+        let cmd = format!(r#"exec tmux $([ "$(command -v tmux)" = tmux ] || echo -u) -C attach-session -t {} -f read-only,ignore-size"#, shq(id));
+        let (on_output, on_structure, clients, sid) = (self.on_output.clone(), self.on_structure.clone(), self.clients.clone(), id.to_owned());
+        let on_line = move |line: String| {
+            if line.starts_with("%output ") || line.starts_with("%extended-output ") {
+                if let Some(pane) = line.split(' ').nth(1).filter(|p| p.starts_with('%')) {
+                    on_output(pane);
+                }
+            } else if re!(r"^%(window-add|window-close|unlinked-window-add|unlinked-window-close|window-renamed|layout-change|sessions-changed|session-renamed|pane-mode-changed|window-pane-changed)\b").is_match(&line) {
+                on_structure();
+            } else if line.starts_with("%exit") {
+                clients.borrow_mut().shift_remove(&sid);
+            }
+        };
+        let Ok(s) = self.host.stream(&cmd, on_line, true) else { return };
+        self.clients.borrow_mut().insert(id.to_owned(), s.clone());
+        let (clients, id) = (self.clients.clone(), id.to_owned());
+        crate::platform::rt::spawn(async move {
+            s.exited.wait().await;
+            let mut c = clients.borrow_mut();
+            if c.get(&id).is_some_and(|x| x.same(&s)) {
+                c.shift_remove(&id);
+            }
+        });
+    }
+
+    pub fn stop(&self) {
+        let all: Vec<StreamHandle> = self.clients.borrow_mut().drain(..).map(|(_, s)| s).collect();
+        for s in all {
+            s.kill();
+        }
     }
 }
 

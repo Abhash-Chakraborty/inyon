@@ -26,9 +26,11 @@ pub mod js;
 pub mod agents;
 pub mod claude;
 pub mod clock;
+pub mod config;
 pub mod features;
 pub mod hosts;
 pub mod ids;
+pub mod platform;
 pub mod sha;
 pub mod tmux;
 

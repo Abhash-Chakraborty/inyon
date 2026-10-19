@@ -67,14 +67,26 @@ pub fn parse_release(v: &str) -> Option<[u64; 3]> {
 }
 
 /// Whether release `next` is newer than the running version `current`. A build between releases
-/// ("0.6.3-build.41", from main after 0.6.3) counts as the release it's built on.
+/// ("0.6.3-build.41", from main after 0.6.3) counts as the release it's built on; a test build of
+/// a release ("0.19.0-rc.1") comes before it, so 0.19.0 is an update for it.
 pub fn newer_release(next: &str, current: &str) -> bool {
     let current = current.trim();
     let base = current.find(['-', '+']).map_or(current, |i| &current[..i]);
     match (parse_release(next), parse_release(base)) {
-        (Some(a), Some(b)) => a > b,
+        (Some(a), Some(b)) if a != b => a > b,
+        (Some(_), Some(_)) => test_build(current),
         _ => false,
     }
+}
+
+/// A signed test build of a release, published as a GitHub pre-release: "0.19.0-rc.1"
+/// (`TEST_BUILD`, `/^v?\d+\.\d+\.\d+-rc\.\d+$/`).
+pub fn test_build(v: &str) -> bool {
+    let v = v.strip_prefix('v').unwrap_or(v);
+    let Some((release, rc)) = v.split_once("-rc.") else { return false };
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let parts: Vec<&str> = release.split('.').collect();
+    parts.len() == 3 && parts.iter().all(|p| digits(p)) && digits(rc)
 }
 
 /// The newest release among `versions` that is newer than `current`, if any.

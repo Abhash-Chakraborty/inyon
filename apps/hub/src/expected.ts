@@ -4,6 +4,19 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import type { AgentKind, ScreenState } from '@inyon/protocol'
 import { codexBrowsing, parseScreen, promptSummary } from './claude/screen.ts'
+import { UTF8_TMUX } from './hosts/host.ts'
+import { ACCOUNT_SH, CURRENT_SH, MARKER, MOVE_OLD_FOLDER_SH, PANE_SH } from './claude/integration-sh.ts'
+import { AGY_STATUS_SCRIPT, HOOK_SCRIPT, STATUS_SCRIPT } from './claude/integration.ts'
+import { HOOK_STATE_SH, PROBE, pasteCommand } from './tmux/tmux.ts'
+import { LINK_UPDATE, READ_STATUS, SELF_UPDATE, WINDOWS_LAUNCHER } from './hosts/node-update.ts'
+import { SCRIPT as CLAUDE_USAGE } from './agents/claude-usage.ts'
+import { copilotCatalogScript } from './agents/copilot-rpc-sh.ts'
+import { VIEW_KEYS } from './terminal/terminal.ts'
+import { PATHS } from './features/setup.ts'
+import { viaCommand } from './hosts/via-backend.ts'
+import { dropAuthorizedKey } from './hosts/tidy.ts'
+import { readCommand } from './terminal/mirror.ts'
+import { remainOnExit, respawnShell, resumeCommand } from './claude/actions.ts'
 
 export const FIXTURES = new URL('../../../fixtures/', import.meta.url)
 
@@ -96,12 +109,39 @@ export function chatScreenSources(all = captures()) {
   return out
 }
 
+/**
+ * The shell the hub sends to machines, and what the command builders make of a few inputs, so the
+ * Rust port sends exactly these bytes (the hook scripts' marker included).
+ */
+export function scripts() {
+  return {
+    UTF8_TMUX, MARKER, CURRENT_SH, PANE_SH, MOVE_OLD_FOLDER_SH, ACCOUNT_SH, HOOK_STATE_SH, PROBE,
+    HOOK_SCRIPT, STATUS_SCRIPT, AGY_STATUS_SCRIPT, WINDOWS_LAUNCHER, SELF_UPDATE, LINK_UPDATE, READ_STATUS,
+    CLAUDE_USAGE, COPILOT_CATALOG: copilotCatalogScript, VIEW_KEYS, PATHS,
+    commands: {
+      paste: pasteCommand('inyon-1', "%1 it's"),
+      via: viaCommand({ id: 's', name: 's', kind: 'ssh', target: "o'brien@db", port: 2222, via: 'j' }, `echo "$HOME" 'x'`),
+      viaTty: viaCommand({ id: 's', name: 's', kind: 'ssh', target: 'db', via: 'j' }, 'tmux attach', true),
+      dropKey: dropAuthorizedKey("ssh-ed25519 AAAA it's me"),
+      read: readCommand('%3'),
+      remainOn: remainOnExit(false, "'%1'", true),
+      remainOffWindows: remainOnExit(true, "'%1'", false),
+      respawn: respawnShell(false, "'%1'", '/home/o b'),
+      respawnWindows: respawnShell(true, "'%1'"),
+      resumeClaude: resumeCommand('claude', '0f7c9d2e-1111-4222-8333-944455556666', ['node', '/x/claude', '--model', 'opus', '--resume', 'abc', 'hello there', '--add-dir=/a b']),
+      resumeCodex: resumeCommand('codex', '0f7c9d2e-1111-4222-8333-944455556666', '/usr/bin/codex resume 0f7c9d2e-1111-4222-8333-944455556666 -m gpt-5 --yolo'),
+      resumeAgy: resumeCommand('antigravity', undefined, ['agy', '--model', 'gemini-3', '-i', 'hi', '--continue']),
+    },
+  }
+}
+
 /** Every file under fixtures/expected, by its path there, with what it should hold. */
 export function expectedFiles(): Map<string, unknown> {
   const all = captures()
   const files = new Map<string, unknown>()
   for (const [name, c] of all) files.set(`screens/${name}.json`, screenExpectation(c.agent, c.lines))
   files.set('chat-screen.json', chatScreenSources(all))
+  files.set('scripts.json', scripts())
   return files
 }
 

@@ -59,6 +59,11 @@ fn release_numbers() {
     assert!(!newer_release("0.6.3", "0.6.3-build.41"));
     assert!(!newer_release("0.7.0-rc.1", "0.6.3"));
     assert!(!newer_release("0.7.0", "dev"));
+    // a test build comes before its release, and after the one before
+    assert!(newer_release("0.19.0", "0.19.0-rc.1"));
+    assert!(newer_release("0.19.0", " v0.19.0-rc.2 "));
+    assert!(!newer_release("0.18.0", "0.19.0-rc.1"));
+    assert!(test_build("v0.19.0-rc.12") && !test_build("0.19.0-rc.") && !test_build("0.19-rc.1") && !test_build("0.19.0-rc.1x"));
     assert_eq!(newest_release(["0.6.4", "v0.7.1", "0.7.0", "0.8.0-rc.1"], "0.6.3").as_deref(), Some("0.7.1"));
     assert_eq!(newest_release(["0.6.2"], "0.6.3"), None);
 }

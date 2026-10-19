@@ -184,6 +184,19 @@ pub fn locale_compare(a: &str, b: &str) -> std::cmp::Ordering {
     })
 }
 
+/// `encodeURIComponent(s)`: everything but letters, digits and `-_.!~*'()` as %XX of its UTF-8.
+pub fn encode_uri_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

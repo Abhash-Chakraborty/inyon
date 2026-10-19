@@ -1,17 +1,23 @@
 //! Port of agents/opencode-controls.ts: what a prompt sent through the API should run with, and
 //! whether the session is busy. The terminal's footer is the truth: whatever it shows (agent,
-//! model, variant) is what OpenCode itself would use for the next message. The requests behind
-//! `storedSelection` and `opencodeLive` are the caller's; these read their answers.
+//! model, variant) is what OpenCode itself would use for the next message.
 
 use indexmap::IndexSet;
 use inyon_protocol::AgentModel;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::opencode_api::OpenCodeSelection;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use super::opencode_api::{OpenCodeClient, OpenCodeSelection};
 use super::opencode_models::model_from_footer;
 use crate::claude::transcript::string_of;
+use crate::clock::now_ms;
+use crate::hosts::host::Host;
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{value_string, Js};
+use crate::platform::rt::{spawn_task, Deferred};
 
 /// From the footer as the screen reader saw it (ScreenState's model, effort and mode).
 pub fn selection_from_footer(model: Option<&str>, effort: Option<&str>, mode: Option<&str>, models: &[AgentModel]) -> Option<OpenCodeSelection> {
@@ -95,4 +101,51 @@ pub fn live_children(sessions: &Value, session: &str) -> IndexSet<String> {
         .filter(|s| s.get("parentID").and_then(Value::as_str) == Some(session))
         .filter_map(|s| s.get("id").and_then(Value::as_str).map(str::to_owned))
         .collect()
+}
+
+/// `storedSelection(client)`: asks the server; nothing for an answer it couldn't give.
+pub async fn stored_selection_of(client: &OpenCodeClient) -> OpenCodeSelection {
+    let info = client.info().await.ok().flatten();
+    stored_selection(info.as_ref())
+}
+
+type Live = Deferred<Result<LiveValue, String>>;
+
+thread_local! {
+    static LIVE: RefCell<HashMap<String, (u64, Live)>> = RefCell::new(HashMap::new());
+}
+
+/// `opencodeLive(host, uri, directory)`: whether the session is busy, what runs under it and what
+/// permission it waits for, from its server; one ask per second per session.
+pub async fn opencode_live(host: &Host, uri: &str, directory: Option<&str>) -> HubResult<LiveValue> {
+    let key = crate::js::stringify(&serde_json::json!([host.id(), uri, directory]));
+    let hit = LIVE.with(|l| l.borrow().get(&key).filter(|(at, _)| now_ms().saturating_sub(*at) < 1000).map(|(_, p)| p.clone()));
+    let pending = match hit {
+        Some(p) => p,
+        None => {
+            let client = OpenCodeClient::new(host, uri, directory)?;
+            let p = spawn_task(async move {
+                let sessions = async {
+                    if client.session.is_empty() {
+                        return Value::Array(vec![]);
+                    }
+                    client.request("/session", "GET", None, Some(3)).await.ok().flatten().unwrap_or_else(|| Value::Array(vec![]))
+                };
+                let (states, permissions, sessions) =
+                    futures_util::future::join3(client.request("/session/status", "GET", None, Some(3)), client.request("/permission", "GET", None, Some(3)), sessions).await;
+                let states = states.map_err(|e| e.message)?.unwrap_or(Value::Null);
+                let permissions = permissions.map_err(|e| e.message)?.unwrap_or(Value::Null);
+                Ok(live_value(&states, &permissions, &client.session, &live_children(&sessions, &client.session)))
+            });
+            LIVE.with(|l| {
+                let mut l = l.borrow_mut();
+                l.insert(key, (now_ms(), p.clone()));
+                if l.len() > 100 {
+                    l.retain(|_, (at, _)| now_ms().saturating_sub(*at) <= 60_000);
+                }
+            });
+            p
+        }
+    };
+    pending.wait().await.map_err(crate::hosts::http_error::HubError::plain)
 }

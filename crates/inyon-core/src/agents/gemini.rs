@@ -12,7 +12,8 @@ use serde_json::{Map, Value};
 use super::status::empty_status;
 use crate::claude::transcript::{numbered, stdout_meta, string_of, text_block, thinking_block, tool_block, Base, ToolCall, TranscriptMeta};
 use crate::clock::now_ms;
-use crate::hosts::host::shq;
+use crate::hosts::host::{shq, Host};
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{self, obj, s, value_string, Js};
 use crate::js::{fmt_number, to_number, JsStr};
 use crate::re;
@@ -316,6 +317,12 @@ impl GeminiDoc {
         }
         numbered(out)
     }
+}
+
+/// `guessGeminiSession(host, home, proc)`: runs the command above on the machine.
+pub async fn find_gemini_session(host: &Host, home: &str, proc: &GeminiProc) -> HubResult<Option<String>> {
+    let r = host.run(&guess_gemini_session_command(home, proc, now_ms() as f64 / 1000.0)).await?;
+    Ok(guess_gemini_session(&r.stdout, proc))
 }
 
 #[cfg(test)]

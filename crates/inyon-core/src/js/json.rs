@@ -45,6 +45,61 @@ fn write(out: &mut String, v: &Value) {
     }
 }
 
+/// `JSON.stringify(v, null, 2)`: the same, one member per line, indented two spaces a level.
+pub fn stringify_pretty(v: &Value) -> String {
+    let mut out = String::new();
+    write_pretty(&mut out, v, 0);
+    out
+}
+
+fn write_pretty(out: &mut String, v: &Value, depth: usize) {
+    let pad = |out: &mut String, d: usize| {
+        out.push('\n');
+        for _ in 0..d {
+            out.push_str("  ");
+        }
+    };
+    match v {
+        Value::Array(a) if !a.is_empty() => {
+            out.push('[');
+            for (i, x) in a.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                pad(out, depth + 1);
+                write_pretty(out, x, depth + 1);
+            }
+            pad(out, depth);
+            out.push(']');
+        }
+        Value::Object(o) if !o.is_empty() => {
+            out.push('{');
+            for (i, (k, x)) in ordered(o).into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                pad(out, depth + 1);
+                quote(out, k);
+                out.push_str(": ");
+                write_pretty(out, x, depth + 1);
+            }
+            pad(out, depth);
+            out.push('}');
+        }
+        _ => write(out, v),
+    }
+}
+
+/// `{ ...v }`: an object's own members, an array's or a string's by index, nothing for the rest.
+pub fn spread(v: Option<&Value>) -> Map<String, Value> {
+    match v {
+        Some(Value::Object(m)) => m.clone(),
+        Some(Value::Array(a)) => a.iter().enumerate().map(|(i, x)| (i.to_string(), x.clone())).collect(),
+        Some(Value::String(s)) => s.encode_utf16().enumerate().map(|(i, u)| (i.to_string(), Value::String(String::from_utf16_lossy(&[u])))).collect(),
+        _ => Map::new(),
+    }
+}
+
 /// An array index key ("0" up to 2^32 - 2, no leading zeros).
 fn index_key(k: &str) -> Option<u32> {
     if k.is_empty() || (k.len() > 1 && k.starts_with('0')) || !k.bytes().all(|b| b.is_ascii_digit()) {
@@ -456,6 +511,13 @@ mod tests {
         assert_eq!(parse(r#"{"t":"a\ud83d"}"#).unwrap()["t"], "a\u{fffd}");
         assert_eq!(parse(r#"{"t":"\ud83d\ude42 \\ud83d"}"#).unwrap()["t"], "🙂 \\ud83d");
         assert_eq!(parse("{"), None);
+    }
+
+    #[test]
+    fn pretty_prints_like_javascript() {
+        let v: Value = serde_json::from_str(r#"{"b":[],"a":{},"2":[1,{"x":"y"}],"s":"q\""}"#).unwrap();
+        assert_eq!(stringify_pretty(&v), "{\n  \"2\": [\n    1,\n    {\n      \"x\": \"y\"\n    }\n  ],\n  \"b\": [],\n  \"a\": {},\n  \"s\": \"q\\\"\"\n}");
+        assert_eq!(stringify_pretty(&Value::from(1.5)), "1.5");
     }
 
     #[test]

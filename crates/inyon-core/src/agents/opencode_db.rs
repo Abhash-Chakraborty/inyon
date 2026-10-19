@@ -6,15 +6,16 @@
 //! file holds account tokens, which are never queried.
 //!
 //! Every query asks SQLite for its rows as one JSON array (json_group_array), printed as is. The
-//! queries and the script that runs them are built here; the caller runs them and hands the
-//! output back to be read.
+//! queries and the script that runs them are built and read by pure functions; the async ones at
+//! the end run them on the machine.
 
 use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
 
-use crate::hosts::host::shq;
+use crate::hosts::host::{shq, ExecOptions, Host};
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{self, Js};
 use crate::js::text::locale_compare;
 use crate::js::JsStr;
@@ -384,6 +385,56 @@ impl OcdbCache {
             })
             .collect()
     }
+}
+
+// ---- run on a machine ----
+
+/// `ocdbQuery(host, sql)`: runs a `json_rows` query and returns its rows.
+pub async fn ocdb_query(host: &Host, sql: &str) -> HubResult<Vec<Value>> {
+    let r = host.exec(&ocdb_query_command(sql), ExecOptions::timeout(15_000)).await?;
+    Ok(ocdb_query_rows(&r.stdout))
+}
+
+/// `ocdbSessions(host, directory, limit)`
+pub async fn ocdb_sessions_of(host: &Host, directory: &str, limit: u32) -> HubResult<Vec<OcdbSessionRow>> {
+    Ok(ocdb_sessions(&ocdb_query(host, &ocdb_sessions_query(directory, limit)).await?))
+}
+
+/// `guessOpenCodeSession(host, proc, screen, paneTitle)`: the folder's conversations are only read
+/// when the title doesn't already say.
+pub async fn find_open_code_session(host: &Host, proc: &OpenCodeProc, screen: Option<&[String]>, pane_title: Option<&str>) -> HubResult<Option<String>> {
+    let Some(cwd) = proc.cwd.as_deref().filter(|c| !c.is_empty()) else { return Ok(None) };
+    if pane_title.map(JsStr::jtrim) == Some("OpenCode") {
+        return Ok(Some(OCDB.into()));
+    }
+    let rows = ocdb_sessions_of(host, cwd, 30).await?;
+    Ok(guess_open_code_session(proc, &rows, screen, pane_title))
+}
+
+/// `ocdbStamp(host, session)`
+pub async fn ocdb_stamp_of(host: &Host, session: &str) -> HubResult<f64> {
+    let Some(q) = ocdb_stamp_query(session) else { return Ok(0.0) };
+    Ok(ocdb_stamp(&ocdb_query(host, &q).await?))
+}
+
+/// `ocdbRows(host, session, since)`: (messages, parts).
+pub async fn ocdb_rows_of(host: &Host, session: &str, since: f64) -> HubResult<(Vec<Value>, Vec<Value>)> {
+    let Some((m, p)) = ocdb_rows_queries(session, since) else { return Ok((vec![], vec![])) };
+    let (messages, parts) = futures_util::future::join(ocdb_query(host, &m), ocdb_query(host, &p)).await;
+    Ok((messages?, parts?))
+}
+
+/// `ocdbShape(host, session)`
+pub async fn ocdb_shape_of(host: &Host, session: &str) -> HubResult<OcdbShape> {
+    let Some((ids, revert)) = ocdb_shape_queries(session) else { return Ok(OcdbShape::default()) };
+    let (ids, revert) = futures_util::future::join(ocdb_query(host, &ids), ocdb_query(host, &revert)).await;
+    Ok(ocdb_shape(&ids?, &revert?))
+}
+
+/// `ocdbSessionInfo(host, session)`
+pub async fn ocdb_session_info_of(host: &Host, session: &str) -> HubResult<Option<OcdbSessionInfo>> {
+    let Some(q) = ocdb_session_info_query(session) else { return Ok(None) };
+    Ok(ocdb_session_info(&ocdb_query(host, &q).await?))
 }
 
 #[cfg(test)]

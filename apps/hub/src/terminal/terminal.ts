@@ -8,7 +8,7 @@ import { openMirror } from './mirror.ts'
  * work as usual. Nothing else is bound, so the prefix key does nothing and every other key goes to
  * the program in the pane.
  */
-const VIEW_KEYS = [
+export const VIEW_KEYS = [
   `bind-key -T inyon-view WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'`,
   `bind-key -T inyon-view MouseDown1Pane 'select-pane -t = ; send-keys -M'`,
   `bind-key -T inyon-view MouseDrag1Pane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'`,

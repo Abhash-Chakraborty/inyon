@@ -1,9 +1,15 @@
 //! Port of apps/hub/src/agents: what each agent's screen and transcript say.
 
 pub mod antigravity;
+pub mod antigravity_models;
+pub mod claude_usage;
 pub mod codex;
 pub mod codex_live;
+pub mod codex_models;
 pub mod copilot;
+pub mod copilot_controls;
+pub mod copilot_models;
+pub mod copilot_rpc_sh;
 pub mod copilot_screen;
 pub mod gemini;
 pub mod opencode;

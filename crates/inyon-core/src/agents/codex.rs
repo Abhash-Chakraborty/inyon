@@ -1,6 +1,6 @@
 //! Port of agents/codex.ts: finding a Codex process's rollout file, reading its lines into chat
-//! items, and its status and permissions. The commands are built here and run by the caller; the
-//! functions that read their output take it as text.
+//! items, and its status and permissions. The commands are built and read by pure functions; the
+//! async ones at the end run them on a machine.
 
 use std::collections::HashMap;
 
@@ -12,7 +12,8 @@ use serde_json::{Map, Value};
 use super::status::{status_from_codex, CodexContext};
 use crate::claude::transcript::{clip_text, result_meta, stdout_meta, string_of, text_block, thinking_block, tool_block, Base, TranscriptMeta};
 use crate::clock::now_ms;
-use crate::hosts::host::shq;
+use crate::hosts::host::{shq, Host};
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{obj, s, stringify, value_string, Js};
 use crate::js::re::dynamic;
 use crate::js::{date, to_number, JsStr};
@@ -1011,6 +1012,51 @@ fn function_call_output(p: Option<&Value>, meta: &mut TranscriptMeta, base: &Bas
     let exit = out.at("metadata").at("exit_code").num();
     let text = clip(&text);
     vec![base.tool_result(call_id, exit.is_some_and(|x| x != 0.0), text.clone(), None, exit.map(|_| stdout_meta(text)))]
+}
+
+// ---- run on a machine: the async halves of the TS functions above ----
+
+/// `guessCodexRollout(host, home, proc, others)`
+pub async fn find_codex_rollout(host: &Host, home: &str, proc: &CodexProc, others: &[CodexProc]) -> HubResult<Option<String>> {
+    let cmd = guess_codex_rollout_command(home, proc, others, now_ms() as f64 / 1000.0);
+    let r = host.run(&cmd).await?;
+    let (rows, names) = codex_rollouts(&r.stdout);
+    Ok(pick_codex_rollout(&rows, proc, others, &names))
+}
+
+/// `codexHistory(host, path)`: the earlier lines to replay before a segment, following bases of
+/// bases, oldest first.
+pub fn codex_history<'a>(host: &'a Host, path: &'a str, depth: u32) -> futures_util::future::LocalBoxFuture<'a, HubResult<Vec<String>>> {
+    Box::pin(async move {
+        if depth > 6 {
+            return Ok(vec![]);
+        }
+        let head = host.run(&codex_history_head_command(path)).await?;
+        let Some((id, offset)) = codex_history_base(&head.stdout) else { return Ok(vec![]) };
+        let r = host.run(&codex_history_find_command(path, &id)).await?;
+        let prev = r.stdout.jtrim().to_owned();
+        if prev.is_empty() {
+            return Ok(vec![]);
+        }
+        let body = host.exec(&codex_history_body_command(&prev, offset), crate::hosts::host::ExecOptions::timeout(30000)).await?;
+        let mut out = codex_history(host, &prev, depth + 1).await?;
+        out.extend(body.stdout.split('\n').filter(|l| !l.is_empty()).map(str::to_owned));
+        Ok(out)
+    })
+}
+
+/// What `codexStatus` reads from a rollout file.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CodexStatusRead {
+    pub status: Option<AgentStatus>,
+    pub permission: Option<String>,
+}
+
+/// `codexStatus(host, path)`
+pub async fn read_codex_status(host: &Host, path: &str) -> HubResult<CodexStatusRead> {
+    let r = host.run(&codex_status_command(path)).await?;
+    let (status, permission) = codex_status(&r.stdout);
+    Ok(CodexStatusRead { status, permission })
 }
 
 #[cfg(test)]
