@@ -51,6 +51,9 @@ jobs:
       # and transcript tail against them, each tmux test on a server in a folder of its own
       - run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -y -q tmux; }
       - run: cargo test -p inyon-backends
+      # the hub in Rust (from 0.20): its routes, sockets, sign-in and updates, as the Bun hub's
+      # tests had them
+      - run: cargo test -p inyon-hub
 
   # the Rust engine as old phones, hubs and scripts meet it: apps/node's tests that run the engine
   # as a program, pointed at this build under the name inyon-engine, against the real Bun hub
@@ -105,7 +108,24 @@ jobs:
       - name: Test
         if: ${{ !matrix.cross }}
         run: cargo test --target ${{ matrix.target }} -p inyon-cli -p inyon-engine
+      # Windows has no hub; the others run its tests on their own system too (sockets, file limits)
+      - name: Test the hub
+        if: ${{ !matrix.cross && !startsWith(matrix.runner, 'windows') }}
+        run: cargo test --target ${{ matrix.target }} -p inyon-hub
+      # the hub in Rust (INYON_HUB_IMPL=rust) carries the web app, embedded from apps/web/dist
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
+        with:
+          bun-version: 1.4.2
+      - name: Build the web app
+        if: ${{ !startsWith(matrix.runner, 'windows') }}
+        working-directory: .
+        run: bun install --frozen-lockfile && bun run --cwd apps/web build
       - run: cargo build --release --target ${{ matrix.target }}
+        env:
+          INYON_BUILD_COMMIT: ${{ github.sha }}
+          # Windows has no hub, so no request to survive a panic in: abort is smaller
+          CARGO_PROFILE_RELEASE_PANIC: ${{ startsWith(matrix.runner, 'windows') && 'abort' || 'unwind' }}
       - name: Name the binary
         shell: bash
         run: |

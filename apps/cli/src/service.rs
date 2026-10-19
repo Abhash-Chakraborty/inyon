@@ -244,9 +244,18 @@ pub fn has_service(sys: &Sys, role: Role) -> bool {
     }
 }
 
+/// Whether `restart_service` has something to restart for `role`: a service, or a copy started in
+/// the background with its pid recorded.
+pub fn can_restart(sys: &Sys, role: Role) -> bool {
+    has_service(sys, role) || pid_file(role).exists()
+}
+
 /// Installs and starts `role` as a user service; `restart` replaces a copy that's already running.
 pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
     crate::engine::remember_legacy(false);
+    if role == Role::Hub {
+        crate::engine::remember_hub_impl(false);
+    }
     let s = spec(role);
     let cmd = settle(&sys.program);
     let args: Vec<String> = cmd.iter().cloned().chain(s.args.iter().map(|a| a.to_string())).collect();
@@ -1170,12 +1179,15 @@ pub fn detach(sys: &Sys, args: &[String], task: &str) -> Installed {
 }
 
 /// What a command started by systemd-run takes along, since it gets the service manager's
-/// environment instead of this one: the mirror, the hub's folder and the kill switch (each under
-/// its INYON_ name, also when it was set under its TETHER_ one).
+/// environment instead of this one: the mirror, the hub's folder, the kill switch and the hub
+/// switch (each under its INYON_ name, also when it was set under its TETHER_ one).
 fn detached_env() -> Vec<String> {
     let mut v: Vec<String> = ["INYON_DOWNLOAD", "INYON_DATA_DIR"].iter().filter_map(|k| crate::paths::env_var(k).map(|val| format!("--setenv={k}={val}"))).collect();
     if let Some(legacy) = crate::engine::legacy_asked() {
         v.push(format!("--setenv=INYON_LEGACY_ENGINE={}", if legacy { 1 } else { 0 }));
+    }
+    if let Some(rust) = crate::engine::hub_impl_asked() {
+        v.push(format!("--setenv=INYON_HUB_IMPL={}", if rust { "rust" } else { "bun" }));
     }
     v
 }

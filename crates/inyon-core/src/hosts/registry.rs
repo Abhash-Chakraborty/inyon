@@ -706,16 +706,20 @@ impl Registry {
     /// Re-poll a machine soon (after an action or a hook event).
     pub fn refresh(&self, id: &str, delay: u64) {
         let Some(rt) = self.get(id) else { return };
-        let mut r = rt.borrow_mut();
-        if r.stopped {
-            return;
+        {
+            let mut r = rt.borrow_mut();
+            if r.stopped {
+                return;
+            }
+            if r.polling {
+                r.poll_again = true;
+                return;
+            }
+            rt::clear(&mut r.timer);
         }
-        if r.polling {
-            r.poll_again = true;
-            return;
-        }
-        rt::clear(&mut r.timer);
-        r.timer = Some(Self::poll_later(&rt, delay));
+        // not borrowed while the timer is set: a runtime may run a zero delay at once
+        let timer = Self::poll_later(&rt, delay);
+        rt.borrow_mut().timer = Some(timer);
     }
 
     fn poll_later(rt: &Rt, ms: u64) -> Timer {

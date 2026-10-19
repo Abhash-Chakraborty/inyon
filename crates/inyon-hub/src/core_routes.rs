@@ -1,0 +1,858 @@
+//! core.ts's API: the routes the app uses for machines, sessions, settings, uploads and the rest,
+//! each a thin reading of the request around inyon-core's features. The hub puts every one behind
+//! sign-in (see `server::guarded`).
+
+use axum::http::Method;
+use inyon_core::claude::actions::{self, LaunchOpts};
+use inyon_core::claude::integration::{install_integration, uninstall_integration};
+use inyon_core::claude::send_receipts::send_once;
+use inyon_core::config::{load_settings, save_settings, HubSettings};
+use inyon_core::features::{conversations, features as feat, models, providers, setup, signin, workspace};
+use inyon_core::hosts::http_error::{http, HubError, HubResult};
+use inyon_core::hosts::node_link;
+use inyon_core::hosts::node_update::node_updates;
+use inyon_core::hosts::registry::{public_config, registry};
+use inyon_core::hosts::removed_nodes::remember_removed;
+use inyon_core::hosts::tidy::{tidy_machine, TidyState};
+use inyon_protocol::{HostConfig, HostKind};
+use serde_json::{json, Map, Value};
+
+use crate::http::{as_str, field, fields, js_number, json_of, ok, ok_json, pane_param, str_or_empty, str_raw, to_int32, truthy, Req, Resp};
+use crate::multipart::{self, Part};
+use crate::server::{guarded, h, Routes};
+
+/// `validateHost(b)`: an SSH machine's settings, checked.
+pub fn validate_host(b: &Map<String, Value>) -> HubResult<HostConfig> {
+    let name = str_or_empty(b.get("name")).trim().to_owned();
+    let target = str_or_empty(b.get("target")).trim().to_owned();
+    if name.is_empty() {
+        return Err(http(400, "Give the machine a name"));
+    }
+    // a leading "-" would be read by ssh as an option
+    if !inyon_core::re!(r"^[\w.@-]+$").is_match(&target) || target.starts_with('-') {
+        return Err(http(400, "Use user@host or an alias from ~/.ssh/config"));
+    }
+    let port = if truthy(b.get("port")) { Some(js_number(b.get("port"))) } else { None };
+    if let Some(p) = port {
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        if !(p > 0.0 && p < 65536.0) {
+            return Err(http(400, "Port must be 1-65535"));
+        }
+    }
+    let identity_file = match b.get("identityFile") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.trim().to_owned()).filter(|s| !s.is_empty()),
+        Some(_) => return Err(HubError::plain("b.identityFile?.trim is not a function")),
+    };
+    if let Some(f) = &identity_file {
+        if !inyon_core::re!(r"^[\w./~-]+$").is_match(f) {
+            return Err(http(400, "Key path has unexpected characters"));
+        }
+    }
+    Ok(HostConfig { name, kind: HostKind::Ssh, target: Some(target), port: port.map(|p| p as u16), identity_file, ..empty_config() })
+}
+
+fn empty_config() -> HostConfig {
+    HostConfig {
+        id: String::new(),
+        name: String::new(),
+        kind: HostKind::Ssh,
+        target: None,
+        port: None,
+        identity_file: None,
+        host_key: None,
+        auth: None,
+        via: None,
+        token_hash: None,
+        paired_at: None,
+        token_issued_at: None,
+        machine_id: None,
+        urls: None,
+        relays: None,
+        keep_integration: None,
+    }
+}
+
+/// A readable id from a name: lower case, runs of anything else as one dash.
+pub fn slug(name: &str, fallback: &str) -> String {
+    let lower = name.to_lowercase();
+    let dashed = inyon_core::re!(r"[^a-z0-9]+").replace_all(&lower, "-");
+    let id = dashed.strip_prefix('-').unwrap_or(&dashed);
+    let id = id.strip_suffix('-').unwrap_or(id);
+    if id.is_empty() {
+        fallback.to_owned()
+    } else {
+        id.to_owned()
+    }
+}
+
+/// `newHostId(name)`: unique among the machines already added.
+pub fn new_host_id(name: &str, fallback: &str) -> String {
+    let id = slug(name, fallback);
+    let mut unique = id.clone();
+    let mut i = 2;
+    while registry().get(&unique).is_some() {
+        unique = format!("{id}-{i}");
+        i += 1;
+    }
+    unique
+}
+
+/// Writes now what would otherwise be saved a few seconds from now: open chats, drafts, and what
+/// each machine looked like. For when the hub stops.
+pub fn save_everything() {
+    let saves: [(&str, fn()); 3] =
+        [("chats", || inyon_core::claude::watcher::watchers().save_all()), ("drafts", inyon_core::claude::drafts::save_drafts), ("machines", || registry().save_all())];
+    for (what, save) in saves {
+        if std::panic::catch_unwind(save).is_err() {
+            inyon_core::platform::console::error(&format!("saving before closing: the {what} could not be saved"));
+        }
+    }
+}
+
+/// Starts watching machines and the housekeeping timers (`startCore`).
+pub fn start_core() {
+    crate::clients::listen();
+    registry().start();
+    feat::start_upload_janitor();
+    inyon_core::claude::chat_cache::prune_chats(None);
+    signin::start();
+    use inyon_core::platform::rt::{set_timeout, sleep, spawn};
+    spawn(async {
+        loop {
+            sleep(30_000).await;
+            let _ = setup::ensure_sessions().await;
+        }
+    });
+    let _ = set_timeout(5_000, || {
+        spawn(async {
+            let _ = setup::ensure_sessions().await;
+        })
+    });
+}
+
+fn id(r: &Req) -> String {
+    r.param("id")
+}
+
+fn pane(r: &Req) -> String {
+    pane_param(&r.param("pane"))
+}
+
+/// `typeof v === 'string' ? v : undefined`, for strings handed on as they came; other values go as
+/// their text, as the TS passes `any` through.
+fn loose(v: Option<&Value>) -> Option<String> {
+    match v {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(v) => Some(crate::http::js_string(v)),
+    }
+}
+
+/// `Math.max(lo, Math.min(hi, Number(x) | 0))`
+fn clamp(x: f64, lo: i32, hi: i32) -> i32 {
+    to_int32(x).clamp(lo, hi)
+}
+
+fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
+    let b = fields(b)?;
+    let u = match b.get("uploads") {
+        None | Some(Value::Null) => Map::new(),
+        Some(Value::Object(m)) => m.clone(),
+        Some(_) => Map::new(),
+    };
+    let cu = cur.0.get("uploads").cloned().unwrap_or(Value::Null);
+    let pick = |k: &str| js_number(u.get(k).filter(|v| !v.is_null()).or_else(|| cu.get(k)));
+    let mut next = cur.0.clone();
+    if let Some(Value::Bool(a)) = b.get("autoResume") {
+        next.insert("autoResume".into(), json!(a));
+    }
+    next.insert(
+        "uploads".into(),
+        json!({
+            "retentionDays": clamp(pick("retentionDays"), 0, 365),
+            "maxMB": clamp(pick("maxMB"), 1, 2048),
+            "maxTotalMB": clamp(pick("maxTotalMB"), 0, 102400),
+            "longPasteLines": clamp(pick("longPasteLines"), 5, 1000),
+        }),
+    );
+    save_settings(&HubSettings(next.clone())).map_err(HubError::plain)?;
+    Ok(Value::Object(next))
+}
+
+async fn upload(mut r: Req) -> HubResult<Resp> {
+    // refuse an oversized upload as soon as it passes the limit, chunked or not
+    let max_mb = load_settings().uploads().map_or(100.0, |u| u.max_mb);
+    let limit = ((max_mb + 1.0) * 1024.0 * 1024.0) as usize;
+    let message = format!("Uploads are limited to {} MB", inyon_core::js::fmt_number(max_mb));
+    let bytes = match r.read_limited(limit, &message).await {
+        Ok(b) => b,
+        Err(e) if e.status == Some(413) => return Err(e),
+        Err(_) => return Err(http(400, "Expected multipart form data")),
+    };
+    let form = multipart::parse(&r.header("content-type").unwrap_or_default(), &bytes).ok_or_else(|| http(400, "Expected multipart form data"))?;
+    let files: Vec<feat::UploadFile> = form
+        .all("files")
+        .filter_map(|p| match p {
+            Part::File { name, mime, data } => Some(feat::UploadFile::new(name.clone(), mime.clone(), data.clone())),
+            Part::Text(_) => None,
+        })
+        .collect();
+    if files.is_empty() {
+        return Err(http(400, "No files"));
+    }
+    let pane_id = form.text("pane").filter(|p| !p.is_empty()).map(pane_param);
+    if let Some(total) = form.text("total") {
+        let offset = match form.get("offset") {
+            None => 0.0,
+            Some(Part::Text(s)) => inyon_core::js::to_number(s),
+            Some(Part::File { .. }) => f64::NAN,
+        };
+        let at = feat::PieceAt { total: inyon_core::js::to_number(total), offset, path: form.text("path").map(str::to_owned) };
+        let one = feat::upload_piece(&id(&r), pane_id.as_deref(), &files[0], &at).await?;
+        return Ok(json_of(&json!({ "files": [one] })));
+    }
+    let all = feat::upload_files(&id(&r), pane_id.as_deref(), &files).await?;
+    Ok(json_of(&json!({ "files": all })))
+}
+
+/// The routes, each behind sign-in.
+pub fn add(routes: &mut Routes) {
+    use Method as M;
+    guarded(
+        routes,
+        "/api/refresh",
+        vec![(
+            M::POST,
+            h(|_r| async {
+                registry().refresh_all(6000).await;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts",
+        vec![
+            (M::GET, h(|_r| async { Ok(json_of(&registry().configs().iter().map(public_config).collect::<Vec<_>>())) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let mut cfg = validate_host(&fields(&r.body().await?)?)?;
+                    let id = new_host_id(&cfg.name, "host");
+                    cfg.id = id.clone();
+                    registry().add(cfg, true)?;
+                    Ok(ok_json(&json!({ "id": id })))
+                }),
+            ),
+        ],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id",
+        vec![
+            (
+                M::PATCH,
+                h(|mut r| async move {
+                    let id = id(&r);
+                    let cur = registry().get(&id).map(|rt| rt.borrow().host.config()).ok_or_else(|| http(404, "Unknown machine"))?;
+                    let b = r.body().await?;
+                    if cur.kind != HostKind::Ssh {
+                        let given = field(&b, "name")?.filter(|v| !v.is_null()).map(crate::http::js_string).unwrap_or_else(|| cur.name.clone());
+                        let name = Some(given.trim().to_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| cur.name.clone());
+                        registry().update(&id, |c| c.name = name)?;
+                    } else {
+                        let mut merged = match serde_json::to_value(&cur) {
+                            Ok(Value::Object(m)) => m,
+                            _ => Map::new(),
+                        };
+                        for (k, v) in fields(&b)? {
+                            merged.insert(k, v);
+                        }
+                        let next = validate_host(&merged)?;
+                        // a new address or key: the connection kept open to the old one goes
+                        if next.target != cur.target || next.port != cur.port || next.identity_file != cur.identity_file {
+                            if let Some(rt) = registry().get(&id) {
+                                let host = rt.borrow().host.clone();
+                                host.close().await?;
+                            }
+                        }
+                        registry().update(&id, |c| {
+                            c.name = next.name;
+                            c.kind = HostKind::Ssh;
+                            c.target = next.target;
+                            c.port = next.port;
+                            c.identity_file = next.identity_file;
+                        })?;
+                    }
+                    Ok(ok())
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    let id = id(&r);
+                    if id == "local" {
+                        return Err(http(400, "This machine cannot be removed"));
+                    }
+                    let rt = registry().get(&id);
+                    let token = rt.as_ref().and_then(|rt| rt.borrow().host.config().token_hash);
+                    // hooks, uploads and the open connection come off the machine first, while it still answers
+                    if let Some(rt) = rt {
+                        let (host, state) = {
+                            let b = rt.borrow();
+                            (b.host.clone(), TidyState::from(&b.state))
+                        };
+                        tidy_machine(&host, Some(state), "").await;
+                    }
+                    remember_removed(token.as_deref());
+                    node_link::disconnect(&id);
+                    registry().remove(&id, true)?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/integration",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let enable = truthy(field(&b, "enable")?);
+                let host = registry().host(&id(&r))?;
+                if enable {
+                    install_integration(&host).await?;
+                } else {
+                    uninstall_integration(&host).await?;
+                }
+                registry().set_keep_integration(&id(&r), enable)?;
+                registry().refresh(&id(&r), 120);
+                Ok(ok())
+            }),
+        )],
+    );
+    // one tap in the app: brings the machine's inyon up to date (see hosts/node_update)
+    guarded(
+        routes,
+        "/api/hosts/:id/node/update",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                let rt = registry().get(&id(&r)).ok_or_else(|| http(404, "Unknown machine"))?;
+                let refused = {
+                    let b = rt.borrow();
+                    let (host, state) = (b.host.clone(), b.state.clone());
+                    drop(b);
+                    node_updates().start(&host, &state)
+                };
+                if let Some(why) = refused {
+                    return Err(http(409, why));
+                }
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/launch",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = fields(&r.body().await?)?;
+                let agent = loose(b.get("agent")).or_else(|| Some(if truthy(b.get("claude")) { "claude" } else { "shell" }.to_owned()));
+                let opts = LaunchOpts {
+                    session: loose(b.get("session")),
+                    name: loose(b.get("name")),
+                    cwd: loose(b.get("cwd")),
+                    agent,
+                    model: loose(b.get("model")),
+                    mode: loose(b.get("mode")),
+                    prompt: loose(b.get("prompt")),
+                };
+                let pane = actions::launch(&id(&r), &opts).await?;
+                Ok(ok_json(&json!({ "pane": pane })))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/settings",
+        vec![
+            (M::GET, h(|_r| async { Ok(ok_json(&Value::Object(load_settings().0))) })),
+            (
+                M::PUT,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    Ok(ok_json(&settings_put(&b, load_settings())?))
+                }),
+            ),
+        ],
+    );
+    guarded(routes, "/api/hosts/:id/uploads", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::upload_usage(&id(&r)).await?)) })), (M::POST, h(upload))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/uploads/clean",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let days = js_number(Some(field(&b, "olderThanDays")?.filter(|v| !v.is_null()).unwrap_or(&json!(0))));
+                Ok(json_of(&feat::clean_uploads(&id(&r), days).await?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/setup",
+        vec![
+            (M::GET, h(|r| async move { Ok(json_of(&setup::setup_report(&id(&r)).await?)) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    if let Some(Value::Bool(keep)) = field(&b, "keepSession")? {
+                        setup::set_keep_session(&id(&r), *keep)?;
+                        return Ok(ok());
+                    }
+                    Ok(json_of(&setup::run_setup(&id(&r), &str_or_empty(field(&b, "action")?)).await?))
+                }),
+            ),
+        ],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/signin",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                Ok(json_of(&signin::start_signin(&id(&r), &str_raw(field(&b, "agent")?), None).await?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/signin/:pane",
+        vec![
+            (M::GET, h(|r| async move { Ok(json_of(&signin::read_signin(&id(&r), &pane(&r)).await?)) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    signin::answer_signin(&id(&r), &pane(&r), &b).await?;
+                    Ok(ok())
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    signin::stop_signin(&id(&r), &pane(&r)).await?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    // OpenCode's model providers on the machine; `pane` names a session whose own server can list them
+    guarded(
+        routes,
+        "/api/hosts/:id/providers",
+        vec![(
+            M::GET,
+            h(|r| async move {
+                let p = r.q("pane");
+                let pane = (!p.is_empty()).then(|| pane_param(&p));
+                Ok(json_of(&providers::list_providers(&id(&r), pane.as_deref()).await?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/providers/:provider",
+        vec![
+            (M::POST, h(|r| async move { Ok(json_of(&providers::connect_provider(&id(&r), &r.param("provider")).await?)) })),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    providers::disconnect_provider(&id(&r), &r.param("provider")).await?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    guarded(routes, "/api/hosts/:id/configs", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_configs(&id(&r)).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/config",
+        vec![
+            (M::GET, h(|r| async move { Ok(json_of(&feat::read_config(&id(&r), &r.q("path")).await?)) })),
+            (
+                M::PUT,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    Ok(json_of(&feat::write_config(&id(&r), &str_raw(field(&b, "path")?), &str_or_empty(field(&b, "content")?)).await?))
+                }),
+            ),
+        ],
+    );
+    guarded(routes, "/api/hosts/:id/subagents", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_subagents(&id(&r), &r.q("transcript")).await?)) }))]);
+    guarded(routes, "/api/hosts/:id/transcript", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::read_transcript(&id(&r), &r.q("path")).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/task-output",
+        vec![(
+            M::GET,
+            h(|r| async move {
+                let given = r.q("path");
+                let path = if given.is_empty() { actions::find_task_output(&id(&r), &r.q("id")).await?.unwrap_or_default() } else { given };
+                if path.is_empty() {
+                    return Err(http(404, "No output saved for that task"));
+                }
+                Ok(json_of(&feat::task_output(&id(&r), &path).await?))
+            }),
+        )],
+    );
+    guarded(routes, "/api/hosts/:id/panes/:pane/commands", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_commands(&id(&r), &pane(&r)).await?)) }))]);
+    guarded(routes, "/api/hosts/:id/panes/:pane/models", vec![(M::GET, h(|r| async move { Ok(json_of(&models::list_models(&id(&r), &pane(&r)).await?)) }))]);
+    // the session's folder: its files (read only) and its git working tree
+    guarded(routes, "/api/hosts/:id/panes/:pane/dir", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::list_dir(&id(&r), &pane(&r), &r.q("path")).await?)) }))]);
+    guarded(routes, "/api/hosts/:id/panes/:pane/file", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::read_file(&id(&r), &pane(&r), &r.q("path")).await?)) }))]);
+    guarded(routes, "/api/hosts/:id/panes/:pane/git", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::git_status(&id(&r), &pane(&r)).await?)) }))]);
+    guarded(routes, "/api/hosts/:id/panes/:pane/git/diff", vec![(M::GET, h(|r| async move { Ok(json_of(&workspace::git_diff(&id(&r), &pane(&r), &r.q("path")).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/git/commit",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let message = field(&b, "message")?.cloned();
+                Ok(json_of(&workspace::git_commit(&id(&r), &pane(&r), message.as_ref()).await?))
+            }),
+        )],
+    );
+    guarded(routes, "/api/hosts/:id/panes/:pane/git/push", vec![(M::POST, h(|r| async move { Ok(json_of(&workspace::git_push(&id(&r), &pane(&r)).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/fork",
+        vec![(M::POST, h(|r| async move { Ok(ok_json(&json!({ "pane": actions::fork_conversation(&id(&r), &pane(&r)).await? }))) }))],
+    );
+    guarded(routes, "/api/hosts/:id/panes/:pane/files", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_files(&id(&r), &pane(&r)).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/input",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                actions::input_answer(&id(&r), &pane(&r), &str_or_empty(field(&b, "text")?)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/tasks/stop",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let path = field(&b, "path")?.filter(|v| truthy(Some(v))).map(crate::http::js_string);
+                let tid = loose(field(&b, "id")?);
+                Ok(json_of(&actions::stop_task(&id(&r), path.as_deref(), tid.as_deref()).await?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/rc",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                actions::remote_control(&id(&r), &pane(&r), truthy(field(&b, "on")?)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/mode",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                actions::set_mode(&id(&r), &pane(&r), &str_raw(field(&b, "mode")?)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/ultracode",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                actions::set_ultracode(&id(&r), &pane(&r), truthy(field(&b, "on")?)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(routes, "/api/hosts/:id/panes/:pane/send", vec![(M::POST, h(send))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/answer",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let option = js_number(field(&b, "option")?);
+                let option = if option.is_finite() && option >= 0.0 { option as u32 } else { u32::MAX };
+                let text = loose(field(&b, "text")?);
+                let question = as_str(field(&b, "question")?);
+                actions::answer(&id(&r), &pane(&r), option, text.as_deref(), question.as_deref()).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/keys",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let Some(Value::Array(list)) = field(&b, "keys")? else { return Err(http(400, "keys must be a short list")) };
+                if list.len() > 20 {
+                    return Err(http(400, "keys must be a short list"));
+                }
+                let keys: Vec<String> = list.iter().map(crate::http::js_string).collect();
+                actions::keys(&id(&r), &pane(&r), &keys).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/interrupt",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                actions::interrupt(&id(&r), &pane(&r)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/name",
+        vec![(
+            M::PUT,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                actions::rename_pane(&id(&r), &pane(&r), &str_or_empty(field(&b, "name")?)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/reconnect",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                actions::reconnect_agent(&id(&r), &pane(&r)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/restart",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                actions::restart_agent(&id(&r), &pane(&r)).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/exit",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                actions::exit_agent(&id(&r), &pane(&r), false).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(routes, "/api/hosts/:id/panes/:pane/end", vec![(M::POST, h(|r| async move { Ok(json_of(&actions::end_session(&id(&r), &pane(&r)).await?)) }))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/rewind",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let text = as_str(field(&b, "text")?);
+                actions::codex_rewind(&id(&r), &pane(&r), text.as_deref()).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/start",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let agent = field(&b, "agent")?.cloned();
+                let resume = field(&b, "resume")?.cloned();
+                actions::start_agent(&id(&r), &pane(&r), agent.as_ref(), resume.as_ref()).await?;
+                Ok(ok())
+            }),
+        )],
+    );
+    // the agent's past conversations in the pane's folder; `agent` says whose when none is running
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/conversations",
+        vec![(
+            M::GET,
+            h(|r| async move {
+                let a = r.q("agent");
+                let asked = (!a.is_empty()).then(|| Value::String(a));
+                Ok(json_of(&conversations::pane_conversations(&id(&r), &pane(&r), asked.as_ref()).await?))
+            }),
+        )],
+    );
+    // exits the running agent (the pane stays) and reopens it on another of its conversations
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/switch",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let agent = field(&b, "agent")?.filter(|v| truthy(Some(v))).cloned();
+                let sid = field(&b, "id")?.cloned();
+                Ok(json_of(&conversations::switch_conversation(&id(&r), &pane(&r), agent.as_ref(), sid.as_ref()).await?))
+            }),
+        )],
+    );
+}
+
+async fn send(mut r: Req) -> HubResult<Resp> {
+    let b = r.body().await?;
+    let text = str_or_empty(field(&b, "text")?);
+    let request_id = field(&b, "requestId")?.cloned();
+    let setting = field(&b, "setting")? == Some(&Value::Bool(true));
+    let steer = field(&b, "steer")? == Some(&Value::Bool(true));
+    let request_id = match request_id {
+        None => None,
+        Some(Value::String(s)) if inyon_core::re!(r"^[\w-]{1,128}$").is_match(&s) => Some(s),
+        Some(_) => return Err(http(400, "Invalid send id")),
+    };
+    let (host, pane_id) = (id(&r), pane(&r));
+    match request_id {
+        Some(rid) if !rid.is_empty() => {
+            let key = inyon_core::js::stringify(&json!([host, r.param("pane"), rid]));
+            let t = text.clone();
+            send_once(&key, &text, move || {
+                Box::pin(async move {
+                    actions::send_message(&host, &pane_id, &t, true, Some(&rid), setting, steer).await?;
+                    Ok(Value::Null)
+                })
+            })
+            .await?;
+        }
+        _ => actions::send_message(&host, &pane_id, &text, false, None, setting, steer).await?,
+    }
+    Ok(ok())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn obj(v: Value) -> Map<String, Value> {
+        v.as_object().unwrap().clone()
+    }
+
+    // saving.test.ts
+
+    fn draft(text: &str, at: u32) -> Option<inyon_core::claude::drafts::Draft> {
+        Some(serde_json::from_value(json!({ "text": text, "source": "app", "at": at })).unwrap())
+    }
+
+    fn saved(key: &str) -> Option<String> {
+        let all: Map<String, Value> = inyon_core::platform::store::kv::get("drafts").unwrap_or_default();
+        all.get(key).and_then(|d| d.get("text")).and_then(Value::as_str).map(str::to_owned)
+    }
+
+    #[test]
+    fn a_draft_is_written_a_moment_later_or_at_once_when_the_hub_is_about_to_close() {
+        crate::test_util::block(async {
+            inyon_core::claude::drafts::set_draft("box:%7", draft("half a thought", 1));
+            // typing writes on a short wait, not on every key
+            assert_eq!(saved("box:%7"), None);
+            save_everything();
+            assert_eq!(saved("box:%7").as_deref(), Some("half a thought"));
+        });
+    }
+
+    #[test]
+    fn while_the_phone_app_is_in_the_background_every_draft_is_written_straight_away() {
+        crate::test_util::block(async {
+            inyon_core::claude::drafts::save_drafts_at_once(true);
+            inyon_core::claude::drafts::set_draft("box:%8", draft("typed just before leaving", 2));
+            assert_eq!(saved("box:%8").as_deref(), Some("typed just before leaving"));
+            inyon_core::claude::drafts::set_draft("box:%8", None);
+            assert_eq!(saved("box:%8"), None);
+            inyon_core::claude::drafts::save_drafts_at_once(false);
+        });
+    }
+
+    #[test]
+    fn a_host_needs_a_name_a_target_and_a_sane_port() {
+        crate::test_util::core();
+        assert_eq!(validate_host(&obj(json!({ "target": "a@b" }))).unwrap_err().message, "Give the machine a name");
+        assert_eq!(validate_host(&obj(json!({ "name": "x", "target": "-oProxy" }))).unwrap_err().message, "Use user@host or an alias from ~/.ssh/config");
+        assert_eq!(validate_host(&obj(json!({ "name": "x", "target": "a b" }))).unwrap_err().message, "Use user@host or an alias from ~/.ssh/config");
+        assert_eq!(validate_host(&obj(json!({ "name": "x", "target": "a@b", "port": 70000 }))).unwrap_err().message, "Port must be 1-65535");
+        assert_eq!(validate_host(&obj(json!({ "name": "x", "target": "a@b", "identityFile": "~/k;rm" }))).unwrap_err().message, "Key path has unexpected characters");
+        let ok = validate_host(&obj(json!({ "name": " Box ", "target": "me@box", "port": "2222", "identityFile": " " }))).unwrap();
+        assert_eq!((ok.name.as_str(), ok.target.as_deref(), ok.port, ok.identity_file), ("Box", Some("me@box"), Some(2222), None));
+    }
+
+    #[test]
+    fn ids_are_slugs() {
+        crate::test_util::core();
+        assert_eq!(slug("My Box!", "host"), "my-box");
+        assert_eq!(slug("--", "host"), "host");
+        assert_eq!(slug("Ünï", "node"), "n");
+    }
+
+    #[test]
+    fn settings_are_clamped_and_other_keys_kept() {
+        crate::test_util::core();
+        let cur = HubSettings(obj(
+            json!({ "keepSession": { "a": true }, "uploads": { "retentionDays": 7, "maxMB": 100, "maxTotalMB": 1024, "longPasteLines": 40, "extra": 1 }, "other": "x" }),
+        ));
+        let next = settings_put(&json!({ "autoResume": true, "uploads": { "retentionDays": 999, "maxMB": "0", "longPasteLines": 2.9 } }), cur);
+        // saving needs a store; the clamped value is what matters here
+        let next = match next {
+            Ok(v) => v,
+            Err(e) => panic!("{e}"),
+        };
+        assert_eq!(
+            inyon_core::js::stringify(&next),
+            r#"{"keepSession":{"a":true},"uploads":{"retentionDays":365,"maxMB":1,"maxTotalMB":1024,"longPasteLines":5},"other":"x","autoResume":true}"#
+        );
+    }
+}

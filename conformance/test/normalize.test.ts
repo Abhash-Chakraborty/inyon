@@ -62,6 +62,28 @@ describe('rules', () => {
     expect(n.number(1768467606000)).toBe(1768467606000)
   })
 
+  rule('key-order', () => {
+    const n = norm()
+    const a = '0c0ffee0-1111-4222-8333-444455556666'
+    const b = '11111111-2222-4333-8444-555555555555'
+    // the same fields in another order write the same line, placeholders numbered alike
+    const bun = JSON.stringify(n.value({ seq: 1, kind: 'user', uuid: a, nested: { z: b, a: [3, 1] } }))
+    const m = norm()
+    const rust = JSON.stringify(m.value({ kind: 'user', nested: { a: [3, 1], z: b }, seq: 1, uuid: a }))
+    expect(rust).toBe(bun)
+    expect(bun).toBe('{"kind":"user","nested":{"a":[3,1],"z":"<uuid:1>"},"seq":1,"uuid":"<uuid:2>"}')
+
+    // a map keyed by ids not seen before: each run's ids are new, so they're numbered by what they
+    // hold, not by the order the hub wrote them in
+    const ids = () => [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
+    const [p, q, r] = ids()
+    const [s, t, u] = ids()
+    const bunMap = JSON.stringify(norm().value({ sessions: { [p]: { name: 'web', at: q }, [r]: { name: 'api', at: p } } }))
+    const rustMap = JSON.stringify(norm().value({ sessions: { [u]: { name: 'api', at: s }, [s]: { name: 'web', at: t } } }))
+    expect(rustMap).toBe(bunMap)
+    expect(bunMap).toBe('{"sessions":{"<uuid:1>":{"at":"<uuid:2>","name":"api"},"<uuid:2>":{"at":"<uuid:3>","name":"web"}}}')
+  })
+
   rule('latency', () => {
     expect(norm().value({ latencyMs: 12, width: 12 })).toEqual({ latencyMs: '<ms>', width: 12 })
   })

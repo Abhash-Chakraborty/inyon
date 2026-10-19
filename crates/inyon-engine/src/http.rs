@@ -72,7 +72,17 @@ fn agent(timeout: Duration, insecure: bool) -> ureq::Agent {
 
 /// A request and its whole answer. `headers` go with it; `body` makes it a request with one.
 pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, timeout: Duration) -> Result<Response, String> {
-    let a = agent(timeout, insecure_tls());
+    request_with(agent(timeout, insecure_tls()), method, url, headers, body)
+}
+
+/// A GET to the hub on this machine over loopback (`inyon hub code`). Its certificate is made out
+/// to the hub's name, not 127.0.0.1, so it isn't checked, as the Bun engine's
+/// `rejectUnauthorized: false` didn't check it.
+pub fn get_local(url: &str, timeout: Duration) -> Result<Response, String> {
+    request_with(agent(timeout, true), "GET", url, &[], None)
+}
+
+fn request_with(a: ureq::Agent, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>) -> Result<Response, String> {
     let mut res = match (method, body) {
         ("GET", _) => {
             let mut r = a.get(url);
@@ -198,5 +208,16 @@ mod tests {
         let trusted = trusted.unwrap();
         assert_eq!((trusted.status, trusted.body.as_slice()), (200, &b"ok"[..]));
         assert!(missing.is_err());
+    }
+
+    #[test]
+    fn the_hub_on_this_machine_is_asked_whatever_name_its_certificate_has() {
+        let dir = std::env::temp_dir().join(format!("inyon-local-hub-http-{}", std::process::id()));
+        let (_ca, port) = test_tls::server(&dir);
+        let url = format!("https://127.0.0.1:{port}/");
+        let got = get_local(&url, Duration::from_secs(10));
+        let _ = std::fs::remove_dir_all(&dir);
+        let got = got.unwrap();
+        assert_eq!((got.status, got.body.as_slice()), (200, &b"ok"[..]));
     }
 }

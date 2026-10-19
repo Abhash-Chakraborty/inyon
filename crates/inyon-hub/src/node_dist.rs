@@ -1,0 +1,682 @@
+//! Port of features/node-dist.ts and pair-command.ts: what a machine downloads from its hub to run
+//! Inyon. The inyon command for its system (/node/inyon), the engine it runs (/node/inyon-engine),
+//! and on Windows busybox-w32, the small sh the hub's commands run with.
+//!
+//! The hub in the inyon program hands out the release of its own version from GitHub, checked
+//! against that release's SHA256SUMS, so a machine never needs GitHub itself. A hub built in a
+//! checkout (see hub_update::checkout) does what the Bun hub does from a checkout: it builds the
+//! engine from the checkout's source with Bun, and serves a command built with cargo when one is
+//! in apps/cli/dist (INYON_CLI_DIST). Either way files are kept under ~/.inyon/node-dist, named
+//! the way the Bun hub names them, so the two hubs share them.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+
+use axum::body::Body;
+use axum::http::{header, HeaderValue, Response, StatusCode};
+use futures_util::future::{FutureExt, LocalBoxFuture, Shared};
+use inyon_core::hosts::http_error::{http, HubError, HubResult};
+use inyon_core::platform::console;
+use inyon_protocol::{compressed, release_files, RELEASES_REPO, VERSION};
+use sha2::{Digest, Sha256};
+
+use crate::http::{hex, Req, Resp};
+use crate::server::{raw, Route, Routes};
+
+pub const INSTALL_SH: &str = include_str!("../../../apps/node/install.sh");
+pub const INSTALL_PS1: &str = include_str!("../../../apps/node/install.ps1");
+pub const HUB_UPDATE_PS1: &str = include_str!("../../../apps/node/hub-update.ps1");
+
+/// The systems a hub hands an engine to: Linux against glibc, macOS and Windows x64.
+pub const HUB_TARGETS: [&str; 5] = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "windows-x64"];
+/// The systems the inyon command ships for: the hub's and Windows on ARM.
+pub const CLI_TARGETS: [&str; 6] = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "windows-x64", "windows-arm64"];
+
+pub fn engine_file(t: &str) -> String {
+    release_files(t).engine
+}
+pub fn cli_file(t: &str) -> String {
+    release_files(t).cli
+}
+
+/// What install.sh can ask for: the hub's systems but Windows.
+fn unix() -> impl Iterator<Item = &'static str> {
+    HUB_TARGETS.into_iter().filter(|t| !t.starts_with("windows"))
+}
+
+/// busybox-w32 FRP-6075, checked against frippery.org/files/busybox/SHA256SUM
+fn busybox_pin(arch: &str) -> (&'static str, &'static str) {
+    if arch == "arm64" {
+        ("busybox-w64a-FRP-6075-g169694ebd.exe", "e67f873d19d58c535cc9f0c4965ffd622e19b7bab87e3da89cb2185fb54464d7")
+    } else {
+        ("busybox-w64u-FRP-6075-g169694ebd.exe", "6e263d154d8548d1eb936f65d1d8312c80df31c45974e48d6335e4dcc0f4f34c")
+    }
+}
+
+/// `?arch=`, x64 when it isn't given.
+pub fn arch_of(query: &Query) -> HubResult<String> {
+    let arch = query.get("arch").unwrap_or_else(|| "x64".into());
+    if arch != "x64" && arch != "arm64" {
+        return Err(http(400, "arch must be x64 or arm64"));
+    }
+    Ok(arch)
+}
+
+pub struct Query(pub String);
+impl Query {
+    fn get(&self, k: &str) -> Option<String> {
+        url::form_urlencoded::parse(self.0.as_bytes()).find(|(n, _)| n == k).map(|(_, v)| v.into_owned())
+    }
+}
+
+/// The engine a request asks for (?os=linux&arch=arm64). Windows on ARM runs the x64 engine.
+pub fn target_of(q: &Query) -> HubResult<String> {
+    let os = q.get("os").unwrap_or_else(|| "windows".into());
+    if os == "windows" {
+        return Ok("windows-x64".into());
+    }
+    let t = format!("{os}-{}", arch_of(q)?);
+    if !HUB_TARGETS.contains(&t.as_str()) {
+        return Err(http(400, "os must be linux, darwin or windows"));
+    }
+    Ok(t)
+}
+
+/// The inyon command a request asks for: the same systems, plus Windows on ARM as its own build.
+pub fn cli_target_of(q: &Query) -> HubResult<String> {
+    let os = q.get("os").unwrap_or_else(|| "windows".into());
+    let t = format!("{os}-{}", arch_of(q)?);
+    if !CLI_TARGETS.contains(&t.as_str()) {
+        return Err(http(400, "os must be linux, darwin or windows"));
+    }
+    Ok(t)
+}
+
+/// hash of what goes into a machine's engine (the node and the packages it uses), so any change gets
+/// rebuilt: node-dist.ts's `sourceHash`, byte for byte, so both hubs name a build alike.
+pub fn source_hash(repo: &Path) -> String {
+    let mut h = Sha256::new();
+    for dir in [repo.join("apps/node"), repo.join("packages/link/src"), repo.join("packages/protocol/src")] {
+        let base = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let mut files: Vec<String> =
+            std::fs::read_dir(&dir).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+        files.retain(|f| (f.ends_with(".ts") || f.ends_with(".sh")) && !f.ends_with(".test.ts") && !f.ends_with(".d.ts"));
+        // JavaScript's default sort: by UTF-16 code units
+        files.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+        for f in files {
+            h.update(format!("{base}/{f}").as_bytes());
+            h.update(std::fs::read(dir.join(&f)).unwrap_or_default());
+        }
+    }
+    hex(&h.finalize())[..16].to_owned()
+}
+
+type Building = Shared<LocalBoxFuture<'static, Result<PathBuf, HubError>>>;
+type Sums = Shared<LocalBoxFuture<'static, Result<String, HubError>>>;
+
+/// The downloads, for one hub.
+pub struct Dist {
+    /// the checkout this hub was built in, when it runs from it
+    pub repo: Option<PathBuf>,
+    pub out: PathBuf,
+    pub cli_dist: PathBuf,
+    tag: String,
+    building: RefCell<HashMap<PathBuf, Building>>,
+    sums: RefCell<Option<Sums>>,
+    /// the program that builds a checkout's engines
+    bun: PathBuf,
+}
+
+thread_local! {
+    static DIST: RefCell<Option<Rc<Dist>>> = const { RefCell::new(None) };
+}
+
+pub fn dist() -> Rc<Dist> {
+    DIST.with(|d| d.borrow().clone()).expect("node-dist is set up")
+}
+
+/// `sha256(data)` as hex
+pub fn digest(data: &[u8]) -> String {
+    hex(&Sha256::digest(data))
+}
+
+/// The line of a SHA256SUMS list for `name`.
+pub fn sum_for(sums: &str, name: &str) -> Option<String> {
+    sums.lines().find_map(|l| {
+        let l = l.trim();
+        let mut parts = l.splitn(2, char::is_whitespace);
+        let sum = parts.next()?;
+        let rest = parts.next()?.trim_start().trim_start_matches('*');
+        let file = rest.split_whitespace().next().unwrap_or("");
+        (file == name).then(|| sum.to_lowercase())
+    })
+}
+
+/// Fetches a URL whole: its status and bytes.
+pub type Get = Rc<dyn Fn(String) -> LocalBoxFuture<'static, Result<(u16, Vec<u8>), String>>>;
+
+pub fn net() -> Get {
+    Rc::new(|url: String| {
+        Box::pin(async move {
+            let r = inyon_engine::http::fetch("GET", url, vec![], None, std::time::Duration::from_secs(600)).await?;
+            Ok((r.status, r.body))
+        })
+    })
+}
+
+/// Release file `name`, checked against the release's SHA256SUMS. The gzipped copy is taken when
+/// the release lists one and checked before it's unpacked; machines get the plain bytes either way.
+pub async fn release_file(name: &str, sums: &str, base: &str, get: Get) -> HubResult<Vec<u8>> {
+    let want = sum_for(sums, name).ok_or_else(|| http(502, format!("Inyon {VERSION} has no {name} on {RELEASES_REPO}")))?;
+    let gz = sum_for(sums, &compressed(name));
+    let asset = if gz.is_some() { compressed(name) } else { name.to_owned() };
+    let (status, mut data) = get(format!("{base}/{asset}")).await.map_err(HubError::plain)?;
+    if !(200..300).contains(&status) {
+        return Err(http(502, format!("Could not download {asset} ({status})")));
+    }
+    if let Some(gz) = gz {
+        if digest(&data) != gz {
+            return Err(http(502, format!("{asset} did not match its release checksum")));
+        }
+        let mut out = Vec::new();
+        std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&data[..]), &mut out).map_err(|e| HubError::plain(e.to_string()))?;
+        data = out;
+    }
+    if digest(&data) != want {
+        return Err(http(502, format!("{name} did not match its release checksum")));
+    }
+    Ok(data)
+}
+
+/// gzip as Node's zlib writes it at level 6 (no name, no time, Unix), so a .gz made by either hub
+/// is the same file.
+pub fn gzip(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    use std::io::Write;
+    let mut e = flate2::GzBuilder::new().operating_system(3).write(Vec::new(), flate2::Compression::new(6));
+    e.write_all(data)?;
+    e.finish()
+}
+
+fn rename(from: &Path, to: &Path) -> HubResult<()> {
+    std::fs::rename(from, to).map_err(|e| HubError::plain(e.to_string()))
+}
+
+fn write(p: &Path, data: &[u8]) -> HubResult<()> {
+    std::fs::write(p, data).map_err(|e| HubError::plain(e.to_string()))
+}
+
+impl Dist {
+    pub fn new(repo: Option<PathBuf>, data_dir: &Path) -> Rc<Self> {
+        let cli_dist = std::env::var("INYON_CLI_DIST").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| repo.clone().unwrap_or_default().join("apps/cli/dist"));
+        let tag = repo.as_deref().map(source_hash).unwrap_or_else(|| format!("v{VERSION}"));
+        Rc::new(Dist { repo, out: data_dir.join("node-dist"), cli_dist, tag, building: RefCell::default(), sums: RefCell::default(), bun: PathBuf::from("bun") })
+    }
+
+    #[cfg(test)]
+    pub fn with_bun(repo: Option<PathBuf>, data_dir: &Path, bun: PathBuf) -> Rc<Self> {
+        let d = Rc::into_inner(Self::new(repo, data_dir)).expect("a new Dist");
+        Rc::new(Dist { bun, ..d })
+    }
+
+    pub fn install(self: &Rc<Self>) {
+        DIST.with(|d| *d.borrow_mut() = Some(self.clone()));
+        // the update script for a Windows machine set up before the rename (see hosts/node_update)
+        inyon_core::hosts::node_update::node_updates().use_scripts(|platform, arch| {
+            let (platform, arch) = (platform.to_owned(), arch.to_owned());
+            Box::pin(async move { dist().update_script(&platform, &arch).await.map_err(|e| e.message) })
+        });
+    }
+
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    fn runs_from_source(&self) -> bool {
+        self.repo.is_some()
+    }
+
+    /// Runs `make` once for `key`, however many ask for it meanwhile.
+    async fn once(self: &Rc<Self>, key: PathBuf, make: impl FnOnce() -> LocalBoxFuture<'static, Result<PathBuf, HubError>>) -> HubResult<PathBuf> {
+        let existing = self.building.borrow().get(&key).cloned();
+        let fut = match existing {
+            Some(f) => f,
+            None => {
+                let f = make().shared();
+                self.building.borrow_mut().insert(key.clone(), f.clone());
+                f
+            }
+        };
+        let r = fut.await;
+        self.building.borrow_mut().remove(&key);
+        r
+    }
+
+    /// Earlier builds and downloads are never served again: only this hub's own tag and release
+    /// version stay, and files from before 0.13 go with the rest. busybox isn't touched.
+    pub fn prune_old(&self, dir: &Path) {
+        let keep = [self.tag.clone(), format!("v{VERSION}")];
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let f = e.file_name().to_string_lossy().into_owned();
+            // /^(?:(.*?)-)?(?:inyon|tether-node)-/
+            let Some(caps) = inyon_core::re!(r"^(?:(.*?)-)?(?:inyon|tether-node)-").captures(&f) else { continue };
+            let prefix = caps.get(1).map_or("", |m| m.as_str());
+            if !keep.iter().any(|k| k == prefix) {
+                let _ = std::fs::remove_file(dir.join(&f));
+            }
+        }
+    }
+
+    /// Where the hub finds the release of its own version (INYON_DOWNLOAD for a mirror).
+    fn release_base() -> String {
+        let base = std::env::var("INYON_DOWNLOAD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("https://github.com/{RELEASES_REPO}/releases/download/v{VERSION}"));
+        base.trim_end_matches('/').to_owned()
+    }
+
+    async fn release_sums(self: &Rc<Self>) -> HubResult<String> {
+        let existing = self.sums.borrow().clone();
+        let fut = existing.unwrap_or_else(|| {
+            let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async {
+                let (status, body) = net()(format!("{}/SHA256SUMS", Self::release_base())).await.map_err(HubError::plain)?;
+                if !(200..300).contains(&status) {
+                    return Err(http(502, format!("Could not get the checksums of Inyon {VERSION} ({status})")));
+                }
+                Ok(String::from_utf8_lossy(&body).into_owned())
+            });
+            let f = f.shared();
+            *self.sums.borrow_mut() = Some(f.clone());
+            f
+        });
+        let r = fut.await;
+        if r.is_err() {
+            *self.sums.borrow_mut() = None;
+        }
+        r
+    }
+
+    /// The engine for `t`, built or downloaded once.
+    pub async fn engine(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        let file = self.out.join(format!("{}-{}", self.tag, engine_file(t)));
+        if file.exists() {
+            return Ok(file);
+        }
+        let (me, t, f) = (self.clone(), t.to_owned(), file.clone());
+        self.once(file, move || {
+            Box::pin(async move {
+                std::fs::create_dir_all(&me.out).map_err(|e| HubError::plain(e.to_string()))?;
+                let tmp = PathBuf::from(format!("{}.tmp", f.display()));
+                let made = if let Some(repo) = &me.repo {
+                    me.build_engine(repo, &t, &tmp).await.map_err(|e| http(500, format!("Could not build the Inyon engine for {t}: {e}")))?
+                } else {
+                    let sums = me.release_sums().await?;
+                    write(&tmp, &release_file(&engine_file(&t), &sums, &Self::release_base(), net()).await?)?;
+                    tmp
+                };
+                rename(&made, &f)?;
+                me.prune_old(&me.out);
+                Ok(f)
+            })
+        })
+        .await
+    }
+
+    /// A checkout's engine for `t`, built by the checkout's own build script (Bun's runtime for
+    /// that system inside, downloaded on the first build for it).
+    /// Returns the file it wrote: Bun adds `.exe` to a Windows build's name (build.ts's buildInyon
+    /// says so too).
+    async fn build_engine(&self, repo: &Path, t: &str, out: &Path) -> Result<PathBuf, String> {
+        let script = format!(
+            "const {{ buildInyon }} = await import({}); await buildInyon({{ target: {}, outfile: {}, hub: false, hideConsole: true }})",
+            serde_json::Value::String(repo.join("apps/node/build.ts").to_string_lossy().into_owned()),
+            serde_json::Value::String(t.to_owned()),
+            serde_json::Value::String(out.to_string_lossy().into_owned()),
+        );
+        let o = tokio::process::Command::new(&self.bun)
+            .args(["-e", &script])
+            .current_dir(repo)
+            .env("PATH", crate::hub_update::tool_path())
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !o.status.success() {
+            let err = String::from_utf8_lossy(&o.stderr).trim().to_owned();
+            return Err(if err.is_empty() { format!("bun exited with {}", o.status) } else { err });
+        }
+        let exe = PathBuf::from(format!("{}.exe", out.display()));
+        Ok(if !out.exists() && exe.exists() { exe } else { out.to_owned() })
+    }
+
+    /// The cargo-built command for `t` next to a checkout, if there is one.
+    fn built_command(&self, t: &str) -> Option<PathBuf> {
+        let f = self.cli_dist.join(cli_file(t));
+        f.exists().then_some(f)
+    }
+
+    /// The inyon command for `t`: the release's, or a checkout's (see source_command).
+    pub async fn command(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        if self.runs_from_source() {
+            self.source_command(t).await
+        } else {
+            self.release_command(t).await
+        }
+    }
+
+    async fn release_command(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        let file = self.out.join(format!("v{VERSION}-{}", cli_file(t)));
+        if file.exists() {
+            return Ok(file);
+        }
+        let (me, t, f) = (self.clone(), t.to_owned(), file.clone());
+        self.once(file, move || {
+            Box::pin(async move {
+                std::fs::create_dir_all(&me.out).map_err(|e| HubError::plain(e.to_string()))?;
+                let sums = me.release_sums().await?;
+                let tmp = PathBuf::from(format!("{}.tmp", f.display()));
+                write(&tmp, &release_file(&cli_file(&t), &sums, &Self::release_base(), net()).await?)?;
+                rename(&tmp, &f)?;
+                me.prune_old(&me.out);
+                Ok(f)
+            })
+        })
+        .await
+    }
+
+    /// A checkout's command for `t`: what cargo built into apps/cli/dist. Without that, Windows gets
+    /// the release's command, and the engine only when the release can't be had. Linux and macOS
+    /// get the engine, which is a whole program too.
+    async fn source_command(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        if let Some(built) = self.built_command(t) {
+            return Ok(built);
+        }
+        if !t.starts_with("windows") {
+            return self.engine(t).await;
+        }
+        match self.release_command(t).await {
+            Ok(f) => Ok(f),
+            Err(e) => {
+                let dist = self.cli_dist.display();
+                if t == "windows-arm64" {
+                    return Err(http(503, format!("This hub runs from a checkout and has no inyon command for {t}: none in {dist}, and the release's failed ({}).", e.message)));
+                }
+                console::error(&format!("inyon command for {t}: none in {dist} and the release's failed ({}); handing out the engine instead", e.message));
+                self.engine(t).await
+            }
+        }
+    }
+
+    /// Whether this hub hands out the engine as a file of its own (a checkout without a built command doesn't).
+    fn split_release(&self, t: &str) -> bool {
+        !self.runs_from_source() || self.built_command(t).is_some()
+    }
+
+    /// The checksums of the Linux and macOS files, which install.sh checks its downloads against.
+    pub async fn unix_sums(self: &Rc<Self>) -> HubResult<String> {
+        let sums = if self.runs_from_source() { None } else { Some(self.release_sums().await?) };
+        let mut lines = vec![];
+        for t in unix() {
+            let names = if self.split_release(t) { vec![cli_file(t), engine_file(t)] } else { vec![cli_file(t)] };
+            for name in names {
+                let sum = match &sums {
+                    Some(s) => sum_for(s, &name),
+                    None => {
+                        let file = if name == cli_file(t) { self.command(t).await? } else { self.engine(t).await? };
+                        Some(self.sha256(&file).await?)
+                    }
+                };
+                let sum = sum.ok_or_else(|| http(502, format!("Inyon {VERSION} has no {name} on {RELEASES_REPO}")))?;
+                lines.push(format!("{sum}  {name}"));
+            }
+        }
+        Ok(format!("{}\n", lines.join("\n")))
+    }
+
+    /// A file gzipped (the engine comes down to about half), once per build, off the hub's thread.
+    async fn gzipped(self: &Rc<Self>, file: &Path) -> HubResult<PathBuf> {
+        let gz = PathBuf::from(format!("{}.gz", file.display()));
+        if gz.exists() {
+            return Ok(gz);
+        }
+        let (src, out) = (file.to_owned(), gz.clone());
+        self.once(gz, move || {
+            Box::pin(async move {
+                let tmp = PathBuf::from(format!("{}.tmp", out.display()));
+                let t2 = tmp.clone();
+                tokio::task::spawn_blocking(move || -> std::io::Result<()> { std::fs::write(&t2, gzip(&std::fs::read(&src)?)?) })
+                    .await
+                    .map_err(|e| HubError::plain(e.to_string()))?
+                    .map_err(|e| HubError::plain(e.to_string()))?;
+                rename(&tmp, &out)?;
+                Ok(out)
+            })
+        })
+        .await
+    }
+
+    /// sha256 of a build, so a download can be told from a cut-off or swapped one
+    async fn sha256(&self, file: &Path) -> HubResult<String> {
+        let out = PathBuf::from(format!("{}.sha256", file.display()));
+        if let Ok(s) = std::fs::read_to_string(&out) {
+            return Ok(s);
+        }
+        let f = file.to_owned();
+        let sum = tokio::task::spawn_blocking(move || std::fs::read(&f).map(|d| digest(&d)))
+            .await
+            .map_err(|e| HubError::plain(e.to_string()))?
+            .map_err(|e| HubError::plain(e.to_string()))?;
+        write(&out, sum.as_bytes())?;
+        Ok(sum)
+    }
+
+    async fn busybox(self: &Rc<Self>, arch: &str) -> HubResult<PathBuf> {
+        let (file, sha) = busybox_pin(arch);
+        let out = self.out.join(file);
+        if out.exists() {
+            return Ok(out);
+        }
+        let (me, o) = (self.clone(), out.clone());
+        self.once(out, move || {
+            Box::pin(async move {
+                std::fs::create_dir_all(&me.out).map_err(|e| HubError::plain(e.to_string()))?;
+                let (status, buf) = net()(format!("https://frippery.org/files/busybox/{file}")).await.map_err(HubError::plain)?;
+                if !(200..300).contains(&status) {
+                    return Err(http(502, format!("Could not download busybox-w32 ({status})")));
+                }
+                if digest(&buf) != sha {
+                    return Err(http(502, "busybox-w32 download did not match its pinned checksum"));
+                }
+                write(&o, &buf)?;
+                Ok(o)
+            })
+        })
+        .await
+    }
+
+    /// what tether-node's own installer and update script ask for: the Windows program, whole
+    async fn windows(self: &Rc<Self>) -> HubResult<PathBuf> {
+        self.engine("windows-x64").await
+    }
+
+    /// The update script for a Windows machine set up before the rename to Inyon, with the
+    /// checksum of the program this hub serves it filled in.
+    pub async fn update_script(self: &Rc<Self>, platform: &str, arch: &str) -> HubResult<String> {
+        if platform != "win32" {
+            return Err(http(409, REPLACED.trim()));
+        }
+        let sum = self.sha256(&self.windows().await?).await?;
+        inyon_core::hosts::node_update::fill_update_script(HUB_UPDATE_PS1, &sum, VERSION, if arch == "arm64" { "arm64" } else { "x64" }).map_err(HubError::plain)
+    }
+
+    /// The one-liners the "Add machine" sheet shows.
+    pub async fn pair_commands(self: &Rc<Self>, hub: &str, token: &str) -> HubResult<(String, String)> {
+        let install_sh = digest(INSTALL_SH.as_bytes());
+        let sums = digest(self.unix_sums().await?.as_bytes());
+        let windows = format!(
+            "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '{hub}/node/install.ps1'))) -Hub '{hub}' -Token '{token}'\""
+        );
+        Ok((unix_pair_command(hub, token, &install_sh, &sums), windows))
+    }
+
+    /// Builds what machines download in the background, so adding one doesn't wait for it.
+    pub fn prebuild(self: &Rc<Self>) {
+        // hubs started by tests never hand out the program
+        if std::env::var("NODE_ENV").as_deref() == Ok("test") {
+            return;
+        }
+        let me = self.clone();
+        inyon_core::platform::rt::spawn(async move {
+            let r: HubResult<()> = async {
+                if !me.runs_from_source() {
+                    me.release_sums().await?;
+                    return Ok(());
+                }
+                for t in unix().chain(["windows-x64"]) {
+                    let f = me.engine(t).await?;
+                    me.sha256(&f).await?;
+                    me.gzipped(&f).await?;
+                }
+                Ok(())
+            }
+            .await;
+            if let Err(e) = r {
+                console::error(&format!("inyon build for machines: {}", e.message));
+            }
+        });
+    }
+}
+
+const REPLACED: &str = "Inyon replaced tether-node with the inyon program. Copy the \"Add a machine\" command from the hub again and run it on this machine.\n";
+
+/// The Unix "Add a machine" one-liner (pair-command.ts). It checks install.sh against its sha256
+/// before running it, and install.sh checks the hub's list of checksums against the one given
+/// here, then the program against its line. The token travels in the environment.
+pub fn unix_pair_command(hub: &str, token: &str, install_sh_sha256: &str, sums_sha256: &str) -> String {
+    let run = concat!(
+        "f=$(mktemp) && curl -fsSL \"$1/node/install.sh\" -o \"$f\" && ",
+        "if [ \"$( (sha256sum \"$f\" 2>/dev/null || shasum -a 256 \"$f\") | cut -c1-64)\" = \"$2\" ]; then sh \"$f\" \"$1\"; ",
+        "else echo \"install.sh did not match its checksum; get a new command from the hub\" >&2; false; fi; s=$?; rm -f \"$f\"; exit $s"
+    );
+    format!("INYON_TOKEN={token} INYON_SUMS_SHA256={sums_sha256} sh -c '{run}' inyon {hub} {install_sh_sha256}")
+}
+
+fn plain(status: u16, body: impl Into<String>) -> Resp {
+    let mut r = Response::new(Body::from(body.into()));
+    *r.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+    r
+}
+
+/// A file as a download, read as it's sent.
+async fn binary(file: &Path, name: &str) -> HubResult<Resp> {
+    let f = tokio::fs::File::open(file).await.map_err(|e| HubError::plain(e.to_string()))?;
+    let stream = futures_util::stream::unfold(f, |mut f| async move {
+        use tokio::io::AsyncReadExt;
+        let mut buf = vec![0u8; 256 * 1024];
+        match f.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(buf)), f))
+            }
+            Err(e) => Some((Err(e), f)),
+        }
+    });
+    let mut r = Response::new(Body::from_stream(stream));
+    r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
+    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+        r.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+    }
+    Ok(r)
+}
+
+/// plain-text errors: these are fetched by install scripts, not the app
+fn route<F, Fut>(f: F) -> Route
+where
+    F: Fn(Rc<Dist>, Query) -> Fut + 'static,
+    Fut: std::future::Future<Output = HubResult<Resp>> + 'static,
+{
+    let f = Rc::new(f);
+    Route::Any(raw(move |r: Req| {
+        let f = f.clone();
+        async move {
+            match f(dist(), Query(r.query.clone())).await {
+                Ok(res) => res,
+                Err(e) => plain(e.status.unwrap_or(500), format!("{}\n", e.message)),
+            }
+        }
+    }))
+}
+
+pub fn add(routes: &mut Routes) {
+    routes.add("/node/install.sh", route(|_, _| async { Ok(plain(200, INSTALL_SH)) }));
+    routes.add("/node/install.ps1", route(|_, _| async { Ok(plain(200, INSTALL_PS1)) }));
+    routes.add("/node/SHA256SUMS", route(|d, _| async move { Ok(plain(200, d.unix_sums().await?)) }));
+    // the inyon command: what install.sh, install.ps1 and `inyon update` on a machine take first
+    routes.add(
+        "/node/inyon",
+        route(|d, q| async move {
+            let t = cli_target_of(&q)?;
+            binary(&d.command(&t).await?, &cli_file(&t)).await
+        }),
+    );
+    routes.add(
+        "/node/inyon.gz",
+        route(|d, q| async move {
+            let t = cli_target_of(&q)?;
+            let f = d.command(&t).await?;
+            binary(&d.gzipped(&f).await?, &format!("{}.gz", cli_file(&t))).await
+        }),
+    );
+    routes.add(
+        "/node/inyon.sha256",
+        route(|d, q| async move {
+            let t = cli_target_of(&q)?;
+            Ok(plain(200, d.sha256(&d.command(&t).await?).await?))
+        }),
+    );
+    // the engine behind it, which the command fetches from here rather than from GitHub
+    routes.add(
+        "/node/inyon-engine",
+        route(|d, q| async move {
+            let t = target_of(&q)?;
+            binary(&d.engine(&t).await?, &engine_file(&t)).await
+        }),
+    );
+    routes.add(
+        "/node/inyon-engine.gz",
+        route(|d, q| async move {
+            let t = target_of(&q)?;
+            let f = d.engine(&t).await?;
+            binary(&d.gzipped(&f).await?, &format!("{}.gz", engine_file(&t))).await
+        }),
+    );
+    routes.add(
+        "/node/inyon-engine.sha256",
+        route(|d, q| async move {
+            let t = target_of(&q)?;
+            Ok(plain(200, d.sha256(&d.engine(&t).await?).await?))
+        }),
+    );
+    routes.add("/node/busybox.exe", route(|d, q| async move { binary(&d.busybox(&arch_of(&q)?).await?, "busybox.exe").await }));
+    // its pinned checksum, which install.ps1 checks the download against
+    routes.add("/node/busybox.exe.sha256", route(|_, q| async move { Ok(plain(200, busybox_pin(&arch_of(&q)?).1)) }));
+    // a Windows machine set up before the rename updates through these (see hub-update.ps1)
+    routes.add("/node/tether-node.exe", route(|d, _| async move { binary(&d.windows().await?, "tether-node.exe").await }));
+    routes.add(
+        "/node/tether-node.exe.gz",
+        route(|d, _| async move {
+            let f = d.windows().await?;
+            binary(&d.gzipped(&f).await?, "tether-node.exe.gz").await
+        }),
+    );
+    routes.add("/node/tether-node.exe.sha256", route(|d, _| async move { Ok(plain(200, d.sha256(&d.windows().await?).await?)) }));
+    // tether-node as a Bun script (install.sh before the rename) has no update to the program
+    routes.add("/node/tether-node.ts", route(|_, _| async { Ok(plain(410, REPLACED)) }));
+    routes.add("/node/tether-node.ts.sha256", route(|_, _| async { Ok(plain(410, REPLACED)) }));
+}
+
+#[cfg(test)]
+#[path = "node_dist_tests.rs"]
+mod tests;

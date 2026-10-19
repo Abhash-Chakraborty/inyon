@@ -838,6 +838,14 @@ impl LiveTmux {
 mod tests {
     use super::*;
 
+    /// legacy.test.ts
+    #[test]
+    fn the_old_names_terminal_views_and_sign_ins_stay_out_of_the_session_list() {
+        assert!(hidden_session("tether-view-ab12cd"));
+        assert!(hidden_session("inyon-login-claude-x1"));
+        assert!(!hidden_session("tether-work"));
+    }
+
     /// tmux 3.4 escapes the field separator; its lines read the same as newer ones (locale.test.ts)
     #[test]
     fn tmux_3_4_escapes_the_field_separator_its_lines_read_the_same_as_newer_ones() {

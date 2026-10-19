@@ -3,10 +3,8 @@
 //!
 //! A panic in one job ends that job only: each job runs as a tokio task of its own, and tokio
 //! catches a task's panic, the way Bun turns a throw in one request handler into a 500 and goes
-//! on. That needs unwinding. The workspace's release profile builds with `panic = "abort"` to keep
-//! the `inyon` download small, and under it any panic ends the whole process, the hub included. A
-//! binary that runs the hub should be built with a profile that unwinds (one that inherits
-//! `release` with `panic = "unwind"`), so one bad request can't take the hub down.
+//! on. That needs unwinding, so the workspace's release profile unwinds; under `panic = "abort"`
+//! (the Windows builds, which have no hub) any panic ends the whole process.
 
 use std::future::Future;
 use std::rc::Rc;
@@ -35,14 +33,19 @@ impl Runtime for TokioRuntime {
 
 /// Runs `main` as the core on this thread until it ends: a current-thread runtime with IO, time
 /// and child processes, a `LocalSet` for the core's tasks, and [`TokioRuntime`] installed. Tasks
-/// still running when `main` returns are dropped with the runtime.
+/// still running when `main` returns are dropped with the runtime, and blocking calls still in
+/// flight (an outgoing request can take minutes) are left to end with the process rather than
+/// waited for: when the hub is told to stop, it saves and goes, as the Bun hub's process.exit did.
 pub fn run_core<F: Future>(main: impl FnOnce() -> F) -> F::Output {
     let tokio = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
     let local = tokio::task::LocalSet::new();
-    local.block_on(&tokio, async move {
+    let out = local.block_on(&tokio, async move {
         install(Rc::new(TokioRuntime));
         main().await
-    })
+    });
+    drop(local);
+    tokio.shutdown_background();
+    out
 }
 
 type Job = Box<dyn FnOnce() -> LocalBoxFuture<'static, ()> + Send>;
@@ -95,6 +98,19 @@ impl CoreHandle {
     pub fn send<Fut: Future<Output = ()> + 'static>(&self, job: impl FnOnce() -> Fut + Send + 'static) -> Result<(), CoreGone> {
         self.tx.send(Box::new(move || Box::pin(async move { job().await }) as LocalBoxFuture<'static, ()>)).map_err(|_| CoreGone)
     }
+}
+
+/// A handle for the core running on this thread (inside [`run_core`]): its jobs start here, each
+/// a task of its own, for as long as a handle is kept. For a server that runs on the core's own
+/// runtime (the hub), so requests never wait on a hop to another thread.
+pub fn core_here() -> CoreHandle {
+    let (tx, mut rx) = mpsc::unbounded_channel::<Job>();
+    tokio::task::spawn_local(async move {
+        while let Some(job) = rx.recv().await {
+            tokio::task::spawn_local(job());
+        }
+    });
+    CoreHandle { tx }
 }
 
 /// Starts the core's thread: `init` runs there first (plug in the store and the backends, start the
