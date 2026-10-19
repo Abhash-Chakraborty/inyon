@@ -82,9 +82,7 @@ pub fn setup_code_message(code: Option<&str>, session: Option<&Value>, url: &str
 fn show_setup_code() -> i32 {
     let url = local_url();
     let code = std::fs::read_to_string(data_dir().join("setup-code")).ok().map(|c| c.trim().to_owned()).filter(|c| !c.is_empty());
-    let session = inyon_engine::http::request("GET", &format!("{url}/api/session"), &[], None, std::time::Duration::from_secs(5))
-        .ok()
-        .and_then(|r| serde_json::from_slice::<Value>(&r.body).ok());
+    let session = inyon_engine::http::get_local(&format!("{url}/api/session"), std::time::Duration::from_secs(5)).ok().and_then(|r| serde_json::from_slice::<Value>(&r.body).ok());
     let message = setup_code_message(code.as_deref(), session.as_ref(), &url);
     let has_password = session.as_ref().map(|s| !crate::http::truthy(s.get("setup")));
     let mut out = Map::new();
