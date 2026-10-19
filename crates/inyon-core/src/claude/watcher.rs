@@ -359,7 +359,7 @@ impl ChatWatcher {
     }
 
     /// `void this.pollScreen()`
-    fn kick_screen(&self) {
+    pub(crate) fn kick_screen(&self) {
         let w = self.rc();
         spawn(async move { w.poll_screen().await });
     }

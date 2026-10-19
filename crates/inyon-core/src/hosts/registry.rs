@@ -183,6 +183,12 @@ pub struct HostRuntime {
 pub type Rt = Rc<RefCell<HostRuntime>>;
 
 impl HostRuntime {
+    /// A test's machine that no poll reads again (the TS tests stub `registry.refresh`).
+    #[cfg(test)]
+    pub(crate) fn hold_polls(&mut self) {
+        self.stopped = true;
+    }
+
     pub fn new(host: Host, state: HostState) -> Self {
         HostRuntime {
             before_outage: None,
@@ -433,6 +439,7 @@ impl Registry {
     /// everyone listening. A listener removed by an earlier one isn't called.
     fn dispatch(&self, e: &RegistryEvent) {
         crate::claude::watcher::on_registry_event(e);
+        crate::claude::actions::on_registry_event(e);
         let all: Vec<(u64, Listener)> = self.listeners.borrow().clone();
         for (id, f) in all {
             if self.listeners.borrow().iter().any(|(i, _)| *i == id) {
@@ -1674,7 +1681,7 @@ impl Registry {
 }
 
 /// A pane's width as the screen reader takes it.
-fn width_of(p: &PaneInfo) -> Option<u32> {
+pub(crate) fn width_of(p: &PaneInfo) -> Option<u32> {
     let w = *p.width;
     (w.is_finite() && w >= 0.0).then_some(w as u32)
 }

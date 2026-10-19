@@ -279,18 +279,24 @@ pub mod sandbox {
 
     pub struct Sandbox {
         pub home: String,
+        /// put in front of every command
+        pub prefix: String,
     }
 
     impl Sandbox {
         pub fn install(home: &str) {
-            let b = Rc::new(Sandbox { home: home.to_owned() });
+            Self::install_with(home, "");
+        }
+
+        pub fn install_with(home: &str, prefix: &str) {
+            let b = Rc::new(Sandbox { home: home.to_owned(), prefix: prefix.to_owned() });
             set_host_backends(move |_| b.clone() as Rc<dyn HostBackend>);
         }
     }
 
     impl HostBackend for Sandbox {
         fn exec(&self, _config: &HostConfig, cmd: &str, opts: ExecOptions) -> LocalBoxFuture<'static, HubResult<ExecResult>> {
-            let (code, stdout, stderr) = super::sh(cmd, opts.input.as_deref(), &[("HOME", &self.home)]);
+            let (code, stdout, stderr) = super::sh(&format!("{}{cmd}", self.prefix), opts.input.as_deref(), &[("HOME", &self.home)]);
             Box::pin(async move { Ok(ExecResult { code, stdout, stderr }) })
         }
         fn stream(&self, _config: &HostConfig, _cmd: &str, _on_line: OnLine, _keep_stdin: bool) -> StreamHandle {

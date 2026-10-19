@@ -177,3 +177,116 @@ fn a_very_long_gemini_or_antigravity_chat_keeps_only_its_latest_messages_like_th
         watchers().stop("quiet-test:%7");
     });
 }
+
+// new-agent.test.ts
+
+const NEW_KEY: &str = "new-agent-test:%5";
+
+/// Claude as it is right after starting: no transcript until something is said.
+fn new_agent_box(pid: u32, started_at: u64) {
+    machine(
+        "new-agent-test",
+        "local",
+        json!([{ "id": "%5", "title": "claude", "width": 100, "agent": { "kind": "claude", "pid": pid, "startedAt": started_at, "state": "idle" } }]),
+    )
+    .borrow_mut()
+    .hold_polls();
+}
+
+fn said() -> Vec<ChatItem> {
+    let base = Base::new("u", "t");
+    vec![
+        with_seq(base.with_uuid("u1").user("Hello", 0), 1),
+        with_seq(base.with_uuid("a1").assistant("m1", None, inyon_protocol::AssistantBlock::Text { text: "Hi Abhash, what are you working on today?".into() }), 2),
+    ]
+}
+
+/// A chat on this pane showing the first Claude's conversation.
+fn chat_of_first() -> Rc<ChatWatcher> {
+    new_agent_box(100, 1_000);
+    let w = watchers().get("new-agent-test", "%5");
+    {
+        let mut st = w.st.borrow_mut();
+        st.transcript = Some("/home/abhash/.claude/projects/x/old.jsonl".into());
+        st.proc = Some("100:1000".into());
+        st.reader = Some(crate::claude::transcript_tail::TranscriptReader::new(400));
+        st.older_from = Some(0);
+        st.items = said();
+        st.ready = true;
+    }
+    w
+}
+
+fn texts(w: &ChatWatcher) -> Vec<String> {
+    w.items()
+        .iter()
+        .filter_map(|i| match i {
+            ChatItem::User { text, .. } => Some(text.clone()),
+            ChatItem::Assistant { block: inyon_protocol::AssistantBlock::Text { text }, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn fresh_new_agent() {
+    watchers().stop(NEW_KEY);
+    WATCHERS.with(|w| w.parked.borrow_mut().shift_remove(NEW_KEY));
+}
+
+#[test]
+fn a_chat_left_open_while_claude_exits_and_starts_again_empties_instead_of_showing_the_old_conversation() {
+    run(|| async {
+        let _fake = Fake::install(|_, _, _| ok(""));
+        fresh_new_agent();
+        let w = chat_of_first();
+        let phone = Rc::new(Phone::default());
+        w.subscribe(phone.clone());
+        // the same Claude, its transcript not known for a moment: nothing changes
+        w.sync();
+        assert_eq!(texts(&w), ["Hello", "Hi Abhash, what are you working on today?"]);
+        // a new Claude in the pane, nothing said to it yet
+        new_agent_box(200, 2_000);
+        phone.got.borrow_mut().clear();
+        w.sync();
+        assert!(texts(&w).is_empty());
+        let resets: Vec<usize> = phone.got.borrow().iter().filter_map(|m| if let ServerMsg::ChatReset { items, .. } = m { Some(items.len()) } else { None }).collect();
+        assert_eq!(resets, [0]);
+        watchers().stop(NEW_KEY);
+    });
+}
+
+#[test]
+fn reopening_the_chat_later_shows_the_new_claude_empty_from_the_saved_copy_as_from_a_recently_closed_one() {
+    run(|| async {
+        let _fake = Fake::install(|_, _, _| ok(""));
+        for from in ["recently closed", "saved copy"] {
+            fresh_new_agent();
+            chat_of_first().save();
+            watchers().stop(NEW_KEY);
+            if from == "saved copy" {
+                WATCHERS.with(|w| w.parked.borrow_mut().shift_remove(NEW_KEY));
+            }
+            new_agent_box(200, 2_000);
+            assert_eq!((from, texts(&watchers().get("new-agent-test", "%5"))), (from, vec![]));
+            watchers().stop(NEW_KEY);
+        }
+    });
+}
+
+#[test]
+fn the_same_claude_reopened_still_shows_its_conversation() {
+    run(|| async {
+        let _fake = Fake::install(|_, _, _| ok(""));
+        for from in ["recently closed", "saved copy"] {
+            fresh_new_agent();
+            chat_of_first().save();
+            watchers().stop(NEW_KEY);
+            if from == "saved copy" {
+                WATCHERS.with(|w| w.parked.borrow_mut().shift_remove(NEW_KEY));
+            }
+            new_agent_box(100, 1_000);
+            assert_eq!((from, texts(&watchers().get("new-agent-test", "%5"))), (from, vec!["Hello".to_owned(), "Hi Abhash, what are you working on today?".to_owned()]));
+            watchers().stop(NEW_KEY);
+        }
+    });
+}
