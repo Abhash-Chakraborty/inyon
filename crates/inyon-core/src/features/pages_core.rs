@@ -42,6 +42,9 @@ pub const NOT_ABSOLUTE: &str = "The folder must be an absolute path";
 pub const TOO_WIDE: &str = "Pick the site's own folder, not / or your home folder";
 pub const PRIVATE_FOLDER: &str = "Folders under ~/.ssh and ~/.inyon can't be pages";
 pub const NO_INDEX: &str = "That folder has no index.html";
+/// A 500 from register and delete when ~/.inyon can't be written: a read-only folder, or a stale lock that can't be removed.
+pub const CANT_WRITE_LIST: &str =
+    "The hub can't write in ~/.inyon, so it can't change pages.json there. Check that the folder and its pages.json.lock belong to the hub's user, then try again.";
 
 /// A slug made from a name: ASCII letters lowercased, every run of anything else (other letters
 /// too) one dash, no dash at either end, cut to 63 characters. "page" when nothing is left.

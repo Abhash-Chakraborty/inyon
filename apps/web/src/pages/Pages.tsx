@@ -10,8 +10,9 @@ import { ApiError } from '../lib/api.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
+import { listHubs } from '../lib/hubs.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, groupPages, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
+  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
   usePages, type Device, type Page, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
@@ -120,6 +121,20 @@ function StaleLine({ name, className }: { name: string; className?: string }) {
   )
 }
 
+/** A paired hub's name by its id, for a hub that may have been forgotten here since. */
+const hubName = (id: string | undefined) => listHubs().find((h) => h.id === id)?.name ?? 'The hub'
+
+/** One line for each paired hub that refused this phone: forgotten there, so its pages are gone until it pairs again. */
+function ForgottenLines({ className }: { className?: string }) {
+  const forgotten = usePages((s) => s.forgotten)
+  return forgotten.map((id) => (
+    <p key={id} role="status" className={clsx('flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
+      <Link2Off className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
+      <span>{hubName(id)} forgot this phone. Pair it again from the hub to see its pages here.</span>
+    </p>
+  ))
+}
+
 function StateCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
   return (
     <div role="status" className="animate-fade-in m-4 w-full max-w-[440px] self-center rounded-3xl border border-line bg-elev p-6 shadow-card">
@@ -221,6 +236,7 @@ function PhoneList() {
       <div className="mx-auto w-full max-w-[720px] px-3 pt-2 pb-8">
         {filtering && <FilterInput value={q} onChange={setQ} placeholder="Filter pages" className="my-1.5 h-11" />}
         {error && <p role="alert" className="mx-1 my-2 text-[13px] text-danger">{error}</p>}
+        <ForgottenLines className="mx-1 my-2" />
         {pages === null ? (
           <Waiting shape="cards" count={2} label="Loading pages" className="pt-3" />
         ) : !pages.length ? (
@@ -308,6 +324,7 @@ function PhoneViewer({ id }: { id: string }) {
   const loaded = usePages((s) => s.pages !== null)
   // a page is gone only when its hub answered without it; a hub out of reach keeps its pages
   const unreached = usePages((s) => hubUnreachable(id, s.unreachable))
+  const forgot = usePages((s) => hubForgot(id, s.forgotten))
   const all = usePages((s) => s.pages)
   const machine = useMachines()
   const nav = useNavigate()
@@ -360,7 +377,12 @@ function PhoneViewer({ id }: { id: string }) {
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col">
         {!page ? (
-          unreached ? (
+          forgot ? (
+            <StateCard icon={<Link2Off className="size-5" />} title={`${hubName(hubIdOf(id))} forgot this phone`}>
+              Pair it again from the hub to open its pages here.
+              <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Pages</Button></div>
+            </StateCard>
+          ) : unreached ? (
             <StateCard icon={<CloudOff className="size-5 text-danger" />} title="The hub is out of reach">
               This page opens again as soon as its hub answers.
               <div className="mt-4"><Button size="sm" onClick={() => void loadPages()}><RotateCw className="size-3.5" /> Try again</Button></div>
@@ -387,6 +409,7 @@ function PhoneViewer({ id }: { id: string }) {
 
 function PagesDesktop({ selected }: { selected?: string }) {
   const pages = usePages((s) => s.pages)
+  const forgot = usePages((s) => !!selected && hubForgot(selected, s.forgotten))
   const seen = usePages((s) => s.seen)
   const error = usePages((s) => s.error)
   const machine = useMachines()
@@ -433,6 +456,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
         )}
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-0.5 pb-3">
           {error && <p role="alert" className="px-2 py-2 text-[13px] text-danger">{error}</p>}
+          <ForgottenLines className="px-2 py-2" />
           {pages === null ? (
             <Waiting shape="rows" label="Loading pages" className="px-1" />
           ) : !pages.length ? (
@@ -474,7 +498,9 @@ function PagesDesktop({ selected }: { selected?: string }) {
         )}
       </section>
       <section aria-label="Viewer" className="pt-safe flex min-h-0 min-w-0 flex-col">
-        {pages && !pages.length ? (
+        {forgot ? (
+          <div className="flex flex-1 items-center justify-center"><Empty icon={<Link2Off className="size-5" />} title={`${hubName(hubIdOf(selected!))} forgot this phone`}>Pair it again from the hub to open its pages here.</Empty></div>
+        ) : pages && !pages.length ? (
           <div className="flex flex-1 items-center justify-center bg-sunken/60"><NoPages wide /></div>
         ) : page ? (
           <DesktopViewer key={page.id} page={page} m={machine(page.host)} />

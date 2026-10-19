@@ -11,7 +11,7 @@ import { isNative } from '../../lib/native.ts'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
   PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
-  renewIn, shouldRenew, usePages, type Page, type PageLink, type Part,
+  RENEW_RETRY_MS, nextRetry, renewIn, shouldRenew, usePages, type Page, type PageLink, type Part,
 } from '../../lib/pages.ts'
 import { Button, Field, SectionLabel, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
 import { contextMenu } from '../ui/ContextMenu.tsx'
@@ -143,15 +143,27 @@ export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined
       document.removeEventListener('visibilitychange', check)
     }
   }, [mint])
-  // a page left on screen (a second monitor, a tablet on a stand) gets no focus event: renew on time
+  // a page left on screen (a second monitor, a tablet on a stand) gets no focus event: renew on time,
+  // and after a failed try (the hub restarting, the phone off the VPN) again with a growing wait while
+  // it stays on screen; a new link moves `until`, which starts this over
   const mine = state?.id === id ? state : undefined
   const until = mine?.link?.until
   useEffect(() => {
     if (until === undefined) return
-    const t = setTimeout(() => {
-      if (document.visibilityState === 'visible') void mint()
-    }, renewIn(until, Date.now()))
-    return () => clearTimeout(t)
+    let stopped = false
+    let wait = RENEW_RETRY_MS
+    let t: ReturnType<typeof setTimeout>
+    const renew = async () => {
+      if (document.visibilityState !== 'visible') return // coming back into view renews it
+      if ((await mint()) || stopped) return
+      t = setTimeout(renew, wait)
+      wait = nextRetry(wait)
+    }
+    t = setTimeout(renew, renewIn(until, Date.now()))
+    return () => {
+      stopped = true
+      clearTimeout(t)
+    }
   }, [until, mint])
   return { link: mine?.link, error: mine?.error, retry: mint }
 }

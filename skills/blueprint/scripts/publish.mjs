@@ -10,7 +10,8 @@
 import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import { LOCAL_HOST, hubHere, inyonDir, publish } from './pages.mjs';
+import { fileURLToPath } from 'node:url';
+import { LOCAL_HOST, agentName, hubHere, inyonDir, publish } from './pages.mjs';
 
 const a = process.argv.slice(2);
 const opt = (k) => { const i = a.indexOf(k); if (i < 0) return undefined; const v = a[i + 1]; a.splice(i, 2); return v === undefined || v.startsWith('--') ? null : v; };
@@ -25,11 +26,15 @@ const win = process.platform === 'win32';
 const q = (s) => (win
   ? (/^[\w+=:./\\-]+$/.test(s) ? s : `'${s.replace(/'/g, "''")}'`)
   : (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`));
-// the installed program by its full path, so the command works where inyon isn't on the PATH
+// What to run later from the user's own shell, outside the sandbox: the installed program by its full
+// path (so it works where inyon isn't on the PATH), or else this script with node.
 const bin = join(inyonDir(), 'bin', win ? 'inyon.exe' : 'inyon');
-const inyon = existsSync(bin) ? (win ? `& ${q(bin)}` : q(bin)) : 'inyon';
-const manual = () => [`${inyon} pages add`, q(dir), ...(name ? ['--name', q(name)] : []), ...(slug ? ['--slug', q(slug)] : [])].join(' ');
-const serve = () => `node ${q(new URL('serve.mjs', import.meta.url).pathname)} ${q(dir)} --host <private-ip>`;
+const here = (f) => q(fileURLToPath(new URL(f, import.meta.url)));
+const flags = [...(name ? ['--name', q(name)] : []), ...(slug ? ['--slug', q(slug)] : [])];
+const manual = () => (existsSync(bin)
+  ? [win ? `& ${q(bin)}` : q(bin), 'pages', 'add', q(dir), ...flags]
+  : ['node', here('publish.mjs'), q(dir), ...flags, '--by', q(by || agentName())]).join(' ');
+const serve = () => `node ${here('serve.mjs')} ${q(dir)} --host <private-ip>`;
 
 try {
   const { page, changed } = publish(dir, { name, slug, by });

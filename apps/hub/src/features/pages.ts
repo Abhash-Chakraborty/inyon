@@ -16,6 +16,7 @@ import { HttpError } from '../hosts/http-error.ts'
 import type { Store } from '../platform/store.ts'
 import {
   BAD_SLUG,
+  CANT_WRITE_LIST,
   decideView,
   goneAfterOpen,
   isSlug,
@@ -190,26 +191,35 @@ function writeAtomic(file: string, text: string) {
 /**
  * Runs `fn` holding `lock`: an exclusive create, waiting up to 3 s, taking over a lock older than
  * LOCK_STALE_MS. The lock holds this process's id and a random tag, and is removed afterwards only
- * while it still holds them. A failure other than "someone else has it" (a folder an agent's
- * sandbox keeps read-only) is thrown at once, never waited on.
+ * while it still holds them. A failure other than "someone else has it" (a read-only folder, or a
+ * stale lock that can't be removed) is thrown at once as CANT_WRITE_LIST, never waited on.
  */
 export async function withLock<T>(lock: string, fn: () => T, wait = 3000): Promise<T> {
-  fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 })
+  const cantWrite = <R>(step: () => R): R => {
+    try {
+      return step()
+    } catch (err) {
+      throw errno(err) === 'EEXIST' ? err : new HttpError(500, CANT_WRITE_LIST)
+    }
+  }
+  cantWrite(() => fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 }))
   const until = Date.now() + wait
   const mine = `${process.pid} ${crypto.randomBytes(8).toString('hex')}\n`
   for (;;) {
     try {
-      const fd = fs.openSync(lock, 'wx', 0o600)
-      try {
-        fs.writeSync(fd, mine)
-      } finally {
-        fs.closeSync(fd)
-      }
+      cantWrite(() => {
+        const fd = fs.openSync(lock, 'wx', 0o600)
+        try {
+          fs.writeSync(fd, mine)
+        } finally {
+          fs.closeSync(fd)
+        }
+      })
       break
     } catch (err) {
       if (errno(err) !== 'EEXIST') throw err
     }
-    if (takeOverStale(lock)) continue
+    if (cantWrite(() => takeOverStale(lock))) continue
     if (Date.now() >= until) throw new HttpError(503, LOCKED)
     await Bun.sleep(25)
   }
@@ -377,12 +387,15 @@ export const diskFs: ViewFs = {
  * folder on the way could have been swapped for a symlink since the check (an agent can rename
  * its own folders). On Linux the system says where the open file really is (/proc/self/fd);
  * elsewhere the path must still have no symlink in it and lead to the same file. Undefined when
- * it can't be opened or isn't the site's.
+ * it can't be opened, isn't a plain file or isn't the site's.
+ *
+ * O_NONBLOCK keeps a file swapped for a FIFO since the check from holding the open until something
+ * writes to it; anything but a plain file is then refused. A plain file reads the same with it set.
  */
 export async function openWithin(file: string, site: string): Promise<{ fd: number; size: number } | undefined> {
   let fd: number
   try {
-    fd = await fdOpen(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0))
+    fd = await fdOpen(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0))
   } catch {
     return undefined
   }
@@ -448,29 +461,48 @@ function streamOf(fd: number): ReadableStream<Uint8Array> {
 }
 
 /**
+ * The line git prints for `git -C <folder> rev-parse <option>`, or null. A line starting with '-'
+ * is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
+ * does that with --path-format, before 2.5 with --git-common-dir).
+ */
+function revParse(folder: string, option: string, git: string) {
+  try {
+    const r = Bun.spawnSync([git, '-C', folder, 'rev-parse', option], { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
+    const line = r.exitCode === 0 ? (r.stdout.toString().split(/\r?\n/)[0] ?? '').trim() : ''
+    return line && !line.startsWith('-') ? line : null
+  } catch {
+    return null
+  }
+}
+
+/**
  * The project a folder belongs to: its git repo's main working tree, or the folder itself. In a
  * linked worktree (an agent's `.claude/worktrees/<name>`, removed once its branch merges) git's
  * common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
- * Blueprint skill group it. A submodule or a bare repo's worktree keeps its own top level.
+ * Blueprint skill group it. A submodule's common dir (`.git/modules/<name>`) or a bare repo's
+ * (`<name>.git`) keeps the top folder. Two plain calls work on any git; the top folder git prints is
+ * kept when the common dir's parent is the same folder.
  */
-function projectOf(folder: string) {
-  const git = (...args: string[]) => {
-    try {
-      const r = Bun.spawnSync(['git', '-C', folder, 'rev-parse', ...args], { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
-      return r.exitCode === 0 ? r.stdout.toString() : null
-    } catch {
-      return null
-    }
+export function projectOf(folder: string, git = 'git') {
+  const top = revParse(folder, '--show-toplevel', git)
+  if (!top) return folder
+  const c = revParse(folder, '--git-common-dir', git)
+  const common = c ? path.resolve(folder, c) : null
+  if (!common || path.basename(common) !== '.git' || !isDir(common)) return top
+  const parent = path.dirname(common)
+  try {
+    return fs.realpathSync(parent) === fs.realpathSync(top) ? top : parent
+  } catch {
+    return top
   }
-  const out = git('--path-format=absolute', '--show-toplevel', '--git-common-dir', '--git-dir')
-  // git older than 2.31 has no --path-format: then the top level as it is
-  if (out === null) return git('--show-toplevel')?.trim() || folder
-  const [top = '', common = '', own = ''] = out.split(/\r?\n/).map((l) => l.trim())
-  if (common && common !== own && path.basename(common) === '.git') {
-    const parent = path.dirname(common)
-    if (parent) return parent
+}
+
+function isDir(p: string) {
+  try {
+    return fs.statSync(p).isDirectory()
+  } catch {
+    return false
   }
-  return top || folder
 }
 
 /** The name and slug in a site's `.inyon-page.json`, when it has a usable one. */

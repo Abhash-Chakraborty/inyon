@@ -31,6 +31,8 @@ export const NOT_ABSOLUTE = 'The folder must be an absolute path'
 export const TOO_WIDE = "Pick the site's own folder, not / or your home folder"
 export const PRIVATE_FOLDER = "Folders under ~/.ssh and ~/.inyon can't be pages"
 export const NO_INDEX = 'That folder has no index.html'
+/** A 500 from register and delete when ~/.inyon can't be written: a read-only folder, or a stale lock that can't be removed. */
+export const CANT_WRITE_LIST = "The hub can't write in ~/.inyon, so it can't change pages.json there. Check that the folder and its pages.json.lock belong to the hub's user, then try again."
 
 /**
  * A slug made from a name: ASCII letters lowercased, every run of anything else (other letters

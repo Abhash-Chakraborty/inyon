@@ -52,7 +52,7 @@ The skill starts from a working sample site for a made-up grocery app, then repl
 | Script | What it does |
 |---|---|
 | `new-site.mjs <dir> --name "App"` | Copies the template into a new folder and marks it with `.inyon-page.json`. Inside a git repository the folder can be left out: it's then `private/plans/<slug>` in the repository's main folder, also from a worktree |
-| `publish.mjs <dir> --name "Plan"` | Puts the site under [Pages](pages.md) on a computer with Inyon set up but no `inyon` command on the path |
+| `publish.mjs <dir> --name "Plan"` | Puts the site under [Pages](pages.md) on a computer with Inyon set up but no `inyon` command on the path. When an agent's sandbox can't write to `~/.inyon`, it prints a line for you to run in your own terminal: the `inyon` command by its full path, or the same `publish.mjs` line when the command isn't installed |
 | `serve.mjs <dir> --host <ip> --port 8790` | Serves the site with the same sandbox Inyon puts around a page, so a site that works here works in the app. Use a private address, such as a VPN or home network IP, to open it on your phone |
 | `stills.mjs <dir> --audit` | Saves gallery pictures of every screen and reports errors and dead buttons |
 | `shoot.mjs <url> <out.png> <w> <h> <light\|dark>` | One screenshot, with optional clicks before it |

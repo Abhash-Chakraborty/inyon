@@ -26,7 +26,7 @@ fn only_known_folders() {
     for e in entries(&fixtures()) {
         let name = e.file_name().unwrap().to_string_lossy().into_owned();
         assert!(
-            ["README.md", "screens", "transcripts", "protocol", "link", "expected", "pages"].contains(&name.as_str()),
+            ["README.md", "screens", "transcripts", "protocol", "link", "expected", "pages", "old-git"].contains(&name.as_str()),
             "fixtures/{name} isn't part of the layout in fixtures/README.md"
         );
     }

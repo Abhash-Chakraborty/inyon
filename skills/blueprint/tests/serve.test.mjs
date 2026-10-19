@@ -6,6 +6,7 @@ import { connect } from 'node:net';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { serve } from '../scripts/lib.mjs';
 
 const tmp = mkdtempSync(join(tmpdir(), 'bp-serve-'));
@@ -37,7 +38,7 @@ describe('serve() on the template site', () => {
   let srv, site, csp;
   beforeAll(async () => {
     site = join(tmp, 'tpl');
-    cpSync(new URL('../assets/site', import.meta.url).pathname, site, { recursive: true });
+    cpSync(fileURLToPath(new URL('../assets/site', import.meta.url)), site, { recursive: true });
     writeFileSync(join(site, '.inyon-page.json'), '{"v":1}');
     writeFileSync(join(site, '.env'), 'SECRET=1');
     mkdirSync(join(site, 'research'));
@@ -105,7 +106,7 @@ describe('serve() on the template site', () => {
 
 // The hub's own cases, from fixtures/pages/responses.json, with /v/<token> taken off the front. Only the
 // cases where the hub accepted the token apply: there is no token here.
-const fixtures = new URL('../../../fixtures/pages/', import.meta.url).pathname;
+const fixtures = fileURLToPath(new URL('../../../fixtures/pages/', import.meta.url));
 const haveFixtures = existsSync(join(fixtures, 'responses.json'));
 describe.skipIf(!haveFixtures || process.platform === 'win32')('serve() matches fixtures/pages/responses.json', () => {
   const spec = haveFixtures ? JSON.parse(readFileSync(join(fixtures, 'responses.json'), 'utf8')) : { cases: [] };

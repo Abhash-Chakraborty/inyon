@@ -7,10 +7,11 @@ import { PagesPage } from './Pages.tsx'
 import { AppShell } from '../components/AppShell.tsx'
 import { PreviewTab } from '../components/session/Panels.tsx'
 import { useStore } from '../lib/store.ts'
-import { usePages, pageId, type Page } from '../lib/pages.ts'
+import { loadPages, usePages, pageId, type Page } from '../lib/pages.ts'
 import { updatedLine } from '../components/pages/shared.tsx'
 import { backHandled } from '../lib/back.ts'
 import { api } from '../test/fakes.ts'
+import { ApiError } from '../lib/api.ts'
 import { host } from '../test/fixtures.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
 
@@ -47,7 +48,7 @@ afterAll(() => void (settings.disableIframePageLoading = loadFrames))
 
 beforeEach(() => {
   useStore.setState({ hosts: [host('local', { config: { id: 'local', kind: 'local', name: 'abhash-arm' } }), host('laptop', { config: { id: 'laptop', kind: 'node', name: 'abhash-laptop' }, status: 'error' })], hostsLoaded: true })
-  usePages.setState({ pages: [PLAN, HANDY, LAPTOP], hubless: false, error: undefined, seen: { [HANDY.id]: NOW } })
+  usePages.setState({ pages: [PLAN, HANDY, LAPTOP], hubless: false, error: undefined, seen: { [HANDY.id]: NOW }, unreachable: [], forgotten: [] })
   useStore.setState({ resolvedTheme: 'light' })
 })
 afterEach(() => viewport(1024, 768))
@@ -271,6 +272,51 @@ describe('the viewer', () => {
     }
   })
 
+  test('a timed renewal that fails is tried again after 1 min, then longer up to 10 min, while the page is on screen', async () => {
+    let timers: { fn: () => void; ms: number }[] = []
+    const realSet = globalThis.setTimeout
+    // timers of a minute or more are kept here instead of run; short ones (React, the test library) run as usual
+    globalThis.setTimeout = ((fn: () => void, ms?: number, ...a: unknown[]) => ((ms ?? 0) >= 60_000 ? (timers.push({ fn, ms: ms! }), 0) : realSet(fn, ms, ...a))) as typeof setTimeout
+    const fire = async (ms: number) => {
+      const t = timers.find((x) => Math.abs(x.ms - ms) < 60_000)
+      expect([ms, !!t]).toEqual([ms, true])
+      timers = []
+      await act(async () => t!.fn())
+      await flush()
+    }
+    try {
+      api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
+      const { container } = await at('/pages/local/ghostex')
+      await flush()
+      api.openPage.mockRejectedValue(new Error("Couldn't reach the hub") as never)
+      await fire(11 * 3_600_000)
+      // each failure waits longer: 1, 2, 4, 8 min, then 10 min from there on
+      for (const wait of [60_000, 120_000, 240_000, 480_000, 600_000, 600_000]) await fire(wait)
+      expect(api.openPage).toHaveBeenCalledTimes(8)
+      // the old link stays on screen meanwhile
+      expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.old.sig/?theme=light')
+      api.openPage.mockResolvedValue({ url: '/v/v1.new.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
+      await fire(600_000)
+      expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.new.sig/?theme=light')
+      // the new link's own renewal is on the clock again, and no retry is left over
+      expect(timers.map((t) => Math.round(t.ms / 3_600_000))).toEqual([11])
+      // out of view the timer doesn't try at all: coming back into view renews it
+      api.openPage.mockRejectedValue(new Error("Couldn't reach the hub") as never)
+      const hidden = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState')
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      try {
+        await fire(11 * 3_600_000)
+        expect(timers).toEqual([])
+        expect(api.openPage).toHaveBeenCalledTimes(9)
+      } finally {
+        delete (document as any).visibilityState
+        if (hidden) Object.defineProperty(Document.prototype, 'visibilityState', hidden)
+      }
+    } finally {
+      globalThis.setTimeout = realSet
+    }
+  })
+
   test("renewal goes by how long the hub says the link lasts, not by the hub's clock", async () => {
     // the hub's clock is two hours ahead of this device's
     api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 14 * 3_600_000, ttl: 12 * 3_600_000 } as never)
@@ -376,6 +422,33 @@ describe('the viewer', () => {
     await act(async () => usePages.setState({ pages: [] }))
     expect(screen.getByText('The hub is out of reach')).toBeTruthy()
     expect(screen.queryByText('This page is gone')).toBeNull()
+  })
+
+  test('a hub that forgot this phone says so in the list and over its page, which is not called gone', async () => {
+    viewport(390, 844)
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'arm', url: 'http://arm:4777', token: 't1', pairedAt: 1 }]))
+    api.hubPages.mockRejectedValue(new ApiError(401, 'Unauthorized') as never)
+    usePages.setState({ pages: [entry('far', { host: 'hub:h1/local', name: 'Far plan' })] })
+    try {
+      const viewer = await at('/pages/hub%3Ah1%2Flocal/far')
+      await act(() => loadPages())
+      expect(usePages.getState()).toMatchObject({ pages: [], forgotten: ['h1'], unreachable: [] })
+      expect(screen.getByText('arm forgot this phone')).toBeTruthy()
+      expect(screen.queryByText('This page is gone')).toBeNull()
+      expect(screen.queryByText('The hub is out of reach')).toBeNull()
+      viewer.unmount()
+      const list = await at('/pages')
+      await flush()
+      expect(screen.getByRole('status').textContent).toBe('arm forgot this phone. Pair it again from the hub to see its pages here.')
+      list.unmount()
+      viewport(1280, 800)
+      await at('/pages/hub%3Ah1%2Flocal/far')
+      await flush()
+      expect(screen.getByText('arm forgot this phone')).toBeTruthy()
+    } finally {
+      delete (window as any).Capacitor
+    }
   })
 
   test('on a desktop, /pages opens the page that changed last', async () => {

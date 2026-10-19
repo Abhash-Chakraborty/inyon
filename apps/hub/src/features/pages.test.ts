@@ -6,8 +6,8 @@ import path from 'node:path'
 import { memoryStore, type Store } from '../platform/store.ts'
 import { HttpError } from '../hosts/http-error.ts'
 import { layOutFixtureSite, NOW, PAGES_FIXTURES, SECRET } from '../cli/pages-vectors.ts'
-import { NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
-import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_SAVED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, removeJudged, withLock } from './pages.ts'
+import { CANT_WRITE_LIST, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
+import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_SAVED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, projectOf, removeJudged, withLock } from './pages.ts'
 
 // The Bun hub's half of Pages: the list file, epochs, the API handlers, and the /v/ answer
 // checked byte for byte against fixtures/pages/responses.json over a real socket.
@@ -129,6 +129,34 @@ describe('every /v/ request in fixtures/pages/responses.json', () => {
     expect(await res.text()).not.toContain('SECRET')
     // nothing swapped: served as before
     expect((await view(`${url}style.css`)).status).toBe(200)
+  })
+
+  test('a file swapped for a FIFO after the check is a 404 at once, not an open that waits for a writer', async () => {
+    const dir = site('fifo', true)
+    const watch = path.join(fs.realpathSync(dir), 'style.css')
+    let swapped = false
+    const swapFs: ViewFs = {
+      realpath: diskFs.realpath,
+      async stat(p) {
+        const st = await diskFs.stat(p)
+        if (!swapped && p === watch) {
+          swapped = true
+          fs.rmSync(watch)
+          expect(Bun.spawnSync(['mkfifo', watch]).exitCode).toBe(0)
+        }
+        return st
+      },
+    }
+    const h = hub({ fs: swapFs, now: Date.now })
+    writeList(h.file, [record('fifo', dir)])
+    const { url } = await (await call(h, '/api/pages/:host/:slug/open', 'POST', { host: 'local', slug: 'fifo' })).json()
+    const view = (u: string) => h.pages.view(new Request(`http://${RESPONSES.context.host}${u}`, { headers: { host: RESPONSES.context.host } }))
+    const res = await Promise.race([view(`${url}style.css`), Bun.sleep(3000).then(() => null)])
+    expect(swapped).toBe(true)
+    expect(res?.status).toBe(404)
+    expect(await res!.text()).toBe(RESPONSES.errorPages['404'])
+    // and a FIFO there from the start is a 404 too
+    expect((await view(`${url}style.css`)).status).toBe(404)
   })
 
   test('an answer nobody reads (a client gone before the body) leaves no open file for the collector to trip on', async () => {
@@ -396,6 +424,31 @@ describe('adding a page', () => {
     expect(entry.project).toBe(fs.realpathSync(repo))
   })
 
+  test('the project is found the same with any git, old ones that print unknown options back too', () => {
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(root, 'git-')))
+    const run = (...args: string[]) => expect(Bun.spawnSync(['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdout: 'ignore', stderr: 'ignore' }).exitCode).toBe(0)
+    run('init', '-q')
+    run('commit', '-q', '--allow-empty', '-m', 'first')
+    const tree = path.join(repo, '.claude', 'worktrees', 'x')
+    run('worktree', 'add', '-q', '--detach', tree)
+    fs.mkdirSync(path.join(repo, 'sub'))
+    fs.mkdirSync(path.join(tree, 'deep'))
+    const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-no-git-')))
+    // fixtures/old-git/git is git before 2.31 (prints --path-format=absolute back, exit 0); git-2.4 knows no --git-common-dir
+    const oldGit = new URL('../../../../fixtures/old-git/', import.meta.url).pathname
+    for (const g of ['git', path.join(oldGit, 'git')]) {
+      expect([g, projectOf(repo, g)]).toEqual([g, repo])
+      expect([g, projectOf(path.join(repo, 'sub'), g)]).toEqual([g, repo])
+      expect([g, projectOf(tree, g)]).toEqual([g, repo])
+      expect([g, projectOf(path.join(tree, 'deep'), g)]).toEqual([g, repo])
+      expect([g, projectOf(outside, g)]).toEqual([g, outside])
+    }
+    const g24 = path.join(oldGit, 'git-2.4')
+    expect(projectOf(path.join(repo, 'sub'), g24)).toBe(repo)
+    expect(projectOf(path.join(tree, 'deep'), g24)).toBe(tree)
+    fs.rmSync(outside, { recursive: true })
+  })
+
   test('without a marker, the slug comes from the folder (whatever the name), and is unique', async () => {
     const h = hub()
     const add = async (body: object) => (await (await call(h, '/api/pages/:host', 'POST', { host: 'local' }, body)).json()).slug
@@ -567,9 +620,35 @@ describe('the lock', () => {
     fs.utimesSync(lock, old, old)
     fs.chmodSync(dir, 0o500)
     try {
-      expect(await message(withLock(lock, () => 1, 60_000))).toContain('EACCES')
+      const started = Date.now()
+      expect(await status(withLock(lock, () => 1, 60_000))).toBe(500)
+      expect(await message(withLock(lock, () => 1, 60_000))).toBe(CANT_WRITE_LIST)
+      expect(Date.now() - started).toBeLessThan(2000)
     } finally {
       fs.chmodSync(dir, 0o700)
+    }
+  })
+
+  test('register and delete answer the same 500 as the Rust hub when a stale lock cannot be removed', async () => {
+    if (process.getuid?.() === 0) return // root ignores the folder's mode
+    const h = hub()
+    const listed = site('listed')
+    writeList(h.file, [record('listed', listed)])
+    const lock = `${h.file}.lock`
+    fs.writeFileSync(lock, '1\n')
+    const old = new Date(Date.now() - 11_000)
+    fs.utimesSync(lock, old, old)
+    const inyon = path.dirname(h.file)
+    fs.chmodSync(inyon, 0o500)
+    try {
+      const add = () => call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: site('new') })
+      const del = () => call(h, '/api/pages/:host/:slug', 'DELETE', { host: 'local', slug: 'listed' })
+      for (const req of [add, del]) {
+        expect(await status(req())).toBe(500)
+        expect(await message(req())).toBe(CANT_WRITE_LIST)
+      }
+    } finally {
+      fs.chmodSync(inyon, 0o700)
     }
   })
 

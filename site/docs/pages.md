@@ -38,7 +38,7 @@ Tap a card to open the page full screen. The bar on top has:
 
 Under the bar, a line says **Sandboxed page: never sign in here**. It stays on screen, so a page can't pass itself off as the app asking for your password.
 
-If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub restarting), its pages stay on the list, shown as offline, and an open page stays on screen with **Can't reach *hub* now** under the bar. Both catch up when the hub answers again.
+If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub restarting), its pages stay on the list, shown as offline, and an open page stays on screen with **Can't reach *hub* now** under the bar. Both catch up when the hub answers again. A hub that answers but refuses the phone, because the phone was forgotten there, is different: its pages leave the list and the app says ***hub* forgot this phone** until you pair it again.
 
 Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
 
@@ -63,7 +63,7 @@ A machine's own page lists its pages too, under **Pages on this machine**.
 
 ## Links and removing
 
-The app opens each page with a link the hub signs for that page alone. A link lasts 12 hours. The app makes a new one every time you open a page or press **Reload**, and again an hour before it runs out, while the page is on screen or as soon as you come back to it. The app counts those 12 hours on its own clock from when the hub answered, so a phone whose clock is off still renews in time. **Open in browser** and **Open in new tab** make a new link each time, so a tab works for 12 hours from when you opened it. Open the page from the app again for a fresh one.
+The app opens each page with a link the hub signs for that page alone. A link lasts 12 hours. The app makes a new one every time you open a page or press **Reload**, and again an hour before it runs out, while the page is on screen or as soon as you come back to it. If the hub doesn't answer then, the app tries again after a minute, then waits twice as long each time, up to 10 minutes, while the page stays on screen. The app counts those 12 hours on its own clock from when the hub answered, so a phone whose clock is off still renews in time. **Open in browser** and **Open in new tab** make a new link each time, so a tab works for 12 hours from when you opened it. Open the page from the app again for a fresh one.
 
 - **Revoke links** ends every link made for that page so far: tabs on other devices, links you copied, and the one on screen, which the app replaces at once.
 - **Remove** takes the page off the list, and its links stop working. The folder and its files stay on the machine. The message that confirms it has **Undo** for a few seconds.
@@ -100,9 +100,11 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 |---|---|
 | ***machine* is offline** | The hub's computer is off or out of reach. **Try again** once it's back |
 | **Can't reach *hub* now** under the bar, or **The hub is out of reach** | The phone's last check with that hub failed. The page stays as it was and catches up when the hub answers. Check the phone's connection or VPN |
+| ***hub* forgot this phone** | The hub refused the phone (it was forgotten on the hub), so its pages left the list. Pair the phone again from the hub |
 | **This page is gone** | It was taken off the list on that machine. Add the folder again if you still want it |
 | **Couldn't open "*name*"** | The app couldn't get a link from the hub; the reason is under it. **Try again** |
 | **Not found** inside the page | The page's folder was moved or deleted, or a link inside the page points at a file that isn't there. `inyon pages` on that computer says when a folder is gone; add it again from its new place |
+| **The hub can't write in ~/.inyon** when adding or removing a page | The hub's user can't write to `~/.inyon` or remove a `pages.json.lock` left behind there. Make sure both belong to the hub's user, then try again |
 | **Couldn't revoke the links**, because the hub couldn't write to its data folder | The hub's disk is full or read-only. The old links stay closed only until the hub restarts. Free some space, then revoke again |
 | **Link expired** inside the page | An old link, or the page's links were revoked. Press **Reload**, or open the page from the list again |
 | A blank or unstyled page | It loads something from the internet. Copy those files into the folder and link them relatively |

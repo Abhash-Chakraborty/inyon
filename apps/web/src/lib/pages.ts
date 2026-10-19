@@ -98,6 +98,11 @@ export const localDeadline = (l: PageOpen, askedAt: number): PageLink => ({ ...l
 /** How long to wait before renewing a link that is on screen: until an hour is left, at least 5 s. */
 export const renewIn = (until: number, now: number) => Math.max(5_000, until - RENEW_BEFORE_MS - now)
 
+/** A timed renewal that failed is tried again after a minute, then twice as long each time, up to 10 minutes. */
+export const RENEW_RETRY_MS = 60_000
+export const RENEW_RETRY_MAX_MS = 10 * 60_000
+export const nextRetry = (wait: number) => Math.min(wait * 2, RENEW_RETRY_MAX_MS)
+
 /** Where a page's hub is: '' for the hub this app came from, else the paired hub's address. */
 export const pageBase = (host: string) => splitHostId(host).hub?.url ?? ''
 
@@ -183,12 +188,23 @@ interface PagesState {
   seen: Record<string, number>
   /** in the phone app, the paired hubs that didn't answer the last time: their pages stay listed, shown offline */
   unreachable: string[]
+  /** in the phone app, the paired hubs that refused the phone's token (401 or 403): it was forgotten there, so their pages are gone until it pairs again */
+  forgotten: string[]
 }
 
-export const usePages = create<PagesState>(() => ({ pages: null, hubless: false, seen: loadSeen(), unreachable: [] }))
+export const usePages = create<PagesState>(() => ({ pages: null, hubless: false, seen: loadSeen(), unreachable: [], forgotten: [] }))
+
+/** A hub that answered "who are you?": the phone was forgotten there, or this app was signed out. */
+export const isRefusal = (e: unknown) => e instanceof ApiError && (e.status === 401 || e.status === 403)
 
 /** The paired hub a page's host belongs to, by id; undefined for this app's own hub. */
 export const hubIdOf = (host: string) => (isHubHost(host) ? host.slice('hub:'.length, host.indexOf('/')) : undefined)
+
+/** Whether a host's hub refused the phone the last time the list was asked for. */
+export const hubForgot = (host: string, forgotten: string[]) => {
+  const id = hubIdOf(host)
+  return id !== undefined && forgotten.includes(id)
+}
 
 /** Whether a host's hub didn't answer the last time the list was asked for. */
 export const hubUnreachable = (host: string, unreachable: string[]) => {
@@ -225,30 +241,34 @@ async function fetchPages(): Promise<void> {
   try {
     if (!isPhone()) {
       const r = await api.pages()
-      usePages.setState({ pages: asPages(r?.pages), hubless: false, error: undefined, unreachable: [] })
+      usePages.setState({ pages: asPages(r?.pages), hubless: false, error: undefined, unreachable: [], forgotten: [] })
       return
     }
     const hubs = listHubs()
-    if (!hubs.length) return usePages.setState({ pages: [], hubless: true, error: undefined, unreachable: [] })
+    if (!hubs.length) return usePages.setState({ pages: [], hubless: true, error: undefined, unreachable: [], forgotten: [] })
     const got = await Promise.allSettled(hubs.map(fromHub))
     // a hub out of reach (a blip, a restart, the phone off the VPN) keeps the pages it had, shown
-    // offline; only an answer from a hub changes its list
+    // offline; only an answer from a hub changes its list, and one that refuses the phone empties it
     const before = usePages.getState().pages ?? []
     const pages: Page[] = []
     const unreachable: string[] = []
+    const forgotten: string[] = []
     got.forEach((g, i) => {
       const hub = hubs[i]!
       if (g.status === 'fulfilled') pages.push(...g.value)
+      else if (isRefusal(g.reason)) forgotten.push(hub.id)
       else {
         unreachable.push(hub.id)
         pages.push(...before.filter((p) => hubIdOf(p.host) === hub.id))
       }
     })
-    const failed = got.find((g): g is PromiseRejectedResult => g.status === 'rejected')
-    // all of them out of reach is an error
-    usePages.setState({ pages, hubless: false, unreachable, error: failed && !got.some((g) => g.status === 'fulfilled') ? (failed.reason as Error).message : undefined })
+    const failed = got.find((g): g is PromiseRejectedResult => g.status === 'rejected' && !isRefusal(g.reason))
+    // all of them out of reach is an error; a forgotten hub says so on its own line
+    usePages.setState({ pages, hubless: false, unreachable, forgotten, error: failed && !got.some((g) => g.status === 'fulfilled') ? (failed.reason as Error).message : undefined })
   } catch (e) {
-    usePages.setState((s) => ({ pages: s.pages ?? [], error: (e as Error).message }))
+    // signed out: the list goes with the sign-in (the app asks for it again); anything else keeps it
+    if (isRefusal(e)) usePages.setState({ pages: [], error: (e as Error).message, unreachable: [], forgotten: [] })
+    else usePages.setState((s) => ({ pages: s.pages ?? [], error: (e as Error).message }))
   }
 }
 

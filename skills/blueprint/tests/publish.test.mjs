@@ -2,12 +2,13 @@
 // publish.mjs and new-site.mjs, run with node the way an agent runs them, against a made-up home folder.
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BAD_SLUG, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
+import { fileURLToPath } from 'node:url';
+import { BAD_SLUG, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
 
-const scripts = new URL('../scripts/', import.meta.url).pathname;
+const scripts = fileURLToPath(new URL('../scripts/', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'bp-publish-'));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -179,7 +180,9 @@ describe('publish.mjs', () => {
     try {
       const r = pub([dir, '--name', "Bob's plan"]);
       expect(r.status).toBe(4);
-      expect(r.stderr).toContain(`inyon pages add ${dir} --name 'Bob'\\''s plan'`);
+      // without the program, this script with node, for the user's own shell outside the sandbox
+      expect(r.stderr).toContain(`\n  node ${join(scripts, 'publish.mjs')} ${dir} --name 'Bob'\\''s plan' --by agent\n`);
+      expect(r.stderr).not.toContain('inyon pages add');
     } finally { chmodSync(join(home, '.inyon'), 0o700); }
     // with the program installed, by its full path: it works where inyon isn't on the PATH
     mkdirSync(join(home, '.inyon/bin'));
@@ -190,6 +193,38 @@ describe('publish.mjs', () => {
       expect(r.status).toBe(4);
       expect(r.stderr).toContain(`\n  ${home}/.inyon/bin/inyon pages add ${dir}\n`);
     } finally { chmodSync(join(home, '.inyon'), 0o700); }
+  });
+
+  test('the printed commands name the scripts by their file path, spaces and all', () => {
+    // a copy of the skill in a folder with a space: a file: URL's pathname would say my%20skills
+    const copy = join(home, 'my skills', 'blueprint');
+    cpSync(join(scripts, '..'), copy, { recursive: true, filter: (f) => !f.includes('node_modules') });
+    const at = (f) => `'${join(copy, 'scripts', f)}'`;
+    const p = (args) => spawnSync('node', [join(copy, 'scripts/publish.mjs'), ...args], { env: env({ CLAUDECODE: '1' }), encoding: 'utf8' });
+    const dir = site('spaced');
+    rmSync(join(home, '.inyon/hub.env'));
+    const r5 = p([dir]);
+    expect(r5.status).toBe(5);
+    expect(r5.stdout).toContain(`node ${at('serve.mjs')} ${dir} --host <private-ip>`);
+    if (process.getuid?.() !== 0) {
+      chmodSync(join(home, '.inyon'), 0o500);
+      try {
+        const r4 = p([site('spaced2')]);
+        expect(r4.status).toBe(4);
+        expect(r4.stderr).toContain(`\n  node ${at('publish.mjs')} ${join(home, 'spaced2')} --by claude\n`);
+      } finally { chmodSync(join(home, '.inyon'), 0o700); }
+    }
+    rmSync(join(home, '.inyon'), { recursive: true });
+    const r3 = p([dir]);
+    expect(r3.status).toBe(3);
+    expect(r3.stderr).toContain(`node ${at('serve.mjs')} ${dir} --host <private-ip>`);
+    expect(r3.stdout + r3.stderr + r5.stdout + r5.stderr).not.toContain('%20');
+    // new-site.mjs copies the template from there too, and prints the same paths
+    const made = spawnSync('node', [join(copy, 'scripts/new-site.mjs'), join(home, 'fresh'), '--name', 'Fresh'], { env: env(), encoding: 'utf8' });
+    expect(made.status).toBe(0);
+    expect(existsSync(join(home, 'fresh/index.html'))).toBe(true);
+    expect(made.stdout).toContain(`node ${join(copy, 'scripts/publish.mjs')} `);
+    expect(made.stdout).not.toContain('%20');
   });
 
   test('on a machine without a hub it lists the page, says the app cannot show it yet, and exits 5', () => {
@@ -313,7 +348,7 @@ describe('publish.mjs', () => {
     try {
       const r = spawnSync('node', [join(scripts, 'publish.mjs'), site('locked')], { env: env(), encoding: 'utf8', timeout: 10_000 });
       expect(r.status).toBe(4);
-      expect(r.stderr).toContain('pages add');
+      expect(r.stderr).toContain(`node ${join(scripts, 'publish.mjs')} ${join(home, 'locked')}`);
     } finally { chmodSync(join(home, '.inyon'), 0o700); }
   });
 
@@ -399,8 +434,65 @@ describe('new-site.mjs', () => {
   });
 });
 
+// Git before 2.31 prints --path-format=absolute back and exits 0; before 2.5, --git-common-dir too.
+// fixtures/old-git has a git that does that, for when this runs inside the Inyon repo.
+const oldGit = fileURLToPath(new URL('../../../fixtures/old-git/', import.meta.url));
+describe('the project a folder belongs to', () => {
+  function repoWithWorktree() {
+    const repo = join(home, 'main');
+    mkdirSync(join(repo, 'sub'), { recursive: true });
+    git(repo, 'init', '-q');
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'x');
+    const wt = join(repo, '.claude/worktrees/feature');
+    expect(git(repo, 'worktree', 'add', '-q', wt).status).toBe(0);
+    mkdirSync(join(wt, 'deep'));
+    return { repo, wt };
+  }
+
+  test('with this git: the main checkout, from a linked worktree and from a subfolder', () => {
+    const { repo, wt } = repoWithWorktree();
+    expect(mainTree(repo)).toBe(repo);
+    expect(mainTree(join(repo, 'sub'))).toBe(repo);
+    expect(mainTree(wt)).toBe(repo);
+    expect(mainTree(join(wt, 'deep'))).toBe(repo);
+    expect(mainTree(home)).toBe(null);
+    // a bare repo's worktree keeps its own top folder
+    const bare = join(home, 'b.git');
+    expect(spawnSync('git', ['clone', '-q', '--bare', repo, bare]).status).toBe(0);
+    const bw = join(home, 'bw');
+    expect(git(bare, 'worktree', 'add', '-q', bw).status).toBe(0);
+    expect(mainTree(bw)).toBe(bw);
+  });
+
+  describe.skipIf(!existsSync(join(oldGit, 'git')))('with an old git that prints unknown options back', () => {
+    test('git 2.30: the main checkout, never a folder named --path-format=absolute', () => {
+      const { repo, wt } = repoWithWorktree();
+      const g = join(oldGit, 'git');
+      expect(mainTree(repo, g)).toBe(repo);
+      expect(mainTree(join(wt, 'deep'), g)).toBe(repo);
+      expect(mainTree(home, g)).toBe(null);
+      const extra = { PATH: `${oldGit}:${process.env.PATH}` };
+      const dir = site('main/.claude/worktrees/feature/private/plans/plan');
+      expect(pub([dir], extra).status).toBe(0);
+      expect(list().pages[0]).toMatchObject({ path: dir, project: repo });
+      const r = spawnSync('node', [join(scripts, 'new-site.mjs'), '--name', 'Old git'], { cwd: wt, env: env(extra), encoding: 'utf8' });
+      expect(r.status).toBe(0);
+      expect(marker(join(repo, 'private/plans/old-git'))).toMatchObject({ slug: 'old-git' });
+      expect(existsSync(join(wt, '--path-format=absolute'))).toBe(false);
+      expect(r.stdout).not.toContain('--path-format');
+    });
+
+    test('git 2.4: no common dir, so the top folder', () => {
+      const { repo, wt } = repoWithWorktree();
+      const g = join(oldGit, 'git-2.4');
+      expect(mainTree(join(repo, 'sub'), g)).toBe(repo);
+      expect(mainTree(wt, g)).toBe(wt);
+    });
+  });
+});
+
 // The same rules as Inyon's hub, checked against its fixtures when this runs inside the Inyon repo.
-const rulesFile = new URL('../../../fixtures/pages/rules.json', import.meta.url).pathname;
+const rulesFile = fileURLToPath(new URL('../../../fixtures/pages/rules.json', import.meta.url));
 describe.skipIf(!existsSync(rulesFile))('rules match fixtures/pages/rules.json', () => {
   const rules = existsSync(rulesFile) ? JSON.parse(readFileSync(rulesFile, 'utf8')) : {};
   test('slugify', () => { for (const c of rules.slugify) expect([c.text, slugify(c.text)]).toEqual([c.text, c.slug]); });

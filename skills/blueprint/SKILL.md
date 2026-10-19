@@ -71,9 +71,10 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    Never hand over a `/v/...` link either, since those expire after 12 hours.
 
    **In a sandbox.** If `~/.inyon` can't be written from where you run (publish.mjs exits 4), don't look
-   for a way around it. Show the reader the `inyon pages add ...` line the script prints (it names the
-   installed program by its full path, so it works where `inyon` isn't on the PATH) and ask them to run
-   it once. Everything else works as before.
+   for a way around it. Show the reader the line the script prints and ask them to run it once from
+   their own shell. It's `inyon pages add ...` with the installed program's full path, so it works where
+   `inyon` isn't on the PATH, or `node .../publish.mjs ...` when the command isn't installed. Everything
+   else works as before.
 9. **Keep the board live** while you carry out the plan:
    `python3 <skill>/scripts/progress.py --file <dir>/progress.json task <id> doing "note"`, then `done`,
    plus `now "<what you're on>"`, `log "<line>"` and `link <id> <PR url>`. Parallel workers can all call it:

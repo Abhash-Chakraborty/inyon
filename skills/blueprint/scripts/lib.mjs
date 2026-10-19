@@ -4,11 +4,12 @@ import { createServer } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Playwright comes from, in order: BLUEPRINT_PLAYWRIGHT (a folder whose node_modules has it), this folder,
 // or the current project. Install it once with `bun add -d playwright` or `npm i -D playwright` anywhere.
 function req(name) {
-  const tries = [process.env.BLUEPRINT_PLAYWRIGHT, new URL('.', import.meta.url).pathname, process.cwd()].filter(Boolean);
+  const tries = [process.env.BLUEPRINT_PLAYWRIGHT, fileURLToPath(new URL('.', import.meta.url)), process.cwd()].filter(Boolean);
   for (const dir of tries) {
     try { return createRequire(join(resolve(dir), 'package.json'))(name); } catch {}
   }

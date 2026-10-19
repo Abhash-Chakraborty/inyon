@@ -14,6 +14,7 @@ fixtures/
   link/<part>.json                   the phone link's bytes, from packages/link/src/vectors.ts
   pages/                             a small site and what both hubs answer for it under /v/
   expected/                          what the TS readers make of the captures, for the Rust ones
+  old-git/                           a git that prints rev-parse options it doesn't know back
 ```
 
 `<agent>` is the agent's id from `packages/protocol/src/agents.ts`: `claude`, `codex`, `opencode`,
@@ -54,6 +55,11 @@ added, and commit them with the change.
 `apps/hub/src/features/pages-core.ts`; `pages-core.test.ts` fails when they no longer match it.
 Both hubs send each request in `responses.json` to a real server and compare, so a change to
 the rules means writing the files again and changing the Rust hub in the same commit.
+
+`old-git/git` stands in for git before 2.31, which prints an option it doesn't know
+(`--path-format=absolute`) back on stdout and still exits 0; `old-git/git-2.4` doesn't know
+`--git-common-dir` either. Everything else goes to the real git. The tests for the project a page
+belongs to (the hubs, the `inyon` command and the Blueprint skill) run against both and the real one.
 
 There are no transcript captures yet. The reader tests build their records in code, one at a time,
 next to what each one should produce.

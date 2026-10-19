@@ -5,6 +5,7 @@ import {
   previewRefusal, projectName, renewIn, shouldRenew, usePages, type Page,
 } from './pages.ts'
 import { api } from '../test/fakes.ts'
+import { ApiError } from './api.ts'
 
 const entry = (slug: string, more: Partial<PageEntry> = {}): Page => {
   const e: PageEntry = { host: 'local', slug, name: slug, project: '/home/me/code/app', by: 'claude', added: 1_000, folder: `/home/me/code/app/private/plans/${slug}`, ...more }
@@ -13,7 +14,7 @@ const entry = (slug: string, more: Partial<PageEntry> = {}): Page => {
 const names: Record<string, string> = { local: 'studio', 'hub:h1/local': 'arm', laptop: 'air' }
 const nameOf = (h: string) => names[h] ?? h
 
-beforeEach(() => usePages.setState({ pages: null, hubless: false, error: undefined, seen: {}, unreachable: [] }))
+beforeEach(() => usePages.setState({ pages: null, hubless: false, error: undefined, seen: {}, unreachable: [], forgotten: [] }))
 
 describe('grouping', () => {
   test('machine, then project, then page; the hub machine first, the newest change on top', () => {
@@ -188,6 +189,50 @@ describe('the list', () => {
     } finally {
       delete (window as any).Capacitor
     }
+  })
+
+  test('a hub that refuses the phone (forgotten there) drops its pages and says so, never kept as out of reach', async () => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([
+      { id: 'h1', name: 'arm', url: 'http://arm:4777', token: 't1', pairedAt: 1 },
+      { id: 'h2', name: 'nas', url: 'http://nas:4777', token: 't2', pairedAt: 2 },
+    ]))
+    const answer: Record<string, number> = { h1: 200, h2: 200 }
+    api.hubPages.mockImplementation((async (hub: { id: string }) => {
+      if (answer[hub.id] !== 200) throw new ApiError(answer[hub.id]!, 'Unauthorized')
+      return { pages: [{ host: 'local', slug: `${hub.id}-plan`, name: 'Plan', project: '/p', by: 'cli', added: 1, folder: '/p/plan' }] }
+    }) as never)
+    const ids = () => usePages.getState().pages!.map((p) => p.id).sort()
+    try {
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/h1-plan', 'hub:h2/local/h2-plan'])
+      for (const status of [401, 403]) {
+        answer.h2 = status
+        await loadPages()
+        expect(ids()).toEqual(['hub:h1/local/h1-plan'])
+        expect(usePages.getState()).toMatchObject({ forgotten: ['h2'], unreachable: [], error: undefined })
+      }
+      // paired again: its list is back and the line goes
+      answer.h2 = 200
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/h1-plan', 'hub:h2/local/h2-plan'])
+      expect(usePages.getState().forgotten).toEqual([])
+    } finally {
+      delete (window as any).Capacitor
+    }
+  })
+
+  test('signed out, the list goes with the sign-in; a request that never got an answer keeps it', async () => {
+    api.pages.mockResolvedValue({ pages: [entry('plan')] } as never)
+    await loadPages()
+    expect(usePages.getState().pages!.map((p) => p.slug)).toEqual(['plan'])
+    api.pages.mockRejectedValue(new TypeError('Failed to fetch') as never)
+    await loadPages()
+    expect(usePages.getState()).toMatchObject({ error: 'Failed to fetch' })
+    expect(usePages.getState().pages!.map((p) => p.slug)).toEqual(['plan'])
+    api.pages.mockRejectedValue(new ApiError(401, 'Sign in first') as never)
+    await loadPages()
+    expect(usePages.getState()).toMatchObject({ pages: [], error: 'Sign in first' })
   })
 
   test("the phone app keeps a hub's pages through a failed poll, marked unreachable, until the hub answers", async () => {

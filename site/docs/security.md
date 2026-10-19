@@ -32,7 +32,7 @@ What the sandbox doesn't stop:
 
 - **A page can reach the internet without being seen.** Its script can open a WebRTC connection, make the browser look up a name in DNS, move to an outside address with data in the URL, or open a window. No header or sandbox flag blocks all of these in today's browsers, and nothing on screen has to change.
 - **What it can carry out** is anything the agent that wrote it could read, and anything typed into the page. An agent whose own sandbox has no network but can read your disk could copy `~/.aws/credentials` or a GitHub token into the page's folder, and the page would send it from your browser.
-- **Never type the hub password into a page.** Inyon never asks you to sign in inside one. A page opened in its own tab sits at the hub's own address, so a fake sign-in form there looks real. Chrome and Firefox won't fill in a saved password on it, because the page has no origin of its own, but a password typed in by hand goes to the page. A separate hostname for pages, so a page never shares the hub's address, is planned.
+- **Never type the hub password into a page.** Inyon never asks you to sign in inside one. A page opened in its own tab sits at the hub's own address, so a fake sign-in form there looks real, and a password typed into it goes to the page. Today Chrome and Firefox turn their password managers off for a page with no origin of its own, as a sandboxed page is, so they shouldn't offer a saved password there. Don't rely on that. A separate hostname for pages, so a page never shares the hub's address, is planned.
 
 ## Phones paired with a hub
 

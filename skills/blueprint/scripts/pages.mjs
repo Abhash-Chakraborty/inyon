@@ -77,21 +77,40 @@ export function hubHere(home = homedir(), env = process.env) {
   ].some((f) => existsSync(f));
 }
 
+// The line git prints for `git -C <dir> rev-parse <option...>`, or null. A line starting with '-' is
+// refused: a git too old to know the option prints it back and still exits 0 (git before 2.31 does
+// that with --path-format, before 2.5 with --git-common-dir).
+export function revParse(dir, option, git = 'git') {
+  try {
+    const line = execFileSync(git, ['-C', dir, 'rev-parse', ...[option].flat()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/)[0].trim();
+    return line && !line.startsWith('-') ? line : null;
+  } catch { return null; }
+}
+
+// The top folder of the git work tree a folder is in, or null outside one.
+export function gitTop(dir, git = 'git') {
+  const top = revParse(dir, '--show-toplevel', git);
+  return top ? resolve(top) : null;
+}
+
 // The main working tree of the git repo a folder is in, when it is in one. In a linked worktree (an
 // agent's .claude/worktrees/<name>, removed once its branch merges) that is the repo's own checkout,
-// so a plan made there outlives the worktree.
-export function mainTree(dir) {
-  const git = (...args) => execFileSync('git', ['-C', dir, 'rev-parse', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  let out;
-  try { out = git('--path-format=absolute', '--show-toplevel', '--git-common-dir', '--git-dir').split(/\r?\n/).map((l) => l.trim()); } catch {
-    // git older than 2.31 has no --path-format: then the top level as it is
-    try { const t = git('--show-toplevel').trim(); return t ? resolve(t) : null; } catch { return null; }
-  }
-  const [top, common, own] = out;
+// so a plan made there outlives the worktree. The common dir is then the main tree's .git; a
+// submodule's (.git/modules/<name>) or a bare repo's (<name>.git) means the top folder stays.
+// Two plain calls work on any git; the top folder git prints is kept when the common dir's parent is
+// the same folder.
+export function mainTree(dir, git = 'git') {
+  const top = gitTop(dir, git);
   if (!top) return null;
-  // in a linked worktree the common dir is the main tree's .git; a submodule or a bare repo's worktree keeps its own
-  return resolve(common && common !== own && basename(common) === '.git' ? dirname(common) : top);
+  const c = revParse(dir, '--git-common-dir', git);
+  const common = c ? resolve(dir, c) : null;
+  if (!common || basename(common) !== '.git' || !isDir(common)) return top;
+  const parent = dirname(common);
+  try { if (realpathSync(parent) === realpathSync(top)) return top; } catch { return top; }
+  return parent;
 }
+
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 // The project a folder belongs to: its repo's main working tree (see mainTree), or the folder itself.
 export function projectOf(dir) {

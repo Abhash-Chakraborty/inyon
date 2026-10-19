@@ -20,7 +20,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
     decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, unique_slug, view_origin, within, FileStat, VerifyContext,
-    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, LOCAL_HOST, NO_INDEX, TOKEN_TTL_MS,
+    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, LOCAL_HOST, NO_INDEX, TOKEN_TTL_MS,
 };
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::js::text::JsStr;
@@ -259,11 +259,11 @@ fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
 
 /// Runs `f` holding `lock`: an exclusive create, waiting up to `wait` ms, taking over a lock older
 /// than LOCK_STALE_MS. The lock holds this process's id and a random tag, and is removed afterwards
-/// only while it still holds them. A failure other than "someone else has it" (a folder an agent's
-/// sandbox keeps read-only) is returned at once, never waited on.
+/// only while it still holds them. A failure other than "someone else has it" (a read-only folder,
+/// or a stale lock that can't be removed) is returned at once as CANT_WRITE_LIST, never waited on.
 pub async fn with_lock<T>(lock: &Path, wait: u64, f: impl FnOnce() -> HubResult<T>) -> HubResult<T> {
     use std::io::Write;
-    let plain = |e: std::io::Error| HubError::plain(e.to_string());
+    let plain = |_: std::io::Error| http(500, CANT_WRITE_LIST);
     if let Some(dir) = lock.parent() {
         private_dir(dir).map_err(plain)?;
     }
@@ -503,44 +503,62 @@ impl ViewFs for DiskFs {
     }
 }
 
+/// The line git prints for `git -C <folder> rev-parse <option>`, or None. A line starting with '-'
+/// is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
+/// does that with --path-format, before 2.5 with --git-common-dir).
+async fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
+    let out = tokio::process::Command::new(git)
+        .args(["-C", folder, "rev-parse", option])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .await
+        .ok()
+        .filter(|o| o.status.success())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text.split('\n').next().unwrap_or("").jtrim();
+    (!line.is_empty() && !line.starts_with('-')).then(|| line.to_owned())
+}
+
 /// The project a folder belongs to: its git repo's main working tree, or the folder itself. In a
 /// linked worktree (an agent's `.claude/worktrees/<name>`, removed once its branch merges) git's
 /// common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
-/// Blueprint skill group it. A submodule or a bare repo's worktree keeps its own top level.
-async fn project_of(folder: &str) -> String {
-    let git = |args: &'static [&'static str]| async move {
-        let out = tokio::process::Command::new("git")
-            .args(["-C", folder, "rev-parse"])
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .output()
-            .await;
-        match out {
-            Ok(o) if o.status.success() => Some(String::from_utf8_lossy(&o.stdout).into_owned()),
-            _ => None,
-        }
+/// Blueprint skill group it. A submodule's common dir (`.git/modules/<name>`) or a bare repo's
+/// (`<name>.git`) keeps the top folder. Two plain calls work on any git; the top folder git prints is
+/// kept when the common dir's parent is the same folder.
+pub(crate) async fn project_of(folder: &str, git: &str) -> String {
+    let Some(top) = rev_parse(git, folder, "--show-toplevel").await else {
+        return folder.to_owned();
     };
-    let Some(out) = git(&["--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"]).await else {
-        // git older than 2.31 has no --path-format: then the top level as it is
-        let top = git(&["--show-toplevel"]).await.unwrap_or_default();
-        let top = top.jtrim();
-        return if top.is_empty() { folder.to_owned() } else { top.to_owned() };
+    let Some(common) = rev_parse(git, folder, "--git-common-dir").await.map(|c| lexical(&Path::new(folder).join(c))) else {
+        return top;
     };
-    let lines: Vec<&str> = out.lines().map(|l| l.jtrim()).collect();
-    let (top, common, own) = (lines.first().copied().unwrap_or(""), lines.get(1).copied().unwrap_or(""), lines.get(2).copied().unwrap_or(""));
-    let c = Path::new(common);
-    if !common.is_empty() && common != own && c.file_name().is_some_and(|n| n == ".git") {
-        if let Some(parent) = c.parent().and_then(Path::to_str).filter(|p| !p.is_empty()) {
-            return parent.to_owned();
+    if common.file_name().is_none_or(|n| n != ".git") || !common.is_dir() {
+        return top;
+    }
+    let Some(parent) = common.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return top;
+    };
+    match (std::fs::canonicalize(parent), std::fs::canonicalize(&top)) {
+        (Ok(a), Ok(b)) if a != b => parent.to_str().map_or(top, str::to_owned),
+        _ => top,
+    }
+}
+
+/// A path with `.` and `..` worked out from the text, as path.resolve does.
+fn lexical(p: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
         }
     }
-    if top.is_empty() {
-        folder.to_owned()
-    } else {
-        top.to_owned()
-    }
+    out
 }
 
 /// The name and slug in a site's `.inyon-page.json`, when it has usable ones.
@@ -678,7 +696,7 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
     let asked = asked.filter(|a| !a.is_empty());
     let basename = folder.rsplit('/').next().unwrap_or("").to_owned();
     let name = asked.clone().or(marker_name).unwrap_or_else(|| basename.clone());
-    let project = project_of(&folder).await;
+    let project = project_of(&folder, "git").await;
     let now = (p.now)();
     let record = p
         .registry
@@ -802,12 +820,28 @@ pub async fn view(req: Req) -> Resp {
 pub async fn open_within(path: &Path, site: &Path) -> Option<(std::fs::File, u64)> {
     let mut o = tokio::fs::OpenOptions::new();
     o.read(true);
+    // O_NONBLOCK keeps a file swapped for a FIFO since the check from holding the open until
+    // something writes to it; anything but a plain file is then refused, and a plain file's reads
+    // go back to blocking ones
     #[cfg(unix)]
-    o.custom_flags(libc::O_NOFOLLOW);
+    o.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     let file = o.open(path).await.ok()?.into_std().await;
     let meta = file.metadata().ok()?;
     if !meta.is_file() {
         return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = file.as_raw_fd();
+        // SAFETY: fd is the open file this function owns; F_GETFL and F_SETFL only touch its flags
+        let ok = unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            flags != -1 && libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK) != -1
+        };
+        if !ok {
+            return None;
+        }
     }
     let inside = match opened_path(&file) {
         Some(at) => within(site, &at),
@@ -852,9 +886,11 @@ fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
     a.dev() == b.dev() && a.ino() == b.ino()
 }
 
+// The Rust hub runs on Linux and macOS only. Elsewhere there's no file id to compare without
+// another dependency, and a size and a time can match a different file, so nothing is served.
 #[cfg(not(unix))]
-fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
-    a.len() == b.len() && a.modified().ok() == b.modified().ok()
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
 }
 
 fn respond(d: ViewDecision, head: bool, opened: Option<(std::fs::File, u64)>) -> Resp {

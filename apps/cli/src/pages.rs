@@ -340,40 +340,48 @@ fn write_marker(site: &Path, old: &Marker, slug: &str, name: &str, now: u64) -> 
 
 /// The git top level of a folder (for a linked worktree, the repo's main checkout), or the folder itself.
 fn project_of(folder: &str) -> String {
-    let git = |args: &[&str]| {
-        let mut c = std::process::Command::new("git");
-        c.args(["-C", folder, "rev-parse"]).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-        crate::sys::quiet(&mut c).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-    };
-    // git older than 2.31 has no --path-format: then the top level as it is
-    let top = match git(&["--path-format=absolute", "--show-toplevel", "--git-common-dir", "--git-dir"]) {
-        Some(out) => {
-            let l: Vec<&str> = out.lines().map(str::trim).collect();
-            main_tree(l.first().copied().unwrap_or(""), l.get(1).copied().unwrap_or(""), l.get(2).copied().unwrap_or(""))
-        }
-        None => git(&["--show-toplevel"]).map(|o| o.trim().to_string()).unwrap_or_default(),
-    };
-    if top.is_empty() {
-        folder.to_string()
-    } else if cfg!(windows) {
-        top.replace('/', "\\")
-    } else {
-        top
+    project_with(folder, "git")
+}
+
+fn project_with(folder: &str, git: &str) -> String {
+    match main_tree(folder, git) {
+        None => folder.to_string(),
+        Some(top) if cfg!(windows) => top.replace('/', "\\"),
+        Some(top) => top,
     }
 }
 
-/// The repo's main working tree, from git's top level, common dir and own dir. In a linked worktree
-/// (an agent's `.claude/worktrees/<name>`, removed once its branch merges) the common dir is the
-/// main tree's `.git`, so the page is grouped under the repo, not the worktree. A submodule or a
-/// bare repo's worktree keeps its own top level.
-fn main_tree(top: &str, common: &str, own: &str) -> String {
-    let c = Path::new(common);
-    if !common.is_empty() && common != own && c.file_name().is_some_and(|n| n == ".git") {
-        if let Some(parent) = c.parent().and_then(Path::to_str).filter(|p| !p.is_empty()) {
-            return parent.to_string();
-        }
+/// The line git prints for `git -C <folder> rev-parse <option>`, or None. A line starting with '-'
+/// is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
+/// does that with --path-format, before 2.5 with --git-common-dir).
+fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
+    let mut c = std::process::Command::new(git);
+    c.args(["-C", folder, "rev-parse", option]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let out = crate::sys::quiet(&mut c).output().ok().filter(|o| o.status.success())?;
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+    (!line.is_empty() && !line.starts_with('-')).then_some(line)
+}
+
+/// The repo's main working tree, or None outside a repo. In a linked worktree (an agent's
+/// `.claude/worktrees/<name>`, removed once its branch merges) git's common dir is the main tree's
+/// `.git`, so the page is grouped under the repo, not the worktree. A submodule's common dir
+/// (`.git/modules/<name>`) or a bare repo's (`<name>.git`) keeps the top level. Two plain calls work
+/// on any git; the top level git prints is kept when the common dir's parent is the same folder.
+fn main_tree(folder: &str, git: &str) -> Option<String> {
+    let top = rev_parse(git, folder, "--show-toplevel")?;
+    let Some(common) = rev_parse(git, folder, "--git-common-dir").map(|c| lexical(&Path::new(folder).join(c))) else {
+        return Some(top);
+    };
+    if common.file_name().is_none_or(|n| n != ".git") || !common.is_dir() {
+        return Some(top);
     }
-    top.to_string()
+    let Some(parent) = common.parent().filter(|p| !p.as_os_str().is_empty()) else {
+        return Some(top);
+    };
+    match (fs::canonicalize(parent), fs::canonicalize(&top)) {
+        (Ok(a), Ok(b)) if a != b => Some(parent.to_str().map_or(top, String::from)),
+        _ => Some(top),
+    }
 }
 
 // ---------- the list file ----------
@@ -876,14 +884,41 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn a_linked_worktree_belongs_to_the_main_checkout() {
-        assert_eq!(main_tree("/r/.claude/worktrees/x", "/r/.git", "/r/.git/worktrees/x"), "/r");
-        assert_eq!(main_tree("/r", "/r/.git", "/r/.git"), "/r");
-        // a submodule, and a bare repo's worktree, keep their own top level
-        assert_eq!(main_tree("/r/sub", "/r/.git/modules/sub", "/r/.git/modules/sub"), "/r/sub");
-        assert_eq!(main_tree("/w/x", "/w/repo.git", "/w/repo.git/worktrees/x"), "/w/x");
-        assert_eq!(main_tree("/r", "", ""), "/r");
+    fn a_linked_worktree_belongs_to_the_main_checkout_with_any_git() {
+        let base = std::env::temp_dir().join(format!("inyon-cli-git-{}-{}", std::process::id(), random_tag()));
+        let repo = base.join("repo");
+        fs::create_dir_all(repo.join("sub")).unwrap();
+        let repo = fs::canonicalize(&repo).unwrap();
+        let s = |p: &Path| p.to_str().unwrap().to_string();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+        let tree = repo.join(".claude/worktrees/x");
+        git(&["worktree", "add", "-q", "--detach", &s(&tree)]);
+        fs::create_dir_all(tree.join("deep")).unwrap();
+        let outside = base.join("plain");
+        fs::create_dir_all(&outside).unwrap();
+        // fixtures/old-git/git is git before 2.31: it prints --path-format=absolute back and exits 0
+        let old = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/old-git/");
+        for g in ["git".to_string(), format!("{old}git")] {
+            assert_eq!(project_with(&s(&repo), &g), s(&repo), "{g}");
+            assert_eq!(project_with(&s(&repo.join("sub")), &g), s(&repo), "{g}");
+            assert_eq!(project_with(&s(&tree), &g), s(&repo), "{g}");
+            assert_eq!(project_with(&s(&tree.join("deep")), &g), s(&repo), "{g}");
+            if std::process::Command::new("git").arg("-C").arg(&outside).args(["rev-parse", "--show-toplevel"]).output().is_ok_and(|o| !o.status.success()) {
+                assert_eq!(project_with(&s(&outside), &g), s(&outside), "{g}");
+            }
+        }
+        // before 2.5 there's no --git-common-dir: the top level then
+        let g24 = format!("{old}git-2.4");
+        assert_eq!(project_with(&s(&repo.join("sub")), &g24), s(&repo));
+        assert_eq!(project_with(&s(&tree.join("deep")), &g24), s(&tree));
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

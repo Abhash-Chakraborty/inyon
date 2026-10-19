@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use axum::http::Method;
 use http_body_util::BodyExt;
-use inyon_core::features::pages_core::{error_page, pages_key, verify_token, VerifyContext, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE};
+use inyon_core::features::pages_core::{error_page, pages_key, verify_token, VerifyContext, CANT_WRITE_LIST, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE};
 use inyon_core::platform::store::kv;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -399,6 +399,49 @@ fn a_folder_swapped_for_a_symlink_after_the_check_is_not_followed_out_of_the_sit
 }
 
 #[test]
+fn a_file_swapped_for_a_fifo_after_the_check_is_a_404_at_once_not_an_open_that_waits_for_a_writer() {
+    let tmp = Tmp::new("fifo");
+    let home = tmp.join("home");
+    let dir = PathBuf::from(site(&tmp, "fifo", true));
+    write_list(&pages_file(&home), json!([record("fifo", &s(&dir))]));
+    /// decide_view's last look at the file swaps it for a FIFO right after
+    struct FifoFs(PathBuf, Cell<bool>);
+    impl ViewFs for FifoFs {
+        fn stat<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<FileStat>> {
+            Box::pin(async move {
+                let st = DiskFs.stat(p).await;
+                if !self.1.get() && p == self.0 {
+                    self.1.set(true);
+                    std::fs::remove_file(&self.0).unwrap();
+                    assert!(std::process::Command::new("mkfifo").arg(&self.0).status().unwrap().success());
+                }
+                st
+            })
+        }
+        fn realpath<'a>(&'a self, p: &'a Path) -> futures_util::future::LocalBoxFuture<'a, Option<PathBuf>> {
+            DiskFs.realpath(p)
+        }
+    }
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let fifo = Rc::new(FifoFs(std::fs::canonicalize(&dir).unwrap().join("style.css"), Cell::new(false)));
+        let mut p = Pages::new(home.clone(), Rc::new(now_ms));
+        p.fs = fifo.clone();
+        install(p);
+        let addr = listen().await;
+        let url = open_url("fifo").await;
+        let (target, headers) = (format!("{url}style.css"), [("host".to_string(), HOST.to_string())]);
+        let get = || raw(addr, "GET", &target, &headers);
+        let res = tokio::time::timeout(std::time::Duration::from_secs(3), get()).await.expect("the open waited for a writer");
+        assert!(fifo.1.get());
+        assert_eq!(res.status, 404);
+        assert_eq!(String::from_utf8_lossy(&res.body), error_page(404));
+        // and a FIFO there from the start is a 404 too
+        assert_eq!(tokio::time::timeout(std::time::Duration::from_secs(3), get()).await.unwrap().status, 404);
+    });
+}
+
+#[test]
 fn a_file_replaced_after_the_check_is_sent_whole_with_the_length_of_the_file_opened() {
     let tmp = Tmp::new("replace");
     let home = tmp.join("home");
@@ -760,6 +803,36 @@ fn a_folder_in_a_linked_git_worktree_belongs_to_the_main_checkout_as_the_cli_and
 }
 
 #[test]
+fn the_project_is_found_the_same_with_any_git_old_ones_that_print_unknown_options_back_too() {
+    let tmp = Tmp::new("old-git");
+    let repo = tmp.join("repo");
+    std::fs::create_dir_all(repo.join("sub")).unwrap();
+    let repo = std::fs::canonicalize(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let ok = std::process::Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success();
+        assert!(ok, "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    let tree = repo.join(".claude/worktrees/x");
+    git(&["worktree", "add", "-q", "--detach", &s(&tree)]);
+    std::fs::create_dir_all(tree.join("deep")).unwrap();
+    // fixtures/old-git/git is git before 2.31 (prints --path-format=absolute back, exit 0); git-2.4 knows no --git-common-dir
+    let old = fixtures_dir().join("../old-git");
+    crate::test_util::block(async {
+        for g in ["git".to_owned(), s(&old.join("git"))] {
+            assert_eq!(project_of(&s(&repo), &g).await, s(&repo), "{g}");
+            assert_eq!(project_of(&s(&repo.join("sub")), &g).await, s(&repo), "{g}");
+            assert_eq!(project_of(&s(&tree), &g).await, s(&repo), "{g}");
+            assert_eq!(project_of(&s(&tree.join("deep")), &g).await, s(&repo), "{g}");
+        }
+        let g24 = s(&old.join("git-2.4"));
+        assert_eq!(project_of(&s(&repo.join("sub")), &g24).await, s(&repo));
+        assert_eq!(project_of(&s(&tree.join("deep")), &g24).await, s(&tree));
+    });
+}
+
+#[test]
 fn without_a_marker_the_slug_comes_from_the_folder_whatever_the_name_and_is_unique() {
     let tmp = Tmp::new("slugs");
     let home = tmp.join("home");
@@ -994,8 +1067,35 @@ fn a_stale_lock_that_cannot_be_removed_is_an_error_not_a_wait() {
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     // root ignores the folder's mode; then the takeover just works
     if unsafe { libc::geteuid() } != 0 {
-        assert!(r.unwrap_err().message.contains("ermission denied"));
+        let e = r.unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(500), CANT_WRITE_LIST));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn register_and_delete_answer_the_same_500_as_the_bun_hub_when_a_stale_lock_cannot_be_removed() {
+    use std::os::unix::fs::PermissionsExt;
+    if unsafe { libc::geteuid() } == 0 {
+        return; // root ignores the folder's mode
+    }
+    let tmp = Tmp::new("lock-ro-routes");
+    let home = tmp.join("home");
+    let file = pages_file(&home);
+    let (listed, fresh) = (site(&tmp, "listed", false), site(&tmp, "new", false));
+    write_list(&file, json!([record("listed", &listed)]));
+    let lock = file.with_extension("json.lock");
+    std::fs::write(&lock, "1\n").unwrap();
+    set_mtime(&lock, std::time::SystemTime::now() - std::time::Duration::from_secs(11));
+    let inyon = file.parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&inyon, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let (added, removed) = crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        (add_page(json!({ "path": fresh })).await, call(h_remove, "DELETE", &[("host", "local"), ("slug", "listed")], None, &[]).await)
+    });
+    std::fs::set_permissions(&inyon, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(added, Err((500, CANT_WRITE_LIST.into())));
+    assert_eq!(removed, Err((500, CANT_WRITE_LIST.into())));
 }
 
 #[test]
