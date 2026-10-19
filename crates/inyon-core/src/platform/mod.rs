@@ -2,5 +2,6 @@
 //! core does no I/O of its own; the hub (crates/inyon-backends) and the phone app plug these in.
 
 pub mod console;
+pub mod fetch;
 pub mod rt;
 pub mod store;
