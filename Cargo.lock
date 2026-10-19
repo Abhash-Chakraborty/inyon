@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-cli"
-version = "0.19.0-rc.1"
+version = "0.19.0-rc.2"
 dependencies = [
  "clap",
  "crossterm",
@@ -1202,7 +1202,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-core"
-version = "0.19.0-rc.1"
+version = "0.19.0-rc.2"
 dependencies = [
  "indexmap",
  "inyon-protocol",
@@ -1214,7 +1214,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-engine"
-version = "0.19.0-rc.1"
+version = "0.19.0-rc.2"
 dependencies = [
  "aes-gcm",
  "base64",
@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-link"
-version = "0.19.0-rc.1"
+version = "0.19.0-rc.2"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
@@ -1259,7 +1259,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-protocol"
-version = "0.19.0-rc.1"
+version = "0.19.0-rc.2"
 dependencies = [
  "indexmap",
  "regex",
