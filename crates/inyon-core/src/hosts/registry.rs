@@ -396,7 +396,8 @@ impl Registry {
             if c.kind == HostKind::Node && c.paired_at.is_none() && c.token_hash.is_some() && c.token_issued_at.is_none() {
                 c.token_issued_at = Some(now_ms());
             }
-            self.add(c, false);
+            // nothing is saved here, so nothing can fail
+            let _ = self.add(c, false);
         }
         // a machine running inyon (re)connected or dropped: re-probe it right away
         node_link::on_change(|id, up| {
@@ -511,7 +512,9 @@ impl Registry {
         found
     }
 
-    pub fn add(&self, config: HostConfig, persist: bool) {
+    /// Fails, with the machine in the list but not polled, when the list can't be saved (as the TS
+    /// throws from `saveHosts`).
+    pub fn add(&self, config: HostConfig, persist: bool) -> HubResult<()> {
         // start from the last state seen, so a machine that's unreachable right now still shows
         // its sessions (marked offline) until it answers again
         let state = match load_snapshot(&config.id) {
@@ -562,11 +565,12 @@ impl Registry {
         rt.borrow_mut().live = Some(Rc::new(live));
         self.hosts.borrow_mut().insert(id, rt.clone());
         if persist {
-            self.persist();
+            self.persist()?;
         }
         let r = rt.clone();
         spawn(async move { registry().poll(r).await });
         self.emit(RegistryEvent::Overview);
+        Ok(())
     }
 
     pub fn update(&self, id: &str, patch: impl FnOnce(&mut HostConfig)) -> HubResult<()> {
@@ -574,9 +578,8 @@ impl Registry {
         let mut config = rt.borrow().host.config();
         patch(&mut config);
         config.id = id.to_owned();
-        self.remove(id, false);
-        self.add(config, true);
-        Ok(())
+        self.remove(id, false)?;
+        self.add(config, true)
     }
 
     /// Changes a machine's settings in place, its state's copy too.
@@ -589,10 +592,10 @@ impl Registry {
     }
 
     /// Records something about a machine that doesn't change how it's reached right now.
-    pub fn note(&self, id: &str, patch: impl FnOnce(&mut HostConfig)) {
-        let Some(rt) = self.get(id) else { return };
+    pub fn note(&self, id: &str, patch: impl FnOnce(&mut HostConfig)) -> HubResult<()> {
+        let Some(rt) = self.get(id) else { return Ok(()) };
         Self::edit_config(&rt, patch);
-        self.persist();
+        self.persist()
     }
 
     /// A fresh pairing token for a node: the old one stops working and it waits to be paired again.
@@ -603,24 +606,25 @@ impl Registry {
             c.token_issued_at = Some(now_ms());
             c.paired_at = None;
         });
-        self.persist();
+        self.persist()?;
         self.emit(RegistryEvent::Overview);
         Ok(())
     }
 
     /// A node connected with its token for the first time: it is no longer waiting to be paired.
-    pub fn mark_paired(&self, id: &str) {
-        let Some(rt) = self.get(id) else { return };
+    pub fn mark_paired(&self, id: &str) -> HubResult<()> {
+        let Some(rt) = self.get(id) else { return Ok(()) };
         if rt.borrow().host.config().paired_at.is_some_and(|p| p != 0) {
-            return;
+            return Ok(());
         }
         Self::edit_config(&rt, |c| c.paired_at = Some(now_ms()));
-        self.persist();
+        self.persist()?;
         self.emit(RegistryEvent::Overview);
+        Ok(())
     }
 
-    pub fn remove(&self, id: &str, persist: bool) {
-        let Some(rt) = self.get(id) else { return };
+    pub fn remove(&self, id: &str, persist: bool) -> HubResult<()> {
+        let Some(rt) = self.get(id) else { return Ok(()) };
         let (events, live) = {
             let mut r = rt.borrow_mut();
             r.stopped = true;
@@ -638,26 +642,25 @@ impl Registry {
         if persist {
             kv::del(&snapshot_key(id));
             prune_chats(Some(id));
-            self.persist();
+            self.persist()?;
             self.emit(RegistryEvent::Overview);
         }
+        Ok(())
     }
 
-    fn persist(&self) {
-        if let Err(e) = save_hosts(&self.configs()) {
-            // the TS throws to whoever changed the list; nothing above this can do more than say so
-            console::error(&format!("hosts: {e}"));
-        }
+    /// Saves the machine list; a failure goes to whoever changed it (an API call answers 500 with it).
+    fn persist(&self) -> HubResult<()> {
+        save_hosts(&self.configs()).map_err(HubError::plain)
     }
 
     /// Remember whether to put the Claude integration back if it disappears.
-    pub fn set_keep_integration(&self, id: &str, keep: bool) {
-        let Some(rt) = self.get(id) else { return };
+    pub fn set_keep_integration(&self, id: &str, keep: bool) -> HubResult<()> {
+        let Some(rt) = self.get(id) else { return Ok(()) };
         if rt.borrow().host.config().keep_integration == Some(keep) {
-            return;
+            return Ok(());
         }
         Self::edit_config(&rt, |c| c.keep_integration = Some(keep));
-        self.persist();
+        self.persist()
     }
 
     /// A prompt in this Claude pane was answered from Inyon: show it working until the turn ends.
@@ -1460,7 +1463,7 @@ impl Registry {
             (p.integration, p.agy_integration, p.installed.clone())
         };
         if integration == IntegrationState::Installed && cfg.keep_integration.is_none() {
-            self.set_keep_integration(&cfg.id, true);
+            self.set_keep_integration(&cfg.id, true)?;
             return Ok(());
         }
         // agy turned up after the integration was installed (or its settings were replaced): add its status line

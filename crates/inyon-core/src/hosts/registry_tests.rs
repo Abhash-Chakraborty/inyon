@@ -502,3 +502,40 @@ fn the_hook_log_is_followed_and_each_event_goes_to_listeners() {
         off();
     });
 }
+
+// ---------- saving the machine list (review) ----------
+
+/// A disk that's full: every record read is there, no record can be written.
+struct FullDisk;
+
+impl crate::platform::store::Store for FullDisk {
+    fn get(&self, _key: &str) -> Option<Value> {
+        None
+    }
+    fn set(&self, _key: &str, _value: &Value) -> Result<(), String> {
+        Err("ENOSPC: no space left on device".into())
+    }
+    fn del(&self, _key: &str) {}
+    fn keys(&self, _prefix: &str) -> Vec<String> {
+        vec![]
+    }
+}
+
+#[test]
+fn a_machine_list_that_cant_be_saved_fails_the_change_that_needed_it() {
+    run(|| async {
+        let _fake = Fake::install(|_, _, _| ok(""));
+        crate::test_support::machine("n", "node", json!([])).borrow_mut().hold_polls();
+        crate::platform::store::use_store(Rc::new(FullDisk));
+        let full = |r: HubResult<()>| assert_eq!(r.unwrap_err().message, "ENOSPC: no space left on device");
+        full(registry().note("n", |c| c.name = "Renamed".into()));
+        full(registry().set_node_token("n", "h2"));
+        full(registry().mark_paired("n"));
+        full(registry().set_keep_integration("n", false));
+        full(registry().add(from(json!({ "id": "b", "name": "B", "kind": "ssh", "target": "b" })), true));
+        // as in the TS: the machine is in the list, but nothing polls it or tells the app
+        assert!(registry().get("b").is_some());
+        full(registry().remove("b", true));
+        full(registry().update("n", |c| c.name = "Again".into()));
+    });
+}
