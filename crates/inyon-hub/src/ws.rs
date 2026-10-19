@@ -401,6 +401,26 @@ mod tests {
     }
 
     #[test]
+    fn from_the_moment_it_is_closed_a_socket_runs_no_text_or_binary_frame() {
+        crate::test_util::block(async {
+            let mut r = rig(Limits { idle: Duration::from_secs(30), close_wait: Duration::from_millis(200) }).await;
+            r.peer.send(Message::text("before")).await.unwrap();
+            let got = r.got.clone();
+            assert!(until(|| got.borrow().len() == 1, Duration::from_secs(2)).await);
+            // closed, its close not yet picked up by the socket task: only the frames are there
+            // to read, so they reach the guard every time
+            r.sock.closed.set(true);
+            r.peer.send(Message::text("term.in")).await.unwrap();
+            r.peer.send(Message::binary(b"term.in as binary".to_vec())).await.unwrap();
+            r.peer.send(Message::Ping(Vec::new().into())).await.unwrap();
+            // the ping's answer shows both frames before it were read
+            let pong = tokio::time::timeout(Duration::from_secs(2), r.peer.next()).await;
+            assert!(matches!(pong, Ok(Some(Ok(Message::Pong(_))))), "{pong:?}");
+            assert_eq!(*r.got.borrow(), ["before"]);
+        });
+    }
+
+    #[test]
     fn a_peer_that_stops_reading_and_says_nothing_is_dropped_at_the_idle_limit() {
         crate::test_util::block(async {
             let r = rig(Limits { idle: Duration::from_millis(300), close_wait: Duration::from_millis(200) }).await;
