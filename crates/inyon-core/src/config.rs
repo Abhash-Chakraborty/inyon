@@ -20,9 +20,29 @@ pub fn set_local_host(host: Option<HostConfig>) {
     LOCAL.with(|l| *l.borrow_mut() = host);
 }
 
+thread_local! {
+    /// hosts.json as last read or written, so what this build can't read goes back out unchanged
+    static RAW_HOSTS: RefCell<Vec<Value>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Every member of [`HostConfig`], as it's written. Members of an entry not named here (from a
+/// newer Inyon, say) are kept as they were.
+const HOST_FIELDS: &[&str] =
+    &["id", "name", "kind", "target", "port", "identityFile", "hostKey", "auth", "via", "tokenHash", "pairedAt", "tokenIssuedAt", "machineId", "urls", "relays", "keepIntegration"];
+
+/// The machine list. An entry this build can't read (one from another version, or a port of
+/// 2222.5 that the TS's checks let through) is left out here, but kept in hosts.json: saving the
+/// list never drops what it didn't understand.
 pub fn load_hosts() -> Vec<HostConfig> {
-    let mut hosts: Vec<HostConfig> =
-        kv::get_value("hosts").and_then(|v| v.as_array().cloned()).map(|a| a.into_iter().filter_map(|h| serde_json::from_value(h).ok()).collect()).unwrap_or_default();
+    let raw: Vec<Value> = kv::get_value("hosts").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let mut hosts: Vec<HostConfig> = vec![];
+    for h in &raw {
+        match serde_json::from_value::<HostConfig>(h.clone()) {
+            Ok(c) => hosts.push(c),
+            Err(e) => crate::platform::console::error(&format!("hosts: kept an entry this version can't read ({e}): {}", crate::js::json::stringify(h))),
+        }
+    }
+    RAW_HOSTS.with(|r| *r.borrow_mut() = raw);
     if let Some(local) = LOCAL.with(|l| l.borrow().clone()) {
         if !hosts.iter().any(|h| h.id == "local") {
             hosts.insert(0, local);
@@ -31,8 +51,34 @@ pub fn load_hosts() -> Vec<HostConfig> {
     hosts
 }
 
+/// Saves the machine list. Each machine is written over its entry as read, so members this build
+/// doesn't know stay, and entries it couldn't read stay where they were.
 pub fn save_hosts(hosts: &[HostConfig]) -> Result<(), String> {
-    kv::set("hosts", hosts)
+    let raw = RAW_HOSTS.with(|r| r.borrow().clone());
+    let readable = |v: &Value| serde_json::from_value::<HostConfig>(v.clone()).is_ok();
+    let mut out: Vec<Value> = vec![];
+    for h in hosts {
+        let typed = serde_json::to_value(h).map_err(|e| e.to_string())?;
+        let was = raw.iter().find(|v| readable(v) && v.get("id").and_then(Value::as_str) == Some(h.id.as_str()));
+        // in the order it was written, as the TS's Object.assign keeps it
+        let mut entry: Map<String, Value> = was.and_then(|v| v.as_object().cloned()).unwrap_or_default();
+        let Value::Object(typed) = typed else { return Err("a machine that isn't an object".into()) };
+        for k in HOST_FIELDS {
+            if !typed.contains_key(*k) {
+                entry.shift_remove(*k);
+            }
+        }
+        entry.extend(typed);
+        out.push(Value::Object(entry));
+    }
+    for (i, v) in raw.iter().enumerate() {
+        if !readable(v) {
+            out.insert(i.min(out.len()), v.clone());
+        }
+    }
+    kv::set_value("hosts", &Value::Array(out.clone()))?;
+    RAW_HOSTS.with(|r| *r.borrow_mut() = out);
+    Ok(())
 }
 
 // ---------- settings ----------
@@ -106,6 +152,49 @@ mod tests {
         kv::set_value("hosts", &serde_json::json!([{ "id": "a", "name": "A", "kind": "ssh", "target": "a" }])).unwrap();
         let ids: Vec<String> = load_hosts().into_iter().map(|h| h.id).collect();
         assert_eq!(ids, vec!["local", "a"]);
+    }
+
+    #[test]
+    fn saving_the_machine_list_keeps_what_this_version_cant_read() {
+        kv::set_value(
+            "hosts",
+            &serde_json::json!([
+                { "id": "a", "name": "A", "kind": "ssh", "target": "a", "fromLater": { "x": 1 } },
+                { "id": "odd", "name": "Odd", "kind": "ssh", "target": "o", "port": 2222.5 },
+                { "id": "b", "name": "B", "kind": "ssh", "target": "b", "port": 22 },
+            ]),
+        )
+        .unwrap();
+        let mut hosts = load_hosts();
+        assert_eq!(hosts.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+        // a renamed and its port cleared, b removed
+        hosts[0].name = "Alpha".into();
+        hosts.pop();
+        save_hosts(&hosts).unwrap();
+        assert_eq!(
+            crate::js::stringify(&kv::get_value("hosts").unwrap()),
+            r#"[{"id":"a","name":"Alpha","kind":"ssh","target":"a","fromLater":{"x":1}},{"id":"odd","name":"Odd","kind":"ssh","target":"o","port":2222.5}]"#
+        );
+        // and a member this version knows, once cleared, stays cleared
+        let mut hosts = load_hosts();
+        hosts[0].target = None;
+        save_hosts(&hosts).unwrap();
+        assert!(!crate::js::stringify(&kv::get_value("hosts").unwrap()).contains(r#""target":"a""#));
+    }
+
+    #[test]
+    fn every_member_of_a_machine_is_one_the_list_knows() {
+        let all: HostConfig = serde_json::from_value(serde_json::json!({
+            "id": "a", "name": "A", "kind": "ssh", "target": "a", "port": 22, "identityFile": "k", "hostKey": "SHA256:x", "auth": "key", "via": "v",
+            "tokenHash": "h", "pairedAt": 1, "tokenIssuedAt": 1, "machineId": "m", "urls": [], "relays": [], "keepIntegration": true,
+        }))
+        .unwrap();
+        let written = serde_json::to_value(&all).unwrap();
+        let mut keys: Vec<&str> = written.as_object().unwrap().keys().map(String::as_str).collect();
+        let mut known = HOST_FIELDS.to_vec();
+        keys.sort();
+        known.sort();
+        assert_eq!(keys, known);
     }
 
     #[test]
