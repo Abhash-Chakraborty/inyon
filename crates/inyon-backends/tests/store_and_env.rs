@@ -124,3 +124,19 @@ fn work_sent_from_other_threads_runs_on_the_core_thread_in_order() {
     drop(core);
     thread.join().unwrap();
 }
+
+#[test]
+fn a_job_that_panics_ends_that_job_not_the_core() {
+    let (core, thread) = core_thread(|| {});
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let (failed, next) = rt.block_on(async {
+        // panics before its first await, on whatever stack runs it first
+        let failed = core.call(|| async { panic!("a bug in one request") }).await;
+        let next = core.call(|| async { 42 }).await;
+        (failed, next)
+    });
+    assert_eq!(failed, Err::<(), _>(inyon_backends::runtime::CoreGone));
+    assert_eq!(next, Ok(42));
+    drop(core);
+    thread.join().unwrap();
+}

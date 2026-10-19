@@ -1,5 +1,12 @@
 //! The core's event loop on tokio: one thread, a current-thread runtime and a `LocalSet`, as
 //! Bun's single event loop is for the TS hub.
+//!
+//! A panic in one job ends that job only: each job runs as a tokio task of its own, and tokio
+//! catches a task's panic, the way Bun turns a throw in one request handler into a 500 and goes
+//! on. That needs unwinding. The workspace's release profile builds with `panic = "abort"` to keep
+//! the `inyon` download small, and under it any panic ends the whole process, the hub included. A
+//! binary that runs the hub should be built with a profile that unwinds (one that inherits
+//! `release` with `panic = "unwind"`), so one bad request can't take the hub down.
 
 use std::future::Future;
 use std::rc::Rc;
@@ -47,13 +54,13 @@ pub struct CoreHandle {
     tx: mpsc::UnboundedSender<Job>,
 }
 
-/// The core's thread has ended, so the job never ran (or never finished).
+/// The job never finished: the core's thread has ended, or the job panicked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreGone;
 
 impl std::fmt::Display for CoreGone {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("the hub's core has stopped")
+        f.write_str("the hub's core stopped before the job finished")
     }
 }
 
@@ -86,7 +93,7 @@ impl CoreHandle {
 
     /// Starts `job` on the core's thread without waiting for it.
     pub fn send<Fut: Future<Output = ()> + 'static>(&self, job: impl FnOnce() -> Fut + Send + 'static) -> Result<(), CoreGone> {
-        self.tx.send(Box::new(move || Box::pin(job()) as LocalBoxFuture<'static, ()>)).map_err(|_| CoreGone)
+        self.tx.send(Box::new(move || Box::pin(async move { job().await }) as LocalBoxFuture<'static, ()>)).map_err(|_| CoreGone)
     }
 }
 
@@ -100,7 +107,8 @@ pub fn core_thread(init: impl FnOnce() + Send + 'static) -> (CoreHandle, JoinHan
             run_core(|| async move {
                 init();
                 while let Some(job) = rx.recv().await {
-                    inyon_core::platform::rt::spawn(job());
+                    // a task of its own, not run on this loop's stack, so a panic in it ends it alone
+                    tokio::task::spawn_local(job());
                 }
             })
         })
