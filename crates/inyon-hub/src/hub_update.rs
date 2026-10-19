@@ -186,10 +186,11 @@ fn spawn_detached(cmd: Vec<String>, cwd: &Path, log: &Path) -> Option<u32> {
     let (prog, args) = cmd.split_first()?;
     let mut c = std::process::Command::new(prog);
     c.args(args).current_dir(cwd).env("PATH", tool_path()).stdin(std::process::Stdio::null()).stdout(out).stderr(err);
-    // SAFETY: setsid is async-signal-safe and touches nothing of this process
+    // SAFETY: setsid and setrlimit are async-signal-safe and touch nothing of this process
     unsafe {
         c.pre_exec(|| {
             libc::setsid();
+            inyon_backends::limits::restore_in_child();
             Ok(())
         });
     }

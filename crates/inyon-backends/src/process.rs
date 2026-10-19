@@ -91,6 +91,7 @@ fn own_group(c: &mut Command) {
     unsafe {
         c.pre_exec(|| {
             libc::setsid();
+            crate::limits::restore_in_child();
             Ok(())
         });
     }

@@ -67,7 +67,7 @@ pub fn serve() -> i32 {
         None => None,
     };
     #[cfg(unix)]
-    crate::idle::raise_open_files();
+    inyon_backends::limits::raise_open_files();
     inyon_backends::runtime::run_core(|| async move {
         let hostname = inyon_engine::hostname();
         let data_dir = match install_hub(&env, &hostname) {

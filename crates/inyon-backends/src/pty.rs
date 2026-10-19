@@ -39,6 +39,9 @@ fn terminal_input(master: &dyn MasterPty) -> std::io::Result<Box<dyn Write + Sen
 pub fn open(argv: &[String], env: &[(String, String)], cols: u16, rows: u16, mut on_data: OnData) -> HubResult<PtyHandle> {
     let err = |e: &dyn std::fmt::Display| HubError::plain(e.to_string());
     let pair = native_pty_system().openpty(size(cols, rows)).map_err(|e| err(&e))?;
+    // portable-pty has no pre_exec hook, so the open-file limit goes back through sh
+    #[cfg(unix)]
+    let argv = &crate::limits::with_limit_restored(argv);
     let mut cmd = CommandBuilder::new(&argv[0]);
     cmd.args(&argv[1..]);
     if let Ok(cwd) = std::env::current_dir() {

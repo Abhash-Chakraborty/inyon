@@ -120,30 +120,6 @@ where
     }
 }
 
-/// Raises this process's open-file limit to the most it may have, as Bun does at start: every
-/// connection, terminal and child process takes descriptors, and 1024 runs out on a busy hub.
-#[cfg(unix)]
-pub fn raise_open_files() -> Option<u64> {
-    let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-    // SAFETY: getrlimit and setrlimit only read and write the struct passed to them
-    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) } != 0 {
-        return None;
-    }
-    if lim.rlim_cur < lim.rlim_max {
-        let want = lim.rlim_max;
-        // macOS refuses more than OPEN_MAX for the soft limit, even when the hard limit is higher
-        #[cfg(target_os = "macos")]
-        let want = want.min(10240);
-        let raised = libc::rlimit { rlim_cur: want, rlim_max: lim.rlim_max };
-        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } == 0 {
-            lim.rlim_cur = want;
-        }
-    }
-    // rlim_t is u64 on the systems the hub runs on, but not on every unix
-    #[allow(clippy::unnecessary_cast)]
-    Some(lim.rlim_cur as u64)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,15 +173,5 @@ mod tests {
             }
             assert!(closed_within(&mut c, Duration::from_secs(3)).await.is_some(), "kept alive, then idle: closed");
         });
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn the_open_file_limit_is_raised_to_the_hard_limit() {
-        let got = raise_open_files().unwrap();
-        let mut lim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-        assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) }, 0);
-        assert_eq!(got.to_string(), lim.rlim_cur.to_string());
-        assert!(lim.rlim_cur == lim.rlim_max || cfg!(target_os = "macos"));
     }
 }

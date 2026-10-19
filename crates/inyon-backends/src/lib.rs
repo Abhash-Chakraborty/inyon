@@ -25,6 +25,8 @@
 
 pub mod env;
 pub mod fs_store;
+#[cfg(unix)]
+pub mod limits;
 pub mod process;
 pub mod pty;
 pub mod runtime;
