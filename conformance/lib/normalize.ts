@@ -62,6 +62,15 @@ export const RULES: Rule[] = [
     number: (v, n) => (n.isNow(v) ? '<time>' : n.isNow(v * 1000) && Number.isInteger(v) ? '<time:s>' : undefined),
   },
   {
+    name: 'key-order',
+    why: 'The order of an object\'s fields. JSON objects are unordered and every client reads them with JSON.parse; the Bun hub writes fields in the order its code happened to add them (seq last, error after updatedAt, a different order per agent), a Rust struct in the order it declares them. Fields are sorted by their normalized name, before their values, so placeholders are numbered the same either way. Arrays keep their order.',
+    object: (o, n) => {
+      const named = Object.entries(o).map(([k, v]) => [n.string(k), k, v] as const)
+      named.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      return Object.fromEntries(named.map(([, k, v]) => [k, v]))
+    },
+  },
+  {
     name: 'latency',
     why: 'How long the machine took to answer a probe (latencyMs).',
     number: (_v, _n, key) => (key === 'latencyMs' ? '<ms>' : undefined),
@@ -144,7 +153,7 @@ export class Normalizer {
     return v
   }
 
-  /** A deep copy of `value` with every rule applied; object keys are normalized too and kept in order. */
+  /** A deep copy of `value` with every rule applied; object keys are normalized too (and sorted, see key-order). */
   value(value: unknown, key = ''): unknown {
     if (typeof value === 'string') return this.string(value, key)
     if (typeof value === 'number') return this.number(value, key)
