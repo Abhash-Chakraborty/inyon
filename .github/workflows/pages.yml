@@ -21,13 +21,15 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   deploy:
     if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    # one deploy at a time, on the job and not the whole run: GitHub keeps one waiting run per group,
+    # and a run whose deploy is skipped (any branch's CI finishing) would take that place and cancel
+    # the deploy queued after a release
+    concurrency:
+      group: pages
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
