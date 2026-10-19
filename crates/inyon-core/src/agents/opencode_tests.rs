@@ -1,16 +1,131 @@
 //! agents/opencode.test.ts, test for test. Each test's name in the TS file is its doc comment. The
-//! tests that run requests against a stand-in server (HTTP failures, prompts, the undo/share/
-//! question routes) check the client, which stays in TS; the last test's stored selection reads
-//! the answer that server gave.
+//! client's tests send real requests with curl on a sandboxed machine to a stand-in server on
+//! loopback, as the TS sends them to Bun.serve.
+
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::agents::opencode_api::{open_code_agents_from, open_code_catalog_from_providers, open_code_model, OpenCodeModel, OpenCodeSelection};
-use crate::agents::opencode_controls::{live_children, live_value, selection_from_footer, selection_from_messages, stored_selection};
+use crate::agents::opencode_api::{open_code_agents_from, open_code_catalog_from_providers, open_code_model, opencode_request, OpenCodeClient, OpenCodeModel, OpenCodeSelection};
+use crate::agents::opencode_controls::{live_children, live_value, selection_from_footer, selection_from_messages, stored_selection, stored_selection_of};
 use crate::claude::transcript::new_meta;
-use crate::test_support::assert_match;
+use crate::test_support::sandbox::Sandbox;
+use crate::test_support::{assert_match, host, rt, TempDir};
 use indexmap::IndexSet;
 use inyon_protocol::{AgentModel, ModeOption};
 use serde_json::json;
+
+/// One request the stand-in server was sent.
+#[derive(Debug, Clone)]
+struct Asked {
+    method: String,
+    /// with its query
+    path: String,
+    body: Option<Value>,
+}
+
+type Respond = dyn Fn(&str, &str) -> (u16, String) + Send + Sync;
+
+/// A stand-in OpenCode server on loopback that records what it was asked and answers through
+/// `respond(method, pathname)`.
+struct FakeServer {
+    port: u16,
+    calls: Arc<Mutex<Vec<Asked>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl FakeServer {
+    fn start(respond: impl Fn(&str, &str) -> (u16, String) + Send + Sync + 'static) -> FakeServer {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (calls, stop) = (Arc::new(Mutex::new(vec![])), Arc::new(AtomicBool::new(false)));
+        let (c, st, respond): (_, _, Box<Respond>) = (calls.clone(), stop.clone(), Box::new(respond));
+        let thread = std::thread::spawn(move || {
+            for conn in listener.incoming() {
+                if st.load(Ordering::SeqCst) {
+                    break;
+                }
+                if let Ok(conn) = conn {
+                    Self::serve(conn, &c, &*respond);
+                }
+            }
+        });
+        FakeServer { port, calls, stop, thread: Some(thread) }
+    }
+
+    /// answers `routes` ("METHOD /path", else "/path") as JSON, anything else with a 404
+    fn routes(routes: Vec<(&str, Value)>) -> FakeServer {
+        let routes: Vec<(String, Value)> = routes.into_iter().map(|(k, v)| (k.to_owned(), v)).collect();
+        Self::start(move |method, path| {
+            let key = format!("{method} {path}");
+            match routes.iter().find(|(k, _)| *k == key).or_else(|| routes.iter().find(|(k, _)| k == path)) {
+                Some((_, v)) => (200, v.to_string()),
+                None => (404, String::new()),
+            }
+        })
+    }
+
+    fn serve(conn: TcpStream, calls: &Mutex<Vec<Asked>>, respond: &Respond) {
+        let mut r = BufReader::new(conn);
+        let mut line = String::new();
+        if r.read_line(&mut line).is_err() {
+            return;
+        }
+        let mut words = line.split_whitespace();
+        let (method, path) = (words.next().unwrap_or("").to_owned(), words.next().unwrap_or("").to_owned());
+        let mut length = 0;
+        loop {
+            let mut h = String::new();
+            if r.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                break;
+            }
+            if let Some((k, v)) = h.split_once(':') {
+                if k.eq_ignore_ascii_case("content-length") {
+                    length = v.trim().parse().unwrap_or(0);
+                }
+            }
+        }
+        let mut body = vec![0; length];
+        let _ = r.read_exact(&mut body);
+        let text = String::from_utf8_lossy(&body);
+        let body = if method == "GET" || text.is_empty() { None } else { serde_json::from_str(&text).ok() };
+        let pathname = path.split('?').next().unwrap_or("").to_owned();
+        calls.lock().unwrap().push(Asked { method: method.clone(), path, body });
+        let (status, answer) = respond(&method, &pathname);
+        let mut conn = r.into_inner();
+        let _ = write!(conn, "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}", answer.len());
+    }
+
+    fn uri(&self) -> String {
+        format!("opencode://127.0.0.1:{}/ses_one", self.port)
+    }
+
+    fn calls(&self) -> Vec<Asked> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl Drop for FakeServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(("127.0.0.1", self.port));
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+/// Runs `test` with every machine a shell in a temporary home (the TS uses its own machine).
+fn on_machine<F: std::future::Future<Output = ()>>(test: impl FnOnce(crate::hosts::host::Host) -> F) {
+    let home = TempDir::new("inyon-opencode-");
+    rt::run(|| async {
+        Sandbox::install(&home.s());
+        test(host("test-opencode", "local")).await;
+    });
+}
 
 fn set(ids: &[&str]) -> IndexSet<String> {
     ids.iter().map(|s| s.to_string()).collect()
@@ -37,9 +152,89 @@ fn an_opencode_sessions_subagents_count_as_background_work_and_their_questions_a
     assert_eq!(live_value(&states, &json!([{ "id": "p2", "sessionID": "ses_other" }]), "ses_root", &children).permission, None);
 }
 
-/// From "OpenCode async prompts preserve provider, model slash, reasoning variant and directory":
-/// only the model id split ported. The request body, the variant and the directory belong to the
-/// HTTP client, which stays in TS (its test there still checks them).
+/// OpenCode HTTP failures are never accepted as a delivered message
+#[test]
+fn opencode_http_failures_are_never_accepted_as_a_delivered_message() {
+    on_machine(|h| async move {
+        let server = FakeServer::start(|_, _| (400, json!({ "error": "secret-provider-key" }).to_string()));
+        assert!(!opencode_post(&h, &format!("http://127.0.0.1:{}/session/bad/prompt_async", server.port), &json!({})).await);
+        let err = opencode_request(&h, &format!("http://127.0.0.1:{}/session", server.port), "GET", None, 12).await.unwrap_err().message;
+        assert!(err.contains("HTTP 400") && !err.contains("secret-provider-key"), "{err}");
+        let err = opencode_request(&h, "http://example.com:80/session", "GET", None, 12).await.unwrap_err().message;
+        assert!(err.contains("local loopback"), "{err}");
+    });
+}
+
+/// OpenCode async prompts preserve provider, model slash, reasoning variant and directory
+#[test]
+fn opencode_async_prompts_preserve_provider_model_slash_reasoning_variant_and_directory() {
+    on_machine(|h| async move {
+        let s = FakeServer::routes(vec![("POST /session/ses_one/prompt_async", json!({}))]);
+        let client = OpenCodeClient::new(&h, &s.uri(), Some("/tmp/a b")).unwrap();
+        let selection = OpenCodeSelection { model: Some("openrouter/vendor/model".into()), variant: Some("high".into()), agent: Some("plan".into()) };
+        client.prompt("hello", &selection, &[]).await.unwrap();
+        let calls = s.calls();
+        assert_eq!(calls[0].path, "/session/ses_one/prompt_async?directory=%2Ftmp%2Fa%20b");
+        assert_eq!(
+            calls[0].body,
+            Some(json!({ "model": { "providerID": "openrouter", "modelID": "vendor/model" }, "variant": "high", "agent": "plan", "parts": [{ "type": "text", "text": "hello" }] }))
+        );
+    });
+    assert!(open_code_model("ambiguous").is_err());
+}
+
+/// undo, redo, share, compact and questions go to the routes OpenCode 1.19 has for them
+#[test]
+fn undo_redo_share_compact_and_questions_go_to_the_routes_opencode_1_19_has_for_them() {
+    on_machine(|h| async move {
+        let s = FakeServer::routes(vec![
+            ("POST /session/ses_one/revert", json!({ "id": "ses_one", "revert": { "messageID": "msg_2" } })),
+            ("POST /session/ses_one/unrevert", json!({ "id": "ses_one" })),
+            ("POST /session/ses_one/share", json!({ "id": "ses_one", "share": { "url": "https://opencode.ai/s/abc" } })),
+            ("DELETE /session/ses_one/share", json!({ "id": "ses_one" })),
+            ("POST /session/ses_one/summarize", json!(true)),
+            (
+                "GET /question",
+                json!([{ "id": "que_1", "sessionID": "ses_one", "questions": [{ "question": "Tabs or spaces?", "header": "Indentation", "options": [{ "label": "Tabs", "description": "" }] }] }]),
+            ),
+            ("POST /question/que_1/reply", json!(true)),
+            ("POST /tui/select-session", json!(true)),
+            ("POST /instance/dispose", json!(true)),
+        ]);
+        let client = OpenCodeClient::new(&h, &s.uri(), Some("/w")).unwrap();
+        assert_eq!(client.revert("msg_2").await.unwrap().unwrap()["revert"]["messageID"], "msg_2");
+        client.unrevert().await.unwrap();
+        assert_eq!(client.share().await.unwrap().unwrap()["share"]["url"], "https://opencode.ai/s/abc");
+        client.unshare().await.unwrap();
+        client.summarize("opencode/big-pickle").await.unwrap();
+        assert_eq!(client.questions().await.unwrap().unwrap()[0]["id"], "que_1");
+        client.reply_question("que_1", &[vec!["Tabs".into()]]).await.unwrap();
+        client.select_session("ses_two").await.unwrap();
+        client.dispose().await.unwrap();
+        let calls = s.calls();
+        assert_eq!(
+            calls.iter().map(|c| format!("{} {}", c.method, c.path.split('?').next().unwrap())).collect::<Vec<_>>(),
+            [
+                "POST /session/ses_one/revert",
+                "POST /session/ses_one/unrevert",
+                "POST /session/ses_one/share",
+                "DELETE /session/ses_one/share",
+                "POST /session/ses_one/summarize",
+                "GET /question",
+                "POST /question/que_1/reply",
+                "POST /tui/select-session",
+                "POST /instance/dispose",
+            ]
+        );
+        assert_eq!(calls[0].body, Some(json!({ "messageID": "msg_2" })));
+        assert_eq!(calls[4].body, Some(json!({ "providerID": "opencode", "modelID": "big-pickle" })));
+        assert_eq!(calls[6].body, Some(json!({ "answers": [["Tabs"]] })));
+        assert_eq!(calls[7].body, Some(json!({ "sessionID": "ses_two" })));
+        // every call carries the session's folder, which the server keys its state by
+        assert!(calls.iter().all(|c| c.path.ends_with("?directory=%2Fw")));
+    });
+}
+
 #[test]
 fn a_model_id_splits_at_its_first_slash_into_provider_and_model() {
     assert_eq!(open_code_model("openrouter/vendor/model"), Ok(OpenCodeModel { provider_id: "openrouter".into(), model_id: "vendor/model".into() }));
@@ -207,6 +402,11 @@ fn what_a_message_runs_with_comes_from_the_footer_first_then_the_sessions_record
     assert_eq!(selection_from_footer(None, None, Some("build"), &models), None);
     let info = json!({ "id": "ses_one", "agent": "plan", "model": { "id": "deepseek-v4.1-flash-free", "providerID": "opencode", "variant": "max" } });
     assert_eq!(stored_selection(Some(&info)), sel("opencode/deepseek-v4.1-flash-free", Some("max"), Some("plan")));
+    on_machine(|h| async move {
+        let s = FakeServer::routes(vec![("GET /session/ses_one", info)]);
+        assert_eq!(stored_selection_of(&OpenCodeClient::new(&h, &s.uri(), Some("/w")).unwrap()).await, sel("opencode/deepseek-v4.1-flash-free", Some("max"), Some("plan")));
+        assert_eq!(s.calls()[0].path, "/session/ses_one?directory=%2Fw");
+    });
     assert_eq!(stored_selection(None), OpenCodeSelection::default());
     assert_eq!(
         selection_from_messages(&list(json!([

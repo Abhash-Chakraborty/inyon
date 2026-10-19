@@ -377,10 +377,14 @@ fn a_restart_keeps_a_flag_value_with_spaces_in_it_whole_read_from_the_real_argum
         }
         let _ = proc.kill();
         let _ = proc.wait();
-        assert_eq!(
-            resume_command_argv(AgentKind::Claude, Some(id), &args.unwrap()),
-            format!("claude --resume {id} '--settings' '/work/my project/settings.json' '--model' 'sonnet'")
-        );
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                resume_command_argv(AgentKind::Claude, Some(id), &args.unwrap()),
+                format!("claude --resume {id} '--settings' '/work/my project/settings.json' '--model' 'sonnet'")
+            );
+        } else {
+            assert_eq!(args, None);
+        }
     });
 }
 
