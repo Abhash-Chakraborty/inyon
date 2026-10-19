@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, frameMessage, frameSrc, groupPages, isChanged, leftText, loadPages, markSeen, matchesPage, pageHosts, pageId,
-  previewRefusal, projectName, shouldRenew, usePages, type Page,
+  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, frameMessage, frameSrc, groupPages, isChanged, leftText, loadPages, localDeadline, markSeen, matchesPage, pageHosts, pageId,
+  previewRefusal, projectName, renewIn, shouldRenew, usePages, type Page,
 } from './pages.ts'
 import { api } from '../test/fakes.ts'
 
@@ -13,7 +13,7 @@ const entry = (slug: string, more: Partial<PageEntry> = {}): Page => {
 const names: Record<string, string> = { local: 'studio', 'hub:h1/local': 'arm', laptop: 'air' }
 const nameOf = (h: string) => names[h] ?? h
 
-beforeEach(() => usePages.setState({ pages: null, hubless: false, error: undefined, seen: {} }))
+beforeEach(() => usePages.setState({ pages: null, hubless: false, error: undefined, seen: {}, unreachable: [] }))
 
 describe('grouping', () => {
   test('machine, then project, then page; the hub machine first, the newest change on top', () => {
@@ -77,6 +77,20 @@ describe('links', () => {
     expect(shouldRenew(now + 3_600_001, now)).toBe(false)
     expect(shouldRenew(now + 3_599_999, now)).toBe(true)
     expect(shouldRenew(now - 1, now)).toBe(true)
+  })
+
+  test("a link's end is counted on this device's clock from the hub's ttl, whatever the hub's clock says", () => {
+    // the hub's clock is two hours ahead of this one
+    const hubExpires = now + 2 * 3_600_000 + 12 * 3_600_000
+    expect(localDeadline({ url: '/v/t/', expires: hubExpires, ttl: 12 * 3_600_000 }, now).until).toBe(now + 12 * 3_600_000)
+    // a hub that doesn't say has only its own expiry
+    expect(localDeadline({ url: '/v/t/', expires: hubExpires } as never, now).until).toBe(hubExpires)
+  })
+
+  test('a link on screen is renewed by a timer an hour before its end, never sooner than 5 s', () => {
+    expect(renewIn(now + 12 * 3_600_000, now)).toBe(11 * 3_600_000)
+    expect(renewIn(now + 3_600_000 + 1, now)).toBe(5_000)
+    expect(renewIn(now - 1, now)).toBe(5_000)
   })
 
   test("the frame's address keeps the token path's slash, so the theme survives without a redirect", () => {
@@ -170,6 +184,45 @@ describe('the list', () => {
       expect(usePages.getState().pages!.map((p) => [p.id, p.host])).toEqual([['hub:h1/local/plan', 'hub:h1/local']])
       expect(usePages.getState().error).toBeUndefined()
       expect(pageHosts()).toEqual(['hub:h1/local', 'hub:h2/local'])
+      expect(usePages.getState().unreachable).toEqual(['h2'])
+    } finally {
+      delete (window as any).Capacitor
+    }
+  })
+
+  test("the phone app keeps a hub's pages through a failed poll, marked unreachable, until the hub answers", async () => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }
+    localStorage.setItem('inyon.hubs.v1', JSON.stringify([
+      { id: 'h1', name: 'arm', url: 'http://arm:4777', token: 't1', pairedAt: 1 },
+      { id: 'h2', name: 'nas', url: 'http://nas:4777', token: 't2', pairedAt: 2 },
+    ]))
+    const down = new Set<string>()
+    const listed: Record<string, string[]> = { h1: ['plan'], h2: ['nas-plan'] }
+    api.hubPages.mockImplementation((async (hub: { id: string }) => {
+      if (down.has(hub.id)) throw new Error(`Couldn't reach ${hub.id}`)
+      return { pages: listed[hub.id]!.map((slug) => ({ host: 'local', slug, name: slug, project: '/p', by: 'cli', added: 1, folder: `/p/${slug}` })) }
+    }) as never)
+    const ids = () => usePages.getState().pages!.map((p) => p.id).sort()
+    try {
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/plan', 'hub:h2/local/nas-plan'])
+      // a blip on one hub: its pages stay, the other's list moves on
+      down.add('h2')
+      listed.h1 = ['plan', 'new']
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/new', 'hub:h1/local/plan', 'hub:h2/local/nas-plan'])
+      expect(usePages.getState()).toMatchObject({ unreachable: ['h2'], error: undefined })
+      // every hub out of reach: nothing is wiped, and it says so
+      down.add('h1')
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/new', 'hub:h1/local/plan', 'hub:h2/local/nas-plan'])
+      expect(usePages.getState().error).toBe("Couldn't reach h1")
+      // back: only an answer changes a hub's list
+      down.clear()
+      listed.h2 = []
+      await loadPages()
+      expect(ids()).toEqual(['hub:h1/local/new', 'hub:h1/local/plan'])
+      expect(usePages.getState()).toMatchObject({ unreachable: [], error: undefined })
     } finally {
       delete (window as any).Capacitor
     }

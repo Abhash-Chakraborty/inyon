@@ -81,9 +81,22 @@ export const isChanged = (p: Page, seen: Record<string, number>) => !(p.id in se
 
 // ---------- links ----------
 
-/** A link is minted again when less than this is left of it (on open, and when the app comes back into view). */
+/** A link is minted again when less than this is left of it: by a timer while the page is on screen, and when the app comes back into view. */
 export const RENEW_BEFORE_MS = 60 * 60 * 1000
-export const shouldRenew = (expires: number, now: number) => expires - now < RENEW_BEFORE_MS
+export const shouldRenew = (until: number, now: number) => until - now < RENEW_BEFORE_MS
+
+/**
+ * A link with when it runs out by this device's clock. The hub says how long it lasts (`ttl`), counted
+ * here from when it was asked for, since the phone's clock and the hub's may not agree; a hub that
+ * doesn't say gives only its own `expires`.
+ */
+export interface PageLink extends PageOpen {
+  until: number
+}
+export const localDeadline = (l: PageOpen, askedAt: number): PageLink => ({ ...l, until: typeof l.ttl === 'number' ? askedAt + l.ttl : l.expires })
+
+/** How long to wait before renewing a link that is on screen: until an hour is left, at least 5 s. */
+export const renewIn = (until: number, now: number) => Math.max(5_000, until - RENEW_BEFORE_MS - now)
 
 /** Where a page's hub is: '' for the hub this app came from, else the paired hub's address. */
 export const pageBase = (host: string) => splitHostId(host).hub?.url ?? ''
@@ -168,9 +181,20 @@ interface PagesState {
   hubless: boolean
   error?: string
   seen: Record<string, number>
+  /** in the phone app, the paired hubs that didn't answer the last time: their pages stay listed, shown offline */
+  unreachable: string[]
 }
 
-export const usePages = create<PagesState>(() => ({ pages: null, hubless: false, seen: loadSeen() }))
+export const usePages = create<PagesState>(() => ({ pages: null, hubless: false, seen: loadSeen(), unreachable: [] }))
+
+/** The paired hub a page's host belongs to, by id; undefined for this app's own hub. */
+export const hubIdOf = (host: string) => (isHubHost(host) ? host.slice('hub:'.length, host.indexOf('/')) : undefined)
+
+/** Whether a host's hub didn't answer the last time the list was asked for. */
+export const hubUnreachable = (host: string, unreachable: string[]) => {
+  const id = hubIdOf(host)
+  return id !== undefined && unreachable.includes(id)
+}
 
 const asPages = (entries: PageEntry[] | undefined, host: (h: string) => string = (h) => h): Page[] =>
   (Array.isArray(entries) ? entries : []).map((e) => ({ ...e, host: host(e.host), id: pageId(host(e.host), e.slug) }))
@@ -201,16 +225,28 @@ async function fetchPages(): Promise<void> {
   try {
     if (!isPhone()) {
       const r = await api.pages()
-      usePages.setState({ pages: asPages(r?.pages), hubless: false, error: undefined })
+      usePages.setState({ pages: asPages(r?.pages), hubless: false, error: undefined, unreachable: [] })
       return
     }
     const hubs = listHubs()
-    if (!hubs.length) return usePages.setState({ pages: [], hubless: true, error: undefined })
+    if (!hubs.length) return usePages.setState({ pages: [], hubless: true, error: undefined, unreachable: [] })
     const got = await Promise.allSettled(hubs.map(fromHub))
-    const ok = got.flatMap((g) => (g.status === 'fulfilled' ? g.value : []))
+    // a hub out of reach (a blip, a restart, the phone off the VPN) keeps the pages it had, shown
+    // offline; only an answer from a hub changes its list
+    const before = usePages.getState().pages ?? []
+    const pages: Page[] = []
+    const unreachable: string[] = []
+    got.forEach((g, i) => {
+      const hub = hubs[i]!
+      if (g.status === 'fulfilled') pages.push(...g.value)
+      else {
+        unreachable.push(hub.id)
+        pages.push(...before.filter((p) => hubIdOf(p.host) === hub.id))
+      }
+    })
     const failed = got.find((g): g is PromiseRejectedResult => g.status === 'rejected')
-    // one hub out of reach keeps the others' pages; all of them out of reach is an error
-    usePages.setState({ pages: ok, hubless: false, error: failed && !got.some((g) => g.status === 'fulfilled') ? (failed.reason as Error).message : undefined })
+    // all of them out of reach is an error
+    usePages.setState({ pages, hubless: false, unreachable, error: failed && !got.some((g) => g.status === 'fulfilled') ? (failed.reason as Error).message : undefined })
   } catch (e) {
     usePages.setState((s) => ({ pages: s.pages ?? [], error: (e as Error).message }))
   }

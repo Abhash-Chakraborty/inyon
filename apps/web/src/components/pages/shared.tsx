@@ -3,15 +3,15 @@ import { Link, useNavigate, type NavigateFunction } from 'react-router-dom'
 import { create } from 'zustand'
 import clsx from 'clsx'
 import { ChevronRight, Copy, ExternalLink, FolderOpen, Link2Off, PanelsTopLeft, Trash2 } from 'lucide-react'
-import type { HostState, PageOpen } from '@inyon/protocol'
+import type { HostState } from '@inyon/protocol'
 import { api, ApiError } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { isNative } from '../../lib/native.ts'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
-  PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, isChanged, isHubMachine, loadPages, openLink, pageBase, pageHosts, pageHref, projectName, shouldRenew, usePages,
-  type Page, type Part,
+  PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
+  renewIn, shouldRenew, usePages, type Page, type PageLink, type Part,
 } from '../../lib/pages.ts'
 import { Button, Field, SectionLabel, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
 import { contextMenu } from '../ui/ContextMenu.tsx'
@@ -35,18 +35,23 @@ export interface PageMachine {
   host?: HostState
 }
 
-/** The machine a page is on, by the hosts the app knows; a hub's own machine is "This hub" until its name arrives. */
-export function machineOf(hosts: HostState[], host: string): PageMachine {
+/**
+ * The machine a page is on, by the hosts the app knows; a hub's own machine is "This hub" until its
+ * name arrives. A paired hub that didn't answer the last time the list was asked for is offline.
+ */
+export function machineOf(hosts: HostState[], host: string, unreachable: string[] = []): PageMachine {
   const h = hosts.find((x) => x.config.id === host)
   const hub = isHubMachine(host)
-  if (!h) return { name: hub ? (splitHostId(host).hub?.name ?? 'This hub') : host, online: true, hub }
-  return { name: h.config.name, online: h.status === 'online', hub: h.config.kind === 'local' || hub, host: h }
+  const reached = !hubUnreachable(host, unreachable)
+  if (!h) return { name: hub ? (splitHostId(host).hub?.name ?? 'This hub') : host, online: reached, hub }
+  return { name: h.config.name, online: reached && h.status === 'online', hub: h.config.kind === 'local' || hub, host: h }
 }
 
 /** A function from host id to its machine, for the current list of hosts. */
 export function useMachines() {
   const hosts = useStore((s) => s.hosts)
-  return useCallback((host: string) => machineOf(hosts, host), [hosts])
+  const unreachable = usePages((s) => s.unreachable)
+  return useCallback((host: string) => machineOf(hosts, host, unreachable), [hosts, unreachable])
 }
 
 // ---------- progress ----------
@@ -61,35 +66,63 @@ export function ProgressBar({ done, total, className }: { done: number; total: n
   )
 }
 
-/** "updated 3 min ago", or when it was added when it has no board. */
-export const updatedLine = (p: Page, now = Date.now()) => (p.progress?.updated ? `updated ${agoText(changedAt(p), now)}` : `added ${agoText(p.added, now)}`)
+/** "updated 3 min ago" by the board's own date, or when it was added when it has no board (or no readable date). */
+export function updatedLine(p: Page, now = Date.now()) {
+  const t = p.progress?.updated ? Date.parse(p.progress.updated) : NaN
+  return Number.isFinite(t) ? `updated ${agoText(t, now)}` : `added ${agoText(p.added, now)}`
+}
+
+/** A page's name for a screen reader, with what the card shows of it. */
+export function pageLabel(p: Page, o: { changed: boolean; online: boolean }, now = Date.now()) {
+  const parts = [p.name]
+  if (o.changed) parts.push('changed')
+  if (p.progress) parts.push(`${p.progress.done} of ${p.progress.total} done`)
+  if (p.progress?.now) parts.push(p.progress.now)
+  parts.push(o.online ? updatedLine(p, now) : 'machine offline')
+  return parts.join(', ')
+}
 
 /** The changed-since-you-opened-it dot. */
-export const ChangedDot = () => <span aria-label="changed" title="Changed since you last opened it" className="animate-pop size-1.5 shrink-0 rounded-full bg-fg" />
+export const ChangedDot = () => <span role="img" aria-label="changed" title="Changed since you last opened it" className="animate-pop size-1.5 shrink-0 rounded-full bg-fg" />
+
+/** What every viewer says about the page in it: a sandbox, and never a place to sign in. */
+export const SANDBOX_NOTE = 'Sandboxed page: never sign in here'
 
 // ---------- links ----------
 
-/** Bumped by Revoke, so an open viewer mints a new link at once. */
+/** Bumped by Revoke (and by opening the page that's open already), so an open viewer mints a new link at once. */
 const useLinkRev = create<Record<string, number>>(() => ({}))
 
+/** Mints a new link for a page an open viewer shows, as Reload does. */
+export const renewLink = (id: string) => useLinkRev.setState((s) => ({ [id]: (s[id] ?? 0) + 1 }))
+
 /**
- * A page's link: minted when the page opens, and again when the app comes back into view with
- * less than an hour left. Each new link reloads the frame.
+ * A page's link: minted when the page opens, and again an hour before it runs out, by a timer while
+ * the page is on screen and on coming back into view after that. Each new link reloads the frame.
+ * Its end is counted on this device's clock (`until`).
  */
 export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined) {
   const rev = useLinkRev((s) => (page ? (s[page.id] ?? 0) : 0))
-  const [state, setState] = useState<{ id: string; link?: PageOpen; error?: ApiError | Error }>()
+  const [state, setState] = useState<{ id: string; link?: PageLink; error?: ApiError | Error }>()
   const current = useRef(state)
   current.current = state
   const id = page?.id
+  // the page shown now: a mint that answers after another page was picked is dropped
+  const shown = useRef(id)
+  shown.current = id
+  /** Asks for a new link; true when one came. */
   const mint = useCallback(async () => {
-    if (!page) return
+    if (!page) return false
     const asked = page.id
+    const at = Date.now()
     try {
-      const link = await openLink(page)
-      if (asked === id) setState({ id: asked, link })
+      const link = localDeadline(await openLink(page), at)
+      if (shown.current !== asked) return false
+      setState({ id: asked, link })
+      return true
     } catch (e) {
-      if (asked === id) setState((s) => ({ id: asked, link: s?.id === asked ? s.link : undefined, error: e as Error }))
+      if (shown.current === asked) setState((s) => ({ id: asked, link: s?.id === asked ? s.link : undefined, error: e as Error }))
+      return false
     }
   }, [id])
   useEffect(() => {
@@ -101,7 +134,7 @@ export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined
     const check = () => {
       if (document.visibilityState !== 'visible') return
       const l = current.current?.link
-      if (l && shouldRenew(l.expires, Date.now())) void mint()
+      if (l && shouldRenew(l.until, Date.now())) void mint()
     }
     window.addEventListener('focus', check)
     document.addEventListener('visibilitychange', check)
@@ -110,7 +143,16 @@ export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined
       document.removeEventListener('visibilitychange', check)
     }
   }, [mint])
+  // a page left on screen (a second monitor, a tablet on a stand) gets no focus event: renew on time
   const mine = state?.id === id ? state : undefined
+  const until = mine?.link?.until
+  useEffect(() => {
+    if (until === undefined) return
+    const t = setTimeout(() => {
+      if (document.visibilityState === 'visible') void mint()
+    }, renewIn(until, Date.now()))
+    return () => clearTimeout(t)
+  }, [until, mint])
   return { link: mine?.link, error: mine?.error, retry: mint }
 }
 
@@ -118,7 +160,7 @@ export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined
  * Which parts of a Blueprint site exist (the plan always does), asked of the hub with each new link.
  * What was found stays shown while a renewed link is asked again.
  */
-export function useSiteParts(page: Pick<Page, 'id' | 'host'> | undefined, link: PageOpen | undefined): Part[] {
+export function useSiteParts(page: Pick<Page, 'id' | 'host'> | undefined, link: PageLink | undefined): Part[] {
   const [found, setFound] = useState<{ id: string; parts: Part[] }>()
   useEffect(() => {
     if (!page || !link) return
@@ -169,14 +211,15 @@ export function PageFrame({ src, title, className, style }: { src: string; title
 // ---------- what can be done to a page ----------
 
 /**
- * Opens a page outside the app. A browser blocks a window opened after a wait, so one is opened
- * first and sent to the link once it is minted; the Android app hands the link to the browser.
+ * Opens a page outside the app, with a new link so it lasts the full 12 hours. A browser blocks a
+ * window opened after a wait, so one is opened first and sent to the link once it is minted; the
+ * Android app hands the link to the browser.
  */
-export async function openInBrowser(p: Page, link?: PageOpen) {
-  const pending = !link && !isNative() ? window.open('', '_blank') : null
+export async function openInBrowser(p: Page) {
+  const pending = !isNative() ? window.open('', '_blank') : null
   if (pending) pending.opener = null
   try {
-    const l = link ?? (await openLink(p))
+    const l = await openLink(p)
     const url = absoluteLink(p.host, l.url)
     if (pending) pending.location.href = url
     else window.open(url, '_blank', 'noopener')
@@ -197,7 +240,7 @@ export async function revokeLinks(p: Page) {
   if (!ok) return
   try {
     await api.revokePage(p.host, p.slug)
-    useLinkRev.setState((s) => ({ [p.id]: (s[p.id] ?? 0) + 1 }))
+    renewLink(p.id)
     toast({ title: 'Links revoked', body: `Old links to “${p.name}” stop working.`, tone: 'success' })
   } catch (e) {
     toast({ title: "Couldn't revoke the links", body: (e as Error).message, tone: 'error' })
@@ -235,12 +278,15 @@ type PageSheet = { kind: 'folder'; page: Page } | { kind: 'add' }
 const usePageSheet = create<{ sheet?: PageSheet; open: boolean }>(() => ({ open: false }))
 export const openPageSheet = (sheet: PageSheet) => usePageSheet.setState({ sheet, open: true })
 
+/** What Open in browser says under it: the link's life, and that the tab is no place to sign in. */
+export const BROWSER_HINT = 'A 12 h link. Never sign in there'
+
 /** One menu for a page wherever it's listed: long-press, right-click and ⋯ share it. */
 export function pageMenu(p: Page, machine: PageMachine, nav: NavigateFunction, o: { open?: boolean } = {}): MenuItem[] {
   const off = !machine.online
   return [
     ...(o.open === false ? [] : [{ key: 'open', label: 'Open', icon: <PanelsTopLeft className="size-4" />, onSelect: () => nav(pageHref(p.host, p.slug)) }]),
-    { key: 'browser', label: 'Open in browser', hint: off ? `${machine.name} is offline` : 'A link that works for 12 h', icon: <ExternalLink className="size-4" />, disabled: off, onSelect: () => void openInBrowser(p) },
+    { key: 'browser', label: 'Open in browser', hint: off ? `${machine.name} is offline` : BROWSER_HINT, icon: <ExternalLink className="size-4" />, disabled: off, onSelect: () => void openInBrowser(p) },
     { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, separated: true, onSelect: () => void revokeLinks(p) },
     { key: 'folder', label: 'Show folder', icon: <FolderOpen className="size-4" />, onSelect: () => openPageSheet({ kind: 'folder', page: p }) },
     { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removePage(p, machine.name) },

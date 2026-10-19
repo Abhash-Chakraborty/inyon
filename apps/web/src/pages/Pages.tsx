@@ -11,7 +11,7 @@ import { copyText } from '../lib/clipboard.ts'
 import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, groupPages, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName, shouldRenew,
+  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, groupPages, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
   usePages, type Device, type Page, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
@@ -22,8 +22,8 @@ import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 import { MachineSheet } from '../components/Sheets.tsx'
 import {
-  ADD_COMMAND, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, copyFolder, openInBrowser, openPageSheet, pageMenu, removePage, revokeLinks, updatedLine, useMachines,
-  usePageLink, useSiteParts, type PageMachine,
+  ADD_COMMAND, BROWSER_HINT, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, SANDBOX_NOTE, copyFolder, openInBrowser, openPageSheet, pageLabel, pageMenu, removePage, renewLink,
+  revokeLinks, updatedLine, useMachines, usePageLink, useSiteParts, type PageMachine,
 } from '../components/pages/shared.tsx'
 
 /** Two panes from this width up; below it, the list and a full-screen viewer. */
@@ -48,7 +48,8 @@ export function PagesPage() {
   const hubless = usePages((s) => s.hubless)
   if (hubless) return <Hubless wide={wide} />
   if (wide) return <PagesDesktop selected={id} />
-  return id ? <PhoneViewer id={id} /> : <PhoneList />
+  // keyed by page: picking another page from the viewer starts it afresh
+  return id ? <PhoneViewer key={id} id={id} /> : <PhoneList />
 }
 
 // ---------- shared by the phone and desktop viewers ----------
@@ -65,8 +66,12 @@ function useViewer(page: Page | undefined) {
   themeNow.current = theme
   // the theme isn't part of the address's identity: a theme change is a message, not a reload
   const src = useMemo(() => (page && link ? frameSrc(pageBase(page.host), link.url, part, themeNow.current) : undefined), [page?.host, link?.url, part])
-  const reload = () => {
-    if (link && shouldRenew(link.expires, Date.now())) void retry()
+  // a new link every time: the one on screen may have been revoked from another device. The new
+  // address reloads the frame; when no link comes (the hub is out of reach) the old one is tried again
+  const reload = () => void retry().then((renewed) => renewed || setN((x) => x + 1))
+  // picking a part always loads it, also the one the control shows when the page moved on by its own links
+  const pickPart = (p: Part) => {
+    setPart(p)
     setN((x) => x + 1)
   }
   // looking at a page clears its changed mark, also when it changes while it's open
@@ -74,7 +79,9 @@ function useViewer(page: Page | undefined) {
   useEffect(() => {
     if (page) markSeen(page)
   }, [page?.id, changed])
-  return { link, error, retry, parts, part, setPart, src, frameKey: `${src}#${n}`, reload }
+  // the page's hub didn't answer the last poll: a frame already showing stays, marked out of date
+  const stale = usePages((s) => !!page && hubUnreachable(page.host, s.unreachable))
+  return { link, error, retry, parts, part, setPart: pickPart, src, frameKey: `${src}#${n}`, reload, stale }
 }
 
 const PART_ICON: Record<Part, React.ReactNode> = { plan: <FileText className="size-4" />, mockups: <LayoutTemplate className="size-4" />, matrix: <Table2 className="size-4" /> }
@@ -100,6 +107,16 @@ function FrameState({ page, machine, error, onRetry, onBack }: { page: Page; mac
         {gone ? onBack && <Button size="sm" onClick={onBack}><ChevronLeft className="size-3.5" /> Back to Pages</Button> : <Button size="sm" onClick={onRetry}><RotateCw className="size-3.5" /> Try again</Button>}
       </div>
     </StateCard>
+  )
+}
+
+/** Said over a page whose hub didn't answer the last time: what's on screen may be behind. */
+function StaleLine({ name, className }: { name: string; className?: string }) {
+  return (
+    <div role="status" className={clsx('flex min-w-0 items-center gap-1.5 font-mono text-[12px] text-danger', className)}>
+      <CloudOff className="size-3.5 shrink-0" />
+      <span className="truncate">Can't reach {name} now: this may be out of date</span>
+    </div>
   )
 }
 
@@ -255,7 +272,7 @@ function PageCard({ p, m, changed }: { p: Page; m: PageMachine; changed: boolean
     <div
       role="link"
       tabIndex={0}
-      aria-label={`${p.name}${m.online ? '' : ', machine offline'}`}
+      aria-label={pageLabel(p, { changed, online: m.online })}
       onClick={open}
       onKeyDown={(e) => e.key === 'Enter' && e.target === e.currentTarget && open()}
       {...contextMenu(items, { touch: true, header: p.name })}
@@ -289,6 +306,8 @@ function PageCard({ p, m, changed }: { p: Page; m: PageMachine; changed: boolean
 function PhoneViewer({ id }: { id: string }) {
   const page = usePages((s) => s.pages?.find((p) => p.id === id))
   const loaded = usePages((s) => s.pages !== null)
+  // a page is gone only when its hub answered without it; a hub out of reach keeps its pages
+  const unreached = usePages((s) => hubUnreachable(id, s.unreachable))
   const all = usePages((s) => s.pages)
   const machine = useMachines()
   const nav = useNavigate()
@@ -302,7 +321,7 @@ function PhoneViewer({ id }: { id: string }) {
     ? [
         { key: 'reload', label: 'Reload', icon: <RotateCw className="size-4" />, disabled: !v.link, onSelect: v.reload },
         ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
-        { key: 'browser', label: 'Open in browser', hint: 'A link that works for 12 h', icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page, v.link) },
+        { key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page) },
       ]
     : []
   const machineItems: MenuItem[] = page && m
@@ -332,10 +351,21 @@ function PhoneViewer({ id }: { id: string }) {
           )}
           {page && <Menu align="end" items={more} trigger={({ toggle, ref }) => <IconButton label="More" className="size-11 rounded-xl" onClick={toggle} ref={ref}><Ellipsis className="size-[18px]" /></IconButton>} />}
         </div>
+        {/* always on screen, so a page can't pass itself off as the app asking for a password */}
+        <div className="flex h-6 items-center gap-1.5 border-t border-line px-3 font-mono text-[12px] text-fg-3">
+          <ShieldCheck className="size-3.5 shrink-0" />
+          <span className="truncate">{SANDBOX_NOTE}</span>
+        </div>
+        {v.stale && m && <StaleLine name={m.name} className="h-6 border-t border-line px-3" />}
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col">
         {!page ? (
-          loaded ? (
+          unreached ? (
+            <StateCard icon={<CloudOff className="size-5 text-danger" />} title="The hub is out of reach">
+              This page opens again as soon as its hub answers.
+              <div className="mt-4"><Button size="sm" onClick={() => void loadPages()}><RotateCw className="size-3.5" /> Try again</Button></div>
+            </StateCard>
+          ) : loaded ? (
             <StateCard icon={<FolderOpen className="size-5" />} title="This page is gone">
               It isn't on the list any more.
               <div className="mt-4"><Button size="sm" onClick={back}><ChevronLeft className="size-3.5" /> Back to Pages</Button></div>
@@ -343,7 +373,7 @@ function PhoneViewer({ id }: { id: string }) {
           ) : (
             <Waiting shape="panel" count={2} label="Opening" className="p-5" />
           )
-        ) : v.src && m!.online ? (
+        ) : v.src && (m!.online || v.stale) ? (
           <PageFrame key={v.frameKey} src={v.src} title={page.name} className="absolute inset-0 size-full border-0 bg-bg" />
         ) : (
           <FrameState page={page} machine={m!} error={v.error} onRetry={() => void v.retry()} onBack={back} />
@@ -463,8 +493,10 @@ function TreeRow({ p, m, active, changed }: { p: Page; m: PageMachine; active: b
   return (
     <Link
       to={pageHref(p.host, p.slug)}
+      // the open page clicked again opens with a new link, as Reload does
+      onClick={() => active && renewLink(p.id)}
       aria-current={active ? 'page' : undefined}
-      aria-label={`${p.name}${m.online ? '' : ', machine offline'}`}
+      aria-label={pageLabel(p, { changed, online: m.online })}
       {...contextMenu(() => pageMenu(p, m, nav), { header: p.name })}
       className={clsx('grid min-h-[34px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-xl pr-2 pl-8 text-[13.5px] transition-colors', active ? 'bg-accent-soft' : 'hover:bg-hover')}
     >
@@ -513,7 +545,6 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
     const t = setInterval(() => setNow(Date.now()), 60_000)
     return () => clearInterval(t)
   }, [])
-  const href = v.link ? `${pageBase(page.host)}${v.link.url}` : undefined
   const menu: MenuItem[] = [
     { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, onSelect: () => void revokeLinks(page) },
     { key: 'copy', label: 'Copy folder path', icon: <Copy className="size-4" />, onSelect: () => void copyFolder(page) },
@@ -536,17 +567,14 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
         {v.parts.length > 1 && <Segmented size="sm" label="Part of the page" value={v.part} onChange={v.setPart} options={v.parts.map((p) => ({ v: p, label: PART_LABEL[p] }))} />}
         <Segmented size="sm" label="Frame size" value={device} onChange={setDevice} options={DEVICE_OPTIONS} />
         <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
-        {href ? (
-          <a href={href} target="_blank" rel="noopener noreferrer" aria-label="Open in new tab" title="Open in new tab" className="press relative inline-flex size-8 shrink-0 items-center justify-center rounded-full text-fg-2 hover:bg-hover hover:text-fg">
-            <ExternalLink className="size-4" />
-          </a>
-        ) : (
-          <IconButton label="Open in new tab" disabled><ExternalLink className="size-4" /></IconButton>
-        )}
+        {/* a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page */}
+        <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page)}>
+          <ExternalLink className="size-4" />
+        </IconButton>
         <Menu align="end" items={menu} header={page.name} trigger={({ toggle, ref }) => <IconButton label={`More for ${page.name}`} onClick={toggle} ref={ref}><Ellipsis className="size-4" /></IconButton>} />
       </div>
       <div ref={stage} className={clsx('relative flex min-h-0 flex-1 overflow-hidden bg-sunken/60', size ? 'items-start justify-center p-3' : 'p-3')}>
-        {v.src && m.online ? (
+        {v.src && (m.online || v.stale) ? (
           size ? (
             <div className="relative shrink-0" style={{ width: size.w * scale, height: size.h * scale }}>
               <div className="animate-pop absolute top-0 left-0 origin-top-left overflow-hidden rounded-xl border border-line-strong bg-bg shadow-soft" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }}>
@@ -566,7 +594,8 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
       </div>
       <div className="flex h-8 shrink-0 items-center gap-2 overflow-hidden border-t border-line px-4 font-mono text-[12px] whitespace-nowrap text-fg-3">
         <ShieldCheck className="size-3.5 shrink-0" />
-        <span className="truncate">Sandboxed: no sign-in, no app access{v.link ? ` · link lasts ${leftText(v.link.expires, now)}` : ''}</span>
+        <span className="truncate">{SANDBOX_NOTE}{v.link && !v.stale ? ` · link lasts ${leftText(v.link.until, now)}` : ''}</span>
+        {v.stale && <StaleLine name={m.name} className="shrink-0" />}
         <span className="ml-auto shrink-0">{size ? `${size.name} · ${size.w} × ${size.h}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : box.w ? `Fit · ${Math.max(0, box.w - 24)} × ${Math.max(0, box.h - 24)}` : ''}</span>
       </div>
     </>
