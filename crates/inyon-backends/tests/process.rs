@@ -1,5 +1,8 @@
 //! The process backend against real processes: output, input, exit codes, timeouts that take the
 //! whole pipeline, streams, terminals, and the ssh command line.
+//! These run /bin/sh, so they only run where there is one.
+
+#![cfg(unix)]
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -47,6 +47,10 @@ jobs:
       # (fixtures/expected), plus the TS tests ported; like the link, they build as wasm too
       - run: cargo test -p inyon-core
       - run: cargo check --target wasm32-unknown-unknown -p inyon-core
+      # the hub core's native side: real processes and terminals, and the core's actions, mirror
+      # and transcript tail against them, each tmux test on a server in a folder of its own
+      - run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -y -q tmux; }
+      - run: cargo test -p inyon-backends
 
   # the Rust engine as old phones, hubs and scripts meet it: apps/node's tests that run the engine
   # as a program, pointed at this build under the name inyon-engine, against the real Bun hub

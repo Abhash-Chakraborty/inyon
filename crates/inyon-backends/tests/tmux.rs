@@ -4,6 +4,8 @@
 //! (TMUX_TMPDIR, with $TMUX dropped), refuses to run unless tmux really uses it, and stops it by
 //! its socket path: the user's server is never touched.
 
+#![cfg(unix)]
+
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;

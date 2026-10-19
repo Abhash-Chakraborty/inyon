@@ -1,5 +1,7 @@
 //! The hub's records as files, its environment, and the core's thread.
 
+#![cfg(unix)]
+
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 

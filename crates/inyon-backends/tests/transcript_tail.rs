@@ -3,6 +3,8 @@
 //! seen as a remote one (so image data is left out) but its commands run here. Any tmux the watcher
 //! reaches for gets a folder of its own with no server in it, so the user's server is never asked.
 
+#![cfg(unix)]
+
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
