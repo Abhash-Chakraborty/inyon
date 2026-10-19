@@ -37,7 +37,7 @@ use crate::js::fmt_number;
 use crate::js::json::Js;
 use crate::js::re::dynamic;
 use crate::js::text::{lower, squash, JsStr};
-use crate::platform::rt::{set_timeout, sleep, spawn, Deferred};
+use crate::platform::rt::{set_timeout, sleep, spawn, spawn_task, Deferred};
 use crate::re;
 use crate::tmux::tmux::{capture_panes, send_keys, type_into};
 
@@ -92,7 +92,7 @@ thread_local! {
     static RENAME_TRIED: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
 }
 
-/// Lets the next action in the lane go when this one ends, however it ends (a dropped future too).
+/// Lets the next action in the lane go when this one ends, however it ends.
 struct LaneTurn {
     key: String,
     done: Deferred<()>,
@@ -111,15 +111,25 @@ impl Drop for LaneTurn {
 }
 
 /// One keyboard per pane: actions that type into it take turns instead of failing each other.
-async fn in_lane<T, Fut: Future<Output = HubResult<T>>>(host_id: &str, pane_id: &str, f: impl FnOnce() -> Fut) -> HubResult<T> {
+/// The turn is taken when this is called, and the action runs as a task of its own, so it always
+/// runs to the end as the TS promise chain does: a caller that stops waiting (an HTTP client that
+/// went away) neither lets the next action in early nor leaves this one half typed.
+fn in_lane<T, Fut>(host_id: &str, pane_id: &str, f: impl FnOnce() -> Fut + 'static) -> impl Future<Output = HubResult<T>> + 'static
+where
+    T: Clone + 'static,
+    Fut: Future<Output = HubResult<T>> + 'static,
+{
     let key = crate::js::json::stringify(&json!([host_id, pane_id]));
     let done = Deferred::new();
     let prev = LANES.with(|l| l.borrow_mut().insert(key.clone(), done.clone()));
-    let _turn = LaneTurn { key, done };
-    if let Some(p) = prev {
-        p.wait().await;
-    }
-    f().await
+    let result = spawn_task(async move {
+        let _turn = LaneTurn { key, done };
+        if let Some(p) = prev {
+            p.wait().await;
+        }
+        f().await
+    });
+    result.wait()
 }
 
 /// Sends a message and follows it until the agent has it. `id` names the send for every device
@@ -127,15 +137,24 @@ async fn in_lane<T, Fut: Future<Output = HubResult<T>>>(host_id: &str, pane_id: 
 /// `from_composer`: the text came out of the app's message box, so the saved draft goes with it.
 /// `setting`: a change made with the app's controls, which no device shows as a message.
 /// `steer`: while Codex works, hand it the message in the middle of its turn rather than queueing it.
+///
+/// The send runs as a task of its own, so it is typed, followed and settled to the end even when
+/// the caller stops waiting for it.
 pub async fn send_message(host_id: &str, pane_id: &str, text: &str, from_composer: bool, id: Option<&str>, setting: bool, steer: bool) -> HubResult<()> {
+    let (host_id, pane_id, text) = (host_id.to_owned(), pane_id.to_owned(), text.to_owned());
     let id = id.map(str::to_owned).unwrap_or_else(|| format!("hub-{}", crate::ids::random_uuid()));
+    spawn_task(async move { send_and_follow(&host_id, &pane_id, &text, from_composer, id, setting, steer).await }).wait().await
+}
+
+async fn send_and_follow(host_id: &str, pane_id: &str, text: &str, from_composer: bool, id: String, setting: bool, steer: bool) -> HubResult<()> {
     // refused before it's followed: an empty send that was would be matched to whatever the agent
     // writes next and show as delivered
     check_send(host_id, pane_id, text)?;
     let w = watchers().get(host_id, pane_id);
     w.track_send(&id, text, setting);
     let r = async {
-        in_lane(host_id, pane_id, || send_message_to_pane(host_id, pane_id, text, from_composer, steer)).await?;
+        let (h, p, t) = (host_id.to_owned(), pane_id.to_owned(), text.to_owned());
+        in_lane(host_id, pane_id, move || async move { send_message_to_pane(&h, &p, &t, from_composer, steer).await }).await?;
         confirm_delivery(host_id, pane_id, &id, text).await
     }
     .await;
@@ -971,7 +990,8 @@ fn mode_alias(target: &str) -> Option<&'static Regex> {
 
 /// Cycles the permission mode (Shift+Tab) until the target shows on screen (Claude Code, Antigravity).
 pub async fn set_mode(host_id: &str, pane_id: &str, target: &str) -> HubResult<()> {
-    in_lane(host_id, pane_id, || set_pane_mode(host_id, pane_id, target)).await
+    let (h, p, t) = (host_id.to_owned(), pane_id.to_owned(), target.to_owned());
+    in_lane(host_id, pane_id, move || async move { set_pane_mode(&h, &p, &t).await }).await
 }
 
 async fn set_pane_mode(host_id: &str, pane_id: &str, target: &str) -> HubResult<()> {

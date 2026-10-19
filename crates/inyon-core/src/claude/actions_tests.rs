@@ -506,3 +506,51 @@ fn a_paste_loads_its_buffer_into_the_panes_own_psmux_server_since_each_session_h
     // tmux has one server, and no -t before the command
     assert_eq!(go(&[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
 }
+
+// ---------- taking turns per pane (review) ----------
+
+#[test]
+fn a_caller_that_stops_waiting_for_its_turn_never_lets_the_next_action_in_early() {
+    run(|| async {
+        let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+        let l = log.clone();
+        let first = in_lane("h", "%1", move || async move {
+            l.borrow_mut().push("first starts");
+            sleep(1000).await;
+            l.borrow_mut().push("first ends");
+            Ok(())
+        });
+        // the second caller goes away while it waits (its HTTP client hung up)
+        let l = log.clone();
+        let mut second = Box::pin(in_lane("h", "%1", move || async move {
+            l.borrow_mut().push("second");
+            Ok(())
+        }));
+        assert!(futures_util::FutureExt::now_or_never(&mut second).is_none());
+        drop(second);
+        let l = log.clone();
+        let third = in_lane("h", "%1", move || async move {
+            l.borrow_mut().push("third");
+            Ok(())
+        });
+        first.await.unwrap();
+        third.await.unwrap();
+        assert_eq!(*log.borrow(), ["first starts", "first ends", "second", "third"]);
+    });
+}
+
+#[test]
+fn a_send_whose_caller_went_away_is_still_typed_and_settled() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        let mut send = Box::pin(send_message("local", "%9", "hello there", true, Some("gone"), false, false));
+        assert!(futures_util::FutureExt::now_or_never(&mut send).is_none());
+        drop(send);
+        sleep(60_000).await;
+        assert_eq!(b.borrow().sent, ["hello there"]);
+        let w = watchers().get("local", "%9");
+        let state = w.delivery("gone").map(|d| d.state);
+        assert!(state.is_some_and(|s| s != SendStatus::Sending), "{state:?}");
+        watchers().stop("local:%9");
+    });
+}
