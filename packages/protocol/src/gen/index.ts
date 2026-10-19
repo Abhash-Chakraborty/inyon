@@ -677,6 +677,112 @@ export type PairedPhone = { id: string, name: string, pairedAt: number, lastSeen
  */
 thisPhone?: true, };
 
+/**
+ * What a page's progress.json says, counted: tasks done of all tasks, and its `now` and `updated` lines.
+ */
+export type PageProgress = { done: number, total: number, 
+/**
+ * the "working on" line
+ */
+now?: string, 
+/**
+ * when progress.json was last written, as it says (an ISO time)
+ */
+updated?: string, };
+
+/**
+ * GET /api/pages: one page, on one machine. Its id is `<host>/<slug>`.
+ */
+export type PageEntry = { 
+/**
+ * the machine's host id ("local" for the hub's own machine)
+ */
+host: string, 
+/**
+ * `^[a-z0-9][a-z0-9-]{0,62}$`, unique on its machine
+ */
+slug: string, name: string, 
+/**
+ * the project folder: the git top level of the page's folder, or the folder itself
+ */
+project: string, 
+/**
+ * who added it: an agent ("claude", "codex"…), "cli" for the inyon command, or "app"
+ */
+by: string, 
+/**
+ * unix ms
+ */
+added: number, 
+/**
+ * the site's folder, absolute; it holds index.html
+ */
+folder: string, 
+/**
+ * left out when the site has no readable progress.json
+ */
+progress?: PageProgress, };
+
+/**
+ * GET /api/pages
+ */
+export type PageList = { pages: Array<PageEntry>, };
+
+/**
+ * POST /api/pages/:host/:slug/open. `url` is a path on the hub that called (`/v/<token>/`); the app
+ * puts the hub's own address in front of it.
+ */
+export type PageOpen = { url: string, 
+/**
+ * unix ms; twelve hours after it was made
+ */
+expires: number, };
+
+/**
+ * POST /api/pages/:host: add a folder as a page. The slug comes from the folder's name when left out.
+ */
+export type PageRegister = { 
+/**
+ * absolute, and holds index.html
+ */
+path: string, name?: string, slug?: string, };
+
+/**
+ * One entry of ~/.inyon/pages.json, the machine's list of pages.
+ */
+export type PageRecord = { slug: string, name: string, path: string, project: string, by: string, 
+/**
+ * unix ms
+ */
+added: number, };
+
+/**
+ * ~/.inyon/pages.json. Written to a temp file and renamed, under pages.json.lock.
+ */
+export type PagesFile = { 
+/**
+ * always 1
+ */
+v: number, pages: Array<PageRecord>, };
+
+/**
+ * What made a page's site; only Blueprint so far.
+ */
+export type PageKind = "blueprint";
+
+/**
+ * `<site>/.inyon-page.json`, the marker in a site's own folder. It is a dot file, so never served.
+ */
+export type PageMarker = { 
+/**
+ * always 1
+ */
+v: number, slug: string, name: string, kind: PageKind, 
+/**
+ * unix ms
+ */
+created: number, };
+
 export type ClientMsg = { "t": "sub.overview" } | { "t": "sub.chat", host: string, pane: string, } | { "t": "unsub.chat", host: string, pane: string, } | { "t": "chat.more", host: string, pane: string, before: number, } | { "t": "draft", host: string, pane: string, text: string, } | { "t": "term.open", id: string, host: string, pane: string, cols: number, rows: number, } | { "t": "term.in", id: string, d: string, } | { "t": "term.resize", id: string, cols: number, rows: number, } | { "t": "term.close", id: string, } | { "t": "ping" };
 
 export type DraftSource = "app" | "terminal";
