@@ -33,14 +33,19 @@ impl Runtime for TokioRuntime {
 
 /// Runs `main` as the core on this thread until it ends: a current-thread runtime with IO, time
 /// and child processes, a `LocalSet` for the core's tasks, and [`TokioRuntime`] installed. Tasks
-/// still running when `main` returns are dropped with the runtime.
+/// still running when `main` returns are dropped with the runtime, and blocking calls still in
+/// flight (an outgoing request can take minutes) are left to end with the process rather than
+/// waited for: when the hub is told to stop, it saves and goes, as the Bun hub's process.exit did.
 pub fn run_core<F: Future>(main: impl FnOnce() -> F) -> F::Output {
     let tokio = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("a tokio runtime");
     let local = tokio::task::LocalSet::new();
-    local.block_on(&tokio, async move {
+    let out = local.block_on(&tokio, async move {
         install(Rc::new(TokioRuntime));
         main().await
-    })
+    });
+    drop(local);
+    tokio.shutdown_background();
+    out
 }
 
 type Job = Box<dyn FnOnce() -> LocalBoxFuture<'static, ()> + Send>;

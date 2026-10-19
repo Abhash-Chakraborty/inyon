@@ -217,3 +217,14 @@ fn a_remote_machine_goes_through_ssh_with_one_shared_connection() {
     assert_eq!(b.argv(&c, "tmux attach", true)[21], "-tt");
     assert_eq!(b.argv(&local(), "true", false), ["/bin/sh", "-c", "true"]);
 }
+
+#[test]
+fn stopping_does_not_wait_for_a_blocking_call_still_in_flight() {
+    let started = std::time::Instant::now();
+    run_core(|| async {
+        // an outgoing request that would take a long time to answer
+        drop(tokio::task::spawn_blocking(|| std::thread::sleep(std::time::Duration::from_secs(20))));
+        tokio::task::yield_now().await;
+    });
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "took {:?}", started.elapsed());
+}
