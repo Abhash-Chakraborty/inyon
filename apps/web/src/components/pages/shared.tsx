@@ -104,8 +104,6 @@ export const renewLink = (id: string) => useLinkRev.setState((s) => ({ [id]: (s[
 export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined) {
   const rev = useLinkRev((s) => (page ? (s[page.id] ?? 0) : 0))
   const [state, setState] = useState<{ id: string; link?: PageLink; error?: ApiError | Error }>()
-  const current = useRef(state)
-  current.current = state
   const id = page?.id
   // the page shown now: a mint that answers after another page was picked is dropped
   const shown = useRef(id)
@@ -130,39 +128,39 @@ export function usePageLink(page: Pick<Page, 'id' | 'host' | 'slug'> | undefined
     setState((s) => (s?.id === id ? { id, link: s.link } : { id }))
     void mint()
   }, [id, rev, mint])
-  useEffect(() => {
-    const check = () => {
-      if (document.visibilityState !== 'visible') return
-      const l = current.current?.link
-      if (l && shouldRenew(l.until, Date.now())) void mint()
-    }
-    window.addEventListener('focus', check)
-    document.addEventListener('visibilitychange', check)
-    return () => {
-      window.removeEventListener('focus', check)
-      document.removeEventListener('visibilitychange', check)
-    }
-  }, [mint])
-  // a page left on screen (a second monitor, a tablet on a stand) gets no focus event: renew on time,
-  // and after a failed try (the hub restarting, the phone off the VPN) again with a growing wait while
-  // it stays on screen; a new link moves `until`, which starts this over
+  // renewed on time by a timer, since a page left on screen (a second monitor, a tablet on a stand)
+  // gets no focus event, and on coming back into view after that. A failed try (the hub restarting,
+  // the phone off the VPN), whichever started it, is tried again with a growing wait while the page
+  // stays on screen; a new link moves `until`, which starts this over
   const mine = state?.id === id ? state : undefined
   const until = mine?.link?.until
   useEffect(() => {
     if (until === undefined) return
     let stopped = false
+    let busy = false
     let wait = RENEW_RETRY_MS
-    let t: ReturnType<typeof setTimeout>
+    let t: ReturnType<typeof setTimeout> | undefined
     const renew = async () => {
-      if (document.visibilityState !== 'visible') return // coming back into view renews it
-      if ((await mint()) || stopped) return
+      clearTimeout(t)
+      if (stopped || busy || document.visibilityState !== 'visible') return // coming back into view renews it
+      busy = true
+      const ok = await mint()
+      busy = false
+      if (ok || stopped) return
       t = setTimeout(renew, wait)
       wait = nextRetry(wait)
     }
+    const check = () => {
+      if (document.visibilityState === 'visible' && shouldRenew(until, Date.now())) void renew()
+    }
     t = setTimeout(renew, renewIn(until, Date.now()))
+    window.addEventListener('focus', check)
+    document.addEventListener('visibilitychange', check)
     return () => {
       stopped = true
       clearTimeout(t)
+      window.removeEventListener('focus', check)
+      document.removeEventListener('visibilitychange', check)
     }
   }, [until, mint])
   return { link: mine?.link, error: mine?.error, retry: mint }

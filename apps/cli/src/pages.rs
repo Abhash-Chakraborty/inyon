@@ -39,6 +39,8 @@ const LOCK_WAIT: Duration = Duration::from_secs(5);
 const NAME_MAX: usize = 200;
 /// How much of index.html is read for its <title>.
 const TITLE_READ: usize = 256 * 1024;
+/// A bigger `.inyon-page.json` isn't read for a page's name and slug.
+const MARKER_MAX: u64 = 64 * 1024;
 
 // ---------- the shared rules ----------
 
@@ -300,9 +302,43 @@ fn decode_entities(s: &str) -> String {
 }
 
 fn page_title(site: &Path) -> Option<String> {
-    let bytes = fs::read(site.join("index.html")).ok()?;
-    let head = &bytes[..bytes.len().min(TITLE_READ)];
-    title_of(&String::from_utf8_lossy(head))
+    use std::io::Read;
+    let mut head = Vec::new();
+    open_plain(&site.join("index.html")).ok()?.0.take(TITLE_READ as u64).read_to_end(&mut head).ok()?;
+    title_of(&String::from_utf8_lossy(&head))
+}
+
+/// Opens a file to read without ever waiting on it: with O_NONBLOCK and without following a symlink
+/// at its end, and only when the open file is a plain file. A FIFO left in a site's folder (or as
+/// the list) would otherwise hold the read until something wrote to it. A plain file reads the
+/// same with O_NONBLOCK set. The file and its size.
+fn open_plain(path: &Path) -> std::io::Result<(fs::File, u64)> {
+    let mut o = OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let file = o.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() {
+        return Err(std::io::Error::new(ErrorKind::InvalidData, "not a plain file"));
+    }
+    Ok((file, meta.len()))
+}
+
+/// A plain file's bytes (see open_plain), refused when there are more than `max`.
+fn read_plain(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let too_big = || std::io::Error::new(ErrorKind::InvalidData, "too big");
+    let (file, len) = open_plain(path)?;
+    if len > max {
+        return Err(too_big());
+    }
+    let mut out = Vec::with_capacity(len as usize);
+    file.take(max.saturating_add(1)).read_to_end(&mut out)?;
+    if out.len() as u64 > max {
+        return Err(too_big());
+    }
+    Ok(out)
 }
 
 /// A name as given: trimmed, at most 200 characters, None when empty.
@@ -318,7 +354,7 @@ struct Marker {
 }
 
 fn read_marker(site: &Path) -> Marker {
-    let raw = fs::read_to_string(site.join(".inyon-page.json")).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| match v {
+    let raw = read_plain(&site.join(".inyon-page.json"), MARKER_MAX).ok().and_then(|t| serde_json::from_slice::<Value>(&t).ok()).and_then(|v| match v {
         Value::Object(m) => Some(m),
         _ => None,
     });
@@ -403,13 +439,8 @@ fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T,
     let until = Instant::now() + LOCK_WAIT;
     let mine = format!("{} {}\n", std::process::id(), random_tag());
     let _held = loop {
-        match OpenOptions::new().write(true).create_new(true).open(&lock) {
-            Ok(mut fh) => {
-                let _ = fh.write_all(mine.as_bytes());
-                break Held(lock, mine);
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(cant_write(file, &e)),
+        if make_lock(&lock, &mine, |fh, b| fh.write_all(b)).map_err(|e| cant_write(file, &e))? {
+            break Held(lock, mine);
         }
         if take_over_stale(&lock).map_err(|e| cant_write(file, &e))? {
             continue;
@@ -420,6 +451,37 @@ fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T,
         std::thread::sleep(Duration::from_millis(25));
     };
     f()
+}
+
+/// Makes the lock with this writer's tag in it; false when another writer has it. A lock whose tag
+/// couldn't be written (a full disk) could never be released, so it is taken away again, while the
+/// path still leads to the file this writer made.
+fn make_lock(lock: &Path, mine: &str, write: impl FnOnce(&mut fs::File, &[u8]) -> std::io::Result<()>) -> std::io::Result<bool> {
+    let mut fh = match OpenOptions::new().write(true).create_new(true).open(lock) {
+        Ok(fh) => fh,
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if let Err(e) = write(&mut fh, mine.as_bytes()) {
+        if fh.metadata().ok().zip(fs::metadata(lock).ok()).is_some_and(|(made, now)| same_file(&made, &now)) {
+            let _ = fs::remove_file(lock);
+        }
+        return Err(e);
+    }
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+// No file id here without another dependency; a lock this young (seconds, not the ten before
+// another writer takes one over) is this writer's.
+#[cfg(not(unix))]
+fn same_file(_: &fs::Metadata, _: &fs::Metadata) -> bool {
+    true
 }
 
 fn lock_of(file: &Path) -> PathBuf {
@@ -513,8 +575,9 @@ fn write_atomic(file: &Path, text: &str, mode: u32) -> std::io::Result<()> {
 
 /// The file as `{v: 1, pages: [...]}` (other keys kept), an empty list when it isn't there.
 fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
-    let text = match fs::read_to_string(file) {
-        Ok(t) => t,
+    let text = match read_plain(file, u64::MAX).map(String::from_utf8) {
+        Ok(Ok(t)) => t,
+        Ok(Err(e)) => return Err(format!("Can't read {}: {e}", file.display())),
         Err(e) if e.kind() == ErrorKind::NotFound => {
             let mut m = Map::new();
             m.insert("v".into(), json!(1));
@@ -842,6 +905,79 @@ mod tests {
         assert_eq!(real_problem(r"\\server\share\site", r"\\server\share\site", r"C:\Users\a"), Some(NOT_ABSOLUTE));
         assert_eq!(real_problem("/home/a/site", "/home/a/.ssh", "/home/a"), Some(PRIVATE_FOLDER));
         assert_eq!(real_problem(r"Z:\x", r"\\server", r"C:\Users\a"), Some(NOT_ABSOLUTE));
+    }
+
+    /// A FIFO at `p`, and a writer that opens it after two seconds and closes it at once: a read
+    /// that opened it as a plain file waits that long instead of hanging the test for good. The
+    /// writer is stopped when this is dropped.
+    #[cfg(unix)]
+    struct Fifo(std::process::Child);
+
+    #[cfg(unix)]
+    impl Fifo {
+        fn at(p: &Path) -> Fifo {
+            let _ = fs::remove_file(p);
+            assert!(std::process::Command::new("mkfifo").arg(p).status().unwrap().success());
+            Fifo(std::process::Command::new("sh").args(["-c", "sleep 2; : > \"$1\"", "sh"]).arg(p).spawn().unwrap())
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for Fifo {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_the_site_or_as_the_list_is_skipped_at_once_not_read_until_something_writes_to_it() {
+        let dir = fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("inyon-cli-fifo-{}-{}", std::process::id(), random_tag()));
+        let home = dir.join("home");
+        let site = home.join("work/piped");
+        fs::create_dir_all(&site).unwrap();
+        fs::write(site.join("index.html"), "<title>Piped plan</title>").unwrap();
+        let file = home.join(".inyon/pages.json");
+        let quick = |at: Instant| assert!(at.elapsed() < Duration::from_secs(1), "took {:?}", at.elapsed());
+        {
+            // the marker: the slug comes from the folder, the name from the title
+            let _w = Fifo::at(&site.join(".inyon-page.json"));
+            let at = Instant::now();
+            let added = add(&file, &home, &site, None, None, "cli", 1).unwrap();
+            quick(at);
+            assert_eq!((field(&added.page, "slug"), field(&added.page, "name")), ("piped", "Piped plan"));
+        }
+        {
+            // index.html swapped for a FIFO after the check: no title, at once
+            let _w = Fifo::at(&site.join("index.html"));
+            let at = Instant::now();
+            assert_eq!(page_title(&site), None);
+            quick(at);
+        }
+        {
+            // the list itself: refused, at once
+            let _w = Fifo::at(&file);
+            fs::remove_file(site.join("index.html")).unwrap();
+            fs::write(site.join("index.html"), "<title>Piped plan</title>").unwrap();
+            let at = Instant::now();
+            assert!(add(&file, &home, &site, None, None, "cli", 1).err().unwrap().starts_with("Can't read"));
+            quick(at);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lock_its_tag_could_not_be_written_to_is_taken_away_again_not_left_for_ten_seconds() {
+        let dir = std::env::temp_dir().join(format!("inyon-cli-lock-full-{}-{}", std::process::id(), random_tag()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("pages.json.lock");
+        let full = |_: &mut fs::File, _: &[u8]| Err(std::io::Error::new(ErrorKind::StorageFull, "no space left on device"));
+        assert_eq!(make_lock(&lock, "1 tag\n", full).unwrap_err().kind(), ErrorKind::StorageFull);
+        assert!(!lock.exists());
+        // the next writer gets it at once
+        assert_eq!(with_lock(&dir.join("pages.json"), || Ok("in")), Ok("in"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

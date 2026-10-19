@@ -317,6 +317,45 @@ describe('the viewer', () => {
     }
   })
 
+  test('a renewal on coming back into view that fails is tried again after 1 min, then longer, without waiting for another focus', async () => {
+    let timers: { fn: () => void; ms: number }[] = []
+    const realSet = globalThis.setTimeout
+    const realNow = Date.now
+    globalThis.setTimeout = ((fn: () => void, ms?: number, ...a: unknown[]) => ((ms ?? 0) >= 60_000 ? (timers.push({ fn, ms: ms! }), 0) : realSet(fn, ms, ...a))) as typeof setTimeout
+    const fire = async (ms: number) => {
+      const t = timers.find((x) => x.ms === ms)
+      expect([ms, !!t]).toEqual([ms, true])
+      timers = []
+      await act(async () => t!.fn())
+      await flush()
+    }
+    try {
+      api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
+      const { container } = await at('/pages/local/ghostex')
+      await flush()
+      timers = []
+      // back after 11 h 10 min (the timer slept with the device), and the hub doesn't answer
+      Date.now = () => realNow() + 11 * 3_600_000 + 10 * 60_000
+      api.openPage.mockRejectedValue(new Error("Couldn't reach the hub") as never)
+      await act(async () => {
+        window.dispatchEvent(new Event('focus'))
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await flush()
+      // both events, one try
+      expect(api.openPage).toHaveBeenCalledTimes(2)
+      for (const wait of [60_000, 120_000, 240_000, 480_000, 600_000]) await fire(wait)
+      expect(api.openPage).toHaveBeenCalledTimes(7)
+      api.openPage.mockResolvedValue({ url: '/v/v1.new.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
+      await fire(600_000)
+      expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.new.sig/?theme=light')
+      expect(timers.map((t) => Math.round(t.ms / 3_600_000))).toEqual([11])
+    } finally {
+      globalThis.setTimeout = realSet
+      Date.now = realNow
+    }
+  })
+
   test("renewal goes by how long the hub says the link lasts, not by the hub's clock", async () => {
     // the hub's clock is two hours ahead of this device's
     api.openPage.mockResolvedValue({ url: '/v/v1.old.sig/', expires: Date.now() + 14 * 3_600_000, ttl: 12 * 3_600_000 } as never)

@@ -41,6 +41,8 @@ pub const LOCK_STALE_MS: u64 = 10_000;
 pub const PROGRESS_TTL_MS: u64 = 30_000;
 /// Bigger progress files aren't read for the list.
 const PROGRESS_MAX: u64 = 1024 * 1024;
+/// A bigger `.inyon-page.json` isn't read for a page's name and slug.
+const MARKER_MAX: u64 = 64 * 1024;
 
 pub const UNKNOWN_PAGE: &str = "Unknown page";
 pub const OTHER_MACHINE: &str = "Pages can only be added on the hub's own machine for now";
@@ -150,7 +152,7 @@ impl Registry {
             return;
         }
         *self.seen.borrow_mut() = stamp;
-        let text = std::fs::read(&self.file).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        let text = read_plain(&self.file, u64::MAX).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         let parsed = parse(&text);
         *self.broken.borrow_mut() = parsed.is_none();
         let mut out: Vec<Record> = vec![];
@@ -185,7 +187,7 @@ impl Registry {
     pub async fn update<T>(&self, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
         let file = self.file.clone();
         with_lock(&lock_of(&self.file), 3000, move || {
-            let current = match std::fs::read(&file) {
+            let current = match read_plain(&file, u64::MAX) {
                 Ok(b) => parse(&String::from_utf8_lossy(&b)).ok_or_else(|| http(500, BROKEN_FILE))?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({ "v": 1, "pages": [] }).as_object().cloned().unwrap_or_default(),
                 Err(e) => return Err(HubError::plain(e.to_string())),
@@ -240,6 +242,31 @@ fn create_private(p: &Path, exclusive: bool) -> std::io::Result<std::fs::File> {
     o.open(p)
 }
 
+/// A file's bytes, read without ever waiting on it: opened with O_NONBLOCK and without following a
+/// symlink at its end, then read only when the open file is a plain file of at most `max` bytes. A
+/// FIFO an agent leaves in a page folder (or as the list) would otherwise hold the read, and with it
+/// the whole hub, until something wrote to it. A plain file reads the same with O_NONBLOCK set.
+pub fn read_plain(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let not_plain = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not a plain file of a size the hub reads");
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    let file = o.open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.len() > max {
+        return Err(not_plain());
+    }
+    // read to the end (it may have grown since), refusing it once it passes `max`
+    let mut out = Vec::with_capacity(meta.len() as usize);
+    file.take(max.saturating_add(1)).read_to_end(&mut out)?;
+    if out.len() as u64 > max {
+        return Err(not_plain());
+    }
+    Ok(out)
+}
+
 /// Writes beside the file and renames over it, so a reader never sees half a list.
 fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
@@ -270,13 +297,8 @@ pub async fn with_lock<T>(lock: &Path, wait: u64, f: impl FnOnce() -> HubResult<
     let until = now_wall() + wait;
     let mine = format!("{} {}\n", std::process::id(), crate::http::random_hex(8));
     loop {
-        match create_private(lock, true) {
-            Ok(mut fd) => {
-                let _ = fd.write_all(mine.as_bytes());
-                break;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(plain(e)),
+        if make_lock(lock, &mine, |f, b| f.write_all(b)).map_err(plain)? {
+            break;
         }
         if take_over_stale(lock).map_err(plain)? {
             continue;
@@ -289,6 +311,24 @@ pub async fn with_lock<T>(lock: &Path, wait: u64, f: impl FnOnce() -> HubResult<
     let r = f();
     release_lock(lock, &mine);
     r
+}
+
+/// Makes the lock with this writer's tag in it; false when another writer has it. A lock whose tag
+/// couldn't be written (a full disk) could never be released, so it is taken away again, while the
+/// path still leads to the file this writer made.
+pub fn make_lock(lock: &Path, mine: &str, write: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>) -> std::io::Result<bool> {
+    let mut f = match create_private(lock, true) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    if let Err(e) = write(&mut f, mine.as_bytes()) {
+        if f.metadata().ok().zip(std::fs::metadata(lock).ok()).is_some_and(|(made, now)| same_file(&made, &now)) {
+            let _ = std::fs::remove_file(lock);
+        }
+        return Err(e);
+    }
+    Ok(true)
 }
 
 /// The file's identity, to tell a lock judged stale from a new one made in its place.
@@ -461,11 +501,8 @@ impl ProgressCache {
                 return v.clone();
             }
         }
-        let file = Path::new(folder).join("progress.json");
-        let value = std::fs::metadata(&file)
+        let value = read_plain(&Path::new(folder).join("progress.json"), PROGRESS_MAX)
             .ok()
-            .filter(|m| m.len() <= PROGRESS_MAX)
-            .and_then(|_| std::fs::read(&file).ok())
             .and_then(|b| inyon_core::js::json::parse(&String::from_utf8_lossy(&b)))
             .and_then(|d| progress_summary(&d));
         self.0.borrow_mut().insert(folder.to_owned(), (now, value.clone()));
@@ -563,7 +600,8 @@ fn lexical(p: &Path) -> PathBuf {
 
 /// The name and slug in a site's `.inyon-page.json`, when it has usable ones.
 fn marker_of(folder: &str) -> (Option<String>, Option<String>) {
-    let Some(Value::Object(m)) = std::fs::read(Path::new(folder).join(".inyon-page.json")).ok().and_then(|b| inyon_core::js::json::parse(&String::from_utf8_lossy(&b))) else {
+    let Some(Value::Object(m)) = read_plain(&Path::new(folder).join(".inyon-page.json"), MARKER_MAX).ok().and_then(|b| inyon_core::js::json::parse(&String::from_utf8_lossy(&b)))
+    else {
         return (None, None);
     };
     let name = m.get("name").and_then(Value::as_str).map(|n| n.jtrim()).filter(|n| !n.is_empty()).map(|n| n.to16(200).to_owned());

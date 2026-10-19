@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test'
 import fs from 'node:fs'
 import net from 'node:net'
 import os from 'node:os'
@@ -18,6 +18,7 @@ const RESPONSES = fixture('responses.json')
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-pages-test-'))
 afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
+afterAll(() => mock.restore())
 let n = 0
 /** A fresh home folder, a store and a hub feature over them, at the fixture clock. */
 function hub(over: Partial<Parameters<typeof pagesFeature>[0]> = {}, store: Store = memoryStore()) {
@@ -61,6 +62,22 @@ const call = async (h: H, route: string, method: string, params: Record<string, 
   const r = (h.pages.routes as any)[route][method]
   const req = Object.assign(new Request('http://hub.test/x', { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), { params })
   return (await r(req)) as Response
+}
+/**
+ * A FIFO at `p`, and a writer that opens it after `ms` and closes it at once: a hub that opened it
+ * as a plain file waits that long (and then reads nothing), instead of hanging the test for good.
+ * Stop the writer at the end, since a hub that never opens it leaves the writer waiting.
+ */
+function fifo(p: string, ms = 2000) {
+  fs.rmSync(p, { force: true })
+  expect(Bun.spawnSync(['mkfifo', p]).exitCode).toBe(0)
+  return Bun.spawn(['sh', '-c', `sleep ${ms / 1000}; : > "$1"`, 'sh', p], { stdout: 'ignore', stderr: 'ignore' })
+}
+/** How long `f` took, in ms. */
+const timed = async <T>(f: () => Promise<T>): Promise<[T, number]> => {
+  const at = performance.now()
+  const v = await f()
+  return [v, performance.now() - at]
 }
 const status = (p: Promise<unknown>) => p.then(() => 200, (e) => (e instanceof HttpError ? e.status : Promise.reject(e)))
 const message = (p: Promise<unknown>) => p.then(() => '', (e) => (e as Error).message)
@@ -353,6 +370,33 @@ describe('~/.inyon/pages.json', () => {
     expect(await done()).toBe(2)
   })
 
+  test('a FIFO as progress.json is skipped at once, not read until something writes to it', async () => {
+    const h = hub()
+    const a = site('a', true)
+    const writer = fifo(path.join(a, 'progress.json'))
+    try {
+      writeList(h.file, [record('a', a)])
+      const [pages, ms] = await timed(async () => (await (await call(h, '/api/pages', 'GET', {})).json()).pages)
+      expect(pages.map((p: any) => [p.slug, p.progress ?? null])).toEqual([['a', null]])
+      expect(ms).toBeLessThan(1000)
+    } finally {
+      writer.kill()
+    }
+  })
+
+  test('a FIFO as the list file itself is no list, at once', async () => {
+    const h = hub()
+    fs.mkdirSync(path.dirname(h.file), { recursive: true })
+    const writer = fifo(h.file)
+    try {
+      const [pages, ms] = await timed(async () => (await (await call(h, '/api/pages', 'GET', {})).json()).pages)
+      expect(pages).toEqual([])
+      expect(ms).toBeLessThan(1000)
+    } finally {
+      writer.kill()
+    }
+  })
+
   test('only entries that may be served come out: well formed, a real folder, the first of a slug', async () => {
     const h = hub()
     const good = site('good')
@@ -447,6 +491,19 @@ describe('adding a page', () => {
     expect(projectOf(path.join(repo, 'sub'), g24)).toBe(repo)
     expect(projectOf(path.join(tree, 'deep'), g24)).toBe(tree)
     fs.rmSync(outside, { recursive: true })
+  })
+
+  test('a FIFO as the marker is skipped at once: the name and slug come from the folder', async () => {
+    const h = hub()
+    const folder = site('piped')
+    const writer = fifo(path.join(folder, '.inyon-page.json'))
+    try {
+      const [entry, ms] = await timed(async () => (await call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: folder })).json())
+      expect([entry.slug, entry.name]).toEqual([path.basename(folder), path.basename(folder)])
+      expect(ms).toBeLessThan(1000)
+    } finally {
+      writer.kill()
+    }
   })
 
   test('without a marker, the slug comes from the folder (whatever the name), and is unique', async () => {
@@ -587,6 +644,22 @@ describe('the lock', () => {
     // released when the change fails, too
     expect(await message(withLock(lock, () => { throw new Error('boom') }))).toBe('boom')
     expect(fs.existsSync(lock)).toBe(false)
+  })
+
+  test('a lock its tag could not be written to (a full disk) is taken away again, not left for 10 seconds', async () => {
+    const lock = path.join(root, `lock-${++n}`, 'pages.json.lock')
+    const write = spyOn(fs, 'writeSync').mockImplementationOnce(() => {
+      throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })
+    })
+    let ran = false
+    try {
+      expect(await message(withLock(lock, () => (ran = true), 100))).toBe(CANT_WRITE_LIST)
+    } finally {
+      write.mockRestore()
+    }
+    expect([ran, fs.existsSync(lock)]).toEqual([false, false])
+    // the next writer gets it at once
+    expect(await withLock(lock, () => 'in', 100)).toBe('in')
   })
 
   test('is removed only while it is still this writer\'s', async () => {

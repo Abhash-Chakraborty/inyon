@@ -24,6 +24,13 @@ function site(rel, { index = true } = {}) {
   if (index) writeFileSync(join(dir, 'index.html'), '<!doctype html><title>x</title>');
   return dir;
 }
+// A FIFO at `p`, and a writer that opens it after 2 s and closes it at once: a script that opened it
+// as a plain file waits that long, instead of hanging the test for good. Kill the writer at the end.
+function fifo(p) {
+  rmSync(p, { force: true });
+  expect(spawnSync('mkfifo', [p]).status).toBe(0);
+  return spawn('sh', ['-c', 'sleep 2; : > "$1"', 'sh', p], { stdio: 'ignore' });
+}
 const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...env(), GIT_CONFIG_GLOBAL: '/dev/null' } });
 
 beforeEach(() => {
@@ -122,6 +129,24 @@ describe('publish.mjs', () => {
     expect(pub([dir]).status).toBe(0);
     expect(list().pages[0]).toMatchObject({ slug: 'from-marker', name: 'Marker name' });
     expect(marker(dir).created).toBe(5);
+  });
+
+  test('a FIFO as the marker or as the list is skipped at once, not read until something writes to it', () => {
+    const dir = site('piped');
+    let writer = fifo(join(dir, '.inyon-page.json'));
+    try {
+      const at = Date.now();
+      expect(pub([dir]).status).toBe(0);
+      expect(Date.now() - at).toBeLessThan(1500);
+      expect(list().pages[0].slug).toBe('piped');
+    } finally { writer.kill(); }
+    writer = fifo(join(home, '.inyon/pages.json'));
+    try {
+      const at = Date.now();
+      const r = pub([site('other')]);
+      expect(Date.now() - at).toBeLessThan(1500);
+      expect([r.status, r.stderr.includes("isn't valid JSON")]).toEqual([1, true]);
+    } finally { writer.kill(); }
   });
 
   test('bad slugs and folders are refused, and the list is left alone', () => {
@@ -318,6 +343,15 @@ describe('publish.mjs', () => {
     writeFileSync(lock, '');
     expect(() => withLock(join(home, '.inyon/pages.json'), () => 1, { waitMs: 100 })).toThrow('held by another writer');
     rmSync(lock);
+  });
+
+  test('a lock its tag could not be written to (a full disk) is taken away again, not left for 10 seconds', () => {
+    const file = join(home, '.inyon/pages.json');
+    const full = () => { throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' }); };
+    let ran = false;
+    expect(() => withLock(file, () => (ran = true), { waitMs: 100, write: full })).toThrow('ENOSPC');
+    expect([ran, existsSync(`${file}.lock`)]).toEqual([false, false]);
+    expect(withLock(file, () => 'in', { waitMs: 100 })).toBe('in');
   });
 
   test('the lock is removed only while it is still this writer\'s', () => {

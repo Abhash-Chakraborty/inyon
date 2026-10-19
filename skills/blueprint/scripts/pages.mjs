@@ -10,7 +10,7 @@
 //
 // `added` and `created` are ms since 1970. pages.json is written to a temp file and renamed into place,
 // while holding pages.json.lock (created with O_EXCL, taken over once it is 10 s old).
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -126,11 +126,36 @@ export function agentName(env = process.env) {
   return 'agent';
 }
 
-const readJson = (f) => JSON.parse(readFileSync(f, 'utf8'));
+// A file's text, read without ever waiting on it: opened with O_NONBLOCK and without following a
+// symlink at its end, and read only when the open file is a plain file of at most `max` bytes. A
+// FIFO left in a site's folder (or as the list) would otherwise hold the read until something wrote
+// to it. Throws the open's error, or a plain Error for anything else.
+export function readPlain(file, max = Infinity) {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > max) throw new Error(`${file} isn't a plain file of a size this reads`);
+    const parts = [];
+    let got = 0;
+    for (;;) {
+      const buf = Buffer.alloc(Math.min(64 * 1024, max + 1 - got));
+      const n = readSync(fd, buf, 0, buf.length, null);
+      if (n === 0) break;
+      parts.push(buf.subarray(0, n));
+      got += n;
+      if (got > max) throw new Error(`${file} is too big`);
+    }
+    return Buffer.concat(parts).toString('utf8');
+  } finally { closeSync(fd); }
+}
+
+const readJson = (f, max) => JSON.parse(readPlain(f, max));
+// A bigger `.inyon-page.json` isn't read for a page's name and slug.
+const MARKER_MAX = 64 * 1024;
 
 export function readMarker(site) {
   try {
-    const m = readJson(join(site, '.inyon-page.json'));
+    const m = readJson(join(site, '.inyon-page.json'), MARKER_MAX);
     return m && typeof m === 'object' && !Array.isArray(m) ? m : null;
   } catch { return null; }
 }
@@ -159,14 +184,20 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 // and is taken over. The lock holds this process's id and a random tag, and is removed afterwards
 // only while it still holds them. A failure other than "someone else has it" (a folder an agent's
 // sandbox keeps read-only: EACCES, EPERM, EROFS) is thrown at once, never waited on.
-export function withLock(file, fn, { waitMs = 15_000 } = {}) {
+export function withLock(file, fn, { waitMs = 15_000, write = writeSync } = {}) {
   const lock = `${file}.lock`;
   const until = Date.now() + waitMs;
   const mine = `${process.pid} ${randomBytes(8).toString('hex')}\n`;
   for (;;) {
     try {
       const fd = openSync(lock, 'wx', 0o600);
-      try { writeSync(fd, mine); } finally { closeSync(fd); }
+      try {
+        if (write(fd, mine) !== Buffer.byteLength(mine)) throw new Error(`short write to ${lock}`);
+      } catch (e) {
+        // a lock without this writer's tag (a full disk) could never be released: take it away again
+        dropMade(lock, fd);
+        throw e;
+      } finally { closeSync(fd); }
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -176,6 +207,14 @@ export function withLock(file, fn, { waitMs = 15_000 } = {}) {
     pause(25 + Math.random() * 50);
   }
   try { return fn(); } finally { try { if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock); } catch {} }
+}
+
+// Removes the lock this writer made as `fd`, while the path still leads to that file.
+function dropMade(lock, fd) {
+  try {
+    const made = fstatSync(fd), now = statSync(lock);
+    if (now.dev === made.dev && now.ino === made.ino) unlinkSync(lock);
+  } catch {}
 }
 
 // Removes a lock left by a writer that died; true when the caller should try to take it again at once.

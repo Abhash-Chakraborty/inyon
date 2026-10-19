@@ -47,6 +47,8 @@ export const LOCK_STALE_MS = 10_000
 export const PROGRESS_TTL_MS = 30_000
 /** Bigger progress files aren't read for the list. */
 const PROGRESS_MAX = 1024 * 1024
+/** A bigger `.inyon-page.json` isn't read for a page's name and slug. */
+const MARKER_MAX = 64 * 1024
 
 export const UNKNOWN_PAGE = 'Unknown page'
 export const OTHER_MACHINE = "Pages can only be added on the hub's own machine for now"
@@ -104,7 +106,7 @@ export function pageRegistry(file: string, home: string, onList: (records: PageR
     const stamp = `${st.ino}:${st.size}:${st.mtimeMs}`
     if (stamp === seen) return
     seen = stamp
-    const parsed = parse(fs.readFileSync(file, 'utf8'))
+    const parsed = parse(readPlain(file))
     broken = parsed === undefined
     const slugs = new Set<string>()
     const next: PageRecord[] = []
@@ -144,7 +146,7 @@ export function pageRegistry(file: string, home: string, onList: (records: PageR
       return withLock(`${file}.lock`, () => {
         let text: string | undefined
         try {
-          text = fs.readFileSync(file, 'utf8')
+          text = readPlain(file)
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
         }
@@ -175,6 +177,37 @@ const realOr = (p: string) => {
     return p
   }
 }
+
+/**
+ * A file's text, read without ever waiting on it: opened with O_NONBLOCK and without following a
+ * symlink at its end, then read only when the open file is a plain file of at most `max` bytes. A
+ * FIFO an agent leaves in a page folder (or as the list) would otherwise hold the read, and with it
+ * the whole hub, until something wrote to it. Throws the open's error (ENOENT for a missing file),
+ * or NOT_PLAIN.
+ */
+export function readPlain(file: string, max = Infinity): string {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0))
+  try {
+    const st = fs.fstatSync(fd)
+    if (!st.isFile() || st.size > max) throw notPlain()
+    // read to the end (it may have grown since), refusing it once it passes `max`
+    const parts: Buffer[] = []
+    let got = 0
+    for (;;) {
+      const buf = Buffer.alloc(Math.min(64 * 1024, max + 1 - got))
+      const n = fs.readSync(fd, buf, 0, buf.length, null)
+      if (n === 0) break
+      parts.push(buf.subarray(0, n))
+      got += n
+      if (got > max) throw notPlain()
+    }
+    return Buffer.concat(parts).toString('utf8')
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
+const notPlain = () => Object.assign(new Error('not a plain file of a size the hub reads'), { code: 'NOT_PLAIN' })
 
 /** Writes beside the file and renames over it, so a reader never sees half a list. */
 function writeAtomic(file: string, text: string) {
@@ -210,7 +243,11 @@ export async function withLock<T>(lock: string, fn: () => T, wait = 3000): Promi
       cantWrite(() => {
         const fd = fs.openSync(lock, 'wx', 0o600)
         try {
-          fs.writeSync(fd, mine)
+          if (fs.writeSync(fd, mine) !== Buffer.byteLength(mine)) throw new Error('short write')
+        } catch (err) {
+          // a lock without this writer's tag (a full disk) could never be released: take it away again
+          dropMade(lock, fd)
+          throw err
         } finally {
           fs.closeSync(fd)
         }
@@ -271,6 +308,15 @@ export function removeJudged(lock: string, old: fs.Stats) {
     } catch {}
   }
   fs.rmSync(aside, { force: true })
+}
+
+/** Removes the lock this writer made as `fd`, while the path still leads to that file. */
+function dropMade(lock: string, fd: number) {
+  try {
+    const made = fs.fstatSync(fd)
+    const now = fs.statSync(lock)
+    if (now.dev === made.dev && now.ino === made.ino) fs.rmSync(lock, { force: true })
+  } catch {}
 }
 
 /** Removes the lock if it is still this writer's. */
@@ -351,8 +397,7 @@ export function progressCache(now: () => number) {
       if (hit && now() - hit.at < PROGRESS_TTL_MS) return hit.value
       let value: ReturnType<typeof progressSummary>
       try {
-        const file = path.join(folder, 'progress.json')
-        if (fs.statSync(file).size <= PROGRESS_MAX) value = progressSummary(JSON.parse(fs.readFileSync(file, 'utf8')))
+        value = progressSummary(JSON.parse(readPlain(path.join(folder, 'progress.json'), PROGRESS_MAX)))
       } catch {}
       cache.set(folder, { at: now(), value })
       return value
@@ -508,7 +553,7 @@ function isDir(p: string) {
 /** The name and slug in a site's `.inyon-page.json`, when it has a usable one. */
 function markerOf(folder: string): { name?: string; slug?: string } {
   try {
-    const m = JSON.parse(fs.readFileSync(path.join(folder, '.inyon-page.json'), 'utf8'))
+    const m = JSON.parse(readPlain(path.join(folder, '.inyon-page.json'), MARKER_MAX))
     if (!isObject(m)) return {}
     return {
       ...(typeof m.name === 'string' && m.name.trim() ? { name: m.name.trim().slice(0, 200) } : {}),

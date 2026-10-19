@@ -83,6 +83,27 @@ fn site(t: &Tmp, name: &str, copy: bool) -> String {
     s(&dir)
 }
 
+/// A FIFO at `p`, and a writer that opens it after two seconds and closes it at once: a hub that
+/// opened it as a plain file waits that long (and then reads nothing), instead of hanging the test
+/// for good. The writer is stopped when this is dropped, since a hub that never opens it leaves the
+/// writer waiting.
+struct Fifo(std::process::Child);
+
+impl Fifo {
+    fn at(p: &Path) -> Fifo {
+        let _ = std::fs::remove_file(p);
+        assert!(std::process::Command::new("mkfifo").arg(p).status().unwrap().success());
+        Fifo(std::process::Command::new("sh").args(["-c", "sleep 2; : > \"$1\"", "sh"]).arg(p).spawn().unwrap())
+    }
+}
+
+impl Drop for Fifo {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn record(slug: &str, path: &str) -> Value {
     json!({ "slug": slug, "name": slug, "path": path, "project": path, "by": "cli", "added": 1 })
 }
@@ -684,6 +705,38 @@ fn progress_is_read_at_most_every_thirty_seconds() {
 }
 
 #[test]
+fn a_fifo_as_progress_json_is_skipped_at_once_not_read_until_something_writes_to_it() {
+    let tmp = Tmp::new("fifo-progress");
+    let home = tmp.join("home");
+    let a = site(&tmp, "a", true);
+    let _writer = Fifo::at(&Path::new(&a).join("progress.json"));
+    write_list(&pages_file(&home), json!([record("a", &a)]));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let at = std::time::Instant::now();
+        let got = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert!(at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", at.elapsed());
+        assert_eq!(got["pages"][0]["slug"], "a");
+        assert_eq!(got["pages"][0].get("progress"), None);
+    });
+}
+
+#[test]
+fn a_fifo_as_the_list_file_itself_is_no_list_at_once() {
+    let tmp = Tmp::new("fifo-list");
+    let home = tmp.join("home");
+    let file = pages_file(&home);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let _writer = Fifo::at(&file);
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let at = std::time::Instant::now();
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await, Ok(json!({ "pages": [] })));
+        assert!(at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", at.elapsed());
+    });
+}
+
+#[test]
 fn only_entries_that_may_be_served_come_out() {
     let tmp = Tmp::new("filter");
     let home = tmp.join("home");
@@ -829,6 +882,22 @@ fn the_project_is_found_the_same_with_any_git_old_ones_that_print_unknown_option
         let g24 = s(&old.join("git-2.4"));
         assert_eq!(project_of(&s(&repo.join("sub")), &g24).await, s(&repo));
         assert_eq!(project_of(&s(&tree.join("deep")), &g24).await, s(&tree));
+    });
+}
+
+#[test]
+fn a_fifo_as_the_marker_is_skipped_at_once_the_name_and_slug_come_from_the_folder() {
+    let tmp = Tmp::new("fifo-marker");
+    let home = tmp.join("home");
+    let folder = site(&tmp, "piped", false);
+    let _writer = Fifo::at(&Path::new(&folder).join(".inyon-page.json"));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let at = std::time::Instant::now();
+        let entry = add_page(json!({ "path": folder })).await.unwrap();
+        assert!(at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", at.elapsed());
+        let base = Path::new(&folder).file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!((entry["slug"].clone(), entry["name"].clone()), (json!(base), json!(base)));
     });
 }
 
@@ -1018,6 +1087,19 @@ fn the_lock_waits_for_a_live_writer_and_takes_over_one_left_for_more_than_ten_se
         // released when the change fails, too
         assert_eq!(with_lock::<()>(&lock, 100, || Err(http(400, "boom"))).await.unwrap_err().message, "boom");
         assert!(!lock.exists());
+    });
+}
+
+#[test]
+fn a_lock_its_tag_could_not_be_written_to_is_taken_away_again_not_left_for_ten_seconds() {
+    let tmp = Tmp::new("lock-full");
+    let lock = tmp.join("pages.json.lock");
+    let full = |_: &mut std::fs::File, _: &[u8]| Err(std::io::Error::from_raw_os_error(libc::ENOSPC));
+    assert_eq!(make_lock(&lock, "1 tag\n", full).unwrap_err().raw_os_error(), Some(libc::ENOSPC));
+    assert!(!lock.exists());
+    // the next writer gets it at once
+    crate::test_util::block(async {
+        assert_eq!(with_lock(&lock, 100, || Ok("in")).await.unwrap(), "in");
     });
 }
 
