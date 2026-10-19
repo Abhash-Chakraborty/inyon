@@ -307,11 +307,11 @@ pub fn stdout_meta(stdout: impl Into<String>) -> ToolResultMeta {
 
 /// Numbers the items as the TS does at the end of a whole-document reader (`seq` = position).
 pub fn numbered(items: Vec<ChatItem>) -> Vec<ChatItem> {
-    items.into_iter().enumerate().map(|(i, it)| with_seq(it, i as u64)).collect()
+    items.into_iter().enumerate().map(|(i, it)| with_seq(it, i as i64)).collect()
 }
 
 /// The item with another `seq`.
-pub fn with_seq(mut it: ChatItem, n: u64) -> ChatItem {
+pub fn with_seq(mut it: ChatItem, n: i64) -> ChatItem {
     match &mut it {
         ChatItem::User { seq, .. }
         | ChatItem::Assistant { seq, .. }

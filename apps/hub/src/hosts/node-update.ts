@@ -50,7 +50,7 @@ export const SELF_UPDATE = '"$INYON_EXE" ${INYON_SCRIPT:+"$INYON_SCRIPT"} update
 /** The same for a laptop paired with the phone that still runs tether-node. */
 export const LINK_UPDATE = '"$TETHER_NODE_EXE" ${TETHER_NODE_SCRIPT:+"$TETHER_NODE_SCRIPT"} update --background'
 /** inyon's folder, or tether-node's where it hasn't moved yet */
-const READ_STATUS = 'cat "$HOME/.inyon/node/update-status" 2>/dev/null || cat "$HOME/.tether-node/update-status" 2>/dev/null; true'
+export const READ_STATUS = 'cat "$HOME/.inyon/node/update-status" 2>/dev/null || cat "$HOME/.tether-node/update-status" 2>/dev/null; true'
 
 /** Fills in the checksum, version and architecture; refuses anything that isn't plainly one. */
 export function fillUpdateScript(script: string, o: { sha256: string; version: string; arch: string }) {

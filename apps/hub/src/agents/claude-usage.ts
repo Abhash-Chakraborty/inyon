@@ -6,7 +6,7 @@ import { Host } from '../hosts/host.ts'
  * /usage reads. Runs on that machine with its own Claude login: the token is read there, handed
  * to curl on stdin (so it never shows in `ps`), and never comes back to the hub.
  */
-const SCRIPT = `
+export const SCRIPT = `
 d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 tok=""
 [ -f "$d/.credentials.json" ] && tok=$(sed -n 's/.*"accessToken" *: *"\\([^"]*\\)".*/\\1/p' "$d/.credentials.json" | head -n 1)

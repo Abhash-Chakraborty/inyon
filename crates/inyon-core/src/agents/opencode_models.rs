@@ -1,6 +1,5 @@
 //! Port of agents/opencode-models.ts: the models and agents `opencode` lists, and matching the
-//! TUI footer's "Model Name Provider Name" to them. The command is built here and run by the
-//! caller, which keeps the answer as long as it likes.
+//! TUI footer's "Model Name Provider Name" to them, and asking a machine for them (kept 10 minutes).
 
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
@@ -8,11 +7,17 @@ use indexmap::IndexMap;
 use inyon_protocol::{AgentCatalog, AgentModel, CatalogSource, ModeOption};
 use serde_json::Value;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use super::opencode_db::OC_PATH;
+use crate::clock::now_ms;
+use crate::hosts::host::{ExecOptions, Host};
 use crate::js::json::{self, Js};
 use crate::js::re::{group, replace_all, split};
 use crate::js::text::{capitalize, lower};
 use crate::js::JsStr;
+use crate::platform::rt::{spawn_task, Deferred};
 use crate::re;
 
 /// Provider names as OpenCode's footer prints them after the model ("Big Pickle OpenCode"), for
@@ -208,6 +213,56 @@ pub fn footer_model_name(models: Option<&[AgentModel]>, footer: &str) -> String 
         Some(known) => known.label.split(" · ").skip(1).collect::<Vec<_>>().join(" · "),
         None => without_provider(footer),
     }
+}
+
+thread_local! {
+    static CLI: RefCell<HashMap<String, (u64, Deferred<AgentCatalog>)>> = RefCell::new(HashMap::new());
+    static SETTLED: RefCell<HashMap<String, AgentCatalog>> = RefCell::new(HashMap::new());
+}
+
+/// `opencodeCliModels(host)`: the models and agents OpenCode offers on this machine (about 3 s to
+/// ask, so kept for 10 minutes). Starts asking at once; await the result or not.
+pub fn opencode_cli_models(host: &Host) -> Deferred<AgentCatalog> {
+    let id = host.id();
+    if let Some((_, v)) = CLI.with(|c| c.borrow().get(&id).filter(|(at, _)| now_ms().saturating_sub(*at) < 600_000).cloned()) {
+        return v;
+    }
+    let (h, hid) = (host.clone(), id.clone());
+    let value = spawn_task(async move {
+        let fail = |e: String| {
+            CLI.with(|c| c.borrow_mut().remove(&hid));
+            AgentCatalog { models: vec![], source: CatalogSource::Cli, updated_at: now_ms(), error: Some(e), modes: None }
+        };
+        match h.exec(&opencode_cli_models_command(), ExecOptions::timeout(45_000)).await {
+            Err(e) => fail(e.message),
+            Ok(r) => {
+                let catalog = opencode_cli_catalog(&r.stdout, now_ms());
+                if catalog.models.is_empty() {
+                    CLI.with(|c| c.borrow_mut().remove(&hid));
+                } else {
+                    SETTLED.with(|s| s.borrow_mut().insert(hid.clone(), catalog.clone()));
+                }
+                catalog
+            }
+        }
+    });
+    // the task may already be over (an answer that didn't wait): only a pending or kept one is cached
+    let keep = !value.is_settled() || value.value().is_some_and(|c| !c.models.is_empty());
+    if keep {
+        CLI.with(|c| c.borrow_mut().insert(id, (now_ms(), value.clone())));
+    }
+    value
+}
+
+/// `peekOpenCodeModels(hostId)`: the last catalog fetched for a machine, without waiting.
+pub fn peek_open_code_models(host_id: &str) -> Option<AgentCatalog> {
+    SETTLED.with(|s| s.borrow().get(host_id).cloned())
+}
+
+/// After a provider was connected or disconnected: the next ask reads the list again.
+pub fn forget_open_code_models(host_id: &str) {
+    CLI.with(|c| c.borrow_mut().remove(host_id));
+    SETTLED.with(|s| s.borrow_mut().remove(host_id));
 }
 
 #[cfg(test)]

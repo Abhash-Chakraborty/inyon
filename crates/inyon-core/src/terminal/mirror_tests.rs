@@ -1,0 +1,86 @@
+//! terminal/mirror.test.ts, the parts that need no tmux, and the psmux check from
+//! hosts/win-prelude.test.ts. The end-to-end tests against a real tmux server are in
+//! inyon-backends, which has real processes.
+
+use super::*;
+use crate::test_support::{sh, TempDir};
+
+fn keys(k: &[&str]) -> Input {
+    Input::Keys(k.iter().map(|s| s.to_string()).collect())
+}
+
+fn text(t: &str) -> Input {
+    Input::Text(t.into())
+}
+
+#[test]
+fn typing_becomes_literal_text_keys_by_name_and_raw_bytes_only_for_the_rest() {
+    assert_eq!(to_input("hello"), [text("hello")]);
+    assert_eq!(to_input("ls -la\r"), [text("ls -la"), keys(&["Enter"])]);
+    assert_eq!(to_input("\x1b[A\x1b[B\x1bOC\x7f\t\x03"), [keys(&["Up", "Down", "Right", "BSpace", "Tab", "C-c"])]);
+    assert_eq!(to_input("\x1b[1;5D\x1b[3~\x1b[5~\x1b[Z"), [keys(&["C-Left", "DC", "PPage", "BTab"])]);
+    assert_eq!(to_input("\x1bb\x1b"), [keys(&["M-b", "Escape"])]);
+    assert_eq!(to_input("\x1c\x1f\x00"), [keys(&["C-\\", "C-_", "C-Space"])]);
+    assert_eq!(to_input("héllo ⏺ 日本"), [text("héllo ⏺ 日本")]);
+    // a mouse report has no name: it goes as the bytes it is
+    assert_eq!(to_input("\x1b[<0;3;4M"), [Input::Hex(["1b", "5b", "3c", "30", "3b", "33", "3b", "34", "4d"].map(str::to_owned).to_vec())]);
+}
+
+#[test]
+fn a_bracketed_paste_goes_in_as_one_paste_with_the_text_around_it_kept_in_order() {
+    assert_eq!(to_input("a\x1b[200~line 1\rline 2\x1b[201~\r"), [text("a"), Input::Paste("line 1\rline 2".into()), keys(&["Enter"])]);
+    let (cmd, input) = input_command("%14.1", &Input::Paste("x\r\ny".into()));
+    // through a file: psmux's load-buffer takes a path, not "-"
+    assert!(regex::Regex::new(r#"load-buffer -b 'inyon-term-\w+' "\$f" && tmux paste-buffer -d -p -b 'inyon-term-\w+' -t '%14\.1'"#).unwrap().is_match(&cmd), "{cmd}");
+    assert_eq!(input.as_deref(), Some("x\ny"));
+}
+
+#[test]
+fn text_is_quoted_for_the_shell_so_it_cant_run_as_a_command() {
+    assert_eq!(input_command("%1", &text("'; rm -rf ~; echo '")).0, r"tmux send-keys -t '%1' -l -- ''\''; rm -rf ~; echo '\'''");
+    assert_eq!(input_command("%1", &keys(&["C-\\"])).0, r"tmux send-keys -t '%1' 'C-\'");
+}
+
+#[test]
+fn the_screen_is_read_with_its_size_and_cursor_one_entry_per_row() {
+    let s = parse_screen("10 3 2 1 1\nab\n\x1b[31mred\x1b[0m\n").unwrap();
+    assert_eq!(s, Screen { width: 10.0, height: 3.0, cursor: Cursor { x: 2.0, y: 1.0, visible: true }, lines: vec!["ab".into(), "\x1b[31mred\x1b[0m".into(), String::new()] });
+    assert_eq!(parse_screen(""), None);
+    assert_eq!(parse_screen("can't find pane\n"), None);
+}
+
+#[test]
+fn only_the_rows_that_changed_are_drawn_again() {
+    let a = parse_screen("10 3 0 0 1\none\ntwo\nthree").unwrap();
+    let first = draw_screen(None, &a);
+    // wrapping off, so a pane wider than the phone is cut at the edge
+    assert!(first.starts_with("\x1b[?7l"));
+    assert!(first.contains("\x1b[2;1H\x1b[0mtwo"));
+    let b = parse_screen("10 3 3 1 1\none\ntwo!\nthree").unwrap();
+    assert_eq!(draw_screen(Some(&a), &b), "\x1b[2;1H\x1b[0mtwo!\x1b[0m\x1b[K\x1b[2;4H\x1b[?25h");
+    assert_eq!(draw_screen(Some(&b), &b), "");
+    let hidden = Screen { cursor: Cursor { visible: false, ..b.cursor.clone() }, ..b.clone() };
+    assert_eq!(draw_screen(Some(&b), &hidden), "\x1b[2;4H\x1b[?25l");
+}
+
+const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
+
+#[test]
+fn the_terminals_commands_reach_the_right_psmux_pane() {
+    // a stand-in for psmux's tmux.exe: logs its argv
+    let bin = TempDir::new("psmux-");
+    let log = bin.path("argv");
+    bin.write("tmux", &format!("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{}\"; done; echo >> \"{}\"\n", log.display(), log.display()));
+    std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    bin.write("argv", "");
+    let cmd = format!("{}; {}; {}", read_command("%14.1"), input_command("%14.1", &keys(&["C-c", "Up"])).0, input_command("%14.1", &Input::Hex(vec!["1b".into(), "5b".into()])).0);
+    let path = format!("{}:/usr/bin:/bin", bin.s());
+    sh(&format!("{PRELUDE}\n{cmd}"), None, &[("PATH", &path)]);
+    assert_eq!(
+        bin.read("argv"),
+        "[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}]\n\
+         [capture-pane][-p][-e][-t][$14:.%1]\n\
+         [send-keys][-t][$14:.%1][C-c][Up]\n\
+         [send-keys][-t][$14:.%1][-H][1b][5b]\n"
+    );
+}

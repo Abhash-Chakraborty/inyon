@@ -12,11 +12,8 @@ mod with_sh {
     use std::path::PathBuf;
     use std::process::{Command, Stdio};
 
-    fn dir() -> PathBuf {
-        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let d = std::env::temp_dir().join(format!("inyon-core-tail-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn dir() -> crate::test_support::TempDir {
+        crate::test_support::TempDir::new("inyon-core-tail-")
     }
 
     fn png() -> String {
@@ -52,7 +49,8 @@ mod with_sh {
     /// drops image data on the far side but counts every byte of the file
     #[test]
     fn drops_image_data_on_the_far_side_but_counts_every_byte_of_the_file() {
-        let file = dir().join("slim.jsonl");
+        let d = dir();
+        let file = d.path("slim.jsonl");
         std::fs::write(&file, user(1, "héllo ✓ 🙂", false) + &user(2, "a screenshot", true) + &user(3, "after", false)).unwrap();
         let out = lines(&tail_command(file.to_str().unwrap(), 0, true, false));
         assert!(out.join("\n").len16() < 2000);
@@ -66,7 +64,8 @@ mod with_sh {
     /// only image data is dropped; long text next to an image stays whole
     #[test]
     fn only_image_data_is_dropped_long_text_next_to_an_image_stays_whole() {
-        let file = dir().join("mixed.jsonl");
+        let d = dir();
+        let file = d.path("mixed.jsonl");
         let text = "Q".repeat(2048);
         let codex = crate::js::stringify(
             &json!({ "type": "response_item", "payload": { "content": [{ "type": "input_text", "text": "see" }, { "type": "input_image", "image_url": format!("data:image/png;base64,{}", png()) }] } }),
@@ -83,7 +82,8 @@ mod with_sh {
     /// reading on from an offset gives exactly the lines after it
     #[test]
     fn reading_on_from_an_offset_gives_exactly_the_lines_after_it() {
-        let file = dir().join("resume.jsonl");
+        let d = dir();
+        let file = d.path("resume.jsonl");
         let path = file.to_str().unwrap();
         std::fs::write(&file, user(1, "one", false) + &user(2, "two", true)).unwrap();
         let mut first = TranscriptReader::new(0);
@@ -130,7 +130,8 @@ mod with_sh {
         if !has_setsid() {
             return;
         }
-        let file = dir().join("closed.jsonl");
+        let d = dir();
+        let file = d.path("closed.jsonl");
         std::fs::write(&file, user(1, "quiet", false)).unwrap();
         let path = file.to_str().unwrap();
         ends_with_stdin(&format!("{}; echo exited", tail_command(path, 0, true, true)), path);
@@ -142,7 +143,8 @@ mod with_sh {
         if !has_setsid() {
             return;
         }
-        let file = dir().join("events.jsonl");
+        let d = dir();
+        let file = d.path("events.jsonl");
         std::fs::write(&file, "").unwrap();
         let path = file.to_str().unwrap();
         // the shape of the hook event follow: a setup step, then the tail
@@ -153,7 +155,8 @@ mod with_sh {
     /// counts by the sizes the far side reports, however the text was decoded
     #[test]
     fn counts_by_the_sizes_the_far_side_reports_however_the_text_was_decoded() {
-        let file = dir().join("marks.jsonl");
+        let d = dir();
+        let file = d.path("marks.jsonl");
         std::fs::write(&file, user(1, "🙂 split across chunks", false) + "\n" + &user(2, "next", false)).unwrap();
         let mut r = TranscriptReader::new(0);
         let out: Vec<String> =
@@ -166,7 +169,8 @@ mod with_sh {
     /// checks that a line starts where the read stopped
     #[test]
     fn checks_that_a_line_starts_where_the_read_stopped() {
-        let file = dir().join("align.jsonl");
+        let d = dir();
+        let file = d.path("align.jsonl");
         let one = user(1, "one", false);
         std::fs::write(&file, one.clone() + &user(2, "two", false)).unwrap();
         let at = |from: u64| {
@@ -183,7 +187,8 @@ mod with_sh {
     /// the summary of a long conversation leaves out what was said
     #[test]
     fn the_summary_of_a_long_conversation_leaves_out_what_was_said() {
-        let file = dir().join("meta.jsonl");
+        let d = dir();
+        let file = d.path("meta.jsonl");
         let line = |o: Value| {
             let mut v = json!({ "uuid": crate::ids::random_uuid(), "timestamp": "2027-01-01T00:00:00Z" });
             v.as_object_mut().unwrap().extend(o.as_object().unwrap().clone());

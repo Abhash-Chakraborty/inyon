@@ -2,8 +2,8 @@
 //!
 //! OpenCode's terminal app talks to its own local HTTP server (the same API `opencode serve`
 //! exposes). Inyon finds that server's port from the process's listening sockets and reads the
-//! same session you see in tmux. The commands and requests are the caller's; these read what they
-//! return.
+//! same session you see in tmux. The pure functions read what the commands and requests return;
+//! the async ones run them on the machine.
 
 use inyon_protocol::{AgentStatus, ChatItem, NoticeLevel, Num};
 use serde_json::{Map, Value};
@@ -11,6 +11,8 @@ use serde_json::{Map, Value};
 use super::status::empty_status;
 use crate::claude::transcript::{numbered, stdout_meta, string_of, text_block, thinking_block, tool_block, Base, ToolCall, TranscriptMeta};
 use crate::clock::now_ms;
+use crate::hosts::host::Host;
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{obj, value_string, Js};
 use crate::js::re::split_plain;
 use crate::js::{date, JsStr};
@@ -275,6 +277,40 @@ pub fn opencode_items(messages: &[Value], meta: &mut TranscriptMeta) -> Vec<Chat
         ..empty_status(now_ms() as f64)
     });
     numbered(out)
+}
+
+/// `opencodeEndpoint(host, pid, cwd, paneTitle)`: the server an OpenCode process started with
+/// --port listens on, and the session it shows.
+pub async fn opencode_endpoint(host: &Host, pid: i64, cwd: Option<&str>, pane_title: Option<&str>) -> HubResult<Option<String>> {
+    let Some([a, b, c]) = opencode_endpoint_commands(pid) else { return Ok(None) };
+    let (sockets, process, children) = futures_util::future::join3(host.run(&a), host.run(&b), host.run(&c)).await;
+    let probe = opencode_endpoint_probe(pid, &sockets?.stdout, &process?.stdout, &children?.stdout);
+    for port in &probe.ports {
+        let base = format!("http://127.0.0.1:{port}");
+        let healthy = opencode_get(host, &format!("{base}/global/health")).await;
+        if !healthy.as_ref().is_some_and(|h| h.get("healthy") == Some(&Value::Bool(true))) {
+            continue;
+        }
+        let query = cwd.filter(|c| !c.is_empty()).map(|c| format!("?directory={}", crate::js::text::encode_uri_component(c))).unwrap_or_default();
+        let Some(list) = opencode_get(host, &format!("{base}/session{query}")).await.filter(Value::is_array) else { continue };
+        if let Some(uri) = opencode_port_endpoint(port, &list, cwd, probe.explicit.as_deref(), pane_title) {
+            return Ok(Some(uri));
+        }
+    }
+    Ok(None)
+}
+
+/// `opencodeGet`: the answer, or None for any failure.
+pub async fn opencode_get(host: &Host, url: &str) -> Option<Value> {
+    super::opencode_api::opencode_request(host, url, "GET", None, 12).await.ok().flatten()
+}
+
+/// `opencodePost`: whether it went through (an answer of `false` counts as no).
+pub async fn opencode_post(host: &Host, url: &str, body: &Value) -> bool {
+    match super::opencode_api::opencode_request(host, url, "POST", Some(body), 12).await {
+        Ok(v) => v != Some(Value::Bool(false)),
+        Err(_) => false,
+    }
 }
 
 #[cfg(test)]

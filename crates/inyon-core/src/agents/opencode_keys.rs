@@ -1,13 +1,18 @@
 //! Port of agents/opencode-keys.ts: the keys Inyon presses in OpenCode's terminal, as OpenCode
 //! 1.19 binds them unless the config says otherwise (`keybinds` in opencode.json, user or
-//! project). The command that reads those files is built here; the caller runs and caches it.
+//! project), read from the machine and kept for a minute.
 
 use indexmap::IndexMap;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::hosts::host::shq;
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::clock::now_ms;
+use crate::hosts::host::{shq, ExecOptions, Host};
 use crate::js::json;
+use crate::platform::rt::{spawn_task, Deferred};
 use crate::re;
 
 /// The default bindings, in OpenCode's order.
@@ -236,6 +241,34 @@ pub fn opencode_keys_command(cwd: Option<&str>) -> String {
 pub fn opencode_keys(stdout: &str) -> OpenCodeKeys {
     let files: Vec<&str> = stdout.split("@@FILE\n").skip(1).collect();
     keys_from(&merge_keybinds(&files))
+}
+
+thread_local! {
+    static KEYS: RefCell<HashMap<String, (u64, Deferred<OpenCodeKeys>)>> = RefCell::new(HashMap::new());
+}
+
+/// `opencodeKeys(host, cwd)`: OpenCode's key bindings on a machine, for a session in `cwd`; read
+/// again after a minute. A machine that doesn't answer gets the defaults.
+pub fn opencode_keys_of(host: &Host, cwd: Option<&str>) -> Deferred<OpenCodeKeys> {
+    let key = format!("{}\0{}", host.id(), cwd.unwrap_or(""));
+    if let Some((_, k)) = KEYS.with(|c| c.borrow().get(&key).filter(|(at, _)| now_ms().saturating_sub(*at) < 60_000).cloned()) {
+        return k;
+    }
+    let (h, cmd) = (host.clone(), opencode_keys_command(cwd));
+    let keys = spawn_task(async move {
+        match h.exec(&cmd, ExecOptions::timeout(10_000)).await {
+            Ok(r) => opencode_keys(&r.stdout),
+            Err(_) => keys_from(&IndexMap::new()),
+        }
+    });
+    KEYS.with(|c| {
+        let mut c = c.borrow_mut();
+        c.insert(key, (now_ms(), keys.clone()));
+        if c.len() > 200 {
+            c.retain(|_, (at, _)| now_ms().saturating_sub(*at) <= 60_000);
+        }
+    });
+    keys
 }
 
 #[cfg(test)]

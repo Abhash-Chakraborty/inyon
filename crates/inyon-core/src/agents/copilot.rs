@@ -9,7 +9,8 @@ use serde_json::{Map, Value};
 use super::status::empty_status;
 use crate::claude::transcript::{stdout_meta, string_of, text_block, thinking_block, tool_block, Base, ToolCall, TranscriptMeta};
 use crate::clock::now_ms;
-use crate::hosts::host::shq;
+use crate::hosts::host::{shq, Host};
+use crate::hosts::http_error::HubResult;
 use crate::js::json::{obj, Js};
 use crate::js::{date, to_number, JsStr};
 use crate::re;
@@ -231,6 +232,15 @@ pub fn normalize_copilot(e: &Value, meta: &mut TranscriptMeta) -> Vec<ChatItem> 
         }
         _ => vec![],
     }
+}
+
+/// `guessCopilotSession(host, home, proc)`: both commands at once, as the TS's Promise.all.
+pub async fn find_copilot_session(host: &Host, home: &str, proc: &CopilotProc) -> HubResult<Option<String>> {
+    if proc.pid <= 0 || proc.pid > MAX_SAFE {
+        return Ok(None);
+    }
+    let (locks, tree) = futures_util::future::join(host.run(&copilot_locks_command(home)), host.run("ps -eo pid=,ppid=")).await;
+    Ok(guess_copilot_session(&locks?.stdout, &tree?.stdout, proc))
 }
 
 #[cfg(test)]

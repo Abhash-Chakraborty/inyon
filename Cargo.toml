@@ -3,7 +3,7 @@
 [workspace]
 resolver = "2"
 # each crate is listed by hand, so a half-made folder under crates/ never breaks the build
-members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core"]
+members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/inyon-engine", "crates/inyon-core", "crates/inyon-backends"]
 
 [workspace.package]
 # the release number, the same as package.json; every crate takes it from here
