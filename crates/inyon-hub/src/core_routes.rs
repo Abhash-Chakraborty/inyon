@@ -784,6 +784,40 @@ mod tests {
         v.as_object().unwrap().clone()
     }
 
+    // saving.test.ts
+
+    fn draft(text: &str, at: u32) -> Option<inyon_core::claude::drafts::Draft> {
+        Some(serde_json::from_value(json!({ "text": text, "source": "app", "at": at })).unwrap())
+    }
+
+    fn saved(key: &str) -> Option<String> {
+        let all: Map<String, Value> = inyon_core::platform::store::kv::get("drafts").unwrap_or_default();
+        all.get(key).and_then(|d| d.get("text")).and_then(Value::as_str).map(str::to_owned)
+    }
+
+    #[test]
+    fn a_draft_is_written_a_moment_later_or_at_once_when_the_hub_is_about_to_close() {
+        crate::test_util::block(async {
+            inyon_core::claude::drafts::set_draft("box:%7", draft("half a thought", 1));
+            // typing writes on a short wait, not on every key
+            assert_eq!(saved("box:%7"), None);
+            save_everything();
+            assert_eq!(saved("box:%7").as_deref(), Some("half a thought"));
+        });
+    }
+
+    #[test]
+    fn while_the_phone_app_is_in_the_background_every_draft_is_written_straight_away() {
+        crate::test_util::block(async {
+            inyon_core::claude::drafts::save_drafts_at_once(true);
+            inyon_core::claude::drafts::set_draft("box:%8", draft("typed just before leaving", 2));
+            assert_eq!(saved("box:%8").as_deref(), Some("typed just before leaving"));
+            inyon_core::claude::drafts::set_draft("box:%8", None);
+            assert_eq!(saved("box:%8"), None);
+            inyon_core::claude::drafts::save_drafts_at_once(false);
+        });
+    }
+
     #[test]
     fn a_host_needs_a_name_a_target_and_a_sane_port() {
         crate::test_util::core();
