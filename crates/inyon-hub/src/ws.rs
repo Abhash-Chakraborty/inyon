@@ -138,13 +138,19 @@ async fn pump(on: hyper::upgrade::OnUpgrade, ends: Ends, on_open: impl FnOnce(),
 }
 
 type Sink<IO> = SplitSink<WebSocketStream<IO>, Message>;
-/// a write in progress: it hands the sink back with whether it worked and how many bytes it took
-type Writing<IO> = Pin<Box<dyn Future<Output = (Sink<IO>, bool, usize)>>>;
+/// a write in progress: it hands the sink back with whether it worked
+type Writing<IO> = Pin<Box<dyn Future<Output = (Sink<IO>, bool)>>>;
 
-fn write<IO: AsyncRead + AsyncWrite + Unpin + 'static>(mut sink: Sink<IO>, m: Message, n: usize) -> Writing<IO> {
+/// Writes one message. Its `n` bytes stop counting against the limit once the socket has taken
+/// the message, before the flush: uWS counts only what the socket hasn't sent yet, and the closest
+/// tungstenite comes is the one message it holds while it writes it out. The next one waits for
+/// the flush, so that's never more than one.
+fn write<IO: AsyncRead + AsyncWrite + Unpin + 'static>(mut sink: Sink<IO>, m: Message, n: usize, queued: Rc<Cell<usize>>) -> Writing<IO> {
     Box::pin(async move {
-        let ok = sink.send(m).await.is_ok();
-        (sink, ok, n)
+        let fed = sink.feed(m).await.is_ok();
+        queued.set(queued.get().saturating_sub(n));
+        let ok = fed && sink.flush().await.is_ok();
+        (sink, ok)
     })
 }
 
@@ -191,8 +197,7 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
             },
             done = async { writing.as_mut().expect("a write in progress").await }, if writing.is_some() => {
                 writing = None;
-                let (s, ok, n) = done;
-                ends.queued.set(ends.queued.get().saturating_sub(n));
+                let (s, ok) = done;
                 sink = Some(s);
                 if !ok {
                     break;
@@ -201,13 +206,13 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
             out = ends.rx.recv(), if writing.is_none() => match out {
                 Some(s) => {
                     let n = s.len();
-                    writing = sink.take().map(|k| write(k, Message::text(s), n));
+                    writing = sink.take().map(|k| write(k, Message::text(s), n, ends.queued.clone()));
                 }
                 None => break,
             },
             _ = tick.tick(), if writing.is_none() => {
                 if last.elapsed() >= limits.idle / 4 {
-                    writing = sink.take().map(|k| write(k, Message::Ping(Vec::new().into()), 0));
+                    writing = sink.take().map(|k| write(k, Message::Ping(Vec::new().into()), 0, ends.queued.clone()));
                 }
             }
         }
@@ -218,7 +223,7 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
     if let Some((code, reason)) = close {
         // the write in progress gets a moment to finish so the close frame can follow it
         if let Some(w) = writing.take() {
-            if let Ok((s, true, _)) = tokio::time::timeout(limits.close_wait, w).await {
+            if let Ok((s, true)) = tokio::time::timeout(limits.close_wait, w).await {
                 sink = Some(s);
             }
         }
@@ -417,6 +422,24 @@ mod tests {
             let pong = tokio::time::timeout(Duration::from_secs(2), r.peer.next()).await;
             assert!(matches!(pong, Ok(Some(Ok(Message::Pong(_))))), "{pong:?}");
             assert_eq!(*r.got.borrow(), ["before"]);
+        });
+    }
+
+    #[test]
+    fn three_upload_pieces_to_a_slow_machine_go_out_and_a_fourth_finds_it_too_far_behind() {
+        crate::test_util::block(async {
+            let r = rig(Limits { idle: Duration::from_secs(30), close_wait: Duration::from_millis(200) }).await;
+            // a 2 MB file in a host.exec frame, base64 and all; the machine reads nothing for now
+            let piece = || "p".repeat(2_800_000);
+            r.sock.send_text(piece());
+            // the socket task takes it and starts writing; the core goes on meanwhile
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            r.sock.send_text(piece());
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            r.sock.send_text(piece());
+            assert!(!r.sock.closed.get(), "the piece being written no longer counts, so 2.8 MB waits");
+            r.sock.send_text(piece());
+            assert!(r.sock.closed.get(), "5.6 MB waiting is past the limit");
         });
     }
 
