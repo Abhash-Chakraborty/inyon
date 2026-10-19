@@ -306,3 +306,33 @@ pub mod sandbox {
 pub fn host(id: &str, kind: &str) -> crate::hosts::host::Host {
     crate::hosts::host::Host::new(serde_json::from_value(serde_json::json!({ "id": id, "name": id, "kind": kind })).unwrap())
 }
+
+/// A machine in this thread's registry, online, with one tmux window holding `panes` (partial
+/// pane objects; what they leave out is filled in). Nothing polls it.
+pub fn machine(id: &str, kind: &str, panes: serde_json::Value) -> crate::hosts::registry::Rt {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::hosts::registry::{registry, HostRuntime};
+    let panes: Vec<serde_json::Value> = panes
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            let mut full = serde_json::json!({ "index": 0, "active": true, "command": "claude", "cwd": "/w", "title": "claude", "width": 100, "height": 30, "dead": false });
+            for (k, v) in p.as_object().unwrap() {
+                full[k] = v.clone();
+            }
+            full
+        })
+        .collect();
+    let state: inyon_protocol::HostState = serde_json::from_value(serde_json::json!({
+        "config": { "id": id, "name": "Box", "kind": kind }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "updatedAt": 0,
+        "sessions": [{ "id": "$1", "name": "work", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": panes }] }],
+    }))
+    .unwrap();
+    let host = crate::hosts::host::Host::new(state.config.clone());
+    let rt = Rc::new(RefCell::new(HostRuntime::new(host, state)));
+    registry().insert_runtime(id, rt.clone());
+    rt
+}

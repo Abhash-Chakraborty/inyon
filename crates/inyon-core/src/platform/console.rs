@@ -33,3 +33,16 @@ pub fn log(line: &str) {
 pub fn error(line: &str) {
     write(true, line);
 }
+
+thread_local! {
+    static DEBUG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Turns on the extra lines the TS prints with INYON_DEBUG set; the platform reads the variable.
+pub fn set_debug(on: bool) {
+    DEBUG.with(|d| d.set(on));
+}
+
+pub fn debug() -> bool {
+    DEBUG.with(std::cell::Cell::get)
+}

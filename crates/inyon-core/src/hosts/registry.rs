@@ -432,6 +432,7 @@ impl Registry {
     /// To the chat watchers and the actions first, as the TS modules registered first, then to
     /// everyone listening. A listener removed by an earlier one isn't called.
     fn dispatch(&self, e: &RegistryEvent) {
+        crate::claude::watcher::on_registry_event(e);
         let all: Vec<(u64, Listener)> = self.listeners.borrow().clone();
         for (id, f) in all {
             if self.listeners.borrow().iter().any(|(i, _)| *i == id) {

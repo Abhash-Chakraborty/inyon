@@ -1,17 +1,19 @@
-//! The pure part of claude/drafts.ts: the draft record, the rule for keeping one, and the keys
-//! that clear and refill the terminal's input box. Storing drafts and typing the keys stay in TS.
+//! Port of claude/drafts.ts: the unsent message for each pane, shared by every device and the
+//! terminal's input box, kept in the store under "drafts".
 
+use std::cell::{Cell, RefCell};
+
+use indexmap::IndexMap;
+pub use inyon_protocol::DraftSource;
 use serde::{Deserialize, Serialize};
 
+use crate::hosts::http_error::HubResult;
+use crate::hosts::registry::registry;
 pub use crate::js::text::squash;
 use crate::js::JsStr;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DraftSource {
-    App,
-    Terminal,
-}
+use crate::platform::rt::{self, set_timeout, Timer};
+use crate::platform::store::kv;
+use crate::tmux::tmux::{send_keys, type_into};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Draft {
@@ -59,4 +61,84 @@ pub fn mirror_steps(text: &str, current: Option<&str>, width: Option<u32>) -> Op
     let clear = current.filter(|c| !c.is_empty()).map(|c| clear_input_keys(c, width));
     let typed = (!text.is_empty()).then(|| text.to_owned());
     Some((clear, typed))
+}
+
+thread_local! {
+    /// read from the store the first time a draft is asked for, as the TS module reads it on load
+    static DRAFTS: RefCell<Option<IndexMap<String, Draft>>> = const { RefCell::new(None) };
+    static SAVE_TIMER: RefCell<Option<Timer>> = const { RefCell::new(None) };
+    /// while the phone app is in the background it can be closed at any moment: no waiting then
+    static AT_ONCE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn with_drafts<R>(f: impl FnOnce(&mut IndexMap<String, Draft>) -> R) -> R {
+    DRAFTS.with(|d| {
+        let mut d = d.borrow_mut();
+        f(d.get_or_insert_with(|| kv::get::<IndexMap<String, Draft>>("drafts").unwrap_or_default()))
+    })
+}
+
+pub fn save_drafts_at_once(on: bool) {
+    AT_ONCE.with(|a| a.set(on));
+}
+
+fn save() {
+    if AT_ONCE.with(Cell::get) {
+        return save_drafts();
+    }
+    SAVE_TIMER.with(|t| {
+        let mut t = t.borrow_mut();
+        rt::clear(&mut t);
+        *t = Some(set_timeout(500, save_drafts));
+    });
+}
+
+/// Writes the drafts now instead of after the short wait (the app or hub is about to go).
+pub fn save_drafts() {
+    SAVE_TIMER.with(|t| rt::clear(&mut t.borrow_mut()));
+    let all = with_drafts(|d| d.clone());
+    let _ = kv::set("drafts", &all);
+}
+
+pub fn get_draft(key: &str) -> Option<Draft> {
+    with_drafts(|d| d.get(key).cloned())
+}
+
+pub fn set_draft(key: &str, d: Option<Draft>) {
+    with_drafts(|all| match d {
+        Some(d) if keeps_draft(Some(&d)) => {
+            all.insert(key.to_owned(), d);
+        }
+        _ => {
+            all.shift_remove(key);
+        }
+    });
+    save();
+}
+
+/// Clears Claude's input box: Ctrl+U clears a row, Backspace joins the row above.
+pub async fn clear_input(host_id: &str, pane_id: &str, draft: &str) -> HubResult<()> {
+    let host = registry().host(host_id)?;
+    let width = registry().find_pane(host_id, pane_id).and_then(|f| pane_width(&f.pane));
+    send_keys(&host, pane_id, &clear_input_keys(draft, width)).await
+}
+
+/// Puts `text` into Claude's input box without submitting it (replacing what's there).
+pub async fn mirror_to_terminal(host_id: &str, pane_id: &str, text: &str, current: Option<&str>) -> HubResult<()> {
+    if squash(current.unwrap_or("")) == squash(text) {
+        return Ok(());
+    }
+    if let Some(c) = current.filter(|c| !c.is_empty()) {
+        clear_input(host_id, pane_id, c).await?;
+    }
+    if !text.is_empty() {
+        type_into(&registry().host(host_id)?, pane_id, text, false).await?;
+    }
+    Ok(())
+}
+
+/// A pane's width as `draftRows` takes it (`width || 80`).
+fn pane_width(p: &inyon_protocol::PaneInfo) -> Option<u32> {
+    let w = *p.width;
+    (w.is_finite() && w > 0.0).then_some(w as u32)
 }
