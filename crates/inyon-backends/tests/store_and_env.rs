@@ -85,17 +85,17 @@ fn the_old_folder_moves_once_and_leaves_a_link() {
     let d = Dir::new("move");
     std::fs::create_dir(d.0.join(".tether")).unwrap();
     std::fs::write(d.0.join(".tether/hosts.json"), "[]").unwrap();
-    move_old_folder(&d.0);
+    move_old_folder(&d.0).unwrap();
     assert_eq!(std::fs::read_to_string(d.0.join(".inyon/hosts.json")).unwrap(), "[]");
     assert!(std::fs::symlink_metadata(d.0.join(".tether")).unwrap().file_type().is_symlink());
     // again: the link is left alone
-    move_old_folder(&d.0);
+    move_old_folder(&d.0).unwrap();
     assert!(d.0.join(".inyon/hosts.json").exists());
     // a new folder already there: nothing moves
     let e = Dir::new("move-both");
     std::fs::create_dir(e.0.join(".tether")).unwrap();
     std::fs::create_dir(e.0.join(".inyon")).unwrap();
-    move_old_folder(&e.0);
+    move_old_folder(&e.0).unwrap();
     assert!(std::fs::symlink_metadata(e.0.join(".tether")).unwrap().is_dir());
 }
 
@@ -139,4 +139,20 @@ fn a_job_that_panics_ends_that_job_not_the_core() {
     assert_eq!(next, Ok(42));
     drop(core);
     thread.join().unwrap();
+}
+
+#[test]
+fn an_old_folder_that_cant_move_is_an_error_not_skipped() {
+    let d = Dir::new("stuck");
+    let old = d.0.join(".tether");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::write(old.join("hosts.json"), "[]").unwrap();
+    // a home that can't be written to: the move fails (install_hub passes this error on, so the hub
+    // refuses to start rather than run on an empty ~/.inyon next to the old one)
+    std::fs::set_permissions(&d.0, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = move_old_folder(&d.0);
+    std::fs::set_permissions(&d.0, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(r.is_err());
+    assert!(old.join("hosts.json").exists());
+    assert!(!d.0.join(".inyon").exists());
 }

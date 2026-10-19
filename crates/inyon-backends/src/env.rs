@@ -85,20 +85,23 @@ impl HubEnv {
 
 /// Moves ~/.tether to ~/.inyon once and leaves a link at the old path, so hooks, status lines and
 /// services still pointing there keep working until they're rewritten. Does nothing when the new
-/// folder exists already or the old one is a link (moved before).
-pub fn move_old_folder(home: &Path) {
+/// folder exists already or the old one is a link (moved before). A move that fails is an error,
+/// as the TS's `renameSync` throws: the hub mustn't start on an empty ~/.inyon beside the old one.
+pub fn move_old_folder(home: &Path) -> std::io::Result<()> {
     let old = home.join(".tether");
     let dir = home.join(".inyon");
     match std::fs::symlink_metadata(&old) {
-        Ok(m) if m.file_type().is_symlink() => return,
+        Ok(m) if m.file_type().is_symlink() => return Ok(()),
         Ok(_) => {}
-        Err(_) => return,
+        Err(_) => return Ok(()),
     }
-    if dir.exists() || std::fs::rename(&old, &dir).is_err() {
-        return;
+    if dir.exists() {
+        return Ok(());
     }
+    std::fs::rename(&old, &dir)?;
     #[cfg(unix)]
     let _ = std::os::unix::fs::symlink(&dir, &old);
+    Ok(())
 }
 
 /// Sets the core up as the hub process (env.ts), on the core's thread: the store under the data
@@ -106,7 +109,7 @@ pub fn move_old_folder(home: &Path) {
 /// as a process. Returns the data directory.
 pub fn install_hub(env: &HubEnv, hostname: &str) -> std::io::Result<PathBuf> {
     if env.nonempty("INYON_DATA_DIR").is_none() {
-        move_old_folder(&env.home());
+        move_old_folder(&env.home())?;
     }
     let dir = env.data_dir();
     inyon_core::platform::store::use_store(Rc::new(FsStore::new(&dir)?));
