@@ -81,6 +81,23 @@ pub fn hub_impl_asked() -> Option<bool> {
     env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)).or_else(hub_impl_in_file)
 }
 
+/// When this shell's INYON_HUB_IMPL and hub.env's line disagree, what to tell the user. The
+/// hub's service reads hub.env and never this shell's variable, so setting the hub up from here
+/// would leave it running the other one.
+pub fn hub_impl_clash() -> Option<String> {
+    let shell = env_var("INYON_HUB_IMPL").map(|v| says_rust(&v))?;
+    let file = hub_impl_in_file()?;
+    let name = |rust: bool| if rust { "rust" } else { "bun" };
+    (shell != file).then(|| {
+        format!(
+            "{} says INYON_HUB_IMPL={}, and the hub's service goes by that, not by INYON_HUB_IMPL={} here. Change the line there (or delete it) and run `inyon hub restart`.",
+            crate::paths::data_dir().join("hub.env").display(),
+            name(file),
+            name(shell)
+        )
+    })
+}
+
 /// `rust` (any case) is the Rust hub; `bun`, and anything else, the Bun one.
 fn says_rust(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case("rust")

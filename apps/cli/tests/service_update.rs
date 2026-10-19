@@ -367,7 +367,8 @@ fn the_rust_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line
     // putting the link's service back in place later doesn't undo it
     assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
     assert!(note.exists() && inyon_cli::engine::rust_hub());
-    // bun in hub.env goes back, and forgets the note
+    // bun in hub.env goes back, and forgets the note (the Bun engine is still here)
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
     home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
     assert!(!note.exists() && !inyon_cli::engine::rust_hub());
@@ -398,4 +399,69 @@ fn going_back_to_the_bun_hub_fetches_its_engine_before_restarting_not_inside_the
     // on the Rust hub, nothing to fetch
     home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
     assert!(inyon_cli::commands::hub_restart(&sys).is_ok());
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn going_back_with_service_install_fetches_the_bun_engine_before_the_service_runs() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    std::env::set_var("INYON_HUB_IMPL", "rust");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    std::env::remove_var("INYON_HUB_IMPL");
+    // the engine went while the Rust hub ran; back without the variable, offline
+    home.clear_calls();
+    std::env::set_var("INYON_DOWNLOAD", "http://127.0.0.1:9/nothing");
+    let r = inyon_cli::commands::service_install(&sys, Some("hub"));
+    std::env::remove_var("INYON_DOWNLOAD");
+    assert!(r.is_err(), "{r:?}");
+    assert!(home.calls().is_empty(), "the service wasn't restarted to fetch it itself: {:?}", home.calls());
+    // with the engine there it goes ahead
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!inyon_cli::engine::rust_hub());
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn a_shell_that_disagrees_with_hub_env_sets_nothing_up() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    let note = home.dir.join(".inyon/node/hub-impl");
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    // went back with the line, as the docs say; now the shell asks for the Rust hub again
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
+    std::env::set_var("INYON_HUB_IMPL", "rust");
+    let start = inyon_cli::commands::hub_start(&sys);
+    let install = inyon_cli::commands::service_install(&sys, Some("hub"));
+    std::env::remove_var("INYON_HUB_IMPL");
+    for r in [&start, &install] {
+        assert!(r.as_ref().is_err_and(|e| e.contains("INYON_HUB_IMPL=bun")), "{r:?}");
+    }
+    assert!(!note.exists() && home.calls().is_empty(), "{:?}", home.calls());
+    // and the other way round
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
+    std::env::set_var("INYON_HUB_IMPL", "bun");
+    let r = inyon_cli::commands::hub_start(&sys);
+    std::env::remove_var("INYON_HUB_IMPL");
+    assert!(r.is_err_and(|e| e.contains("INYON_HUB_IMPL=rust")));
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn restarting_a_hub_that_is_not_there_says_so_without_fetching_anything() {
+    let _g = lock();
+    let home = setup(&["systemctl", "loginctl", "systemd-run"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
+    // a machine with only the link; the engine isn't here and couldn't be fetched
+    std::env::set_var("INYON_DOWNLOAD", "http://127.0.0.1:9/nothing");
+    let r = inyon_cli::commands::hub_restart(&sys);
+    std::env::remove_var("INYON_DOWNLOAD");
+    assert!(r.as_ref().is_err_and(|e| e.contains("no background service or process found")), "{r:?}");
+    assert!(!home.dir.join(".inyon/bin/inyon-engine").exists());
 }

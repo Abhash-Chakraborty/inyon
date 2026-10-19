@@ -244,6 +244,12 @@ pub fn has_service(sys: &Sys, role: Role) -> bool {
     }
 }
 
+/// Whether `restart_service` has something to restart for `role`: a service, or a copy started in
+/// the background with its pid recorded.
+pub fn can_restart(sys: &Sys, role: Role) -> bool {
+    has_service(sys, role) || pid_file(role).exists()
+}
+
 /// Installs and starts `role` as a user service; `restart` replaces a copy that's already running.
 pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
     crate::engine::remember_legacy(false);
