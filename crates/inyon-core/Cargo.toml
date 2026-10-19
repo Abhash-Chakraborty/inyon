@@ -11,6 +11,8 @@ base64 = "0.23"
 # futures without a runtime: the core's tasks run on whichever single-threaded executor the
 # platform installs (tokio's LocalSet in the hub, the browser's event loop on the phone)
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# signs the links Pages hands out (features/pages_core), as the Bun hub signs them
+hmac = "0.13"
 indexmap = { version = "2.10", features = ["serde"] }
 inyon-protocol = { path = "../inyon-protocol" }
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-case", "unicode-gencat", "unicode-script"] }

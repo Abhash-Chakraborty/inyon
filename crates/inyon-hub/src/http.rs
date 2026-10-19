@@ -17,7 +17,7 @@ pub type Resp = Response<Body>;
 /// `params` add.
 pub struct Req {
     pub method: Method,
-    /// the URL's path as it came, still percent-encoded (`new URL(req.url).pathname`)
+    /// the URL's path, still percent-encoded, with dot segments resolved (`new URL(req.url).pathname`)
     pub path: String,
     /// the query string without its `?`
     pub query: String,
