@@ -173,6 +173,10 @@ pub fn signed_in_test(kind: AgentKind) -> String {
 
 // ---------- the report ----------
 
+/// OpenCode's connected providers, as base64 on one line (GNU base64 wraps at 76 columns, and
+/// only the report's first OCAUTH line is read).
+pub const OCAUTH_LINE: &str = "command -v opencode >/dev/null 2>&1 && echo \"OCAUTH $(opencode auth list 2>/dev/null | base64 | tr -d '\\n')\"";
+
 /// Everything Inyon needs on a machine, checked in one round trip.
 pub async fn setup_report(host_id: &str) -> HubResult<SetupReport> {
     let host = registry().host(host_id)?;
@@ -199,7 +203,7 @@ echo "GIT $(git --version 2>/dev/null)"
 {vers}
 {bins}
 echo "NPMLS $(npm ls -g --depth=0 --parseable 2>/dev/null | tr '\n' ' ')"
-command -v opencode >/dev/null 2>&1 && echo "OCAUTH $(opencode auth list 2>/dev/null | base64 | tr -d '\\n')"
+{OCAUTH_LINE}
 {auth_tests}
 "#
     );

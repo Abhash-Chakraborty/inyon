@@ -295,3 +295,23 @@ fn the_sign_in_tests_read_the_same_files_the_probe_does() {
         assert!(crate::tmux::tmux::PROBE.contains(&want), "{}", k.as_str());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn the_report_reads_opencodes_providers_from_a_listing_long_enough_for_base64_to_wrap() {
+    // the line as the machine's shell runs it, with an opencode that lists two providers
+    let dir = std::env::temp_dir().join(format!("inyon-ocauth-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listing = "┌  Credentials ~/.local/share/opencode/auth.json\n│\n●  DeepSeek api\n│\n●  Anthropic oauth\n│\n└  2 credentials\n\n┌  Environment\n│\n●  Groq GROQ_API_KEY\n│\n└  1 environment variable\n";
+    std::fs::write(dir.join("listing"), listing).unwrap();
+    let stub = dir.join("opencode");
+    std::fs::write(&stub, format!("#!/bin/sh\ncat '{}'\n", dir.join("listing").display())).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = std::process::Command::new("sh").arg("-c").arg(OCAUTH_LINE).env("PATH", format!("{}:/usr/bin:/bin", dir.display())).output().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    let encoded = stdout.trim_end().strip_prefix("OCAUTH ").unwrap();
+    assert_eq!(connected_providers(encoded), ["DeepSeek", "Anthropic", "Groq"]);
+}
