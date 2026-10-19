@@ -125,6 +125,8 @@ pub struct Dist {
     tag: String,
     building: RefCell<HashMap<PathBuf, Building>>,
     sums: RefCell<Option<Sums>>,
+    /// the program that builds a checkout's engines
+    bun: PathBuf,
 }
 
 thread_local! {
@@ -209,7 +211,13 @@ impl Dist {
     pub fn new(repo: Option<PathBuf>, data_dir: &Path) -> Rc<Self> {
         let cli_dist = std::env::var("INYON_CLI_DIST").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| repo.clone().unwrap_or_default().join("apps/cli/dist"));
         let tag = repo.as_deref().map(source_hash).unwrap_or_else(|| format!("v{VERSION}"));
-        Rc::new(Dist { repo, out: data_dir.join("node-dist"), cli_dist, tag, building: RefCell::default(), sums: RefCell::default() })
+        Rc::new(Dist { repo, out: data_dir.join("node-dist"), cli_dist, tag, building: RefCell::default(), sums: RefCell::default(), bun: PathBuf::from("bun") })
+    }
+
+    #[cfg(test)]
+    pub fn with_bun(repo: Option<PathBuf>, data_dir: &Path, bun: PathBuf) -> Rc<Self> {
+        let d = Rc::into_inner(Self::new(repo, data_dir)).expect("a new Dist");
+        Rc::new(Dist { bun, ..d })
     }
 
     pub fn install(self: &Rc<Self>) {
@@ -299,13 +307,14 @@ impl Dist {
             Box::pin(async move {
                 std::fs::create_dir_all(&me.out).map_err(|e| HubError::plain(e.to_string()))?;
                 let tmp = PathBuf::from(format!("{}.tmp", f.display()));
-                if let Some(repo) = &me.repo {
-                    me.build_engine(repo, &t, &tmp).await.map_err(|e| http(500, format!("Could not build the Inyon engine for {t}: {e}")))?;
+                let made = if let Some(repo) = &me.repo {
+                    me.build_engine(repo, &t, &tmp).await.map_err(|e| http(500, format!("Could not build the Inyon engine for {t}: {e}")))?
                 } else {
                     let sums = me.release_sums().await?;
                     write(&tmp, &release_file(&engine_file(&t), &sums, &Self::release_base(), net()).await?)?;
-                }
-                rename(&tmp, &f)?;
+                    tmp
+                };
+                rename(&made, &f)?;
                 me.prune_old(&me.out);
                 Ok(f)
             })
@@ -315,14 +324,16 @@ impl Dist {
 
     /// A checkout's engine for `t`, built by the checkout's own build script (Bun's runtime for
     /// that system inside, downloaded on the first build for it).
-    async fn build_engine(&self, repo: &Path, t: &str, out: &Path) -> Result<(), String> {
+    /// Returns the file it wrote: Bun adds `.exe` to a Windows build's name (build.ts's buildInyon
+    /// says so too).
+    async fn build_engine(&self, repo: &Path, t: &str, out: &Path) -> Result<PathBuf, String> {
         let script = format!(
             "const {{ buildInyon }} = await import({}); await buildInyon({{ target: {}, outfile: {}, hub: false, hideConsole: true }})",
             serde_json::Value::String(repo.join("apps/node/build.ts").to_string_lossy().into_owned()),
             serde_json::Value::String(t.to_owned()),
             serde_json::Value::String(out.to_string_lossy().into_owned()),
         );
-        let o = tokio::process::Command::new("bun")
+        let o = tokio::process::Command::new(&self.bun)
             .args(["-e", &script])
             .current_dir(repo)
             .env("PATH", crate::hub_update::tool_path())
@@ -334,7 +345,8 @@ impl Dist {
             let err = String::from_utf8_lossy(&o.stderr).trim().to_owned();
             return Err(if err.is_empty() { format!("bun exited with {}", o.status) } else { err });
         }
-        Ok(())
+        let exe = PathBuf::from(format!("{}.exe", out.display()));
+        Ok(if !out.exists() && exe.exists() { exe } else { out.to_owned() })
     }
 
     /// The cargo-built command for `t` next to a checkout, if there is one.

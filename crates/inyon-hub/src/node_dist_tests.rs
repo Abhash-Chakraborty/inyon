@@ -173,3 +173,26 @@ fn the_build_tag_is_the_bun_hubs() {
     let line = String::from_utf8_lossy(&out.stdout).trim().lines().last().unwrap_or("").to_owned();
     assert_eq!(source_hash(&repo), line);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_checkouts_windows_engine_is_served_though_bun_adds_exe_to_its_name() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("inyon-node-dist-{}", crate::http::random_hex(6)));
+    let repo = dir.join("repo");
+    std::fs::create_dir_all(repo.join("apps/node")).unwrap();
+    // Bun.build with a windows target: the outfile gets .exe on the end
+    let bun = dir.join("bun");
+    std::fs::write(
+        &bun,
+        "#!/bin/sh\nout=$(printf '%s' \"$2\" | sed -n 's/.*outfile: \"\\([^\"]*\\)\".*/\\1/p')\ncase \"$out\" in *windows*) out=\"$out.exe\";; esac\nprintf 'engine' > \"$out\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&bun, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let d = Dist::with_bun(Some(repo), &dir.join("data"), bun);
+    let (win, linux) = block(async { (d.engine("windows-x64").await, d.engine("linux-x64").await) });
+    let _ = std::fs::remove_dir_all(&dir);
+    let win = win.unwrap();
+    assert!(win.to_string_lossy().ends_with("-inyon-engine-windows-x64.exe"), "{}", win.display());
+    assert!(linux.unwrap().to_string_lossy().ends_with("-inyon-engine-linux-x64"));
+}
