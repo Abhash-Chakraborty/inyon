@@ -40,4 +40,6 @@ url = "2.5"
 libc = "0.2"
 
 [dev-dependencies]
+# registry hooks for tests that put a machine in by hand
+inyon-core = { path = "../inyon-core", features = ["testing"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake"] }

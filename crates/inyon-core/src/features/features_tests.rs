@@ -425,6 +425,34 @@ fn transcripts_and_subagents_come_only_from_the_projects_folder() {
 }
 
 #[test]
+fn transcripts_are_read_from_claude_projects_folders_only() {
+    run(|| async {
+        // one session keeps its transcripts elsewhere (CLAUDE_CONFIG_DIR)
+        connected(
+            "paths",
+            "/home/me",
+            json!([{ "id": "%1", "agent": { "kind": "claude", "pid": 7, "state": "idle", "transcriptPath": "/home/me/.claude-work/projects/-w/abc.jsonl" } }]),
+        );
+        crate::test_support::fake::Fake::install(|_, _, _| crate::test_support::fake::ok(""));
+        for ok in ["/home/me/.claude/projects/-x/s.jsonl", "/home/me/.claude-work/projects/-w/abc/subagents/agent-1.jsonl"] {
+            read_transcript("paths", ok).await.unwrap();
+            list_subagents("paths", ok).await.unwrap();
+        }
+        for bad in [
+            "/home/me/.claude/projects/../../.ssh/id.jsonl",
+            "/home/me/.claude/projects/-x/./s.jsonl",
+            "/etc/.claude/projects/x.jsonl",
+            "/home/me/other/.claude/projects/x.jsonl",
+            "relative/.claude/projects/x.jsonl",
+            "/home/me/.claude/projects/-x/s.txt",
+        ] {
+            assert_eq!(read_transcript("paths", bad).await.unwrap_err().message, "Bad transcript path", "{bad}");
+            assert_eq!(list_subagents("paths", bad).await.unwrap_err().message, "Bad transcript path", "{bad}");
+        }
+    });
+}
+
+#[test]
 fn a_machine_not_connected_yet_has_no_home_to_put_files_in() {
     run(|| async {
         let rt = machine("off", "local", json!([]));

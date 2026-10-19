@@ -54,7 +54,7 @@ pub fn machine_kind(line: &str) -> Option<MachineKind> {
     Some(MachineKind::Desktop)
 }
 
-/// describe('machine kind'), from machine-kind.test.ts (the probe script test stays in TS).
+/// describe('machine kind'), from machine-kind.test.ts.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +126,34 @@ mod tests {
     #[test]
     fn no_facts_an_older_probe_is_unknown() {
         assert_eq!(machine_kind(""), None);
+    }
+
+    /// The machine-kind block of the probe, as machine-kind.ts has it on its own.
+    #[cfg(unix)]
+    fn machine_kind_sh() -> &'static str {
+        let probe = crate::tmux::tmux::PROBE;
+        let from = probe.find("k=\"$HOME/.inyon/machine-kind\"").unwrap();
+        let end = "echo \"@@KIND $(head -n 1 \"$k\" 2>/dev/null)\"\n";
+        &probe[from..probe.find(end).unwrap() + end.len()]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_probe_script_runs_here_and_caches_what_it_found() {
+        let home = std::env::temp_dir().join(format!("inyon-kind-{}", std::process::id()));
+        let run = || {
+            let o = std::process::Command::new("sh").arg("-c").arg(machine_kind_sh()).env("HOME", &home).env("DISPLAY", "").env("WAYLAND_DISPLAY", "").output().unwrap();
+            String::from_utf8_lossy(&o.stdout).trim().to_owned()
+        };
+        let out = run();
+        let cached = std::fs::read_to_string(home.join(".inyon/machine-kind"));
+        // the second run reads the file instead of looking again
+        std::fs::write(home.join(".inyon/machine-kind"), "Linux|||none|1|1||\n").unwrap();
+        let again = run();
+        let _ = std::fs::remove_dir_all(&home);
+        assert!(regex::Regex::new(r"^@@KIND (Linux|Darwin)\|").unwrap().is_match(&out), "{out}");
+        assert!(machine_kind(&out[7..]).is_some());
+        assert_eq!(cached.unwrap(), format!("{}\n", &out[7..]));
+        assert_eq!(again, "@@KIND Linux|||none|1|1||");
     }
 }

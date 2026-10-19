@@ -1,5 +1,5 @@
-//! hosts/node-update.test.ts. "the API refuses machines it cannot update" goes through core.ts's
-//! routes, which aren't ported yet; the overview test is in registry_tests.rs.
+//! hosts/node-update.test.ts. "the API refuses machines it cannot update" goes through the hub's
+//! route, so it is in inyon-hub's core_routes.rs; the overview test is in registry_tests.rs.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;

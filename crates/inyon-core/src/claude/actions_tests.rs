@@ -478,8 +478,8 @@ fn what_closing_a_pane_takes_with_it() {
 }
 
 // ---------- hosts/win-prelude.test.ts: psmux ----------
-// The first four check apps/node/win-prelude.sh on its own, with no hub code, and the sign-in one
-// is features/signin.ts; they stay with the TS.
+// The first four check apps/node/win-prelude.sh on its own, with no hub code: they are in
+// inyon-engine's ops.rs, which runs the prelude. The sign-in one is in signin_tests.rs.
 
 const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
 

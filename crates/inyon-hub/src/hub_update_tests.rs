@@ -1,6 +1,6 @@
 //! hub-update.test.ts, the hub's half ("the hub checks for updates and starts one", "a hub run as
-//! the inyon program"). The update script's own steps stay in TS (apps/hub/src/cli/update.ts),
-//! and so do their tests. Every checkout here is a throwaway repository in a temp folder.
+//! the inyon program", and the checkout checks the status shares with the script). The update
+//! script's own steps stay in TS (apps/hub/src/cli/update.ts), and so do their tests. Every checkout here is a throwaway repository in a temp folder.
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -87,6 +87,28 @@ fn counting() -> (Rc<Cell<u32>>, Exec) {
         real(cmd, cwd)
     });
     (seen, run)
+}
+
+#[test]
+fn a_folder_inside_some_other_repository_is_not_a_checkout_of_inyon() {
+    let root = tmp();
+    let (dir, _) = checkout(&root.0, "r7", &[]);
+    std::fs::create_dir_all(dir.join("apps")).unwrap();
+    let co = block(check_checkout(&dir.join("apps"), &exec()));
+    assert!(!co.git);
+    assert!(co.reason.as_deref().unwrap().contains("isn't a git checkout"));
+    let s = block(HubUpdater::new(opts(Some(dir.join("apps")), root.0.join("data7"), "0.6.3")).status(false));
+    assert_eq!(s["canUpdate"], json!(false));
+}
+
+#[test]
+fn a_detached_checkout() {
+    let root = tmp();
+    let (dir, _) = checkout(&root.0, "r8", &[]);
+    git(&dir, &["checkout", "-q", "--detach"]);
+    let s = block(HubUpdater::new(opts(Some(dir), root.0.join("data8"), "0.6.3")).status(false));
+    assert!(s["reason"].as_str().unwrap().contains("not a branch"));
+    assert_eq!(s["canUpdate"], json!(false));
 }
 
 #[test]
@@ -193,7 +215,9 @@ fn post_starts_the_script_on_its_own_and_answers_at_once() {
         assert_eq!(s["log"], json!(u.log_file.to_string_lossy()));
         // failed, as the script wrote it down
         std::fs::write(&u.job_file, r#"{"pid":4242,"started":1,"step":"build","error":"Building the web app failed."}"#).unwrap();
-        assert_eq!(u.status(false).await["error"], json!("Building the web app failed."));
+        let s = u.status(false).await;
+        assert_eq!(s["error"], json!("Building the web app failed."));
+        assert_eq!(s["log"], json!(u.log_file.to_string_lossy()));
     });
 }
 

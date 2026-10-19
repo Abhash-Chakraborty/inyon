@@ -216,6 +216,20 @@ async fn upload(mut r: Req) -> HubResult<Resp> {
     Ok(json_of(&json!({ "files": all })))
 }
 
+async fn node_update(r: Req) -> HubResult<Resp> {
+    let rt = registry().get(&id(&r)).ok_or_else(|| http(404, "Unknown machine"))?;
+    let refused = {
+        let b = rt.borrow();
+        let (host, state) = (b.host.clone(), b.state.clone());
+        drop(b);
+        node_updates().start(&host, &state)
+    };
+    if let Some(why) = refused {
+        return Err(http(409, why));
+    }
+    Ok(ok())
+}
+
 /// The routes, each behind sign-in.
 pub fn add(routes: &mut Routes) {
     use Method as M;
@@ -334,26 +348,7 @@ pub fn add(routes: &mut Routes) {
         )],
     );
     // one tap in the app: brings the machine's inyon up to date (see hosts/node_update)
-    guarded(
-        routes,
-        "/api/hosts/:id/node/update",
-        vec![(
-            M::POST,
-            h(|r| async move {
-                let rt = registry().get(&id(&r)).ok_or_else(|| http(404, "Unknown machine"))?;
-                let refused = {
-                    let b = rt.borrow();
-                    let (host, state) = (b.host.clone(), b.state.clone());
-                    drop(b);
-                    node_updates().start(&host, &state)
-                };
-                if let Some(why) = refused {
-                    return Err(http(409, why));
-                }
-                Ok(ok())
-            }),
-        )],
-    );
+    guarded(routes, "/api/hosts/:id/node/update", vec![(M::POST, h(node_update))]);
     guarded(
         routes,
         "/api/hosts/:id/launch",
@@ -854,5 +849,126 @@ mod tests {
             inyon_core::js::stringify(&next),
             r#"{"keepSession":{"a":true},"uploads":{"retentionDays":365,"maxMB":1,"maxTotalMB":1024,"longPasteLines":5},"other":"x","autoResume":true}"#
         );
+    }
+
+    // node-update.test.ts and uploads.test.ts: routes run on a machine put in the registry
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use inyon_core::hosts::host::Host;
+    use inyon_core::hosts::registry::HostRuntime;
+
+    /// A machine in the registry as `state` says, never polled.
+    fn put(state: Value) -> inyon_core::hosts::registry::Rt {
+        let state: inyon_protocol::HostState = serde_json::from_value(state).unwrap();
+        let rt = Rc::new(RefCell::new(HostRuntime::new(Host::new(state.config.clone()), state.clone())));
+        rt.borrow_mut().hold_polls();
+        registry().insert_runtime(&state.config.id, rt.clone());
+        rt
+    }
+
+    fn host_state(id: &str, kind: &str, more: Value) -> Value {
+        let mut s =
+            json!({ "config": { "id": id, "name": id, "kind": kind }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0 });
+        for (k, v) in more.as_object().unwrap() {
+            s[k] = v.clone();
+        }
+        s
+    }
+
+    async fn answered(res: HubResult<Resp>) -> (u16, Value) {
+        let res = crate::http::answer(res);
+        let status = res.status().as_u16();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+    }
+
+    struct Sock;
+    impl node_link::NodeSocket for Sock {
+        fn send(&self, _: &str) {}
+        fn close(&self, _: u16, _: &str) {}
+    }
+
+    #[test]
+    fn the_api_refuses_machines_it_cannot_update_with_a_clear_409() {
+        crate::test_util::block(async {
+            put(host_state("box", "ssh", json!({})));
+            put(host_state("away", "node", json!({ "status": "error", "nodeVersion": "0.3.0" })));
+            put(host_state("fine", "node", json!({ "nodeVersion": inyon_protocol::VERSION })));
+            node_link::attach("fine", Rc::new(Sock));
+            node_link::receive("fine", &json!({ "type": "hello", "version": inyon_protocol::VERSION, "os": "linux x64" }));
+            let ask = |id: &str| {
+                let mut r = crate::server::test_req("POST", &format!("/api/hosts/{id}/node/update"), &[], "");
+                r.params = vec![("id".into(), id.into())];
+                async move {
+                    let (status, body) = answered(node_update(r).await).await;
+                    (status, body["error"].as_str().unwrap_or_default().to_owned())
+                }
+            };
+            assert_eq!(ask("nope").await, (404, "Unknown machine".into()));
+            assert_eq!(ask("box").await, (409, "Only machines running inyon can be updated from here.".into()));
+            assert_eq!(ask("away").await, (409, "away isn't connected. Update it once it's back online.".into()));
+            assert_eq!(ask("fine").await, (409, "inyon on fine is already up to date.".into()));
+        });
+    }
+
+    /// A multipart upload sent as a stream, so there is no Content-Length to go by.
+    fn chunked_upload(fields: &[(&str, &str)], file: &str, size: usize) -> Req {
+        const B: &str = "----inyon-test";
+        let mut head = String::new();
+        for (k, v) in fields {
+            head.push_str(&format!("--{B}\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n"));
+        }
+        head.push_str(&format!("--{B}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"{file}\"\r\nContent-Type: application/octet-stream\r\n\r\n"));
+        const MB: usize = 1024 * 1024;
+        let data = (0..size).step_by(MB).map(move |at| (at..(at + MB).min(size)).map(|i| ((i * 7) & 255) as u8).collect::<Vec<u8>>());
+        let chunks = std::iter::once(head.into_bytes()).chain(data).chain(std::iter::once(format!("\r\n--{B}--\r\n").into_bytes()));
+        let stream = futures_util::stream::iter(chunks.map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::from(c))));
+        let mut r = crate::server::test_req("POST", "/api/hosts/up/uploads", &[("content-type", &format!("multipart/form-data; boundary={B}"))], "");
+        r.body = Some(axum::body::Body::from_stream(stream));
+        r.params = vec![("id".into(), "up".into())];
+        r
+    }
+
+    #[test]
+    fn the_upload_route_takes_a_chunked_piece_and_counts_what_it_reads() {
+        let home = std::env::temp_dir().join(format!("inyon-up-{}", crate::http::random_hex(6)));
+        std::fs::create_dir_all(&home).unwrap();
+        let (ok, refused) = crate::test_util::block(async {
+            let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = inyon_backends::process::ProcessBackend::new(home.join("cm"), vec![]);
+            inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
+            let rt = put(host_state("up", "local", json!({})));
+            rt.borrow_mut().probe = Some(Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult {
+                hostname: "box".into(),
+                home: home.to_string_lossy().into_owned(),
+                os: "Linux".into(),
+                now: 0.0,
+                latency_ms: 0.0,
+                tmux: inyon_core::tmux::tmux::TmuxProbe::Ok,
+                integration: inyon_protocol::IntegrationState::Missing,
+                sessions: vec![],
+                agent_procs: Default::default(),
+                hook_panes: Default::default(),
+                status_panes: Default::default(),
+                account: None,
+                compact_panes: Default::default(),
+                installed: vec![],
+                signed_in: vec![],
+                agy_conversations: Default::default(),
+                agy_status: Default::default(),
+                agy_titles: Default::default(),
+                agy_integration: None,
+                machine_kind: None,
+            })));
+            let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
+            // over the 100 MB setting (plus a megabyte for the form itself)
+            let refused = answered(upload(chunked_upload(&[], "big.bin", 102 * 1024 * 1024)).await).await;
+            (ok, refused)
+        });
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(ok.0, 200, "{}", ok.1);
+        assert_eq!(ok.1["files"][0]["size"], json!(1000));
+        assert_eq!(refused, (413, json!({ "error": "Uploads are limited to 100 MB" })));
     }
 }
