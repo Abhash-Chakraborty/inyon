@@ -8,6 +8,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { type Installer, isInstaller, stampInstaller } from "../apps/node/installers.ts";
 
 const ROOT = dirname(import.meta.dir);
 const SITE = import.meta.dir;
@@ -368,6 +369,46 @@ export function minisignOk(data: Buffer, sig: string, key: string): boolean {
   );
 }
 
+/** sha256sum's lines ("<hex>  name", "*" marking binary mode) as file name to checksum. */
+export function parseSums(sums: string): Map<string, string> {
+  const expected = new Map<string, string>();
+  for (const line of sums.split("\n")) {
+    const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(.+)$/);
+    if (m) expected.set(m[2], m[1]);
+  }
+  return expected;
+}
+
+/** An installer as the commit tagged `tag` has it (apps/node/<name>), from this checkout's git. */
+function taggedInstaller(tag: string, name: Installer): Buffer | undefined {
+  const p = Bun.spawnSync(["git", "show", `${tag}:apps/node/${name}`], { cwd: ROOT, stdout: "pipe", stderr: "ignore" });
+  return p.exitCode === 0 ? Buffer.from(p.stdout) : undefined;
+}
+
+/**
+ * Throws unless release file `name` may be published as `data`: listed in the signed SHA256SUMS
+ * with that checksum. The list can't name itself or its signature. Releases before 0.20 left the
+ * installers out of it, so for those an installer has to be byte for byte the one in the commit
+ * the release is tagged on (`tagged`), or the site keeps serving what it had.
+ */
+export function checkReleaseFile(
+  name: string,
+  data: Buffer,
+  expected: Map<string, string>,
+  tagged: (name: Installer) => Buffer | undefined,
+): void {
+  const want = expected.get(name);
+  if (want) {
+    if (createHash("sha256").update(data).digest("hex") !== want) throw new Error(`${name}: checksum mismatch`);
+    return;
+  }
+  if (name === "SHA256SUMS" || name === "SHA256SUMS.minisig") return;
+  if (!isInstaller(name)) throw new Error(`${name}: not in SHA256SUMS`);
+  const copy = tagged(name);
+  if (!copy) throw new Error(`${name}: not in SHA256SUMS, and the release's tag isn't here to check it against`);
+  if (!copy.equals(data)) throw new Error(`${name}: not in SHA256SUMS, and not the copy in the release's tagged commit`);
+}
+
 /** Downloads every mirrored file of the release and refuses to publish one that doesn't match the
  *  release's SHA256SUMS, so the domain can never serve something the release didn't sign off. */
 async function mirror(release: Release, raw: GhRelease) {
@@ -393,28 +434,23 @@ async function mirror(release: Release, raw: GhRelease) {
   } else if (!/^0\.(\d|1[0-3])\./.test(release.version)) {
     throw new Error(`${release.tag} has no SHA256SUMS.minisig`);
   }
-  const expected = new Map<string, string>();
-  for (const line of sums.split("\n")) {
-    const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(.+)$/);
-    if (m) expected.set(m[2], m[1]);
+  // the short installer URLs at the root must keep working, so a release without them isn't served
+  for (const name of ["get.sh", "get.ps1"]) {
+    if (!release.assets.some((a) => a.name === name)) throw new Error(`${release.tag} has no ${name}`);
   }
+  const expected = parseSums(sums);
+  const sumsSha = createHash("sha256").update(sumsBytes).digest("hex");
   for (const asset of release.assets) {
     const data = asset.name === "SHA256SUMS" ? sumsBytes : await fetchAsset(asset.name);
-    const sha = createHash("sha256").update(data).digest("hex");
-    const want = expected.get(asset.name);
-    // the sums can't list themselves or their signature, and the installers are what check them,
-    // so those come straight from the release; any other unlisted file stops the build
-    if (want && want !== sha) throw new Error(`${asset.name}: checksum mismatch`);
-    if (!want && !/^(SHA256SUMS|get\.sh$|get\.ps1$)/.test(asset.name)) {
-      throw new Error(`${asset.name}: not in SHA256SUMS`);
-    }
-    asset.sha256 = sha;
+    checkReleaseFile(asset.name, data, expected, (name) => taggedInstaller(release.tag, name));
+    asset.sha256 = createHash("sha256").update(data).digest("hex");
     writeFileSync(join(dir, asset.name), data);
-    // the installers are also served short, at the site's root
-    if (asset.name === "get.sh" || asset.name === "get.ps1") writeFileSync(join(OUT, asset.name), data);
+    // the installers are also served short, at the site's root, with the sha256 of the list just
+    // checked filled in: that copy needs no minisign to trust it
+    if (isInstaller(asset.name)) writeFileSync(join(OUT, asset.name), stampInstaller(asset.name, data.toString("utf8"), sumsSha));
     // a stable name for the newest APK
     if (asset.name.endsWith(".apk")) writeFileSync(join(dir, "inyon.apk"), data);
-    console.log(`  ${asset.name} ${mb(asset.size)} ${want ? "checked" : ""}`);
+    console.log(`  ${asset.name} ${mb(asset.size)} ${expected.has(asset.name) ? "checked" : ""}`);
   }
 }
 

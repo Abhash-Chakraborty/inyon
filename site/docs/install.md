@@ -28,7 +28,7 @@ curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
 ### What they do
 
 1. Work out the system and processor: Linux or macOS on x64 or arm64, Windows on x64 or arm64. Anything else stops with a message. On Alpine and other musl systems, a hub gets the engine built for musl.
-2. Download the release's `SHA256SUMS`. When [minisign](https://jedisct1.github.io/minisign/) is installed, check that list's signature against Inyon's release key and stop if it doesn't match. Without minisign the installers say so and carry on; `inyon` itself always checks the signature from then on.
+2. Download the release's `SHA256SUMS` and make sure it's the signed one. From 0.20 the copy of each installer this site serves carries the sha256 of the list the site checked against Inyon's release key when it published the release, so it needs no other tool. A copy from anywhere else, or one pointed at another release, checks the list's signature with [minisign](https://jedisct1.github.io/minisign/), and that the list is the one for the version it asked for. Without minisign it stops, unless you [tell it to go on](#without-minisign). Before 0.20 the installers checked the signature only when minisign was installed.
 3. Download the `inyon` command for this system, compressed when `gzip` is available, and check it against `SHA256SUMS`, both compressed and unpacked. A mismatch stops the install before anything runs.
 4. Put it in `~/.inyon/bin/inyon` (`%USERPROFILE%\.inyon\bin\inyon.exe` on Windows). On macOS it gets an ad-hoc signature so the system will run it.
 5. On Alpine, for a hub, add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to. Before 0.19 every Alpine install did this.
@@ -48,6 +48,24 @@ Both read `INYON_DOWNLOAD`, a folder URL to fetch from instead. Every release st
 ```sh
 curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh
 ```
+
+From 0.20 that needs [minisign](https://jedisct1.github.io/minisign/) (`brew install minisign`, `apt install minisign`, `scoop install minisign`), since the list it fetches isn't the one the site checked. The installers check its signature against Inyon's release key, and that it lists the APK of the version asked for: the tag in a GitHub address, the release GitHub calls latest, or the version in the folder's `latest.json`. An older release's list is refused even though it's signed too.
+
+### Without minisign
+
+To install from somewhere else on a computer without minisign, tell the installer to go on without the signature:
+
+```sh
+curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh -s -- --no-signature-check
+```
+
+```powershell
+$env:INYON_DOWNLOAD = 'https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0'
+$env:INYON_NO_SIGNATURE_CHECK = '1'
+irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
+```
+
+`--no-signature-check` (or `INYON_NO_SIGNATURE_CHECK=1`) only skips a check nothing on the computer can make. Every download is still checked against the list, and with minisign installed a list with a bad signature is refused all the same. `inyon` checks the signature itself on every update from then on.
 
 ## With npm
 
