@@ -678,6 +678,53 @@ export type PairedPhone = { id: string, name: string, pairedAt: number, lastSeen
 thisPhone?: true, };
 
 /**
+ * What a companion may do: read the overview, watch chats, answer prompts, send text. Nothing else.
+ */
+export type CompanionScope = "overview" | "chat" | "answer" | "send";
+
+/**
+ * A short one-time code for a companion to type: six characters, no 0, O, 1, I or L.
+ */
+export type CompanionPairCode = { code: string, 
+/**
+ * unix ms; five minutes after the code was made
+ */
+expiresAt: number, };
+
+/**
+ * POST /api/companions/claim, sent with `X-Inyon-Contract`.
+ */
+export type CompanionClaim = { 
+/**
+ * any case, spaces and dashes ignored
+ */
+code: string, 
+/**
+ * what the hub lists it as, e.g. "Legato on abhash-laptop"
+ */
+name: string, 
+/**
+ * the app itself, e.g. "Legato for Windows"
+ */
+app?: string, };
+
+export type CompanionClaimResult = { 
+/**
+ * sent as `Authorization: Bearer` from then on; the hub keeps only its hash
+ */
+token: string, hubId: string, scopes: Array<CompanionScope>, contractVersion: number, };
+
+/**
+ * GET /api/companions: a companion app that paired, as the hub lists it.
+ */
+export type PairedCompanion = { id: string, name: string, app?: string, scopes: Array<CompanionScope>, contractVersion: number, pairedAt: number, lastSeen: number, };
+
+/**
+ * GET /api/companions/me: the companion asking, and the hub it paired with.
+ */
+export type CompanionMe = { id: string, name: string, app?: string, scopes: Array<CompanionScope>, contractVersion: number, hub: HubInfo, };
+
+/**
  * What a page's progress.json says, counted: tasks done of all tasks, and its `now` and `updated` lines.
  */
 export type PageProgress = { done: number, total: number, 

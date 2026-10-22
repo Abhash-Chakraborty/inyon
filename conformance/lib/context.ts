@@ -67,8 +67,8 @@ export class AppSocket {
     private ctx: Context,
   ) {}
 
-  open(as: As = 'browser', query = ''): Promise<string> {
-    const headers: Record<string, string> = {}
+  open(as: As = 'browser', query = '', extra: Record<string, string> = {}): Promise<string> {
+    const headers: Record<string, string> = { ...extra }
     const cookie = this.ctx.cookieFor(as)
     if (cookie) headers.cookie = cookie
     if (typeof as === 'object' && 'bearer' in as) headers.authorization = `Bearer ${as.bearer}`
@@ -272,10 +272,10 @@ export class Context {
     return false
   }
 
-  /** Opens /ws and records how that went. */
-  async connect(name = 'app', as: As = 'browser', query = '') {
+  /** Opens /ws and records how that went; `headers` go on the upgrade request. */
+  async connect(name = 'app', as: As = 'browser', query = '', headers: Record<string, string> = {}) {
     const s = this.socket(name)
-    const r = await s.open(as, query)
+    const r = await s.open(as, query, headers)
     this.entry({ ws: name, open: r })
     return s
   }

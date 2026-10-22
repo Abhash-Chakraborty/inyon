@@ -15,7 +15,7 @@ use crate::hosts::host::{shq, ExecOptions, Host, PtyHandle};
 use crate::js::{fmt_number, to_number};
 use crate::platform::rt::{clear, set_timeout, spawn, Deferred, Timer};
 use crate::re;
-use crate::tmux::tmux::paste_command;
+use crate::tmux::tmux::{paste_command, paste_text};
 
 /// xterm's sequences for the keys tmux knows by name.
 fn named(seq: &str) -> Option<&'static str> {
@@ -168,7 +168,7 @@ pub fn input_command(pane: &str, x: &Input) -> (String, Option<String>) {
         Input::Keys(keys) => (format!("{t} {}", keys.iter().map(|k| shq(k)).collect::<Vec<_>>().join(" ")), None),
         Input::Text(text) => (format!("{t} -l -- {}", shq(text)), None),
         Input::Hex(hex) => (format!("{t} -H {}", hex.join(" ")), None),
-        Input::Paste(p) => (paste_command(&format!("inyon-term-{}", short_id(8)), pane), Some(re!(r"\r\n?", "g").replace_all(p, "\n").into_owned())),
+        Input::Paste(p) => (paste_command(&format!("inyon-term-{}", short_id(8)), pane), Some(paste_text(p))),
     }
 }
 

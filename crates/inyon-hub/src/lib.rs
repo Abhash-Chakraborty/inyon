@@ -9,6 +9,7 @@
 pub mod auth;
 pub mod cli;
 pub mod clients;
+pub mod companions;
 pub mod core_routes;
 pub mod hostnames;
 pub mod http;

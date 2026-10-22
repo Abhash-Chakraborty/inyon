@@ -60,7 +60,9 @@ fn local_node(s: &HostState) -> Value {
 /// The inyon command on this machine reads the hub's machines over loopback with the token the hub
 /// wrote as it started, readable only by this user.
 fn from_this_machine(req: &Req) -> bool {
-    if !loopback(&req.ip()) {
+    // loopback, or the hub's own address when it listens on one (a VPN address, say): either way this machine
+    let ip = req.ip();
+    if !loopback(&ip) && ip.strip_prefix("::ffff:").unwrap_or(&ip) != ctx().bind {
         return false;
     }
     let given = req.query_get("token").unwrap_or_else(|| {
@@ -247,6 +249,47 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
             ),
         )],
     );
+    // ---------- companion apps: they type a short code this hub's web app or `inyon hub companion-code` shows ----------
+    r.methods("/api/companions", vec![(Method::GET, api(h(|_req| async move { Ok(ok_json(&crate::companions::list_companions())) }), Opts::default()))]);
+    post(
+        &mut r,
+        "/api/companions/pair",
+        h(|req| async move {
+            // a code hands out a token that outlives this session, so the password must be fresh
+            if !recent_sign_in(&req, CODE_TTL) {
+                return Err(http(403, "Sign in again to pair a companion app."));
+            }
+            Ok(ok_json(&crate::companions::new_companion_code(now_ms())))
+        }),
+        OWNER,
+    );
+    r.methods("/api/companions/claim", vec![(Method::POST, crate::server::api_for(h(crate::companions::claim), OPEN, Some(crate::companions::claim_route())))]);
+    r.methods(
+        "/api/companions/me",
+        vec![(
+            Method::GET,
+            crate::server::api_for(
+                h(|_req| async move { Ok(answer(403, &json!({ "error": "Only a companion app asks this" }))) }),
+                Opts::default(),
+                Some(crate::companions::me_route()),
+            ),
+        )],
+    );
+    r.methods(
+        "/api/companions/:id",
+        vec![(
+            Method::DELETE,
+            api(
+                h(|req| async move {
+                    if !crate::companions::revoke_companion(&req.param("id")) {
+                        return Err(http(404, "Unknown companion app"));
+                    }
+                    Ok(ok())
+                }),
+                OWNER,
+            ),
+        )],
+    );
     post(
         &mut r,
         "/api/hosts/pair",
@@ -293,6 +336,20 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
             }
             let nodes: Vec<Value> = registry().overview().iter().map(local_node).collect();
             ok_json(&json!({ "v": 1, "ok": true, "nodes": nodes }))
+        })),
+    );
+    // `inyon hub companion-code`: a code for a companion app without a browser
+    r.add(
+        "/api/local/companion-code",
+        Route::Any(raw(|req| async move {
+            if !from_this_machine(&req) {
+                return answer(403, &json!({ "error": "Only the inyon command on this machine may ask" }));
+            }
+            let mut v = json!({ "v": 1, "ok": true });
+            if let (Some(o), Value::Object(code)) = (v.as_object_mut(), crate::companions::new_companion_code(now_ms())) {
+                o.extend(code);
+            }
+            ok_json(&v)
         })),
     );
     crate::node_dist::add(&mut r);

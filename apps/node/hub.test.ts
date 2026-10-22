@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { privateHost, setupCodeMessage } from './hub.ts'
+import { companionCodeMessage, formatCompanionCode, privateHost, setupCodeMessage } from './hub.ts'
 
 const url = 'http://127.0.0.1:4777'
 
@@ -29,4 +29,14 @@ test('setup code: a hub with a password points at reset-password', () => {
 test('setup code: the file without a running hub, and neither', () => {
   expect(setupCodeMessage('e8ff64a5', undefined, url)).toMatch(/^Setup code: e8ff64a5\n.*start it/)
   expect(setupCodeMessage(undefined, undefined, url)).toContain('has not started yet')
+})
+
+test('companion code: shown in two halves, with where to type it and for how long', () => {
+  expect(formatCompanionCode('K7M2QX')).toBe('K7M-2QX')
+  expect(formatCompanionCode('odd')).toBe('odd')
+  expect(companionCodeMessage('K7M2QX', 'http://100.97.0.1:8787')).toBe(
+    "Companion code: K7M-2QX\nType it into the companion app (Legato: Settings > Connections > Inyon) with this hub's address, http://100.97.0.1:8787. It works once, for 5 minutes.",
+  )
+  // behind a proxy the loopback address would reach nothing from the app's computer
+  expect(companionCodeMessage('K7M2QX', 'http://127.0.0.1:4777')).toContain('with the address you open this hub at.')
 })

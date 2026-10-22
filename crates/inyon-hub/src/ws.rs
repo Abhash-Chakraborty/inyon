@@ -252,6 +252,12 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
 /// bearer; either one is judged alone, never a cookie sent along with it.
 pub fn app_upgrade(mut req: Req) -> Resp {
     let ticket = req.query_get("ticket");
+    // a companion app: its bearer, and its contract in a header or (for a client that can't set one) ?contract=
+    if ticket.is_none() {
+        if let Some(c) = crate::companions::companion_for(&req) {
+            return companion_upgrade(req, c);
+        }
+    }
     let as_phone = ticket.is_some() || has_bearer(&req);
     let phone = match &ticket {
         Some(t) => redeem_ticket(t, now_ms()),
@@ -283,6 +289,43 @@ pub fn app_upgrade(mut req: Req) -> Resp {
         ends,
         move || add(&c1),
         move |t| client_message(&c2, t),
+        move || {
+            release();
+            close_client(&c3);
+        },
+    ));
+    res
+}
+
+/// `/ws` for a companion app: only what its scopes allow goes out, and a frame it may not send
+/// ends the connection.
+fn companion_upgrade(mut req: Req, c: crate::companions::CompanionRecord) -> Resp {
+    if let Some(refused) = crate::companions::contract_refusal(&req, req.query_get("contract")) {
+        return refused;
+    }
+    let (Some(res), Some(on)) = (handshake(&req), req.upgrade.take()) else { return text(400, "Upgrade failed") };
+    let (sock, ends) = Socket::new();
+    let scopes = Rc::new(c.scopes.clone());
+    let (s, sc) = (sock.clone(), scopes.clone());
+    let client = new_client(move |msg| {
+        if let Some(v) = crate::companions::companion_frame(msg, &sc) {
+            s.send_text(inyon_core::js::stringify(&v));
+        }
+    });
+    let s = sock.clone();
+    let closer: Closer = Rc::new(move |code, reason| s.close_with(code, reason));
+    let release = crate::companions::hold_companion_socket(&c.id, closer);
+    let (c1, c2, c3) = (client.clone(), client.clone(), client);
+    let s = sock;
+    tokio::task::spawn_local(pump(
+        on,
+        ends,
+        move || add(&c1),
+        move |t| match crate::companions::inbound_refusal(t, &scopes) {
+            // a companion may only watch: anything else ends its connection
+            Some(why) => s.close_with(4403, &why),
+            None => client_message(&c2, t),
+        },
         move || {
             release();
             close_client(&c3);

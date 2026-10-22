@@ -14,6 +14,7 @@
  *   inyon-engine connect             run the connection to that hub
  *   inyon-engine hub                 run the hub
  *   inyon-engine hub code            show the setup code a new hub asks for
+ *   inyon-engine hub companion-code  a one-time code for a companion app to pair with
  *   inyon-engine hub reset-password  choose a new password for a forgotten one
  *   inyon-engine version             print the version
  *   inyon-engine hidden <program> …  run a program with no window and wait for it
@@ -301,6 +302,7 @@ const USAGE = `inyon-engine ${VERSION}: the program behind the inyon command, wh
   inyon-engine connect              run the connection to that hub
   inyon-engine hub                  run the hub
   inyon-engine hub code             show the setup code a new hub asks for
+  inyon-engine hub companion-code   a one-time code for a companion app to pair with
   inyon-engine hub reset-password   choose a new password for a forgotten one
   inyon-engine version              print the version
 

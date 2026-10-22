@@ -224,7 +224,7 @@ pub const WRONG_HOST: &str = "This hub doesn't answer to that address. If it's y
 /// Sent to a name the hub answers to (see hostnames), including the one a local proxy forwards.
 /// A signed-in browser passes under any name: its cookie can only have been set by the hub itself.
 pub fn right_host(req: &Req) -> bool {
-    if is_authed(req) {
+    if is_authed(req) || crate::companions::companion_for(req).is_some() {
         return true;
     }
     let c = ctx();
@@ -314,14 +314,25 @@ pub const OPEN_OWNER: Opts = Opts { open: true, owner: true };
 
 /// `api(fn, opts)`: an API handler behind the hub's checks, its errors as JSON.
 pub fn api(f: ApiHandler, o: Opts) -> Handler {
+    api_for(f, o, None)
+}
+
+/// `api(fn, { ...opts, companion })`: `companion` is what a companion app may do on this route,
+/// with which scope; without it a companion is refused.
+pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::CompanionRoute>) -> Handler {
     Rc::new(move |req: Req| {
         let f = f.clone();
+        let companion = companion.clone();
         Box::pin(async move {
             if let Some(pre) = preflight(&req) {
                 return pre;
             }
             if !right_host(&req) {
                 return json(421, &serde_json::json!({ "error": WRONG_HOST }));
+            }
+            // a companion's token is judged on its own: its contract, then its scope for this route
+            if let Some(c) = crate::companions::companion_for(&req) {
+                return crate::companions::as_companion(req, c, companion).await;
             }
             let origin = req.header("origin");
             let phone = phone_request(&req);
@@ -346,7 +357,15 @@ pub fn api(f: ApiHandler, o: Opts) -> Handler {
 
 /// The shared routes, each method behind sign-in (`guarded`).
 pub fn guarded(routes: &mut Routes, pattern: &str, list: Vec<(Method, ApiHandler)>) {
-    routes.methods(pattern, list.into_iter().map(|(m, f)| (m, api(f, Opts::default()))).collect());
+    routes.methods(
+        pattern,
+        list.into_iter()
+            .map(|(m, f)| {
+                let c = crate::companions::route_for(pattern, &m);
+                (m, api_for(f, Opts::default(), c))
+            })
+            .collect(),
+    );
 }
 
 /// The same for handlers that make their own answers.
@@ -357,7 +376,15 @@ pub fn guarded_raw(routes: &mut Routes, pattern: &str, list: Vec<(Method, Handle
             Box::pin(async move { Ok(f(r).await) })
         })
     };
-    routes.methods(pattern, list.into_iter().map(|(m, f)| (m, api(wrap(f), Opts::default()))).collect());
+    routes.methods(
+        pattern,
+        list.into_iter()
+            .map(|(m, f)| {
+                let c = crate::companions::route_for(pattern, &m);
+                (m, api_for(wrap(f), Opts::default(), c))
+            })
+            .collect(),
+    );
 }
 
 // ---------- requests ----------

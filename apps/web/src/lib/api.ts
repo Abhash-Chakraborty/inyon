@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -346,6 +346,10 @@ export const api = {
   phonePair: (origin: string) => request<{ id: string; code: string; link: string; expiresAt: number }>('POST', '/api/phones/pair', { origin }),
   phones: () => request<{ id: string; name: string; pairedAt: number; lastSeen?: number; thisPhone?: boolean }[]>('GET', '/api/phones'),
   forgetPhone: (id: string) => request<unknown>('DELETE', `/api/phones/${encodeURIComponent(id)}`),
+  // ---- companion apps (Legato and the like) pair with a short code the hub shows ----
+  companionPair: () => request<CompanionPairCode>('POST', '/api/companions/pair', {}),
+  companions: () => request<PairedCompanion[]>('GET', '/api/companions'),
+  forgetCompanion: (id: string) => request<unknown>('DELETE', `/api/companions/${encodeURIComponent(id)}`),
 
   /** Uploads with progress (fetch can't report upload progress). */
   upload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {

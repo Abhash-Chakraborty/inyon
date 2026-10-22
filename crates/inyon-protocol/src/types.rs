@@ -846,6 +846,79 @@ pub struct PairedPhone {
     pub this_phone: Option<True>,
 }
 
+// ---------- Companion apps (Legato and the like), contract version 1 ----------
+
+/// What a companion may do: read the overview, watch chats, answer prompts, send text. Nothing else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum CompanionScope {
+    Overview,
+    Chat,
+    Answer,
+    Send,
+}
+
+/// A short one-time code for a companion to type: six characters, no 0, O, 1, I or L.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionPairCode {
+    pub code: String,
+    /// unix ms; five minutes after the code was made
+    pub expires_at: u64,
+}
+
+/// POST /api/companions/claim, sent with `X-Inyon-Contract`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct CompanionClaim {
+    /// any case, spaces and dashes ignored
+    pub code: String,
+    /// what the hub lists it as, e.g. "Legato on abhash-laptop"
+    pub name: String,
+    /// the app itself, e.g. "Legato for Windows"
+    pub app: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct CompanionClaimResult {
+    /// sent as `Authorization: Bearer` from then on; the hub keeps only its hash
+    pub token: String,
+    pub hub_id: String,
+    pub scopes: Vec<CompanionScope>,
+    pub contract_version: u32,
+}
+
+/// GET /api/companions: a companion app that paired, as the hub lists it.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct PairedCompanion {
+    pub id: String,
+    pub name: String,
+    pub app: Option<String>,
+    pub scopes: Vec<CompanionScope>,
+    pub contract_version: u32,
+    pub paired_at: u64,
+    pub last_seen: u64,
+}
+
+/// GET /api/companions/me: the companion asking, and the hub it paired with.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct CompanionMe {
+    pub id: String,
+    pub name: String,
+    pub app: Option<String>,
+    pub scopes: Vec<CompanionScope>,
+    pub contract_version: u32,
+    pub hub: HubInfo,
+}
+
 // ---------- Pages: sites an agent made, served by the hub under a token URL ----------
 
 /// What a page's progress.json says, counted: tasks done of all tasks, and its `now` and `updated` lines.

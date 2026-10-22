@@ -20,6 +20,8 @@ import type { HostState, PhoneClaim } from '@inyon/protocol'
 import { pushAll, startHubPush } from './push/hub-push.ts'
 import { pushRoutes, TEST_PAYLOAD } from './push/routes.ts'
 import { pagesFeature } from './features/pages.ts'
+import { asCompanion, claimCompanion, companionFor, companionFrame, companionMe, companionRoutes, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, type CompanionRoute } from './companions.ts'
+import type { CompanionScope } from '@inyon/protocol'
 import { kv } from './platform/store.ts'
 
 /** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
@@ -66,7 +68,7 @@ void detectNetworks().then((nets) => nets.forEach((n) => n.name && networkNames.
 const knownHost = allowedHosts(process.env, BIND, networkNames)
 const refusedHosts = new Set<string>()
 function rightHost(req: Request) {
-  if (isAuthed(req)) return true
+  if (isAuthed(req) || companionFor(req)) return true
   const names = [req.headers.get('host'), ...(req.headers.get('x-forwarded-host')?.split(',').map((h) => h.trim()) ?? [])].filter((h) => h !== null)
   const wrong = names.find((h) => !knownHost(h)) ?? (names.length ? undefined : '(none)')
   if (wrong === undefined) return true
@@ -121,15 +123,19 @@ function preflight(req: Request) {
 
 /**
  * An API handler behind sign-in and the same-origin check. `open`: no sign-in needed. `owner`:
- * the hub's own account is the browser's to manage, so a paired phone is refused.
+ * the hub's own account is the browser's to manage, so a paired phone is refused. `companion`:
+ * what a companion app may do here, with which scope; without it a companion is refused.
  */
 const api =
-  (fn: Handler, { open = false, owner = false } = {}): Handler => {
+  (fn: Handler, { open = false, owner = false, companion }: { open?: boolean; owner?: boolean; companion?: CompanionRoute } = {}): Handler => {
     const run = handled(fn)
     return async (req) => {
       const pre = preflight(req)
       if (pre) return pre
       if (!rightHost(req)) return json({ error: WRONG_HOST }, { status: 421 })
+      // a companion's token is judged on its own: its contract, then its scope for this route
+      const comp = companionFor(req)
+      if (comp) return asCompanion(req, comp, companion)
       if (owner && hasBearer(req)) return cors(req, json({ error: 'Not from a phone. Do this in the browser.' }, { status: 403 }))
       if (!phoneRequest(req) && framedCaller(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
       // a bearer request carries no ambient credential, so CSRF doesn't apply to it
@@ -139,17 +145,30 @@ const api =
     }
   }
 
-/** The shared routes, each behind sign-in. */
+/** A companion hands in its code; the answer carries its token. */
+const claim = async (req: Request) => {
+  const refused = contractRefusal(req)
+  if (refused) return refused
+  const b = await body<Record<string, unknown>>(req, 8 * 1024)
+  const res = claimCompanion(clientAddress(server.requestIP(req)?.address ?? '?', req.headers.get('x-forwarded-for')), b)
+  // a wrong code costs a moment, as wrong phone digits do
+  if (res.status === 401) await Bun.sleep(400)
+  return res
+}
+
+/** The shared routes, each behind sign-in; the few a companion may call carry its handler. */
 const guarded = (routes: Routes) =>
   Object.fromEntries(
     Object.entries(routes).map(([route, r]) => [
       route,
-      typeof r === 'function' ? api(r) : Object.fromEntries(Object.entries(r).map(([method, h]) => [method, api(h!)])),
+      typeof r === 'function'
+        ? api(r)
+        : Object.fromEntries(Object.entries(r).map(([method, h]) => [method, api(h!, { companion: companionRoutes[route]?.[method as 'GET' | 'POST'] })])),
     ]),
   )
 
 /** an app's connection, with the request it opened with until it's tied to that sign-in (or to its phone) */
-type AppSocket = Client & { req?: Request; phone?: string; release?: () => void }
+type AppSocket = Client & { req?: Request; phone?: string; companion?: { id: string; scopes: CompanionScope[] }; release?: () => void }
 type SocketData = AppSocket | (NodeSocketData & { kind: 'node' })
 
 // ---------- static files (production build of apps/web) ----------
@@ -206,8 +225,10 @@ const localToken = crypto.randomBytes(24).toString('base64url')
 fs.rmSync(LOCAL_TOKEN_FILE, { force: true })
 fs.writeFileSync(LOCAL_TOKEN_FILE, localToken + '\n', { mode: 0o600 })
 const loopback = (ip: string) => /^(127\.|::1$|::ffff:127\.)/.test(ip)
+/** Loopback, or the hub's own address when it listens on one (a VPN address, say): either way this machine. */
+const thisMachine = (ip: string) => loopback(ip) || (ip !== '' && ip.replace(/^::ffff:/, '') === BIND)
 function fromThisMachine(req: Request) {
-  if (!loopback(server.requestIP(req)?.address ?? '')) return false
+  if (!thisMachine(server.requestIP(req)?.address ?? '')) return false
   const given = new URL(req.url).searchParams.get('token') ?? (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   return given.length === localToken.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(localToken))
 }
@@ -353,6 +374,30 @@ const server = Bun.serve<SocketData>({
         return ok()
       }, { owner: true }),
     },
+    // ---------- companion apps: they type a short code this hub's web app or `inyon hub companion-code` shows ----------
+    '/api/companions': {
+      GET: api(() => json(listCompanions())),
+    },
+    '/api/companions/pair': {
+      POST: api((req) => {
+        // a code hands out a token that outlives this session, so the password must be fresh
+        if (!recentSignIn(req, CODE_TTL)) throw new HttpError(403, 'Sign in again to pair a companion app.')
+        return json(newCompanionCode())
+      }, { owner: true }),
+    },
+    '/api/companions/claim': {
+      // open, and a companion that still holds an older token may pair again with a new code
+      POST: api(claim, { open: true, companion: { run: claim } }),
+    },
+    '/api/companions/me': {
+      GET: api(() => json({ error: 'Only a companion app asks this' }, { status: 403 }), { companion: { run: (_req, c) => json(companionMe(c)) } }),
+    },
+    '/api/companions/:id': {
+      DELETE: api((req) => {
+        if (!revokeCompanion(req.params.id)) throw new HttpError(404, 'Unknown companion app')
+        return ok()
+      }, { owner: true }),
+    },
     '/api/hosts/pair': {
       POST: api(async (req) => {
         const b = await body<{ name?: string; origin?: string }>(req)
@@ -382,6 +427,8 @@ const server = Bun.serve<SocketData>({
     },
     // ---------- the inyon command on this machine, over loopback with the local token ----------
     '/api/local/nodes': local(() => json({ v: 1, ok: true, nodes: registry.overview().map(localNode) })),
+    // `inyon hub companion-code`: a code for a companion app without a browser
+    '/api/local/companion-code': local(() => json({ v: 1, ok: true, ...newCompanionCode() })),
     ...nodeRoutes,
     ...guarded(coreRoutes),
     ...guarded(pushRoutes((endpoint) => pushAll(TEST_PAYLOAD, undefined, endpoint))),
@@ -410,6 +457,15 @@ const server = Bun.serve<SocketData>({
       // a phone connects with a ticket (a page can't set a header on a WebSocket) or its bearer;
       // either one is judged alone, never a cookie sent along with it
       const ticket = url.searchParams.get('ticket')
+      // a companion app: its bearer, and its contract in a header or (for a client that can't set one) ?contract=
+      const comp = ticket === null ? companionFor(req) : undefined
+      if (comp) {
+        const refused = contractRefusal(req, url.searchParams.get('contract'))
+        if (refused) return refused
+        const data: AppSocket = Object.assign(newClient(), { companion: { id: comp.id, scopes: comp.scopes } })
+        if (srv.upgrade(req, { data })) return
+        return new Response('Upgrade failed', { status: 400 })
+      }
       const asPhone = ticket !== null || hasBearer(req)
       const phone = ticket !== null ? redeemTicket(ticket) : asPhone ? phoneFor(req) : undefined
       if (asPhone && !phone) return new Response('Not signed in', { status: 401 })
@@ -436,15 +492,25 @@ const server = Bun.serve<SocketData>({
     open(ws) {
       if (ws.data.kind === 'node') return nodeLinks.attach(ws.data.hostId, ws as any)
       const c = ws.data
-      c.send = (msg) => {
-        ws.send(JSON.stringify(msg))
-      }
-      c.release = c.phone ? holdPhoneSocket(c.phone, ws) : holdSocket(c.req!, ws)
+      const companion = c.companion
+      c.send = companion
+        ? (msg) => {
+            const out = companionFrame(msg, companion.scopes)
+            if (out) ws.send(JSON.stringify(out))
+          }
+        : (msg) => {
+            ws.send(JSON.stringify(msg))
+          }
+      c.release = companion ? holdCompanionSocket(companion.id, ws) : c.phone ? holdPhoneSocket(c.phone, ws) : holdSocket(c.req!, ws)
       c.req = undefined
       clients.add(c)
     },
     message(ws, raw) {
       if (ws.data.kind === 'node') return nodeLinks.message(ws.data.hostId, String(raw))
+      const companion = ws.data.companion
+      // a companion may only watch: anything else ends its connection
+      const refused = companion && inboundRefusal(String(raw), companion.scopes)
+      if (refused) return ws.close(4403, refused)
       clientMessage(ws.data, String(raw))
     },
     close(ws) {

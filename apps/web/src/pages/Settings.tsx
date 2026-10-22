@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import clsx from 'clsx'
-import { Bell, BookOpen, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Monitor, Moon, Smartphone, Sun, Vibrate } from 'lucide-react'
-import { AGENTS, INSTALL_URL } from '@inyon/protocol'
+import { Bell, BookOpen, Check, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Mic, Minus, Monitor, Moon, MoreHorizontal, QrCode, ShieldCheck, Smartphone, Sun, Trash2, Vibrate } from 'lucide-react'
+import { AGENTS, INSTALL_URL, type CompanionScope, type PairedCompanion } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { Button, Pulse, Segmented, Toggle, Waiting, inputClass } from '../components/ui/primitives.tsx'
+import { Button, Menu, Pulse, Segmented, Sheet, Toggle, Waiting, inputClass, type MenuItem } from '../components/ui/primitives.tsx'
+import { contextMenu } from '../components/ui/ContextMenu.tsx'
+import { confirmAction } from '../components/Confirm.tsx'
+import { CompanionSheet } from '../components/CompanionSheet.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { isHosted, publicFile } from '../lib/base.ts'
@@ -317,7 +320,7 @@ const NAV = [
   ['machines', isPhone() ? 'Computers' : 'Machines'],
   ...(isPhone()
     ? ([['hubs', 'Hubs'], ...(canSsh() ? ([['phone-key', "This phone's key"]] as const) : [])] as const)
-    : ([['devices', 'Other devices'], ['account', 'Account']] as const)),
+    : ([['devices', 'Other devices'], ['paired', 'Paired devices'], ['account', 'Account']] as const)),
   ['updates', 'Updates'],
   ['about', 'About'],
 ] as const
@@ -536,6 +539,7 @@ export function Settings() {
           ) : (
             <>
           <OtherDevices />
+          <PairedDevices />
 
           <Section id="account" title="Account">
             <ChangePassword />
@@ -672,43 +676,161 @@ function OtherDevices() {
           </>
         }
       />
-      <PairedPhones />
     </Section>
   )
 }
 
-/** The Inyon apps paired with this hub, each one revocable, and the code for the next. */
-function PairedPhones() {
+const SCOPE_LABEL: Record<CompanionScope, [string, string]> = {
+  overview: ['Overview', 'Every session, its state and machine, and live changes'],
+  chat: ['Chats', 'The screen, details and alerts of a chat it opens'],
+  answer: ['Answer', 'Answer a prompt, once, with its prompt key'],
+  send: ['Send', 'Type text into a session; the hub answers once it has landed'],
+}
+
+const since = (at: number) => {
+  const m = Math.round((Date.now() - at) / 60_000)
+  if (m < 1) return 'now'
+  if (m < 60) return `${m} min ago`
+  if (m < 24 * 60) return `${Math.round(m / 60)} h ago`
+  return new Date(at).toLocaleDateString()
+}
+
+/**
+ * The phones and companion apps paired with this hub, each one revocable, and the codes for the
+ * next. A companion's token can't come back, so Remove asks first.
+ */
+function PairedDevices() {
   const [phones, setPhones] = useState<{ id: string; name: string; pairedAt: number; lastSeen?: number }[]>()
-  const [code, setCode] = useState(false)
-  const load = () => api.phones().then((p) => setPhones(Array.isArray(p) ? p : []), () => setPhones([]))
-  useEffect(() => void load(), [])
+  const [companions, setCompanions] = useState<PairedCompanion[]>()
+  const [phoneCode, setPhoneCode] = useState(false)
+  const [companionCode, setCompanionCode] = useState(false)
+  const [details, setDetails] = useState<PairedCompanion>()
+  const loadPhones = () => api.phones().then((p) => setPhones(Array.isArray(p) ? p : []), () => setPhones([]))
+  const loadCompanions = () => api.companions().then((c) => setCompanions(Array.isArray(c) ? c : []), () => setCompanions([]))
+  useEffect(() => {
+    void loadPhones()
+    void loadCompanions()
+  }, [])
   const forget = async (p: { id: string; name: string }) => {
     try {
       await api.forgetPhone(p.id)
       toast({ title: `${p.name} forgotten`, body: 'It can pair again with a new code.', tone: 'success' })
-      void load()
+      void loadPhones()
     } catch (e) {
       toast({ title: "Couldn't forget it", body: (e as Error).message, tone: 'error' })
     }
   }
+  const remove = async (c: PairedCompanion) => {
+    const yes = await confirmAction({ title: `Remove ${c.name}?`, body: 'Its key stops working now and its connection closes. To use it again, pair it with a new code.', yes: 'Remove', danger: true })
+    if (!yes) return
+    try {
+      await api.forgetCompanion(c.id)
+      setDetails(undefined)
+      toast({ title: `${c.name} removed`, tone: 'success' })
+      void loadCompanions()
+    } catch (e) {
+      toast({ title: "Couldn't remove it", body: (e as Error).message, tone: 'error' })
+    }
+  }
+  const menu = (c: PairedCompanion): MenuItem[] => [
+    { key: 'details', label: 'What it can do', icon: <ShieldCheck className="size-4" />, onSelect: () => setDetails(c) },
+    { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void remove(c) },
+  ]
+  const label = (text: string, n?: number) => (
+    <div className="flex items-center gap-2 bg-sunken/60 px-4 pb-1.5 pt-3 text-[12px] font-medium text-fg-3">
+      {text}
+      {n !== undefined && <span className="tabular rounded-full bg-hover px-1.5 text-[12px]">{n}</span>}
+    </div>
+  )
   return (
-    <>
-      <Row label="Inyon app" hint="The app pairs with this hub by scanning a code, then reaches its machines itself, from any network.">
-        <Button size="sm" variant="primary" onClick={() => setCode(true)}>Show the code</Button>
+    <Section id="paired" title="Paired devices" desc="Phones and companion apps that reach this hub. Each has its own key, and removing one ends it at once.">
+      <Row label={<span className="flex items-center gap-2"><QrCode className="size-4 text-fg-3" /> Inyon app</span>} hint="A phone scans a code, then reaches your machines from any network.">
+        <Button size="sm" onClick={() => setPhoneCode(true)}>Show the code</Button>
       </Row>
+      <Row label={<span className="flex items-center gap-2"><Mic className="size-4 text-fg-3" /> Companion app</span>} hint="Apps like Legato read your sessions, answer prompts and send text. They type a short code.">
+        <Button size="sm" variant="primary" onClick={() => setCompanionCode(true)}>Pair a companion app</Button>
+      </Row>
+      {label('Phones', phones?.length)}
+      {phones && !phones.length && <p className="px-4 py-3 text-[13px] text-fg-3">No phones paired.</p>}
       {phones?.map((p) => (
         <div key={p.id} className="flex items-center gap-3 px-4 py-3 text-[14px]">
           <Smartphone className="size-4 shrink-0 text-fg-3" />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{p.name}</span>
-            <span className="block truncate font-mono text-[12px] text-fg-3">paired {new Date(p.pairedAt).toLocaleDateString()}{p.lastSeen ? ` · seen ${new Date(p.lastSeen).toLocaleString()}` : ''}</span>
+            <span className="block truncate font-mono text-[12px] text-fg-3">Inyon app · paired {new Date(p.pairedAt).toLocaleDateString()}{p.lastSeen ? ` · seen ${since(p.lastSeen)}` : ''}</span>
           </span>
           <Button size="sm" variant="ghost" onClick={() => forget(p)}>Forget</Button>
         </div>
       ))}
-      <PhoneSheet open={code} onClose={() => (setCode(false), void load())} />
-    </>
+      {label('Companion apps', companions?.length)}
+      {companions && !companions.length && <p className="px-4 py-3 text-[13px] text-fg-3">No companion apps. Apps like Legato pair with a short code.</p>}
+      {companions?.map((c) => (
+        <div key={c.id} className="flex items-start gap-3 px-4 py-3 text-[14px]" {...contextMenu(() => menu(c), { header: c.name })}>
+          <Mic className="mt-0.5 size-4 shrink-0 text-fg-3" />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate font-medium">{c.name}</span>
+              <span className="shrink-0 rounded-full border border-line px-1.5 font-mono text-[12px] text-fg-3">contract v{c.contractVersion}</span>
+            </span>
+            <span className="block font-mono text-[12px] leading-snug text-fg-3">{c.app ? `${c.app} · ` : ''}paired {new Date(c.pairedAt).toLocaleDateString()} · seen {since(c.lastSeen)}</span>
+            <span className="mt-1.5 flex flex-wrap gap-1">
+              {c.scopes.map((s) => (
+                <span key={s} className="rounded-full bg-sunken px-2 py-0.5 text-[12px] text-fg-2">{SCOPE_LABEL[s]?.[0] ?? s}</span>
+              ))}
+            </span>
+          </span>
+          <Menu
+            align="end"
+            width={220}
+            header={c.name}
+            items={menu(c)}
+            trigger={({ toggle, ref }) => (
+              <button ref={ref} type="button" onClick={toggle} aria-label={`Options for ${c.name}`} className="-my-1 -mr-1.5 flex size-8 shrink-0 items-center justify-center rounded-full text-fg-3 hover:bg-hover hover:text-fg">
+                <MoreHorizontal className="size-4" />
+              </button>
+            )}
+          />
+        </div>
+      ))}
+      <PhoneSheet open={phoneCode} onClose={() => (setPhoneCode(false), void loadPhones())} />
+      <CompanionSheet open={companionCode} onClose={() => (setCompanionCode(false), void loadCompanions())} onPaired={() => void loadCompanions()} />
+      <Sheet
+        open={!!details}
+        onClose={() => setDetails(undefined)}
+        title={details?.name ?? ''}
+        icon={<ShieldCheck className="size-4" />}
+        footer={
+          <div className="flex items-center justify-between gap-2">
+            <Button variant="danger" onClick={() => details && void remove(details)}><Trash2 className="size-3.5" /> Remove</Button>
+            <Button variant="primary" onClick={() => setDetails(undefined)}>Done</Button>
+          </div>
+        }
+      >
+        {details && (
+          <div className="space-y-3">
+            <p className="text-[13px] text-fg-3">{details.app ? `${details.app} · ` : ''}contract v{details.contractVersion} · paired {new Date(details.pairedAt).toLocaleDateString()} · seen {since(details.lastSeen)}</p>
+            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line">
+              {details.scopes.map((s) => (
+                <div key={s} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[14px]">{SCOPE_LABEL[s]?.[0] ?? s}</span>
+                    <span className="block text-[12.5px] text-fg-3">{SCOPE_LABEL[s]?.[1]}</span>
+                  </span>
+                  <Check className="size-4 shrink-0 text-ok" aria-label="Allowed" />
+                </div>
+              ))}
+              <div className="flex items-center gap-3 px-4 py-2.5">
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[14px]">Interrupt, terminal, files, settings</span>
+                  <span className="block text-[12.5px] text-fg-3">The hub refuses these on every route and WebSocket message.</span>
+                </span>
+                <Minus className="size-4 shrink-0 text-fg-3" aria-label="Refused" />
+              </div>
+            </div>
+          </div>
+        )}
+      </Sheet>
+    </Section>
   )
 }
 

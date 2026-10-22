@@ -12,13 +12,14 @@ const unq = (s: string) => s.replace(/^'|'$/g, '').replace(/'\\''/g, "'")
  * Claude's input box as far as a send can tell: a long paste shows as "[Pasted text #N]" and Enter
  * submits what's behind it, so a preview left over from an older draft looks like any other.
  */
-function fakeClaude(box: { text?: string; paste?: string }[]) {
+function fakeClaude(box: { text?: string; paste?: string }[], o: { slow?: boolean } = {}) {
   let pastes = box.filter((b) => b.paste).length
   const sent: string[] = []
   const shown = () => box.map((b, i) => b.text ?? `[Pasted text #${i + pastes}]`).join('')
   const exec = async (cmd: string, opts: { input?: string } = {}) => {
     if (cmd.includes('@@CAP')) {
-      const screen = `● Done.\n${R}\n❯ ${shown()}\n${R}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`
+      // slow: the box hasn't drawn what was typed yet
+      const screen = `● Done.\n${R}\n❯ ${o.slow ? '' : shown()}\n${R}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`
       return { code: 0, stdout: `@@CAP %9\n${screen}\n`, stderr: '' }
     }
     if (cmd.includes('paste-buffer')) {
@@ -59,6 +60,12 @@ test('a short message typed into an empty box goes in as typed', async () => {
   const sent = fakeClaude([])
   await sendMessageToPane('local', '%9', 'hello there', true)
   expect(sent).toEqual(['hello there'])
+}, 20_000)
+
+test('a box slow to show the text gets it typed once, never twice', async () => {
+  const sent = fakeClaude([], { slow: true })
+  await sendMessageToPane('local', '%9', 'Run the tests again', true).catch(() => {})
+  expect(sent).toEqual(['Run the tests again'])
 }, 20_000)
 
 test('an old draft that differs only in whitespace is replaced, not sent', async () => {

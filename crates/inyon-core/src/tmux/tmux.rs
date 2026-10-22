@@ -452,6 +452,20 @@ pub fn paste_command(buffer: &str, pane: &str) -> String {
     )
 }
 
+/// Text for a bracketed paste: line ends made \n, and no paste markers of its own. tmux doesn't
+/// filter what it pastes, so an end marker inside would close the paste early and the rest would
+/// arrive as typed keys (Ctrl-U, !, Enter). Removed until none is left, so halves can't join up.
+pub fn paste_text(text: &str) -> String {
+    let mut s = re!(r"\r\n?", "g").replace_all(text, "\n").into_owned();
+    loop {
+        let next = re!(r"(?:\x1b\[|\x9b)20[01]~", "g").replace_all(&s, "").into_owned();
+        if next == s {
+            return s;
+        }
+        s = next;
+    }
+}
+
 /// How `typeText` gets text into a pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeText {
@@ -471,7 +485,7 @@ pub fn type_text(pane: &str, text: &str, submit: bool, buffer: &str) -> TypeText
     if text.len16() > 800 || re!(r"[\r\n]").is_match(text) {
         // Deliver one bracketed paste instead of a burst of individual key events. The CLI can
         // preserve long/multiline text atomically and display its own collapsed paste preview.
-        return TypeText::Paste { command: paste_command(buffer, pane), input: normal, submit };
+        return TypeText::Paste { command: paste_command(buffer, pane), input: paste_text(text), submit };
     }
     let mut parts: Vec<String> = vec![];
     for (i, line) in normal.split('\n').enumerate() {
@@ -837,6 +851,15 @@ impl LiveTmux {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// a paste never carries its own end marker, for any caller (companions.test.ts)
+    #[test]
+    fn a_paste_never_carries_its_own_end_marker_for_any_caller() {
+        assert_eq!(paste_text("x\r\n\u{1b}[201~\u{15}!id\r"), "x\n\u{15}!id\n");
+        assert_eq!(paste_text("a\u{1b}[20\u{1b}[201~1~b\u{9b}200~c"), "abc");
+        let TypeText::Paste { input, .. } = type_text("%1", "x\n\u{1b}[201~\u{15}!id\r", true, "b1") else { panic!() };
+        assert_eq!(input, "x\n\u{15}!id\n");
+    }
 
     /// legacy.test.ts
     #[test]

@@ -13,6 +13,7 @@ import { emit, fail } from './output.ts'
  *
  *   inyon-engine hub                 run it here
  *   inyon-engine hub code            show the setup code a new hub asks for
+ *   inyon-engine hub companion-code  a one-time code for a companion app (Legato) to pair with
  *   inyon-engine hub reset-password  choose a new password when the old one is forgotten
  */
 const dataDir = () => process.env.INYON_DATA_DIR || path.join(os.homedir(), '.inyon')
@@ -43,9 +44,10 @@ export async function hubCommand(args: string[]) {
   const [sub] = args
   for (const [k, v] of Object.entries(readEnvFile(hubEnvFile()))) process.env[k] ??= v
   if (sub === 'code') return showSetupCode()
+  if (sub === 'companion-code') return showCompanionCode()
   if (sub === 'reset-password') return resetPassword(args[1])
   if (sub) {
-    console.error('usage: inyon-engine hub [code|reset-password]')
+    console.error('usage: inyon-engine hub [code|companion-code|reset-password]')
     process.exit(2)
   }
   // for `inyon update`: it waits for this to name the new version
@@ -90,6 +92,39 @@ async function showSetupCode() {
   const session = await askHub(url)
   const message = setupCodeMessage(code, session, url)
   emit({ code: session && !session.setup ? undefined : code, url, running: !!session, hasPassword: session ? !session.setup : undefined, message }, message)
+}
+
+/** "K7M2QX" as it is shown: K7M-2QX. */
+export const formatCompanionCode = (code: string) => (code.length === 6 ? `${code.slice(0, 3)}-${code.slice(3)}` : code)
+
+/**
+ * What `inyon hub companion-code` says once the hub made a code. A hub on loopback sits behind a
+ * proxy or `tailscale serve`, whose address this program doesn't know, so it names none then.
+ */
+export const companionCodeMessage = (code: string, url: string) => {
+  const address = /^https?:\/\/(127\.|localhost|\[::1\])/.test(url) ? 'the address you open this hub at' : `this hub's address, ${url}`
+  return `Companion code: ${formatCompanionCode(code)}\nType it into the companion app (Legato: Settings > Connections > Inyon) with ${address}. It works once, for 5 minutes.`
+}
+
+/**
+ * `inyon hub companion-code`: asks the running hub for a companion code over its own address,
+ * with the token it wrote for the inyon command on this machine.
+ */
+async function showCompanionCode() {
+  const url = localUrl()
+  let token = ''
+  try {
+    token = readFileSync(path.join(dataDir(), 'local-token'), 'utf8').trim()
+  } catch {}
+  if (!token) fail("The hub hasn't started here yet. Run `inyon hub` or `inyon hub start` first.", 1)
+  const r = await fetch(`${url}/api/local/companion-code?token=${encodeURIComponent(token)}`, { method: 'POST', tls: { rejectUnauthorized: false } } as any)
+    .then(async (res) => ({ status: res.status, body: (await res.json().catch(() => ({}))) as { code?: string; expiresAt?: number; error?: string } }))
+    .catch(() => undefined)
+  if (!r) fail(`The hub isn't answering at ${url}. Start it with \`inyon hub start\`.`, 1)
+  if (r.status === 404) fail('This hub is too old for companion apps. Update it with `inyon update`.', 1)
+  if (!r.body.code) fail(r.body.error ?? `The hub answered ${r.status}.`, 1)
+  const message = companionCodeMessage(r.body.code, url)
+  emit({ code: r.body.code, expiresAt: r.body.expiresAt, url, message }, message)
 }
 
 /**

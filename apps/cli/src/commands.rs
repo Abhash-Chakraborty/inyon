@@ -177,6 +177,11 @@ pub fn hub_code() -> Outcome {
     engine::ask(&["hub", "code"], &[])
 }
 
+/// `inyon hub companion-code`: a one-time code for a companion app, from the running hub.
+pub fn hub_companion_code() -> Outcome {
+    engine::ask(&["hub", "companion-code"], &[])
+}
+
 /// `inyon hub reset-password [password]`: asked for here when not given, handed to the engine in
 /// its environment rather than on the process list. The engine writes it; a hub running in the
 /// background is restarted here to pick it up.

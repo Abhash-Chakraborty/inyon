@@ -46,7 +46,8 @@ fn agent_pane(host_id: &str, pane_id: &str) -> HubResult<(Host, FoundPane)> {
     Ok((registry().host(host_id)?, found))
 }
 
-async fn current_screen(host_id: &str, pane_id: &str) -> HubResult<ScreenState> {
+/// The pane's screen as it is now, read off a fresh capture.
+pub async fn current_screen(host_id: &str, pane_id: &str) -> HubResult<ScreenState> {
     let host = registry().host(host_id)?;
     let caps = capture_panes(&host, &[pane_id.to_owned()]).await?;
     let pane = registry().find_pane(host_id, pane_id).map(|f| f.pane);
@@ -414,13 +415,13 @@ impl Typing<'_> {
         let mut typed = false;
         // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
         if !input_contains(screen.draft.as_deref(), text, false) {
-            // a second go when the first doesn't show up: a mirrored draft still being typed (or a slow
-            // first frame after a hub restart) can leave the box with something else in it
-            // (only when the box can be read: typing blind again would double the text)
+            // a second go when the first doesn't show up: a mirrored draft still being typed can leave
+            // the box with something else in it, which is cleared first. Only then: an empty box or
+            // one that can't be read may just be slow to show the text, and typing again would double it.
             let mut draft = screen.draft.clone();
             let mut readable = screen.input_visible == Some(true) || !self.checked_input;
             let mut round = 0;
-            while round < 2 && !self.arrived(draft.as_deref(), typed) && (round == 0 || readable) {
+            while round < 2 && !self.arrived(draft.as_deref(), typed) && (round == 0 || (readable && draft.as_deref().is_some_and(|d| !d.is_empty()))) {
                 if let Some(d) = draft.clone().filter(|d| !d.is_empty()) {
                     empty_input(host_id, pane_id, d).await?;
                 }

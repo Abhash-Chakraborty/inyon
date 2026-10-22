@@ -366,6 +366,20 @@ export function pasteCommand(buffer: string, pane: string) {
 }
 
 /**
+ * Text for a bracketed paste: line ends made \n, and no paste markers of its own. tmux doesn't
+ * filter what it pastes, so an end marker inside would close the paste early and the rest would
+ * arrive as typed keys (Ctrl-U, !, Enter). Removed until none is left, so halves can't join up.
+ */
+export function pasteText(text: string) {
+  let s = text.replace(/\r\n?/g, '\n')
+  for (let prev = ''; prev !== s; ) {
+    prev = s
+    s = s.replace(/(?:\x1b\[|\x9b)20[01]~/g, '')
+  }
+  return s
+}
+
+/**
  * Types text into a pane exactly as a person would; newlines become Ctrl+J (newline without
  * submitting). With `submit`, Enter follows after a short pause, all in one round trip.
  */
@@ -374,7 +388,7 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
     // Deliver one bracketed paste instead of a burst of individual key events. The CLI can
     // preserve long/multiline text atomically and display its own collapsed paste preview.
     const buffer = `inyon-${crypto.randomUUID()}`
-    const result = await host.exec(pasteCommand(buffer, pane), { input: text.replace(/\r\n?/g, '\n') })
+    const result = await host.exec(pasteCommand(buffer, pane), { input: pasteText(text) })
     if (result.code !== 0) {
       throw new Error(result.stderr.trim() || 'Could not paste text into the terminal')
     }
