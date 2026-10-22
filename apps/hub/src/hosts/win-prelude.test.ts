@@ -82,3 +82,22 @@ test("a paste loads its buffer into the pane's own psmux server, since each sess
   // tmux has one server, and no -t before the command
   expect((await go({})).replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n')
 })
+
+test('typed text reaches tmux through a file and never in any arguments, on psmux and tmux', async () => {
+  const { typedCommand } = await import('../tmux/tmux.ts')
+  const secret = 'sk-ant-api03-not-in-argv'
+  const cmd = typedCommand('%14.1', secret, true, 'b1')
+  // sh -c <cmd> is what other users could read in /proc/*/cmdline, and so is every tmux run
+  expect(cmd).not.toContain(secret)
+  const go = (env: Record<string, string>) => {
+    writeFileSync(join(bin, 'argv'), '')
+    Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\n${cmd}`], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, stdin: Buffer.from(secret) })
+    return Bun.file(join(bin, 'argv')).text()
+  }
+  const psmux = await go({ OS: 'Windows_NT' })
+  expect(psmux).not.toContain(secret)
+  expect(psmux.replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[-t][$14:.%1][load-buffer][-b][b1][file]\n[paste-buffer][-d][-b][b1][-t][$14:.%1]\n[send-keys][-t][$14:.%1][Enter]\n')
+  const tmux = await go({})
+  expect(tmux).not.toContain(secret)
+  expect(tmux.replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[load-buffer][-b][b1][file]\n[paste-buffer][-d][-b][b1][-t][$14:.%1]\n[send-keys][-t][$14:.%1][Enter]\n')
+})

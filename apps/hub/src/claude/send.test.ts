@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
 import { registry } from '../hosts/registry.ts'
 import { launch, sendMessageToPane } from './actions.ts'
+import { asKeys } from '../tmux/as-keys.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
@@ -16,7 +17,9 @@ function fakeClaude(box: { text?: string; paste?: string }[], o: { slow?: boolea
   let pastes = box.filter((b) => b.paste).length
   const sent: string[] = []
   const shown = () => box.map((b, i) => b.text ?? `[Pasted text #${i + pastes}]`).join('')
-  const exec = async (cmd: string, opts: { input?: string } = {}) => {
+  const exec = async (typed: string, given: { input?: string } = {}) => {
+    const { cmd, input } = asKeys(typed, given.input)
+    const opts = { input }
     if (cmd.includes('@@CAP')) {
       // slow: the box hasn't drawn what was typed yet
       const screen = `● Done.\n${R}\n❯ ${o.slow ? '' : shown()}\n${R}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)`

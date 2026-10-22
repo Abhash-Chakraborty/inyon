@@ -45,6 +45,7 @@ fn the_scripts_and_command_builders_send_the_bytes_the_ts_sends() {
         "PATHS": PATHS,
         "commands": {
             "paste": tmux::paste_command("inyon-1", "%1 it's"),
+            "typed": match tmux::type_text("%1 it's", "hi", true, "inyon-1") { tmux::TypeText::Keys { command, .. } => command, _ => String::new() },
             "via": via_backend::via_command(&ssh(json!({ "id": "s", "name": "s", "kind": "ssh", "target": "o'brien@db", "port": 2222, "via": "j" })), r#"echo "$HOME" 'x'"#, false),
             "viaTty": via_backend::via_command(&ssh(json!({ "id": "s", "name": "s", "kind": "ssh", "target": "db", "via": "j" })), "tmux attach", true),
             "dropKey": tidy::drop_authorized_key("ssh-ed25519 AAAA it's me"),

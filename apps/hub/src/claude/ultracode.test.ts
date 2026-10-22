@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, mock, spyOn, test } from 'bun:test'
 import { registry } from '../hosts/registry.ts'
 import { setUltracode } from './actions.ts'
+import { asKeys } from '../tmux/as-keys.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
@@ -15,7 +16,8 @@ const unq = (s: string) => s.replace(/^'|'$/g, '').replace(/'\\''/g, "'")
 function fakeClaude(start: { on: boolean; refuse?: string }) {
   const pane = { on: start.on, box: '', said: '' }
   const sent: string[] = []
-  const exec = async (cmd: string) => {
+  const exec = async (typed: string, opts: { input?: string } = {}) => {
+    const { cmd } = asKeys(typed, opts.input)
     if (cmd.includes('@@CAP')) {
       const rule = pane.on ? `${R.slice(0, 88)} ultracode ─` : R
       const answer = pane.said ? `❯ /effort ultracode on\n  ⎿  ${pane.said}\n` : ''

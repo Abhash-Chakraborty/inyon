@@ -36,8 +36,12 @@ fn a_bracketed_paste_goes_in_as_one_paste_with_the_text_around_it_kept_in_order(
 }
 
 #[test]
-fn text_is_quoted_for_the_shell_so_it_cant_run_as_a_command() {
-    assert_eq!(input_command("%1", &text("'; rm -rf ~; echo '")).0, r"tmux send-keys -t '%1' -l -- ''\''; rm -rf ~; echo '\'''");
+fn typed_text_goes_on_stdin_never_on_the_command_line() {
+    // a password typed at a sudo prompt in the terminal view must not show in /proc/*/cmdline
+    let (cmd, input) = input_command("%1", &text("'; rm -rf ~; echo '"));
+    assert!(!cmd.contains("rm -rf"), "{cmd}");
+    assert!(regex::Regex::new(r#"load-buffer -b 'inyon-term-\w+' "\$f" && tmux paste-buffer -d -b 'inyon-term-\w+' -t '%1'"#).unwrap().is_match(&cmd), "{cmd}");
+    assert_eq!(input.as_deref(), Some("'; rm -rf ~; echo '"));
     assert_eq!(input_command("%1", &keys(&["C-\\"])).0, r"tmux send-keys -t '%1' 'C-\'");
 }
 

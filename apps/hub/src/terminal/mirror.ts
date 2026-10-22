@@ -1,5 +1,5 @@
 import { Host, shq, type PtyHandle } from '../hosts/host.ts'
-import { pasteCommand, pasteText } from '../tmux/tmux.ts'
+import { pasteCommand, pasteText, typeCommand } from '../tmux/tmux.ts'
 
 /**
  * A terminal for psmux (tmux on Windows), drawn from the pane's screen rather than from a terminal
@@ -92,7 +92,8 @@ export function toInput(d: string): Input[] {
 export function inputCommand(pane: string, x: Input): { cmd: string; input?: string } {
   const t = `tmux send-keys -t ${shq(pane)}`
   if ('keys' in x) return { cmd: `${t} ${x.keys.map(shq).join(' ')}` }
-  if ('text' in x) return { cmd: `${t} -l -- ${shq(x.text)}` }
+  // through a buffer, never the command line, where other users could read it
+  if ('text' in x) return { cmd: typeCommand(`inyon-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: x.text }
   if ('hex' in x) return { cmd: `${t} -H ${x.hex.join(' ')}` }
   return { cmd: pasteCommand(`inyon-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: pasteText(x.paste) }
 }
