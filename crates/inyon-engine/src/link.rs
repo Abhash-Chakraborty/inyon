@@ -1019,7 +1019,7 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                 Ok(b) => b,
                 Err(e) => {
                     error(&format!("tunnel: {e}"));
-                    tokio::time::sleep(Duration::from_millis(300_000.min(10_000u64 << attempt.min(10)))).await;
+                    tokio::time::sleep(crate::backoff(attempt, Duration::from_secs(10), Duration::from_secs(300))).await;
                     attempt += 1;
                     continue;
                 }
@@ -1043,8 +1043,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                     }
                     if let Some(mut stderr) = child.stderr.take() {
                         let on_url = on_url.clone();
-                        let reset = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let r = reset.clone();
                         let reader = tokio::spawn(async move {
                             let mut carry = String::new();
                             let mut pending: Vec<u8> = Vec::new();
@@ -1062,7 +1060,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                                 carry.push_str(&String::from_utf8_lossy(&pending[..cut]));
                                 pending.drain(..cut);
                                 if let Some(url) = tunnel_address(&carry) {
-                                    r.store(true, std::sync::atomic::Ordering::Relaxed);
                                     on_url(Some(url));
                                     carry.clear();
                                 } else if carry.len() > 65536 {
@@ -1074,9 +1071,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                         });
                         let _ = child.wait().await;
                         let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
-                        if reset.load(std::sync::atomic::Ordering::Relaxed) {
-                            attempt = 0;
-                        }
                     } else {
                         let _ = child.wait().await;
                     }
@@ -1087,11 +1081,13 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                 Err(e) => error(&format!("tunnel: {e}")),
             }
             on_url(None);
-            // quick tunnels are rate limited; back off if it keeps dying young
+            // quick tunnels are rate limited; back off if it keeps dying young, even after it gave an
+            // address, and start over only after a run that lasted
             let delay = if started.elapsed() > Duration::from_secs(60) {
-                Duration::from_secs(2)
+                attempt = 0;
+                Duration::from_secs(2) + crate::backoff(0, Duration::from_secs(2), Duration::from_secs(2))
             } else {
-                let d = Duration::from_millis(300_000.min(5000u64 << attempt.min(10)));
+                let d = crate::backoff(attempt, Duration::from_secs(5), Duration::from_secs(300));
                 attempt += 1;
                 d
             };
@@ -1138,6 +1134,7 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
         let host = host_of(&url);
         let mut attempt: u32 = 0;
         loop {
+            let mut ready_at: Option<tokio::time::Instant> = None;
             let code = match crate::ws::connect(&inyon_link::relay_ws(&url, &inyon_link::machine_path(&id.id)), &[]).await {
                 Err((code, _)) => code,
                 Ok(socket) => {
@@ -1171,7 +1168,7 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                                         let _ = tx.send(Message::Text(json!({ "t": "auth", "id": id.id, "sig": sig }).to_string().into()));
                                     }
                                     Some("ready") => {
-                                        attempt = 0;
+                                        ready_at = Some(tokio::time::Instant::now());
                                         log(&format!("relay {host}: connected"));
                                         on_state(true);
                                     }
@@ -1207,8 +1204,9 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                 }
             };
             on_state(false);
-            let delay = Duration::from_millis(60_000.min(1000u64 << attempt.min(10)));
-            attempt += 1;
+            // a relay that lets the machine in and drops it at once keeps being backed off from
+            attempt = crate::next_attempt(attempt, ready_at.map(|t| t.elapsed()));
+            let delay = crate::backoff(attempt.saturating_sub(1), Duration::from_secs(1), Duration::from_secs(60));
             log(&format!("relay {host}: disconnected ({code}); retrying in {}s", (delay.as_millis() + 500) / 1000));
             tokio::time::sleep(delay).await;
         }
@@ -1220,10 +1218,14 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
 /// Publishes a record to every pkarr relay; the seq it used as soon as one of them took it (the
 /// rest carry on).
 pub async fn publish(identity: &Identity, record: &Record, last_seq: Option<u64>) -> Result<u64, String> {
+    publish_to(&inyon_link::PKARR_RELAYS, identity, record, last_seq).await
+}
+
+async fn publish_to(relays: &[&str], identity: &Identity, record: &Record, last_seq: Option<u64>) -> Result<u64, String> {
     let seq = inyon_link::pkarr::next_seq(last_seq.unwrap_or(0), crate::now_ms());
     let body = inyon_link::encode_published(identity, record, seq).map_err(|e| e.to_string())?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<(), String>>();
-    for r in inyon_link::PKARR_RELAYS {
+    for r in relays.iter().map(|r| r.to_string()) {
         let (tx, body, url) = (tx.clone(), body.clone(), format!("{r}/{}", identity.id));
         tokio::spawn(async move {
             let res = crate::http::fetch("PUT", url, Vec::new(), Some(body), Duration::from_secs(40)).await;
@@ -1245,6 +1247,31 @@ pub async fn publish(identity: &Identity, record: &Record, last_seq: Option<u64>
     Err(format!("Couldn't publish the address: {}", why.join("; ")))
 }
 
+/// Publishes until a relay takes the record, backing off from `base` up to 60 times that (10 s to
+/// 10 minutes for the link) with jitter: the phone only learns a new tunnel address from pkarr, so
+/// a failed publish (relays slow, rate limiting, no network yet at boot) can't wait for the
+/// 30-minute republish. Stops when `wanted` says a newer record took over.
+async fn publish_until_taken(relays: &[&str], identity: &Identity, record: &Record, last_seq: Option<u64>, base: Duration, wanted: impl Fn() -> bool) -> Option<u64> {
+    let mut attempt = 0;
+    loop {
+        match publish_to(relays, identity, record, last_seq).await {
+            Ok(seq) => return Some(seq),
+            Err(e) => {
+                if !wanted() {
+                    return None;
+                }
+                let delay = crate::backoff(attempt, base, base * 60);
+                error(&format!("publish: {e}; trying again in {}s", (delay.as_millis() + 500) / 1000));
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                if !wanted() {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// For typing in: publishes the machine's id and addresses under the short code's identity.
 pub async fn publish_short_code(short: &ShortCode, machine: &str, name: &str, urls: &[String], relays: &[String]) -> Result<(), String> {
     let s = short.clone();
@@ -1259,11 +1286,14 @@ struct Live {
     tunnel_url: Option<String>,
     last_published: String,
     last_seq: Option<u64>,
+    /// counts publishes started; a retrying one stops once a newer one has begun
+    publishing: u64,
     /// private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
     vpn: Vec<(String, Option<tokio::task::JoinHandle<()>>)>,
 }
 
 fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
+    let mine;
     let (urls, key, last_seq) = {
         let l = live.lock().unwrap_or_else(|e| e.into_inner());
         let mut urls: Vec<String> = Vec::new();
@@ -1291,12 +1321,19 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
             return;
         }
         l.last_published = key;
+        l.publishing += 1;
+        mine = l.publishing;
     }
     let (id, relays, live) = (id.clone(), config.relays.clone(), live.clone());
     tokio::spawn(async move {
         let record = Record { urls: urls.clone(), relays: relays.clone(), machine: None, name: None };
-        match publish(&id, &record, last_seq).await {
-            Ok(seq) => {
+        let wanted = {
+            let live = live.clone();
+            move || live.lock().unwrap_or_else(|e| e.into_inner()).publishing == mine
+        };
+        // None: a newer record took over
+        if let Some(seq) = publish_until_taken(&inyon_link::PKARR_RELAYS, &id, &record, last_seq, Duration::from_secs(10), wanted).await {
+            {
                 live.lock().unwrap_or_else(|e| e.into_inner()).last_seq = Some(seq);
                 {
                     let _files = node_files();
@@ -1307,10 +1344,6 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
             }
-            Err(e) => {
-                live.lock().unwrap_or_else(|e| e.into_inner()).last_published.clear();
-                error(&format!("publish: {e}"));
-            }
         }
     });
 }
@@ -1320,7 +1353,7 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
 pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
     let id = Arc::new(load_identity()?);
     listen(id.clone(), if config.lan { "0.0.0.0" } else { "127.0.0.1" }, config.port).map_err(|e| format!("Can't listen on port {}: {e}", config.port))?;
-    let live = Arc::new(Mutex::new(Live { tunnel_url: None, last_published: String::new(), last_seq: current_state().and_then(|s| s.last_seq), vpn: Vec::new() }));
+    let live = Arc::new(Mutex::new(Live { tunnel_url: None, last_published: String::new(), last_seq: current_state().and_then(|s| s.last_seq), publishing: 0, vpn: Vec::new() }));
     let config = Arc::new(config);
 
     if config.tunnel {
@@ -1728,6 +1761,58 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let made = load_identity().unwrap();
         assert_eq!(load_identity().unwrap().id, made.id);
+    }
+
+    /// A pkarr relay that answers each PUT with the next status in `answers` (the last one from then on).
+    fn fake_pkarr(answers: Vec<u16>) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let puts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = puts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                use std::io::{Read, Write};
+                let mut buf = vec![0u8; 65536];
+                let mut got = Vec::new();
+                // the head, then as much body as it says
+                while let Ok(k) = stream.read(&mut buf) {
+                    if k == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..k]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                        if got.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let status = answers.get(i).or(answers.last()).copied().unwrap_or(200);
+                let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        (url, puts)
+    }
+
+    #[test]
+    fn a_publish_the_relays_refuse_is_tried_again_soon_until_one_takes_it() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let id = Identity::generate().unwrap();
+        let record = Record { urls: vec!["wss://new-tunnel.trycloudflare.com/link".into()], relays: vec![], machine: None, name: None };
+        // rate limited twice (relay.pkarr.org answers 429 to bursts), then taken
+        let (url, puts) = fake_pkarr(vec![429, 429, 200]);
+        let seq = rt.block_on(publish_until_taken(&[url.as_str()], &id, &record, Some(5), Duration::from_millis(20), || true));
+        assert!(seq.is_some_and(|s| s > 5));
+        assert_eq!(puts.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // a newer record took over: the old one stops trying
+        let (url, puts) = fake_pkarr(vec![429]);
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let seq = rt.block_on(publish_until_taken(&[url.as_str()], &id, &record, None, Duration::from_millis(20), || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 3));
+        assert_eq!(seq, None);
+        assert_eq!(puts.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[cfg(unix)]

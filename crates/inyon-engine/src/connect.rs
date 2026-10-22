@@ -80,7 +80,8 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
     let bearer = format!("Bearer {token}");
     let mut attempt: u32 = 0;
     loop {
-        let (code, opened) = session(&ws_url, &host, &bearer, &mut attempt).await;
+        let (code, up) = session(&ws_url, &host, &bearer).await;
+        let opened = up.is_some();
         if code == 4001 || (!opened && removed_there(&http_url, &bearer).await) {
             leave(&format!("This machine was removed from {host}.")).await;
         }
@@ -88,20 +89,21 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
             error("The hub rejected the token. Pair this machine again from the hub.");
             std::process::exit(1);
         }
-        let delay = Duration::from_millis(30_000.min(1000u64 << attempt.min(15)));
+        // a hub that takes the connection and drops it at once isn't tried every second
+        attempt = crate::next_attempt(attempt, up);
+        let delay = crate::backoff(attempt.saturating_sub(1), Duration::from_secs(1), Duration::from_secs(30));
         log(&format!("disconnected ({code}); retrying in {}s", (delay.as_millis() + 500) / 1000));
         tokio::time::sleep(delay).await;
-        attempt += 1;
     }
 }
 
-/// One connection, from opening to closing: the close code, and whether it ever opened.
-async fn session(ws_url: &str, host: &str, bearer: &str, attempt: &mut u32) -> (u16, bool) {
+/// One connection, from opening to closing: the close code, and how long it was open (None: it never opened).
+async fn session(ws_url: &str, host: &str, bearer: &str) -> (u16, Option<Duration>) {
     let socket = match crate::ws::connect(ws_url, &[("authorization", bearer)]).await {
         Ok(s) => s,
-        Err((code, _)) => return (code, false),
+        Err((code, _)) => return (code, None),
     };
-    *attempt = 0;
+    let opened = tokio::time::Instant::now();
     log(&format!("connected to {host}"));
     let (mut write, mut read) = socket.split();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
@@ -149,7 +151,7 @@ async fn session(ws_url: &str, host: &str, bearer: &str, attempt: &mut u32) -> (
     drop(ops);
     drop(send);
     writer.abort();
-    (code, true)
+    (code, Some(opened.elapsed()))
 }
 
 /// A hub answers 410 to a machine removed while it was off (a token it never knew gets 403).

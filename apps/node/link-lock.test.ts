@@ -142,3 +142,23 @@ test('a damaged identity stops the link and stays as it is', async () => {
   const made = await command('console.log(JSON.stringify(link.identity().id))')
   expect(await command('console.log(JSON.stringify(link.identity().id))')).toBe(made)
 })
+
+test('a publish the relays refuse is tried again soon until one takes it', async () => {
+  const r = await command(`
+    const { newIdentity } = await import('@inyon/link')
+    const id = newIdentity()
+    let puts = 0
+    const refusing = (answers) => async () => new Response('', { status: answers[Math.min(puts++, answers.length - 1)] })
+    const seq = await link.publishUntilTaken(['http://pkarr.test'], id, { urls: ['wss://a.test'], relays: [] }, 5, 20, () => true, refusing([429, 429, 200]))
+    const tookIt = puts
+    // a newer record took over: the old one stops trying
+    puts = 0
+    let asked = 0
+    const stopped = await link.publishUntilTaken(['http://pkarr.test'], id, { urls: ['wss://a.test'], relays: [] }, undefined, 20, () => asked++ < 3, refusing([429]))
+    console.log(JSON.stringify({ seq, tookIt, stopped: stopped ?? null, puts }))
+  `)
+  expect(r.seq).toBeGreaterThan(5)
+  expect(r.tookIt).toBe(3)
+  expect(r.stopped).toBeNull()
+  expect(r.puts).toBe(2)
+})

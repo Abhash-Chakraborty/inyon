@@ -6,6 +6,7 @@ import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
+import { attemptAfter, backoff } from '@inyon/protocol'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
 import { forgetPushes, startPush } from './push.ts'
@@ -535,7 +536,7 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
       bin = await cloudflared()
     } catch (err) {
       console.error(`tunnel: ${(err as Error).message}`)
-      return setTimeout(run, Math.min(300_000, 10_000 * 2 ** attempt++))
+      return setTimeout(run, backoff(attempt++, 10_000, 300_000))
     }
     const p = Bun.spawn([bin, 'tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`], { stdout: 'ignore', stderr: 'pipe', windowsHide: true } as any)
     children.add(p)
@@ -547,7 +548,6 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
         carry += dec.decode(chunk, { stream: true })
         const m = carry.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
         if (m) {
-          attempt = 0
           onUrl(`wss://${new URL(m[0]).host}/link`)
           carry = ''
         } else if (carry.length > 65536) carry = carry.slice(-4096)
@@ -556,8 +556,10 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
     await p.exited
     children.delete(p)
     onUrl(undefined)
-    // quick tunnels are rate limited; back off if it keeps dying young
-    const delay = Date.now() - started > 60_000 ? 2000 : Math.min(300_000, 5000 * 2 ** attempt++)
+    // quick tunnels are rate limited; back off if it keeps dying young, even after it gave an
+    // address, and start over only after a run that lasted
+    if (Date.now() - started > 60_000) attempt = 0
+    const delay = Date.now() - started > 60_000 ? 2000 + backoff(0, 2000, 2000) : backoff(attempt++, 5000, 300_000)
     console.log(`tunnel stopped; restarting in ${Math.round(delay / 1000)}s`)
     setTimeout(run, delay)
   }
@@ -570,6 +572,7 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
 function relay(id: Identity, url: string, onState: (up: boolean) => void) {
   let attempt = 0
   const connect = () => {
+    let readyAt: number | undefined
     const ws = new WebSocket(relayWs(url, machinePath(id.id)))
     ws.binaryType = 'arraybuffer'
     const sessions = new Map<number, Wire>()
@@ -588,7 +591,7 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
       if (m.t === 'challenge') {
         ws.send(JSON.stringify({ t: 'auth', id: id.id, sig: Buffer.from(sign(id, authMessage(m.nonce))).toString('base64') }))
       } else if (m.t === 'ready') {
-        attempt = 0
+        readyAt = Date.now()
         console.log(`relay ${new URL(url).host}: connected`)
         onState(true)
       } else if (m.t === 'open') {
@@ -612,7 +615,9 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
       for (const w of sessions.values()) w.onclose?.(1001, 'relay disconnected')
       sessions.clear()
       onState(false)
-      const delay = Math.min(60_000, 1000 * 2 ** attempt++)
+      // a relay that lets the machine in and drops it at once keeps being backed off from
+      attempt = attemptAfter(attempt, readyAt)
+      const delay = backoff(attempt++, 1000, 60_000)
       console.log(`relay ${new URL(url).host}: disconnected (${e.code}); retrying in ${Math.round(delay / 1000)}s`)
       setTimeout(connect, delay)
     }
@@ -623,12 +628,33 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
 
 // ---------- the service ----------
 
+/**
+ * Publishes until a relay takes the record, backing off from `base` up to 60 times that with
+ * jitter: the phone only learns a new tunnel address from pkarr, so a failed publish can't wait for
+ * the 30-minute republish. Stops (undefined) when `wanted` says a newer record took over.
+ */
+export async function publishUntilTaken(relays: string[], id: Identity, rec: { urls: string[]; relays: string[] }, lastSeq: number | undefined, base: number, wanted: () => boolean, fetcher: typeof fetch = fetch) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await publish(id, rec, relays, fetcher, lastSeq)
+    } catch (e) {
+      if (!wanted()) return
+      const delay = backoff(attempt, base, base * 60)
+      console.error(`publish: ${(e as Error).message}; trying again in ${Math.round(delay / 1000)}s`)
+      await Bun.sleep(delay)
+      if (!wanted()) return
+    }
+  }
+}
+
 export function startLink(config: LinkConfig) {
   const id = identity()
   listen(id, config.lan ? '0.0.0.0' : '127.0.0.1', config.port)
   let tunnelUrl: string | undefined
   let lastPublished = ''
   let lastSeq = currentState()?.lastSeq
+  /** counts publishes started; a retrying one stops once a newer one has begun */
+  let publishing = 0
   // private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
   const vpn = new Map<string, { stop(): void }>()
 
@@ -646,16 +672,13 @@ export function startLink(config: LinkConfig) {
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return
     lastPublished = key
-    publish(id, { urls, relays: config.relays }, PKARR_RELAYS, fetch, lastSeq)
-      .then((seq) => {
-        lastSeq = seq
-        writeJson('state.json', { ...(currentState() ?? state), lastSeq })
-        console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
-      })
-      .catch((e) => {
-        lastPublished = ''
-        console.error(`publish: ${e.message}`)
-      })
+    const mine = ++publishing
+    publishUntilTaken(PKARR_RELAYS, id, { urls, relays: config.relays }, lastSeq, 10_000, () => publishing === mine).then((seq) => {
+      if (seq === undefined) return
+      lastSeq = seq
+      withNodeFiles(() => writeJson('state.json', { ...(currentState() ?? state), lastSeq }))
+      console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
+    })
   }
 
   if (config.tunnel) {

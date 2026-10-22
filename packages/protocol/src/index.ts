@@ -3,6 +3,7 @@ import type { AgentKind } from './agents.ts'
 
 export * from './agents.ts'
 export * from './versions.ts'
+export * from './backoff.ts'
 
 /** local: the hub itself · ssh: the hub connects out over SSH · node: the machine connects in to the hub (no open ports) */
 export type HostKind = 'local' | 'ssh' | 'node' | 'link'

@@ -29,7 +29,7 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
-import { INSTALL_URL, WEB_URL } from '@inyon/protocol'
+import { attemptAfter, backoff, INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
 import { privateHost } from './hub.ts'
 import { startTidying } from './tidy.ts'
@@ -90,10 +90,11 @@ function connectMode(hubArg?: string, tokenArg?: string) {
     const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     const ops = serveOps(send)
     let opened = false
+    let openedAt: number | undefined
 
     ws.onopen = () => {
       opened = true
-      attempt = 0
+      openedAt = Date.now()
       console.log(`connected to ${url.host}`)
       send({ type: 'hello', version: VERSION, os: `${os.platform()} ${os.arch()}`, hostname: os.hostname(), platform: os.platform(), mux: WIN ? 'psmux' : 'tmux' })
     }
@@ -115,7 +116,9 @@ function connectMode(hubArg?: string, tokenArg?: string) {
         console.error('The hub rejected the token. Pair this machine again from the hub.')
         process.exit(1)
       }
-      const delay = Math.min(30_000, 1000 * 2 ** attempt)
+      // a hub that takes the connection and drops it at once isn't tried every second
+      attempt = attemptAfter(attempt, openedAt)
+      const delay = backoff(attempt, 1000, 30_000)
       console.log(`disconnected (${e.code}); retrying in ${Math.round(delay / 1000)}s`)
       setTimeout(() => connect(attempt + 1), delay)
     }
