@@ -10,3 +10,6 @@ secret:
     # example, so the encryption can be checked byte for byte. Nothing private to anyone.
     - crates/inyon-engine/src/webpush.rs
     - crates/inyon-engine/src/push.rs
+    # Pages tokens: minted from "fixture-session-secret: not a real one" so both hubs can be
+    # checked against the same tokens. They open nothing on any real hub.
+    - fixtures/pages/**
