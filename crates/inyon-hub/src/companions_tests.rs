@@ -197,6 +197,42 @@ fn a_chat_reaches_a_companion_without_its_drafts_queue_send_texts_links_or_paths
 }
 
 #[test]
+fn the_overview_reaches_a_companion_with_what_labels_a_session_and_no_paths_ids_or_numbers() {
+    let v = companion_frame(&fixture("overview"), &SCOPES).unwrap();
+    let mut got: std::collections::BTreeMap<&str, std::collections::BTreeSet<String>> = Default::default();
+    let mut add = |level: &'static str, o: &Value| got.entry(level).or_default().extend(o.as_object().unwrap().keys().cloned());
+    for h in v["hosts"].as_array().unwrap() {
+        add("host", h);
+        add("config", &h["config"]);
+        for s in h["sessions"].as_array().unwrap() {
+            add("session", s);
+            for w in s["windows"].as_array().unwrap() {
+                add("window", w);
+                for p in w["panes"].as_array().unwrap() {
+                    add("pane", p);
+                    if p["agent"].is_object() {
+                        add("agent", &p["agent"]);
+                    }
+                }
+            }
+        }
+    }
+    let got: Vec<(&str, Vec<String>)> = got.into_iter().map(|(k, s)| (k, s.into_iter().collect())).collect();
+    let want = [
+        ("agent", &["activity", "kind", "mode", "options", "state", "waitingFor"][..]),
+        ("config", &["id", "kind", "name"]),
+        ("host", &["config", "sessions", "status"]),
+        ("pane", &["active", "agent", "dead", "id", "index", "label", "title"]),
+        ("session", &["id", "name", "windows"]),
+        ("window", &["active", "id", "index", "name", "panes"]),
+    ];
+    assert_eq!(got, want.iter().map(|(k, s)| (*k, s.iter().map(|x| x.to_string()).collect())).collect::<Vec<_>>());
+    for secret in ["transcriptPath", "sessionId", "\"pid\"", "\"cwd\"", "identityFile", "tokenHash"] {
+        assert!(!v.to_string().contains(secret), "{secret}");
+    }
+}
+
+#[test]
 fn a_companion_types_printable_text_only_and_no_line_of_it_opens_a_command_or_a_shell() {
     let status = |t: &str| text_refusal(t).map(|r| r.status().as_u16());
     for bad in ["\u{15}!id", "x\n\u{1b}[201~\u{15}!id\r", "\u{3}", "tidy up\u{7f}", "hi\u{9b}201~"] {

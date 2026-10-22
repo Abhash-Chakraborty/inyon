@@ -481,11 +481,40 @@ pub fn inbound_refusal(raw: &str, scopes: &[CompanionScope]) -> Option<String> {
 
 /// Machines as a companion sees them: who each one is, never how the hub reaches it (SSH target,
 /// key file, relays).
+/// The overview as a companion gets it: enough to list sessions and label them. Who each machine
+/// is, never how the hub reaches it (SSH target, key file, relays); no folders, transcripts,
+/// process ids or the agent's numbers.
+pub const COMPANION_HOST: [&str; 3] = ["config", "status", "sessions"];
+pub const COMPANION_SESSION: [&str; 3] = ["id", "name", "windows"];
+pub const COMPANION_WINDOW: [&str; 5] = ["id", "index", "name", "active", "panes"];
+pub const COMPANION_PANE: [&str; 7] = ["id", "index", "active", "title", "label", "dead", "agent"];
+pub const COMPANION_AGENT: [&str; 6] = ["kind", "state", "mode", "waitingFor", "options", "activity"];
+
 pub fn companion_hosts(hosts: &mut Value) {
-    for h in hosts.as_array_mut().into_iter().flatten() {
-        if let Some(c) = h.get_mut("config") {
-            *c = json!({ "id": c["id"], "name": c["name"], "kind": c["kind"] });
+    // each level picked, then the level below it in place
+    fn each(v: &mut Map<String, Value>, key: &str, keys: &[&str], inner: impl Fn(&mut Map<String, Value>)) {
+        for item in v.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
+            let mut picked = pick(item, keys);
+            inner(&mut picked);
+            *item = Value::Object(picked);
         }
+    }
+    let Some(list) = hosts.as_array_mut() else { return };
+    for h in list {
+        let mut host = pick(h, &COMPANION_HOST);
+        let c = &h["config"];
+        host.insert("config".into(), json!({ "id": c["id"], "name": c["name"], "kind": c["kind"] }));
+        each(&mut host, "sessions", &COMPANION_SESSION, |s| {
+            each(s, "windows", &COMPANION_WINDOW, |w| {
+                each(w, "panes", &COMPANION_PANE, |p| {
+                    if let Some(a) = p.get("agent").filter(|a| a.is_object()) {
+                        let a = Value::Object(pick(a, &COMPANION_AGENT));
+                        p.insert("agent".into(), a);
+                    }
+                })
+            })
+        });
+        *h = Value::Object(host);
     }
 }
 

@@ -114,7 +114,16 @@ Eight wrong codes in a minute from one address, or thirty from all of them, get 
 
 ### The overview
 
-`GET /api/overview` returns the data the app's overview is drawn from, `{ "hosts": HostState[] }`, with the `HostState` type in [packages/protocol](https://github.com/Abhash-Chakraborty/inyon/blob/main/packages/protocol/src/index.ts). Each machine has a `config` with only its `id`, `name` and `kind` (a companion never sees how the hub reaches a machine), a `status` (`online`, `connecting` or `error`) and its tmux `sessions`, each with `windows` and their `panes`. A pane running an agent has an `agent` with:
+`GET /api/overview` returns `{ "hosts": [...] }`, a cut-down form of the app's overview (the `HostState` type in [packages/protocol](https://github.com/Abhash-Chakraborty/inyon/blob/main/packages/protocol/src/index.ts)) with only what it takes to list sessions and label them:
+
+| Level | Fields |
+|---|---|
+| machine | `config` with only `id`, `name` and `kind`, `status` (`online`, `connecting` or `error`), `sessions` |
+| session | `id`, `name` (the tmux session's name), `windows` |
+| window | `id`, `index`, `name`, `active`, `panes` |
+| pane | `id`, `index`, `active`, `title`, `label` (the name you gave it in Inyon), `dead`, `agent` |
+
+A companion never sees how the hub reaches a machine, folders, transcript paths, session or process ids, or the agent's usage numbers. A pane running an agent has an `agent` with:
 
 | Field | Holds |
 |---|---|
@@ -123,6 +132,7 @@ Eight wrong codes in a minute from one address, or thirty from all of them, get 
 | `waitingFor` | a short line about the question, while `state` is `waiting` |
 | `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question |
 | `activity` | the working line, such as `Undulating… (2s · thinking with high effort)` |
+| `mode` | the agent's mode, such as `manual` or `plan` |
 
 A pane is named by its machine's `config.id` and its tmux pane id, such as `box` and `%3`.
 

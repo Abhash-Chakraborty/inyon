@@ -255,8 +255,29 @@ const companionSend: CompanionRoute['run'] = async (req, c) => {
   return json({ ok: true, state: state === 'delivered' || state === 'queued' ? state : 'sent' })
 }
 
-/** Machines as a companion sees them: who each one is, never how the hub reaches it (SSH target, key file, relays). */
-export const companionHosts = (hosts: HostState[]): HostState[] => hosts.map((h) => ({ ...h, config: { id: h.config.id, name: h.config.name, kind: h.config.kind } }))
+/**
+ * The overview as a companion gets it: enough to list sessions and label them. Who each machine
+ * is, never how the hub reaches it (SSH target, key file, relays); no folders, transcripts,
+ * process ids or the agent's numbers.
+ */
+export const COMPANION_HOST = ['config', 'status', 'sessions'] as const
+export const COMPANION_SESSION = ['id', 'name', 'windows'] as const
+export const COMPANION_WINDOW = ['id', 'index', 'name', 'active', 'panes'] as const
+export const COMPANION_PANE = ['id', 'index', 'active', 'title', 'label', 'dead', 'agent'] as const
+export const COMPANION_AGENT = ['kind', 'state', 'mode', 'waitingFor', 'options', 'activity'] as const
+
+export const companionHosts = (hosts: HostState[]) =>
+  hosts.map((h) => ({
+    ...pick(h, COMPANION_HOST),
+    config: { id: h.config.id, name: h.config.name, kind: h.config.kind },
+    sessions: h.sessions.map((s) => ({
+      ...pick(s, COMPANION_SESSION),
+      windows: s.windows.map((w) => ({
+        ...pick(w, COMPANION_WINDOW),
+        panes: w.panes.map((p) => ({ ...pick(p, COMPANION_PANE), ...(p.agent ? { agent: pick(p.agent, COMPANION_AGENT) } : {}) })),
+      })),
+    })),
+  }))
 
 const overview: CompanionRoute['run'] = () => json({ hosts: companionHosts(registry.overview()) })
 

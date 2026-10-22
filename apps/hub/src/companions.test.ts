@@ -121,6 +121,36 @@ test('a chat reaches a companion without its drafts, queue, send texts, links or
   expect(JSON.stringify(v)).not.toContain('half a thought')
 })
 
+test('the overview reaches a companion with what labels a session, and no paths, ids or numbers', () => {
+  const v = companionFrame(fixture('overview'), SCOPES) as any
+  const keys = new Map<string, Set<string>>()
+  const add = (level: string, o: object) => Object.keys(o).forEach((k) => (keys.get(level) ?? keys.set(level, new Set()).get(level)!).add(k))
+  for (const h of v.hosts) {
+    add('host', h)
+    add('config', h.config)
+    for (const s of h.sessions) {
+      add('session', s)
+      for (const w of s.windows) {
+        add('window', w)
+        for (const p of w.panes) {
+          add('pane', p)
+          if (p.agent) add('agent', p.agent)
+        }
+      }
+    }
+  }
+  const got = Object.fromEntries([...keys].map(([k, s]) => [k, [...s].sort()]))
+  expect(got).toEqual({
+    host: ['config', 'sessions', 'status'],
+    config: ['id', 'kind', 'name'],
+    session: ['id', 'name', 'windows'],
+    window: ['active', 'id', 'index', 'name', 'panes'],
+    pane: ['active', 'agent', 'dead', 'id', 'index', 'label', 'title'],
+    agent: ['activity', 'kind', 'mode', 'options', 'state', 'waitingFor'],
+  })
+  for (const secret of ['transcriptPath', 'sessionId', '"pid"', '"cwd"', 'identityFile', 'tokenHash']) expect(JSON.stringify(v)).not.toContain(secret)
+})
+
 test('a companion types printable text only, and no line of it opens a command or a shell', () => {
   for (const bad of ['\u0015!id', 'x\n\u001b[201~\u0015!id\r', '\u0003', 'tidy up\u007f', 'hi\u009b201~']) expect(textRefusal(bad)?.status).toBe(400)
   for (const cmd of ['ok\n/model x', 'fine\r\n  !rm -rf build', '\u00a0/clear']) expect(textRefusal(cmd)?.status).toBe(403)
