@@ -121,12 +121,14 @@ export default {
     await legatoWs.until('pong', (m) => m.t === 'pong')
     legatoWs.send({ t: 'sub.overview' })
     await legatoWs.until('overview', (m) => m.t === 'overview')
-    legatoWs.send({ t: 'sub.chat', host: BOX, pane: PANE })
-    await legatoWs.until('chat.info', (m) => m.t === 'chat.info' && m.key === KEY)
-    await legatoWs.until('chat.screen', (m) => m.t === 'chat.screen' && m.key === KEY)
+    // the app first, so its subscription is the one that starts the chat and both see the same
+    // frames on every run; the companion then joins a chat that is already loaded
     app.send({ t: 'sub.chat', host: BOX, pane: PANE })
     await app.until('chat.reset', (m) => m.t === 'chat.reset' && m.key === KEY)
     await app.until('chat.screen', (m) => m.t === 'chat.screen' && m.key === KEY)
+    legatoWs.send({ t: 'sub.chat', host: BOX, pane: PANE })
+    await legatoWs.until('chat.info', (m) => m.t === 'chat.info' && m.key === KEY)
+    await legatoWs.until('chat.screen', (m) => m.t === 'chat.screen' && m.key === KEY)
 
     await ctx.step('Claude asks to run a command: the companion gets the question with its key, and the notice')
     claude.took('Write hello-inyon to out.txt', 20)
