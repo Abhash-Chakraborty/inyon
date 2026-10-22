@@ -22,7 +22,7 @@ use inyon_link::PairInfo;
 use serde_json::{json, Value};
 
 use crate::link::{self, LinkConfig};
-use crate::output::{emit, fail, log, pair_result, say, PairOutput};
+use crate::output::{emit, fail, log, pair_result, PairOutput};
 use crate::paths::{self, env_var, node_dir, Role};
 use crate::{ops, push, tidy, usage, INSTALL_URL, VERSION, WEB_URL, WIN};
 
@@ -147,78 +147,134 @@ fn link_url(u: &str) -> bool {
     rest.and_then(|r| r.strip_suffix("/link")).is_some_and(|host| !host.is_empty() && !host.contains('/'))
 }
 
-/// What `pair` found: its answer (as `pair --json` prints it), and whether a link runs elsewhere,
-/// so this process has nothing left to do once the code is shown.
-pub struct Paired {
-    pub answer: Value,
-    pub service: bool,
+/// How long `pair` waits for an address and how often it looks: a moment before it says the
+/// tunnel is starting, `first` before it shows a code with what it has (a LAN or VPN address
+/// works already), and `until` (the pairing's lifetime) before it stops watching for the tunnel.
+pub struct Patience {
+    pub quick: Duration,
+    pub first: Duration,
+    pub tick: Duration,
+    pub until: Duration,
 }
 
-/// Makes a pairing code; starts the link here first if it isn't running yet. Prints nothing.
-pub async fn make_pairing(args: &[String]) -> Paired {
+impl Patience {
+    pub const REAL: Patience =
+        Patience { quick: Duration::from_millis(1500), first: Duration::from_secs(30), tick: Duration::from_millis(500), until: Duration::from_secs(link::PAIR_MINUTES * 60) };
+}
+
+/// Makes a pairing code, starting the link here first if it isn't running yet, and hands each
+/// answer to `show` as `pair --json` prints it. The first may say the tunnel is still starting
+/// (`"waiting": "tunnel"`); a later one carries the code again with the tunnel's address. Prints
+/// nothing itself. Returns whether the link runs elsewhere, so this process has nothing left to do.
+pub async fn make_pairing(args: &[String], show: &mut dyn FnMut(&Value)) -> bool {
     let config = link_options(args);
     let service = link::link_running(Some(config.port)).await;
     if !service {
+        // a program reads this one's output (the inyon command, its window): what the link it
+        // started has to say goes to link.log, as the service's does, and only the answers come out
+        if crate::output::json() {
+            crate::output::log_to(paths::log_file(Role::Link));
+        }
         if let Err(e) = link::start_link(config.clone()) {
             fail(&e, 1);
         }
         tidy::start_tidying(paths::home());
     }
     let pairing = link::new_pairing().unwrap_or_else(|e| fail(&e, 1));
-    // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
-    // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
-    let wanted = config.tunnel || config.lan || config.vpn || !config.urls.is_empty() || !config.relays.is_empty();
-    let enough = |s: &link::State| !s.relays.is_empty() || if config.tunnel { s.urls.iter().any(|u| u.starts_with("wss://")) } else { !s.urls.is_empty() };
-    for _ in 0..60 {
-        if !wanted {
-            break;
-        }
-        if let Some(s) = link::current_state() {
-            if enough(&s) && (service || s.pid == std::process::id()) {
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
-    let s = link::current_state();
-    let (urls, relays) = s.map(|s| (s.urls, s.relays)).unwrap_or_default();
     let id = link::identity().id;
-    let info = PairInfo { id: id.clone(), secret: pairing.secret.clone(), name: crate::hostname(), urls: urls.clone(), relays: relays.clone() };
+    let publish = |urls: Vec<String>, relays: Vec<String>| {
+        let (short, id) = (pairing.short.clone(), id.clone());
+        // the typed-in code needs the relays to know this ID; without them there's still the QR code
+        async move { tokio::time::timeout(Duration::from_secs(8), link::publish_short_code(&short, &id, &crate::hostname(), &urls, &relays)).await.is_ok_and(|r| r.is_ok()) }
+    };
+    pairing_answers(&config, service, &pairing, &id, &Patience::REAL, publish, show).await;
+    service
+}
+
+/// The pairing as `pair --json` answers it, for these addresses.
+fn full_answer(pairing: &link::Pairing, id: &str, urls: Vec<String>, relays: Vec<String>, typed: bool, service: bool) -> Value {
+    let info = PairInfo { id: id.to_string(), secret: pairing.secret.clone(), name: crate::hostname(), urls: urls.clone(), relays: relays.clone() };
     let link_text = inyon_link::pair_link(&info, None);
     // the QR code opens the web app when scanned with a phone's camera; the Inyon app reads it too.
     // INYON_WEB_URL points it at a copy of the web app you host yourself
     let web = env_var("INYON_WEB_URL").unwrap_or_else(|| WEB_URL.into());
     let qr = inyon_link::pair_link(&info, Some(&web));
-    // the typed-in code needs the relays to know this ID; without them there's still the QR code
-    let typed = tokio::time::timeout(Duration::from_secs(8), link::publish_short_code(&pairing.short, &id, &crate::hostname(), &urls, &relays)).await.is_ok_and(|r| r.is_ok());
     let out = PairOutput { link: link_text, qr, short: Some((pairing.short.id.clone(), pairing.short.code.clone())), urls, relays, service };
-    Paired { answer: pair_result(&out, typed), service }
+    pair_result(&out, typed)
 }
 
-/// `pair`: shows the code the way the Bun engine printed it. True when the link runs elsewhere.
+/// Waits for an address the phone can use and shows the code once it's there. The tunnel takes a
+/// few seconds to come up, longer when cloudflared has to be downloaded first; a private network's
+/// ws:// address comes first, but browsers only open wss://, so it waits for the tunnel too.
+/// Until then it says the tunnel is starting; after `first` it shows the code with what it has,
+/// and again with the tunnel's address once that arrives.
+async fn pairing_answers<F, Fut>(config: &LinkConfig, service: bool, pairing: &link::Pairing, id: &str, patience: &Patience, publish: F, show: &mut dyn FnMut(&Value))
+where
+    F: Fn(Vec<String>, Vec<String>) -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let wanted = config.tunnel || config.lan || config.vpn || !config.urls.is_empty() || !config.relays.is_empty();
+    let enough = |s: &link::State| !s.relays.is_empty() || if config.tunnel { s.urls.iter().any(|u| u.starts_with("wss://")) } else { !s.urls.is_empty() };
+    // a link started here counts once it has written its own state
+    let current = || link::current_state().filter(|s| service || s.pid == std::process::id());
+    let ready = || current().filter(|s| enough(s));
+    let started = tokio::time::Instant::now();
+    let addresses = |s: Option<link::State>| s.map(|s| (s.urls, s.relays)).unwrap_or_default();
+    while wanted && ready().is_none() && started.elapsed() < patience.quick {
+        tokio::time::sleep(patience.tick).await;
+    }
+    if !wanted {
+        let (urls, relays) = addresses(current());
+        let typed = publish(urls.clone(), relays.clone()).await;
+        show(&full_answer(pairing, id, urls, relays, typed, service));
+        return;
+    }
+    let mut up = ready();
+    if up.is_none() {
+        show(&json!({ "waiting": "tunnel", "service": service }));
+        while ready().is_none() && started.elapsed() < patience.first {
+            tokio::time::sleep(patience.tick).await;
+        }
+        up = ready();
+    }
+    if up.is_none() {
+        // still no tunnel: the code with what there is, and again once the tunnel is up
+        let (urls, relays) = addresses(current());
+        let typed = !urls.is_empty() && publish(urls.clone(), relays.clone()).await;
+        let mut v = full_answer(pairing, id, urls, relays, typed, service);
+        v["waiting"] = json!("tunnel");
+        show(&v);
+        while up.is_none() {
+            // paired already (over the LAN, say), or a newer code took its place
+            if link::pairing_secret().as_deref() != Some(pairing.secret.as_str()) {
+                return;
+            }
+            if started.elapsed() >= patience.until {
+                show(&json!({ "ok": false, "error": crate::output::PAIR_EXPIRED, "expired": true }));
+                return;
+            }
+            tokio::time::sleep(patience.tick).await;
+            up = ready();
+        }
+    }
+    let Some(s) = up else { return };
+    let (urls, relays) = (s.urls, s.relays);
+    let typed = publish(urls.clone(), relays.clone()).await;
+    show(&full_answer(pairing, id, urls, relays, typed, service));
+}
+
+/// `pair`: shows each answer as it comes, drawn for a person, or as JSON lines with --json. True
+/// when the link runs elsewhere.
 async fn pair(args: &[String]) -> bool {
-    let p = make_pairing(args).await;
-    let a = &p.answer;
-    let text = |k: &str| a.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    say("\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n");
-    say(&crate::qr::render(&text("qr")).unwrap_or_else(|e| format!("(no QR code: {e})")));
-    if let Some(short) = a.get("short") {
-        let id = short.get("id").and_then(Value::as_str).unwrap_or("");
-        let code = short.get("code").and_then(Value::as_str).unwrap_or("");
-        let (c1, c2) = code.split_at(code.len().min(3));
-        say(&format!("\nCan't scan it? Choose \"Type a code\" in the app and enter\n\n    ID    {}\n    Code  {c1} {c2}\n", inyon_link::format_short_id(id)));
-    }
-    say(&format!("\nOr paste this link into the app:\n{}\n", text("link")));
-    let none = |k: &str| a.get(k).and_then(Value::as_array).is_none_or(|l| l.is_empty());
-    if none("urls") && none("relays") {
-        say("No address yet: the phone will look this machine up once its tunnel is up.\n");
-    }
-    emit(a.clone(), None);
-    if p.service {
-        return true;
-    }
-    say("Keep this running so the phone can connect, or run `inyon service install` to keep it running in the background.");
-    false
+    let json = crate::output::json();
+    make_pairing(args, &mut |v| {
+        if json {
+            emit(v.clone(), None);
+        } else {
+            log(&crate::output::render_pair(v));
+        }
+    })
+    .await
 }
 
 fn phones() {
@@ -403,6 +459,82 @@ pub fn run(args: &[String], hub: impl FnOnce(&[String]) -> i32) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The answers `pair` gives while the link's state goes through `states` (after each delay),
+    /// with short waits so the test takes a second or two.
+    fn answers_while(config: LinkConfig, states: Vec<(u64, Vec<&'static str>)>) -> Vec<Value> {
+        let _h = crate::paths::testing::home(&format!("pair-wait-{}", states.len()));
+        let pairing = link::new_pairing().unwrap();
+        let patience = Patience { quick: Duration::from_millis(100), first: Duration::from_millis(600), tick: Duration::from_millis(20), until: Duration::from_secs(4) };
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut answers = Vec::new();
+        rt.block_on(async {
+            tokio::spawn(async move {
+                for (after, urls) in states {
+                    tokio::time::sleep(Duration::from_millis(after)).await;
+                    let s =
+                        link::State { urls: urls.into_iter().map(String::from).collect(), relays: vec![], updated_at: 0, pid: std::process::id(), version: None, last_seq: None };
+                    link::write_node_json("state.json", &s).unwrap();
+                }
+            });
+            let publish = |_urls: Vec<String>, _relays: Vec<String>| async { true };
+            pairing_answers(&config, false, &pairing, "machine-id", &patience, publish, &mut |v| answers.push(v.clone())).await;
+        });
+        answers
+    }
+
+    fn urls(v: &Value) -> Vec<String> {
+        v.get("urls").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_link_already_up_answers_once_with_its_address() {
+        let config = LinkConfig { vpn: false, ..LinkConfig::default() };
+        let a = answers_while(config, vec![(0, vec!["wss://a.trycloudflare.com/link"])]);
+        assert_eq!(a.len(), 1, "{a:?}");
+        assert_eq!(urls(&a[0]), ["wss://a.trycloudflare.com/link"]);
+        assert!(a[0].get("waiting").is_none() && a[0].get("qr").is_some());
+    }
+
+    #[test]
+    fn pair_says_the_tunnel_is_starting_and_shows_the_code_once_its_address_is_there() {
+        // the tunnel's address comes after the first look but before the code would be shown
+        // without one (in 0.19.0 that code came after 30 s, with no address in it)
+        let config = LinkConfig { vpn: false, ..LinkConfig::default() };
+        let a = answers_while(config, vec![(0, vec![]), (300, vec!["wss://a.trycloudflare.com/link"])]);
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert_eq!(a[0], json!({ "waiting": "tunnel", "service": false }));
+        assert_eq!(urls(&a[1]), ["wss://a.trycloudflare.com/link"]);
+        assert!(a[1].get("waiting").is_none());
+    }
+
+    #[test]
+    fn a_slow_tunnel_gets_the_code_shown_with_what_there_is_and_again_once_it_is_up() {
+        let a = answers_while(LinkConfig::default(), vec![(0, vec!["ws://100.64.0.9:4780/link"]), (1200, vec!["wss://a.trycloudflare.com/link", "ws://100.64.0.9:4780/link"])]);
+        assert_eq!(a.len(), 3, "{a:?}");
+        assert_eq!(a[0]["waiting"], "tunnel");
+        // the VPN works meanwhile, so that code is shown, marked as waiting for the tunnel
+        assert_eq!((a[1]["waiting"].as_str(), urls(&a[1])), (Some("tunnel"), vec!["ws://100.64.0.9:4780/link".to_string()]));
+        // then the same pairing again, now with the tunnel
+        assert_eq!(urls(&a[2]), ["wss://a.trycloudflare.com/link", "ws://100.64.0.9:4780/link"]);
+        assert!(a[2].get("waiting").is_none());
+        let secret = |v: &Value| v["link"].as_str().unwrap().split(['?', '&']).find(|p| p.starts_with("s=")).map(String::from);
+        assert!(secret(&a[1]).is_some());
+        assert_eq!(secret(&a[1]), secret(&a[2]));
+    }
+
+    #[test]
+    fn a_tunnel_that_never_comes_stops_the_wait_when_the_pairing_ends() {
+        let config = LinkConfig { vpn: false, ..LinkConfig::default() };
+        let started = std::time::Instant::now();
+        let a = answers_while(config, vec![(0, vec![])]);
+        assert_eq!(a.len(), 3, "{a:?}");
+        assert!(a[1]["waiting"] == "tunnel" && urls(&a[1]).is_empty());
+        // the last answer says so, for the window and `pair --json`, which may show nothing else
+        assert_eq!(a[2], json!({ "ok": false, "error": crate::output::PAIR_EXPIRED, "expired": true }));
+        assert!(crate::output::render_pair(&a[2]).contains("expired before the tunnel came up"));
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
 
     #[test]
     fn an_own_address_must_be_a_websocket_ending_in_link() {

@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use inyon_engine::http::Limits;
+
 pub struct Response {
     pub status: u16,
     pub location: Option<String>,
@@ -15,12 +17,13 @@ impl Response {
     }
 }
 
+/// Every request has the engine's limits: 10 s to connect (a dead address gives way to the next),
+/// 30 s without a byte, and `total` in all.
 fn agent(follow: bool, insecure: bool) -> ureq::Agent {
     let mut c = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(if follow { 10 } else { 0 })
         .max_redirects_will_error(false)
-        .timeout_global(Some(Duration::from_secs(600)))
         .user_agent(format!("inyon/{}", env!("CARGO_PKG_VERSION")));
     c = c.tls_config(if insecure {
         // the hub on this machine may use a certificate it issued itself
@@ -29,7 +32,7 @@ fn agent(follow: bool, insecure: bool) -> ureq::Agent {
         // Mozilla's roots, and the ones NODE_EXTRA_CA_CERTS adds
         ureq::tls::TlsConfig::builder().root_certs(inyon_engine::http::ureq_roots()).build()
     });
-    c.build().new_agent()
+    inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(600)))
 }
 
 /// More than any release file (the engine is about 120 MB) and less than would fill memory.
@@ -80,9 +83,8 @@ pub fn get_no_redirect(url: &str) -> Result<Response, String> {
 
 /// GET from the hub on this machine, whose certificate may be its own.
 pub fn get_local(url: &str) -> Result<Response, String> {
-    let mut c = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(Duration::from_secs(3)));
-    c = c.tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
-    let mut res = c.build().new_agent().get(url).call().map_err(|e| e.to_string())?;
+    let c = ureq::Agent::config_builder().http_status_as_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
+    let mut res = inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(3))).get(url).call().map_err(|e| e.to_string())?;
     let status = res.status().as_u16();
     let body = res.body_mut().read_to_vec().map_err(|e| e.to_string())?;
     Ok(Response { status, location: None, body })

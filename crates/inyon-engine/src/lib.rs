@@ -23,6 +23,8 @@ pub mod qr;
 pub mod screen;
 pub mod tidy;
 pub mod webpush;
+#[cfg(windows)]
+pub mod winjob;
 mod ws;
 
 /// Inyon's version, the same for every part of a release.

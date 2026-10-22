@@ -42,7 +42,7 @@ inyon
 inyon status --plain
 ```
 
-In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses, the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. Times are in this computer's time zone. At 72 columns or wider it uses two columns.
+In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses while the link runs, whether phones reach it only through the tunnel and how to change that (from 0.20), the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. Times are in this computer's time zone. At 72 columns or wider it uses two columns.
 
 | Key | Does |
 |---|---|
@@ -96,7 +96,7 @@ A mouse click chooses a row.
 
 Windows Firewall lets nothing in to a program it hasn't been told about, and it counts VPNs such as NetBird as public networks. So when you tick *LAN* or *VPN* on Windows, setup from 0.17.1 adds a firewall rule named "Inyon link", and Windows asks an administrator to allow it. The rule lets in TCP on the link's port, to `inyon-engine.exe` only, from the local network and the VPN ranges (`100.64.0.0/10` and Tailscale's `fd7a:115c:a1e0::/48`).
 
-If you say no, phones can only connect through the tunnel, and setup prints the command to add the rule later from PowerShell run as administrator. `inyon uninstall` removes the rule.
+If you say no, phones can only connect through the tunnel, and setup prints the command to add the rule later from PowerShell run as administrator. `inyon uninstall` removes the rule. From 0.20, when the link already runs and you change these settings, setup restarts it so they take effect, and `inyon doctor` checks the rule.
 
 ### Without the screens
 
@@ -123,7 +123,7 @@ INYON_TOKEN=… inyon setup --yes --hub https://hub.example.ts.net
 inyon pair
 ```
 
-Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. Any link options you add are saved, the same ones `inyon link` takes:
+Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. While the tunnel starts it says "Starting the tunnel…" first; from 0.20 it waits for the tunnel's address and shows the code again if the address arrives after the first 30 seconds (see [How the phone finds it](computers.md#how-the-phone-finds-it)). Any link options you add are saved, the same ones `inyon link` takes:
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -175,7 +175,7 @@ inyon service install [link|node|hub]
 inyon service uninstall [link|node|hub]
 ```
 
-Without a role, `install` picks `node` if a hub is saved and `link` otherwise. [Install](install.md#the-background-service) has the details for each system.
+Without a role, `install` picks `node` if a hub is saved and `link` otherwise. From 0.20, installing the link also downloads `cloudflared` when the tunnel is on and it isn't there yet. [Install](install.md#the-background-service) has the details for each system.
 
 ## Logs
 
@@ -194,6 +194,8 @@ inyon doctor
 ```
 
 Checks, one line each: the engine (from 0.19 "built in", plus the hub's engine on a hub) and the command, tmux (psmux on Windows), which agents are on the `PATH`, each service, leftovers from tether-node, the link's and the hub's ports, the private networks found, `cloudflared`, the clock and the last update. A line starting with `!` needs attention. With `--json`, `ok` is `false` when any check failed.
+
+From 0.20 a `reach` line says when phones reach the computer only through the tunnel (the default on Windows), and how to let phones on the same Wi-Fi or VPN in. On Windows with *LAN* or *VPN* on, doctor also checks the link's port and the firewall rule "Inyon link", and prints the command that adds the rule when it's missing.
 
 ## Update and uninstall
 
@@ -263,9 +265,11 @@ If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the sa
 
 `--json` makes every command answer one JSON object, for scripts. Success looks like `{"v":1,"ok":true,…}` and a failure like `{"v":1,"ok":false,"error":"…"}`, with exit code 1.
 
+`inyon pair --json` can answer more than once, one line each, and the last line is the current one. From 0.20, while the tunnel starts, it first prints `{"v":1,"ok":true,"waiting":"tunnel",…}`. If the tunnel takes longer than 30 seconds, a line with a code and `"waiting"` follows, carrying the addresses that work so far, and a last line has the code with the tunnel's address. If the code runs out before the tunnel comes up, the last line is `{"v":1,"ok":false,"error":"The pairing code expired before the tunnel came up. …","expired":true}`.
+
 ```sh
 inyon status --json | jq '.phones[].name'
-inyon pair --json | jq -r '.link'
+inyon pair --json | jq -r 'select(.waiting == null and .ok) | .link'
 ```
 
 ## Environment

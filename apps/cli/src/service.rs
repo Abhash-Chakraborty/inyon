@@ -391,19 +391,50 @@ fn stop_copies(sys: &Sys, role: Option<Role>) -> String {
         Some(r) => format!(" -and {line} -match '\\s\"?{}\"?\\s*$'", spec(r).args[0]),
         None => String::new(),
     };
-    // the link's tunnel (cloudflared from ~/.inyon/bin) outlives an engine stopped this way
-    let tunnel = if matches!(role, None | Some(Role::Link)) {
-        format!(
-            "\nGet-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" | Where-Object {{ $_.ExecutablePath -like {} }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
-            psq(&format!("{}\\*", path_str(&bin_dir())))
-        )
-    } else {
-        String::new()
-    };
+    // the link's tunnel (cloudflared from ~/.inyon/bin), in case the link's own job didn't take it along
+    let tunnel = if matches!(role, None | Some(Role::Link)) { format!("\n{}", stop_tunnel_script()) } else { String::new() };
     format!(
         "Get-Process -Name '{NAME}', '{ENGINE}', 'tether-node' -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {}{job} }} | Stop-Process -Force -ErrorAction SilentlyContinue{tunnel}",
         sys.pid
     )
+}
+
+/// PowerShell that stops the link's tunnel: cloudflared running from ~/.inyon/bin.
+fn stop_tunnel_script() -> String {
+    format!(
+        "Get-CimInstance Win32_Process -Filter \"Name='cloudflared.exe'\" | Where-Object {{ $_.ExecutablePath -like {} }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        psq(&format!("{}\\*", path_str(&bin_dir())))
+    )
+}
+
+/// Ends `role`'s logon task (Windows), so Task Scheduler doesn't count the stop as a failure to
+/// start it again from.
+pub fn end_task(sys: &Sys, role: Role) {
+    if sys.platform != Platform::Windows {
+        return;
+    }
+    if let Some(task) = task_name(role) {
+        run(&["schtasks.exe", "/End", "/TN", task]);
+    }
+}
+
+/// Stops the link's tunnel once the link itself has stopped (Windows, where a child process
+/// outlives its parent). The link's own job takes cloudflared with it from 0.20; this catches a
+/// tunnel an older link left, and is what Restart does too.
+pub fn stop_tunnel(sys: &Sys, role: Role) {
+    if sys.platform == Platform::Windows && role == Role::Link {
+        ps(&stop_tunnel_script());
+    }
+}
+
+/// Quit, from the tray icon or the Inyon window (Windows): ends the task, the engine (`pid`) and
+/// then its tunnel, so nothing keeps answering for a link that has stopped.
+pub fn quit(sys: &Sys, role: Role, pid: Option<u32>) {
+    end_task(sys, role);
+    if let Some(pid) = pid.filter(|p| *p != sys.pid && sys.proc.alive(*p)) {
+        sys.proc.signal(pid, Signal::Kill);
+    }
+    stop_tunnel(sys, role);
 }
 
 /// PowerShell that stops every program running from ~/.inyon/bin but this one (the engines, the
@@ -459,7 +490,7 @@ pub fn firewall_rule_script(port: u16) -> String {
 }
 
 /// Whether the firewall rule is there for `port` (Windows).
-fn firewall_allows(port: u16) -> bool {
+pub fn firewall_allows(port: u16) -> bool {
     ps(&format!(
         "$r = Get-NetFirewallRule -DisplayName {} -ErrorAction SilentlyContinue | Select-Object -First 1\nif ($r -and $r.Enabled -eq 'True' -and (($r | Get-NetFirewallPortFilter).LocalPort -eq '{port}')) {{ exit 0 }} else {{ exit 1 }}",
         psq(FIREWALL_RULE)
@@ -499,8 +530,13 @@ pub fn allow_link_through_firewall(sys: &Sys, port: u16) -> Option<String> {
     }
     Some(format!(
         "! Windows Firewall blocks phones on your network and VPN, so they connect through the tunnel only. To let them in, run this in PowerShell as administrator:\n  {}",
-        firewall_rule_script(port).lines().last().unwrap_or_default()
+        firewall_command(port)
     ))
+}
+
+/// The one line that adds the firewall rule, for a person to run in PowerShell as administrator.
+pub fn firewall_command(port: u16) -> String {
+    firewall_rule_script(port).lines().last().unwrap_or_default().to_string()
 }
 
 /// Takes the firewall rule away again (Windows), asking for an administrator's yes when it's there.

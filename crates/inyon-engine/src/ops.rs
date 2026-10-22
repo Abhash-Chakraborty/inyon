@@ -115,7 +115,7 @@ pub fn ensure_shell() -> Result<(), String> {
         return Ok(());
     }
     let (_, file, sum) = BUSYBOX.iter().find(|(a, _, _)| *a == if crate::arch() == "arm64" { "arm64" } else { "x64" }).copied().unwrap_or(BUSYBOX[0]);
-    crate::output::log("downloading busybox-w32 (the shell Inyon runs commands with)…");
+    crate::output::say("downloading busybox-w32 (the shell Inyon runs commands with)…");
     let res = crate::http::download(&format!("https://frippery.org/files/busybox/{file}"))?;
     if !res.ok() {
         return Err(format!("couldn't download busybox-w32: {}", res.status));

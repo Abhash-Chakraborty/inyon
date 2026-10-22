@@ -34,7 +34,8 @@ use crate::output::{error, log};
 use crate::paths::{bin_dir, node_dir};
 use crate::{VERSION, WIN};
 
-const PAIR_MINUTES: u64 = 10;
+/// How long a pairing code works.
+pub const PAIR_MINUTES: u64 = 10;
 
 fn file(name: &str) -> PathBuf {
     node_dir().join(name)
@@ -233,6 +234,11 @@ pub fn new_pairing() -> Result<Pairing, String> {
     let _files = node_files();
     write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }))?;
     Ok(Pairing { secret, short })
+}
+
+/// The secret of the pairing that's open, if one is (a phone that pairs with it ends it).
+pub fn pairing_secret() -> Option<String> {
+    read_node_json::<Value>("pairing.json")?.get("secret")?.as_str().map(String::from)
 }
 
 /// What the running link last wrote: its addresses, pid and version.
@@ -765,20 +771,28 @@ pub fn cloudflared_asset(platform: &str, cpu: &str) -> String {
 
 /// cloudflared from PATH, or the pinned release downloaded once into ~/.inyon/bin.
 async fn cloudflared() -> Result<PathBuf, String> {
-    if let Some(p) = which("cloudflared") {
+    tokio::task::spawn_blocking(ensure_cloudflared).await.map_err(|e| e.to_string())?
+}
+
+/// cloudflared, if it's here already: on PATH or in ~/.inyon/bin.
+pub fn cloudflared_here() -> Option<PathBuf> {
+    which("cloudflared").or_else(|| Some(bin_dir().join(if WIN { "cloudflared.exe" } else { "cloudflared" })).filter(|b| b.exists()))
+}
+
+/// cloudflared, downloaded now when it isn't here. Setup and `inyon service install` call this, so
+/// the first pairing doesn't wait for a 40 MB download before the tunnel can start.
+pub fn ensure_cloudflared() -> Result<PathBuf, String> {
+    if let Some(p) = cloudflared_here() {
         return Ok(p);
     }
-    let bin = bin_dir().join(if WIN { "cloudflared.exe" } else { "cloudflared" });
-    if bin.exists() {
-        return Ok(bin);
-    }
-    tokio::task::spawn_blocking(move || download_cloudflared(&bin)).await.map_err(|e| e.to_string())?
+    download_cloudflared(&bin_dir().join(if WIN { "cloudflared.exe" } else { "cloudflared" }))
 }
 
 fn download_cloudflared(bin: &Path) -> Result<PathBuf, String> {
     let asset = cloudflared_asset(crate::platform(), crate::arch());
     let (_, sum, inner) = CLOUDFLARED.iter().find(|(a, _, _)| *a == asset).copied().ok_or("no cloudflared for this system")?;
-    log(&format!("downloading cloudflared {CLOUDFLARED_VERSION} ({asset}) for the tunnel…"));
+    // on stderr: `inyon service install --json` prints its answer on stdout after this
+    error(&format!("downloading cloudflared {CLOUDFLARED_VERSION} ({asset}) for the tunnel…"));
     let res = crate::http::download(&format!("https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/{asset}"))?;
     if !res.ok() {
         return Err(format!("couldn't download cloudflared: {}", res.status));
@@ -877,6 +891,13 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
             match c.spawn() {
                 Ok(mut child) => {
                     let pid = child.id();
+                    // on Windows it would outlive this process: in the job, it ends when the link does
+                    #[cfg(windows)]
+                    if let (Some(job), Some(h)) = (crate::winjob::for_children(), child.raw_handle()) {
+                        if !job.add(h) {
+                            error("tunnel: couldn't tie cloudflared to the link, so it may outlive it");
+                        }
+                    }
                     if let Some(pid) = pid {
                         CHILDREN.lock().unwrap_or_else(|e| e.into_inner()).push(pid);
                     }

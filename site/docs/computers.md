@@ -42,9 +42,11 @@ The computer can answer in several ways at once, and the phone races them:
 | Local network | Off | `--lan`, `--no-lan` |
 | An address you publish yourself | None | `--url wss://…/link` |
 
-Pass options to `inyon pair`, or choose them in `inyon setup`; they're saved. The link listens on port 4780 (`--port` changes it). `cloudflared`, which runs the tunnel, is downloaded on first use into `~/.inyon/bin`, pinned to a known version and checked.
+Pass options to `inyon pair`, or choose them in `inyon setup`; they're saved. The link listens on port 4780 (`--port` changes it). `cloudflared`, which runs the tunnel, is downloaded into `~/.inyon/bin`, pinned to a known version and checked. From 0.20 `inyon setup` and `inyon service install` download it, so the first pairing doesn't wait for it; before, the link fetched it the first time it opened a tunnel. On Windows from 0.20, `cloudflared` stops with the link however the link ends.
 
-The tunnel works from any network but has no uptime promise: if Cloudflare's quick tunnels are slow, a private network is the steadier route. The private network is off by default on Windows, because Windows Firewall blocks it until a rule allows it. When you turn it on in `inyon setup`, setup adds that rule with an administrator's permission (see [The firewall on Windows](cli.md#the-firewall-on-windows)).
+The tunnel works from any network but has no uptime promise: if Cloudflare's quick tunnels are slow, a private network is the steadier route. The private network is off by default on Windows, because Windows Firewall blocks it until a rule allows it. So a Windows computer is reachable only through the tunnel until you change that, and from 0.20 `inyon`, `inyon status` and `inyon doctor` say so. When you turn on *LAN* or *VPN* in `inyon setup`, setup adds that rule with an administrator's permission (see [The firewall on Windows](cli.md#the-firewall-on-windows)) and restarts the link with the new settings.
+
+While the tunnel starts, `inyon pair` says so instead of showing a code. From 0.20 it shows the code once the tunnel's address is in it. If the tunnel takes more than 30 seconds, it shows the code with whatever addresses already work (a LAN or VPN address), or says it's still starting, and shows the code again when the tunnel is up. Before 0.20 it showed a code with no address after 30 seconds, and a phone couldn't find the computer with it.
 
 ### Your own HTTPS address
 

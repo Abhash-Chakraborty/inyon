@@ -64,25 +64,152 @@ pub fn ureq_roots() -> ureq::tls::RootCerts {
 /// What may come back: more than cloudflared (about 40 MB), less than would fill memory.
 const MAX_BODY: u64 = 256 * 1024 * 1024;
 
-fn agent(timeout: Duration, insecure: bool) -> ureq::Agent {
-    let mut c = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(Some(timeout)).user_agent(format!("inyon/{}", crate::VERSION));
-    c = c.tls_config(if insecure { ureq::tls::TlsConfig::builder().disable_verification(true).build() } else { ureq::tls::TlsConfig::builder().root_certs(ureq_roots()).build() });
-    c.build().new_agent()
+/// How long opening a connection may take, every address of the name and the TLS handshake
+/// included. ureq gives the first address half of it and each next one half of what's left, so an
+/// address that never answers (GitHub's CDN hands out a dead one now and then) costs a few seconds
+/// before the next is tried, not the two minutes the system would wait.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long a request may wait for its next byte, either way, before it's given up: a download
+/// that stalls fails after this rather than at the end of its whole time.
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A request's time limits: in all, to connect, and between two reads or writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Limits {
+    pub total: Duration,
+    pub connect: Duration,
+    pub stall: Duration,
+}
+
+impl Limits {
+    /// `total` in all, with the usual connect and stall limits (never longer than `total`).
+    pub fn new(total: Duration) -> Limits {
+        Limits { total, connect: CONNECT_TIMEOUT.min(total), stall: STALL_TIMEOUT.min(total) }
+    }
+}
+
+/// An agent for `config` that keeps to `limits`. Every request this program makes goes through
+/// one (the inyon command's too), so none of them can hang on a dead address or a stalled answer.
+pub fn timed_agent(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>, limits: Limits) -> ureq::Agent {
+    timed_agent_with(config, limits, ureq::unversioned::resolver::DefaultResolver::default())
+}
+
+/// `timed_agent` with a resolver of its own (the tests hand out a dead address first).
+pub fn timed_agent_with(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>, limits: Limits, resolver: impl ureq::unversioned::resolver::Resolver) -> ureq::Agent {
+    let config = config.timeout_global(Some(limits.total)).timeout_resolve(Some(limits.connect)).timeout_connect(Some(limits.connect)).build();
+    ureq::Agent::with_parts(config, stall::Connector::new(limits.stall), resolver)
+}
+
+/// A request that gave up because nothing came for a while says so, and a connection that
+/// couldn't be opened says how long it was given.
+fn describe(e: ureq::Error, limits: &Limits) -> String {
+    match e {
+        ureq::Error::Timeout(ureq::Timeout::Connect) => format!("couldn't connect within {} s", limits.connect.as_secs()),
+        e => e.to_string(),
+    }
+}
+
+/// Caps every wait for a byte at the stall limit. ureq's own timeouts count from the start of a
+/// phase (the whole body, say), so a body that stops arriving halfway would otherwise hold the
+/// request until its total time ran out.
+mod stall {
+    use std::time::Duration;
+
+    use ureq::unversioned::transport::time::Duration as UDuration;
+    use ureq::unversioned::transport::{Buffers, ConnectionDetails, DefaultConnector, NextTimeout, Transport};
+
+    #[derive(Debug)]
+    pub struct Connector {
+        inner: DefaultConnector,
+        stall: Duration,
+    }
+
+    impl Connector {
+        pub fn new(stall: Duration) -> Connector {
+            Connector { inner: DefaultConnector::new(), stall }
+        }
+    }
+
+    impl ureq::unversioned::transport::Connector<()> for Connector {
+        type Out = Stalling;
+
+        fn connect(&self, details: &ConnectionDetails, chained: Option<()>) -> Result<Option<Stalling>, ureq::Error> {
+            Ok(self.inner.connect(details, chained)?.map(|inner| Stalling { inner, stall: self.stall }))
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct Stalling {
+        inner: Box<dyn Transport>,
+        stall: Duration,
+    }
+
+    impl Stalling {
+        /// The wait ureq asked for, or the stall limit when that's sooner; and whether it was cut.
+        fn cap(&self, t: NextTimeout) -> (NextTimeout, bool) {
+            if *t.after > self.stall {
+                (NextTimeout { after: UDuration::Exact(self.stall), reason: t.reason }, true)
+            } else {
+                (t, false)
+            }
+        }
+
+        fn stalled(&self, e: ureq::Error, cut: bool) -> ureq::Error {
+            match e {
+                ureq::Error::Timeout(_) if cut => ureq::Error::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("nothing arrived for {} s", self.stall.as_secs()))),
+                e => e,
+            }
+        }
+    }
+
+    impl Transport for Stalling {
+        fn buffers(&mut self) -> &mut dyn Buffers {
+            self.inner.buffers()
+        }
+
+        fn transmit_output(&mut self, amount: usize, timeout: NextTimeout) -> Result<(), ureq::Error> {
+            let (t, cut) = self.cap(timeout);
+            self.inner.transmit_output(amount, t).map_err(|e| self.stalled(e, cut))
+        }
+
+        fn await_input(&mut self, timeout: NextTimeout) -> Result<bool, ureq::Error> {
+            let (t, cut) = self.cap(timeout);
+            self.inner.await_input(t).map_err(|e| self.stalled(e, cut))
+        }
+
+        fn is_open(&mut self) -> bool {
+            self.inner.is_open()
+        }
+
+        fn is_tls(&self) -> bool {
+            self.inner.is_tls()
+        }
+    }
+}
+
+fn config(insecure: bool) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    let c = ureq::Agent::config_builder().http_status_as_error(false).user_agent(format!("inyon/{}", crate::VERSION));
+    c.tls_config(if insecure { ureq::tls::TlsConfig::builder().disable_verification(true).build() } else { ureq::tls::TlsConfig::builder().root_certs(ureq_roots()).build() })
 }
 
 /// A request and its whole answer. `headers` go with it; `body` makes it a request with one.
 pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, timeout: Duration) -> Result<Response, String> {
-    request_with(agent(timeout, insecure_tls()), method, url, headers, body)
+    let limits = Limits::new(timeout);
+    request_with(timed_agent(config(insecure_tls()), limits), &limits, method, url, headers, body, false)
 }
 
 /// A GET to the hub on this machine over loopback (`inyon hub code`). Its certificate is made out
 /// to the hub's name, not 127.0.0.1, so it isn't checked, as the Bun engine's
 /// `rejectUnauthorized: false` didn't check it.
 pub fn get_local(url: &str, timeout: Duration) -> Result<Response, String> {
-    request_with(agent(timeout, true), "GET", url, &[], None)
+    let limits = Limits::new(timeout);
+    request_with(timed_agent(config(true), limits), &limits, "GET", url, &[], None, false)
 }
 
-fn request_with(a: ureq::Agent, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>) -> Result<Response, String> {
+/// Sends the request and reads the answer. With `whole`, a body that breaks off is an error
+/// rather than whatever arrived (a download is checked against its checksum after this).
+fn request_with(a: ureq::Agent, limits: &Limits, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, whole: bool) -> Result<Response, String> {
     let mut res = match (method, body) {
         ("GET", _) => {
             let mut r = a.get(url);
@@ -103,9 +230,14 @@ fn request_with(a: ureq::Agent, method: &str, url: &str, headers: &[(&str, &str)
             r.send(b)
         }
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| describe(e, limits))?;
     let status = res.status().as_u16();
-    let body = res.body_mut().with_config().limit(MAX_BODY).read_to_vec().unwrap_or_default();
+    let read = res.body_mut().with_config().limit(MAX_BODY).read_to_vec();
+    let body = match read {
+        Ok(b) => b,
+        Err(e) if whole => return Err(describe(e, limits)),
+        Err(_) => Vec::new(),
+    };
     Ok(Response { status, body })
 }
 
@@ -119,9 +251,16 @@ pub async fn fetch(method: &'static str, url: String, headers: Vec<(String, Stri
     .map_err(|e| e.to_string())?
 }
 
+/// The longest a download may take in all, however steadily it arrives.
+pub const DOWNLOAD_TIME: Duration = Duration::from_secs(600);
+
 /// Downloads a file whole (a program to check before it's used).
 pub fn download(url: &str) -> Result<Response, String> {
-    request("GET", url, &[], None, Duration::from_secs(600))
+    download_with(url, Limits::new(DOWNLOAD_TIME), ureq::unversioned::resolver::DefaultResolver::default())
+}
+
+fn download_with(url: &str, limits: Limits, resolver: impl ureq::unversioned::resolver::Resolver) -> Result<Response, String> {
+    request_with(timed_agent_with(config(insecure_tls()), limits, resolver), &limits, "GET", url, &[], None, true)
 }
 
 /// A server on a certificate from a certificate authority of its own, made with openssl for the
@@ -219,5 +358,105 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let got = got.unwrap();
         assert_eq!((got.status, got.body.as_slice()), (200, &b"ok"[..]));
+    }
+}
+
+#[cfg(test)]
+mod timeout_tests {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener};
+    use std::time::Instant;
+
+    use super::*;
+
+    /// A name that resolves to these addresses, in this order.
+    #[derive(Debug)]
+    struct Fixed(Vec<SocketAddr>);
+
+    impl ureq::unversioned::resolver::Resolver for Fixed {
+        fn resolve(
+            &self,
+            _uri: &ureq::http::Uri,
+            _config: &ureq::config::Config,
+            _timeout: ureq::unversioned::transport::NextTimeout,
+        ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+            let mut v = self.empty();
+            for a in &self.0 {
+                v.push(*a);
+            }
+            Ok(v)
+        }
+    }
+
+    /// A server on 127.0.0.1 that reads one request per connection and hands it to `answer`.
+    fn server(answer: impl Fn(&mut std::net::TcpStream) + Send + Sync + 'static) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let answer = std::sync::Arc::new(answer);
+        std::thread::spawn(move || {
+            for mut tcp in listener.incoming().flatten() {
+                let answer = answer.clone();
+                std::thread::spawn(move || {
+                    let mut seen = Vec::new();
+                    let mut buf = [0u8; 1024];
+                    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match tcp.read(&mut buf) {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => seen.extend_from_slice(&buf[..n]),
+                        }
+                    }
+                    answer(&mut tcp);
+                });
+            }
+        });
+        port
+    }
+
+    #[test]
+    fn a_download_moves_on_from_an_address_that_never_answers() {
+        // 192.0.2.1 is kept for documentation: nothing answers it, so a connect there waits until
+        // the system gives up (two minutes on Linux), as one of GitHub's addresses did in 0.19.0
+        let port = server(|tcp| {
+            let _ = tcp.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\ncloudflared");
+        });
+        let addrs = vec![SocketAddr::from(([192, 0, 2, 1], port)), SocketAddr::from(([127, 0, 0, 1], port))];
+        let started = Instant::now();
+        let got = download_with(&format!("http://downloads.example:{port}/cloudflared"), Limits::new(DOWNLOAD_TIME), Fixed(addrs)).unwrap();
+        let took = started.elapsed();
+        assert_eq!((got.status, got.body.as_slice()), (200, &b"cloudflared"[..]));
+        // the dead address gets about two thirds of the 10 s connect limit, then the next one is tried
+        assert!(took < Duration::from_secs(12), "took {took:?}");
+    }
+
+    #[test]
+    fn a_download_that_stops_arriving_fails_once_nothing_came_for_the_stall_limit() {
+        let port = server(|tcp| {
+            let _ = tcp.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\npart of it");
+            let _ = tcp.flush();
+            std::thread::sleep(Duration::from_secs(20));
+        });
+        let limits = Limits { stall: Duration::from_secs(1), ..Limits::new(DOWNLOAD_TIME) };
+        let started = Instant::now();
+        let got = download_with(&format!("http://127.0.0.1:{port}/cloudflared"), limits, ureq::unversioned::resolver::DefaultResolver::default());
+        let took = started.elapsed();
+        let err = got.err().expect("a body that broke off is an error, not a short file");
+        assert!(err.contains("nothing arrived for 1 s"), "{err}");
+        assert!(took < Duration::from_secs(8), "took {took:?}");
+    }
+
+    #[test]
+    fn a_server_that_never_answers_is_given_up_on_after_the_stall_limit() {
+        let port = server(|_| std::thread::sleep(Duration::from_secs(20)));
+        let limits = Limits { stall: Duration::from_secs(1), ..Limits::new(DOWNLOAD_TIME) };
+        let started = Instant::now();
+        let err = download_with(&format!("http://127.0.0.1:{port}/"), limits, ureq::unversioned::resolver::DefaultResolver::default()).err().unwrap();
+        assert!(err.contains("nothing arrived for 1 s"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[test]
+    fn short_requests_keep_their_own_total() {
+        assert_eq!(Limits::new(Duration::from_millis(700)), Limits { total: Duration::from_millis(700), connect: Duration::from_millis(700), stall: Duration::from_millis(700) });
+        assert_eq!(Limits::new(DOWNLOAD_TIME), Limits { total: DOWNLOAD_TIME, connect: CONNECT_TIMEOUT, stall: STALL_TIMEOUT });
     }
 }

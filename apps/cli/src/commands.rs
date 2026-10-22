@@ -22,6 +22,8 @@ pub type Outcome = Result<Value, String>;
 /// A command's result as text or JSON, and the exit code it ends with.
 pub fn finish(r: Outcome, json: bool) -> i32 {
     match r {
+        // the command printed its answer itself (`pair`, whose answers come one at a time)
+        Ok(Value::Null) => 0,
         Ok(v) => {
             if json {
                 println!("{}", serde_json::to_string(&with_v(v)).unwrap_or_default());
@@ -107,48 +109,27 @@ fn through(args: Vec<String>) -> Outcome {
     }
 }
 
-/// The pairing code as the terminal shows it: the engine's answer (`pair --json`) drawn here.
+/// The pairing code as the terminal shows it: one of the engine's answers (`pair --json`) drawn
+/// here, or the line that the tunnel is still starting.
 pub fn render_pair(v: &Value) -> String {
-    let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-    let list = |k: &str| v.get(k).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
-    let mut out = String::new();
-    out.push_str("\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n\n");
-    match crate::qr::render(&text("qr")) {
-        Ok(code) => out.push_str(&code),
-        Err(e) => out.push_str(&format!("(no QR code: {e})")),
-    }
-    out.push('\n');
-    if let Some(short) = v.get("short") {
-        let id = short.get("id").and_then(Value::as_str).unwrap_or("");
-        let code = short.get("code").and_then(Value::as_str).unwrap_or("");
-        let (a, b) = id.split_at(id.len().min(4));
-        let (c, d) = code.split_at(code.len().min(3));
-        out.push_str(&format!("\nCan't scan it? Choose \"Type a code\" in the app and enter\n\n    ID    {a}-{b}\n    Code  {c} {d}\n\n"));
-    }
-    out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
-    if list("urls") == 0 && list("relays") == 0 {
-        out.push_str("No address yet: the phone will look this machine up once its tunnel is up.\n\n");
-    }
-    if v.get("service").and_then(Value::as_bool) == Some(false) {
-        out.push_str("Keep this running so the phone can connect, or run `inyon service install` to keep it running in the background.\n");
-    }
-    out
+    inyon_engine::output::render_pair(v)
 }
 
-/// `inyon pair`: the engine makes the secret and publishes it; the code is drawn here. With
-/// `json` the engine's answer is passed on as it is.
+/// `inyon pair`: the engine makes the secret and publishes it; the code is drawn here, again when
+/// the tunnel's address arrives after it. With `json` each of the engine's answers is printed as
+/// it comes, one JSON line each; the last one is current.
 pub fn pair(args: &[String], json: bool) -> Outcome {
-    let mut answer = None;
+    use std::io::Write;
     engine::pair(args, &mut |v| {
         if json {
-            answer = Some(v.clone());
+            println!("{}", serde_json::to_string(&with_v(v.clone())).unwrap_or_default());
         } else {
             print!("{}", render_pair(v));
-            use std::io::Write;
-            let _ = std::io::stdout().flush();
         }
+        let _ = std::io::stdout().flush();
     })?;
-    Ok(answer.unwrap_or_else(|| json!({ "message": "" })))
+    // printed already
+    Ok(Value::Null)
 }
 
 pub fn forget(which: &str) -> Outcome {
@@ -372,6 +353,31 @@ pub fn service_install(sys: &Sys, role: Option<&str>) -> Outcome {
     Ok(json!({ "role": role.name(), "service": installed(&r), "message": format!("inyon {role} runs as {}.", r.how) }))
 }
 
+/// `inyon service install` as typed: for the link, cloudflared is fetched first, so the service
+/// finds it and the first pairing doesn't wait for the download.
+pub fn service_install_command(sys: &Sys, role: Option<&str>) -> Outcome {
+    let note = if role_arg(sys, role, true)? == Role::Link { fetch_tunnel() } else { None };
+    let mut v = service_install(sys, role)?;
+    if let Some(n) = note {
+        v["message"] = json!(format!("{n}\n{}", v["message"].as_str().unwrap_or_default()));
+    }
+    Ok(v)
+}
+
+/// Gets cloudflared now when the link will open a tunnel and it isn't here yet (about 40 MB from
+/// GitHub, checked against its pinned checksum). Without it the link downloads it as it starts,
+/// and the first pairing waits for that. A failure is a note: the link tries again itself.
+pub fn fetch_tunnel() -> Option<String> {
+    if !state::link_config().tunnel.unwrap_or(true) || inyon_engine::link::cloudflared_here().is_some() {
+        return None;
+    }
+    eprintln!("Getting cloudflared for the tunnel…");
+    Some(match inyon_engine::link::ensure_cloudflared() {
+        Ok(_) => "✓ cloudflared is here for the tunnel".to_string(),
+        Err(e) => format!("! Couldn't get cloudflared for the tunnel yet ({e}). The link tries again as it starts."),
+    })
+}
+
 /// Which service's setup decides the hub's INYON_HUB_IMPL note: the hub's only, so putting the
 /// link back in place never undoes how the hub was set up.
 fn hub_impl_follows(role: Role) -> bool {
@@ -586,6 +592,35 @@ fn port_open(port: u16) -> bool {
     std::net::TcpStream::connect_timeout(&std::net::SocketAddr::from(([127, 0, 0, 1], port)), std::time::Duration::from_millis(300)).is_ok()
 }
 
+/// How phones reach the link, for `doctor`: whether its port answers and, on Windows, whether
+/// the firewall lets the same network in, or that it's the tunnel only and how to change that.
+/// On Windows the link answers on 127.0.0.1 alone (for the tunnel) unless LAN or VPN is on, so its
+/// port is checked only then; elsewhere it's always checked, as before.
+fn link_reach(platform: Platform, cfg: &state::LinkConfig, answers: &dyn Fn(u16) -> bool, firewall_allows: &dyn Fn(u16) -> bool) -> Vec<(bool, String, String)> {
+    let windows = platform == Platform::Windows;
+    let port = cfg.port.unwrap_or(4780);
+    let mut out = Vec::new();
+    let direct = cfg.lan.unwrap_or(false) || cfg.vpn.unwrap_or(!windows);
+    if !windows || direct {
+        out.push((true, "link port".to_string(), format!("{port}: {}", if answers(port) { "answers" } else { "nothing listens" })));
+    }
+    if windows && direct {
+        if firewall_allows(port) {
+            out.push((true, "firewall".to_string(), format!("the rule \"{}\" lets phones on your network and VPN in", service::FIREWALL_RULE)));
+        } else {
+            out.push((
+                false,
+                "firewall".to_string(),
+                format!("Windows Firewall keeps phones on your network and VPN out, so they connect through the tunnel only. Run `inyon setup` and tick LAN or VPN to add the rule, or in PowerShell as administrator:\n  {}", service::firewall_command(port)),
+            ));
+        }
+    }
+    if let Some(note) = crate::ui::dashboard::tunnel_only(cfg, windows) {
+        out.push((true, "reach".to_string(), note));
+    }
+    out
+}
+
 pub fn doctor(sys: &Sys) -> Outcome {
     let mut checks: Vec<(bool, String, String)> = Vec::new();
     // the Bun engine, for a hub or with the kill switch; everything else is built in
@@ -634,10 +669,7 @@ pub fn doctor(sys: &Sys) -> Outcome {
             format!("{} still set up as tether-node; `inyon migrate` moves them", old.iter().map(|r| r.name()).collect::<Vec<_>>().join(", ")),
         ));
     }
-    if sys.platform != Platform::Windows {
-        let link_port = state::link_config().port.unwrap_or(4780);
-        checks.push((true, "link port".into(), format!("{link_port}: {}", if port_open(link_port) { "answers" } else { "nothing listens" })));
-    }
+    checks.extend(link_reach(sys.platform, &state::link_config(), &|p| port_open(p), &service::firewall_allows));
     if service::has_service(sys, Role::Hub) {
         let port: u16 = read_env_file(&hub_env_file()).get("PORT").and_then(|p| p.parse().ok()).unwrap_or(4777);
         checks.push((port_open(port), "hub port".into(), format!("{port}: {}", if port_open(port) { "answers" } else { "nothing listens" })));
@@ -1115,6 +1147,7 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
         RoleChoice::Node => {
             // the link reads its settings as it starts; setup is the one time this program writes them
             let mut cfg = state::link_config();
+            let before = cfg.clone();
             cfg.tunnel = Some(plan.tunnel);
             cfg.lan = Some(plan.lan);
             cfg.vpn = Some(plan.vpn);
@@ -1122,6 +1155,9 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
             cfg.port = Some(plan.port_number());
             state::write_json("link.json", &cfg).map_err(|e| e.to_string())?;
             engine::ready("link", &|l| eprintln!("{l}"))?;
+            if plan.tunnel {
+                lines.extend(fetch_tunnel());
+            }
             if plan.lan || plan.vpn {
                 lines.extend(service::allow_link_through_firewall(sys, plan.port_number()));
             }
@@ -1132,11 +1168,19 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
                     (service::move_old_service(sys, Role::Link), format!("✓ Restarted with version {VERSION}."))
                 } else {
                     let stale = running && update::stale_link(state::link_state().as_ref(), &engine::version().unwrap_or_default());
-                    if running && !stale {
+                    // the link reads its settings as it starts, so new ones need a restart
+                    let changed = running && before != cfg;
+                    if running && !stale && !changed {
                         (Installed { ok: true, how: String::new() }, "✓ Already running in the background".to_string())
                     } else {
-                        let r = service::install_service(sys, Role::Link, stale);
-                        let note = if stale { "✓ Restarted with the new version.".to_string() } else { format!("✓ Runs as {}.", r.how) };
+                        let r = service::install_service(sys, Role::Link, stale || changed);
+                        let note = if stale {
+                            "✓ Restarted with the new version.".to_string()
+                        } else if changed {
+                            "✓ Restarted with the new settings.".to_string()
+                        } else {
+                            format!("✓ Runs as {}.", r.how)
+                        };
                         (r, note)
                     }
                 };
@@ -1308,6 +1352,28 @@ mod tests {
     }
 
     #[test]
+    fn doctor_says_windows_is_tunnel_only_and_checks_the_port_once_the_lan_or_vpn_is_on() {
+        let cfg = |lan: Option<bool>, vpn: Option<bool>| state::LinkConfig { lan, vpn, ..Default::default() };
+        let names = |checks: &[(bool, String, String)]| checks.iter().map(|c| c.1.clone()).collect::<Vec<_>>();
+        let yes = |_: u16| true;
+        let no = |_: u16| false;
+        // Windows by default: the tunnel only, said plainly, with how to change it
+        let w = link_reach(Platform::Windows, &cfg(None, None), &yes, &no);
+        assert_eq!(names(&w), ["reach"]);
+        assert!(w[0].0 && w[0].2.contains("only through the tunnel") && w[0].2.contains("firewall rule"), "{:?}", w);
+        // LAN on: the port is checked, and the firewall rule with it
+        let w = link_reach(Platform::Windows, &cfg(Some(true), None), &yes, &no);
+        assert_eq!(names(&w), ["link port", "firewall"]);
+        assert!(!w[1].0 && w[1].2.contains("New-NetFirewallRule") && w[1].2.contains("-LocalPort 4780"), "{:?}", w[1]);
+        let w = link_reach(Platform::Windows, &cfg(None, Some(true)), &no, &yes);
+        assert_eq!(w[0].2, "4780: nothing listens");
+        assert!(w[1].0);
+        // elsewhere: the port as before, and the VPN is on unless turned off
+        assert_eq!(names(&link_reach(Platform::Linux, &cfg(None, None), &yes, &no)), ["link port"]);
+        assert_eq!(names(&link_reach(Platform::Linux, &cfg(None, Some(false)), &yes, &no)), ["link port", "reach"]);
+    }
+
+    #[test]
     fn the_pairing_code_is_drawn_from_the_engines_answer() {
         let v = json!({ "link": "inyon://pair?m=abc&s=secret&n=box", "qr": "https://inyon.abhashchakraborty.tech/#pair?m=abc&s=secret&n=box", "short": { "id": "K7Q4MX2T", "code": "493812" }, "urls": ["wss://a.example/link"], "relays": [], "service": true });
         let out = render_pair(&v);
@@ -1323,6 +1389,20 @@ mod tests {
         assert!(!out.contains("Type a code"));
         assert!(out.contains("No address yet"));
         assert!(out.ends_with("Keep this running so the phone can connect, or run `inyon service install` to keep it running in the background.\n"));
+    }
+
+    #[test]
+    fn while_the_tunnel_starts_the_terminal_says_so_instead_of_a_code_that_cant_connect() {
+        let out = render_pair(&json!({ "waiting": "tunnel", "service": false }));
+        assert!(out.contains("Starting the tunnel") && !out.contains("Scan this"), "{out}");
+        // half a minute on, still nothing to reach: no code yet either
+        let out = render_pair(&json!({ "waiting": "tunnel", "link": "inyon://pair?m=a", "qr": "https://x/#pair?m=a", "urls": [], "relays": [], "service": false }));
+        assert!(out.contains("still starting") && !out.contains("Scan this"), "{out}");
+        // a VPN address works meanwhile: the code, and that it comes again with the tunnel
+        let out = render_pair(
+            &json!({ "waiting": "tunnel", "link": "inyon://pair?m=a", "qr": "https://x/#pair?m=a", "urls": ["ws://100.64.0.9:4780/link"], "relays": [], "service": false }),
+        );
+        assert!(out.contains("Scan this") && out.contains("same network or VPN") && !out.contains("No address yet"), "{out}");
     }
 
     #[test]

@@ -44,7 +44,12 @@ test('a running link is seen by its port, whatever state.json says', async () =>
 test('a phone pairs with the code, runs commands, and comes back without it', async () => {
   for (let i = 0; i < 50 && !(await fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false)); i++) await Bun.sleep(100)
   const info = await pairingLink()
-  expect(info.urls).toContain(`ws://${Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)!.address}:${port}/link`)
+  if (process.platform === 'win32') {
+    // the runner's first adapter may be a Hyper-V switch, which the link leaves out
+    expect(info.urls.some((u) => u.startsWith('ws://') && u.endsWith(`:${port}/link`))).toBe(true)
+  } else {
+    expect(info.urls).toContain(`ws://${Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)!.address}:${port}/link`)
+  }
   const phone = generateKeyPair()
 
   const first = await open(phone, info.id, { name: 'Test phone', pair: info.secret })
@@ -90,7 +95,8 @@ test("a phone named after Android's build string is listed by its model", async 
   expect(JSON.stringify(phones)).not.toContain('Build/')
 }, 30_000)
 
-test('forgetting a phone ends the session it has open and what that session runs', async () => {
+// a POSIX shell's $$ and exec, and a pid to signal: on Windows the commands run in busybox-w32
+test.skipIf(process.platform === 'win32')('forgetting a phone ends the session it has open and what that session runs', async () => {
   const info = await pairingLink()
   const phone = generateKeyPair()
   const { channel } = await open(phone, info.id, { name: 'Open phone', pair: info.secret })
