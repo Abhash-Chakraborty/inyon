@@ -2,12 +2,16 @@
 # Gets inyon for this computer and sets it up for the Inyon phone app:
 #   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
 # It downloads the inyon command for this system into ~/.inyon/bin from the website's copy of the
-# newest release, checks it against the release's checksums (and their signature, when minisign
-# is installed), and runs its setup, which starts it in the background at login and shows a code
-# to scan with the app. With --hub it sets up an Inyon hub instead (the server the app signs in
-# to), and setup also fetches the engine the hub runs on:
+# newest release, checks it against the release's signed checksums, and runs its setup, which
+# starts it in the background at login and shows a code to scan with the app. With --hub it sets
+# up an Inyon hub instead (the server the app signs in to), and setup also fetches the engine the
+# hub runs on:
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
+# The sha256 of the checksum list this copy was published with. The website fills it in when it
+# publishes a release, after checking the list's signature against the release key, so the copy
+# it serves needs no other tool to trust that list. Empty here: anywhere else, minisign checks it.
+LIST_SHA256=
 BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://inyon.abhashchakraborty.tech/download}}"
 # the minisign key a release's SHA256SUMS is signed with (the inyon command carries the same one)
 KEY=RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
@@ -20,10 +24,14 @@ case "$BASE" in
   *) if [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && [ -n "${INYON_SIGNING_KEY:-}" ]; then KEY="$INYON_SIGNING_KEY"; fi ;;
 esac
 ROLE=setup
+# --no-signature-check (or INYON_NO_SIGNATURE_CHECK=1) goes on without the signature when nothing
+# here can check it; a list with a bad signature is refused all the same
+UNCHECKED="${INYON_NO_SIGNATURE_CHECK:-}"
 for a in "$@"; do
   case "$a" in
     --hub) ROLE=hub ;;
-    *) echo "unknown option $a (the only one is --hub)" >&2; exit 2 ;;
+    --no-signature-check) UNCHECKED=1 ;;
+    *) echo "unknown option $a (the options are --hub and --no-signature-check)" >&2; exit 2 ;;
   esac
 done
 
@@ -52,23 +60,56 @@ dir="$HOME/.inyon/bin"
 mkdir -p "$dir"
 tmp="$dir/inyon.download"
 list="$dir/SHA256SUMS.download"
-curl -fsSL "$BASE/SHA256SUMS" -o "$list" || { echo "Couldn't get $BASE/SHA256SUMS. Check the connection and run the command again." >&2; exit 1; }
-# the list is signed; without minisign it's trusted as it comes, as before 0.14
-if command -v minisign >/dev/null 2>&1; then
-  if curl -fsSL "$BASE/SHA256SUMS.minisig" -o "$list.minisig" && minisign -V -q -m "$list" -x "$list.minisig" -P "$KEY" >/dev/null 2>&1; then
-    rm -f "$list.minisig"
-  else
-    rm -f "$list" "$list.minisig"
-    echo "The release's checksum list isn't signed by Inyon's release key, so nothing was installed." >&2
-    exit 1
-  fi
-else
-  echo "(minisign isn't installed, so the checksums weren't signature-checked)"
-fi
-sums="$(cat "$list")"
-rm -f "$list"
-sum_for() { printf '%s\n' "$sums" | awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }'; }
 sum_of() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -d' ' -f1; }
+sum_for() { printf '%s\n' "$sums" | awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }'; }
+refuse() {
+  rm -f "$list" "$list.minisig"
+  echo "$1" >&2
+  exit 1
+}
+# The version this install asks for: the tag a GitHub address names, the one GitHub calls latest,
+# or the one latest.json names on the website or a mirror. Empty for a tag that isn't a version
+# (a build like node-latest), which asks for that build and nothing older.
+asked_version() {
+  b="${BASE%/}"
+  case "$b" in
+    */releases/download/*) v="${b##*/releases/download/}"; case "$v" in v[0-9]*) ;; *) return 0 ;; esac ;;
+    */releases/latest/download) v="$(curl -fsS -o /dev/null -w '%{redirect_url}' "${b%/download}")" && v="${v##*/tag/}" || v="" ;;
+    *) v="$(curl -fsSL "$b/latest.json" | awk -F'"' '{ for (i = 1; i < NF - 1; i++) if ($i == "version") { print $(i + 2); exit } }')" || v="" ;;
+  esac
+  v="${v#v}"
+  case "$v" in
+    [0-9]*.[0-9]*.[0-9]*) case "$v" in *[!0-9A-Za-z.+-]*) v="" ;; esac ;;
+    *) v="" ;;
+  esac
+  [ -n "$v" ] || refuse "Couldn't tell which version $BASE serves, so nothing was installed."
+  echo "$v"
+}
+curl -fsSL "$BASE/SHA256SUMS" -o "$list" || { echo "Couldn't get $BASE/SHA256SUMS. Check the connection and run the command again." >&2; exit 1; }
+sums="$(cat "$list")"
+redirected="${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}"
+if [ -n "$LIST_SHA256" ] && [ "$(sum_of "$list")" = "$LIST_SHA256" ]; then
+  # the list the website checked against the release key when it published this copy
+  :
+elif command -v minisign >/dev/null 2>&1; then
+  if ! { curl -fsSL "$BASE/SHA256SUMS.minisig" -o "$list.minisig" && minisign -V -q -m "$list" -x "$list.minisig" -P "$KEY" >/dev/null 2>&1; }; then
+    refuse "The release's checksum list isn't signed by Inyon's release key, so nothing was installed."
+  fi
+  # a good signature isn't enough on its own: an older release's list carries one too. Each
+  # release lists its APK as inyon-<version>.apk, so the list has to name the version asked for
+  version="$(asked_version)" || exit 1
+  if [ -n "$version" ] && [ -z "$(sum_for "inyon-$version.apk")" ]; then
+    refuse "The release's signed checksum list isn't the one for Inyon $version (it doesn't list inyon-$version.apk), so nothing was installed. Try again in a few minutes."
+  fi
+elif [ -n "$UNCHECKED" ]; then
+  echo "(the checksum list's signature wasn't checked, as asked)"
+elif [ -n "$LIST_SHA256" ] && [ -z "$redirected" ]; then
+  refuse "The website's checksum list isn't the one this installer was published with: it's probably changing over to a new release. Run the command again in a few minutes."
+else
+  refuse "Couldn't check the signature of the release's checksum list, because minisign isn't installed, so nothing was installed. Install minisign (brew install minisign, apt install minisign) and run this again, or add --no-signature-check to trust the list without it:
+  curl -fsSL $SITE/get.sh | sh -s -- --no-signature-check"
+fi
+rm -f "$list" "$list.minisig"
 mismatch() {
   rm -f "$tmp" "$tmp.gz"
   echo "The download didn't match the release's checksum. Run the command again." >&2

@@ -262,9 +262,15 @@ jobs:
       needs.apk.result == 'success' && needs.ssh-plugin.result == 'success' &&
       needs.smoke.outputs.crashed != 'yes'
     runs-on: ubuntu-24.04
+    # uploads to the release; it installs only Ubuntu's minisign package, to sign, and runs no
+    # dependencies
     permissions:
       contents: write
     steps:
+      # for .github/scripts/list-apk.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: inyon-${{ needs.apk.outputs.version }}
@@ -280,6 +286,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.apk.outputs.version }}
           KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          # the release key; the list on the release must already carry its signature
+          PUBKEY: RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
         run: |
           apk="$RUNNER_TEMP/inyon-$VERSION.apk"
           cp "$RUNNER_TEMP/apk/inyon.apk" "$apk"
@@ -289,29 +297,28 @@ jobs:
             gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" "${pre[@]}" --title "Inyon $VERSION" --generate-notes
             gh release upload "$GITHUB_REF_NAME" "$apk" --clobber
             # list the APK in SHA256SUMS too, next to the files node.yml attached, and sign the
-            # list again, as node.yml did: the installers and `inyon update` check the signature
-            # before trusting it. Without the key the list stays as node.yml signed it.
+            # list again: the installers and `inyon update` check the signature before trusting
+            # it. Only a list node.yml signed is signed again (list-apk.sh checks), so the wait
+            # also covers node.yml uploading the list and its signature one after the other.
+            # Without the key the list stays as node.yml signed it.
             sums="$RUNNER_TEMP/sums"
+            if [ -z "$KEY" ]; then
+              echo "::warning::MINISIGN_SECRET_KEY isn't set, so SHA256SUMS keeps its signature and the APK isn't listed in it"
+              exit 0
+            fi
             for i in $(seq 1 30); do
-              gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -D "$sums" --clobber 2>/dev/null && break
+              rm -rf "$sums" && mkdir -p "$sums"
+              gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -p SHA256SUMS.minisig -p "inyon-$VERSION.apk" -D "$sums" 2>/dev/null || true
+              [ -f "$sums/SHA256SUMS" ] && [ -f "$sums/SHA256SUMS.minisig" ] &&
+                minisign -V -q -m "$sums/SHA256SUMS" -x "$sums/SHA256SUMS.minisig" -P "$PUBKEY" >/dev/null 2>&1 && break
               sleep 20
             done
             if [ ! -f "$sums/SHA256SUMS" ]; then
               echo "::warning::The release has no SHA256SUMS yet, so the APK isn't listed in it"
-            elif [ -z "$KEY" ]; then
-              echo "::warning::MINISIGN_SECRET_KEY isn't set, so SHA256SUMS keeps its signature and the APK isn't listed in it"
-            else
-              grep -v " inyon-$VERSION.apk\$" "$sums/SHA256SUMS" > "$sums/new" || true
-              (cd "$RUNNER_TEMP" && sha256sum "inyon-$VERSION.apk") >> "$sums/new"
-              mv "$sums/new" "$sums/SHA256SUMS"
-              keyfile="$RUNNER_TEMP/minisign.key"
-              # minisign wants the key file whole, a comment line above the key
-              (umask 077 && { case "$KEY" in "untrusted comment:"*) ;; *) echo "untrusted comment: minisign secret key" ;; esac; printf '%s\n' "$KEY"; } > "$keyfile")
-              minisign -S -s "$keyfile" -m "$sums/SHA256SUMS" -x "$sums/SHA256SUMS.minisig" < /dev/null
-              rm -f "$keyfile"
-              minisign -V -m "$sums/SHA256SUMS" -x "$sums/SHA256SUMS.minisig" -P RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
-              gh release upload "$GITHUB_REF_NAME" "$sums/SHA256SUMS" "$sums/SHA256SUMS.minisig" --clobber
+              exit 0
             fi
+            .github/scripts/list-apk.sh "$sums" "$apk" "$sums/inyon-$VERSION.apk"
+            gh release upload "$GITHUB_REF_NAME" "$sums/SHA256SUMS" "$sums/SHA256SUMS.minisig" --clobber
           else
             gh release delete android-latest --yes --cleanup-tag 2>/dev/null || true
             gh release create android-latest "$apk" --prerelease --target "$GITHUB_SHA" \

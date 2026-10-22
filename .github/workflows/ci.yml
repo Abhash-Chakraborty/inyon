@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-24.04
@@ -17,6 +20,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      # get.sh's tests and the release pipeline's check signed mock releases with it
+      - run: sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null
       - run: bun run typecheck
       - run: bun test
         working-directory: apps/hub
@@ -28,6 +33,8 @@ jobs:
         working-directory: packages/protocol
       - run: bun test
         working-directory: apps/node
+      # the workflows' permissions, the Android job's re-signing, and the site's release mirror
+      - run: bun test ./scripts ./site
       - run: bun run build
 
   # the hub's answers against the golden transcripts (conformance/README.md); on a pull request

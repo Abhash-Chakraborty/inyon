@@ -1,8 +1,9 @@
 name: Site
 
 # Publishes inyon.abhashchakraborty.tech: the home page, the docs (site/docs), the changelog and the
-# latest release's files under /download (each checked against its SHA256SUMS), plus get.sh and
-# get.ps1 at the root so the one-line installers can be typed short. site/build.ts does all of it.
+# latest release's files under /download (each checked against its signed SHA256SUMS), plus get.sh
+# and get.ps1 at the root so the one-line installers can be typed short, with the sha256 of that
+# checked list filled in so they trust no other. site/build.ts does all of it.
 # The app itself is never hosted here; it runs on your own computers, phone and hub.
 on:
   push:
@@ -16,13 +17,15 @@ on:
     types: [completed]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 
 jobs:
   deploy:
+    # publishes the site; it builds only this repository's code and installs nothing
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
     if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
     # one deploy at a time, on the job and not the whole run: GitHub keeps one waiting run per group,
     # and a run whose deploy is skipped (any branch's CI finishing) would take that place and cancel
