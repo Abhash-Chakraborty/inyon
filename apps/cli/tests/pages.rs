@@ -22,7 +22,8 @@ impl Home {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         // the real path, so the folders below compare equal to what the command writes (macOS's /tmp is a link)
-        Home { dir: fs::canonicalize(&dir).unwrap() }
+        // and on Windows in the form people type, not the `\\?\C:\…` canonicalize gives
+        Home { dir: PathBuf::from(pages::strip_verbatim(s(&fs::canonicalize(&dir).unwrap()))) }
     }
 
     /// A site folder under the home, with an index.html titled `title`.
@@ -400,6 +401,17 @@ fn the_list_shows_each_page_and_what_is_wrong() {
     assert_eq!(list["pages"][3]["slug"], "gamma");
 }
 
+#[cfg(windows)]
+#[test]
+fn a_folder_in_the_form_windows_prints_is_listed_as_people_type_it() {
+    let h = Home::new("verbatim");
+    let site = h.site("s", "S");
+    let typed = format!(r"\\?\{}", s(&site));
+    let (code, _, stderr) = h.run(&["pages", "add", &typed]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(h.list()["pages"][0]["path"], s(&site));
+}
+
 #[test]
 fn a_broken_list_is_never_overwritten() {
     let h = Home::new("broken");
@@ -417,7 +429,9 @@ fn a_broken_list_is_never_overwritten() {
 
 #[test]
 fn a_list_bigger_than_the_cap_is_a_broken_list_at_once_a_sparse_one_claiming_terabytes_too() {
-    for size in [4u64 << 40, pages::LIST_MAX + 1] {
+    // NTFS files aren't sparse unless asked, so Windows can't make the terabyte one
+    let sizes: &[u64] = if cfg!(windows) { &[pages::LIST_MAX + 1] } else { &[4 << 40, pages::LIST_MAX + 1] };
+    for &size in sizes {
         let h = Home::new("big");
         fs::create_dir_all(h.dir.join(".inyon")).unwrap();
         fs::write(h.file(), r#"{"v":1,"pages":[]}"#).unwrap();
@@ -428,7 +442,8 @@ fn a_list_bigger_than_the_cap_is_a_broken_list_at_once_a_sparse_one_claiming_ter
         assert_eq!(code, 1, "{size}");
         assert!(stderr.contains(pages::BROKEN_FILE), "{stderr}");
         assert_eq!(h.run(&["pages", "ls"]).0, 1);
-        assert!(at.elapsed() < std::time::Duration::from_secs(2), "took {:?}", at.elapsed());
+        // reading the terabytes would take hours; two runs of the binary on a slow CI machine take seconds
+        assert!(at.elapsed() < std::time::Duration::from_secs(30), "took {:?}", at.elapsed());
         assert_eq!(fs::metadata(h.file()).unwrap().len(), size);
     }
     // one at the cap is still read
