@@ -8,7 +8,7 @@ import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'no
 import { execFileSync } from 'node:child_process';
 import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BAD_SLUG, gitTop, isSlug, mainTree, revParse, slugify, writeMarker } from './pages.mjs';
+import { BAD_SLUG, GIT_ENV, GIT_TIMEOUT_MS, gitTop, isSlug, mainTree, revParse, slugify, writeMarker } from './pages.mjs';
 
 const a = process.argv.slice(2);
 const opt = (k) => { const i = a.indexOf(k); return i < 0 ? null : a.splice(i, 2)[1]; };
@@ -18,7 +18,7 @@ const dirArg = a.find((x) => !x.startsWith('--'));
 const usage = 'usage: node new-site.mjs [dir] --name "Product" [--slug product] [--force]';
 if (slugOpt !== null && !isSlug(slugOpt)) { console.error(BAD_SLUG); process.exit(2); }
 
-const git = (...args) => { try { return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; } };
+const git = (...args) => { try { return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS, killSignal: 'SIGKILL', env: { ...process.env, ...GIT_ENV } }).trim(); } catch { return null; } };
 // the repo the new folder will be in: ask git from its nearest folder that exists already
 let probe = dirArg ? resolve(dirArg) : process.cwd();
 while (!existsSync(probe) && probe !== dirname(probe)) probe = dirname(probe);

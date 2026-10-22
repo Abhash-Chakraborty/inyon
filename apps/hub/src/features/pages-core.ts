@@ -20,6 +20,16 @@ export const LOCAL_HOST = 'local'
 export const TOKEN_TTL_MS = 12 * 60 * 60 * 1000
 /** Longer than any token a hub makes; anything longer is refused before it is looked at. */
 const MAX_TOKEN = 2048
+/**
+ * The most of ~/.inyon/pages.json any reader takes (both hubs, the CLI and Blueprint): a list
+ * of a few thousand pages fits, and a bigger file (a sparse one claiming terabytes) counts as a
+ * list that can't be read, at once.
+ */
+export const PAGES_LIST_MAX = 4 * 1024 * 1024
+/** How long the `git rev-parse` calls that find a page's project may take, together, before git is stopped. */
+export const GIT_TIMEOUT_MS = 3000
+/** Set for those calls: no machine-wide git config, and no lock files taken just to look. */
+export const GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0' } as const
 
 // ---------- slugs, folders, progress ----------
 

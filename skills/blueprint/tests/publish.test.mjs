@@ -2,11 +2,11 @@
 // publish.mjs and new-site.mjs, run with node the way an agent runs them, against a made-up home folder.
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BAD_SLUG, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
+import { BAD_SLUG, GIT_TIMEOUT_MS, LIST_MAX, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
 
 const scripts = fileURLToPath(new URL('../scripts/', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'bp-publish-'));
@@ -24,12 +24,13 @@ function site(rel, { index = true } = {}) {
   if (index) writeFileSync(join(dir, 'index.html'), '<!doctype html><title>x</title>');
   return dir;
 }
-// A FIFO at `p`, and a writer that opens it after 2 s and closes it at once: a script that opened it
-// as a plain file waits that long, instead of hanging the test for good. Kill the writer at the end.
-function fifo(p) {
+// A FIFO at `p`, and a writer that opens it after `secs` (2 s) and closes it at once: a script that
+// opened it as a plain file waits that long, instead of hanging the test for good. Kill the writer
+// at the end.
+function fifo(p, secs = 2) {
   rmSync(p, { force: true });
   expect(spawnSync('mkfifo', [p]).status).toBe(0);
-  return spawn('sh', ['-c', 'sleep 2; : > "$1"', 'sh', p], { stdio: 'ignore' });
+  return spawn('sh', ['-c', `sleep ${secs}; : > "$1"`, 'sh', p], { stdio: 'ignore' });
 }
 const git = (dir, ...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...env(), GIT_CONFIG_GLOBAL: '/dev/null' } });
 
@@ -145,9 +146,58 @@ describe('publish.mjs', () => {
       const at = Date.now();
       const r = pub([site('other')]);
       expect(Date.now() - at).toBeLessThan(1500);
-      expect([r.status, r.stderr.includes("isn't valid JSON")]).toEqual([1, true]);
+      expect([r.status, r.stderr.includes("isn't a plain file of at most 4 MB")]).toEqual([1, true]);
     } finally { writer.kill(); }
   });
+
+  test('a list bigger than the cap is a broken list at once, a sparse one claiming terabytes too', () => {
+    const file = join(home, '.inyon/pages.json');
+    for (const size of [4 * 1024 ** 4, LIST_MAX + 1]) {
+      writeFileSync(file, '{"v":1,"pages":[]}');
+      truncateSync(file, size);
+      const at = Date.now();
+      const r = pub([site(`big-${size}`)]);
+      expect(Date.now() - at).toBeLessThan(1500);
+      expect([size, r.status, r.stderr.includes("isn't a plain file of at most 4 MB")]).toEqual([size, 1, true]);
+      expect(statSync(file).size).toBe(size);
+    }
+    // one at the cap is still read
+    const text = '{"v":1,"pages":[]}';
+    writeFileSync(file, text + ' '.repeat(LIST_MAX - text.length));
+    expect(pub([site('at-cap')]).status).toBe(0);
+    expect(list().pages.map((p) => p.slug)).toEqual(['at-cap']);
+  });
+
+  test('a symlinked list (a dotfile setup) is read and written through: the link stays, its file changes', () => {
+    const dotfiles = join(home, 'dotfiles');
+    mkdirSync(dotfiles);
+    const file = join(home, '.inyon/pages.json');
+    // a relative link to a file not made yet, as a dotfile manager can leave it
+    symlinkSync('../dotfiles/pages.json', file);
+    const a = site('a'), b = site('b');
+    expect(pub([a]).status).toBe(0);
+    expect(pub([b]).status).toBe(0);
+    expect(lstatSync(file).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(readFileSync(join(dotfiles, 'pages.json'), 'utf8')).pages.map((p) => p.path)).toEqual([a, b]);
+    expect(readdirSync(dotfiles)).toEqual(['pages.json']);
+  });
+
+  test('git that never answers (a named pipe as .git/HEAD) is stopped after 3 s, and the folder is the project', () => {
+    const dir = site('stuck');
+    mkdirSync(join(dir, '.git/objects'), { recursive: true });
+    mkdirSync(join(dir, '.git/refs'));
+    // a writer late enough that a script waiting on git fails the test instead of hanging it
+    const writer = fifo(join(dir, '.git/HEAD'), 8);
+    try {
+      const at = Date.now();
+      const r = pub([dir]);
+      const ms = Date.now() - at;
+      expect(r.status).toBe(0);
+      expect(ms).toBeGreaterThan(GIT_TIMEOUT_MS - 200);
+      expect(ms).toBeLessThan(GIT_TIMEOUT_MS + 1500);
+      expect(list().pages[0]).toMatchObject({ path: dir, project: dir });
+    } finally { writer.kill(); }
+  }, 15_000);
 
   test('bad slugs and folders are refused, and the list is left alone', () => {
     const ok = site('fine');
@@ -354,6 +404,18 @@ describe('publish.mjs', () => {
     expect(withLock(file, () => 'in', { waitMs: 100 })).toBe('in');
   });
 
+  test('a named pipe put in place of the lock is not waited on when it is released', () => {
+    const file = join(home, '.inyon/pages.json');
+    let writer;
+    try {
+      const at = Date.now();
+      withLock(file, () => { writer = fifo(`${file}.lock`); });
+      expect(Date.now() - at).toBeLessThan(1000);
+      // it isn't this writer's lock, so it stays
+      expect(statSync(`${file}.lock`).isFIFO()).toBe(true);
+    } finally { writer?.kill(); }
+  });
+
   test('the lock is removed only while it is still this writer\'s', () => {
     const file = join(home, '.inyon/pages.json');
     // another writer took it over (it thought this one had died) and holds it now
@@ -529,6 +591,7 @@ describe('the project a folder belongs to', () => {
 const rulesFile = fileURLToPath(new URL('../../../fixtures/pages/rules.json', import.meta.url));
 describe.skipIf(!existsSync(rulesFile))('rules match fixtures/pages/rules.json', () => {
   const rules = existsSync(rulesFile) ? JSON.parse(readFileSync(rulesFile, 'utf8')) : {};
+  test('listMax', () => expect(LIST_MAX).toBe(rules.listMax));
   test('slugify', () => { for (const c of rules.slugify) expect([c.text, slugify(c.text)]).toEqual([c.text, c.slug]); });
   test('isSlug', () => { for (const c of rules.isSlug) expect([c.s, isSlug(c.s)]).toEqual([c.s, c.ok]); });
   test('uniqueSlug', () => { for (const c of rules.uniqueSlug) expect(uniqueSlug(c.base, (s) => c.taken.includes(s))).toBe(c.slug); });

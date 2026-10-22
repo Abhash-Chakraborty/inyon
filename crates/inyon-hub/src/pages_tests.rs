@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use axum::http::Method;
 use http_body_util::BodyExt;
-use inyon_core::features::pages_core::{error_page, pages_key, verify_token, VerifyContext, CANT_WRITE_LIST, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE};
+use inyon_core::features::pages_core::{error_page, pages_key, verify_token, VerifyContext, CANT_WRITE_LIST, GIT_TIMEOUT_MS, NO_INDEX, PAGES_LIST_MAX, PRIVATE_FOLDER, TOO_WIDE};
 use inyon_core::platform::store::kv;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -91,9 +91,13 @@ struct Fifo(std::process::Child);
 
 impl Fifo {
     fn at(p: &Path) -> Fifo {
+        Fifo::after(p, 2)
+    }
+    /// The writer opens it after `secs` seconds.
+    fn after(p: &Path, secs: u32) -> Fifo {
         let _ = std::fs::remove_file(p);
         assert!(std::process::Command::new("mkfifo").arg(p).status().unwrap().success());
-        Fifo(std::process::Command::new("sh").args(["-c", "sleep 2; : > \"$1\"", "sh"]).arg(p).spawn().unwrap())
+        Fifo(std::process::Command::new("sh").args(["-c", &format!("sleep {secs}; : > \"$1\""), "sh"]).arg(p).spawn().unwrap())
     }
 }
 
@@ -737,6 +741,79 @@ fn a_fifo_as_the_list_file_itself_is_no_list_at_once() {
 }
 
 #[test]
+fn a_list_bigger_than_the_cap_is_a_broken_list_at_once_a_sparse_one_claiming_terabytes_too() {
+    let tmp = Tmp::new("big-list");
+    let home = tmp.join("home");
+    let file = pages_file(&home);
+    let a = site(&tmp, "a", false);
+    let x = site(&tmp, "x", false);
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        for size in [4u64 << 40, PAGES_LIST_MAX + 1] {
+            write_list(&file, json!([record("a", &a)]));
+            std::fs::OpenOptions::new().write(true).open(&file).unwrap().set_len(size).unwrap();
+            let at = std::time::Instant::now();
+            assert_eq!(call(h_list, "GET", &[], None, &[]).await, Ok(json!({ "pages": [] })), "{size}");
+            assert!(at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", at.elapsed());
+            assert!(pages().registry.broken());
+            assert_eq!(add_page(json!({ "path": x })).await, Err((500, BROKEN_FILE.into())));
+            assert_eq!(call(h_remove, "DELETE", &[("host", "local"), ("slug", "a")], None, &[]).await, Err((500, BROKEN_FILE.into())));
+            assert_eq!(std::fs::metadata(&file).unwrap().len(), size);
+        }
+        // one at the cap is still read
+        let text = serde_json::to_string(&json!({ "v": 1, "pages": [record("a", &a)] })).unwrap();
+        std::fs::write(&file, format!("{text}{}", " ".repeat(PAGES_LIST_MAX as usize - text.len()))).unwrap();
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"][0]["slug"], "a");
+    });
+}
+
+#[test]
+fn a_symlinked_list_a_dotfile_setup_is_read_and_written_through_the_link_stays_its_file_changes() {
+    let tmp = Tmp::new("linked-list");
+    let home = tmp.join("home");
+    let file = pages_file(&home);
+    let a = site(&tmp, "a", false);
+    let b = site(&tmp, "b", false);
+    let dotfiles = tmp.join("dotfiles");
+    write_list(&dotfiles.join("pages.json"), json!([record("a", &a)]));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    // a relative link, as dotfile managers make them
+    std::os::unix::fs::symlink("../../dotfiles/pages.json", &file).unwrap();
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"][0]["slug"], "a");
+        assert_eq!(add_page(json!({ "path": b })).await.unwrap()["folder"], json!(b));
+        assert!(std::fs::symlink_metadata(&file).unwrap().file_type().is_symlink());
+        let paths = |v: Value| v["pages"].as_array().unwrap().iter().map(|p| p["path"].clone()).collect::<Vec<_>>();
+        assert_eq!(paths(read_list(&dotfiles.join("pages.json"))), vec![json!(a), json!(b)]);
+        call(h_remove, "DELETE", &[("host", "local"), ("slug", "a")], None, &[]).await.unwrap();
+        assert!(std::fs::symlink_metadata(&file).unwrap().file_type().is_symlink());
+        assert_eq!(paths(read_list(&dotfiles.join("pages.json"))), vec![json!(b)]);
+        assert_eq!(std::fs::read_dir(&dotfiles).unwrap().count(), 1);
+    });
+}
+
+#[test]
+fn a_named_pipe_put_in_place_of_the_lock_is_not_waited_on_when_it_is_released() {
+    let tmp = Tmp::new("fifo-lock");
+    let lock = tmp.join("pages.json.lock");
+    crate::test_util::block(async {
+        let at = std::time::Instant::now();
+        let mut writer = None;
+        with_lock(&lock, 3000, || {
+            writer = Some(Fifo::at(&lock));
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(at.elapsed() < std::time::Duration::from_secs(1), "took {:?}", at.elapsed());
+        // it isn't this writer's lock, so it stays
+        assert!(std::os::unix::fs::FileTypeExt::is_fifo(&std::fs::symlink_metadata(&lock).unwrap().file_type()));
+        drop(writer);
+    });
+}
+
+#[test]
 fn only_entries_that_may_be_served_come_out() {
     let tmp = Tmp::new("filter");
     let home = tmp.join("home");
@@ -882,6 +959,33 @@ fn the_project_is_found_the_same_with_any_git_old_ones_that_print_unknown_option
         let g24 = s(&old.join("git-2.4"));
         assert_eq!(project_of(&s(&repo.join("sub")), &g24).await, s(&repo));
         assert_eq!(project_of(&s(&tree.join("deep")), &g24).await, s(&tree));
+    });
+}
+
+#[test]
+fn git_that_never_answers_a_named_pipe_as_git_head_is_stopped_after_three_seconds_and_the_hub_serves_meanwhile() {
+    let tmp = Tmp::new("git-stuck");
+    let home = tmp.join("home");
+    let folder = site(&tmp, "stuck", false);
+    std::fs::create_dir_all(Path::new(&folder).join(".git/objects")).unwrap();
+    std::fs::create_dir_all(Path::new(&folder).join(".git/refs")).unwrap();
+    // a writer late enough that a hub waiting on git fails the test instead of hanging it
+    let _writer = Fifo::after(&Path::new(&folder).join(".git/HEAD"), 8);
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let at = std::time::Instant::now();
+        let (entry, list_ms) = tokio::join!(async { (add_page(json!({ "path": folder })).await, at.elapsed()) }, async {
+            inyon_core::platform::rt::sleep(200).await;
+            let t = std::time::Instant::now();
+            // another request is answered while git is stuck
+            assert_eq!(call(h_list, "GET", &[], None, &[]).await, Ok(json!({ "pages": [] })));
+            t.elapsed()
+        });
+        let (entry, took) = entry;
+        assert_eq!(entry.unwrap()["project"], json!(folder));
+        assert!(list_ms < std::time::Duration::from_millis(500), "list took {list_ms:?}");
+        assert!(took > std::time::Duration::from_millis(GIT_TIMEOUT_MS - 200), "took {took:?}");
+        assert!(took < std::time::Duration::from_millis(GIT_TIMEOUT_MS + 1500), "took {took:?}");
     });
 }
 

@@ -13,6 +13,7 @@ import {
   errorPage,
   mintToken,
   pagesKey,
+  PAGES_LIST_MAX,
   progressSummary,
   etagOf,
   sitePathProblem,
@@ -137,7 +138,8 @@ function tokenVectors() {
 function ruleVectors() {
   const home = '/home/abhash'
   return {
-    about: 'Pure rules both hubs and the CLI share: slugify, isSlug, uniqueSlug (taken = the listed slugs), sitePathProblem (null when the folder may be a page), progressSummary (null when it gives undefined).',
+    about: 'Pure rules both hubs and the CLI share: slugify, isSlug, uniqueSlug (taken = the listed slugs), sitePathProblem (null when the folder may be a page), progressSummary (null when it gives undefined), listMax (the most bytes of pages.json any reader takes).',
+    listMax: PAGES_LIST_MAX,
     slugify: ['Inyon plan', 'Handy redesign', '  --Café: v2.0!--  ', '', '!!!', 'ABC def_ghi', 'a'.repeat(70), `${'b'.repeat(62)} c`, 'ąęł 日本'].map((text) => ({ text, slug: slugify(text) })),
     isSlug: ['ghostex', 'a', '0', 'a-b-c', 'x'.repeat(63), 'x'.repeat(64), '-a', 'A', 'a_b', 'a.b', '', 'a b', 'ünï'].map((s) => ({ s, ok: isSlug(s) })),
     uniqueSlug: [

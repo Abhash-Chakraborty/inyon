@@ -26,6 +26,14 @@ pub const LOCAL_HOST: &str = "local";
 pub const TOKEN_TTL_MS: u64 = 12 * 60 * 60 * 1000;
 /// Longer than any token a hub makes; anything longer is refused before it is looked at.
 const MAX_TOKEN: usize = 2048;
+/// The most of ~/.inyon/pages.json any reader takes (both hubs, the CLI and Blueprint): a list
+/// of a few thousand pages fits, and a bigger file (a sparse one claiming terabytes) counts as a
+/// list that can't be read, at once.
+pub const PAGES_LIST_MAX: u64 = 4 * 1024 * 1024;
+/// How long the `git rev-parse` calls that find a page's project may take, together, before git is stopped.
+pub const GIT_TIMEOUT_MS: u64 = 3000;
+/// Set for those calls: no machine-wide git config, and no lock files taken just to look.
+pub const GIT_ENV: [(&str, &str); 2] = [("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_OPTIONAL_LOCKS", "0")];
 /// `Number.MAX_SAFE_INTEGER`
 const MAX_SAFE: f64 = 9_007_199_254_740_991.0;
 

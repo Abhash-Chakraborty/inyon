@@ -85,6 +85,7 @@ fn rules() -> Value {
 #[test]
 fn slugs_and_folders_follow_the_shared_rules() {
     let r = rules();
+    assert_eq!(r["listMax"].as_u64(), Some(pages::LIST_MAX));
     for c in r["slugify"].as_array().unwrap() {
         assert_eq!(pages::slugify(c["text"].as_str().unwrap()), c["slug"].as_str().unwrap(), "slugify {c}");
     }
@@ -412,6 +413,58 @@ fn a_broken_list_is_never_overwritten() {
     assert_eq!(h.run(&["pages", "ls"]).0, 1);
     fs::write(h.file(), r#"{"v":2,"pages":[]}"#).unwrap();
     assert_eq!(h.run(&["pages", "add", s(&site)]).0, 1);
+}
+
+#[test]
+fn a_list_bigger_than_the_cap_is_a_broken_list_at_once_a_sparse_one_claiming_terabytes_too() {
+    for size in [4u64 << 40, pages::LIST_MAX + 1] {
+        let h = Home::new("big");
+        fs::create_dir_all(h.dir.join(".inyon")).unwrap();
+        fs::write(h.file(), r#"{"v":1,"pages":[]}"#).unwrap();
+        fs::File::options().write(true).open(h.file()).unwrap().set_len(size).unwrap();
+        let site = h.site("s", "S");
+        let at = std::time::Instant::now();
+        let (code, _, stderr) = h.run(&["pages", "add", s(&site)]);
+        assert_eq!(code, 1, "{size}");
+        assert!(stderr.contains(pages::BROKEN_FILE), "{stderr}");
+        assert_eq!(h.run(&["pages", "ls"]).0, 1);
+        assert!(at.elapsed() < std::time::Duration::from_secs(2), "took {:?}", at.elapsed());
+        assert_eq!(fs::metadata(h.file()).unwrap().len(), size);
+    }
+    // one at the cap is still read
+    let h = Home::new("at-cap");
+    fs::create_dir_all(h.dir.join(".inyon")).unwrap();
+    let text = r#"{"v":1,"pages":[]}"#;
+    fs::write(h.file(), format!("{text}{}", " ".repeat(pages::LIST_MAX as usize - text.len()))).unwrap();
+    let site = h.site("s", "S");
+    assert_eq!(h.run(&["pages", "add", s(&site)]).0, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_list_a_dotfile_setup_is_read_and_written_through_the_link_stays_its_file_changes() {
+    let h = Home::new("linked");
+    let dotfiles = h.dir.join("dotfiles");
+    fs::create_dir_all(&dotfiles).unwrap();
+    fs::create_dir_all(h.dir.join(".inyon")).unwrap();
+    // a relative link to a file not made yet, as a dotfile manager can leave it
+    std::os::unix::fs::symlink("../dotfiles/pages.json", h.file()).unwrap();
+    let a = h.site("a", "A");
+    let b = h.site("b", "B");
+    assert_eq!(h.run(&["pages", "add", s(&a)]).0, 0);
+    assert_eq!(h.run(&["pages", "add", s(&b)]).0, 0);
+    let target = dotfiles.join("pages.json");
+    let paths = || -> Vec<String> {
+        let v: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        v["pages"].as_array().unwrap().iter().map(|p| p["path"].as_str().unwrap().to_owned()).collect()
+    };
+    assert!(fs::symlink_metadata(h.file()).unwrap().file_type().is_symlink());
+    assert_eq!(paths(), vec![s(&a).to_owned(), s(&b).to_owned()]);
+    assert_eq!(h.run(&["pages", "rm", "a"]).0, 0);
+    assert!(fs::symlink_metadata(h.file()).unwrap().file_type().is_symlink());
+    assert_eq!(paths(), vec![s(&b).to_owned()]);
+    assert_eq!(h.json(&["pages", "ls"]).1["pages"].as_array().unwrap().len(), 1);
+    assert_eq!(fs::read_dir(&dotfiles).unwrap().count(), 1);
 }
 
 #[test]

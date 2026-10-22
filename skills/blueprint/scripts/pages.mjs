@@ -9,8 +9,9 @@
 //   <site>/.inyon-page.json {"v":1,"slug","name","kind":"blueprint","created"}
 //
 // `added` and `created` are ms since 1970. pages.json is written to a temp file and renamed into place,
-// while holding pages.json.lock (created with O_EXCL, taken over once it is 10 s old).
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+// while holding pages.json.lock (created with O_EXCL, taken over once it is 10 s old). It may be a
+// symlink (a dotfile setup): it is read through the link, and written where the link leads.
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, openSync, readlinkSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -26,6 +27,16 @@ export const TOO_WIDE = "Pick the site's own folder, not / or your home folder";
 export const PRIVATE_FOLDER = "Folders under ~/.ssh and ~/.inyon can't be pages";
 export const NO_INDEX = 'That folder has no index.html';
 export const LOCK_STALE_MS = 10_000;
+// The most of pages.json this reads, as Inyon's hubs and CLI: a bigger file (a sparse one claiming
+// terabytes too) is a list this can't read.
+export const LIST_MAX = 4 * 1024 * 1024;
+// A lock holds a process id and a tag; anything longer isn't one of ours.
+const LOCK_MAX = 256;
+// How long the git calls that find a folder's project may take, together, before git is killed. A
+// named pipe in a folder's .git would otherwise keep it waiting for good.
+export const GIT_TIMEOUT_MS = 3000;
+// Set for those calls: no machine-wide git config, and no lock files taken just to look.
+export const GIT_ENV = { GIT_CONFIG_NOSYSTEM: '1', GIT_OPTIONAL_LOCKS: '0' };
 
 // ASCII letters lowercased, every other run one dash, no dash at either end, at most 63 characters.
 export function slugify(text) {
@@ -79,17 +90,18 @@ export function hubHere(home = homedir(), env = process.env) {
 
 // The line git prints for `git -C <dir> rev-parse <option...>`, or null. A line starting with '-' is
 // refused: a git too old to know the option prints it back and still exits 0 (git before 2.31 does
-// that with --path-format, before 2.5 with --git-common-dir).
-export function revParse(dir, option, git = 'git') {
+// that with --path-format, before 2.5 with --git-common-dir). Git is killed after `timeout` ms.
+export function revParse(dir, option, git = 'git', timeout = GIT_TIMEOUT_MS) {
+  if (timeout <= 0) return null;
   try {
-    const line = execFileSync(git, ['-C', dir, 'rev-parse', ...[option].flat()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split(/\r?\n/)[0].trim();
+    const line = execFileSync(git, ['-C', dir, 'rev-parse', ...[option].flat()], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout, killSignal: 'SIGKILL', env: { ...process.env, ...GIT_ENV } }).split(/\r?\n/)[0].trim();
     return line && !line.startsWith('-') ? line : null;
   } catch { return null; }
 }
 
 // The top folder of the git work tree a folder is in, or null outside one.
-export function gitTop(dir, git = 'git') {
-  const top = revParse(dir, '--show-toplevel', git);
+export function gitTop(dir, git = 'git', timeout = GIT_TIMEOUT_MS) {
+  const top = revParse(dir, '--show-toplevel', git, timeout);
   return top ? resolve(top) : null;
 }
 
@@ -98,11 +110,12 @@ export function gitTop(dir, git = 'git') {
 // so a plan made there outlives the worktree. The common dir is then the main tree's .git; a
 // submodule's (.git/modules/<name>) or a bare repo's (<name>.git) means the top folder stays.
 // Two plain calls work on any git; the top folder git prints is kept when the common dir's parent is
-// the same folder.
+// the same folder. Both calls together get GIT_TIMEOUT_MS.
 export function mainTree(dir, git = 'git') {
+  const until = Date.now() + GIT_TIMEOUT_MS;
   const top = gitTop(dir, git);
   if (!top) return null;
-  const c = revParse(dir, '--git-common-dir', git);
+  const c = revParse(dir, '--git-common-dir', git, until - Date.now());
   const common = c ? resolve(dir, c) : null;
   if (!common || basename(common) !== '.git' || !isDir(common)) return top;
   const parent = dirname(common);
@@ -126,12 +139,14 @@ export function agentName(env = process.env) {
   return 'agent';
 }
 
-// A file's text, read without ever waiting on it: opened with O_NONBLOCK and without following a
-// symlink at its end, and read only when the open file is a plain file of at most `max` bytes. A
-// FIFO left in a site's folder (or as the list) would otherwise hold the read until something wrote
-// to it. Throws the open's error, or a plain Error for anything else.
-export function readPlain(file, max = Infinity) {
-  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+// A file's text, read without ever waiting on it: opened with O_NONBLOCK, and read only when the open
+// file is a plain file of at most `max` bytes, into a buffer that grows as it reads (never sized from
+// the file, which can claim terabytes it doesn't have). A FIFO left in a site's folder (or as the
+// list) would otherwise hold the read until something wrote to it. A symlink at the end of the path
+// is followed only when `follow` says so: the list may be one, a file in a site's folder may not.
+// Throws the open's error, or a plain Error for anything else.
+export function readPlain(file, max, follow = false) {
+  const fd = openSync(file, constants.O_RDONLY | (follow ? 0 : (constants.O_NOFOLLOW ?? 0)) | (constants.O_NONBLOCK ?? 0));
   try {
     const st = fstatSync(fd);
     if (!st.isFile() || st.size > max) throw new Error(`${file} isn't a plain file of a size this reads`);
@@ -150,6 +165,18 @@ export function readPlain(file, max = Infinity) {
 }
 
 const readJson = (f, max) => JSON.parse(readPlain(f, max));
+
+// The path a chain of symlinks ends at, read link by link so a link to a file not made yet still
+// leads somewhere; the path itself when it isn't a link. Gives up after 40 links (a loop).
+export function linkTarget(file) {
+  let p = file;
+  for (let i = 0; i < 40; i++) {
+    let to;
+    try { to = readlinkSync(p); } catch { return p; }
+    p = resolve(dirname(p), to);
+  }
+  return p;
+}
 // A bigger `.inyon-page.json` isn't read for a page's name and slug.
 const MARKER_MAX = 64 * 1024;
 
@@ -206,7 +233,8 @@ export function withLock(file, fn, { waitMs = 15_000, write = writeSync } = {}) 
     if (Date.now() > until) throw Object.assign(new Error(`${lock} is held by another writer; try again, or delete it if nothing is running`), { code: 'ELOCKED' });
     pause(25 + Math.random() * 50);
   }
-  try { return fn(); } finally { try { if (readFileSync(lock, 'utf8') === mine) unlinkSync(lock); } catch {} }
+  // read as the list is, so a FIFO put in its place isn't waited on
+  try { return fn(); } finally { try { if (readPlain(lock, LOCK_MAX) === mine) unlinkSync(lock); } catch {} }
 }
 
 // Removes the lock this writer made as `fd`, while the path still leads to that file.
@@ -242,8 +270,9 @@ export function removeJudged(lock, old) {
 
 export function readPages(file) {
   if (!existsSync(file)) return { v: 1, pages: [] };
-  let d;
-  try { d = readJson(file); } catch { throw Object.assign(new Error(`${file} isn't valid JSON; fix it or move it away, then publish again`), { code: 'EBADLIST' }); }
+  let text, d;
+  try { text = readPlain(file, LIST_MAX, true); } catch { throw Object.assign(new Error(`${file} isn't a plain file of at most 4 MB; fix it or move it away, then publish again`), { code: 'EBADLIST' }); }
+  try { d = JSON.parse(text); } catch { throw Object.assign(new Error(`${file} isn't valid JSON; fix it or move it away, then publish again`), { code: 'EBADLIST' }); }
   if (!d || typeof d !== 'object' || d.v !== 1 || !Array.isArray(d.pages)) throw Object.assign(new Error(`${file} isn't a version 1 list of pages; update this skill or Inyon`), { code: 'EBADLIST' });
   return d;
 }
@@ -306,7 +335,8 @@ export function publish(dir, opts = {}) {
     const changed = !old || JSON.stringify(old) !== JSON.stringify(page);
     if (changed) {
       if (at >= 0) pages[at] = page; else pages.push(page);
-      atomicWrite(file, JSON.stringify(list, null, 2) + '\n', 0o600);
+      // through a symlinked list to its file, so the link stays
+      atomicWrite(linkTarget(file), JSON.stringify(list, null, 2) + '\n', 0o600);
     }
     // The marker helps Inyon find the site again later; a folder it can't write to still gets listed.
     let marker = null;

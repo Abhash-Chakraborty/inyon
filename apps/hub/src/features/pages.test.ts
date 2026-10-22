@@ -6,7 +6,7 @@ import path from 'node:path'
 import { memoryStore, type Store } from '../platform/store.ts'
 import { HttpError } from '../hosts/http-error.ts'
 import { layOutFixtureSite, NOW, PAGES_FIXTURES, SECRET } from '../cli/pages-vectors.ts'
-import { CANT_WRITE_LIST, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
+import { CANT_WRITE_LIST, GIT_TIMEOUT_MS, NO_INDEX, PAGES_LIST_MAX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
 import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_SAVED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, projectOf, removeJudged, withLock } from './pages.ts'
 
 // The Bun hub's half of Pages: the list file, epochs, the API handlers, and the /v/ answer
@@ -397,6 +397,46 @@ describe('~/.inyon/pages.json', () => {
     }
   })
 
+  test('a list bigger than the cap is a broken list at once, a sparse one claiming terabytes too', async () => {
+    for (const size of [4 * 1024 ** 4, PAGES_LIST_MAX + 1]) {
+      const h = hub()
+      writeList(h.file, [record('a', site('a'))])
+      fs.truncateSync(h.file, size)
+      const [pages, ms] = await timed(async () => (await (await call(h, '/api/pages', 'GET', {})).json()).pages)
+      expect([size, pages, h.pages.registry.broken()]).toEqual([size, [], true])
+      expect(ms).toBeLessThan(1000)
+      expect(await message(call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: site('x') }))).toBe(BROKEN_FILE)
+      expect(await message(call(h, '/api/pages/:host/:slug', 'DELETE', { host: 'local', slug: 'a' }))).toBe(BROKEN_FILE)
+      expect(fs.statSync(h.file).size).toBe(size)
+    }
+    // one at the cap is still read
+    const h = hub()
+    const a = site('a')
+    const text = JSON.stringify({ v: 1, pages: [record('a', a)] })
+    fs.mkdirSync(path.dirname(h.file), { recursive: true })
+    fs.writeFileSync(h.file, text + ' '.repeat(PAGES_LIST_MAX - text.length))
+    expect((await (await call(h, '/api/pages', 'GET', {})).json()).pages.map((p: any) => p.slug)).toEqual(['a'])
+  })
+
+  test('a symlinked list (a dotfile setup) is read, and written through: the link stays, its file changes', async () => {
+    const h = hub()
+    const a = site('a')
+    const dotfiles = path.join(root, `dotfiles-${++n}`)
+    writeList(path.join(dotfiles, 'pages.json'), [record('a', a)])
+    fs.mkdirSync(path.dirname(h.file), { recursive: true })
+    // a relative link, as dotfile managers make them
+    fs.symlinkSync(path.relative(path.dirname(h.file), path.join(dotfiles, 'pages.json')), h.file)
+    expect((await (await call(h, '/api/pages', 'GET', {})).json()).pages.map((p: any) => p.slug)).toEqual(['a'])
+    const b = site('b')
+    expect((await (await call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: b })).json()).folder).toBe(b)
+    expect(fs.lstatSync(h.file).isSymbolicLink()).toBe(true)
+    expect(readList(path.join(dotfiles, 'pages.json')).pages.map((p: any) => p.path)).toEqual([a, b])
+    expect(await status(call(h, '/api/pages/:host/:slug', 'DELETE', { host: 'local', slug: 'a' }))).toBe(200)
+    expect(fs.lstatSync(h.file).isSymbolicLink()).toBe(true)
+    expect(readList(path.join(dotfiles, 'pages.json')).pages.map((p: any) => p.path)).toEqual([b])
+    expect(fs.readdirSync(dotfiles)).toEqual(['pages.json'])
+  })
+
   test('only entries that may be served come out: well formed, a real folder, the first of a slug', async () => {
     const h = hub()
     const good = site('good')
@@ -468,7 +508,7 @@ describe('adding a page', () => {
     expect(entry.project).toBe(fs.realpathSync(repo))
   })
 
-  test('the project is found the same with any git, old ones that print unknown options back too', () => {
+  test('the project is found the same with any git, old ones that print unknown options back too', async () => {
     const repo = fs.realpathSync(fs.mkdtempSync(path.join(root, 'git-')))
     const run = (...args: string[]) => expect(Bun.spawnSync(['git', '-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdout: 'ignore', stderr: 'ignore' }).exitCode).toBe(0)
     run('init', '-q')
@@ -481,17 +521,44 @@ describe('adding a page', () => {
     // fixtures/old-git/git is git before 2.31 (prints --path-format=absolute back, exit 0); git-2.4 knows no --git-common-dir
     const oldGit = new URL('../../../../fixtures/old-git/', import.meta.url).pathname
     for (const g of ['git', path.join(oldGit, 'git')]) {
-      expect([g, projectOf(repo, g)]).toEqual([g, repo])
-      expect([g, projectOf(path.join(repo, 'sub'), g)]).toEqual([g, repo])
-      expect([g, projectOf(tree, g)]).toEqual([g, repo])
-      expect([g, projectOf(path.join(tree, 'deep'), g)]).toEqual([g, repo])
-      expect([g, projectOf(outside, g)]).toEqual([g, outside])
+      expect([g, await projectOf(repo, g)]).toEqual([g, repo])
+      expect([g, await projectOf(path.join(repo, 'sub'), g)]).toEqual([g, repo])
+      expect([g, await projectOf(tree, g)]).toEqual([g, repo])
+      expect([g, await projectOf(path.join(tree, 'deep'), g)]).toEqual([g, repo])
+      expect([g, await projectOf(outside, g)]).toEqual([g, outside])
     }
     const g24 = path.join(oldGit, 'git-2.4')
-    expect(projectOf(path.join(repo, 'sub'), g24)).toBe(repo)
-    expect(projectOf(path.join(tree, 'deep'), g24)).toBe(tree)
+    expect(await projectOf(path.join(repo, 'sub'), g24)).toBe(repo)
+    expect(await projectOf(path.join(tree, 'deep'), g24)).toBe(tree)
     fs.rmSync(outside, { recursive: true })
   })
+
+  test('git that never answers (a named pipe as .git/HEAD) is stopped after 3 s, and the hub serves meanwhile', async () => {
+    const h = hub()
+    const folder = site('stuck')
+    fs.mkdirSync(path.join(folder, '.git', 'objects'), { recursive: true })
+    fs.mkdirSync(path.join(folder, '.git', 'refs'))
+    // a writer late enough that a hub waiting on git fails the test instead of hanging it
+    const writer = fifo(path.join(folder, '.git', 'HEAD'), 8000)
+    let ticks = 0
+    const tick = setInterval(() => ticks++, 100)
+    try {
+      const at = performance.now()
+      const added = call(h, '/api/pages/:host', 'POST', { host: 'local' }, { path: folder }).then(async (r) => [await r.json(), performance.now() - at] as const)
+      // another request is answered while git is stuck
+      const [list, listMs] = await timed(async () => (await call(h, '/api/pages', 'GET', {})).json())
+      expect(list).toEqual({ pages: [] })
+      expect(listMs).toBeLessThan(500)
+      const [entry, ms] = await added
+      expect(entry.project).toBe(folder)
+      expect(ms).toBeGreaterThan(GIT_TIMEOUT_MS - 200)
+      expect(ms).toBeLessThan(GIT_TIMEOUT_MS + 1500)
+      expect(ticks).toBeGreaterThan(GIT_TIMEOUT_MS / 100 / 2)
+    } finally {
+      clearInterval(tick)
+      writer.kill()
+    }
+  }, 15_000)
 
   test('a FIFO as the marker is skipped at once: the name and slug come from the folder', async () => {
     const h = hub()
@@ -667,6 +734,19 @@ describe('the lock', () => {
     // another writer took it over (it thought this one had died) and holds it now
     await withLock(lock, () => fs.writeFileSync(lock, '999 0123456789abcdef\n'))
     expect(fs.readFileSync(lock, 'utf8')).toBe('999 0123456789abcdef\n')
+  })
+
+  test('a named pipe put in place of the lock is not waited on when it is released', async () => {
+    const lock = path.join(root, `lock-${++n}`, 'pages.json.lock')
+    let writer: ReturnType<typeof fifo> | undefined
+    try {
+      const [, ms] = await timed(() => withLock(lock, () => void (writer = fifo(lock))))
+      expect(ms).toBeLessThan(1000)
+      // it isn't this writer's lock, so it stays
+      expect(fs.statSync(lock).isFIFO()).toBe(true)
+    } finally {
+      writer?.kill()
+    }
   })
 
   test('a stale lock two writers judged leaves the fresh one made in between in its place', () => {

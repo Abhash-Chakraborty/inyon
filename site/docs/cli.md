@@ -244,7 +244,7 @@ The second line is where the page is in the app, not a link to share. A link tha
 | `--slug <slug>` | The site's own slug, or the folder's name | The page's name in links: lowercase letters, digits and dashes, up to 63 characters, unique on the computer. A slug that's taken gets `-2`, `-3` and so on, unless you asked for it with `--slug`, which is refused instead |
 
 - **The site's own name and slug** come from `.inyon-page.json` in its folder. Blueprint writes that file when it makes a site, and `add` writes or updates it, so the site keeps its slug if it's ever added again.
-- **The project** the app groups it under is the folder's git repository, or the folder itself outside one. In a linked worktree it's the repository's main folder, so the page keeps its place after the worktree is removed.
+- **The project** the app groups it under is the folder's git repository, or the folder itself outside one. In a linked worktree it's the repository's main folder, so the page keeps its place after the worktree is removed. If git doesn't answer within 3 seconds, it's the folder itself.
 - **Who added it** is saved too: `claude`, `codex`, `gemini` or `opencode` when one of those agents ran the command, `cli` otherwise.
 - **Adding a folder again** is safe. It keeps its slug and its place, and changes only the name or slug you pass.
 

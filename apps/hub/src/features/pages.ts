@@ -18,11 +18,14 @@ import {
   BAD_SLUG,
   CANT_WRITE_LIST,
   decideView,
+  GIT_ENV,
+  GIT_TIMEOUT_MS,
   goneAfterOpen,
   isSlug,
   LOCAL_HOST,
   mintToken,
   NO_INDEX,
+  PAGES_LIST_MAX,
   pagesKey,
   progressSummary,
   sitePathProblem,
@@ -49,6 +52,8 @@ export const PROGRESS_TTL_MS = 30_000
 const PROGRESS_MAX = 1024 * 1024
 /** A bigger `.inyon-page.json` isn't read for a page's name and slug. */
 const MARKER_MAX = 64 * 1024
+/** A lock holds a process id and a tag; anything longer isn't one of ours. */
+const LOCK_MAX = 256
 
 export const UNKNOWN_PAGE = 'Unknown page'
 export const OTHER_MACHINE = "Pages can only be added on the hub's own machine for now"
@@ -106,7 +111,11 @@ export function pageRegistry(file: string, home: string, onList: (records: PageR
     const stamp = `${st.ino}:${st.size}:${st.mtimeMs}`
     if (stamp === seen) return
     seen = stamp
-    const parsed = parse(readPlain(file))
+    // a list that can't be read as a plain file of at most PAGES_LIST_MAX bytes is a broken one
+    let parsed: ReturnType<typeof parse>
+    try {
+      parsed = parse(readPlain(file, PAGES_LIST_MAX, true))
+    } catch {}
     broken = parsed === undefined
     const slugs = new Set<string>()
     const next: PageRecord[] = []
@@ -146,9 +155,10 @@ export function pageRegistry(file: string, home: string, onList: (records: PageR
       return withLock(`${file}.lock`, () => {
         let text: string | undefined
         try {
-          text = readPlain(file)
+          text = readPlain(file, PAGES_LIST_MAX, true)
         } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+          if (errno(err) === 'NOT_PLAIN') throw new HttpError(500, BROKEN_FILE)
+          if (errno(err) !== 'ENOENT') throw err
         }
         const current = text === undefined ? { v: 1, pages: [] } : parse(text)
         if (!current) throw new HttpError(500, BROKEN_FILE)
@@ -179,14 +189,16 @@ const realOr = (p: string) => {
 }
 
 /**
- * A file's text, read without ever waiting on it: opened with O_NONBLOCK and without following a
- * symlink at its end, then read only when the open file is a plain file of at most `max` bytes. A
- * FIFO an agent leaves in a page folder (or as the list) would otherwise hold the read, and with it
- * the whole hub, until something wrote to it. Throws the open's error (ENOENT for a missing file),
- * or NOT_PLAIN.
+ * A file's text, read without ever waiting on it: opened with O_NONBLOCK, then read only when the
+ * open file is a plain file of at most `max` bytes, into a buffer that grows as it reads (never
+ * sized from the file, which can claim terabytes it doesn't have). A FIFO an agent leaves in a page
+ * folder (or as the list) would otherwise hold the read, and with it the whole hub, until something
+ * wrote to it. A symlink at the end of the path is followed only when `follow` says so: the list may
+ * be one (a dotfile setup), a file in a page folder may not. Throws the open's error (ENOENT for a
+ * missing file), or NOT_PLAIN.
  */
-export function readPlain(file: string, max = Infinity): string {
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0))
+export function readPlain(file: string, max: number, follow = false): string {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (follow ? 0 : (fs.constants.O_NOFOLLOW ?? 0)) | (fs.constants.O_NONBLOCK ?? 0))
   try {
     const st = fs.fstatSync(fd)
     if (!st.isFile() || st.size > max) throw notPlain()
@@ -209,16 +221,39 @@ export function readPlain(file: string, max = Infinity): string {
 
 const notPlain = () => Object.assign(new Error('not a plain file of a size the hub reads'), { code: 'NOT_PLAIN' })
 
-/** Writes beside the file and renames over it, so a reader never sees half a list. */
+/**
+ * Writes beside the file and renames over it, so a reader never sees half a list. A symlinked list
+ * (a dotfile setup) is written where the link leads: the rename replaces that file, and the link
+ * stays.
+ */
 function writeAtomic(file: string, text: string) {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
-  const tmp = `${file}.${process.pid}.tmp`
+  const target = linkTarget(file)
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 })
+  const tmp = `${target}.${process.pid}.tmp`
   try {
     fs.writeFileSync(tmp, text, { mode: 0o600 })
-    fs.renameSync(tmp, file)
+    fs.renameSync(tmp, target)
   } finally {
     fs.rmSync(tmp, { force: true })
   }
+}
+
+/**
+ * The path a chain of symlinks ends at, read link by link so a link to a file not made yet still
+ * leads somewhere; the path itself when it isn't a link. Gives up after 40 links (a loop).
+ */
+export function linkTarget(file: string): string {
+  let p = file
+  for (let i = 0; i < 40; i++) {
+    let to: string
+    try {
+      to = fs.readlinkSync(p)
+    } catch {
+      return p
+    }
+    p = path.resolve(path.dirname(p), to)
+  }
+  return p
 }
 
 /**
@@ -319,10 +354,10 @@ function dropMade(lock: string, fd: number) {
   } catch {}
 }
 
-/** Removes the lock if it is still this writer's. */
+/** Removes the lock if it is still this writer's (read as the list is, so a FIFO put there isn't waited on). */
 export function releaseLock(lock: string, mine: string) {
   try {
-    if (fs.readFileSync(lock, 'utf8') === mine) fs.rmSync(lock, { force: true })
+    if (readPlain(lock, LOCK_MAX) === mine) fs.rmSync(lock, { force: true })
   } catch {}
 }
 
@@ -508,15 +543,36 @@ function streamOf(fd: number): ReadableStream<Uint8Array> {
 /**
  * The line git prints for `git -C <folder> rev-parse <option>`, or null. A line starting with '-'
  * is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
- * does that with --path-format, before 2.5 with --git-common-dir).
+ * does that with --path-format, before 2.5 with --git-common-dir). Git runs on its own, never
+ * holding up the hub, and is killed at `until` (ms since 1970): a named pipe in a folder's `.git`
+ * would otherwise keep it waiting for good.
  */
-function revParse(folder: string, option: string, git: string) {
+async function revParse(folder: string, option: string, git: string, until: number): Promise<string | null> {
+  const left = until - Date.now()
+  if (left <= 0) return null
+  let proc: Bun.Subprocess<'ignore', 'pipe', 'ignore'>
   try {
-    const r = Bun.spawnSync([git, '-C', folder, 'rev-parse', option], { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
-    const line = r.exitCode === 0 ? (r.stdout.toString().split(/\r?\n/)[0] ?? '').trim() : ''
-    return line && !line.startsWith('-') ? line : null
+    proc = Bun.spawn([git, '-C', folder, 'rev-parse', option], { stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', env: { ...process.env, ...GIT_ENV } })
   } catch {
     return null
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stopped = new Promise<null>((ok) => {
+    timer = setTimeout(() => {
+      proc.kill('SIGKILL')
+      ok(null)
+    }, left)
+  })
+  const done = (async () => {
+    const text = await new Response(proc.stdout).text()
+    return (await proc.exited) === 0 ? text : null
+  })().catch(() => null)
+  try {
+    const text = await Promise.race([done, stopped])
+    const line = text === null ? '' : (text.split(/\r?\n/)[0] ?? '').trim()
+    return line && !line.startsWith('-') ? line : null
+  } finally {
+    clearTimeout(timer)
   }
 }
 
@@ -526,12 +582,13 @@ function revParse(folder: string, option: string, git: string) {
  * common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
  * Blueprint skill group it. A submodule's common dir (`.git/modules/<name>`) or a bare repo's
  * (`<name>.git`) keeps the top folder. Two plain calls work on any git; the top folder git prints is
- * kept when the common dir's parent is the same folder.
+ * kept when the common dir's parent is the same folder. Both calls together get GIT_TIMEOUT_MS.
  */
-export function projectOf(folder: string, git = 'git') {
-  const top = revParse(folder, '--show-toplevel', git)
+export async function projectOf(folder: string, git = 'git'): Promise<string> {
+  const until = Date.now() + GIT_TIMEOUT_MS
+  const top = await revParse(folder, '--show-toplevel', git, until)
   if (!top) return folder
-  const c = revParse(folder, '--git-common-dir', git)
+  const c = await revParse(folder, '--git-common-dir', git, until)
   const common = c ? path.resolve(folder, c) : null
   if (!common || path.basename(common) !== '.git' || !isDir(common)) return top
   const parent = path.dirname(common)
@@ -657,7 +714,7 @@ export function pagesFeature(o: PagesOptions) {
     const marker = markerOf(folder)
     const asked = b.name?.trim().slice(0, 200)
     const name = asked || marker.name || path.basename(folder)
-    const project = projectOf(folder)
+    const project = await projectOf(folder)
     const record = await registry.update<PageRecord>((pages) => {
       const records = pages.map(asRecord)
       const same = records.find((r) => r?.path === folder)

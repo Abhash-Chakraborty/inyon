@@ -88,6 +88,7 @@ fn a_new_session_secret_ends_every_token() {
 #[test]
 fn the_rules_match_the_vectors() {
     let r = vectors("rules.json");
+    assert_eq!(r["listMax"].as_u64(), Some(PAGES_LIST_MAX));
     for c in r["slugify"].as_array().unwrap() {
         assert_eq!(slugify(c["text"].as_str().unwrap()), c["slug"].as_str().unwrap(), "{c}");
     }

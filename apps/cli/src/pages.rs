@@ -41,6 +41,15 @@ const NAME_MAX: usize = 200;
 const TITLE_READ: usize = 256 * 1024;
 /// A bigger `.inyon-page.json` isn't read for a page's name and slug.
 const MARKER_MAX: u64 = 64 * 1024;
+/// The most of pages.json this reads, as both hubs and Blueprint (`PAGES_LIST_MAX` in
+/// pages-core.ts): a bigger file, a sparse one claiming terabytes too, is a list it can't read.
+pub const LIST_MAX: u64 = 4 * 1024 * 1024;
+/// A lock holds a process id and a tag; anything longer isn't one of ours.
+const LOCK_MAX: u64 = 256;
+/// How long the git calls that find a page's project may take, together, before git is stopped.
+pub const GIT_TIMEOUT: Duration = Duration::from_millis(3000);
+/// Set for those calls: no machine-wide git config, and no lock files taken just to look.
+const GIT_ENV: [(&str, &str); 2] = [("GIT_CONFIG_NOSYSTEM", "1"), ("GIT_OPTIONAL_LOCKS", "0")];
 
 // ---------- the shared rules ----------
 
@@ -304,19 +313,22 @@ fn decode_entities(s: &str) -> String {
 fn page_title(site: &Path) -> Option<String> {
     use std::io::Read;
     let mut head = Vec::new();
-    open_plain(&site.join("index.html")).ok()?.0.take(TITLE_READ as u64).read_to_end(&mut head).ok()?;
+    open_plain(&site.join("index.html"), false).ok()?.0.take(TITLE_READ as u64).read_to_end(&mut head).ok()?;
     title_of(&String::from_utf8_lossy(&head))
 }
 
-/// Opens a file to read without ever waiting on it: with O_NONBLOCK and without following a symlink
-/// at its end, and only when the open file is a plain file. A FIFO left in a site's folder (or as
-/// the list) would otherwise hold the read until something wrote to it. A plain file reads the
-/// same with O_NONBLOCK set. The file and its size.
-fn open_plain(path: &Path) -> std::io::Result<(fs::File, u64)> {
+/// Opens a file to read without ever waiting on it: with O_NONBLOCK, and only when the open file is
+/// a plain file. A FIFO left in a site's folder (or as the list) would otherwise hold the read until
+/// something wrote to it. A plain file reads the same with O_NONBLOCK set. A symlink at the end of
+/// the path is followed only when `follow` says so: the list may be one (a dotfile setup), a file in
+/// a site's folder may not. The file and its size.
+fn open_plain(path: &Path, follow: bool) -> std::io::Result<(fs::File, u64)> {
     let mut o = OpenOptions::new();
     o.read(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, if follow { libc::O_NONBLOCK } else { libc::O_NOFOLLOW | libc::O_NONBLOCK });
+    #[cfg(not(unix))]
+    let _ = follow;
     let file = o.open(path)?;
     let meta = file.metadata()?;
     if !meta.is_file() {
@@ -327,13 +339,18 @@ fn open_plain(path: &Path) -> std::io::Result<(fs::File, u64)> {
 
 /// A plain file's bytes (see open_plain), refused when there are more than `max`.
 fn read_plain(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    read_capped(path, max, false)
+}
+
+fn read_capped(path: &Path, max: u64, follow: bool) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let too_big = || std::io::Error::new(ErrorKind::InvalidData, "too big");
-    let (file, len) = open_plain(path)?;
+    let (file, len) = open_plain(path, follow)?;
     if len > max {
         return Err(too_big());
     }
-    let mut out = Vec::with_capacity(len as usize);
+    // a buffer that grows as it reads, never sized from the file, which can claim terabytes it doesn't have
+    let mut out = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut out)?;
     if out.len() as u64 > max {
         return Err(too_big());
@@ -380,7 +397,7 @@ fn project_of(folder: &str) -> String {
 }
 
 fn project_with(folder: &str, git: &str) -> String {
-    match main_tree(folder, git) {
+    match main_tree(folder, git, Instant::now() + GIT_TIMEOUT) {
         None => folder.to_string(),
         Some(top) if cfg!(windows) => top.replace('/', "\\"),
         Some(top) => top,
@@ -389,12 +406,30 @@ fn project_with(folder: &str, git: &str) -> String {
 
 /// The line git prints for `git -C <folder> rev-parse <option>`, or None. A line starting with '-'
 /// is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
-/// does that with --path-format, before 2.5 with --git-common-dir).
-fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
+/// does that with --path-format, before 2.5 with --git-common-dir). Git is killed at `until`: a
+/// named pipe in a folder's `.git` would otherwise keep it waiting for good.
+fn rev_parse(git: &str, folder: &str, option: &str, until: Instant) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
     let mut c = std::process::Command::new(git);
-    c.args(["-C", folder, "rev-parse", option]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    let out = crate::sys::quiet(&mut c).output().ok().filter(|o| o.status.success())?;
-    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_string();
+    c.args(["-C", folder, "rev-parse", option]).envs(GIT_ENV).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped());
+    let mut child = crate::sys::quiet(&mut c).spawn().ok()?;
+    // the one line rev-parse prints fits in the pipe, so git never waits on it before exiting
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => break,
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(10)),
+            Ok(Some(_)) => return None,
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let mut out = Vec::new();
+    child.stdout.take()?.read_to_end(&mut out).ok()?;
+    let line = String::from_utf8_lossy(&out).lines().next().unwrap_or("").trim().to_string();
     (!line.is_empty() && !line.starts_with('-')).then_some(line)
 }
 
@@ -403,9 +438,10 @@ fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
 /// `.git`, so the page is grouped under the repo, not the worktree. A submodule's common dir
 /// (`.git/modules/<name>`) or a bare repo's (`<name>.git`) keeps the top level. Two plain calls work
 /// on any git; the top level git prints is kept when the common dir's parent is the same folder.
-fn main_tree(folder: &str, git: &str) -> Option<String> {
-    let top = rev_parse(git, folder, "--show-toplevel")?;
-    let Some(common) = rev_parse(git, folder, "--git-common-dir").map(|c| lexical(&Path::new(folder).join(c))) else {
+/// Both calls stop at `until`.
+fn main_tree(folder: &str, git: &str, until: Instant) -> Option<String> {
+    let top = rev_parse(git, folder, "--show-toplevel", until)?;
+    let Some(common) = rev_parse(git, folder, "--git-common-dir", until).map(|c| lexical(&Path::new(folder).join(c))) else {
         return Some(top);
     };
     if common.file_name().is_none_or(|n| n != ".git") || !common.is_dir() {
@@ -430,7 +466,8 @@ fn with_lock<T>(file: &Path, f: impl FnOnce() -> Result<T, String>) -> Result<T,
     struct Held(PathBuf, String);
     impl Drop for Held {
         fn drop(&mut self) {
-            if fs::read_to_string(&self.0).is_ok_and(|t| t == self.1) {
+            // read as the list is, so a FIFO put in its place isn't waited on
+            if read_plain(&self.0, LOCK_MAX).is_ok_and(|t| t == self.1.as_bytes()) {
                 let _ = fs::remove_file(&self.0);
             }
         }
@@ -573,9 +610,11 @@ fn write_atomic(file: &Path, text: &str, mode: u32) -> std::io::Result<()> {
     result
 }
 
-/// The file as `{v: 1, pages: [...]}` (other keys kept), an empty list when it isn't there.
+/// The file as `{v: 1, pages: [...]}` (other keys kept), an empty list when it isn't there. The list
+/// may be a symlink (a dotfile setup); one that isn't a plain file of at most LIST_MAX bytes is a
+/// broken list.
 fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
-    let text = match read_plain(file, u64::MAX).map(String::from_utf8) {
+    let text = match read_capped(file, LIST_MAX, true).map(String::from_utf8) {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return Err(format!("Can't read {}: {e}", file.display())),
         Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -584,6 +623,7 @@ fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
             m.insert("pages".into(), json!([]));
             return Ok(m);
         }
+        Err(e) if e.kind() == ErrorKind::InvalidData => return Err(BROKEN_FILE.into()),
         Err(e) => return Err(format!("Can't read {}: {e}", file.display())),
     };
     match serde_json::from_str::<Value>(&text) {
@@ -592,9 +632,22 @@ fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
     }
 }
 
+/// Writes the list; a symlinked one (a dotfile setup) where the link leads, so the rename replaces
+/// that file and the link stays.
 fn write_list(file: &Path, list: &Map<String, Value>) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&Value::Object(list.clone())).unwrap_or_default() + "\n";
-    write_atomic(file, &text, 0o600).map_err(|e| cant_write(file, &e))
+    write_atomic(&link_target(file), &text, 0o600).map_err(|e| cant_write(file, &e))
+}
+
+/// The path a chain of symlinks ends at, read link by link so a link to a file not made yet still
+/// leads somewhere; the path itself when it isn't a link. Gives up after 40 links (a loop).
+pub fn link_target(file: &Path) -> PathBuf {
+    let mut p = file.to_owned();
+    for _ in 0..40 {
+        let Ok(to) = fs::read_link(&p) else { return p };
+        p = lexical(&p.parent().unwrap_or(Path::new("")).join(to));
+    }
+    p
 }
 
 /// Makes ~/.inyon when it isn't there, readable only by this user.
@@ -916,9 +969,13 @@ mod tests {
     #[cfg(unix)]
     impl Fifo {
         fn at(p: &Path) -> Fifo {
+            Fifo::after(p, 2)
+        }
+        /// The writer opens it after `secs` seconds.
+        fn after(p: &Path, secs: u32) -> Fifo {
             let _ = fs::remove_file(p);
             assert!(std::process::Command::new("mkfifo").arg(p).status().unwrap().success());
-            Fifo(std::process::Command::new("sh").args(["-c", "sleep 2; : > \"$1\"", "sh"]).arg(p).spawn().unwrap())
+            Fifo(std::process::Command::new("sh").args(["-c", &format!("sleep {secs}; : > \"$1\""), "sh"]).arg(p).spawn().unwrap())
         }
     }
 
@@ -956,14 +1013,46 @@ mod tests {
             quick(at);
         }
         {
-            // the list itself: refused, at once
+            // the list itself: a list it can't read, at once
             let _w = Fifo::at(&file);
             fs::remove_file(site.join("index.html")).unwrap();
             fs::write(site.join("index.html"), "<title>Piped plan</title>").unwrap();
             let at = Instant::now();
-            assert!(add(&file, &home, &site, None, None, "cli", 1).err().unwrap().starts_with("Can't read"));
+            assert_eq!(add(&file, &home, &site, None, None, "cli", 1).err().as_deref(), Some(BROKEN_FILE));
             quick(at);
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_named_pipe_put_in_place_of_the_lock_is_not_waited_on_when_it_is_released() {
+        let dir = std::env::temp_dir().join(format!("inyon-cli-lock-fifo-{}-{}", std::process::id(), random_tag()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join("pages.json.lock");
+        let at = Instant::now();
+        let w = with_lock(&dir.join("pages.json"), || Ok(Fifo::at(&lock))).unwrap();
+        assert!(at.elapsed() < Duration::from_secs(1), "took {:?}", at.elapsed());
+        // it isn't this writer's lock, so it stays
+        assert!(std::os::unix::fs::FileTypeExt::is_fifo(&fs::symlink_metadata(&lock).unwrap().file_type()));
+        drop(w);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn git_that_never_answers_a_named_pipe_as_git_head_is_stopped_after_three_seconds() {
+        let dir = fs::canonicalize(std::env::temp_dir()).unwrap().join(format!("inyon-cli-git-stuck-{}-{}", std::process::id(), random_tag()));
+        fs::create_dir_all(dir.join(".git/objects")).unwrap();
+        fs::create_dir_all(dir.join(".git/refs")).unwrap();
+        // a writer late enough that waiting on git fails the test instead of hanging it
+        let w = Fifo::after(&dir.join(".git/HEAD"), 8);
+        let at = Instant::now();
+        let folder = dir.to_str().unwrap();
+        assert_eq!(project_of(folder), folder);
+        let took = at.elapsed();
+        assert!(took > GIT_TIMEOUT - Duration::from_millis(200) && took < GIT_TIMEOUT + Duration::from_millis(1500), "took {took:?}");
+        drop(w);
         let _ = fs::remove_dir_all(&dir);
     }
 

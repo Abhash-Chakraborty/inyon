@@ -62,7 +62,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/uploads/` | Files you attached, per day and session |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |
-| `~/.inyon/pages.json` | From 0.20, the pages on this machine: each one's slug, name, folder, project, who added it and when. `inyon pages add`, Blueprint and the app write it, and the hub reads it again whenever it changes. It stays in your home folder even with `INYON_DATA_DIR` set |
+| `~/.inyon/pages.json` | From 0.20, the pages on this machine: each one's slug, name, folder, project, who added it and when. `inyon pages add`, Blueprint and the app write it, and the hub reads it again whenever it changes. It stays in your home folder even with `INYON_DATA_DIR` set. It can be a symlink into your dotfiles: Inyon reads through the link and writes the file it leads to, so the link stays. A file over 4 MB counts as a list Inyon can't read |
 | `~/.inyon/page-epochs.json` | From 0.20, a counter per page that revoking or removing it moves on, so older links stop working. It moves with `INYON_DATA_DIR` |
 | `~/.inyon/page-listed.json` | From 0.20, the pages the hub saw in `pages.json` last time, so a page removed while the hub was stopped still has its old links ended. It moves with `INYON_DATA_DIR` |
 | `<site>/.inyon-page.json` | From 0.20, a marker in a page's own folder with its name and slug, which the hub uses when the page is added. Names starting with a dot are never served |

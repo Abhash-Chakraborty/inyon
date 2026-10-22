@@ -104,6 +104,7 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 | **This page is gone** | It was taken off the list on that machine. Add the folder again if you still want it |
 | **Couldn't open "*name*"** | The app couldn't get a link from the hub; the reason is under it. **Try again** |
 | **Not found** inside the page | The page's folder was moved or deleted, or a link inside the page points at a file that isn't there. `inyon pages` on that computer says when a folder is gone; add it again from its new place |
+| **~/.inyon/pages.json isn't a page list Inyon can read** | The file isn't valid JSON, isn't a plain file (a named pipe, say) or is bigger than 4 MB. Fix it or delete it, then try again. A symlink to a real list is fine |
 | **The hub can't write in ~/.inyon** when adding or removing a page | The hub's user can't write to `~/.inyon` or remove a `pages.json.lock` left behind there. Make sure both belong to the hub's user, then try again |
 | **Couldn't revoke the links**, because the hub couldn't write to its data folder | The hub's disk is full or read-only. The old links stay closed only until the hub restarts. Free some space, then revoke again |
 | **Link expired** inside the page | An old link, or the page's links were revoked. Press **Reload**, or open the page from the list again |

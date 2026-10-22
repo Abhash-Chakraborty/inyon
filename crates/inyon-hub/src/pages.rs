@@ -20,7 +20,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
     decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, unique_slug, view_origin, within, FileStat, VerifyContext,
-    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, LOCAL_HOST, NO_INDEX, TOKEN_TTL_MS,
+    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, GIT_ENV, GIT_TIMEOUT_MS, LOCAL_HOST, NO_INDEX, PAGES_LIST_MAX, TOKEN_TTL_MS,
 };
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::js::text::JsStr;
@@ -43,6 +43,8 @@ pub const PROGRESS_TTL_MS: u64 = 30_000;
 const PROGRESS_MAX: u64 = 1024 * 1024;
 /// A bigger `.inyon-page.json` isn't read for a page's name and slug.
 const MARKER_MAX: u64 = 64 * 1024;
+/// A lock holds a process id and a tag; anything longer isn't one of ours.
+const LOCK_MAX: u64 = 256;
 
 pub const UNKNOWN_PAGE: &str = "Unknown page";
 pub const OTHER_MACHINE: &str = "Pages can only be added on the hub's own machine for now";
@@ -152,7 +154,8 @@ impl Registry {
             return;
         }
         *self.seen.borrow_mut() = stamp;
-        let text = read_plain(&self.file, u64::MAX).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+        // a list that can't be read as a plain file of at most PAGES_LIST_MAX bytes is a broken one
+        let text = read_list(&self.file).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         let parsed = parse(&text);
         *self.broken.borrow_mut() = parsed.is_none();
         let mut out: Vec<Record> = vec![];
@@ -187,9 +190,10 @@ impl Registry {
     pub async fn update<T>(&self, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
         let file = self.file.clone();
         with_lock(&lock_of(&self.file), 3000, move || {
-            let current = match read_plain(&file, u64::MAX) {
+            let current = match read_list(&file) {
                 Ok(b) => parse(&String::from_utf8_lossy(&b)).ok_or_else(|| http(500, BROKEN_FILE))?,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({ "v": 1, "pages": [] }).as_object().cloned().unwrap_or_default(),
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => return Err(http(500, BROKEN_FILE)),
                 Err(e) => return Err(HubError::plain(e.to_string())),
             };
             let pages = current.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
@@ -244,22 +248,35 @@ fn create_private(p: &Path, exclusive: bool) -> std::io::Result<std::fs::File> {
 
 /// A file's bytes, read without ever waiting on it: opened with O_NONBLOCK and without following a
 /// symlink at its end, then read only when the open file is a plain file of at most `max` bytes. A
-/// FIFO an agent leaves in a page folder (or as the list) would otherwise hold the read, and with it
-/// the whole hub, until something wrote to it. A plain file reads the same with O_NONBLOCK set.
+/// FIFO an agent leaves in a page folder would otherwise hold the read, and with it the whole hub,
+/// until something wrote to it. A plain file reads the same with O_NONBLOCK set.
 pub fn read_plain(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
+    read_capped(path, max, false)
+}
+
+/// ~/.inyon/pages.json's bytes, read as `read_plain` reads, at most PAGES_LIST_MAX of them. The
+/// list may be a symlink (a dotfile setup), so the one at the end of its path is followed.
+pub fn read_list(path: &Path) -> std::io::Result<Vec<u8>> {
+    read_capped(path, PAGES_LIST_MAX, true)
+}
+
+fn read_capped(path: &Path, max: u64, follow: bool) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let not_plain = || std::io::Error::new(std::io::ErrorKind::InvalidData, "not a plain file of a size the hub reads");
     let mut o = std::fs::OpenOptions::new();
     o.read(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut o, if follow { libc::O_NONBLOCK } else { libc::O_NOFOLLOW | libc::O_NONBLOCK });
+    #[cfg(not(unix))]
+    let _ = follow;
     let file = o.open(path)?;
     let meta = file.metadata()?;
     if !meta.is_file() || meta.len() > max {
         return Err(not_plain());
     }
-    // read to the end (it may have grown since), refusing it once it passes `max`
-    let mut out = Vec::with_capacity(meta.len() as usize);
+    // read to the end (it may have grown since), refusing it once it passes `max`; the buffer grows
+    // as it reads, never sized from the file, which can claim terabytes it doesn't have
+    let mut out = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut out)?;
     if out.len() as u64 > max {
         return Err(not_plain());
@@ -267,9 +284,12 @@ pub fn read_plain(path: &Path, max: u64) -> std::io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Writes beside the file and renames over it, so a reader never sees half a list.
+/// Writes beside the file and renames over it, so a reader never sees half a list. A symlinked list
+/// (a dotfile setup) is written where the link leads: the rename replaces that file, and the link
+/// stays.
 fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
+    let file = &link_target(file);
     if let Some(dir) = file.parent() {
         private_dir(dir)?;
     }
@@ -282,6 +302,17 @@ fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
     })();
     let _ = std::fs::remove_file(&tmp);
     r
+}
+
+/// The path a chain of symlinks ends at, read link by link so a link to a file not made yet still
+/// leads somewhere; the path itself when it isn't a link. Gives up after 40 links (a loop).
+pub fn link_target(file: &Path) -> PathBuf {
+    let mut p = file.to_owned();
+    for _ in 0..40 {
+        let Ok(to) = std::fs::read_link(&p) else { return p };
+        p = lexical(&p.parent().unwrap_or(Path::new("")).join(to));
+    }
+    p
 }
 
 /// Runs `f` holding `lock`: an exclusive create, waiting up to `wait` ms, taking over a lock older
@@ -375,9 +406,10 @@ pub fn remove_judged(lock: &Path, old: &std::fs::Metadata) -> std::io::Result<()
     Ok(())
 }
 
-/// Removes the lock if it is still this writer's.
+/// Removes the lock if it is still this writer's (read as the list is, so a FIFO put there isn't
+/// waited on).
 pub fn release_lock(lock: &Path, mine: &str) {
-    if std::fs::read_to_string(lock).is_ok_and(|t| t == mine) {
+    if read_plain(lock, LOCK_MAX).is_ok_and(|t| t == mine.as_bytes()) {
         let _ = std::fs::remove_file(lock);
     }
 }
@@ -542,17 +574,20 @@ impl ViewFs for DiskFs {
 
 /// The line git prints for `git -C <folder> rev-parse <option>`, or None. A line starting with '-'
 /// is refused: a git too old to know the option prints it back and still exits 0 (git before 2.31
-/// does that with --path-format, before 2.5 with --git-common-dir).
-async fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
-    let out = tokio::process::Command::new(git)
+/// does that with --path-format, before 2.5 with --git-common-dir). Git is killed at `until`: a
+/// named pipe in a folder's `.git` would otherwise keep it waiting for good.
+async fn rev_parse(git: &str, folder: &str, option: &str, until: tokio::time::Instant) -> Option<String> {
+    let child = tokio::process::Command::new(git)
         .args(["-C", folder, "rev-parse", option])
+        .envs(GIT_ENV)
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
-        .output()
-        .await
-        .ok()
-        .filter(|o| o.status.success())?;
+        .kill_on_drop(true)
+        .spawn()
+        .ok()?;
+    // past `until` the wait is dropped, and with it the child, which kill_on_drop kills
+    let out = tokio::time::timeout_at(until, child.wait_with_output()).await.ok()?.ok().filter(|o| o.status.success())?;
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.split('\n').next().unwrap_or("").jtrim();
     (!line.is_empty() && !line.starts_with('-')).then(|| line.to_owned())
@@ -563,12 +598,13 @@ async fn rev_parse(git: &str, folder: &str, option: &str) -> Option<String> {
 /// common dir is the main tree's `.git`, so the page is grouped under the repo, as the CLI and the
 /// Blueprint skill group it. A submodule's common dir (`.git/modules/<name>`) or a bare repo's
 /// (`<name>.git`) keeps the top folder. Two plain calls work on any git; the top folder git prints is
-/// kept when the common dir's parent is the same folder.
+/// kept when the common dir's parent is the same folder. Both calls together get GIT_TIMEOUT_MS.
 pub(crate) async fn project_of(folder: &str, git: &str) -> String {
-    let Some(top) = rev_parse(git, folder, "--show-toplevel").await else {
+    let until = tokio::time::Instant::now() + std::time::Duration::from_millis(GIT_TIMEOUT_MS);
+    let Some(top) = rev_parse(git, folder, "--show-toplevel", until).await else {
         return folder.to_owned();
     };
-    let Some(common) = rev_parse(git, folder, "--git-common-dir").await.map(|c| lexical(&Path::new(folder).join(c))) else {
+    let Some(common) = rev_parse(git, folder, "--git-common-dir", until).await.map(|c| lexical(&Path::new(folder).join(c))) else {
         return top;
     };
     if common.file_name().is_none_or(|n| n != ".git") || !common.is_dir() {
