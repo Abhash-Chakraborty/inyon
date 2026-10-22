@@ -28,7 +28,8 @@ impl Home {
 
     /// A site folder under the home, with an index.html titled `title`.
     fn site(&self, rel: &str, title: &str) -> PathBuf {
-        let d = self.dir.join(rel);
+        // one part at a time, so a Windows path has no '/' in it
+        let d = rel.split('/').fold(self.dir.clone(), |d, part| d.join(part));
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("index.html"), format!("<!doctype html><html><head><title>{title}</title></head><body></body></html>")).unwrap();
         d
@@ -285,7 +286,7 @@ fn the_project_is_the_git_top_level() {
     assert_eq!(code, 0, "{stdout}");
     assert!(stdout.contains("under my-repo"), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
-    assert_eq!(fs::canonicalize(project).unwrap(), repo);
+    assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }
 
 #[test]
@@ -305,7 +306,7 @@ fn the_project_of_a_folder_in_a_linked_worktree_is_the_main_checkout() {
     assert_eq!(code, 0, "{stdout}");
     assert!(stdout.contains("under my-repo."), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
-    assert_eq!(fs::canonicalize(project).unwrap(), repo);
+    assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }
 
 #[test]
