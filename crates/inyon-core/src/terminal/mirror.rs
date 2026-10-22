@@ -161,6 +161,41 @@ fn short_id(n: usize) -> String {
     crate::ids::random_uuid().replace('-', "")[..n].to_owned()
 }
 
+/// A batch of input as few commands as it can go in: one shell for the whole batch, keys and text
+/// joined with &&, so it stops at the first that fails as one command per piece did. A shell has one
+/// stdin, so each piece of text after the first starts the next command. On Windows every program
+/// started is slow (sh, psmux, and busybox's mktemp, cat and rm), so a keystroke plus Enter is one
+/// shell, not two.
+pub fn batch_commands(pane: &str, inputs: &[Input]) -> Vec<(String, Option<String>)> {
+    let mut out = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut input: Option<String> = None;
+    let close = |parts: &mut Vec<String>, input: &mut Option<String>, out: &mut Vec<(String, Option<String>)>| {
+        if parts.is_empty() {
+            return;
+        }
+        let cmd = if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            parts.drain(..).map(|p| if p.starts_with("umask ") { format!("{{ {p}; }}") } else { p }).collect::<Vec<_>>().join(" && ")
+        };
+        parts.clear();
+        out.push((cmd, input.take()));
+    };
+    for x in inputs {
+        let (cmd, piece) = input_command(pane, x);
+        if piece.is_some() && input.is_some() {
+            close(&mut parts, &mut input, &mut out);
+        }
+        parts.push(cmd);
+        if piece.is_some() {
+            input = piece;
+        }
+    }
+    close(&mut parts, &mut input, &mut out);
+    out
+}
+
 /// The tmux commands for one piece of input, and what to feed them.
 pub fn input_command(pane: &str, x: &Input) -> (String, Option<String>) {
     let t = format!("tmux send-keys -t {}", shq(pane));
@@ -369,8 +404,7 @@ fn flush(m: Rc<Mirror>) -> LocalBoxFuture<'static, ()> {
             st.writing = true;
             std::mem::take(&mut st.pending)
         };
-        for x in to_input(&d) {
-            let (cmd, input) = input_command(&m.pane, &x);
+        for (cmd, input) in batch_commands(&m.pane, &to_input(&d)) {
             let opts = input.map(ExecOptions::input).unwrap_or_default();
             if m.host.exec(&cmd, opts).await.is_err() {
                 break;

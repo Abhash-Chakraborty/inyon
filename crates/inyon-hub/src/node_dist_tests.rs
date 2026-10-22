@@ -750,7 +750,9 @@ fn the_release_checksums_count_only_with_a_good_signature_from_the_release_key()
     assert!(e.message.contains("aren't the ones for Inyon 0.15.0 (they don't list inyon-0.15.0.apk)"), "{}", e.message);
     // a list changed by one byte, no signature, another key, and a changed trusted comment are each refused, before any file
     let retimed: &'static str = Box::leak(SIGNED_SIG.replace("timestamp:1791906365", "timestamp:1791906366").into_boxed_str());
-    for (sums, sig, key) in [("abd  file-a\nabc  inyon-0.14.0.apk\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)] {
+    for (sums, sig, key) in
+        [("abd  file-a\nabc  inyon-0.14.0.apk\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)]
+    {
         let asked = Rc::new(RefCell::new(Vec::new()));
         let e = block(signed_sums("http://r", key, "0.14.0", signed_release(asked.clone(), sums, sig))).unwrap_err();
         assert_eq!(e.status, Some(502), "{}", e.message);

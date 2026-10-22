@@ -458,9 +458,10 @@ fn through_buffer(buffer: &str, pane: &str, flags: &str) -> String {
     let b = shq(buffer);
     let t = r#"${s:+-t "$s"}"#;
     let p = shq(pane);
-    // the trap deletes the file (it holds what was pasted) even when the connection drops half way
+    // the trap deletes the file (it holds what was pasted) even when the connection drops half way;
+    // once it's gone f is emptied, so the trap doesn't start a second rm (each start costs on Windows)
     format!(
-        r#"umask 077; f=$(mktemp) && trap 'rm -f "$f"' EXIT HUP INT TERM && {{ s=; [ "$OS" = Windows_NT ] && s={p}; cat > "$f" && tmux {t} load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; r=$?; rm -f "$f"; [ $r = 0 ] || tmux {t} delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
+        r#"umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && {{ s=; [ "$OS" = Windows_NT ] && s={p}; cat > "$f" && tmux {t} load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; r=$?; rm -f "$f"; f=; [ $r = 0 ] || tmux {t} delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
     )
 }
 

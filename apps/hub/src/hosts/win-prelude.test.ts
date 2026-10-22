@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import PRELUDE from '../../../node/win-prelude.sh' with { type: 'text' }
@@ -100,4 +100,30 @@ test('typed text reaches tmux through a file and never in any arguments, on psmu
   const tmux = await go({})
   expect(tmux).not.toContain(secret)
   expect(tmux.replace(/\[[^\]]*tmp[^\]]*\]/, '[file]')).toBe('[load-buffer][-b][b1][file]\n[paste-buffer][-d][-b][b1][-t][$14:.%1]\n[send-keys][-t][$14:.%1][Enter]\n')
+})
+
+test('a keystroke batch on psmux is one shell that starts mktemp, cat and rm once each', async () => {
+  const { batchCommands, toInput } = await import('../terminal/mirror.ts')
+  // stand-ins that note each start, then do the real thing
+  for (const name of ['mktemp', 'cat', 'rm']) {
+    const real = Bun.which(name, { PATH: '/usr/bin:/bin' })!
+    writeFileSync(join(bin, name), `#!/bin/sh\necho ${name} >> "${bin}/starts"\nexec ${real} "$@"\n`)
+    chmodSync(join(bin, name), 0o755)
+  }
+  try {
+    const batch = batchCommands('%14.1', toInput('ls -la\r'))
+    expect(batch.length).toBe(1)
+    expect(batch[0].input).toBe('ls -la')
+    writeFileSync(join(bin, 'argv'), '')
+    writeFileSync(join(bin, 'starts'), '')
+    const r = Bun.spawnSync(['/bin/sh', '-c', `${PRELUDE}\n${batch[0].cmd}`], { env: { PATH: `${bin}:/usr/bin:/bin`, OS: 'Windows_NT' }, stdin: Buffer.from(batch[0].input!) })
+    expect(r.exitCode).toBe(0)
+    expect((await Bun.file(join(bin, 'starts')).text()).split('\n').filter(Boolean).sort()).toEqual(['cat', 'mktemp', 'rm'])
+    const argv = (await Bun.file(join(bin, 'argv')).text()).replace(/\[[^\]]*tmp[^\]]*\]/, '[file]').replace(/inyon-term-\w+/g, 'b')
+    expect(argv).toBe('[-t][$14:.%1][load-buffer][-b][b][file]\n[paste-buffer][-d][-b][b][-t][$14:.%1]\n[send-keys][-t][$14:.%1][Enter]\n')
+    // text, a key, then more text: the second text needs stdin of its own
+    expect(batchCommands('%14.1', toInput('a\x1b[Ab')).map((c) => c.input)).toEqual(['a', 'b'])
+  } finally {
+    for (const name of ['mktemp', 'cat', 'rm']) rmSync(join(bin, name), { force: true })
+  }
 })

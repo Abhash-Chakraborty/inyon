@@ -236,7 +236,9 @@ impl Server {
                         let command = if hb.split { hb.commands.get(&format!("{os}-{arch}")).cloned() } else { engine.clone() };
                         let engine_sum = engine.as_ref().map(|b| if hb.sum_override.is_empty() { sha(b.as_bytes()) } else { hb.sum_override.clone() });
                         match (path.as_str(), hb.split) {
-                            ("/node/release/SHA256SUMS", _) if hb.list_status.is_some() => (hb.list_status.unwrap(), String::new(), b"Could not get the checksums of Inyon 0.20.0 (503)\n".to_vec()),
+                            ("/node/release/SHA256SUMS", _) if hb.list_status.is_some() => {
+                                (hb.list_status.unwrap(), String::new(), b"Could not get the checksums of Inyon 0.20.0 (503)\n".to_vec())
+                            }
                             ("/node/release/SHA256SUMS", _) if hb.signed => ("200 OK", String::new(), hb.release_sums().into_bytes()),
                             ("/node/release/version", _) if hb.signed => ("200 OK", String::new(), format!("{}\n", hb.version).into_bytes()),
                             ("/node/release/SHA256SUMS.minisig", _) if hb.signed => ("200 OK", String::new(), sign(&hb.signer, hb.release_sums().as_bytes()).into_bytes()),

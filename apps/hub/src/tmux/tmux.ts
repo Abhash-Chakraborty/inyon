@@ -371,8 +371,9 @@ export const typeCommand = (buffer: string, pane: string) => throughBuffer(buffe
 function throughBuffer(buffer: string, pane: string, flags: string) {
   const b = shq(buffer)
   const t = `\${s:+-t "$s"}`
-  // the trap deletes the file (it holds what was pasted) even when the connection drops half way
-  return `umask 077; f=$(mktemp) && trap 'rm -f "$f"' EXIT HUP INT TERM && { s=; [ "$OS" = Windows_NT ] && s=${shq(pane)}; cat > "$f" && tmux ${t} load-buffer -b ${b} "$f" && tmux paste-buffer -d ${flags}-b ${b} -t ${shq(pane)}; r=$?; rm -f "$f"; [ $r = 0 ] || tmux ${t} delete-buffer -b ${b} 2>/dev/null; [ $r = 0 ]; }`
+  // the trap deletes the file (it holds what was pasted) even when the connection drops half way;
+  // once it's gone f is emptied, so the trap doesn't start a second rm (each start costs on Windows)
+  return `umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && { s=; [ "$OS" = Windows_NT ] && s=${shq(pane)}; cat > "$f" && tmux ${t} load-buffer -b ${b} "$f" && tmux paste-buffer -d ${flags}-b ${b} -t ${shq(pane)}; r=$?; rm -f "$f"; f=; [ $r = 0 ] || tmux ${t} delete-buffer -b ${b} 2>/dev/null; [ $r = 0 ]; }`
 }
 
 /**
