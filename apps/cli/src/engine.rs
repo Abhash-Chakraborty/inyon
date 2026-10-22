@@ -355,14 +355,11 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
     std::fs::rename(&tmp, to).map_err(|e| e.to_string())
 }
 
+/// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by whichever engine
+/// connects (crates/inyon-engine/src/hub_tls.rs, apps/node/pin.ts), never made an authority here.
 fn command(engine: &Path) -> Command {
     let mut c = Command::new(engine);
     c.env("INYON_CLI", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
-    // the Bun engine trusts the certificate of a hub joined by its sha256 the way Node would
-    let hub_cert = inyon_engine::http::hub_cert_file();
-    if env_var("NODE_EXTRA_CA_CERTS").is_none() && hub_cert.exists() {
-        c.env("NODE_EXTRA_CA_CERTS", hub_cert);
-    }
     c
 }
 

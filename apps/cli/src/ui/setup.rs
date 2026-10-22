@@ -314,9 +314,11 @@ impl Wizard {
                         },
                     ];
                     for n in p.vpn_networks() {
+                        // plain http only on Tailscale and NetBird; ZeroTier and WireGuard get a certificate as the LAN does
+                        let https = if n.ip.parse().is_ok_and(inyon_engine::hub::plain_http_ip) { "" } else { ", over HTTPS" };
                         v.push(Item::Radio {
                             label: n.kind.label().into(),
-                            note: n.name.clone().map(|name| format!("{} ({name})", n.ip)).unwrap_or_else(|| n.ip.clone()),
+                            note: format!("{}{https}", n.name.clone().map(|name| format!("{} ({name})", n.ip)).unwrap_or_else(|| n.ip.clone())),
                             on: p.bind == Bind::Vpn(n.ip.clone()),
                             disabled: false,
                         });

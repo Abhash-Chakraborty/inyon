@@ -382,6 +382,7 @@ class Registry {
         os: pr.os,
         machineKind: pr.machineKind,
         nodeVersion: rt.host.config.kind === 'node' || rt.host.config.kind === 'link' ? nodeLinks.info.get(rt.host.id)?.version : undefined,
+        nodeWarning: rt.host.config.kind === 'node' || rt.host.config.kind === 'link' ? nodeLinks.info.get(rt.host.id)?.warning : undefined,
         latencyMs: pr.latencyMs,
         sessions: pr.sessions,
         updatedAt: Date.now(),

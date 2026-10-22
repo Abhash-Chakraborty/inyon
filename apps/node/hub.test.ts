@@ -20,7 +20,10 @@ test('a LAN address or a public one is refused, and a name is looked up', () => 
 })
 
 test('a name passes only when every address it has is allowed', async () => {
-  expect(await checkName('localhost')).toBe('')
+  // the addresses it was judged by, to connect to and nothing else
+  const local = await checkName('localhost')
+  expect(local && 'addrs' in local && local.addrs.length > 0 && local.addrs.every((a) => a === '::1' || a.startsWith('127.'))).toBe(true)
+  expect(await checkName('192.168.1.2')).toEqual({ why: expect.stringContaining('Refusing to send the token over plain http to 192.168.1.2') })
   expect(await checkName('nothing.invalid')).toBeNull()
   expect(plainHttpIp('100.100.1.1')).toBe(true)
   expect(plainHttpIp('192.168.1.2')).toBe(false)

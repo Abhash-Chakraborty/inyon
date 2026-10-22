@@ -199,7 +199,7 @@ inyon doctor
 
 Checks, one line each: the engine (from 0.19 "built in", plus the hub's engine on a hub) and the command, tmux (psmux on Windows), which agents are on the `PATH`, each service, leftovers from tether-node, the link's and the hub's ports, the private networks found, `cloudflared`, the clock and the last update. A line starting with `!` needs attention. With `--json`, `ok` is `false` when any check failed.
 
-From 0.20 a `reach` line says when phones reach the computer only through the tunnel (the default on Windows), and how to let phones on the same Wi-Fi or VPN in. On Windows with *LAN* or *VPN* on, doctor also checks the link's port and the firewall rule "Inyon link", and prints the command that adds the rule when it's missing.
+From 0.20 a `reach` line says when phones reach the computer only through the tunnel (the default on Windows), and how to let phones on the same Wi-Fi or VPN in. On Windows with *LAN* or *VPN* on, doctor also checks the link's port and the firewall rule "Inyon link", and prints the command that adds the rule when it's missing. On a machine added to a hub, a `hub` line says whether its connection may go to the saved address, and repeats a warning or problem the connection reported, such as a hub on plain http (see [Plain http](machines.md#plain-http)).
 
 ## Update and uninstall
 

@@ -55,16 +55,16 @@ The hub listens only on its own machine until you choose otherwise, because anyo
 
 ### A private network
 
-On Tailscale, Headscale, NetBird, ZeroTier or WireGuard, let the hub listen on that network's address. In `inyon setup`, choose the network under *Network*; setup writes it to `~/.inyon/hub.env`:
+On Tailscale, Headscale, NetBird, ZeroTier or WireGuard, let the hub listen on that network's address. In `inyon setup`, choose the network under *Network*; setup writes it to `~/.inyon/hub.env`. On a Tailscale or NetBird address:
 
 ```sh
 BIND=100.64.0.5
 INYON_ALLOW_HTTP=1
 ```
 
-`INYON_ALLOW_HTTP=1` allows plain `http://` on that address, which is fine on a VPN that already encrypts. Then open `http://<machine>:4777` from any device on the network. Names on Tailscale (`.ts.net`), NetBird and common home networks (`.local`, `.lan`, `.home.arpa`) are accepted automatically.
+`INYON_ALLOW_HTTP=1` allows plain `http://` on that address, which is fine on a VPN that already encrypts. Then open `http://<machine>:4777` from any device on the network. On a ZeroTier or WireGuard address, which machines can't tell apart from a LAN, setup makes a certificate as it does for [the LAN](#the-lan) (from 0.20), and the hub answers on `https://`. Names on Tailscale (`.ts.net`), NetBird and common home networks (`.local`, `.lan`, `.home.arpa`) are accepted automatically.
 
-From 0.20 a machine sends its token over plain `http://` only to a Tailscale or NetBird address (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or to a name that points only there, such as the machine's `.ts.net` name. On ZeroTier or WireGuard, whose addresses look like any LAN to the machine, add machines through HTTPS, or set `INYON_ALLOW_INSECURE=1` on each machine. See [Adding machines](machines.md#plain-http).
+From 0.20 a machine sends its token over plain `http://` only to a Tailscale or NetBird address (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or to a name that points only there, such as the machine's `.ts.net` name. On ZeroTier or WireGuard, whose addresses look like any LAN to the machine, setup gives the hub HTTPS, and the **Add a machine** command carries its certificate's SHA-256. See [Adding machines](machines.md#plain-http).
 
 ### HTTPS
 
@@ -88,7 +88,7 @@ Choose *LAN* in setup (`BIND=0.0.0.0`) to answer on every interface of a home ne
 
 No authority vouches for that certificate, so the browser warns the first time. Open the certificate from the warning, compare its SHA-256 fingerprint with the one setup printed, and only then go on. A certificate you set in `TLS_CERT` yourself is kept, and so is setup's own when you run setup again, so the machines added with it keep working. To make a new one, for example after the machine's address changed, delete `~/.inyon/tls` and run setup again; then add the machines again.
 
-The hub puts the certificate's SHA-256 into every **Add a machine** command (from 0.20), and the machine trusts that certificate and no other for the hub. The Windows command can't check it yet: add a Windows machine through a VPN address, or give the hub a certificate Windows trusts. The Android app doesn't accept a certificate like this yet either, so on the LAN it connects through a VPN address or `tailscale serve`.
+The hub puts the certificate's SHA-256 into every **Add a machine** command (from 0.20), and the machine accepts exactly that certificate from the hub's address, and never as an authority for anything else. The Windows command can't check it yet: add a Windows machine through a VPN address, or give the hub a certificate Windows trusts. The Android app doesn't accept a certificate like this yet either, so on the LAN it connects through a VPN address or `tailscale serve`.
 
 Before 0.20, choosing *LAN* served plain http and wrote `INYON_ALLOW_HTTP=1`. Prefer a VPN if the network isn't yours alone.
 

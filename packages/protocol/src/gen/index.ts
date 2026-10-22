@@ -328,6 +328,11 @@ machineKind?: MachineKind,
  */
 nodeVersion?: string, 
 /**
+ * what that machine's inyon warns about its connection to the hub (plain http, from a machine
+ * added before 0.20), with how to fix it
+ */
+nodeWarning?: string, 
+/**
  * set when that inyon is behind, or while an update runs
  */
 nodeUpdate?: NodeUpdate, latencyMs?: number, sessions: Array<SessionInfo>, updatedAt: number, 

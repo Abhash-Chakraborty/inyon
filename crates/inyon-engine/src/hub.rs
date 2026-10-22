@@ -58,8 +58,10 @@ pub fn plain_refusal(host: &str) -> String {
 /// Looks up a hub's name and checks that every address it has is one plain http may go to (a
 /// MagicDNS name that points into the tailnet is). Err(None) when the name couldn't be looked up,
 /// which is worth trying again; Err(Some(why)) when it points somewhere it mustn't.
-pub async fn check_name(host: &str, port: u16) -> Result<(), Option<String>> {
-    judge(host, tokio::net::lookup_host((host, port)).await.map_err(|_| None)?.map(|a| a.ip()).collect())
+pub async fn check_name(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, Option<String>> {
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port)).await.map_err(|_| None)?.collect();
+    judge(host, addrs.iter().map(|a| a.ip()).collect())?;
+    Ok(addrs)
 }
 
 /// check_name, for a program with no async threads (`inyon join`).
@@ -117,11 +119,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_name_passes_only_when_every_address_it_has_is_allowed() {
-        assert_eq!(check_name("localhost", 4777).await, Ok(()));
+        // the addresses it was judged by, to connect to and nothing else
+        assert!(check_name("localhost", 4777).await.unwrap().iter().all(|a| a.ip().is_loopback() && a.port() == 4777));
         // 192.168.1.2 written as a name
         let lan = check_name("192.168.1.2", 4777).await.unwrap_err().unwrap();
         assert!(lan.starts_with("Refusing to send the token over plain http to 192.168.1.2") && lan.contains("is 192.168.1.2"), "{lan}");
-        assert_eq!(check_name("100.100.1.1", 4777).await, Ok(()));
+        assert_eq!(check_name("100.100.1.1", 4777).await, Ok(vec!["100.100.1.1:4777".parse().unwrap()]));
         assert_eq!(check_name("nothing.invalid", 4777).await, Err(None));
         assert_eq!(check_name_now("localhost", 4777), Ok(()));
         assert!(check_name_now("192.168.1.2", 4777).unwrap_err().is_some());

@@ -38,6 +38,8 @@ struct Op {
 pub struct NodeInfo {
     pub version: Option<String>,
     pub os: Option<String>,
+    /// what the machine warns about its connection (plain http to a hub it was added to before 0.20)
+    pub warning: Option<String>,
     pub connected_at: u64,
 }
 
@@ -88,7 +90,7 @@ pub fn attach(host_id: &str, ws: Socket) {
     }
     with(|n| {
         n.sockets.insert(host_id.to_owned(), ws);
-        n.info.insert(host_id.to_owned(), NodeInfo { version: None, os: None, connected_at: now_ms() });
+        n.info.insert(host_id.to_owned(), NodeInfo { version: None, os: None, warning: None, connected_at: now_ms() });
     });
     notify(host_id, true);
 }
@@ -168,7 +170,7 @@ pub fn receive(host_id: &str, msg: &Value) {
     let m = Some(msg);
     if m.at("type").str() == Some("hello") {
         let s = |k: &str| m.at(k).str().map(str::to_owned);
-        with(|n| n.info.insert(host_id.to_owned(), NodeInfo { version: s("version"), os: s("os"), connected_at: now_ms() }));
+        with(|n| n.info.insert(host_id.to_owned(), NodeInfo { version: s("version"), os: s("os"), warning: s("warning").filter(|w| !w.is_empty()), connected_at: now_ms() }));
         return;
     }
     // `${hostId}:${msg.id}`: a number or a missing id is written as JavaScript would

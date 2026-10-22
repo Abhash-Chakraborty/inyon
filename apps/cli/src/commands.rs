@@ -277,6 +277,9 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
     trust_hub_cert(hub, pin.as_deref(), &|url| http::get_unverified(url), &inyon_engine::http::hub_cert_file())?;
     let win = sys.platform == Platform::Windows;
     let mut lines = vec![format!("INYON_HUB={hub}"), format!("INYON_TOKEN={token}")];
+    // the version that joined, so the connection knows this address passed this check (one saved
+    // before 0.20 on plain http still connects, with a warning); and INYON_ALLOW_INSECURE if it was needed
+    lines.extend(inyon_engine::connect::join_marks(hub));
     if win {
         if let Some(sh) = paths::env_var("INYON_SH") {
             lines.push(format!("INYON_SH={sh}"));
@@ -705,6 +708,17 @@ pub fn doctor(sys: &Sys) -> Outcome {
     let cloudflared = which("cloudflared").is_some() || bin_dir().join("cloudflared").exists() || bin_dir().join("cloudflared.exe").exists();
     checks.push((true, "tunnel".into(), if cloudflared { "cloudflared is here".into() } else { "cloudflared isn't here yet; the link fetches it on first use".into() }));
     checks.push((true, "clock".into(), format!("{} UTC", state::format_utc(state::now_ms()))));
+    if let Some(check) = inyon_engine::connect::saved_hub_check() {
+        let host = saved_hub().map(|h| http::host_of(&h)).unwrap_or_default();
+        // what the running connection last said, when it has a problem of its own
+        let said = connection_note().filter(|(problem, _)| *problem);
+        checks.push(match (check, said) {
+            (Err(why), _) => (false, "hub".into(), why),
+            (Ok(Some(warning)), _) => (false, "hub".into(), warning),
+            (Ok(None), Some((_, why))) => (false, "hub".into(), why),
+            (Ok(None), None) => (true, "hub".into(), host),
+        });
+    }
     if let Ok(s) = fs::read_to_string(update::status_file()) {
         let s = s.trim().to_string();
         checks.push((!s.starts_with("failed"), "last update".into(), s));
@@ -713,6 +727,15 @@ pub fn doctor(sys: &Sys) -> Outcome {
     let list: Vec<Value> = checks.iter().map(|(ok, name, detail)| json!({ "ok": ok, "check": name, "detail": detail })).collect();
     let all_ok = checks.iter().all(|c| c.0);
     Ok(json!({ "ok": all_ok, "checks": list, "message": lines.join("\n") }))
+}
+
+/// What the hub connection last wrote about itself in node.json, while it runs: (true, why) when
+/// it can't connect, (false, warning) when it connects in a way worth knowing about (plain http to a
+/// hub joined before 0.20).
+pub fn connection_note() -> Option<(bool, String)> {
+    let v: Value = serde_json::from_str(&fs::read_to_string(paths::node_dir().join("node.json")).ok()?).ok()?;
+    let text = |k: &str| v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from);
+    text("problem").map(|p| (true, p)).or_else(|| text("warning").map(|w| (false, w)))
 }
 
 // ---------- update ----------
@@ -1149,7 +1172,7 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
                 let ips: Vec<std::net::IpAddr> = plan.networks.iter().filter_map(|n| n.ip.parse().ok()).collect();
                 crate::hub_cert::make(&data_dir().join("tls"), &crate::hub_cert::names(&inyon_engine::hostname(), &ips))
             };
-            lines.extend(hub_settings(&plan.bind, &plan.networks, &mut env, &make)?);
+            lines.extend(hub_settings(&plan.bind, &mut env, &make)?);
             let _ = fs::create_dir_all(data_dir());
             fs::write(&file, env.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).map_err(|e| e.to_string())?;
             if !plan.autostart {
@@ -1226,16 +1249,12 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
     }
 }
 
-/// The hub's BIND and how it's reached, for setup's network choice. Plain http only where a VPN
-/// encrypts it already (INYON_ALLOW_HTTP); on the LAN, or any other address, the hub serves HTTPS
-/// on TLS_CERT and TLS_KEY, a certificate `make` makes unless you named your own. The lines to
-/// show: the certificate's fingerprint, for comparing in the browser.
-pub fn hub_settings(
-    bind: &Bind,
-    networks: &[networks::Network],
-    env: &mut std::collections::BTreeMap<String, String>,
-    make: &dyn Fn() -> Result<crate::hub_cert::Made, String>,
-) -> Result<Vec<String>, String> {
+/// The hub's BIND and how it's reached, for setup's network choice. Plain http only on a Tailscale
+/// or NetBird address (INYON_ALLOW_HTTP), the ones a machine sends its token to over plain http; on
+/// the LAN, ZeroTier, WireGuard or any other address, the hub serves HTTPS on TLS_CERT and TLS_KEY,
+/// a certificate `make` makes unless you named your own. The lines to show: the certificate's
+/// fingerprint, for comparing in the browser.
+pub fn hub_settings(bind: &Bind, env: &mut std::collections::BTreeMap<String, String>, make: &dyn Fn() -> Result<crate::hub_cert::Made, String>) -> Result<Vec<String>, String> {
     let address = match bind {
         Bind::Localhost => "127.0.0.1".to_string(),
         Bind::Lan => "0.0.0.0".to_string(),
@@ -1245,9 +1264,8 @@ pub fn hub_settings(
     env.insert("BIND".into(), address.clone());
     let ip: Option<std::net::IpAddr> = address.parse().ok();
     let local = ip.is_some_and(|ip| ip.is_loopback()) || address == "localhost";
-    let vpn = matches!(bind, Bind::Vpn(_))
-        || !local
-            && ip.is_some_and(|ip| !ip.is_unspecified() && (inyon_engine::hub::plain_http_ip(ip) || networks.iter().any(|n| n.kind != networks::Kind::Lan && n.ip == address)));
+    // the same rule machines hold plain http to: a ZeroTier or WireGuard address gets a certificate too
+    let vpn = !local && ip.is_some_and(|ip| !ip.is_unspecified() && inyon_engine::hub::plain_http_ip(ip));
     // set by an earlier setup for the LAN, it would serve plain http again
     if !vpn {
         env.remove("INYON_ALLOW_HTTP");
@@ -1511,12 +1529,8 @@ mod tests {
             made.set(made.get() + 1);
             crate::hub_cert::make(&dir, &crate::hub_cert::names("studio", &["192.168.1.20".parse().unwrap()]))
         };
-        let nets = vec![
-            networks::Network { kind: networks::Kind::Lan, ip: "192.168.1.20".into(), name: None },
-            networks::Network { kind: networks::Kind::Zerotier, ip: "10.147.17.5".into(), name: None },
-        ];
         let run = |bind: Bind, mut env: BTreeMap<String, String>| {
-            let lines = hub_settings(&bind, &nets, &mut env, &make).unwrap();
+            let lines = hub_settings(&bind, &mut env, &make).unwrap();
             (env, lines)
         };
         let keys = |env: &BTreeMap<String, String>| env.keys().cloned().collect::<Vec<_>>().join(" ");
@@ -1531,13 +1545,16 @@ mod tests {
         // set up again: the same certificate, so the machines added with it keep working
         let (again, _) = run(Bind::Lan, env.clone());
         assert_eq!((again, made.get()), (env, 1));
-        // an address of your own on the LAN, or a public one, is the same
-        for own in ["192.168.1.20", "203.0.113.7", "0.0.0.0"] {
-            let (env, _) = run(Bind::Own(own.into()), BTreeMap::new());
-            assert_eq!(keys(&env), "BIND TLS_CERT TLS_KEY", "{own}");
+        // an address of your own on the LAN, or a public one, is the same; and so are ZeroTier and
+        // WireGuard, which machines don't send their token to over plain http
+        for bind in
+            [Bind::Own("192.168.1.20".into()), Bind::Own("203.0.113.7".into()), Bind::Own("0.0.0.0".into()), Bind::Vpn("10.147.17.5".into()), Bind::Own("10.147.17.5".into())]
+        {
+            let (env, _) = run(bind.clone(), BTreeMap::from([("INYON_ALLOW_HTTP".into(), "1".into())]));
+            assert_eq!(keys(&env), "BIND TLS_CERT TLS_KEY", "{bind:?}");
         }
-        // a VPN encrypts on its own: plain http, as before
-        for bind in [Bind::Vpn("100.64.0.9".into()), Bind::Vpn("10.147.17.5".into()), Bind::Own("100.70.1.2".into()), Bind::Own("10.147.17.5".into())] {
+        // Tailscale and NetBird encrypt on their own: plain http, as before
+        for bind in [Bind::Vpn("100.64.0.9".into()), Bind::Own("100.70.1.2".into()), Bind::Vpn("fd7a:115c:a1e0::9".into())] {
             let (env, lines) = run(bind.clone(), BTreeMap::new());
             assert_eq!((keys(&env), env["INYON_ALLOW_HTTP"].as_str(), lines.len()), ("BIND INYON_ALLOW_HTTP".into(), "1", 0), "{bind:?}");
         }
@@ -1550,7 +1567,7 @@ mod tests {
             let (env, _) = run(bind, own.clone());
             assert_eq!((keys(&env), env["TLS_CERT"].as_str()), ("BIND TLS_CERT TLS_KEY".into(), "/etc/hub.pem"));
         }
-        assert_eq!(made.get(), 4);
+        assert_eq!(made.get(), 6);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

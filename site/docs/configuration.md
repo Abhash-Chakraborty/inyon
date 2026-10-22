@@ -32,13 +32,14 @@ These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
+| `INYON_JOINED` | Written by `inyon join` into `~/.inyon/node/env` with the version that joined (from 0.20). A machine whose file lacks it was added before 0.20, and keeps connecting to a hub on plain http, with a warning. See [Plain http](machines.md#plain-http) |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
 | `INYON_LEGACY_ENGINE` | `1` runs the link and the hub connection on the Bun engine `inyon-engine`, as 0.18 does, instead of inside `inyon` (from 0.19). `inyon service install` writes it into the service and remembers it for commands started without it. See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_NO_MODIFY_PATH` | Set to `1` before running `get.sh` or `get.ps1` to keep them from putting `inyon` on your `PATH` (from 0.17.1). See [Put inyon on your PATH](install.md#put-inyon-on-your-path) |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
-| `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on an address that isn't this machine's or a Tailscale or NetBird one, such as a LAN or ZeroTier address. From 0.20 it also lets `inyon update` take a hub's own checksums when the hub has no signed list. Avoid it |
-| `INYON_HUB_CERT` | The SHA-256 of a hub's own certificate, which its **Add a machine** command sets (from 0.20). `inyon join` saves that certificate as `~/.inyon/node/hub.crt` and trusts it for the hub |
+| `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on an address that isn't this machine's or a Tailscale or NetBird one, such as a LAN or ZeroTier address. From 0.20 it also lets `inyon update` take a hub's own checksums when the hub has no signed list, and `inyon join` writes it into `~/.inyon/node/env` when the address needed it, so the background connection keeps the choice. Avoid it |
+| `INYON_HUB_CERT` | The SHA-256 of a hub's own certificate, which its **Add a machine** command sets (from 0.20). `inyon join` saves that certificate as `~/.inyon/node/hub.crt`, and from then on the connections to that hub accept that exact certificate. It's never trusted as an authority, for the hub or anything else |
 | `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust as well as the usual ones, for a hub on a certificate from your organisation's own authority. The Bun engine always read it; from 0.19 `inyon` does too |
 | `NO_COLOR` | Turn colour off in the terminal |
 

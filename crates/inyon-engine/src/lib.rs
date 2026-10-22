@@ -13,6 +13,7 @@ pub mod cli;
 pub mod connect;
 pub mod http;
 pub mod hub;
+pub mod hub_tls;
 pub mod link;
 pub mod networks;
 pub mod ops;

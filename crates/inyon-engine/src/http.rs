@@ -23,12 +23,10 @@ pub fn insecure_tls() -> bool {
 
 /// The certificates in the file NODE_EXTRA_CA_CERTS names, trusted besides Mozilla's roots, as
 /// the Bun engine did (a hub behind a company's own certificate authority). A file that can't be
-/// read is said once and left out, as Node does.
+/// read is said once and left out, as Node does. A hub's own certificate is never one of them: it's
+/// pinned for that hub alone (crate::hub_tls).
 pub fn extra_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
-    let mut roots = node_extra_ca_certs();
-    // a hub that made its certificate itself, trusted by the sha256 its "Add a machine" command gave
-    roots.extend(pem_certs(&hub_cert_file()).unwrap_or_default());
-    roots
+    node_extra_ca_certs()
 }
 
 /// Where `inyon join` keeps the certificate of a hub that made it itself (see pinned_cert).
@@ -132,8 +130,54 @@ pub fn timed_agent(config: ureq::config::ConfigBuilder<ureq::typestate::AgentSco
 
 /// `timed_agent` with a resolver of its own (the tests hand out a dead address first).
 pub fn timed_agent_with(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>, limits: Limits, resolver: impl ureq::unversioned::resolver::Resolver) -> ureq::Agent {
+    timed_agent_pinned(config, limits, resolver, None)
+}
+
+/// `timed_agent_with`, and with `pin` the TLS of a hub whose certificate is pinned (crate::hub_tls).
+pub fn timed_agent_pinned(
+    config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+    limits: Limits,
+    resolver: impl ureq::unversioned::resolver::Resolver,
+    pin: Option<std::sync::Arc<rustls::ClientConfig>>,
+) -> ureq::Agent {
     let config = config.timeout_global(Some(limits.total)).timeout_resolve(Some(limits.connect)).timeout_connect(Some(limits.connect)).build();
-    ureq::Agent::with_parts(config, stall::Connector::new(limits.stall), resolver)
+    ureq::Agent::with_parts(config, stall::Connector::new(limits.stall, pin), resolver)
+}
+
+/// An agent for a request to `url`: the hub's pin when `url` is the hub joined and its certificate
+/// was kept, the usual roots for everything else.
+pub fn timed_agent_for(url: &str, config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>, limits: Limits) -> ureq::Agent {
+    timed_agent_to(url, config, limits, ureq::unversioned::resolver::DefaultResolver::default())
+}
+
+fn timed_agent_to(
+    url: &str,
+    config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+    limits: Limits,
+    resolver: impl ureq::unversioned::resolver::Resolver,
+) -> ureq::Agent {
+    let pin = if insecure_tls() { None } else { crate::hub_tls::config_for(url) };
+    timed_agent_pinned(config, limits, resolver, pin)
+}
+
+/// A name that resolves to these addresses only: ones already checked (crate::hub::check_name),
+/// so a second lookup can't send the request somewhere else.
+#[derive(Debug)]
+pub struct Addrs(pub Vec<std::net::SocketAddr>);
+
+impl ureq::unversioned::resolver::Resolver for Addrs {
+    fn resolve(
+        &self,
+        _uri: &ureq::http::Uri,
+        _config: &ureq::config::Config,
+        _timeout: ureq::unversioned::transport::NextTimeout,
+    ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
+        let mut v = self.empty();
+        for a in &self.0 {
+            v.push(*a);
+        }
+        Ok(v)
+    }
 }
 
 /// A request that gave up because nothing came for a while says so, and a connection that
@@ -152,17 +196,30 @@ mod stall {
     use std::time::Duration;
 
     use ureq::unversioned::transport::time::Duration as UDuration;
-    use ureq::unversioned::transport::{Buffers, ConnectionDetails, DefaultConnector, NextTimeout, Transport};
+    use ureq::unversioned::transport::{Buffers, ChainedConnector, ConnectionDetails, Connector as _, DefaultConnector, NextTimeout, TcpConnector, Transport};
+
+    use crate::hub_tls::ureq_tls::Tls;
+
+    #[derive(Debug)]
+    enum Inner {
+        Default(DefaultConnector),
+        /// a pinned hub: TCP, then TLS that accepts its certificate
+        Pinned(ChainedConnector<(), TcpConnector, Tls>),
+    }
 
     #[derive(Debug)]
     pub struct Connector {
-        inner: DefaultConnector,
+        inner: Inner,
         stall: Duration,
     }
 
     impl Connector {
-        pub fn new(stall: Duration) -> Connector {
-            Connector { inner: DefaultConnector::new(), stall }
+        pub fn new(stall: Duration, pin: Option<std::sync::Arc<rustls::ClientConfig>>) -> Connector {
+            let inner = match pin {
+                Some(c) => Inner::Pinned(TcpConnector::default().chain(Tls(c))),
+                None => Inner::Default(DefaultConnector::new()),
+            };
+            Connector { inner, stall }
         }
     }
 
@@ -170,7 +227,11 @@ mod stall {
         type Out = Stalling;
 
         fn connect(&self, details: &ConnectionDetails, chained: Option<()>) -> Result<Option<Stalling>, ureq::Error> {
-            Ok(self.inner.connect(details, chained)?.map(|inner| Stalling { inner, stall: self.stall }))
+            let inner: Option<Box<dyn Transport>> = match &self.inner {
+                Inner::Default(c) => c.connect(details, chained)?,
+                Inner::Pinned(c) => c.connect(details, chained)?.map(|t| t.boxed()),
+            };
+            Ok(inner.map(|inner| Stalling { inner, stall: self.stall }))
         }
     }
 
@@ -231,7 +292,14 @@ fn config(insecure: bool) -> ureq::config::ConfigBuilder<ureq::typestate::AgentS
 /// A request and its whole answer. `headers` go with it; `body` makes it a request with one.
 pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, timeout: Duration) -> Result<Response, String> {
     let limits = Limits::new(timeout);
-    request_with(timed_agent(config(insecure_tls()), limits), &limits, method, url, headers, body, false)
+    request_with(timed_agent_for(url, config(insecure_tls()), limits), &limits, method, url, headers, body, false)
+}
+
+/// `request`, sent only to `addrs` (the hub's name, already looked up and checked), with the name
+/// kept for the Host header and the certificate.
+pub fn request_to(method: &str, url: &str, headers: &[(&str, &str)], timeout: Duration, addrs: Vec<std::net::SocketAddr>) -> Result<Response, String> {
+    let limits = Limits::new(timeout);
+    request_with(timed_agent_to(url, config(insecure_tls()), limits, Addrs(addrs)), &limits, method, url, headers, None, false)
 }
 
 /// A GET to the hub on this machine over loopback (`inyon hub code`). Its certificate is made out
@@ -292,6 +360,16 @@ pub async fn fetch(method: &'static str, url: String, headers: Vec<(String, Stri
     .map_err(|e| e.to_string())?
 }
 
+/// `request_to` on a blocking thread, for async code.
+pub async fn fetch_to(url: String, headers: Vec<(String, String)>, timeout: Duration, addrs: Vec<std::net::SocketAddr>) -> Result<Response, String> {
+    tokio::task::spawn_blocking(move || {
+        let h: Vec<(&str, &str)> = headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        request_to("GET", &url, &h, timeout, addrs)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The longest a download may take in all, however steadily it arrives.
 pub const DOWNLOAD_TIME: Duration = Duration::from_secs(600);
 
@@ -301,7 +379,7 @@ pub fn download(url: &str) -> Result<Response, String> {
 }
 
 fn download_with(url: &str, limits: Limits, resolver: impl ureq::unversioned::resolver::Resolver) -> Result<Response, String> {
-    request_with(timed_agent_with(config(insecure_tls()), limits, resolver), &limits, "GET", url, &[], None, true)
+    request_with(timed_agent_to(url, config(insecure_tls()), limits, resolver), &limits, "GET", url, &[], None, true)
 }
 
 /// A server on a certificate from a certificate authority of its own, made with openssl for the
@@ -339,6 +417,17 @@ openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out s
         std::fs::create_dir_all(dir).unwrap();
         let script = "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout server.key -out server.pem -days 2 -subj /CN=hub -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -addext extendedKeyUsage=serverAuth -addext basicConstraints=critical,CA:FALSE";
         (dir.join("server.pem"), serve(dir, script))
+    }
+
+    /// A server for localhost and 127.0.0.1 on a certificate signed with the key of the hub's own
+    /// certificate in `hub_dir`, as whoever has that key could make one for any name.
+    pub fn signed_by_hub_server(dir: &Path, hub_dir: &Path) -> u16 {
+        std::fs::create_dir_all(dir).unwrap();
+        let script = format!(
+            "openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout server.key -out server.csr -subj /CN=localhost && printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\\nextendedKeyUsage=serverAuth\\n' > ext && openssl x509 -req -in server.csr -CA '{0}/server.pem' -CAkey '{0}/server.key' -CAcreateserial -out server.pem -days 2 -extfile ext",
+            hub_dir.display()
+        );
+        serve(dir, &script)
     }
 
     /// Runs `script` in `dir` to make server.pem and server.key, and serves "ok" over TLS with them.
@@ -405,29 +494,54 @@ mod tests {
     }
 
     #[test]
-    fn a_hub_on_a_certificate_it_made_itself_is_trusted_through_the_copy_join_kept() {
+    fn join_keeps_only_a_certificate_with_the_sha256_the_command_named() {
+        let dir = std::env::temp_dir().join(format!("inyon-kept-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout server.key -out server.pem -days 2 -subj /CN=hub 2>/dev/null")
+            .current_dir(&dir)
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        let served = std::fs::read(dir.join("server.pem")).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let der = <rustls::pki_types::CertificateDer as rustls::pki_types::pem::PemObject>::from_pem_slice(&served).unwrap();
+        let sha: String = <sha2::Sha256 as sha2::Digest>::digest(&der).iter().map(|b| format!("{b:02x}")).collect();
+        assert!(pinned_cert(&served, &sha).is_ok());
+        assert!(pinned_cert(&served, &"0".repeat(64)).is_err());
+        assert!(pinned_cert(b"not a certificate", &sha).is_err());
+    }
+
+    #[test]
+    fn the_certificate_join_kept_is_pinned_for_that_hub_alone_and_vouches_for_nothing_else() {
         let _env = test_tls::env_lock();
-        let dir = std::env::temp_dir().join(format!("inyon-self-signed-{}", std::process::id()));
-        let (cert, port) = test_tls::self_signed_server(&dir);
-        let url = format!("https://127.0.0.1:{port}/");
+        let home = crate::paths::testing::home("hub-pin");
         // SAFETY: the tests that touch NODE_EXTRA_CA_CERTS hold env_lock
         unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
-        let unknown = request("GET", &url, &[], None, Duration::from_secs(10));
-        // what `inyon join` keeps, checked against the command's sha256, joins the roots as it is
+        let (cert, port) = test_tls::self_signed_server(&home.dir.join("hub"));
+        let forged_port = test_tls::signed_by_hub_server(&home.dir.join("forged"), &home.dir.join("hub"));
+        let get = |url: String| request("GET", &url, &[], None, Duration::from_secs(10)).map(|r| r.status);
+        let hub = format!("https://127.0.0.1:{port}");
+        // before joining: nobody vouches for it
+        assert!(get(format!("{hub}/")).is_err());
+        // what `inyon join` keeps, checked against the command's sha256, and the hub it saved
         let served = std::fs::read(&cert).unwrap();
         let der = <rustls::pki_types::CertificateDer as rustls::pki_types::pem::PemObject>::from_pem_slice(&served).unwrap();
         let sha: String = <sha2::Sha256 as sha2::Digest>::digest(&der).iter().map(|b| format!("{b:02x}")).collect();
-        let kept = dir.join("hub.crt");
-        std::fs::write(&kept, pinned_cert(&served, &sha).unwrap()).unwrap();
-        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", &kept) };
-        let trusted = request("GET", &url, &[], None, Duration::from_secs(10));
-        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
-        let _ = std::fs::remove_dir_all(&dir);
-        assert!(unknown.is_err());
-        let trusted = trusted.unwrap();
-        assert_eq!((trusted.status, trusted.body.as_slice()), (200, &b"ok"[..]));
-        assert!(pinned_cert(&served, &"0".repeat(64)).is_err());
-        assert!(pinned_cert(b"not a certificate", &sha).is_err());
+        std::fs::create_dir_all(crate::paths::node_dir()).unwrap();
+        std::fs::write(hub_cert_file(), pinned_cert(&served, &sha).unwrap()).unwrap();
+        let save = |hub: &str| std::fs::write(crate::paths::node_dir().join(if crate::WIN { ".env" } else { "env" }), format!("INYON_HUB={hub}\nINYON_TOKEN=t\n")).unwrap();
+        save(&hub);
+        assert_eq!(get(format!("{hub}/node")), Ok(200));
+        // the same certificate under another name isn't the hub joined
+        assert!(get(format!("https://localhost:{port}/")).is_err());
+        // a certificate its key signed, for this machine's own name: no authority, anywhere
+        assert!(get(format!("https://127.0.0.1:{forged_port}/")).is_err());
+        assert!(get(format!("https://localhost:{forged_port}/")).is_err());
+        // not even as the hub: only the very certificate counts
+        save(&format!("https://127.0.0.1:{forged_port}"));
+        assert!(get(format!("https://127.0.0.1:{forged_port}/")).is_err());
     }
 
     #[test]
@@ -449,25 +563,6 @@ mod timeout_tests {
     use std::time::Instant;
 
     use super::*;
-
-    /// A name that resolves to these addresses, in this order.
-    #[derive(Debug)]
-    struct Fixed(Vec<SocketAddr>);
-
-    impl ureq::unversioned::resolver::Resolver for Fixed {
-        fn resolve(
-            &self,
-            _uri: &ureq::http::Uri,
-            _config: &ureq::config::Config,
-            _timeout: ureq::unversioned::transport::NextTimeout,
-        ) -> Result<ureq::unversioned::resolver::ResolvedSocketAddrs, ureq::Error> {
-            let mut v = self.empty();
-            for a in &self.0 {
-                v.push(*a);
-            }
-            Ok(v)
-        }
-    }
 
     /// A server on 127.0.0.1 that reads one request per connection and hands it to `answer`.
     fn server(answer: impl Fn(&mut std::net::TcpStream) + Send + Sync + 'static) -> u16 {
@@ -494,6 +589,34 @@ mod timeout_tests {
     }
 
     #[test]
+    fn a_request_to_checked_addresses_does_not_look_the_name_up_again_and_keeps_it_as_the_host() {
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let s = seen.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut c in listener.incoming().flatten() {
+                let mut req = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match c.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => req.extend_from_slice(&buf[..n]),
+                    }
+                }
+                *s.lock().unwrap() =
+                    String::from_utf8_lossy(&req).lines().find_map(|l| l.strip_prefix("host: ").or(l.strip_prefix("Host: ")).map(String::from)).unwrap_or_default();
+                let _ = c.write_all(b"HTTP/1.1 410 Gone\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+            }
+        });
+        let url = format!("http://hub.invalid:{port}/node");
+        assert!(request("GET", &url, &[], None, Duration::from_secs(5)).is_err());
+        let r = request_to("GET", &url, &[("authorization", "Bearer t")], Duration::from_secs(5), vec![format!("127.0.0.1:{port}").parse().unwrap()]).unwrap();
+        assert_eq!(r.status, 410);
+        assert_eq!(*seen.lock().unwrap(), format!("hub.invalid:{port}"));
+    }
+
+    #[test]
     fn a_download_moves_on_from_an_address_that_never_answers() {
         // 192.0.2.1 is kept for documentation: nothing answers it, so a connect there waits until
         // the system gives up (two minutes on Linux), as one of GitHub's addresses did in 0.19.0
@@ -502,7 +625,7 @@ mod timeout_tests {
         });
         let addrs = vec![SocketAddr::from(([192, 0, 2, 1], port)), SocketAddr::from(([127, 0, 0, 1], port))];
         let started = Instant::now();
-        let got = download_with(&format!("http://downloads.example:{port}/cloudflared"), Limits::new(DOWNLOAD_TIME), Fixed(addrs)).unwrap();
+        let got = download_with(&format!("http://downloads.example:{port}/cloudflared"), Limits::new(DOWNLOAD_TIME), Addrs(addrs)).unwrap();
         let took = started.elapsed();
         assert_eq!((got.status, got.body.as_slice()), (200, &b"cloudflared"[..]));
         // the dead address gets about two thirds of the 10 s connect limit, then the next one is tried

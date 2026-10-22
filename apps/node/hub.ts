@@ -66,10 +66,10 @@ export const plainRefusal = (host: string) =>
 
 /**
  * Looks up a hub's name and checks every address it has (a MagicDNS name pointing into the tailnet
- * passes). null when it couldn't be looked up, worth trying again; the refusal when it points
- * somewhere it mustn't; '' when it's fine.
+ * passes). The addresses it was judged by, to connect to and nothing else; the refusal when it
+ * points somewhere it mustn't; null when it couldn't be looked up, worth trying again.
  */
-export async function checkName(host: string): Promise<string | null> {
+export async function checkName(host: string): Promise<{ addrs: string[] } | { why: string } | null> {
   let addrs: { address: string }[]
   try {
     addrs = await dns.lookup(host, { all: true })
@@ -78,7 +78,7 @@ export async function checkName(host: string): Promise<string | null> {
   }
   if (!addrs.length) return null
   const bad = addrs.find((a) => !plainHttpIp(a.address))
-  return bad ? `${plainRefusal(host).replace(/\.$/, '')} (${host} is ${bad.address})` : ''
+  return bad ? { why: `${plainRefusal(host).replace(/\.$/, '')} (${host} is ${bad.address})` } : { addrs: addrs.map((a) => a.address) }
 }
 
 export async function hubCommand(args: string[]) {

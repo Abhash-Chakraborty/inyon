@@ -57,7 +57,7 @@ The app explains what it found:
 
 - **From another device:** the hub listens only on its own machine until you choose a network. See [Reaching it from your phone](hub.md#reaching-it-from-your-phone).
 - **"Refusing to serve plain http"** in the log, with a network `BIND`: set `TLS_CERT` and `TLS_KEY`, or `INYON_ALLOW_HTTP=1` on a VPN. For the LAN, run `inyon setup` and choose *LAN*, which makes a certificate.
-- **"Refusing to send the token over plain http"** on a machine: from 0.20 plain http only goes to a Tailscale or NetBird address. See [Plain http](machines.md#plain-http).
+- **"Refusing to send the token over plain http"** on a machine: from 0.20 plain http only goes to a Tailscale or NetBird address. A machine added before 0.20 still connects and warns with **"Sending the token over plain http"** instead. See [Plain http](machines.md#plain-http).
 - **"doesn't hand out Inyon's signed list of checksums"** from `inyon update` on a machine: update the hub first. See [Security](security.md#downloads).
 - **"couldn't hand out Inyon's signed list of checksums"** from `inyon update` on a machine: the hub couldn't fetch its release's list from GitHub, or the list it got isn't the one for its version. The hub's log says which. Try again later; the machine changes nothing meanwhile.
 - **"This hub doesn't answer to that address"** under a domain name: add it to `INYON_ALLOWED_HOSTS`. Behind a proxy on another hostname, add the origin to `INYON_ALLOWED_ORIGINS`.

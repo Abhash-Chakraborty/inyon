@@ -86,8 +86,6 @@ fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// A hub answering 200 over TLS on the certificate, as the hub would serve it.
     fn serve(made: &Made) -> u16 {
         use rustls::pki_types::pem::PemObject;
@@ -147,21 +145,21 @@ mod tests {
         assert!(inyon_engine::http::pinned_cert(&pem, &fp).is_ok());
         assert!(inyon_engine::http::pinned_cert(&pem, &hex).is_ok());
         assert!(inyon_engine::http::pinned_cert(&pem, &"00".repeat(32)).unwrap_err().contains("wasn't added"));
-        // and the engine connects to a hub serving it, once it's among the roots as join keeps it
+        // and the engine connects to a hub serving it, through the pin join sets up for that hub
         let port = serve(&made);
         let url = format!("https://127.0.0.1:{port}/");
-        let get = || inyon_engine::http::request("GET", &url, &[], None, std::time::Duration::from_secs(10));
-        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: only this test touches NODE_EXTRA_CA_CERTS in this program, under ENV
-        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
-        let unknown = get();
+        let get = |pin: Option<[u8; 32]>| {
+            let c = ureq::Agent::config_builder().http_status_as_error(false);
+            let limits = inyon_engine::http::Limits::new(std::time::Duration::from_secs(10));
+            let pin = pin.map(|want| inyon_engine::hub_tls::config(want, "127.0.0.1".into()));
+            inyon_engine::http::timed_agent_pinned(c, limits, ureq::unversioned::resolver::DefaultResolver::default(), pin).get(&url).call().map(|r| r.status().as_u16())
+        };
         let kept = dir.join("kept.crt");
         std::fs::write(&kept, inyon_engine::http::pinned_cert(&pem, &hex).unwrap()).unwrap();
-        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", &kept) };
-        let trusted = get();
-        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
-        assert!(unknown.is_err());
-        assert_eq!(trusted.map(|r| r.status), Ok(200));
+        assert!(get(None).is_err());
+        assert_eq!(get(inyon_engine::hub_tls::pinned_sha256(&kept)).ok(), Some(200));
+        // a pin for another certificate doesn't let it through
+        assert!(get(Some([0; 32])).is_err());
         let again = make(&dir, &names("studio", &[])).unwrap();
         assert_ne!(fingerprint(&again.cert).unwrap(), fp, "each certificate has its own key");
         let _ = std::fs::remove_dir_all(&dir);
