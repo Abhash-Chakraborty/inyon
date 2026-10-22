@@ -42,7 +42,12 @@ interface CompanionRecord {
 }
 
 const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
-const same = (a: string, b: string) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))
+// byte lengths: a code with a non-ASCII letter has more bytes than characters, and timingSafeEqual throws on a mismatch
+const same = (a: string, b: string) => {
+  const x = Buffer.from(a)
+  const y = Buffer.from(b)
+  return x.length === y.length && crypto.timingSafeEqual(x, y)
+}
 
 let companions: CompanionRecord[] = kv.get<CompanionRecord[]>('companions') ?? []
 const save = () => kv.set('companions', companions)
@@ -279,8 +284,10 @@ export function companionFrame(msg: ServerMsg, scopes: CompanionScope[]): unknow
       return can('chat') ? { t: 'chat.info', key: msg.key, info: msg.info } : undefined
     case 'chat.screen': {
       if (!can('chat')) return
-      const p = msg.screen.prompt
-      return p ? { ...msg, screen: { ...msg.screen, prompt: { ...p, key: promptKey(p) } } } : msg
+      // what's typed in the box and not sent yet stays with the apps that type it
+      const { draft: _draft, ...screen } = msg.screen
+      const p = screen.prompt
+      return { ...msg, screen: p ? { ...screen, prompt: { ...p, key: promptKey(p) } } : screen }
     }
   }
 }

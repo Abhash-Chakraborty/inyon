@@ -49,6 +49,12 @@ test('an expired code is refused, and eight failures a minute stop an address', 
   expect((await read(claimCompanion('10.1.0.5', { code: good, name: 'x' }, t))).status).toBe(200)
 })
 
+test('a code with a letter outside ASCII is a wrong code, not an error', async () => {
+  newCompanionCode(T0)
+  const r = await read(claimCompanion('10.1.0.9', { code: 'ÄBCDEF' }, T0))
+  expect([r.status, r.body.reason]).toEqual([401, 'bad-code'])
+})
+
 test('the contract header, or ?contract= on a WebSocket, must name version 1', async () => {
   expect(contractRefusal(asCompanion('x', '1'))).toBeUndefined()
   expect(contractRefusal(asCompanion('x', ' 1 '))).toBeUndefined()
@@ -77,10 +83,12 @@ test('a companion gets no history, live text, drafts or terminal data, and its p
   const screen = {
     working: false,
     width: 80,
+    draft: 'half a thought',
     prompt: { body: ['Bash command', 'rm -rf build', 'Do you want to proceed?'], options: [{ n: 1, label: 'Yes', selected: true }, { n: 2, label: 'No', selected: false }], multi: false },
   } as ScreenState
   const v = companionFrame({ t: 'chat.screen', key: 'box:%1', screen }, SCOPES) as any
   expect(v.screen.prompt.key).toBe('Bashcommandrm-rfbuildDoyouwanttoproceed?1.Yes2.No')
+  expect('draft' in v.screen).toBe(false)
   expect(companionFrame({ t: 'chat.screen', key: 'box:%1', screen }, ['overview'])).toBeUndefined()
   for (const m of [
     { t: 'term.data', id: '1', d: 'secret' },

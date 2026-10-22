@@ -480,6 +480,10 @@ pub fn companion_frame(msg: &ServerMsg, scopes: &[CompanionScope]) -> Option<Val
         ServerMsg::ChatReset { key, info, .. } if can(CompanionScope::Chat) => Some(json!({ "t": "chat.info", "key": key, "info": info })),
         ServerMsg::ChatScreen { screen, .. } if can(CompanionScope::Chat) => {
             let mut v = whole()?;
+            // what's typed in the box and not sent yet stays with the apps that type it
+            if let Some(s) = v.get_mut("screen").and_then(Value::as_object_mut) {
+                s.remove("draft");
+            }
             if let Some(p) = &screen.prompt {
                 if let Some(prompt) = v.get_mut("screen").and_then(|s| s.get_mut("prompt")).and_then(Value::as_object_mut) {
                     prompt.insert("key".into(), json!(prompt_key(&p.body, &p.options)));

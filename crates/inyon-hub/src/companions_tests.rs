@@ -99,6 +99,14 @@ fn an_expired_code_is_refused_and_eight_failures_a_minute_stop_an_address() {
 }
 
 #[test]
+fn a_code_with_a_letter_outside_ascii_is_a_wrong_code_not_an_error() {
+    crate::test_util::core();
+    code_now(T0);
+    let (status, body) = read(claim_companion("10.1.0.9", &json!({ "code": "ÄBCDEF" }), T0));
+    assert_eq!((status, body["reason"].as_str()), (401, Some("bad-code")));
+}
+
+#[test]
 fn the_contract_header_or_query_must_name_version_one() {
     crate::test_util::core();
     assert!(contract_refusal(&as_companion_req("x", Some("1")), None).is_none());
@@ -137,12 +145,14 @@ fn a_companion_gets_no_history_live_text_drafts_or_terminal_data_and_its_prompts
     let screen: ScreenState = serde_json::from_value(json!({
         "working": false,
         "width": 80,
+        "draft": "half a thought",
         "prompt": { "body": ["Bash command", "rm -rf build", "Do you want to proceed?"], "options": [{ "n": 1, "label": "Yes", "selected": true }, { "n": 2, "label": "No", "selected": false }], "multi": false }
     }))
     .unwrap();
     let v = companion_frame(&ServerMsg::ChatScreen { key: "box:%1".into(), screen: Box::new(screen.clone()) }, &all).unwrap();
     assert_eq!(v["screen"]["prompt"]["key"], json!("Bashcommandrm-rfbuildDoyouwanttoproceed?1.Yes2.No"));
     assert_eq!(v["t"], json!("chat.screen"));
+    assert!(v["screen"].get("draft").is_none());
     assert!(companion_frame(&ServerMsg::ChatScreen { key: "box:%1".into(), screen: Box::new(screen) }, &[CompanionScope::Overview]).is_none());
     assert!(companion_frame(&ServerMsg::TermData { id: "1".into(), d: "secret".into() }, &all).is_none());
     assert!(companion_frame(&ServerMsg::ChatAppend { key: "box:%1".into(), items: vec![] }, &all).is_none());

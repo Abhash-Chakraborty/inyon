@@ -30,8 +30,8 @@ A hub that listens only on `127.0.0.1`, behind a proxy or `tailscale serve`, doe
 
 | Permission | What it gives the app |
 |---|---|
-| Overview | every session with its state and machine, and live changes |
-| Chats | the screen and the details of a session it watches, and its alerts |
+| Overview | every session with its state and machine, live changes, and alerts |
+| Chats | the screen and the details of a session it watches |
 | Answer | an answer to an agent's question, once, for the question it saw |
 | Send | plain text typed into a session; the hub says whether it arrived |
 
