@@ -76,6 +76,29 @@ jobs:
           ln -s "$GITHUB_WORKSPACE/target/debug/inyon" "$RUNNER_TEMP/inyon-engine"
           INYON_TEST_ENGINE="$RUNNER_TEMP/inyon-engine" bun test ./link.test.ts ./link-relay.test.ts ./hub-interop.test.ts ./connect.test.ts ./output.test.ts ./usage.test.ts
 
+  # the link on Windows, where the phone first met 0.19.0's problems: the phone's link
+  # (packages/link) pairs with `inyon-engine link --no-tunnel` over 127.0.0.1, runs commands through
+  # busybox-w32 and is refused without a code, as on Linux above
+  interop-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+        working-directory: .
+      - run: cargo build -p inyon-cli
+      - name: The link's tests against the Windows build
+        working-directory: apps/node
+        shell: pwsh
+        # named inyon-engine, the program answers the engine's commands, as the logon task runs it
+        run: |
+          Copy-Item "$env:GITHUB_WORKSPACE\target\debug\inyon.exe" "$env:RUNNER_TEMP\inyon-engine.exe"
+          $env:INYON_TEST_ENGINE = "$env:RUNNER_TEMP\inyon-engine.exe"
+          bun test ./link.test.ts
+
   build:
     strategy:
       fail-fast: false
