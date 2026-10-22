@@ -85,20 +85,26 @@ struct ClaudeBox {
     pieces: Vec<Piece>,
     pastes: usize,
     sent: Vec<String>,
+    /// the box hasn't drawn what was typed yet
+    slow: bool,
 }
 
 /// Claude's input box as far as a send can tell: a long paste shows as "[Pasted text #N]" and Enter
 /// submits what's behind it, so a preview left over from an older draft looks like any other.
 fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     let pastes = start.iter().filter(|p| matches!(p, Piece::Paste(_))).count();
-    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![] }));
+    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![], slow: false }));
     let state = b.clone();
     let re = keys_re();
     Fake::install(move |_, cmd, input| {
         let mut b = state.borrow_mut();
         if cmd.contains("@@CAP") {
             let pastes = b.pastes;
-            let shown: String = b.pieces.iter().enumerate().map(|(i, p)| if let Piece::Text(t) = p { t.clone() } else { format!("[Pasted text #{}]", i + pastes) }).collect();
+            let shown: String = if b.slow {
+                String::new()
+            } else {
+                b.pieces.iter().enumerate().map(|(i, p)| if let Piece::Text(t) = p { t.clone() } else { format!("[Pasted text #{}]", i + pastes) }).collect()
+            };
             let r = rule(R100);
             return ok(&format!("@@CAP %9\n● Done.\n{r}\n❯ {shown}\n{r}\n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"));
         }
@@ -137,6 +143,16 @@ fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     });
     pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "idle" } }]));
     b
+}
+
+#[test]
+fn a_box_slow_to_show_the_text_gets_it_typed_once_never_twice() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        b.borrow_mut().slow = true;
+        let _ = send_message_to_pane("local", "%9", "Run the tests again", true, false).await;
+        assert_eq!(b.borrow().sent, ["Run the tests again"]);
+    });
 }
 
 #[test]

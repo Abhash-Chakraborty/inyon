@@ -231,12 +231,12 @@ export async function sendMessageToPane(hostId: string, paneId: string, text: st
     }
     // the draft may already be in the box (mirrored from the app); otherwise replace whatever is there
     if (!inputContains(screen.draft, text)) {
-      // a second go when the first doesn't show up: a mirrored draft still being typed (or a slow
-      // first frame after a hub restart) can leave the box with something else in it
-      // (only when the box can be read: typing blind again would double the text)
+      // a second go when the first doesn't show up: a mirrored draft still being typed can leave
+      // the box with something else in it, which is cleared first. Only then: an empty box or one
+      // that can't be read may just be slow to show the text, and typing again would double it.
       let draft = screen.draft
       let readable = screen.inputVisible || !checkedInput
-      for (let round = 0; round < 2 && !arrived(draft) && (round === 0 || readable); round++) {
+      for (let round = 0; round < 2 && !arrived(draft) && (round === 0 || (readable && !!draft)); round++) {
         if (draft) await emptyInput(hostId, paneId, draft)
         await typeText(host, paneId, text)
         typed = true

@@ -122,8 +122,10 @@ export default {
     legatoWs.send({ t: 'sub.overview' })
     await legatoWs.until('overview', (m) => m.t === 'overview')
     legatoWs.send({ t: 'sub.chat', host: BOX, pane: PANE })
+    await legatoWs.until('chat.info', (m) => m.t === 'chat.info' && m.key === KEY)
     await legatoWs.until('chat.screen', (m) => m.t === 'chat.screen' && m.key === KEY)
     app.send({ t: 'sub.chat', host: BOX, pane: PANE })
+    await app.until('chat.reset', (m) => m.t === 'chat.reset' && m.key === KEY)
     await app.until('chat.screen', (m) => m.t === 'chat.screen' && m.key === KEY)
 
     await ctx.step('Claude asks to run a command: the companion gets the question with its key, and the notice')
