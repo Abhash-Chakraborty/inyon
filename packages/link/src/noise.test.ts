@@ -89,3 +89,14 @@ test('a tampered message is rejected', () => {
   message[40] ^= 1
   expect(() => i.readMessage2(message)).toThrow()
 })
+
+test('a low-order key never gives a DH result, as the Rust responder refuses it too', () => {
+  const machine = generateKeyPair()
+  for (const low of ['00'.repeat(32), 'e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800']) {
+    // noble throws on an all-zero shared secret, so a message 1 carrying such a key can't be read
+    expect(() => x25519.getSharedSecret(machine.secretKey, hexToBytes(low))).toThrow()
+    const msg = new Uint8Array(32 + 32 + 16 + 16)
+    msg.set(hexToBytes(low))
+    expect(() => new Responder(machine).readMessage1(msg)).toThrow()
+  }
+})
