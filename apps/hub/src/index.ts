@@ -1,11 +1,12 @@
 // first, so records are read from ~/.inyon and machines can be reached
 import { BIND, DATA_DIR, PORT, TLS } from './env.ts'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { checkPassword, hasPassword, passwordProblem, setPassword } from './password.ts'
+import { checkPassword, hasPassword, passwordProblem, sessionSecret, setPassword } from './password.ts'
 import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, recentSignIn, refreshCookie, revokeSession, tryLogin } from './auth.ts'
-import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, hubAbout, issueTicket, listPhones, newPairCode, phoneFor, redeemTicket, revokePhone } from './phones.ts'
+import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, hubAbout, issueTicket, listPhones, newPairCode, phoneFor, phonePaired, redeemTicket, revokePhone } from './phones.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
 import { allowedHosts } from './hostnames.ts'
 import { detectNetworks } from './networks.ts'
@@ -18,6 +19,8 @@ import { api as handled, body, clientMessage, clients, closeClient, coreRoutes, 
 import type { HostState, PhoneClaim } from '@inyon/protocol'
 import { pushAll, startHubPush } from './push/hub-push.ts'
 import { pushRoutes, TEST_PAYLOAD } from './push/routes.ts'
+import { pagesFeature } from './features/pages.ts'
+import { kv } from './platform/store.ts'
 
 /** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
 
@@ -82,6 +85,17 @@ const WRONG_HOST = "This hub doesn't answer to that address. If it's yours, add 
  */
 const CORS_PATHS = new Set(['/api/phones/claim', '/api/phones/ticket'])
 const phoneRequest = (req: Request) => hasBearer(req) || CORS_PATHS.has(new URL(req.url).pathname)
+
+/**
+ * A call from a page with no origin of its own (a sandboxed frame, such as a page served under
+ * /v/) or from another site. The browser may still attach the hub's cookie, so these are refused
+ * for every method, reads included. A bearer request carries no ambient credential and passes.
+ */
+function framedCaller(req: Request) {
+  const origin = req.headers.get('origin')
+  if (origin === 'null') return true
+  return req.headers.get('sec-fetch-site') === 'cross-site' && !(origin && ALLOWED_ORIGINS.has(origin))
+}
 function allowOrigin(res: Response, origin: string) {
   res.headers.set('Access-Control-Allow-Origin', origin)
   res.headers.set('Vary', 'Origin')
@@ -117,6 +131,7 @@ const api =
       if (pre) return pre
       if (!rightHost(req)) return json({ error: WRONG_HOST }, { status: 421 })
       if (owner && hasBearer(req)) return cors(req, json({ error: 'Not from a phone. Do this in the browser.' }, { status: 403 }))
+      if (!phoneRequest(req) && framedCaller(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
       // a bearer request carries no ambient credential, so CSRF doesn't apply to it
       if (req.method !== 'GET' && req.method !== 'HEAD' && !phoneRequest(req) && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
       if (!open && !isAuthed(req)) return cors(req, json({ error: 'Not signed in' }, { status: 401 }))
@@ -217,6 +232,17 @@ function secureRequest(req: Request): boolean {
   const ip: string = server.requestIP(req)?.address ?? ''
   return new URL(req.url).protocol === 'https:' || (/^(127\.|::1$|::ffff:127\.)/.test(ip) && req.headers.get('x-forwarded-proto') === 'https')
 }
+
+// sites agents made, listed from ~/.inyon/pages.json and served under /v/<token>/ (features/pages.ts)
+const pages = pagesFeature({
+  home: os.homedir(),
+  store: kv,
+  secret: sessionSecret,
+  phoneOf: (req) => phoneFor(req)?.id,
+  phonePaired,
+  knownHost,
+  secure: secureRequest,
+})
 
 const server = Bun.serve<SocketData>({
   port: PORT,
@@ -360,9 +386,12 @@ const server = Bun.serve<SocketData>({
     ...guarded(coreRoutes),
     ...guarded(pushRoutes((endpoint) => pushAll(TEST_PAYLOAD, undefined, endpoint))),
     ...guarded(hubUpdate.routes),
+    ...guarded(pages.routes),
   },
   async fetch(req, srv) {
     const url = new URL(req.url)
+    // a page's own files: the token in the path is the only credential, never the cookie
+    if (url.pathname.startsWith('/v/')) return pages.view(req)
     if (url.pathname === '/node') {
       // machines running inyon authenticate with their pairing token
       const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')

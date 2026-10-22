@@ -1,7 +1,8 @@
 // Inyon service worker: caches the app shell and every file of the build, so the installed app
-// opens instantly and a second open needs no network for the app itself. API calls and the
-// WebSocket always go to the network. Paths are under the worker's scope: `/` on a hub and for the
-// web app at inyon.abhashchakraborty.tech; a copy hosted under a folder works too.
+// opens instantly and a second open needs no network for the app itself. API calls, the
+// WebSocket and pages under /v/ always go to the network. Paths are under the worker's scope: `/`
+// on a hub and for the web app at inyon.abhashchakraborty.tech; a copy hosted under a folder works
+// too.
 const CACHE = 'inyon-v3'
 const BASE = new URL(self.registration.scope).pathname
 const SHELL = [BASE, BASE + 'manifest.webmanifest', BASE + 'icon-192.png', BASE + 'badge-96.png']
@@ -40,7 +41,9 @@ self.addEventListener('activate', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url)
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname === '/ws') return
+  // /v/ is a page an agent made, served by the hub inside a sandbox: never answered from here, or
+  // an offline frame would get the app shell instead
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.startsWith('/api/') || url.pathname.startsWith('/v/') || url.pathname === '/ws') return
   if (e.request.mode === 'navigate') {
     // network first for pages so updates show up, cached shell when offline
     e.respondWith(fetch(e.request).catch(() => caches.match(BASE)))

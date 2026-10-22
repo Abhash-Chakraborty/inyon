@@ -112,6 +112,10 @@ inyon logs --role hub -f
 
 The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash, machines, paired phones, settings, drafts, and the last state of each offline machine. [Configuration](configuration.md) lists every setting.
 
+## Pages
+
+From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#pages) says how a page is kept away from your sign-in.
+
 ## Trying the hub in Rust
 
 From 0.20 `inyon` carries a second hub, written in Rust, that will replace the Bun one. It's off until you turn it on, so you can test it first. It answers the web app, the Android app and joining machines as the Bun hub does, from the same records in `~/.inyon`: your password, phones and machines carry over both ways. It runs on Linux and macOS.

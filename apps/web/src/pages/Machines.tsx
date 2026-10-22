@@ -29,6 +29,7 @@ import { confirmAction } from '../components/Confirm.tsx'
 import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { machineMenu, paneMenu, removeMachine } from '../components/menus.tsx'
+import { MachinePages } from '../components/pages/shared.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
@@ -267,6 +268,7 @@ export function MachinePage() {
           {tab === 'uploads' && <UploadsCard host={host} />}
           {tab === 'integration' && <IntegrationCard host={host} />}
         </div>
+        <MachinePages host={host.config.id} />
         </>
         )}
       </div>

@@ -213,6 +213,11 @@ pub fn phone_for_at(req: &Req, now: u64) -> Option<PhoneRecord> {
     bearer(req).and_then(|t| by_token(&t, now))
 }
 
+/// Whether a phone with this id is still paired (a page link a phone made stops working once it isn't).
+pub fn phone_paired(id: &str) -> bool {
+    with(|s| s.phones.iter().any(|p| p.id == id))
+}
+
 // ---------- WebSocket tickets ----------
 
 // a page can't put a header on a WebSocket, so a phone trades its token for a short-lived ticket

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -9,13 +9,13 @@ export class ApiError extends Error {
   }
 }
 
-/** The paired hub a request about one of its machines belongs to, and its address there. */
+/** The paired hub a request about one of its machines (or their pages) belongs to, and its address there. */
 function hubTarget(url: URL): { hub: PairedHub; url: string } | undefined {
-  const m = url.pathname.match(/^\/api\/hosts\/([^/]+)(.*)$/)
+  const m = url.pathname.match(/^\/api\/(hosts|pages)\/([^/]+)(.*)$/)
   if (!m) return
-  const { hub, id } = splitHostId(decodeURIComponent(m[1]!))
+  const { hub, id } = splitHostId(decodeURIComponent(m[2]!))
   if (!hub) return
-  return { hub, url: `${hub.url}/api/hosts/${encodeURIComponent(id)}${m[2]}${url.search}` }
+  return { hub, url: `${hub.url}/api/${m[1]}/${encodeURIComponent(id)}${m[3]}${url.search}` }
 }
 
 /**
@@ -49,6 +49,15 @@ async function send(req: Request): Promise<Response> {
   })
 }
 
+/** A request to a paired hub itself (not about one of its machines), with the phone's token. */
+async function hubRequest<T>(hub: PairedHub, method: string, path: string, timeoutMs = 15_000): Promise<T> {
+  const url = `${hub.url}${path}`
+  const res = await toHub(new Request(url, { method, signal: AbortSignal.timeout(timeoutMs) }), { hub, url })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new ApiError(res.status, data.error ?? `Request failed (${res.status})`)
+  return data as T
+}
+
 async function request<T>(method: string, url: string, body?: unknown, timeoutMs?: number): Promise<T> {
   const res = await send(new Request(new URL(url, location.href), {
     method,
@@ -71,6 +80,7 @@ export const paneSlug = (pane: string) => pane.replace(/^%/, '')
 export const paneFromSlug = (slug: string) => (slug.startsWith('%') ? slug : `%${slug}`)
 
 const h = (id: string) => `/api/hosts/${encodeURIComponent(id)}`
+const pg = (host: string, slug?: string) => `/api/pages/${encodeURIComponent(host)}${slug ? `/${encodeURIComponent(slug)}` : ''}`
 const panePath = (host: string, pane: string) => `${h(host)}/panes/${paneSlug(pane)}`
 const qs = (o: Record<string, string>) => `?${new URLSearchParams(o)}`
 
@@ -316,6 +326,20 @@ export const api = {
     request<{ agentId: string; toolUseId?: string; type?: string; description?: string; path: string }[]>('GET', `${h(id)}/subagents${qs({ transcript })}`),
   transcript: (id: string, path: string) => request<ChatItem[]>('GET', `${h(id)}/transcript${qs({ path })}`),
   taskOutput: (id: string, task: { id: string; path?: string }) => request<{ path: string; output: string }>('GET', `${h(id)}/task-output${qs({ path: task.path ?? '', id: task.id })}`),
+
+  // ---- pages: sites an agent made, served by the hub under a token link ----
+  /** the pages of the hub this app came from */
+  pages: () => request<PageList>('GET', '/api/pages', undefined, 20_000),
+  /** a paired hub's pages (the phone app), with the phone's token */
+  hubPages: (hub: PairedHub) => hubRequest<PageList>(hub, 'GET', '/api/pages', 20_000),
+  /** a link to the page, good for 12 hours; `url` is a path on the page's hub */
+  openPage: (host: string, slug: string) => request<PageOpen>('POST', `${pg(host, slug)}/open`, undefined, 20_000),
+  /** every link to the page stops working */
+  revokePage: (host: string, slug: string) => request<{ ok: true }>('POST', `${pg(host, slug)}/revoke`),
+  /** adds a folder with an index.html as a page */
+  addPage: (host: string, b: PageRegister) => request<PageEntry>('POST', pg(host), b, 20_000),
+  /** takes a page off the list; its folder stays */
+  removePage: (host: string, slug: string) => request<{ ok: true }>('DELETE', pg(host, slug)),
 
   // ---- phones paired with this hub (the hub's web app shows the code; the app claims it) ----
   /** A one-time code for a phone to pair with this hub; needs a recent sign-in. */

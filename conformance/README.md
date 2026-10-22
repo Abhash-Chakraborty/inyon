@@ -79,8 +79,10 @@ question mark, and checks the diff points at it.
 
 `golden/<scenario>.jsonl`, one JSON value per line: `{"step"}`, `{"rest", "status", "headers",
 "body"}` (only the headers in `HEADERS` in `lib/context.ts`, a `Set-Cookie` split into its fields
-with its signature checked), `{"send"}`, `{"ws", "got"}`, `{"ws", "upgrade", "status", "body"}` for
-a refused WebSocket, `{"machine"}`, `{"node"}` and `{"timeout"}`. Long text bodies are written as
+with its signature checked), `{"raw", …}` the same for a request written byte for byte on a socket
+(a target with `..` or `%2e%2e` that `fetch` would rewrite, or another Host), `{"send"}`,
+`{"ws", "got"}`, `{"ws", "upgrade", "status", "body"}` for a refused WebSocket, `{"machine"}`,
+`{"node"}`, `{"file"}` for a file the hub wrote, and `{"timeout"}`. Long text bodies are written as
 their size and checksum, downloads too.
 
 When a change to the hub is meant to change an answer, run with `--update` and commit the goldens
@@ -127,6 +129,7 @@ bun conformance/run.ts --hub "env INYON_HUB_IMPL=rust $PWD/target/debug/inyon en
 | node-dist | install scripts, `SHA256SUMS`, programs and checksums, bad systems |
 | local-cli | `/api/local/nodes` with and without the local token |
 | errors | unknown machine and pane, bad JSON and input, settings ranges, sign-in, origin and Host checks, 413, an offline machine |
+| pages | adding a site (refused folders, its marker's slug), the list with progress, a token link and every kind of `/v/` answer (redirects, ETags, dot files, symlinks and dot segments out of the site, bad tokens, a wrong Host), framed and cross-site API calls refused, revoking, a page removed and added again by another program, removing |
 
 ## What is left out
 

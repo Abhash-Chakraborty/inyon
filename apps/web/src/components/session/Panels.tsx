@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, RefreshCw, Smartphone,
-  SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2,
+  SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2, ShieldAlert,
 } from 'lucide-react'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { buildRows } from '../../lib/chat.ts'
@@ -17,6 +17,7 @@ import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { confirmAction } from '../Confirm.tsx'
+import { appOrigins, previewRefusal } from '../../lib/pages.ts'
 
 // ---------- changes ----------
 
@@ -306,6 +307,8 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
   })
   const [draft, setDraft] = useState(url)
   const [phone, setPhone] = useState(false)
+  // this frame runs with same-origin rights, so it never shows Inyon's own address
+  const refused = url ? previewRefusal(url, appOrigins()) : null
   const [n, setN] = useState(0)
   const go = (u: string) => {
     const v = /^https?:\/\//.test(u) ? u : u ? `http://${u}` : ''
@@ -325,13 +328,17 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
         <button type="button" title={phone ? 'Desktop width' : 'Phone width'} aria-label={phone ? 'Desktop width' : 'Phone width'} onClick={() => setPhone(!phone)} className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
           {phone ? <MonitorIcon className="size-3.5" /> : <Smartphone className="size-3.5" />}
         </button>
-        {url && (
+        {url && !refused && (
           <a href={url} target="_blank" rel="noreferrer" title="Open in a new tab" aria-label="Open in a new tab" className="flex size-8 shrink-0 items-center justify-center rounded-full border border-line text-fg-2 hover:bg-hover">
             <ExternalLink className="size-3.5" />
           </a>
         )}
       </form>
-      {url ? (
+      {refused ? (
+        <div className="p-3">
+          <Empty icon={<ShieldAlert className="size-5" />} title="Not shown here">{refused}</Empty>
+        </div>
+      ) : url ? (
         <div className="flex min-h-0 flex-1 justify-center bg-sunken p-2.5 pt-0">
           <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-xl border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
         </div>

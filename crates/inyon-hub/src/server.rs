@@ -139,6 +139,13 @@ thread_local! {
     static ROUTES: RefCell<Option<Rc<Routes>>> = const { RefCell::new(None) };
 }
 
+impl HubCtx {
+    /// Whether a Host header names this hub (see hostnames), with no cookie looked at.
+    pub fn answers_to(&self, host: &str) -> bool {
+        (self.known_host)(Some(host))
+    }
+}
+
 /// The hub's context; only on the core thread, once the hub has started.
 pub fn ctx() -> Rc<HubCtx> {
     CTX.with(|c| c.borrow().clone()).expect("the hub has started on this thread")
@@ -245,6 +252,17 @@ fn phone_request(req: &Req) -> bool {
     has_bearer(req) || CORS_PATHS.contains(&req.path.as_str())
 }
 
+/// A call from a page with no origin of its own (a sandboxed frame, such as a page served under
+/// /v/) or from another site. The browser may still attach the hub's cookie, so these are refused
+/// for every method, reads included. A bearer request carries no ambient credential and passes.
+fn framed_caller(req: &Req) -> bool {
+    let origin = req.header("origin");
+    if origin.as_deref() == Some("null") {
+        return true;
+    }
+    req.header("sec-fetch-site").as_deref() == Some("cross-site") && !origin.is_some_and(|o| ctx().allowed_origins.contains(&o))
+}
+
 fn allow_origin(mut res: Resp, origin: &str) -> Resp {
     set_header(&mut res, "access-control-allow-origin", origin);
     set_header(&mut res, "vary", "Origin");
@@ -310,6 +328,9 @@ pub fn api(f: ApiHandler, o: Opts) -> Handler {
             if o.owner && has_bearer(&req) {
                 return cors(origin.as_deref(), phone, json(403, &serde_json::json!({ "error": "Not from a phone. Do this in the browser." })));
             }
+            if !phone && framed_caller(&req) {
+                return json(403, &serde_json::json!({ "error": "Cross-site request refused" }));
+            }
             // a bearer request carries no ambient credential, so CSRF doesn't apply to it
             if req.method != Method::GET && req.method != Method::HEAD && !phone && !same_origin(&req) {
                 return json(403, &serde_json::json!({ "error": "Cross-site request refused" }));
@@ -356,13 +377,21 @@ pub async fn dispatch(mut req: Req) -> Resp {
     fallback(req).await
 }
 
-/// Bun.serve's `fetch`: what no route took.
-async fn fallback(req: Req) -> Resp {
+/// Bun.serve's `fetch`: what no route took. Routes are matched on the path as it came, as Bun's
+/// router matches them; `fetch` reads `new URL(req.url).pathname`, with its dot segments resolved,
+/// so this does too.
+async fn fallback(mut req: Req) -> Resp {
+    req.path = inyon_core::features::pages_core::normalize_target(&req.path).0;
     if req.path == "/node" {
         return crate::ws::node_upgrade(req).await;
     }
     if req.path == "/ws" {
         return crate::ws::app_upgrade(req);
+    }
+    // a page's own files: the token in the path is the only credential, never the cookie, and the
+    // Host is checked there without one (pages::view)
+    if req.path.starts_with("/v/") {
+        return crate::pages::view(req).await;
     }
     // a route that only lists some methods leaves OPTIONS to land here
     if let Some(pre) = preflight(&req) {
@@ -403,7 +432,14 @@ async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Pee
         upgrade,
     };
     match app.core.call(move || dispatch(r)).await {
-        Ok(res) => res,
+        // a page's file is read here, off the core's job (pages::view only named it)
+        Ok(mut res) => match res.extensions_mut().remove::<crate::pages::ViewFile>().and_then(|f| f.file.lock().ok()?.take().map(|file| (file, f.size))) {
+            Some((file, size)) => {
+                *res.body_mut() = crate::pages::file_body(file, size);
+                res
+            }
+            None => res,
+        },
         // the job panicked (and only it ended), or the hub is stopping
         Err(e) => json(500, &serde_json::json!({ "error": e.to_string() })),
     }

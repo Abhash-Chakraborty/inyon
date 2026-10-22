@@ -1,5 +1,6 @@
 import crypto from 'node:crypto'
 import http from 'node:http'
+import net from 'node:net'
 import { fold, foldActions, type Folded, type Msg } from './record.ts'
 import type { Hub } from './hub.ts'
 import type { Machine } from './machine.ts'
@@ -10,7 +11,7 @@ import type { Normalizer } from './normalize.ts'
 const HEADERS = [
   'content-type', 'set-cookie', 'cache-control', 'content-disposition', 'vary', 'access-control-allow-origin',
   'access-control-allow-headers', 'access-control-allow-methods', 'access-control-max-age', 'content-security-policy',
-  'x-content-type-options', 'referrer-policy',
+  'x-content-type-options', 'x-dns-prefetch-control', 'referrer-policy', 'location', 'etag', 'allow',
 ]
 /** bodies longer than this are recorded by size and checksum */
 const MAX_TEXT = 4096
@@ -348,6 +349,56 @@ export class Context {
       this.entry({ rest: sent, status: res.status, headers: this.headers(res.headers), body: this.body(parsed, text) })
     }
     return { status: res.status, headers: res.headers, body: parsed, text }
+  }
+
+  /**
+   * A request written byte for byte on a socket, for targets a URL parser would rewrite before
+   * sending (`..`, `%2e%2e`, a backslash) and for a Host header fetch won't send. Recorded like
+   * rest(), with `raw` in place of `rest`.
+   */
+  async raw(method: string, target: string, o: { as?: As; headers?: Record<string, string> } = {}): Promise<RestResult> {
+    const as = o.as ?? 'anon'
+    const headers: Record<string, string> = { host: new URL(this.hub.base).host, connection: 'close', ...(o.headers ?? {}) }
+    const cookie = this.cookieFor(as)
+    if (cookie) headers.cookie = cookie
+    if (typeof as === 'object' && 'bearer' in as) headers.authorization = `Bearer ${as.bearer}`
+    const url = new URL(this.hub.base)
+    const bytes = await new Promise<Buffer>((resolve, reject) => {
+      const sock = net.connect(Number(url.port), url.hostname, () => {
+        sock.write(`${method} ${target} HTTP/1.1\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('')}\r\n`)
+      })
+      const chunks: Buffer[] = []
+      sock.on('data', (c: Buffer) => chunks.push(c))
+      sock.on('end', () => resolve(Buffer.concat(chunks)))
+      sock.on('error', reject)
+    })
+    const split = bytes.indexOf('\r\n\r\n')
+    const head = bytes.subarray(0, split).toString('latin1').split('\r\n')
+    const status = Number(head[0]?.split(' ')[1])
+    const h = new Headers()
+    for (const line of head.slice(1)) {
+      const i = line.indexOf(':')
+      h.append(line.slice(0, i).trim(), line.slice(i + 1).trim())
+    }
+    let body = bytes.subarray(split + 4)
+    if (/chunked/i.test(h.get('transfer-encoding') ?? '')) {
+      const out: Buffer[] = []
+      for (let at = 0; at < body.length; ) {
+        const eol = body.indexOf('\r\n', at)
+        const size = parseInt(body.subarray(at, eol).toString(), 16)
+        if (!size) break
+        out.push(body.subarray(eol + 2, eol + 2 + size))
+        at = eol + 2 + size + 2
+      }
+      body = Buffer.concat(out)
+    }
+    const text = body.toString('utf8')
+    this.activityAt = Date.now()
+    const sent: Record<string, unknown> = { method, target }
+    if (as !== 'anon') sent.as = typeof as === 'string' ? as : 'cookie' in as ? 'other cookie' : 'bearer'
+    if (o.headers) sent.headers = o.headers
+    this.entry({ raw: sent, status, headers: this.headers(h), body: this.body(text, text) })
+    return { status, headers: h, body: text, text }
   }
 
   private headers(h: Headers) {

@@ -228,6 +228,26 @@ describe("a paired hub's machines", () => {
     expect(calls[0]!.body).toContain('hi')
   })
 
+  test("its pages: the list, links, revoking, adding and removing reach that hub with the token, under the hub's own name for the machine", async () => {
+    const actions: [string, () => Promise<unknown>, string, unknown][] = [
+      ['list', () => api.hubPages(hub), 'GET http://box:4777/api/pages', undefined],
+      ['open', () => api.openPage(machine, 'ghostex'), 'POST http://box:4777/api/pages/local/ghostex/open', undefined],
+      ['revoke', () => api.revokePage(machine, 'ghostex'), 'POST http://box:4777/api/pages/local/ghostex/revoke', undefined],
+      ['add', () => api.addPage(machine, { path: '/srv/site', name: 'Site' }), 'POST http://box:4777/api/pages/local', { path: '/srv/site', name: 'Site' }],
+      ['remove', () => api.removePage(machine, 'ghostex'), 'DELETE http://box:4777/api/pages/local/ghostex', undefined],
+    ]
+    for (const [name, run, route, body] of actions) {
+      calls.length = 0
+      await run()
+      const c = calls[0]
+      if (!c) throw new Error(`${name} never reached the hub`)
+      expect([name, `${c.method} ${c.url}`]).toEqual([name, route])
+      expect(c.headers.get('authorization')).toBe('Bearer tok')
+      expect(c.credentials).toBe('omit')
+      expect(c.body === undefined ? undefined : JSON.parse(c.body)).toEqual(body)
+    }
+  })
+
   test("a hub that can't be reached is named; one that refuses the token doesn't sign the app out", async () => {
     globalThis.fetch = mock(async () => Promise.reject(new TypeError('Failed to fetch'))) as any
     const err = await failure(api.send(machine, '%3', 'hello'))
@@ -244,6 +264,14 @@ describe("a paired hub's machines", () => {
       window.removeEventListener('inyon:signed-out', out)
     }
   })
+})
+
+test("in a browser, a page's calls go to the hub the app came from, with the cookie", async () => {
+  await api.openPage('local', 'ghostex')
+  expect([sent().method, sent().url, sent().credentials]).toEqual(['POST', 'http://localhost:5173/api/pages/local/ghostex/open', 'same-origin'])
+  fetchMock.mockClear()
+  await api.pages()
+  expect([sent().method, sent().url]).toEqual(['GET', 'http://localhost:5173/api/pages'])
 })
 
 test('pane slugs', () => {
