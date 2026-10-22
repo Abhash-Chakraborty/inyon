@@ -167,7 +167,11 @@ impl Patience {
 /// (`"waiting": "tunnel"`); a later one carries the code again with the tunnel's address. Prints
 /// nothing itself. Returns whether the link runs elsewhere, so this process has nothing left to do.
 pub async fn make_pairing(args: &[String], show: &mut dyn FnMut(&Value)) -> bool {
-    let config = link_options(args);
+    // `--once`: nobody can watch for a later answer (an installer with no terminal), so the code
+    // after `first` is the last one, as before 0.20
+    let once = args.iter().any(|a| a == "--once");
+    let args: Vec<String> = args.iter().filter(|a| *a != "--once").cloned().collect();
+    let config = link_options(&args);
     let service = link::link_running(Some(config.port)).await;
     if !service {
         // a program reads this one's output (the inyon command, its window): what the link it
@@ -187,7 +191,7 @@ pub async fn make_pairing(args: &[String], show: &mut dyn FnMut(&Value)) -> bool
         // the typed-in code needs the relays to know this ID; without them there's still the QR code
         async move { tokio::time::timeout(Duration::from_secs(8), link::publish_short_code(&short, &id, &crate::hostname(), &urls, &relays)).await.is_ok_and(|r| r.is_ok()) }
     };
-    pairing_answers(&config, service, &pairing, &id, &Patience::REAL, publish, show).await;
+    pairing_answers(&config, service, &pairing, &id, &Patience::REAL, once, publish, show).await;
     service
 }
 
@@ -207,8 +211,10 @@ fn full_answer(pairing: &link::Pairing, id: &str, urls: Vec<String>, relays: Vec
 /// few seconds to come up, longer when cloudflared has to be downloaded first; a private network's
 /// ws:// address comes first, but browsers only open wss://, so it waits for the tunnel too.
 /// Until then it says the tunnel is starting; after `first` it shows the code with what it has,
-/// and again with the tunnel's address once that arrives.
-async fn pairing_answers<F, Fut>(config: &LinkConfig, service: bool, pairing: &link::Pairing, id: &str, patience: &Patience, publish: F, show: &mut dyn FnMut(&Value))
+/// and again with the tunnel's address once that arrives. With `once` the code after `first` is
+/// the last answer: the phone looks the machine up by its ID once the tunnel is up.
+#[allow(clippy::too_many_arguments)]
+async fn pairing_answers<F, Fut>(config: &LinkConfig, service: bool, pairing: &link::Pairing, id: &str, patience: &Patience, once: bool, publish: F, show: &mut dyn FnMut(&Value))
 where
     F: Fn(Vec<String>, Vec<String>) -> Fut,
     Fut: std::future::Future<Output = bool>,
@@ -242,6 +248,10 @@ where
         let (urls, relays) = addresses(current());
         let typed = !urls.is_empty() && publish(urls.clone(), relays.clone()).await;
         let mut v = full_answer(pairing, id, urls, relays, typed, service);
+        if once {
+            show(&v);
+            return;
+        }
         v["waiting"] = json!("tunnel");
         show(&v);
         while up.is_none() {
@@ -463,7 +473,11 @@ mod tests {
     /// The answers `pair` gives while the link's state goes through `states` (after each delay),
     /// with short waits so the test takes a second or two.
     fn answers_while(config: LinkConfig, states: Vec<(u64, Vec<&'static str>)>) -> Vec<Value> {
-        let _h = crate::paths::testing::home(&format!("pair-wait-{}", states.len()));
+        answers_with(config, states, false)
+    }
+
+    fn answers_with(config: LinkConfig, states: Vec<(u64, Vec<&'static str>)>, once: bool) -> Vec<Value> {
+        let _h = crate::paths::testing::home(&format!("pair-wait-{}-{once}", states.len()));
         let pairing = link::new_pairing().unwrap();
         let patience = Patience { quick: Duration::from_millis(100), first: Duration::from_millis(600), tick: Duration::from_millis(20), until: Duration::from_secs(4) };
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -478,7 +492,7 @@ mod tests {
                 }
             });
             let publish = |_urls: Vec<String>, _relays: Vec<String>| async { true };
-            pairing_answers(&config, false, &pairing, "machine-id", &patience, publish, &mut |v| answers.push(v.clone())).await;
+            pairing_answers(&config, false, &pairing, "machine-id", &patience, once, publish, &mut |v| answers.push(v.clone())).await;
         });
         answers
     }
@@ -534,6 +548,19 @@ mod tests {
         assert_eq!(a[2], json!({ "ok": false, "error": crate::output::PAIR_EXPIRED, "expired": true }));
         assert!(crate::output::render_pair(&a[2]).contains("expired before the tunnel came up"));
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn with_once_the_code_after_the_first_wait_is_the_last_answer() {
+        // an installer with no terminal: no one waits ten minutes for a tunnel that can't start
+        let config = LinkConfig { vpn: false, ..LinkConfig::default() };
+        let started = std::time::Instant::now();
+        let a = answers_with(config, vec![(0, vec![])], true);
+        assert_eq!(a.len(), 2, "{a:?}");
+        assert_eq!(a[0]["waiting"], "tunnel");
+        assert!(a[1].get("waiting").is_none() && a[1].get("qr").is_some() && urls(&a[1]).is_empty());
+        assert!(crate::output::render_pair(&a[1]).contains("No address yet"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
