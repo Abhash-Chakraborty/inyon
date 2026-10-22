@@ -6,7 +6,7 @@ use inyon_cli::commands::{self, SetupFlags};
 use inyon_cli::service::{Role, Sys};
 use inyon_cli::sys::RealProc;
 use inyon_cli::ui::{dashboard, Theme};
-use inyon_cli::{engine, paths, update};
+use inyon_cli::{engine, pages, paths, update};
 
 /// Drive your coding agents from the Inyon app: pair this machine, keep it reachable, keep it up to date.
 #[derive(Parser)]
@@ -93,6 +93,11 @@ enum Command {
         /// Wait for Enter at the end (how Windows runs it from Settings, in a window of its own)
         #[arg(long, hide = true)]
         pause: bool,
+    },
+    /// The sites your agents make, shown in the app under Pages: add, list or remove them
+    Pages {
+        #[command(subcommand)]
+        action: Option<PagesAction>,
     },
     /// Agent skills that come with each release: list, add or remove them
     Skill {
@@ -194,6 +199,27 @@ enum SkillAction {
         #[arg(long)]
         to: Option<std::path::PathBuf>,
     },
+}
+
+#[derive(Subcommand)]
+enum PagesAction {
+    /// Show a site's folder in the app under Pages (it needs an index.html)
+    Add {
+        /// The site's folder
+        dir: std::path::PathBuf,
+        /// The name the app shows (default: the site's own, its <title>, or the folder's name)
+        #[arg(long)]
+        name: Option<String>,
+        /// The page's name in links: lowercase letters, digits and dashes (default: the site's own, or the folder's name)
+        #[arg(long)]
+        slug: Option<String>,
+    },
+    /// The pages on this machine (the same as plain `inyon pages`)
+    #[command(visible_alias = "list")]
+    Ls,
+    /// Take a page out of the app; its folder stays as it is
+    #[command(visible_alias = "remove")]
+    Rm { slug: String },
 }
 
 #[derive(Subcommand)]
@@ -326,6 +352,14 @@ fn main() {
             }
             code
         }
+        Some(Command::Pages { action }) => commands::finish(
+            match action {
+                Some(PagesAction::Add { dir, name, slug }) => pages::add_command(&dir, name.as_deref(), slug.as_deref()),
+                Some(PagesAction::Rm { slug }) => pages::remove_command(&slug),
+                Some(PagesAction::Ls) | None => pages::list_command(),
+            },
+            json,
+        ),
         Some(Command::Skill { action }) => commands::finish(
             match action {
                 SkillAction::List => commands::skill_list(),

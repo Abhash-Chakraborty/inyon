@@ -9,6 +9,8 @@ pub mod conversations;
 #[allow(clippy::module_inception)]
 pub mod features;
 pub mod models;
+// the rules for serving a page (pages-core.ts): no shell, no disk; the hub brings its own
+pub mod pages_core;
 pub mod paths;
 pub mod providers;
 pub mod setup;

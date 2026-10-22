@@ -127,9 +127,13 @@
     frame.classList.remove('loading');
     try { ifr.contentWindow.postMessage({ type: 'theme', value: theme }, '*'); ifr.contentWindow.postMessage({ type: 'notes?' }, '*'); } catch {}
   });
+  // Notes come only from the screen in our own frame; anything else posting here is ignored.
   window.addEventListener('message', (e) => {
-    if (e.data && e.data.type === 'notes') $('#notesBody').innerHTML = e.data.html || '<p>No notes for this screen yet.</p>';
+    if (e.source !== ifr.contentWindow || !e.data || e.data.type !== 'notes') return;
+    $('#notesBody').innerHTML = typeof e.data.html === 'string' && e.data.html ? e.data.html : '<p>No notes for this screen yet.</p>';
   });
+  // The page around the viewer (Inyon) changed the theme: kit.js has set it here, pass it on to the screen.
+  document.addEventListener('bp:theme', (e) => { const b = K.$(`#thm button[data-value="${e.detail}"]`); if (b && e.detail !== theme) b.click(); });
   $('#dev').addEventListener('change', (e) => { device = e.detail; store('ixv-device', device); fit(); });
   $('#thm').addEventListener('change', (e) => { theme = e.detail; K.setTheme(theme); try { ifr.contentWindow.postMessage({ type: 'theme', value: theme }, '*'); } catch {} $('#full').href = src(all[cur]); });
   K.$$('#dev button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.value === device));

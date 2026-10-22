@@ -81,6 +81,7 @@ pub fn serve() -> i32 {
         crate::password::init();
         crate::auth::init();
         crate::phones::init();
+        crate::pages::init(inyon_engine::paths::home());
 
         // A new hub has no password: the first visit creates one, with a one-time code from the
         // hub's log. The code is asked for even on localhost, since a page in your browser can

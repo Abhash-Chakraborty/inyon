@@ -15,6 +15,26 @@ Inyon gives whoever reaches it a shell on your machines, as the user your agents
 - **Servers over SSH** use the hub's own `ssh` with your config and keys. The hub stores no SSH keys. It accepts a new server's host key on first contact and refuses one that changes later.
 - **What it asks the internet.** Besides its own update check, from 0.17.4 the hub asks `registry.npmjs.org` for the newest version of each agent's npm package when a machine's Setup tab opens, at most once an hour per package. The request names the package and nothing else; nothing about you or your machines is sent.
 
+## Pages
+
+From 0.20 the hub shows the sites your agents make on its machine, such as a Blueprint plan with its mockups and progress board. An agent wrote that HTML and JavaScript, and an agent can be talked into writing anything, so the hub treats every page as untrusted.
+
+- **Signed in to see one.** Only a signed-in browser or a paired phone can list pages or open one.
+- **A link per page.** A page opens under `/v/<link>/` on the hub's own port. The link is signed with a key made from the hub's session secret, opens one page and nothing else, and lasts 12 hours. The app makes a fresh one each time you open the page.
+- **No cookie under `/v/`.** Those answers never read your sign-in cookie or a phone's token, and never set a cookie. A link that is expired, revoked or altered gets "Link expired" whoever asks.
+- **Ending links.** Revoking a page's links ends every link made for it so far. Removing the page does the same, from the app, with `inyon pages rm` or by editing `pages.json`, even while the hub is stopped, so a page added again under the same name doesn't open old links. Changing the hub's password ends the links of every page. A link made on a phone stops working when you forget that phone.
+- **A sandbox on every answer.** Every answer under `/v/`, errors and redirects too, carries a Content-Security-Policy sandbox without `allow-same-origin`. The page runs with an origin of its own, even opened in its own tab, so it can't read the app's cookies or storage (where the app keeps the tokens of other hubs) or reach into the app's page. In its own tab the address bar still shows the hub's address, since pages share the hub's port.
+- **Only its own files.** A page can load scripts, styles, images, fonts and data only from its own link's address, never from the internet or another page, and a form on it can't submit to any address. The hub also turns off DNS prefetching for it. Names starting with a dot (`.git`, `.env`, the `.inyon-page.json` marker) are never served, folders are never listed, and a file a symlink leads to outside the site's folder isn't served.
+- **The API refuses framed callers.** From 0.20 a call to the hub's API that carries the sign-in cookie is refused when it comes from a page with no origin of its own (`Origin: null`) or from another site (`Sec-Fetch-Site: cross-site`), reads included. A paired phone sends its token instead of a cookie and isn't affected. `INYON_ALLOWED_ORIGINS` names origins that may still call.
+- **Folders that can't be pages.** `/`, your home folder and anything under `~/.ssh` or `~/.inyon` can't be added, judged by the path and by where its symlinks lead. A page's folder needs an `index.html`.
+- **Nothing in a folder can stall the hub.** The hub reads a page's `progress.json` and its `.inyon-page.json` only when each is a plain file, not a symlink or a named pipe, so a pipe an agent leaves there can't hold the hub up waiting for data. `pages.json` may be a symlink, for dotfile setups, but it too is read only when it leads to a plain file, and only up to 4 MB. When you add a page, git gets 3 seconds to name its project, so a pipe in the folder's `.git` can't hold things up either: past that, the page is grouped under its own folder. `inyon pages` and Blueprint work the same way.
+
+What the sandbox doesn't stop:
+
+- **A page can reach the internet without being seen.** Its script can open a WebRTC connection, make the browser look up a name in DNS, move to an outside address with data in the URL, or open a window. No header or sandbox flag blocks all of these in today's browsers, and nothing on screen has to change.
+- **What it can carry out** is anything the agent that wrote it could read, and anything typed into the page. An agent whose own sandbox has no network but can read your disk could copy `~/.aws/credentials` or a GitHub token into the page's folder, and the page would send it from your browser.
+- **Never type the hub password into a page.** Inyon never asks you to sign in inside one. A page opened in its own tab sits at the hub's own address, so a fake sign-in form there looks real, and a password typed into it goes to the page. Today Chrome and Firefox turn their password managers off for a page with no origin of its own, as a sandboxed page is, so they shouldn't offer a saved password there. Don't rely on that. A separate hostname for pages, so a page never shares the hub's address, is planned.
+
 ## Phones paired with a hub
 
 - Only a browser that signed in within the last 10 minutes can show a pairing code. A code works once, for 10 minutes, and five wrong tries cancel it.

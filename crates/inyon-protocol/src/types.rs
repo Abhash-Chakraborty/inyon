@@ -846,6 +846,110 @@ pub struct PairedPhone {
     pub this_phone: Option<True>,
 }
 
+// ---------- Pages: sites an agent made, served by the hub under a token URL ----------
+
+/// What a page's progress.json says, counted: tasks done of all tasks, and its `now` and `updated` lines.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct PageProgress {
+    pub done: u32,
+    pub total: u32,
+    /// the "working on" line
+    pub now: Option<String>,
+    /// when progress.json was last written, as it says (an ISO time)
+    pub updated: Option<String>,
+}
+
+/// GET /api/pages: one page, on one machine. Its id is `<host>/<slug>`.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct PageEntry {
+    /// the machine's host id ("local" for the hub's own machine)
+    pub host: String,
+    /// `^[a-z0-9][a-z0-9-]{0,62}$`, unique on its machine
+    pub slug: String,
+    pub name: String,
+    /// the project folder: the git top level of the page's folder, or the folder itself
+    pub project: String,
+    /// who added it: an agent ("claude", "codex"…), "cli" for the inyon command, or "app"
+    pub by: String,
+    /// unix ms
+    pub added: u64,
+    /// the site's folder, absolute; it holds index.html
+    pub folder: String,
+    /// left out when the site has no readable progress.json
+    pub progress: Option<PageProgress>,
+}
+
+/// GET /api/pages
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PageList {
+    pub pages: Vec<PageEntry>,
+}
+
+/// POST /api/pages/:host/:slug/open. `url` is a path on the hub that called (`/v/<token>/`); the app
+/// puts the hub's own address in front of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PageOpen {
+    pub url: String,
+    /// unix ms; twelve hours after it was made
+    pub expires: u64,
+    /// how long the link lasts from when it was made, in ms; the app counts it on its own clock, which may not agree with the hub's
+    pub ttl: u64,
+}
+
+/// POST /api/pages/:host: add a folder as a page. The slug comes from the folder's name when left out.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct PageRegister {
+    /// absolute, and holds index.html
+    pub path: String,
+    pub name: Option<String>,
+    pub slug: Option<String>,
+}
+
+/// One entry of ~/.inyon/pages.json, the machine's list of pages.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PageRecord {
+    pub slug: String,
+    pub name: String,
+    pub path: String,
+    pub project: String,
+    pub by: String,
+    /// unix ms
+    pub added: u64,
+}
+
+/// ~/.inyon/pages.json. Written to a temp file and renamed, under pages.json.lock.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PagesFile {
+    /// always 1
+    pub v: u32,
+    pub pages: Vec<PageRecord>,
+}
+
+/// What made a page's site; only Blueprint so far.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum PageKind {
+    Blueprint,
+}
+
+/// `<site>/.inyon-page.json`, the marker in a site's own folder. It is a dot file, so never served.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PageMarker {
+    /// always 1
+    pub v: u32,
+    pub slug: String,
+    pub name: String,
+    pub kind: PageKind,
+    /// unix ms
+    pub created: u64,
+}
+
 // ---------- WebSocket protocol ----------
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

@@ -17,6 +17,7 @@ pub mod idle;
 pub mod index;
 pub mod multipart;
 pub mod node_dist;
+pub mod pages;
 pub mod password;
 pub mod phones;
 pub mod push;

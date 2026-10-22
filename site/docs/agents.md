@@ -82,6 +82,10 @@ Found through its process locks and event log. Its models come from the CLI's ow
 
 Google's `agy`. Read from its transcripts, with plan quotas from its own status line. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
 
+## Pages an agent makes
+
+From 0.20 any of them can put a site it built, such as a plan or mockups, in the app with `inyon pages add <folder>`. The [Blueprint](skills.md#blueprint) skill does it on its own. The page records who added it: `claude`, `codex`, `gemini` or `opencode` when one of those ran the command, `cli` for anything else. See [Pages](pages.md).
+
 ## Installing and signing in
 
 A machine's **Setup** tab installs any of them, with the official installer or npm (Codex, Gemini CLI and Copilot need Node.js, which it can install too), and runs each one's sign-in as steps in the app. From 0.17.4 it also shows which of the six has a newer version and updates it with one button, from the browser or the phone. See [Adding machines](machines.md#the-setup-tab).

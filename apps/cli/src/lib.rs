@@ -5,6 +5,7 @@ pub mod commands;
 pub mod engine;
 pub mod http;
 pub mod networks;
+pub mod pages;
 pub mod paths;
 /// the pairing QR code, drawn in the terminal
 pub use inyon_engine::qr;

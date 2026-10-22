@@ -56,7 +56,7 @@ jobs:
           tar -czf "$out/inyon-web.tar.gz" -C apps/web/dist-hosted .
           # each agent skill as inyon-skill-<name>.tar.gz with its folder at the top, for
           # `inyon skill add` and for anyone who wants it on its own
-          for d in skills/*/; do n=$(basename "$d"); tar -czf "$out/inyon-skill-$n.tar.gz" --owner=0 --group=0 --numeric-owner -C skills "$n"; done
+          for d in skills/*/; do n=$(basename "$d"); tar -czf "$out/inyon-skill-$n.tar.gz" --owner=0 --group=0 --numeric-owner --exclude="$n/tests" --exclude=__pycache__ -C skills "$n"; done
           rm -f "$out/SHA256SUMS"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

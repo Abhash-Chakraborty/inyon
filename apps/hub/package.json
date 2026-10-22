@@ -7,6 +7,7 @@
     "start": "NODE_ENV=production bun src/index.ts",
     "set-password": "bun src/cli/set-password.ts",
     "expected": "bun src/cli/expected.ts",
+    "pages-vectors": "bun src/cli/pages-vectors.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

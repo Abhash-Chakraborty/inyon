@@ -139,6 +139,9 @@ export function phoneFor(req: Request, now = Date.now()): PhoneRecord | undefine
   return token ? byToken(token, now) : undefined
 }
 
+/** Whether a phone with this id is still paired (a page link a phone made stops working once it isn't). */
+export const phonePaired = (id: string) => phones.some((p) => p.id === id)
+
 // ---------- WebSocket tickets ----------
 
 // a page can't put a header on a WebSocket, so a phone trades its token for a short-lived ticket

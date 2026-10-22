@@ -507,6 +507,94 @@ export interface PairedPhone {
   thisPhone?: true
 }
 
+// ---------- Pages: sites an agent made, served by the hub under a token URL ----------
+
+/** What a page's progress.json says, counted: tasks done of all tasks, and its `now` and `updated` lines. */
+export interface PageProgress {
+  done: number
+  total: number
+  /** the "working on" line */
+  now?: string
+  /** when progress.json was last written, as it says (an ISO time) */
+  updated?: string
+}
+
+/** GET /api/pages: one page, on one machine. Its id is `<host>/<slug>`. */
+export interface PageEntry {
+  /** the machine's host id ("local" for the hub's own machine) */
+  host: string
+  /** `^[a-z0-9][a-z0-9-]{0,62}$`, unique on its machine */
+  slug: string
+  name: string
+  /** the project folder: the git top level of the page's folder, or the folder itself */
+  project: string
+  /** who added it: an agent ("claude", "codex"…), "cli" for the inyon command, or "app" */
+  by: string
+  /** unix ms */
+  added: number
+  /** the site's folder, absolute; it holds index.html */
+  folder: string
+  /** left out when the site has no readable progress.json */
+  progress?: PageProgress
+}
+
+/** GET /api/pages */
+export interface PageList {
+  pages: PageEntry[]
+}
+
+/**
+ * POST /api/pages/:host/:slug/open. `url` is a path on the hub that called (`/v/<token>/`); the app
+ * puts the hub's own address in front of it.
+ */
+export interface PageOpen {
+  url: string
+  /** unix ms; twelve hours after it was made */
+  expires: number
+  /** how long the link lasts from when it was made, in ms; the app counts it on its own clock, which may not agree with the hub's */
+  ttl: number
+}
+
+/** POST /api/pages/:host: add a folder as a page. The slug comes from the folder's name when left out. */
+export interface PageRegister {
+  /** absolute, and holds index.html */
+  path: string
+  name?: string
+  slug?: string
+}
+
+/** One entry of ~/.inyon/pages.json, the machine's list of pages. */
+export interface PageRecord {
+  slug: string
+  name: string
+  path: string
+  project: string
+  by: string
+  /** unix ms */
+  added: number
+}
+
+/** ~/.inyon/pages.json. Written to a temp file and renamed, under pages.json.lock. */
+export interface PagesFile {
+  /** always 1 */
+  v: number
+  pages: PageRecord[]
+}
+
+/** What made a page's site; only Blueprint so far. */
+export type PageKind = 'blueprint'
+
+/** `<site>/.inyon-page.json`, the marker in a site's own folder. It is a dot file, so never served. */
+export interface PageMarker {
+  /** always 1 */
+  v: number
+  slug: string
+  name: string
+  kind: PageKind
+  /** unix ms */
+  created: number
+}
+
 // ---------- WebSocket protocol ----------
 
 export type ClientMsg =

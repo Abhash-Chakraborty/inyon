@@ -41,4 +41,8 @@ PY
 if $p task nope done 2>/dev/null; then echo "progress.py took an unknown task"; exit 1; fi
 
 node "$bp/scripts/stills.mjs" "$tmp/site" --audit
+
+# publishing to Inyon's list of pages, serve.mjs against the hub's /v/ fixtures, progress.py's locking
+bun test "$bp/tests"
+python3 "$bp/tests/test_progress.py"
 echo "skills ok"

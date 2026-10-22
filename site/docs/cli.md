@@ -29,6 +29,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon doctor` | Check that everything is in place |
 | `inyon update` | Update to the newest release |
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
+| `inyon pages add`, `ls`, `rm` | Show a site's folder in the app under Pages |
 | `inyon uninstall` | Remove Inyon |
 | `inyon version` | Show the version |
 
@@ -218,6 +219,45 @@ inyon skill remove blueprint
 ```
 
 From 0.17.7. `add` downloads the skill from the newest release, checks it against the signed SHA256SUMS, and installs it for each coding agent on the computer. `--to` picks one folder instead, and `--force` replaces a skill of the same name that Inyon didn't install. See [Agent skills](skills.md).
+
+## Pages
+
+```sh
+inyon pages add ~/development/handy-redesign
+inyon pages add ./private/plans/ghostex --name "Inyon plan" --slug ghostex
+inyon pages                  # the pages on this computer; the same as inyon pages ls
+inyon pages rm ghostex
+```
+
+From 0.20. `add` lists a site's folder in `~/.inyon/pages.json`, so the app shows it under Pages. The folder needs an `index.html`. It can't be `/`, your home folder, or anything under `~/.ssh` or `~/.inyon`, judged by the path and by where its symlinks lead. On Windows a mapped network drive works like any other drive letter, and the share's top folder counts as too wide. No hub has to be running: the hub reads the file again when it changes.
+
+```
+"Inyon plan" is in Inyon: Pages > abhash-arm > custom-tmux
+Open it in the app at /pages/local/ghostex
+```
+
+The second line is where the page is in the app, not a link to share. A link that opens the page directly is made by the app each time you open it, and lasts 12 hours (see [Security](security.md#pages)).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--name <text>` | The site's own name, its `<title>`, or the folder's name | What the app calls the page |
+| `--slug <slug>` | The site's own slug, or the folder's name | The page's name in links: lowercase letters, digits and dashes, up to 63 characters, unique on the computer. A slug that's taken gets `-2`, `-3` and so on, unless you asked for it with `--slug`, which is refused instead |
+
+- **The site's own name and slug** come from `.inyon-page.json` in its folder. Blueprint writes that file when it makes a site, and `add` writes or updates it, so the site keeps its slug if it's ever added again.
+- **The project** the app groups it under is the folder's git repository, or the folder itself outside one. In a linked worktree it's the repository's main folder, so the page keeps its place after the worktree is removed. If git doesn't answer within 3 seconds, it's the folder itself.
+- **Who added it** is saved too: `claude`, `codex`, `gemini` or `opencode` when one of those agents ran the command, `cli` otherwise.
+- **Adding a folder again** is safe. It keeps its slug and its place, and changes only the name or slug you pass.
+
+`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is.
+
+> **Note:** For now the app shows pages from the hub's own computer only. On any other computer `add` still saves the page, but answers with where it's listed instead of a place in the app:
+
+```
+"Inyon plan" is listed on laptop, under custom-tmux.
+This machine doesn't run a hub. For now the app shows pages from the hub's own machine only. The app can't open this page yet.
+```
+
+If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.
 
 ## JSON output
 
