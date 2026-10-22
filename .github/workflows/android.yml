@@ -262,7 +262,8 @@ jobs:
       needs.apk.result == 'success' && needs.ssh-plugin.result == 'success' &&
       needs.smoke.outputs.crashed != 'yes'
     runs-on: ubuntu-24.04
-    # uploads to the release; nothing in this job installs or runs dependencies
+    # uploads to the release; it installs only Ubuntu's minisign package, to sign, and runs no
+    # dependencies
     permissions:
       contents: write
     steps:

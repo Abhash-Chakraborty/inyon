@@ -42,7 +42,8 @@ function writes(p: Perms): string[] {
     .map(([k]) => k)
 }
 
-/** The only jobs that may write, and what: each one publishes, and none installs or runs dependencies. */
+/** The only jobs that may write, and what: each one publishes, and none installs or runs dependencies
+ * (the signing jobs may install Ubuntu's minisign package, and nothing else). */
 const PUBLISHERS: Record<string, string[]> = {
   'node.yml/publish': ['contents'],
   'android.yml/publish': ['contents'],
@@ -50,7 +51,11 @@ const PUBLISHERS: Record<string, string[]> = {
   'npm.yml/publish': ['id-token'],
 }
 /** steps that run code from outside this repository: dependency installs, builds, tests and the tools they start */
-const THIRD_PARTY = /\b(bun|npm|pnpm|yarn)\s+(install|i|ci|add)\b|\bbunx?\s+x\b|\bbunx\b|\bbun\s+(run\s+)?(build|test)\b|gradlew|\bcargo\b|\bcap\s+sync\b/
+const THIRD_PARTY =
+  /\b(bun|npm|pnpm|yarn)\s+(install|i|ci|add)\b|\bbunx?\s+x\b|\bbunx\b|\bbun\s+(run\s+)?(build|test)\b|gradlew|\bcargo\b|\bcap\s+sync\b|\bapt(-get)?\s+install\b|\bpip3?\s+install\b/
+/** the one package install a publishing job may run */
+const MINISIGN = 'sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null'
+
 
 describe('workflow permissions', () => {
   test('every workflow is read-only unless a job says otherwise', () => {
@@ -69,7 +74,8 @@ describe('workflow permissions', () => {
         // a job that calls another workflow hands it its token
         expect({ key, uses: job.uses }).toEqual({ key, uses: undefined })
         for (const step of job.steps ?? []) {
-          expect({ key, run: step.run ?? '' }).not.toEqual({ key, run: expect.stringMatching(THIRD_PARTY) })
+          const run = (step.run ?? '').split(MINISIGN).join('')
+          expect({ key, run }).not.toEqual({ key, run: expect.stringMatching(THIRD_PARTY) })
         }
       }
     }
