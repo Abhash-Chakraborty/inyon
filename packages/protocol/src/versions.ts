@@ -19,6 +19,8 @@ export const APP_ID = 'tech.abhashchakraborty.inyon'
 
 /** The repository every release is published on. */
 export const RELEASES_REPO = SOURCE_REPO
+/** The minisign key every release's SHA256SUMS is signed with (key id 0F27F489FF0BBD53). */
+export const RELEASE_KEY = 'RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6'
 /**
  * The website's copy of the newest release, where the app and the inyon program are downloaded
  * from. Older releases stay on GitHub only.

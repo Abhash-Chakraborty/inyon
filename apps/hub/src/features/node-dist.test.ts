@@ -149,3 +149,59 @@ test('a checkout without a built command hands Windows the release command, and 
     console.warn = warn
   }
 })
+
+// made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
+const TEST_KEY = 'RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm'
+const SIGNED = 'abc  file-a\n'
+const SIGNED_SIG = `untrusted comment: signature from minisign secret key
+RUQqNVK9mQOKMsG6IaBxYN3yeR9DY8Kwq2+HGNkBa8PWTC7MyZVoH8WrwxnZc1dJUEhj/YiXuUfHK7DA/140uWusc6AMswmIuAk=
+trusted comment: timestamp:1791906365\tfile:SUMS\thashed
+oVJ5Gs0ifXOH3A3LPOydH99Oy63a+zAnotC94agLquPv6YcFYKXEl61a2M7Kiba52Dq4ulBuTrygyBnx8RdFCw==
+`
+
+test('the release checksums count only with a good signature from the release key', async () => {
+  const { signedSums } = await import('./node-dist.ts')
+  const { RELEASE_KEY } = await import('@inyon/protocol')
+  const release = (sums: string, sig?: string) => {
+    const asked: string[] = []
+    const get = (async (url: string) => {
+      const name = url.split('/').pop()!
+      asked.push(name)
+      if (name === 'SHA256SUMS') return new Response(sums)
+      if (name === 'SHA256SUMS.minisig' && sig) return new Response(sig)
+      return new Response('no', { status: 404 })
+    }) as unknown as typeof fetch
+    return { asked, get }
+  }
+  const good = release(SIGNED, SIGNED_SIG)
+  expect(await signedSums('http://r', TEST_KEY, good.get)).toBe(SIGNED)
+  // a list changed by one byte, no signature, another key, and a changed trusted comment: each refused before any file
+  for (const [sums, sig, key] of [
+    ['abd  file-a\n', SIGNED_SIG, TEST_KEY],
+    [SIGNED, undefined, TEST_KEY],
+    [SIGNED, SIGNED_SIG, RELEASE_KEY],
+    [SIGNED, SIGNED_SIG.replace('timestamp:1791906365', 'timestamp:1791906366'), TEST_KEY],
+  ] as const) {
+    const r = release(sums, sig)
+    await expect(signedSums('http://r', key, r.get)).rejects.toMatchObject({ status: 502 })
+    expect(r.asked.every((n) => n.startsWith('SHA256SUMS'))).toBe(true)
+  }
+})
+
+test('only a mock release may name another signing key', async () => {
+  const { signingKey } = await import('./minisign.ts')
+  const { RELEASE_KEY, RELEASES_REPO, VERSION } = await import('@inyon/protocol')
+  const old = process.env.INYON_SIGNING_KEY
+  process.env.INYON_SIGNING_KEY = `untrusted comment: test key\n${TEST_KEY}\n`
+  try {
+    expect(signingKey('http://127.0.0.1:8000/download')).toBe(TEST_KEY)
+    for (const base of [`https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`, 'https://inyon.abhashchakraborty.tech/download', 'HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download']) {
+      expect(signingKey(base)).toBe(RELEASE_KEY)
+    }
+    delete process.env.INYON_SIGNING_KEY
+    expect(signingKey('http://127.0.0.1:8000/download')).toBe(RELEASE_KEY)
+  } finally {
+    if (old === undefined) delete process.env.INYON_SIGNING_KEY
+    else process.env.INYON_SIGNING_KEY = old
+  }
+})

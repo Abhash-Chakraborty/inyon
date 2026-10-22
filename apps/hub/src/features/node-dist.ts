@@ -11,6 +11,7 @@ import { CLI_TARGETS, cliFile, engineFile, HUB_TARGETS, type CliTarget, type Hub
 import { DATA_DIR } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
+import { signingKey, verifyMinisign } from './minisign.ts'
 import { unixPairCommand } from './pair-command.ts'
 
 /**
@@ -182,12 +183,23 @@ const releaseBase = () => (process.env.INYON_DOWNLOAD || `https://github.com/${R
 
 let sumsText: Promise<string> | undefined
 function releaseSums() {
-  sumsText ??= fetch(`${releaseBase()}/SHA256SUMS`).then(async (r) => {
-    if (!r.ok) throw new HttpError(502, `Could not get the checksums of Inyon ${VERSION} (${r.status})`)
-    return r.text()
-  })
+  sumsText ??= signedSums(releaseBase(), signingKey(releaseBase()))
   sumsText.catch(() => (sumsText = undefined))
   return sumsText
+}
+
+/**
+ * The release's SHA256SUMS, refused unless SHA256SUMS.minisig signs it with `key`: the hub hands
+ * out what this list names, and puts its hash in every "Add a machine" command.
+ */
+export async function signedSums(base: string, key: string, get: typeof fetch = fetch): Promise<string> {
+  const r = await get(`${base}/SHA256SUMS`)
+  if (!r.ok) throw new HttpError(502, `Could not get the checksums of Inyon ${VERSION} (${r.status})`)
+  const sums = new Uint8Array(await r.arrayBuffer())
+  const s = await get(`${base}/SHA256SUMS.minisig`)
+  if (!s.ok) throw new HttpError(502, `Could not get the signature of Inyon ${VERSION}'s checksums (${s.status}), so nothing from that release is handed out`)
+  if (!verifyMinisign(sums, await s.text(), key)) throw new HttpError(502, `The checksums of Inyon ${VERSION} at ${base} aren't signed with Inyon's release key, so nothing from that release is handed out`)
+  return new TextDecoder().decode(sums)
 }
 
 const sumFor = (sums: string, name: string) => sums.split(/\r?\n/).map((l) => l.trim().split(/\s+\*?/)).find(([, n]) => n === name)?.[0]?.toLowerCase()

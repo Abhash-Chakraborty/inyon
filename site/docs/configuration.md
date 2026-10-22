@@ -19,7 +19,7 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `INYON_ALLOWED_ORIGINS` | | Extra origins allowed to call the hub, comma-separated, for a reverse proxy on another hostname |
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
-| `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines |
+| `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines. A mirror needs `SHA256SUMS.minisig` beside `SHA256SUMS`: from 0.20 the hub checks it with the release key first |
 | `INYON_HUB_IMPL` | `bun` | `rust` runs the hub built into `inyon` instead of the Bun engine's, and the Bun engine isn't downloaded (from 0.20, an opt-in test). `bun` goes back, and so does `INYON_LEGACY_ENGINE=1`. See [Trying the hub in Rust](hub.md#trying-the-hub-in-rust) |
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.

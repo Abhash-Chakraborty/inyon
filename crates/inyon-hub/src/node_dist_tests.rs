@@ -689,3 +689,57 @@ fn windows_script_under_powershell_launch_only_starts_itself_as_a_one_off_task()
     );
     assert_eq!(r.calls[1], "start Tether update");
 }
+
+// made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
+const TEST_KEY: &str = "RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm";
+const SIGNED: &str = "abc  file-a\n";
+const SIGNED_SIG: &str = "untrusted comment: signature from minisign secret key\n\
+    RUQqNVK9mQOKMsG6IaBxYN3yeR9DY8Kwq2+HGNkBa8PWTC7MyZVoH8WrwxnZc1dJUEhj/YiXuUfHK7DA/140uWusc6AMswmIuAk=\n\
+    trusted comment: timestamp:1791906365\tfile:SUMS\thashed\n\
+    oVJ5Gs0ifXOH3A3LPOydH99Oy63a+zAnotC94agLquPv6YcFYKXEl61a2M7Kiba52Dq4ulBuTrygyBnx8RdFCw==\n";
+
+/// A release with this list and signature (None: no .minisig); every name asked is noted.
+fn signed_release(asked: Rc<RefCell<Vec<String>>>, sums: &'static str, sig: Option<&'static str>) -> Get {
+    Rc::new(move |url: String| {
+        asked.borrow_mut().push(url.rsplit('/').next().unwrap_or("").to_owned());
+        Box::pin(async move {
+            Ok(match (url.rsplit('/').next().unwrap_or(""), sig) {
+                ("SHA256SUMS", _) => (200, sums.as_bytes().to_vec()),
+                ("SHA256SUMS.minisig", Some(s)) => (200, s.as_bytes().to_vec()),
+                _ => (404, b"no".to_vec()),
+            })
+        })
+    })
+}
+
+#[test]
+fn the_release_checksums_count_only_with_a_good_signature_from_the_release_key() {
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let ok = block(signed_sums("http://r", TEST_KEY, signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG))));
+    assert_eq!(ok.unwrap(), SIGNED);
+    // a list changed by one byte, no signature, another key, and a changed trusted comment are each refused, before any file
+    let retimed: &'static str = Box::leak(SIGNED_SIG.replace("timestamp:1791906365", "timestamp:1791906366").into_boxed_str());
+    for (sums, sig, key) in [("abd  file-a\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)] {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let e = block(signed_sums("http://r", key, signed_release(asked.clone(), sums, sig))).unwrap_err();
+        assert_eq!(e.status, Some(502), "{}", e.message);
+        assert!(asked.borrow().iter().all(|n| n.starts_with("SHA256SUMS")), "{:?}", asked.borrow());
+    }
+}
+
+#[test]
+fn only_a_mock_release_may_name_another_signing_key() {
+    // SAFETY: no other test in this binary reads INYON_SIGNING_KEY
+    unsafe { std::env::set_var("INYON_SIGNING_KEY", format!("untrusted comment: test key\n{TEST_KEY}\n")) };
+    assert_eq!(signing_key("http://127.0.0.1:8000/download"), TEST_KEY);
+    for base in [
+        format!("https://github.com/{RELEASES_REPO}/releases/download/v{VERSION}"),
+        "https://inyon.abhashchakraborty.tech/download".into(),
+        "HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download".into(),
+    ] {
+        assert_eq!(signing_key(&base), RELEASE_KEY, "{base}");
+    }
+    assert_eq!(signing_key("https://github.com/someone-else/inyon/releases/download/v1"), TEST_KEY);
+    unsafe { std::env::remove_var("INYON_SIGNING_KEY") };
+    assert_eq!(signing_key("http://127.0.0.1:8000/download"), RELEASE_KEY);
+}

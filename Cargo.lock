@@ -1398,6 +1398,7 @@ dependencies = [
  "inyon-link",
  "inyon-protocol",
  "libc",
+ "minisign-verify",
  "regex",
  "rust-embed",
  "rustls",

@@ -22,6 +22,8 @@ inyon-core = { path = "../inyon-core" }
 inyon-engine = { path = "../inyon-engine" }
 inyon-link = { path = "../inyon-link" }
 inyon-protocol = { path = "../inyon-protocol" }
+# the release's SHA256SUMS.minisig, checked before any file it lists is handed to a machine
+minisign-verify = "0.3"
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
 rust-embed = { version = "8.7", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

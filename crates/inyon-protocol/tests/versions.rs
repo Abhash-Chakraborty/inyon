@@ -25,6 +25,7 @@ fn constants_match_versions_ts() {
         ("INSTALL_URL", INSTALL_URL),
         ("APP_ID", APP_ID),
         ("ENGINE", ENGINE),
+        ("RELEASE_KEY", RELEASE_KEY),
     ] {
         assert!(ts.contains(&format!("export const {name} = '{value}'")), "{name} differs from versions.ts");
     }
@@ -34,6 +35,8 @@ fn constants_match_versions_ts() {
     assert_eq!(DOWNLOAD_URL, format!("{INSTALL_URL}/download"));
     assert!(ts.contains("export const LATEST_URL = `${DOWNLOAD_URL}/latest.json`"));
     assert_eq!(LATEST_URL, format!("{DOWNLOAD_URL}/latest.json"));
+    // the inyon command checks its own updates with the same key
+    assert!(include_str!("../../../apps/cli/src/signing.rs").contains(&format!("pub const RELEASE_KEY: &str = \"{RELEASE_KEY}\";")));
 }
 
 #[test]

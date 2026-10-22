@@ -987,7 +987,10 @@ mod tests {
         let c = parse_captures("junk\n@@CAP %1\na\nb\n@@CAP %2\n");
         assert_eq!(c["%1"], vec!["a", "b"]);
         assert_eq!(c["%2"], vec![""]);
-        assert_eq!(type_text("%1", "hi", true, "b"), TypeText::Keys { command: format!("{} && sleep 0.12 && tmux send-keys -t '%1' Enter", type_command("b", "%1")), input: "hi".into() });
+        assert_eq!(
+            type_text("%1", "hi", true, "b"),
+            TypeText::Keys { command: format!("{} && sleep 0.12 && tmux send-keys -t '%1' Enter", type_command("b", "%1")), input: "hi".into() }
+        );
         assert_eq!(type_text("%1", "", true, "b"), TypeText::Keys { command: "sleep 0.12 && tmux send-keys -t '%1' Enter".into(), input: String::new() });
         assert_eq!(type_text("%1", "", false, "b"), TypeText::Nothing);
         assert!(matches!(type_text("%1", "a\r\nb", false, "b"), TypeText::Paste { input, .. } if input == "a\nb"));

@@ -542,7 +542,13 @@ fn typed_text_reaches_tmux_through_a_file_and_never_in_any_arguments() {
     let bin = TempDir::new("typed-");
     let log = bin.path("argv");
     // the fake tmux keeps its arguments, and the buffer it was handed
-    bin.write("tmux", &format!("#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{0}\"; done; echo >> \"{0}\"\n[ \"$1\" = load-buffer ] && cat \"$4\" > \"{0}.buffer\"; exit 0\n", log.display()));
+    bin.write(
+        "tmux",
+        &format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{0}\"; done; echo >> \"{0}\"\n[ \"$1\" = load-buffer ] && cat \"$4\" > \"{0}.buffer\"; exit 0\n",
+            log.display()
+        ),
+    );
     std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     bin.write("argv", "");
     let secret = "sk-ant-api03-not-in-argv";

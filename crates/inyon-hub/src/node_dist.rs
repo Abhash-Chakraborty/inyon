@@ -19,7 +19,7 @@ use axum::http::{header, HeaderValue, Response, StatusCode};
 use futures_util::future::{FutureExt, LocalBoxFuture, Shared};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::platform::console;
-use inyon_protocol::{compressed, release_files, RELEASES_REPO, VERSION};
+use inyon_protocol::{compressed, release_files, INSTALL_URL, RELEASES_REPO, RELEASE_KEY, VERSION};
 use sha2::{Digest, Sha256};
 
 use crate::http::{hex, Req, Resp};
@@ -166,6 +166,52 @@ pub fn net() -> Get {
     })
 }
 
+/// Whether `base` is where real releases come from: the website, or the releases on GitHub. Only
+/// somewhere else (a mock release in tests and the container runs) may INYON_SIGNING_KEY name
+/// another key, as for `inyon update`, so an environment variable alone can't change the key for
+/// the real thing.
+fn official(base: &str) -> bool {
+    let Ok(u) = url::Url::parse(&base.trim().to_ascii_lowercase()) else { return false };
+    let host = u.host_str().unwrap_or("");
+    let site = url::Url::parse(INSTALL_URL).ok().and_then(|s| s.host_str().map(str::to_owned)).unwrap_or_default();
+    host == site || (matches!(host, "github.com" | "www.github.com") && u.path().starts_with(&format!("/{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+}
+
+/// The key the release at `base` must be signed with.
+pub fn signing_key(base: &str) -> String {
+    if !official(base) {
+        if let Some(k) =
+            std::env::var("INYON_SIGNING_KEY").ok().and_then(|t| t.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.starts_with("untrusted comment:")).map(str::to_owned))
+        {
+            return k;
+        }
+    }
+    RELEASE_KEY.to_owned()
+}
+
+/// The release's SHA256SUMS, refused unless SHA256SUMS.minisig signs it with `key`: the hub hands
+/// out what this list names, and puts its hash in every "Add a machine" command. Only the hashed
+/// kind of signature, which the release workflow makes, counts.
+pub async fn signed_sums(base: &str, key: &str, get: Get) -> HubResult<String> {
+    let (status, sums) = get(format!("{base}/SHA256SUMS")).await.map_err(HubError::plain)?;
+    if !(200..300).contains(&status) {
+        return Err(http(502, format!("Could not get the checksums of Inyon {VERSION} ({status})")));
+    }
+    let (status, sig) = get(format!("{base}/SHA256SUMS.minisig")).await.map_err(HubError::plain)?;
+    if !(200..300).contains(&status) {
+        return Err(http(502, format!("Could not get the signature of Inyon {VERSION}'s checksums ({status}), so nothing from that release is handed out")));
+    }
+    let checked = (|| {
+        let key = minisign_verify::PublicKey::from_base64(key.trim()).ok()?;
+        let sig = minisign_verify::Signature::decode(&String::from_utf8_lossy(&sig)).ok()?;
+        key.verify(&sums, &sig, false).ok()
+    })();
+    if checked.is_none() {
+        return Err(http(502, format!("The checksums of Inyon {VERSION} at {base} aren't signed with Inyon's release key, so nothing from that release is handed out")));
+    }
+    String::from_utf8(sums).map_err(|_| http(502, format!("The checksums of Inyon {VERSION} aren't text")))
+}
+
 /// Release file `name`, checked against the release's SHA256SUMS. The gzipped copy is taken when
 /// the release lists one and checked before it's unpacked; machines get the plain bytes either way.
 pub async fn release_file(name: &str, sums: &str, base: &str, get: Get) -> HubResult<Vec<u8>> {
@@ -279,11 +325,8 @@ impl Dist {
         let existing = self.sums.borrow().clone();
         let fut = existing.unwrap_or_else(|| {
             let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async {
-                let (status, body) = net()(format!("{}/SHA256SUMS", Self::release_base())).await.map_err(HubError::plain)?;
-                if !(200..300).contains(&status) {
-                    return Err(http(502, format!("Could not get the checksums of Inyon {VERSION} ({status})")));
-                }
-                Ok(String::from_utf8_lossy(&body).into_owned())
+                let base = Self::release_base();
+                signed_sums(&base, &signing_key(&base), net()).await
             });
             let f = f.shared();
             *self.sums.borrow_mut() = Some(f.clone());
