@@ -79,6 +79,11 @@ printf 'not an app\n' > "$dist/$apk"
 # signed as a release is, with the test key (no password; minisign still reads one from stdin)
 minisign -S -s "$keys/test.key" -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" < /dev/null
 minisign -V -q -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" -P "$pubkey"
+# the website serves get.sh with the sha256 of the list it checked filled in (apps/node/installers.ts),
+# so the containers, which have no minisign, install as they would from the website
+list_sha=$(sha256sum "$dist/SHA256SUMS" | cut -d' ' -f1)
+sed -i "s/^LIST_SHA256=\$/LIST_SHA256=$list_sha/" "$dist/get.sh"
+grep -q "^LIST_SHA256=$list_sha\$" "$dist/get.sh" || { echo "couldn't fill in the list's sha256 in get.sh" >&2; exit 1; }
 say "the mock release $version"
 cat "$dist/SHA256SUMS"
 
