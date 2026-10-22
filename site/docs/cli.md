@@ -123,7 +123,7 @@ INYON_TOKEN=… inyon setup --yes --hub https://hub.example.ts.net
 inyon pair
 ```
 
-Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. While the tunnel starts it says "Starting the tunnel…" first; from 0.20 it waits for the tunnel's address and shows the code again if the address arrives after the first 30 seconds (see [How the phone finds it](computers.md#how-the-phone-finds-it)). Any link options you add are saved, the same ones `inyon link` takes:
+Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. While the tunnel starts it says "Starting the tunnel…" first; from 0.20 it waits for the tunnel's address and shows the code again if the address arrives after the first 30 seconds (see [How the phone finds it](computers.md#how-the-phone-finds-it)). When its output isn't a terminal, as in an installer run by a script, the code it shows after those 30 seconds is the last one, and the phone finds the computer by its ID once the tunnel is up. `--json` keeps waiting either way. Any link options you add are saved, the same ones `inyon link` takes:
 
 | Option | Default | Meaning |
 |---|---|---|

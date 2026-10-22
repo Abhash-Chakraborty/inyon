@@ -119,8 +119,9 @@ pub fn render_pair(v: &Value) -> String {
 /// the tunnel's address arrives after it. With `json` each of the engine's answers is printed as
 /// it comes, one JSON line each; the last one is current.
 pub fn pair(args: &[String], json: bool) -> Outcome {
-    use std::io::Write;
-    engine::pair(args, &mut |v| {
+    use std::io::{IsTerminal, Write};
+    let args = pair_args(args, json, std::io::stdout().is_terminal());
+    engine::pair(&args, &mut |v| {
         if json {
             println!("{}", serde_json::to_string(&with_v(v.clone())).unwrap_or_default());
         } else {
@@ -130,6 +131,16 @@ pub fn pair(args: &[String], json: bool) -> Outcome {
     })?;
     // printed already
     Ok(Value::Null)
+}
+
+/// What the engine's `pair` gets. Drawn for no terminal (an installer in a script or a container),
+/// the code after the first wait is the last: nobody is there for the one that follows the tunnel.
+fn pair_args(args: &[String], json: bool, terminal: bool) -> Vec<String> {
+    let mut a = args.to_vec();
+    if !json && !terminal {
+        a.push("--once".into());
+    }
+    a
 }
 
 pub fn forget(which: &str) -> Outcome {
@@ -1371,6 +1382,15 @@ mod tests {
         // elsewhere: the port as before, and the VPN is on unless turned off
         assert_eq!(names(&link_reach(Platform::Linux, &cfg(None, None), &yes, &no)), ["link port"]);
         assert_eq!(names(&link_reach(Platform::Linux, &cfg(None, Some(false)), &yes, &no)), ["link port", "reach"]);
+    }
+
+    #[test]
+    fn without_a_terminal_pair_shows_one_code_and_ends() {
+        let none: Vec<String> = vec![];
+        assert_eq!(pair_args(&none, false, false), vec!["--once".to_string()]);
+        // a person at a terminal, and a program reading JSON lines, get the code again with the tunnel
+        assert!(pair_args(&none, false, true).is_empty());
+        assert!(pair_args(&none, true, false).is_empty());
     }
 
     #[test]
