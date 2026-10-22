@@ -291,7 +291,7 @@ const ALREADY: &str = "That question was already answered, or is no longer on sc
 
 /// An answer to the question the companion saw, by its key: anything else on screen now is
 /// "already answered".
-async fn companion_answer(mut req: Req, _c: CompanionRecord) -> HubResult<Resp> {
+async fn companion_answer(mut req: Req, c: CompanionRecord) -> HubResult<Resp> {
     let b = req.body().await?;
     let host = req.param("id");
     let pane = pane_param(&req.param("pane"));
@@ -314,12 +314,39 @@ async fn companion_answer(mut req: Req, _c: CompanionRecord) -> HubResult<Resp> 
     if !offered {
         return Ok(refuse(400, "bad-option", &format!("That question has no option {}.", inyon_core::js::json::number(option))));
     }
-    match actions::answer(&host, &pane, option as u32, text.as_deref(), Some(&key)).await {
+    // an answer picks a choice; typed words go only into the question's own free-text choice, and
+    // they're text sent to the agent, so they need the send scope and its rules
+    let typed = text.filter(|t| !t.jtrim().is_empty());
+    if let Some(t) = &typed {
+        if p.free_text_option.map(|n| n as f64) != Some(option) {
+            return Ok(refuse(400, "bad-request", "Text goes only with the question’s free-text choice."));
+        }
+        if !c.scopes.contains(&CompanionScope::Send) {
+            return Ok(refuse(403, "scope", "Typing an answer needs the send permission."));
+        }
+        if let Some(r) = text_refusal(t) {
+            return Ok(r);
+        }
+    }
+    match actions::answer(&host, &pane, option as u32, typed.as_deref(), Some(&key)).await {
         Ok(()) => Ok(ok_json(&json!({ "ok": true }))),
         Err(e) if e.status == Some(409) => Ok(refuse(409, "already-answered", ALREADY)),
         Err(e) if e.status == Some(404) => Ok(refuse(409, "pane-gone", "That session is gone.")),
         Err(e) => Err(e),
     }
+}
+
+/// Why a companion's text can't be typed into a session, or None when it can: only printable
+/// text, tabs and line breaks (no C0 control but those, no DEL or C1: they work as keys, Ctrl-U,
+/// Esc, a paste's end), and no line that starts with / or ! (an agent's command, a shell).
+pub fn text_refusal(text: &str) -> Option<Resp> {
+    if inyon_core::re!(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]").is_match(text) {
+        return Some(refuse(400, "bad-request", "Companion apps send printable text: no control characters or escape sequences."));
+    }
+    if text.split(['\r', '\n']).any(|line| line.jtrim_start().starts_with('/') || line.jtrim_start().starts_with('!')) {
+        return Some(refuse(403, "scope", "Companion apps send plain text, not / or ! commands."));
+    }
+    None
 }
 
 /// Why the hub's send didn't land, from what it said: the same messages in both hubs.
@@ -343,8 +370,8 @@ async fn companion_send(mut req: Req, c: CompanionRecord) -> HubResult<Resp> {
     let Some(text) = b.get("text").and_then(Value::as_str).filter(|t| !t.jtrim().is_empty()).map(str::to_owned) else {
         return Ok(refuse(400, "bad-request", "Message is empty"));
     };
-    if text.jtrim_start().starts_with('/') || text.jtrim_start().starts_with('!') {
-        return Ok(refuse(403, "scope", "Companion apps send plain text, not / or ! commands."));
+    if let Some(r) = text_refusal(&text) {
+        return Ok(r);
     }
     let request_id = match b.get("requestId") {
         None => None,
@@ -462,6 +489,34 @@ pub fn companion_hosts(hosts: &mut Value) {
     }
 }
 
+fn pick(v: &Value, keys: &[&str]) -> Map<String, Value> {
+    keys.iter().filter_map(|k| v.get(*k).map(|x| ((*k).to_owned(), x.clone()))).collect()
+}
+
+/// A chat's details as a companion gets them: no drafts, queue, send texts, links or paths.
+pub const COMPANION_INFO: [&str; 10] = ["hostId", "paneId", "agent", "title", "model", "mode", "running", "status", "turn", "sends"];
+pub const COMPANION_SEND: [&str; 3] = ["id", "state", "at"];
+/// A chat's screen as a companion gets it: the question and the agent's state, not the input box's text.
+pub const COMPANION_SCREEN: [&str; 10] = ["inputVisible", "prompt", "working", "activity", "since", "mode", "model", "effort", "dialog", "width"];
+
+pub fn companion_info(info: &inyon_protocol::ChatInfo) -> Value {
+    let all = serde_json::to_value(info).unwrap_or_default();
+    let mut v = pick(&all, &COMPANION_INFO);
+    if let Some(sends) = all.get("sends").and_then(Value::as_array) {
+        v.insert("sends".into(), Value::Array(sends.iter().map(|s| Value::Object(pick(s, &COMPANION_SEND))).collect()));
+    }
+    Value::Object(v)
+}
+
+pub fn companion_screen(screen: &inyon_protocol::ScreenState) -> Value {
+    let all = serde_json::to_value(screen).unwrap_or_default();
+    let mut v = pick(&all, &COMPANION_SCREEN);
+    if let (Some(p), Some(Value::Object(prompt))) = (&screen.prompt, v.get_mut("prompt")) {
+        prompt.insert("key".into(), json!(prompt_key(&p.body, &p.options)));
+    }
+    Value::Object(v)
+}
+
 /// What a companion gets of a message to the app: the overview, notices, a chat's info and screen
 /// (its question with the key to answer it by), and pong. Chat history, live text, drafts and
 /// terminal data never go to a companion.
@@ -476,21 +531,10 @@ pub fn companion_frame(msg: &ServerMsg, scopes: &[CompanionScope]) -> Option<Val
             Some(v)
         }
         ServerMsg::Notify { .. } if can(CompanionScope::Overview) => whole(),
-        ServerMsg::ChatInfo { .. } if can(CompanionScope::Chat) => whole(),
-        ServerMsg::ChatReset { key, info, .. } if can(CompanionScope::Chat) => Some(json!({ "t": "chat.info", "key": key, "info": info })),
-        ServerMsg::ChatScreen { screen, .. } if can(CompanionScope::Chat) => {
-            let mut v = whole()?;
-            // what's typed in the box and not sent yet stays with the apps that type it
-            if let Some(s) = v.get_mut("screen").and_then(Value::as_object_mut) {
-                s.remove("draft");
-            }
-            if let Some(p) = &screen.prompt {
-                if let Some(prompt) = v.get_mut("screen").and_then(|s| s.get_mut("prompt")).and_then(Value::as_object_mut) {
-                    prompt.insert("key".into(), json!(prompt_key(&p.body, &p.options)));
-                }
-            }
-            Some(v)
+        ServerMsg::ChatInfo { key, info } | ServerMsg::ChatReset { key, info, .. } if can(CompanionScope::Chat) => {
+            Some(json!({ "t": "chat.info", "key": key, "info": companion_info(info) }))
         }
+        ServerMsg::ChatScreen { key, screen } if can(CompanionScope::Chat) => Some(json!({ "t": "chat.screen", "key": key, "screen": companion_screen(screen) })),
         _ => None,
     }
 }

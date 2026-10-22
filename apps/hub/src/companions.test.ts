@@ -1,6 +1,8 @@
 import { expect, test } from 'bun:test'
 import type { ScreenState, ServerMsg } from '@inyon/protocol'
-import { claimCompanion, COMPANION_CODE_TTL, companionFor, companionFrame, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, SCOPES, sendReason } from './companions.ts'
+import { readFileSync } from 'node:fs'
+import { claimCompanion, COMPANION_CODE_TTL, companionFor, companionFrame, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, SCOPES, sendReason, textRefusal } from './companions.ts'
+import { pasteText } from './tmux/tmux.ts'
 import { hubId } from './phones.ts'
 
 // The code, the claim, the contract header and what a companion may send and receive, against a
@@ -102,6 +104,32 @@ test('a companion gets no history, live text, drafts or terminal data, and its p
   const notice: ServerMsg = { t: 'notify', host: 'box', pane: '%1', kind: 'waiting', title: 't', body: 'b' }
   expect(companionFrame(notice, SCOPES)).toBe(notice)
   expect(companionFrame(notice, ['chat'])).toBeUndefined()
+})
+
+const fixture = (name: string) => JSON.parse(readFileSync(new URL(`../../../fixtures/protocol/ServerMsg/${name}.json`, import.meta.url), 'utf8')) as ServerMsg
+
+test('a chat reaches a companion without its drafts, queue, send texts, links or paths', () => {
+  const info = companionFrame(fixture('chat-info'), SCOPES) as any
+  expect(Object.keys(info.info).sort()).toEqual(['agent', 'hostId', 'mode', 'model', 'paneId', 'running', 'sends', 'status', 'title', 'turn'])
+  for (const s of info.info.sends) expect(Object.keys(s).sort()).toEqual(['at', 'id', 'state'])
+  const reset = companionFrame({ ...(fixture('chat-info') as any), t: 'chat.reset', items: [{ kind: 'user', text: 'secret' }], hasMore: false }, SCOPES) as any
+  expect(reset).toEqual(info)
+  const queued = fixture('chat-screen-antigravity-queued') as Extract<ServerMsg, { t: 'chat.screen' }>
+  const screen = { ...queued.screen, draft: 'half a thought', remote: 'https://claude.ai/code/session_x', background: '1 shell' }
+  const v = companionFrame({ ...queued, screen }, SCOPES) as any
+  expect(Object.keys(v.screen).sort()).toEqual(['activity', 'effort', 'inputVisible', 'mode', 'model', 'width', 'working'])
+  expect(JSON.stringify(v)).not.toContain('half a thought')
+})
+
+test('a companion types printable text only, and no line of it opens a command or a shell', () => {
+  for (const bad of ['\u0015!id', 'x\n\u001b[201~\u0015!id\r', '\u0003', 'tidy up\u007f', 'hi\u009b201~']) expect(textRefusal(bad)?.status).toBe(400)
+  for (const cmd of ['ok\n/model x', 'fine\r\n  !rm -rf build', '\u00a0/clear']) expect(textRefusal(cmd)?.status).toBe(403)
+  expect(textRefusal('Run the tests again.\n\tThen tell me what failed, 100% / 2 or so!')).toBeUndefined()
+})
+
+test('a paste never carries its own end marker, for any caller', () => {
+  expect(pasteText('x\r\n\u001b[201~\u0015!id\r')).toBe('x\n\u0015!id\n')
+  expect(pasteText('a\u001b[20\u001b[201~1~b\u009b200~c')).toBe('abc')
 })
 
 test('a send that failed is named by what the hub said', () => {

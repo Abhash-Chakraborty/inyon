@@ -164,6 +164,50 @@ fn a_companion_gets_no_history_live_text_drafts_or_terminal_data_and_its_prompts
     assert!(companion_frame(&notice, &[CompanionScope::Chat]).is_none());
 }
 
+fn fixture(name: &str) -> ServerMsg {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../fixtures/protocol/ServerMsg/{name}.json"));
+    serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+}
+
+fn keys(v: &Value) -> Vec<String> {
+    let mut k: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+    k.sort();
+    k
+}
+
+#[test]
+fn a_chat_reaches_a_companion_without_its_drafts_queue_send_texts_links_or_paths() {
+    let all = SCOPES.to_vec();
+    let msg = fixture("chat-info");
+    let v = companion_frame(&msg, &all).unwrap();
+    assert_eq!(keys(&v["info"]), ["agent", "hostId", "mode", "model", "paneId", "running", "sends", "status", "title", "turn"]);
+    for s in v["info"]["sends"].as_array().unwrap() {
+        assert_eq!(keys(s), ["at", "id", "state"]);
+    }
+    let ServerMsg::ChatInfo { key, info } = msg else { panic!() };
+    let reset = ServerMsg::ChatReset { key, info, items: vec![], has_more: false };
+    assert_eq!(companion_frame(&reset, &all).unwrap(), v);
+    let ServerMsg::ChatScreen { key, mut screen } = fixture("chat-screen-antigravity-queued") else { panic!() };
+    screen.draft = Some("half a thought".into());
+    screen.remote = Some(Some("https://claude.ai/code/session_x".into()));
+    screen.background = Some(Some("1 shell".into()));
+    let v = companion_frame(&ServerMsg::ChatScreen { key, screen }, &all).unwrap();
+    assert_eq!(keys(&v["screen"]), ["activity", "effort", "inputVisible", "mode", "model", "width", "working"]);
+    assert!(!v.to_string().contains("half a thought"));
+}
+
+#[test]
+fn a_companion_types_printable_text_only_and_no_line_of_it_opens_a_command_or_a_shell() {
+    let status = |t: &str| text_refusal(t).map(|r| r.status().as_u16());
+    for bad in ["\u{15}!id", "x\n\u{1b}[201~\u{15}!id\r", "\u{3}", "tidy up\u{7f}", "hi\u{9b}201~"] {
+        assert_eq!(status(bad), Some(400), "{bad:?}");
+    }
+    for cmd in ["ok\n/model x", "fine\r\n  !rm -rf build", "\u{a0}/clear"] {
+        assert_eq!(status(cmd), Some(403), "{cmd:?}");
+    }
+    assert_eq!(status("Run the tests again.\n\tThen tell me what failed, 100% / 2 or so!"), None);
+}
+
 #[test]
 fn a_send_that_failed_is_named_by_what_the_hub_said() {
     assert_eq!(send_reason("The agent is waiting for an answer to a question first"), "prompt-open");

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { promptKey, type CompanionClaimResult, type CompanionMe, type CompanionPairCode, type CompanionScope, type HostState, type PairedCompanion, type ServerMsg } from '@inyon/protocol'
+import { promptKey, type ChatInfo, type ScreenState, type CompanionClaimResult, type CompanionMe, type CompanionPairCode, type CompanionScope, type HostState, type PairedCompanion, type ServerMsg } from '@inyon/protocol'
 import { HttpError, registry } from './hosts/registry.ts'
 import { kv } from './platform/store.ts'
 import { answer, currentScreen, sendMessage } from './claude/actions.ts'
@@ -175,7 +175,7 @@ function paneProblem(hostId: string, paneId: string) {
 }
 
 /** An answer to the question the companion saw, by its key: anything else on screen now is "already answered". */
-const companionAnswer: CompanionRoute['run'] = async (req) => {
+const companionAnswer: CompanionRoute['run'] = async (req, c) => {
   const b = await body<{ option?: unknown; key?: unknown; text?: unknown }>(req)
   const host = req.params.id!
   const pane = paneParam(req.params.pane!)
@@ -188,14 +188,35 @@ const companionAnswer: CompanionRoute['run'] = async (req) => {
   const p = (await currentScreen(host, pane)).prompt
   if (!p || promptKey(p) !== b.key) return refuse(409, 'already-answered', 'That question was already answered, or is no longer on screen.')
   if (!(option === 0 ? p.confirm : p.options.some((o) => o.n === option))) return refuse(400, 'bad-option', `That question has no option ${option}.`)
+  // an answer picks a choice; typed words go only into the question's own free-text choice, and
+  // they're text sent to the agent, so they need the send scope and its rules
+  const typed = text?.trim() ? text : undefined
+  if (typed) {
+    if (option !== p.freeTextOption) return refuse(400, 'bad-request', 'Text goes only with the question’s free-text choice.')
+    if (!c.scopes.includes('send')) return refuse(403, 'scope', 'Typing an answer needs the send permission.')
+    const refused = textRefusal(typed)
+    if (refused) return refused
+  }
   try {
-    await answer(host, pane, option, text, b.key)
+    await answer(host, pane, option, typed, b.key)
   } catch (err) {
     if (err instanceof HttpError && err.status === 409) return refuse(409, 'already-answered', 'That question was already answered, or is no longer on screen.')
     if (err instanceof HttpError && err.status === 404) return refuse(409, 'pane-gone', 'That session is gone.')
     throw err
   }
   return json({ ok: true })
+}
+
+/** C0 controls but tab and the line ends, DEL and C1: the bytes that work as keys (Ctrl-U, Esc, a paste's end) rather than text. */
+const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/
+
+/**
+ * Why a companion's text can't be typed into a session, or undefined when it can: only printable
+ * text, tabs and line breaks, and no line that starts with / or ! (an agent's command, a shell).
+ */
+export function textRefusal(text: string) {
+  if (CONTROL.test(text)) return refuse(400, 'bad-request', 'Companion apps send printable text: no control characters or escape sequences.')
+  if (text.split(/[\r\n]/).some((line) => /^[/!]/.test(line.trimStart()))) return refuse(403, 'scope', 'Companion apps send plain text, not / or ! commands.')
 }
 
 /** Why the hub's send didn't land, from what it said: the same messages in both hubs. */
@@ -213,7 +234,8 @@ const companionSend: CompanionRoute['run'] = async (req, c) => {
   const pane = paneParam(req.params.pane!)
   if (typeof b.text !== 'string' || !b.text.trim()) return refuse(400, 'bad-request', 'Message is empty')
   const text = b.text
-  if (/^[/!]/.test(text.trimStart())) return refuse(403, 'scope', 'Companion apps send plain text, not / or ! commands.')
+  const refused = textRefusal(text)
+  if (refused) return refused
   if (b.requestId !== undefined && (typeof b.requestId !== 'string' || !/^[\w-]{1,128}$/.test(b.requestId))) return refuse(400, 'bad-request', 'Invalid send id')
   const gone = paneProblem(host, pane)
   if (gone) return gone
@@ -264,6 +286,26 @@ export function inboundRefusal(raw: string, scopes: CompanionScope[]): string | 
   return `Not for companion apps: ${name.slice(0, 40) || 'an unreadable frame'}`
 }
 
+const pick = <T extends object>(o: T, keys: readonly string[]) => Object.fromEntries(keys.filter((k) => (o as Record<string, unknown>)[k] !== undefined).map((k) => [k, (o as Record<string, unknown>)[k]]))
+
+/** A chat's details as a companion gets them: no drafts, queue, send texts, links or paths. */
+export const COMPANION_INFO = ['hostId', 'paneId', 'agent', 'title', 'model', 'mode', 'running', 'status', 'turn', 'sends'] as const
+export const COMPANION_SEND = ['id', 'state', 'at'] as const
+/** A chat's screen as a companion gets it: the question and the agent's state, not the input box's text. */
+export const COMPANION_SCREEN = ['inputVisible', 'prompt', 'working', 'activity', 'since', 'mode', 'model', 'effort', 'dialog', 'width'] as const
+
+export function companionInfo(info: ChatInfo) {
+  const v = pick(info, COMPANION_INFO)
+  if (info.sends) v.sends = info.sends.map((s) => pick(s, COMPANION_SEND))
+  return v
+}
+
+export function companionScreen(screen: ScreenState) {
+  const v = pick(screen, COMPANION_SCREEN)
+  if (screen.prompt) v.prompt = { ...screen.prompt, key: promptKey(screen.prompt) }
+  return v
+}
+
 /**
  * What a companion gets of a message to the app: the overview, notices, a chat's info and screen
  * (its question with the key to answer it by), and pong. Chat history, live text, drafts and
@@ -279,16 +321,10 @@ export function companionFrame(msg: ServerMsg, scopes: CompanionScope[]): unknow
     case 'notify':
       return can('overview') ? msg : undefined
     case 'chat.info':
-      return can('chat') ? msg : undefined
     case 'chat.reset':
-      return can('chat') ? { t: 'chat.info', key: msg.key, info: msg.info } : undefined
-    case 'chat.screen': {
-      if (!can('chat')) return
-      // what's typed in the box and not sent yet stays with the apps that type it
-      const { draft: _draft, ...screen } = msg.screen
-      const p = screen.prompt
-      return { ...msg, screen: p ? { ...screen, prompt: { ...p, key: promptKey(p) } } : screen }
-    }
+      return can('chat') ? { t: 'chat.info', key: msg.key, info: companionInfo(msg.info) } : undefined
+    case 'chat.screen':
+      return can('chat') ? { t: 'chat.screen', key: msg.key, screen: companionScreen(msg.screen) } : undefined
   }
 }
 

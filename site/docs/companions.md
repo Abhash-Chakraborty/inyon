@@ -35,7 +35,7 @@ A hub that listens only on `127.0.0.1`, behind a proxy or `tailscale serve`, doe
 | Answer | an answer to an agent's question, once, for the question it saw |
 | Send | plain text typed into a session; the hub says whether it arrived |
 
-Interrupting, keys, the terminal, uploads, files, model and mode switches, past conversations and every setting are refused, on every route and every WebSocket message. The check is on the hub, so a companion that misbehaves gets the same refusal as one that doesn't. Text that starts with `/` or `!` is refused too, so a companion can't run an agent's commands or a shell command through **Send**.
+Interrupting, keys, the terminal, uploads, files, model and mode switches, past conversations and every setting are refused, on every route and every WebSocket message. The check is on the hub, so a companion that misbehaves gets the same refusal as one that doesn't. **Send** and typed answers take printable text only. Tabs and line breaks are fine; control characters and escape sequences are refused, and so is any line that starts with `/` or `!`, so a companion can't run an agent's commands or a shell command itself. It can still ask the agent to do something, and the agent does it under its own permission mode, as it would a message typed in the terminal. **Answer** approves or declines what the agent asks, so pair only an app you trust with that.
 
 **Settings › Paired devices** lists each companion with its name, app, permissions, contract version, when it paired and when it was last seen. **What it can do** in its menu spells out the permissions. **Remove** ends it at once: its token stops working and its open connection closes. To use it again, pair it with a new code.
 
@@ -141,7 +141,7 @@ A companion may send:
 
 Anything else closes the socket with code `4403` and a reason naming the frame, such as `Not for companion apps: term.open`. When you're removed in Inyon, the socket closes with `4001` and `Companion removed`.
 
-It receives `overview`, `chat.info`, `chat.screen`, `notify` and `pong`, and never the chat history, live text, drafts or terminal data. `chat.info` is `{ "t": "chat.info", "key": "box:%3", "info": ChatInfo }` with the conversation's agent, model, mode, recent sends and `title`. The title is the name you gave the conversation, else the agent's own title for it, else the terminal's title, which Claude Code sets to the task and tmux otherwise sets to the machine's name. The tmux session's name is `name` in the overview's `sessions`. Alerts look like this, with `kind` one of `waiting`, `done`, `offline` and `online`:
+It receives `overview`, `chat.info`, `chat.screen`, `notify` and `pong`, and never the chat history, live text, drafts, the queue, the text of sends, Remote Control or share links, or terminal data. `chat.info` is `{ "t": "chat.info", "key": "box:%3", "info": { … } }` with only `hostId`, `paneId`, `agent`, `title`, `model`, `mode`, `running`, `status` (the agent's live numbers), `turn` (when the turn under way started) and `sends`, each send as `{ "id": "companion-legato-7f3a", "state": "delivered", "at": 1792038540000 }` without its text. The title is the name you gave the conversation, else the agent's own title for it, else the terminal's title, which Claude Code sets to the task and tmux otherwise sets to the machine's name. The tmux session's name is `name` in the overview's `sessions`. Alerts look like this, with `kind` one of `waiting`, `done`, `offline` and `online`:
 
 ```json
 { "t": "notify", "host": "box", "pane": "%3", "kind": "waiting", "title": "Claude needs you", "body": "Bash: rm -rf build", "agent": "claude" }
@@ -149,7 +149,7 @@ It receives `overview`, `chat.info`, `chat.screen`, `notify` and `pong`, and nev
 
 ### A question and its key
 
-While an agent asks something, `chat.screen` carries the question as `screen.prompt`, and for companions the hub adds the question's `key`:
+A companion's `chat.screen` has only `working`, `activity`, `since`, `inputVisible`, `mode`, `model`, `effort`, `dialog` and `width`, never what's typed in the box. While an agent asks something, it carries the question as `screen.prompt`, and the hub adds the question's `key`:
 
 ```json
 {
@@ -189,9 +189,10 @@ POST /api/hosts/box/panes/3/answer
 | 409 | `"reason": "already-answered"` | that question was answered (in the app, on a phone, in the terminal) or is gone |
 | 409 | `"reason": "pane-gone"` or `"offline"` | the session or its machine isn't there |
 | 400 | `"reason": "bad-option"` | the question has no option with that number |
-| 400 | `"reason": "bad-request"` | no `key`, or an `option` that isn't a number |
+| 400 | `"reason": "bad-request"` | no `key`, an `option` that isn't a number, or `text` that isn't allowed |
+| 403 | `"reason": "scope"` | `text` without the **Send** permission, or a line of it that starts with `/` or `!` |
 
-`text` is optional, for an option that takes typed text.
+`text` goes only with the question's free-text choice, the option numbered `prompt.freeTextOption` (Claude's "No, and tell Claude what to do differently", say). It needs the **Send** permission and follows Send's rules. With any other option it gets `400`.
 
 ### Send text
 
@@ -213,8 +214,8 @@ POST /api/hosts/box/panes/3/send
 | 409 | `"reason": "not-landed"` | the hub typed it but couldn't confirm it arrived; check before sending again |
 | 409 | `"reason": "no-agent"` | no agent runs in that pane |
 | 409 | `"reason": "pane-gone"` or `"offline"` | the session or its machine isn't there |
-| 403 | `"reason": "scope"` | the text starts with `/` or `!`: commands aren't for companions |
-| 400 | `"reason": "bad-request"` | empty text, or a `requestId` with other characters |
+| 403 | `"reason": "scope"` | a line of the text starts with `/` or `!`: commands aren't for companions |
+| 400 | `"reason": "bad-request"` | empty text, a control character or escape sequence, or a `requestId` with other characters |
 
 A send shows in the session's list of sends in Inyon, whether it landed or not.
 

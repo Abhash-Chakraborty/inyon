@@ -48,7 +48,8 @@ From 0.20 an app like Legato can pair with a hub. See [Companion apps](companion
 
 - Only a browser that signed in within the last 10 minutes can make a companion code, as can `inyon hub companion-code` on the hub's computer. A code is six characters, works once, for 5 minutes, and a new code ends the last one. Eight wrong codes in a minute from one address, or thirty from all of them, stop claims for the rest of that minute.
 - The app gets its own random token; the hub stores only its SHA-256.
-- The hub checks the app's four permissions on every route and every WebSocket message. Everything else gets `403`, and a WebSocket frame it may not send closes the connection. It never gets terminal data, the chat history, files, uploads, settings, the account or how the hub reaches a machine (SSH targets, key files, relays), and it can't send `/` or `!` commands.
+- The hub checks the app's four permissions on every route and every WebSocket message. Everything else gets `403`, and a WebSocket frame it may not send closes the connection. It never gets terminal data, the chat history, files, uploads, settings, the account or how the hub reaches a machine (SSH targets, key files, relays), and it can't send `/` or `!` commands, control characters or escape sequences. It never sees what's typed in a box and not sent, the queue, the text of sends, or Remote Control and share links.
+- What it sends reaches the agent like a message you type, so the agent may act on it within its permission mode, and **Answer** approves or declines what the agent asks. Pair only apps you trust with that.
 - Its token never opens `/node`, the `/v/` pages or the `/api/local` routes of the `inyon` command.
 - **Settings → Paired devices → Remove** cuts it off at once and closes its connection. Changing the hub's password doesn't remove companion apps; remove them separately.
 
