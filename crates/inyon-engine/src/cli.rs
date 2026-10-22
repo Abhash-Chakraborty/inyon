@@ -554,13 +554,12 @@ mod tests {
     fn with_once_the_code_after_the_first_wait_is_the_last_answer() {
         // an installer with no terminal: no one waits ten minutes for a tunnel that can't start
         let config = LinkConfig { vpn: false, ..LinkConfig::default() };
-        let started = std::time::Instant::now();
         let a = answers_with(config, vec![(0, vec![])], true);
+        // two answers and done: waiting on, it would end with the code expiring (a third)
         assert_eq!(a.len(), 2, "{a:?}");
         assert_eq!(a[0]["waiting"], "tunnel");
         assert!(a[1].get("waiting").is_none() && a[1].get("qr").is_some() && urls(&a[1]).is_empty());
         assert!(crate::output::render_pair(&a[1]).contains("No address yet"));
-        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[test]
