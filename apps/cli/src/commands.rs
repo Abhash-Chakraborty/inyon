@@ -1184,14 +1184,16 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
         }
         RoleChoice::Node => {
             // the link reads its settings as it starts; setup is the one time this program writes them
-            let mut cfg = state::link_config();
-            let before = cfg.clone();
-            cfg.tunnel = Some(plan.tunnel);
-            cfg.lan = Some(plan.lan);
-            cfg.vpn = Some(plan.vpn);
-            cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
-            cfg.port = Some(plan.port_number());
-            state::write_json("link.json", &cfg).map_err(|e| e.to_string())?;
+            // read and written under the node's lock, so a relay `inyon pair` adds meanwhile stays
+            let mut before = state::LinkConfig::default();
+            let cfg = inyon_engine::link::change_node_json("link.json", |cfg: &mut state::LinkConfig| {
+                before = cfg.clone();
+                cfg.tunnel = Some(plan.tunnel);
+                cfg.lan = Some(plan.lan);
+                cfg.vpn = Some(plan.vpn);
+                cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
+                cfg.port = Some(plan.port_number());
+            })?;
             engine::ready("link", &|l| eprintln!("{l}"))?;
             if plan.tunnel {
                 lines.extend(fetch_tunnel());

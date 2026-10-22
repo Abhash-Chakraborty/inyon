@@ -51,6 +51,9 @@ pub struct LinkConfig {
     pub urls: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// whatever else the file holds stays in it when setup writes it back
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

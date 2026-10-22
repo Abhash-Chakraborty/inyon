@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
+import { ENGINE } from './engine-under-test.ts'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 
 // `inyon forget` and `inyon pair` run as processes of their own beside the link: these tests race
 // two Bun processes (the link and the command) over the same ~/.inyon/node. Everything that touches
@@ -121,13 +122,66 @@ test('a wrong guess that cannot be counted ends the code', async () => {
   expect(r.left).toBe(false)
 })
 
-test('a lock left by a writer that died is taken over', async () => {
+test('three processes counting at once lose no count', async () => {
+  const count = path.join(node, 'count.json')
+  rmSync(count, { force: true })
+  const kids = [0, 1, 2].map(() =>
+    command(`
+      for (let i = 0; i < 100; i++) link.withNodeFiles(() => {
+        const n = existsSync(path.join(node, 'count.json')) ? JSON.parse(readFileSync(path.join(node, 'count.json'), 'utf8')) : 0
+        writeFileSync(path.join(node, 'count.json'), JSON.stringify(n + 1))
+      })
+      console.log(1)
+    `),
+  )
+  await Promise.all(kids)
+  expect(JSON.parse(readFileSync(count, 'utf8'))).toBe(300)
+})
+
+test('a held lock is waited for, the phone is told busy in time, and it is free the moment its holder dies whatever its date', async () => {
   const lock = path.join(node, 'files.lock')
-  writeFileSync(lock, '1 dead\n')
-  const past = new Date(Date.now() - 60_000)
-  utimesSync(lock, past, past)
-  await command('link.forgetPhone(KEY); console.log(1)')
-  expect(() => readFileSync(lock)).toThrow()
+  const held = path.join(node, 'held')
+  rmSync(held, { force: true })
+  const holder = runningLink(`link.withNodeFiles(() => { writeFileSync(path.join(node, 'held'), ''); Bun.sleepSync(60_000) })`)
+  while (!existsSync(held)) await Bun.sleep(5)
+  utimesSync(lock, new Date(Date.now() + 3600_000), new Date(Date.now() + 3600_000))
+  const busy = await command(`
+    const t = Date.now()
+    let said = ''
+    try { link.check(new Uint8Array(32).fill(4), {}) } catch (e) { said = e.message }
+    console.log(JSON.stringify({ said, took: Date.now() - t }))
+  `)
+  expect(busy.said).toContain('busy saving its files')
+  expect(busy.took).toBeLessThan(2500)
+  holder.kill('SIGKILL')
+  await holder.exited
+  const free = await command('const t = Date.now(); link.forgetPhone(KEY); console.log(Date.now() - t)')
+  expect(free).toBeLessThan(1000)
+}, 15_000)
+
+test('the engine under test waits for a lock this engine holds, and goes on once it is let go', async () => {
+  await command('addPhone(); console.log(1)')
+  const held = path.join(node, 'held')
+  rmSync(held, { force: true })
+  const holder = runningLink(`link.withNodeFiles(() => { writeFileSync(path.join(node, 'held'), ''); Bun.sleepSync(800) }); process.exit(0)`)
+  while (!existsSync(held)) await Bun.sleep(5)
+  const t = Date.now()
+  const f = Bun.spawn([...ENGINE, 'forget', 'Pixel 9'], { env, stdout: 'pipe', stderr: 'pipe' })
+  expect(await f.exited).toBe(0)
+  const took = Date.now() - t
+  await holder.exited
+  expect(took).toBeGreaterThan(500)
+  expect(JSON.parse(readFileSync(path.join(node, 'phones.json'), 'utf8'))[KEY]).toBeUndefined()
+}, 15_000)
+
+test('a dangling symlink in place of the lock is replaced, not spun on', async () => {
+  const lock = path.join(node, 'files.lock')
+  rmSync(lock, { force: true })
+  symlinkSync(path.join(node, 'nowhere', 'x'), lock)
+  const took = await command('const t = Date.now(); link.forgetPhone(KEY); console.log(Date.now() - t)')
+  expect(took).toBeLessThan(1000)
+  expect(lstatSync(lock).isFile()).toBe(true)
+  expect(existsSync(path.join(node, 'nowhere'))).toBe(false)
 })
 
 test('a damaged identity stops the link and stays as it is', async () => {

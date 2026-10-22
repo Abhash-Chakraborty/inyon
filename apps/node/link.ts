@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
@@ -9,6 +9,7 @@ import {
 import { attemptAfter, backoff } from '@inyon/protocol'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
+import { tryLock, type Held } from './oslock.ts'
 import { forgetPushes, startPush } from './push.ts'
 import { binDir, nodeDir } from './paths.ts'
 
@@ -83,76 +84,55 @@ function writeJson(name: string, value: unknown) {
  * The lock every process takes around a read-modify-write of the node's files: `inyon forget` and
  * `inyon pair` run as processes of their own beside the link, and without it one would write back
  * what it read before the other's change (a forgotten phone back, a new code replaced by the old).
- * Made with an exclusive create, the same file the built-in engine takes.
+ * An OS lock on the file (oslock.ts), the same one the built-in engine takes. The file stays: removing
+ * it while another process waits on it would let a third lock a new one.
  */
 export const FILES_LOCK = 'files.lock'
-const LOCK_STALE = 10_000
 const LOCK_WAIT = 15_000
+/** How long a phone's hello waits: the phone gives each address 4 s, and the handshake needs some. */
+export const CHECK_WAIT = 1000
 
-export function withNodeFiles<T>(fn: () => T): T {
+/** The lock, or why not by `until`. Every way through ends by then. */
+function takeFilesLock(until: number): Held | string {
   mkdirSync(nodeDir(), { recursive: true, mode: 0o700 })
   const lock = file(FILES_LOCK)
-  const mine = `${process.pid} ${crypto.randomBytes(8).toString('hex')}\n`
-  const until = Date.now() + LOCK_WAIT
-  let held = false
+  let why = 'another process holds it'
   for (;;) {
     try {
-      const fd = openSync(lock, 'wx', 0o600)
-      try {
-        writeSync(fd, mine)
-        held = true
-      } finally {
-        closeSync(fd)
-      }
-      if (!held) rmSync(lock, { force: true })
-      break
+      const held = tryLock(lock)
+      if (held) return held
+      why = 'another process holds it'
     } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code
-      const busy = code === 'EEXIST' || (process.platform === 'win32' && code === 'EPERM')
-      if (!busy) {
-        console.error(`couldn't lock ${lock}: ${(err as Error).message}`)
-        break
-      }
+      why = (err as Error).message
     }
-    if (takeOverStale(lock)) continue
-    if (Date.now() >= until) {
-      console.error(`${lock} stayed locked for ${LOCK_WAIT / 1000}s; going on without it`)
-      break
-    }
+    if (Date.now() >= until) return `couldn't lock ${lock} in time (${why})`
     Bun.sleepSync(5)
+  }
+}
+
+/** Runs `fn` holding the files. After 15 s it goes on without the lock and says so: a stuck process mustn't stop the link. */
+export function withNodeFiles<T>(fn: () => T): T {
+  const held = takeFilesLock(Date.now() + LOCK_WAIT)
+  if (typeof held === 'string') console.error(`${held}; going on without it`)
+  try {
+    return fn()
+  } finally {
+    if (typeof held !== 'string') held.release()
+  }
+}
+
+/** Runs `fn` holding the files, or returns `busy` when they aren't free within `wait` ms. */
+export function withNodeFilesWithin<T, B>(wait: number, fn: () => T, busy: () => B): T | B {
+  const held = takeFilesLock(Date.now() + wait)
+  if (typeof held === 'string') {
+    console.error(held)
+    return busy()
   }
   try {
     return fn()
   } finally {
-    if (held) {
-      try {
-        if (readFileSync(lock, 'utf8') === mine) rmSync(lock, { force: true })
-      } catch {}
-    }
+    held.release()
   }
-}
-
-/** Removes a lock left by a writer that died, and only that one; true to try again at once. */
-function takeOverStale(lock: string) {
-  let old
-  try {
-    old = statSync(lock)
-  } catch {
-    return true
-  }
-  if (Date.now() - old.mtimeMs <= LOCK_STALE) return false
-  const aside = `${lock}.${process.pid}.stale`
-  try {
-    renameSync(lock, aside)
-  } catch {
-    return true
-  }
-  try {
-    const now = statSync(aside)
-    if (now.mtimeMs !== old.mtimeMs || now.size !== old.size) linkSync(aside, lock)
-  } catch {}
-  rmSync(aside, { force: true })
-  return true
 }
 
 /**
@@ -318,7 +298,11 @@ function welcome() {
 }
 
 /** Who may come in: a phone paired before, or one bringing the secret from the code on screen. */
-export const check = (remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) => withNodeFiles(() => checkLocked(remoteStatic, hello))
+export const check = (remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) =>
+  // the phone gives each address a few seconds: say busy in time rather than miss them all
+  withNodeFilesWithin(CHECK_WAIT, () => checkLocked(remoteStatic, hello), () => {
+    throw new LinkError('REFUSED', `${os.hostname()} is busy saving its files. Try again in a moment.`)
+  })
 
 function checkLocked(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
   const key = hex(remoteStatic)
@@ -668,7 +652,7 @@ export function startLink(config: LinkConfig) {
       ]),
     ]
     const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION, lastSeq }
-    writeJson('state.json', state)
+    withNodeFiles(() => writeJson('state.json', state))
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return
     lastPublished = key

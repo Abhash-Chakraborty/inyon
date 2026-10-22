@@ -55,39 +55,61 @@ pub fn pretty(value: &impl Serialize) -> String {
 /// relays and the publisher run on several threads at once, and the phone tries every address
 /// together, so without it two writers would lose each other's change: a guess not counted, a
 /// forgotten phone back, a new pairing gone. `inyon forget` and `inyon pair` run as processes of
-/// their own, so the threads' mutex isn't enough: the guard also holds `files.lock` in the folder,
-/// made with an exclusive create (the Bun engine takes the same file, so the two never mix).
+/// their own, so the threads' mutex isn't enough: the guard also holds an OS lock on `files.lock`
+/// in the folder (flock, or LockFileEx on Windows; the Bun engine takes the same one). The system
+/// lets go of it when the holder exits or dies, so nothing is ever judged stale by its age.
 static NODE_FILES: Mutex<()> = Mutex::new(());
 
-/// The lock file every process takes around a read-modify-write of the node's files.
+/// The file every process locks around a read-modify-write of the node's files. It stays in the
+/// folder: removing it while another process waits on it would let a third lock a new one.
 pub const FILES_LOCK: &str = "files.lock";
-/// A lock this old belongs to a writer that died; a read-modify-write takes milliseconds.
-const LOCK_STALE: Duration = Duration::from_secs(10);
-/// Longer than LOCK_STALE, so a lock left behind is always taken over before this runs out.
+/// A read-modify-write takes milliseconds; a lock held longer belongs to a process that's stuck.
 const LOCK_WAIT: Duration = Duration::from_secs(15);
+/// How long a phone's hello waits for the files. The phone gives each address 4 s, and the
+/// handshake needs some of that.
+pub const CHECK_WAIT: Duration = Duration::from_millis(1000);
 
 pub struct NodeFiles {
-    _file: Option<FileLock>,
+    _file: Option<std::fs::File>,
     _threads: std::sync::MutexGuard<'static, ()>,
 }
 
-/// `files.lock` while this process holds it: removed on drop, and only while it still holds our tag.
-struct FileLock {
-    path: PathBuf,
-    mine: String,
-}
-
-impl Drop for FileLock {
-    fn drop(&mut self) {
-        if std::fs::read_to_string(&self.path).is_ok_and(|t| t == self.mine) {
-            let _ = std::fs::remove_file(&self.path);
-        }
-    }
-}
-
+/// Waits up to 15 s for the files, then goes on without the lock and says so in the log: a stuck
+/// process mustn't stop the link.
 pub fn node_files() -> NodeFiles {
     let threads = NODE_FILES.lock().unwrap_or_else(|e| e.into_inner());
-    NodeFiles { _file: take_files_lock(), _threads: threads }
+    let file = match take_files_lock(std::time::Instant::now() + LOCK_WAIT) {
+        Ok(f) => Some(f),
+        Err(e) => {
+            error(&format!("{e}; going on without it"));
+            None
+        }
+    };
+    NodeFiles { _file: file, _threads: threads }
+}
+
+/// The files within `wait`, or None (said in the log) when another thread or process holds them
+/// that long.
+pub fn node_files_within(wait: Duration) -> Option<NodeFiles> {
+    let until = std::time::Instant::now() + wait;
+    let threads = loop {
+        match NODE_FILES.try_lock() {
+            Ok(g) => break g,
+            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(Duration::from_millis(2)),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                error("the node's files stayed busy in this process");
+                return None;
+            }
+        }
+    };
+    match take_files_lock(until) {
+        Ok(f) => Some(NodeFiles { _file: Some(f), _threads: threads }),
+        Err(e) => {
+            error(&e);
+            None
+        }
+    }
 }
 
 fn ensure_node_dir() -> PathBuf {
@@ -103,63 +125,50 @@ fn ensure_node_dir() -> PathBuf {
     dir
 }
 
-/// None when the folder can't hold a lock at all (it can't hold the files either, so the write
-/// that follows fails and says why).
-fn take_files_lock() -> Option<FileLock> {
+/// The locked `files.lock`, held until it's dropped, or why not by `until`. Every way through
+/// ends by then: a lock held by another process, a symlink or folder in its place, a file the
+/// system won't open.
+fn take_files_lock(until: std::time::Instant) -> Result<std::fs::File, String> {
     let path = ensure_node_dir().join(FILES_LOCK);
-    let mine = format!("{} {}\n", std::process::id(), crate::random_bytes(8).iter().map(|b| format!("{b:02x}")).collect::<String>());
-    let until = std::time::Instant::now() + LOCK_WAIT;
     loop {
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut fh) => {
-                use std::io::Write;
-                if fh.write_all(mine.as_bytes()).is_err() {
-                    drop(fh);
-                    let _ = std::fs::remove_file(&path);
-                    return None;
+        let last = match open_lock_file(&path) {
+            Ok(fh) => match fh.try_lock() {
+                Ok(()) => {
+                    // for whoever looks: the pid that holds it
+                    use std::io::{Seek, Write};
+                    let mut fh = fh;
+                    let _ = fh.set_len(0).and_then(|()| fh.rewind()).and_then(|_| writeln!(fh, "{}", std::process::id()));
+                    return Ok(fh);
                 }
-                return Some(FileLock { path, mine });
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            // Windows refuses to make a file another process is still deleting: busy, not broken
-            Err(e) if WIN && e.kind() == std::io::ErrorKind::PermissionDenied && std::time::Instant::now() < until => {
-                std::thread::sleep(Duration::from_millis(5));
-                continue;
-            }
-            Err(e) => {
-                error(&format!("couldn't lock {}: {e}", path.display()));
-                return None;
-            }
-        }
-        if take_over_stale(&path) {
-            continue;
-        }
+                Err(std::fs::TryLockError::WouldBlock) => "another process holds it".to_string(),
+                Err(std::fs::TryLockError::Error(e)) => return Err(format!("couldn't lock {}: {e}", path.display())),
+            },
+            Err(e) => e,
+        };
         if std::time::Instant::now() >= until {
-            error(&format!("{} stayed locked for {}s; going on without it", path.display(), LOCK_WAIT.as_secs()));
-            return None;
+            return Err(format!("couldn't lock {} in time ({last})", path.display()));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
 
-/// Removes a lock older than LOCK_STALE, and only that one: it's renamed aside first, and put back
-/// if it turns out to be a newer lock another process made in the meantime. True when the caller
-/// should try again at once.
-fn take_over_stale(path: &Path) -> bool {
-    let Ok(old) = std::fs::metadata(path) else { return true };
-    if !old.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > LOCK_STALE) {
-        return false;
+/// Opens `files.lock`, making it if it isn't there. Anything but a plain file in its place (a
+/// symlink, dangling or not, or a folder) is removed first: the folder is this user's alone.
+fn open_lock_file(path: &Path) -> Result<std::fs::File, String> {
+    if let Ok(m) = std::fs::symlink_metadata(path) {
+        if !m.is_file() {
+            let gone = if m.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+            gone.map_err(|e| format!("something that isn't a lock is in its place: {e}"))?;
+        }
     }
-    let aside = PathBuf::from(format!("{}.{}.stale", path.to_string_lossy(), std::process::id()));
-    if std::fs::rename(path, &aside).is_err() {
-        return true;
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW);
     }
-    let same = std::fs::metadata(&aside).ok().is_some_and(|m| m.modified().ok() == old.modified().ok() && m.len() == old.len());
-    if !same {
-        let _ = std::fs::hard_link(&aside, path);
-    }
-    let _ = std::fs::remove_file(&aside);
-    true
+    o.open(path).map_err(|e| e.to_string())
 }
 
 /// Each write gets a temporary file of its own, so two threads never rename each other's.
@@ -218,6 +227,17 @@ impl Default for LinkConfig {
 
 pub fn load_config() -> LinkConfig {
     read_node_json("link.json").unwrap_or_default()
+}
+
+/// Reads a file in the node's folder, changes it and writes it back, all under the lock, so a
+/// change another process made in the meantime (`inyon pair` adding a relay, the link) isn't
+/// written over with what was read before it. What's missing or unreadable starts as the default.
+pub fn change_node_json<T: DeserializeOwned + Serialize + Default>(name: &str, f: impl FnOnce(&mut T)) -> Result<T, String> {
+    let _files = node_files();
+    let mut value = read_node_json::<T>(name).unwrap_or_default();
+    f(&mut value);
+    write_node_json(name, &value)?;
+    Ok(value)
 }
 
 pub fn save_config(c: &LinkConfig) {
@@ -521,7 +541,11 @@ const SHORT_TRIES: u64 = 5;
 /// Who may come in: a phone paired before, or one bringing the secret from the code on screen.
 pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError> {
     let key: String = remote_static.iter().map(|b| format!("{b:02x}")).collect();
-    let _files = node_files();
+    let host = crate::hostname();
+    // the phone gives each address a few seconds: say busy in time rather than miss them all
+    let Some(_files) = node_files_within(CHECK_WAIT) else {
+        return Err(LinkError::Refused(format!("{host} is busy saving its files. Try again in a moment.")));
+    };
     let mut all = phones_raw();
     let now = crate::now_ms();
     // nothing is written yet: message 1 can be replayed by anyone who saw it, so lastSeen waits
@@ -529,7 +553,6 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
     if all.contains_key(&key) {
         return Ok(welcome());
     }
-    let host = crate::hostname();
     let mut pairing = match read_node_json::<Value>("pairing.json") {
         Some(Value::Object(m)) => m,
         _ => Map::new(),
@@ -1709,21 +1732,108 @@ mod tests {
         assert_eq!(lost, 0, "the code on screen was replaced by an older one {lost} times out of 150");
     }
 
+    /// Holds the files until the test drops a stop file, as a process stuck mid-write would.
     #[test]
-    fn a_lock_left_by_a_writer_that_died_is_taken_over_and_a_live_one_is_not() {
-        let _h = testing::home("link-stale-lock");
-        let lock = ensure_node_dir().join(FILES_LOCK);
-        std::fs::write(&lock, "1 dead\n").unwrap();
-        // a fresh lock is someone's: wait for it
-        assert!(!take_over_stale(&lock));
-        let old = std::fs::File::options().write(true).open(&lock).unwrap();
-        old.set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
-        drop(old);
-        {
-            let _f = node_files();
-            assert_ne!(std::fs::read_to_string(&lock).unwrap(), "1 dead\n");
+    fn child_holds_the_files() {
+        if !as_child() {
+            return;
         }
-        assert!(!lock.exists(), "released after use");
+        let _f = node_files();
+        std::fs::write(node_dir().join("held"), "").unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Adds one to count.json 200 times, each a read-modify-write under the lock.
+    #[test]
+    fn child_counts() {
+        if !as_child() {
+            return;
+        }
+        for _ in 0..200 {
+            let _f = node_files();
+            let n = read_node_json::<u64>("count.json").unwrap_or(0);
+            write_node_json("count.json", &(n + 1)).unwrap();
+        }
+    }
+
+    fn wait_for(file: &Path) {
+        let until = std::time::Instant::now() + Duration::from_secs(20);
+        while !file.exists() {
+            assert!(std::time::Instant::now() < until, "{} never showed up", file.display());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn three_processes_counting_at_once_lose_no_count() {
+        let h = testing::home("link-lock-race");
+        let kids: Vec<_> = (0..3).map(|_| child("child_counts", &h.dir)).collect();
+        for mut k in kids {
+            assert!(k.wait().unwrap().success());
+        }
+        assert_eq!(read_node_json::<u64>("count.json"), Some(600));
+    }
+
+    #[test]
+    fn a_lock_held_by_a_process_is_waited_for_and_free_the_moment_it_dies_whatever_its_date() {
+        let h = testing::home("link-lock-held");
+        let lock = ensure_node_dir().join(FILES_LOCK);
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        // the phone's hello gives up in time, and says why
+        let t = std::time::Instant::now();
+        assert!(node_files_within(Duration::from_millis(300)).is_none());
+        assert!(t.elapsed() < Duration::from_secs(2), "waited {:?}", t.elapsed());
+        let e = check(&[4u8; 32], &json!({})).unwrap_err();
+        assert!(e.message().contains("busy saving its files"), "{}", e.message());
+        // the holder dies with a date from the future on the file: the lock is free at once
+        std::fs::File::options().write(true).open(&lock).unwrap().set_modified(std::time::SystemTime::now() + Duration::from_secs(3600)).unwrap();
+        holder.kill().unwrap();
+        let _ = holder.wait();
+        let t = std::time::Instant::now();
+        assert!(node_files_within(Duration::from_secs(5)).is_some());
+        assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn a_change_waits_for_the_lock_and_keeps_what_its_holder_wrote() {
+        let h = testing::home("link-lock-change");
+        write_node_json("link.json", &json!({ "port": 4780 })).unwrap();
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        let change = std::thread::spawn(|| change_node_json::<Value>("link.json", |c| c["tunnel"] = json!(false)).unwrap());
+        std::thread::sleep(Duration::from_millis(300));
+        // what the holder writes while it has the lock
+        write_node_json("link.json", &json!({ "port": 4780, "relays": ["https://relay.example.com"] })).unwrap();
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = holder.wait();
+        let after = change.join().unwrap();
+        assert_eq!(after, json!({ "port": 4780, "relays": ["https://relay.example.com"], "tunnel": false }));
+        assert_eq!(read_node_json::<Value>("link.json"), Some(after));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_in_place_of_the_lock_is_replaced_not_spun_on() {
+        let _h = testing::home("link-lock-symlink");
+        let lock = ensure_node_dir().join(FILES_LOCK);
+        let elsewhere = node_dir().join("nowhere").join("x");
+        std::os::unix::fs::symlink(&elsewhere, &lock).unwrap();
+        let t = std::time::Instant::now();
+        {
+            let f = node_files_within(Duration::from_secs(2));
+            assert!(f.is_some());
+        }
+        assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
+        assert!(std::fs::symlink_metadata(&lock).unwrap().is_file(), "a plain file now");
+        assert!(!elsewhere.exists());
+        // a folder in its place is no lock either
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        assert!(node_files_within(Duration::from_secs(2)).is_some());
     }
 
     #[test]
