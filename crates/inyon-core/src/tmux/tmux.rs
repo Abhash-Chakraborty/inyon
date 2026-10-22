@@ -1002,7 +1002,7 @@ mod tests {
     #[test]
     fn typed_text_never_reaches_a_command_line() {
         // other users on the machine can read every process's arguments: messages, drafts and API keys go on stdin
-        let samples = ["sk-ant-api03-SECRET", "hello world", "it's \"quoted\" $HOME `id`", "ünïcødé 🙂", &"x".repeat(799), &"y".repeat(900), "two\nlines"];
+        let samples = ["a pasted API key", "hello world", "it's \"quoted\" $HOME `id`", "ünïcødé 🙂", &"x".repeat(799), &"y".repeat(900), "two\nlines"];
         for text in samples {
             match type_text("%1", text, true, "inyon-b") {
                 TypeText::Keys { command, input } => {

@@ -71,6 +71,8 @@ export async function reach(o: { noise: KeyPair; id: string; urls: string[]; rel
         (err) => (clearTimeout(timer), fail(err)),
       )
     })
+  // addresses where something other than the computer answered, said as a detail at the end
+  const others = new Set<string>()
   /** The first address to answer wins; the others are closed, even ones that answer later. */
   const firstOf = (urls: string[], ms: number) =>
     new Promise<Awaited<ReturnType<typeof via>>>((ok, fail) => {
@@ -86,6 +88,8 @@ export async function reach(o: { noise: KeyPair; id: string; urls: string[]; rel
           },
           (err) => {
             errors.push(err)
+            // only where it happened: another address of the batch may just have timed out
+            if (err instanceof LinkError && err.code === 'BAD_KEY') others.add(new URL(u).host)
             if (won || errors.length < urls.length) return
             // a refusal from the computer says more than a timeout, and more than something else answering
             fail(errors.find(final) ?? errors.find((e) => e instanceof LinkError && e.code === 'BAD_KEY') ?? errors[0])
@@ -94,17 +98,14 @@ export async function reach(o: { noise: KeyPair; id: string; urls: string[]; rel
       }
     })
   const tried = new Set<string>()
-  // addresses where something other than the computer answered, said as a detail at the end
-  const others = new Set<string>()
-  const failed = (err: unknown, urls: string[]) => {
+  const failed = (err: unknown) => {
     if (final(err)) throw err
-    if (err instanceof LinkError && err.code === 'BAD_KEY') for (const u of urls) others.add(new URL(u).host)
   }
   try {
     o.urls.forEach((u) => tried.add(u))
     return { ...(await firstOf(usable(o.urls), DIRECT_MS)), urls: o.urls }
   } catch (err) {
-    failed(err, usable(o.urls))
+    failed(err)
   }
   const found = await (o.resolve ?? resolve)(o.id).catch(() => undefined)
   const fresh = usable((found?.urls ?? []).filter((u) => !tried.has(u)))
@@ -113,14 +114,14 @@ export async function reach(o: { noise: KeyPair; id: string; urls: string[]; rel
     try {
       return { ...(await firstOf(fresh, DIRECT_MS * 2)), urls: found!.urls }
     } catch (err) {
-      failed(err, fresh)
+      failed(err)
     }
   }
   if (relays.length) {
     try {
       return { ...(await firstOf(relays.map((r) => relayWs(r, phonePath(o.id))), DIRECT_MS * 2)), urls: found?.urls ?? o.urls }
     } catch (err) {
-      failed(err, [])
+      failed(err)
     }
   }
   const elsewhere = others.size ? ` (something else answered at ${[...others].join(', ')})` : ''

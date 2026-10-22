@@ -79,7 +79,7 @@ HTTPS is needed for the web app installed to a phone's home screen, for notifica
 
 ### The LAN
 
-Choose *LAN* in setup (`BIND=0.0.0.0`) to answer on every interface of a home network. Anyone on that network can listen in, so from 0.20 the hub serves HTTPS there, never plain http. Setup makes a certificate for the machine's name (`name` and `name.local`), `localhost` and its addresses, saves it as `~/.inyon/tls/hub.crt` and `hub.key` (readable only by you), points `TLS_CERT` and `TLS_KEY` at them and removes an `INYON_ALLOW_HTTP=1` an earlier setup wrote. It prints the certificate's SHA-256 fingerprint:
+Choose *LAN* in setup (`BIND=0.0.0.0`) to answer on every interface of a home network. Anyone on that network can listen in, so from 0.20 the hub serves HTTPS there, never plain http. Setup makes a certificate for the machine's name (`name` and `name.local`), `localhost`, its addresses and the address you told the hub to listen on, saves it as `~/.inyon/tls/hub.crt` and `hub.key` (readable only by you), points `TLS_CERT` and `TLS_KEY` at them and removes an `INYON_ALLOW_HTTP=1` an earlier setup wrote. It prints the certificate's SHA-256 fingerprint:
 
 ```
 ✓ HTTPS, on a certificate made for this machine. The browser warns about it once; check that its SHA-256 fingerprint is

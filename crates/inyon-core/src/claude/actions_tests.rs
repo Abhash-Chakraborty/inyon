@@ -551,7 +551,7 @@ fn typed_text_reaches_tmux_through_a_file_and_never_in_any_arguments() {
     );
     std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
     bin.write("argv", "");
-    let secret = "sk-ant-api03-not-in-argv";
+    let secret = "typed words that stay out of argv";
     let crate::tmux::tmux::TypeText::Keys { command, input } = crate::tmux::tmux::type_text("%1", secret, true, "b1") else { panic!() };
     let path = format!("{}:/usr/bin:/bin", bin.s());
     // sh -c <command> is what other users could read in /proc/*/cmdline, and so is every tmux run

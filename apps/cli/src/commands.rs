@@ -1169,7 +1169,7 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
             let mut env = read_env_file(&file);
             env.insert("PORT".into(), plan.port_number().to_string());
             let make = || {
-                let ips: Vec<std::net::IpAddr> = plan.networks.iter().filter_map(|n| n.ip.parse().ok()).collect();
+                let ips = cert_ips(plan.networks.iter().map(|n| n.ip.as_str()), &plan.bind);
                 crate::hub_cert::make(&data_dir().join("tls"), &crate::hub_cert::names(&inyon_engine::hostname(), &ips))
             };
             lines.extend(hub_settings(&plan.bind, &mut env, &make)?);
@@ -1254,6 +1254,20 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
 /// the LAN, ZeroTier, WireGuard or any other address, the hub serves HTTPS on TLS_CERT and TLS_KEY,
 /// a certificate `make` makes unless you named your own. The lines to show: the certificate's
 /// fingerprint, for comparing in the browser.
+/// The addresses a hub's own certificate is made for: the private networks found, and the address
+/// it was told to listen on, which may be none of them (a public one, typed in setup).
+fn cert_ips<'a>(networks: impl Iterator<Item = &'a str>, bind: &Bind) -> Vec<std::net::IpAddr> {
+    let mut ips: Vec<std::net::IpAddr> = networks.filter_map(|ip| ip.parse().ok()).collect();
+    if let Bind::Vpn(a) | Bind::Own(a) = bind {
+        if let Ok(ip) = a.trim().trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+            if !ip.is_unspecified() && !ips.contains(&ip) {
+                ips.push(ip);
+            }
+        }
+    }
+    ips
+}
+
 pub fn hub_settings(bind: &Bind, env: &mut std::collections::BTreeMap<String, String>, make: &dyn Fn() -> Result<crate::hub_cert::Made, String>) -> Result<Vec<String>, String> {
     let address = match bind {
         Bind::Localhost => "127.0.0.1".to_string(),
@@ -1393,6 +1407,17 @@ pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hub_certificate_covers_the_address_it_was_told_to_listen_on() {
+        let nets = ["192.168.1.20", "100.70.1.2"];
+        let ips = |bind: &Bind| cert_ips(nets.iter().copied(), bind).iter().map(|i| i.to_string()).collect::<Vec<_>>();
+        assert_eq!(ips(&Bind::Lan), ["192.168.1.20", "100.70.1.2"]);
+        assert_eq!(ips(&Bind::Own("203.0.113.7".into())), ["192.168.1.20", "100.70.1.2", "203.0.113.7"]);
+        assert_eq!(ips(&Bind::Vpn("10.147.17.5".into())), ["192.168.1.20", "100.70.1.2", "10.147.17.5"]);
+        assert_eq!(ips(&Bind::Own("192.168.1.20".into())), ["192.168.1.20", "100.70.1.2"]);
+        assert_eq!(ips(&Bind::Own("0.0.0.0".into())), ["192.168.1.20", "100.70.1.2"]);
+    }
 
     #[test]
     fn only_setting_up_the_hub_touches_its_inyon_hub_impl_note() {

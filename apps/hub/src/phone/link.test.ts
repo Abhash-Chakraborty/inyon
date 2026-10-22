@@ -146,3 +146,23 @@ test('with only something else answering, the phone keeps trying and never calls
     fake.stop()
   }
 }, 30_000)
+
+test('of a batch, only the address something else answered at is named, not one that timed out', async () => {
+  const fake = impostor()
+  // takes the connection and never says a word
+  const silent = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: (req, srv) => (srv.upgrade(req) ? undefined : new Response('')), websocket: { message() {} } })
+  const phone = generateKeyPair()
+  try {
+    const links = linkConnector(async () => phone, 'Impostor test', () => {}, { resolve: async () => undefined })
+    const id = (await import('@inyon/link')).newIdentity().id
+    links.ensure({ id: 'cafe3', name: 'Laptop', kind: 'link', machineId: id, urls: [fake.url, `ws://127.0.0.1:${silent.port}/link`], relays: [] })
+    expect(await until(() => (nodeLinks.why('cafe3') ?? '').includes('something else answered'), 20_000)).toBe(true)
+    const why = nodeLinks.why('cafe3') ?? ''
+    expect(why).toContain(`something else answered at ${new URL(fake.url).host})`)
+    expect(why).not.toContain(String(silent.port))
+    links.forget('cafe3')
+  } finally {
+    fake.stop()
+    silent.stop(true)
+  }
+}, 30_000)

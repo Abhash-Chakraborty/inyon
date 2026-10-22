@@ -85,7 +85,7 @@ test("a paste loads its buffer into the pane's own psmux server, since each sess
 
 test('typed text reaches tmux through a file and never in any arguments, on psmux and tmux', async () => {
   const { typedCommand } = await import('../tmux/tmux.ts')
-  const secret = 'sk-ant-api03-not-in-argv'
+  const secret = 'typed words that stay out of argv'
   const cmd = typedCommand('%14.1', secret, true, 'b1')
   // sh -c <cmd> is what other users could read in /proc/*/cmdline, and so is every tmux run
   expect(cmd).not.toContain(secret)
