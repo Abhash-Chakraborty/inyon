@@ -42,11 +42,13 @@ test.skipIf(shellFakes)('a token the hub doesn\'t know (a hub that lost its data
   expect(r).toEqual({ code: 'still running', cli: '' })
 }, 10_000)
 
-test('a ws:// hub on a public address is refused like http://, before the token goes anywhere', () => {
+test('a ws:// hub on a public or LAN address is refused like http://, before the token goes anywhere', () => {
   const home = fs.mkdtempSync(path.join(dir, 'home-'))
-  for (const hub of ['ws://hub.example.com', 'http://hub.example.com']) {
-    const p = Bun.spawnSync([...ENGINE, 'connect'], { env: { ...process.env, HOME: home, INYON_HUB: hub, INYON_TOKEN: 'tok', INYON_ALLOW_INSECURE: '' }, stdout: 'pipe', stderr: 'pipe' })
+  // a LAN can be listened to, and anyone on it can answer as the hub
+  for (const [hub, host] of [['ws://8.8.8.8', '8.8.8.8'], ['http://8.8.8.8', '8.8.8.8'], ['http://192.168.1.5:4777', '192.168.1.5']]) {
+    const p = Bun.spawnSync([...ENGINE, 'connect'], { env: { ...process.env, HOME: home, INYON_HUB: hub!, INYON_TOKEN: 'tok', INYON_ALLOW_INSECURE: '' }, stdout: 'pipe', stderr: 'pipe', timeout: 10_000 })
     expect(p.exitCode).toBe(2)
-    expect(p.stderr.toString()).toContain('Refusing to send the token over plain http to hub.example.com')
+    expect(p.stderr.toString()).toContain(`Refusing to send the token over plain http to ${host}`)
+    expect(p.stderr.toString()).toContain('INYON_ALLOW_INSECURE=1')
   }
 })

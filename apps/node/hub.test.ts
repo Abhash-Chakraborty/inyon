@@ -1,20 +1,30 @@
 import { expect, test } from 'bun:test'
-import { companionCodeMessage, formatCompanionCode, privateHost, setupCodeMessage } from './hub.ts'
+import { checkName, companionCodeMessage, formatCompanionCode, plainHost, plainHttpIp, plainRefusal, setupCodeMessage } from './hub.ts'
 
 const url = 'http://127.0.0.1:4777'
 
-const isPrivate = (hub: string) => privateHost(new URL(hub))
+const plain = (hub: string) => plainHost(new URL(hub))
 
-test('plain http is for private addresses: loopback, LAN and VPN ranges, local names', () => {
-  for (const h of ['localhost', '127.0.0.1', '10.0.0.1', '192.168.1.20', '172.16.0.1', '172.31.255.255', '100.64.0.1', '100.127.255.255', '[::1]', '[fd7a:115c:a1e0::1]', '[fe80::1]', 'hub.ts.net', 'hub.local', 'hub.lan', 'hub.internal', 'hub']) {
-    expect(isPrivate(`http://${h}:4777`)).toBe(true)
+test('plain http is for this machine and the VPN ranges', () => {
+  for (const h of ['localhost', '127.0.0.1', '127.8.0.1', '100.64.0.1', '100.127.255.255', '[::1]', '[fd7a:115c:a1e0::1]', '[fd7a:115c:a1e0:ab12::5]', '[::ffff:100.100.1.1]']) {
+    expect(plain(`http://${h}:4777`)).toBe('ok')
   }
 })
 
-test('a public address, or a name that only starts like a private one, is not', () => {
-  for (const h of ['example.com', '8.8.8.8', '172.32.0.1', '100.128.0.1', '10.0.0.1.attacker.com', '192.168.1.20.example.net', '127.0.0.1.nip.io', '[2001:db8::1]']) {
-    expect(isPrivate(`http://${h}:4777`)).toBe(false)
+test('a LAN address or a public one is refused, and a name is looked up', () => {
+  // a LAN can be listened to, and answered by anyone on it
+  for (const h of ['10.0.0.1', '192.168.1.20', '172.16.0.1', '8.8.8.8', '100.128.0.1', '100.63.255.255', '[fd00::1]', '[fe80::1]', '[fd7a:115c:a1e1::1]', '[2001:db8::1]', '[::ffff:192.168.1.2]']) {
+    expect(plain(`http://${h}:4777`)).toBe('refused')
   }
+  for (const h of ['hub.local', 'hub.lan', 'hub', 'hub.tail1234.ts.net', '10.0.0.1.attacker.com']) expect(plain(`http://${h}:4777`)).toBe('look up')
+})
+
+test('a name passes only when every address it has is allowed', async () => {
+  expect(await checkName('localhost')).toBe('')
+  expect(await checkName('nothing.invalid')).toBeNull()
+  expect(plainHttpIp('100.100.1.1')).toBe(true)
+  expect(plainHttpIp('192.168.1.2')).toBe(false)
+  expect(plainRefusal('192.168.1.2')).toContain('INYON_ALLOW_INSECURE=1')
 })
 
 test('setup code: shown while the hub waits for its first password', () => {

@@ -307,7 +307,8 @@ impl Wizard {
                         },
                         Item::Radio {
                             label: "LAN".into(),
-                            note: p.lan_ip().map(|ip| format!("at {ip}")).unwrap_or_else(|| "every address".into()),
+                            // anyone on the Wi-Fi could read plain http: setup makes a certificate
+                            note: format!("{}, over HTTPS", p.lan_ip().map(|ip| format!("at {ip}")).unwrap_or_else(|| "every address".into())),
                             on: p.bind == Bind::Lan,
                             disabled: false,
                         },

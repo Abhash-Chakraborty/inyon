@@ -8,7 +8,7 @@ import INSTALL_SH from '../../../node/install.sh' with { type: 'text' }
 import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
 import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
 import { CLI_TARGETS, cliFile, engineFile, HUB_TARGETS, type CliTarget, type HubTarget, type Target } from '../../../node/targets.ts'
-import { DATA_DIR } from '../env.ts'
+import { DATA_DIR, TLS } from '../env.ts'
 import { HttpError } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
 import { signingKey, verifyMinisign } from './minisign.ts'
@@ -181,25 +181,61 @@ const splitRelease = (t: HubTarget) => !FROM_SOURCE || !!builtCommand(t)
 /** Where the hub finds the release of its own version (INYON_DOWNLOAD for a mirror). */
 const releaseBase = () => (process.env.INYON_DOWNLOAD || `https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`).replace(/\/+$/, '')
 
-let sumsText: Promise<string> | undefined
-function releaseSums() {
-  sumsText ??= signedSums(releaseBase(), signingKey(releaseBase()))
-  sumsText.catch(() => (sumsText = undefined))
-  return sumsText
+let signedRelease: Promise<{ sums: string; sig: string }> | undefined
+function releaseSigned() {
+  signedRelease ??= signedList(releaseBase(), signingKey(releaseBase()))
+  signedRelease.catch(() => (signedRelease = undefined))
+  return signedRelease
 }
+const releaseSums = () => releaseSigned().then((r) => r.sums)
 
 /**
  * The release's SHA256SUMS, refused unless SHA256SUMS.minisig signs it with `key`: the hub hands
  * out what this list names, and puts its hash in every "Add a machine" command.
  */
 export async function signedSums(base: string, key: string, get: typeof fetch = fetch): Promise<string> {
+  return (await signedList(base, key, get)).sums
+}
+
+/** signedSums, with the signature: machines check it themselves before an update (see /node/release/). */
+export async function signedList(base: string, key: string, get: typeof fetch = fetch): Promise<{ sums: string; sig: string }> {
   const r = await get(`${base}/SHA256SUMS`)
   if (!r.ok) throw new HttpError(502, `Could not get the checksums of Inyon ${VERSION} (${r.status})`)
   const sums = new Uint8Array(await r.arrayBuffer())
   const s = await get(`${base}/SHA256SUMS.minisig`)
   if (!s.ok) throw new HttpError(502, `Could not get the signature of Inyon ${VERSION}'s checksums (${s.status}), so nothing from that release is handed out`)
-  if (!verifyMinisign(sums, await s.text(), key)) throw new HttpError(502, `The checksums of Inyon ${VERSION} at ${base} aren't signed with Inyon's release key, so nothing from that release is handed out`)
-  return new TextDecoder().decode(sums)
+  const sig = await s.text()
+  if (!verifyMinisign(sums, sig, key)) throw new HttpError(502, `The checksums of Inyon ${VERSION} at ${base} aren't signed with Inyon's release key, so nothing from that release is handed out`)
+  return { sums: new TextDecoder().decode(sums), sig }
+}
+
+/** What a machine hears when it asks a hub that runs from a checkout for the signed list. */
+export const NOT_SIGNED = "This hub runs from a checkout, so what it hands out isn't signed by Inyon's release key.\n"
+
+/**
+ * The hub's own certificate when it made it itself (setup's LAN choice): a machine can't check it
+ * against anyone, so the "Add a machine" command carries its sha256 and the machine trusts exactly
+ * that certificate. A certificate from an authority (Let's Encrypt, a company's) gets none.
+ */
+export function selfSignedCert(file = TLS?.cert): { pem: string; sha256: string } | undefined {
+  if (!file) return undefined
+  try {
+    const cert = new crypto.X509Certificate(fs.readFileSync(file))
+    if (cert.issuer !== cert.subject || !cert.verify(cert.publicKey)) return undefined
+    return { pem: cert.toString(), sha256: cert.fingerprint256.replace(/:/g, '').toLowerCase() }
+  } catch {
+    return undefined
+  }
+}
+
+/** The certificate the hub serves, first one in TLS_CERT, as PEM. */
+function servedCert(file = TLS?.cert) {
+  if (!file) return undefined
+  try {
+    return new crypto.X509Certificate(fs.readFileSync(file)).toString()
+  } catch {
+    return undefined
+  }
 }
 
 const sumFor = (sums: string, name: string) => sums.split(/\r?\n/).map((l) => l.trim().split(/\s+\*?/)).find(([, n]) => n === name)?.[0]?.toLowerCase()
@@ -309,6 +345,15 @@ export const nodeRoutes = {
   '/node/install.sh': route(() => plain(INSTALL_SH)),
   '/node/install.ps1': route(() => plain(INSTALL_PS1)),
   '/node/SHA256SUMS': route(async () => plain(await unixSums())),
+  // the release's own list and its signature, as the release has them: a machine checks what it
+  // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
+  '/node/release/SHA256SUMS': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain((await releaseSigned()).sums))),
+  '/node/release/SHA256SUMS.minisig': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain((await releaseSigned()).sig))),
+  // the certificate this hub serves, for a machine added with its sha256 (see selfSignedCert)
+  '/node/hub.crt': route(() => {
+    const pem = servedCert()
+    return pem ? plain(pem) : plain('This hub has no certificate of its own.\n', 404)
+  }),
   // the inyon command: what install.sh, install.ps1 and `inyon update` on a machine take first
   '/node/inyon': route(async (req) => binary(await command(commandOf(req)), cliFile(commandOf(req)))),
   '/node/inyon.gz': route(async (req) => binary(await gzipped(await command(commandOf(req))), `${cliFile(commandOf(req))}.gz`)),
@@ -334,7 +379,7 @@ export async function pairCommands(hub: string, token: string) {
   const installSh = crypto.createHash('sha256').update(INSTALL_SH).digest('hex')
   const sums = crypto.createHash('sha256').update(await unixSums()).digest('hex')
   return {
-    unix: unixPairCommand(hub, token, installSh, sums),
+    unix: unixPairCommand(hub, token, installSh, sums, hub.startsWith('https:') ? selfSignedCert()?.sha256 : undefined),
     // works pasted into Windows PowerShell 5.1, PowerShell 7 and cmd.exe: no $ for the outer shell
     // to expand, and the token is base64url so single quotes are safe
     windows: `powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '${hub}/node/install.ps1'))) -Hub '${hub}' -Token '${token}'"`,

@@ -74,7 +74,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
-   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. To join a hub, type the hub's address.
+   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, type the hub's address.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.

@@ -77,3 +77,112 @@ impl axum::serve::Listener for TlsListener {
         Ok(self.local)
     }
 }
+
+/// The certificate a hub serves, as a machine joining it sees it.
+pub struct Cert {
+    pub pem: String,
+    /// sha256 of its DER bytes, as hex: what browsers show as its SHA-256 fingerprint
+    pub sha256: String,
+}
+
+fn first_cert(file: &str) -> Option<CertificateDer<'static>> {
+    if file.is_empty() {
+        return None;
+    }
+    CertificateDer::pem_file_iter(file).ok()?.next()?.ok()
+}
+
+fn pem_of(der: &[u8]) -> String {
+    use base64::Engine;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(der);
+    let lines: Vec<&str> = b64.as_bytes().chunks(64).map(|c| std::str::from_utf8(c).unwrap_or("")).collect();
+    format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", lines.join("\n"))
+}
+
+/// The first certificate in TLS_CERT, as PEM (nothing else the file may hold).
+pub fn served_pem(file: &str) -> Option<String> {
+    first_cert(file).map(|c| pem_of(&c))
+}
+
+/// The hub's certificate when it made it itself (setup's LAN choice): a machine can't check it
+/// against anyone, so the "Add a machine" command carries its sha256 and the machine trusts
+/// exactly that certificate. One from an authority (Let's Encrypt, a company's) gets None.
+pub fn self_signed(file: &str) -> Option<Cert> {
+    use sha2::{Digest, Sha256};
+    let der = first_cert(file)?;
+    let (issuer, subject) = issuer_and_subject(&der)?;
+    (issuer == subject).then(|| Cert { pem: pem_of(&der), sha256: crate::http::hex(&Sha256::digest(&der)) })
+}
+
+/// The issuer and subject names of a DER certificate, read from its TBSCertificate: version
+/// (optional, [0]), serial, signature algorithm, issuer, validity, subject.
+fn issuer_and_subject(der: &[u8]) -> Option<(&[u8], &[u8])> {
+    /// one DER element: its tag, the whole of it, what's inside, and what follows it
+    type Element<'a> = (u8, &'a [u8], &'a [u8], &'a [u8]);
+    fn tlv(b: &[u8]) -> Option<Element<'_>> {
+        let tag = *b.first()?;
+        let first = *b.get(1)?;
+        let (len, head) = if first < 0x80 {
+            (first as usize, 2)
+        } else {
+            let n = (first & 0x7f) as usize;
+            if n == 0 || n > 4 {
+                return None;
+            }
+            let mut len = 0usize;
+            for i in 0..n {
+                len = (len << 8) | *b.get(2 + i)? as usize;
+            }
+            (len, 2 + n)
+        };
+        let end = head.checked_add(len).filter(|e| *e <= b.len())?;
+        Some((tag, &b[..end], &b[head..end], &b[end..]))
+    }
+    let (_, _, cert, _) = tlv(der)?;
+    let (_, _, tbs, _) = tlv(cert)?;
+    let (tag, _, _, after) = tlv(tbs)?;
+    let rest = if tag == 0xa0 { after } else { tbs };
+    let (_, _, _, rest) = tlv(rest)?; // serial
+    let (_, _, _, rest) = tlv(rest)?; // signature algorithm
+    let (_, issuer, _, rest) = tlv(rest)?;
+    let (_, _, _, rest) = tlv(rest)?; // validity
+    let (_, subject, _, _) = tlv(rest)?;
+    Some((issuer, subject))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn openssl(dir: &std::path::Path, script: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        let made = std::process::Command::new("sh").arg("-c").arg(script).current_dir(dir).output().expect("sh");
+        assert!(made.status.success(), "openssl: {}", String::from_utf8_lossy(&made.stderr));
+    }
+
+    #[test]
+    fn only_a_certificate_the_hub_made_itself_gets_its_sha256_into_the_command() {
+        let dir = std::env::temp_dir().join(format!("inyon-hub-cert-{}", std::process::id()));
+        openssl(
+            &dir,
+            "set -e
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout self.key -out self.pem -days 2 -subj /CN=hub -addext subjectAltName=IP:192.168.1.5
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -out ca.pem -days 2 -subj /CN=inyon-test-ca
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout leaf.key -out leaf.csr -subj /CN=hub
+openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out leaf.pem -days 2
+openssl x509 -in self.pem -outform der | sha256sum | cut -c1-64 > self.sha256",
+        );
+        let path = |f: &str| dir.join(f).to_string_lossy().into_owned();
+        let own = self_signed(&path("self.pem")).expect("a self-signed certificate");
+        assert_eq!(own.sha256, std::fs::read_to_string(dir.join("self.sha256")).unwrap().trim());
+        // the PEM a machine downloads is the same certificate
+        let back: Vec<CertificateDer> = CertificateDer::pem_slice_iter(own.pem.as_bytes()).map(Result::unwrap).collect();
+        assert_eq!(back, vec![first_cert(&path("self.pem")).unwrap()]);
+        assert_eq!(served_pem(&path("self.pem")), Some(own.pem));
+        // one an authority signed is checked the usual way
+        assert!(self_signed(&path("leaf.pem")).is_none());
+        assert!(served_pem(&path("leaf.pem")).is_some());
+        assert!(self_signed("").is_none() && served_pem(&path("nothing.pem")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

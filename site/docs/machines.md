@@ -13,7 +13,18 @@ The command downloads `inyon` from the hub, checks it against the hub's checksum
 
 - The command carries a token for that one machine. Treat it like a password until it's used.
 - An unused command expires after 24 hours. **New pairing command** on the machine's page makes another.
-- The machine needs to reach the hub's address. A plain `http://` hub address is only accepted on a private network.
+- The machine needs to reach the hub's address. A plain `http://` hub address is only accepted on a VPN; see [Plain http](#plain-http).
+- From 0.20, when the hub serves HTTPS on a certificate it made itself (setup's [LAN](hub.md#the-lan) choice), the command carries that certificate's SHA-256 as `INYON_HUB_CERT`. `inyon join` keeps the certificate only if it has that SHA-256 and from then on trusts it, and no other, for the hub. Its downloads skip curl's own check of that certificate, since each is checked against a checksum the command already has.
+
+### Plain http
+
+A machine refuses to send its token over plain `http://` unless the hub is on this machine or on a Tailscale or NetBird address (`100.64.0.0/10`, or `fd7a:115c:a1e0::/48`). A name counts when every address it points to is one of those, and it's looked up again before each connection. Before 0.20 any private address was accepted, and names ending in `.local`, `.lan` or `.internal`. Anyone on a LAN can read plain http there, or answer for the hub's name, so a machine joined that way stops with:
+
+```
+Refusing to send the token over plain http to 192.168.1.5: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway.
+```
+
+Run `inyon setup` on the hub and choose *LAN* again to give it HTTPS, then run a new **Add a machine** command on the machine. Or add it through the hub's VPN address. `INYON_ALLOW_INSECURE=1` in the machine's environment keeps the old behaviour, at that risk.
 
 ## Servers over SSH
 

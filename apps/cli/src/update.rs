@@ -693,14 +693,17 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
         Kind::Hub(hub) => {
             let t = target(platform, host.arch())?;
             let q = format!("?os={}&arch={}", t.os, t.arch);
+            // what the hub hands out is checked against the release's signed list, as the hub has it
+            let signed = hub_signed_sums(hub, &host.signing_key())?;
             // a hub from before 0.13 hands out one program under /node/inyon, which this
             // program can't run as its engine
             let engine_sum = || -> Result<String, Error> {
-                hub_sum(hub, "inyon-engine", &q)?
+                hub_checksum(hub, signed.as_deref(), "inyon-engine", &hub_files(&t).engine, &q)?
                     .ok_or_else(|| err(format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first, then this machine.")))
             };
             let wanted_engine = if need_engine { Some(engine_sum()?) } else { None };
-            let cli_sum = hub_sum(hub, "inyon", &q)?.ok_or_else(|| err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")))?;
+            let cli_sum = hub_checksum(hub, signed.as_deref(), "inyon", &hub_files(&t).cli, &q)?
+                .ok_or_else(|| err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")))?;
             let mine = host.version();
             let same = |file: &Path, want: &str| -> Result<bool, Error> { Ok(files.exists(file) && sha256_file(file)? == want) };
             let new_program = !same(&install.file, &cli_sum)?;
@@ -764,6 +767,53 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
     }
 }
 
+/// The release files a hub hands this system: its own command, and the x64 engine on Windows.
+pub fn hub_files(t: &Target) -> Names {
+    let engine_arch = if t.os == "windows" { "x64" } else { t.arch };
+    Names { cli: release_files(&format!("{}-{}", t.os, t.arch)).cli, engine: release_files(&format!("{}-{engine_arch}", t.os)).engine }
+}
+
+/// Why nothing is taken from a hub with no signed list.
+pub fn hub_unsigned(hub: &str) -> String {
+    format!(
+        "{} doesn't hand out Inyon's signed list of checksums (a hub from before 0.20, or one running from a checkout), so nothing was changed. Update the hub first; or, to take the hub's own checksums anyway, set INYON_ALLOW_INSECURE=1 and run this again.",
+        crate::http::host_of(hub)
+    )
+}
+
+/// The release's SHA256SUMS as the hub has it (/node/release/), once SHA256SUMS.minisig signs it
+/// with `key`: a machine never takes a checksum only the hub, or someone between, vouches for.
+/// None when the hub has no list to give (a hub from before 0.20, or one running from a
+/// checkout); a list that's there but isn't signed is refused.
+pub fn hub_signed_sums(hub: &str, key: &str) -> Result<Option<String>, Error> {
+    let base = format!("{hub}/node/release");
+    let url = format!("{base}/SHA256SUMS");
+    let res = http::get(&url).map_err(|e| err(format!("Couldn't reach {url} ({e}).")))?;
+    let sums = String::from_utf8_lossy(&res.body).into_owned();
+    // an older hub answers 404, or its web page: neither lists a single checksum
+    let listed = sums.lines().any(|l| l.split_whitespace().next().is_some_and(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit())));
+    if !res.ok() || !listed {
+        return Ok(None);
+    }
+    let sig_url = format!("{base}/SHA256SUMS.minisig");
+    let sig = http::get(&sig_url).map_err(|e| err(format!("Couldn't reach {sig_url} ({e}).")))?;
+    if !sig.ok() || signing::verify_sums(&sums, &String::from_utf8_lossy(&sig.body), key).is_err() {
+        return Err(err(format!("The list of checksums {} hands out isn't signed by Inyon's key, so nothing was changed.", crate::http::host_of(hub))));
+    }
+    Ok(Some(sums))
+}
+
+/// The checksum to check one of a hub's files against: its line in the signed list (`name`), or
+/// with no list and INYON_ALLOW_INSECURE set, the one the hub gives for `route`. None when the hub
+/// doesn't hand that file out.
+pub fn hub_checksum(hub: &str, signed: Option<&str>, route: &str, name: &str, q: &str) -> Result<Option<String>, Error> {
+    match signed {
+        Some(sums) => sum_for(sums, name).map(Some).ok_or_else(|| err(format!("The signed list from {} has no {name}, so nothing was changed.", crate::http::host_of(hub)))),
+        None if crate::paths::env_var("INYON_ALLOW_INSECURE").is_some() => hub_sum(hub, route, q),
+        None => Err(err(hub_unsigned(hub))),
+    }
+}
+
 /// The checksum a hub publishes for one of its files (`inyon`, `inyon-engine`); None when the
 /// hub doesn't serve that file.
 pub fn hub_sum(hub: &str, route: &str, q: &str) -> Result<Option<String>, Error> {
@@ -786,7 +836,7 @@ pub fn hub_sum(hub: &str, route: &str, q: &str) -> Result<Option<String>, Error>
 pub fn fetch_hub_file(hub: &str, route: &str, q: &str, want: &str, to: &Path, log: &dyn Fn(&str)) -> Result<(), Error> {
     let data = gunzip(&download(&format!("{hub}/node/{route}.gz{q}"), log)?).map_err(|e| err(format!("Couldn't unpack the hub's download ({e}).")))?;
     if sha256(&data) != want {
-        return Err(err("The download didn't match the hub's checksum, so nothing was changed. Try again."));
+        return Err(err("The download didn't match its checksum, so nothing was changed. Try again."));
     }
     fs::write(to, data)?;
     Ok(())

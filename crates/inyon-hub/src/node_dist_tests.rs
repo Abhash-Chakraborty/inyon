@@ -157,9 +157,35 @@ fn checksum_lists_are_read_as_sha256sum_writes_them() {
 fn the_unix_one_liner_carries_the_token_in_the_environment_and_both_checksums() {
     // unixPairCommand('http://hub:4777', 'tok', 'aaa', 'bbb') in Bun
     assert_eq!(
-        unix_pair_command("http://hub:4777", "tok", "aaa", "bbb"),
+        unix_pair_command("http://hub:4777", "tok", "aaa", "bbb", None),
         r#"INYON_TOKEN=tok INYON_SUMS_SHA256=bbb sh -c 'f=$(mktemp) && curl -fsSL "$1/node/install.sh" -o "$f" && if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s' inyon http://hub:4777 aaa"#
     );
+}
+
+#[test]
+fn a_hub_on_its_own_certificate_puts_its_sha256_in_the_command() {
+    // unixPairCommand('https://192.168.1.5:4777', 'tok', 'aaa', 'bbb', 'cc') in Bun
+    assert_eq!(
+        unix_pair_command("https://192.168.1.5:4777", "tok", "aaa", "bbb", Some("cc")),
+        r#"INYON_TOKEN=tok INYON_SUMS_SHA256=bbb INYON_HUB_CERT=cc sh -c 'f=$(mktemp) && curl -fsSLk "$1/node/install.sh" -o "$f" && if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s' inyon https://192.168.1.5:4777 aaa"#
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hub_on_its_own_certificate_hands_its_sha256_to_join_and_every_download_is_still_checked() {
+    let (hub, state) = pair_hub(false);
+    state.lock().unwrap().program = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" \"$INYON_HUB_CERT\" > \"$HOME/ran\"\n".into();
+    let sums = state.lock().unwrap().sums();
+    let pin = "ab".repeat(32);
+    let r = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&sums), Some(&pin)), &[]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.ran.as_deref(), Some(format!("join {hub}\n{pin}\n").as_str()));
+    // curl skips its own check only where the command's checksums cover every download
+    let unchecked = run_pair(&format!("INYON_TOKEN=tok INYON_HUB_CERT={pin} sh -c 'curl -fsSL \"$1/node/install.sh\" | sh -s -- \"$1\"' inyon {hub}"), &[]);
+    assert_eq!(unchecked.code, 2, "{}", unchecked.err);
+    assert!(unchecked.err.contains("INYON_HUB_CERT needs INYON_SUMS_SHA256"), "{}", unchecked.err);
+    assert_eq!(unchecked.ran, None);
 }
 
 #[test]
@@ -219,7 +245,7 @@ fn checkout_dist() -> (std::path::PathBuf, Rc<Dist>) {
 
 /// The release's checksums, as a release that can't be had answers.
 fn sums_fail(d: &Dist) {
-    let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async { Err(http(502, "Could not get the checksums of Inyon 0.17.0 (404)")) });
+    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async { Err(http(502, "Could not get the checksums of Inyon 0.17.0 (404)")) });
     *d.sums.borrow_mut() = Some(f.shared());
 }
 
@@ -233,7 +259,7 @@ fn a_checkout_without_a_built_command_hands_windows_the_release_command_and_the_
     // anything that asks the release for its checksums trips this
     let asked = Rc::new(std::cell::Cell::new(false));
     let a = asked.clone();
-    let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async move {
+    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async move {
         a.set(true);
         Err(http(502, "the release was asked"))
     });
@@ -443,7 +469,7 @@ fn sha(s: &str) -> String {
 #[test]
 fn the_one_liner_installs_what_the_hub_vouched_for_and_has_it_join_with_the_token_kept_out_of_argv() {
     let (hub, state) = pair_hub(false);
-    let cmd = unix_pair_command(&hub, "tok_123-abc", &sha(INSTALL_SH), &sha(&state.lock().unwrap().sums()));
+    let cmd = unix_pair_command(&hub, "tok_123-abc", &sha(INSTALL_SH), &sha(&state.lock().unwrap().sums()), None);
     assert!(!cmd.split(" sh -c '").nth(1).unwrap().contains("tok_123-abc"));
     let r = run_pair(&cmd, &[]);
     assert!(!r.err.contains("checksum"), "{}", r.err);
@@ -458,12 +484,12 @@ fn the_one_liner_installs_what_the_hub_vouched_for_and_has_it_join_with_the_toke
 fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
     let (hub, state) = pair_hub(false);
     let sums = state.lock().unwrap().sums();
-    let swapped_installer = run_pair(&unix_pair_command(&hub, "tok", &sha("something else"), &sha(&sums)), &[]);
+    let swapped_installer = run_pair(&unix_pair_command(&hub, "tok", &sha("something else"), &sha(&sums), None), &[]);
     assert_ne!(swapped_installer.code, 0);
     assert!(swapped_installer.err.contains("install.sh did not match"), "{}", swapped_installer.err);
     assert_eq!(swapped_installer.ran, None);
 
-    let swapped_sums = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha("a different list")), &[]);
+    let swapped_sums = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha("a different list"), None), &[]);
     assert_ne!(swapped_sums.code, 0);
     assert!(swapped_sums.err.contains("The hub's checksums did not match"), "{}", swapped_sums.err);
     assert_eq!(swapped_sums.ran, None);
@@ -475,7 +501,7 @@ fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
         h.program = "#!/bin/sh\necho \"not what the hub built\" > \"$HOME/ran\"\n".into();
         h.fixed_list.clone().unwrap()
     };
-    let swapped_program = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed)), &[]);
+    let swapped_program = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed), None), &[]);
     assert_ne!(swapped_program.code, 0);
     assert!(swapped_program.err.contains("inyon did not match its checksum"), "{}", swapped_program.err);
     assert_eq!(swapped_program.ran, None);
@@ -487,7 +513,7 @@ fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
 fn from_0_19_a_machine_joins_with_the_command_alone_though_the_hub_lists_the_engine() {
     let (hub, state) = pair_hub(true);
     let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums)), &[]);
+    let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums), None), &[]);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
     assert!(!r.bin.join("inyon-engine").exists());
@@ -500,7 +526,7 @@ fn with_inyon_legacy_engine_1_the_engine_comes_from_the_hub_too_checked_the_same
     let (hub, state) = pair_hub(true);
     let legacy = [("INYON_LEGACY_ENGINE", "1")];
     let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_456", &sha(INSTALL_SH), &sha(&sums)), &legacy);
+    let r = run_pair(&unix_pair_command(&hub, "tok_456", &sha(INSTALL_SH), &sha(&sums), None), &legacy);
     assert!(!r.err.contains("checksum"), "{}", r.err);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
@@ -511,7 +537,7 @@ fn with_inyon_legacy_engine_1_the_engine_comes_from_the_hub_too_checked_the_same
     // an engine swapped on the way is refused before anything joins
     let fixed = sums.replace(&sha(ENGINE), &sha("other engine"));
     state.lock().unwrap().fixed_list = Some(fixed.clone());
-    let swapped = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed)), &legacy);
+    let swapped = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed), None), &legacy);
     assert_ne!(swapped.code, 0);
     assert!(swapped.err.contains("engine did not match its checksum"), "{}", swapped.err);
     assert_eq!(swapped.ran, None);

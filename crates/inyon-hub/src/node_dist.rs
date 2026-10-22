@@ -114,7 +114,14 @@ pub fn source_hash(repo: &Path) -> String {
 }
 
 type Building = Shared<LocalBoxFuture<'static, Result<PathBuf, HubError>>>;
-type Sums = Shared<LocalBoxFuture<'static, Result<String, HubError>>>;
+type Sums = Shared<LocalBoxFuture<'static, Result<Signed, HubError>>>;
+
+/// A release's SHA256SUMS, and SHA256SUMS.minisig, which signs it.
+#[derive(Clone)]
+pub struct Signed {
+    pub sums: String,
+    pub sig: String,
+}
 
 /// The downloads, for one hub.
 pub struct Dist {
@@ -193,6 +200,11 @@ pub fn signing_key(base: &str) -> String {
 /// out what this list names, and puts its hash in every "Add a machine" command. Only the hashed
 /// kind of signature, which the release workflow makes, counts.
 pub async fn signed_sums(base: &str, key: &str, get: Get) -> HubResult<String> {
+    Ok(signed_list(base, key, get).await?.sums)
+}
+
+/// signed_sums, with the signature: machines check it themselves before an update (/node/release/).
+pub async fn signed_list(base: &str, key: &str, get: Get) -> HubResult<Signed> {
     let (status, sums) = get(format!("{base}/SHA256SUMS")).await.map_err(HubError::plain)?;
     if !(200..300).contains(&status) {
         return Err(http(502, format!("Could not get the checksums of Inyon {VERSION} ({status})")));
@@ -201,16 +213,21 @@ pub async fn signed_sums(base: &str, key: &str, get: Get) -> HubResult<String> {
     if !(200..300).contains(&status) {
         return Err(http(502, format!("Could not get the signature of Inyon {VERSION}'s checksums ({status}), so nothing from that release is handed out")));
     }
+    let sig = String::from_utf8_lossy(&sig).into_owned();
     let checked = (|| {
         let key = minisign_verify::PublicKey::from_base64(key.trim()).ok()?;
-        let sig = minisign_verify::Signature::decode(&String::from_utf8_lossy(&sig)).ok()?;
+        let sig = minisign_verify::Signature::decode(&sig).ok()?;
         key.verify(&sums, &sig, false).ok()
     })();
     if checked.is_none() {
         return Err(http(502, format!("The checksums of Inyon {VERSION} at {base} aren't signed with Inyon's release key, so nothing from that release is handed out")));
     }
-    String::from_utf8(sums).map_err(|_| http(502, format!("The checksums of Inyon {VERSION} aren't text")))
+    let sums = String::from_utf8(sums).map_err(|_| http(502, format!("The checksums of Inyon {VERSION} aren't text")))?;
+    Ok(Signed { sums, sig })
 }
+
+/// What a machine hears when it asks a hub that runs from a checkout for the signed list.
+pub const NOT_SIGNED: &str = "This hub runs from a checkout, so what it hands out isn't signed by Inyon's release key.\n";
 
 /// Release file `name`, checked against the release's SHA256SUMS. The gzipped copy is taken when
 /// the release lists one and checked before it's unpacked; machines get the plain bytes either way.
@@ -322,11 +339,15 @@ impl Dist {
     }
 
     async fn release_sums(self: &Rc<Self>) -> HubResult<String> {
+        Ok(self.release_signed().await?.sums)
+    }
+
+    async fn release_signed(self: &Rc<Self>) -> HubResult<Signed> {
         let existing = self.sums.borrow().clone();
         let fut = existing.unwrap_or_else(|| {
-            let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async {
+            let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async {
                 let base = Self::release_base();
-                signed_sums(&base, &signing_key(&base), net()).await
+                signed_list(&base, &signing_key(&base), net()).await
             });
             let f = f.shared();
             *self.sums.borrow_mut() = Some(f.clone());
@@ -559,7 +580,8 @@ impl Dist {
         let windows = format!(
             "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm '{hub}/node/install.ps1'))) -Hub '{hub}' -Token '{token}'\""
         );
-        Ok((unix_pair_command(hub, token, &install_sh, &sums), windows))
+        let cert = if hub.starts_with("https:") { crate::tls::self_signed(&tls_cert()).map(|c| c.sha256) } else { None };
+        Ok((unix_pair_command(hub, token, &install_sh, &sums, cert.as_deref()), windows))
     }
 
     /// Builds what machines download in the background, so adding one doesn't wait for it.
@@ -595,13 +617,23 @@ const REPLACED: &str = "Inyon replaced tether-node with the inyon program. Copy 
 /// The Unix "Add a machine" one-liner (pair-command.ts). It checks install.sh against its sha256
 /// before running it, and install.sh checks the hub's list of checksums against the one given
 /// here, then the program against its line. The token travels in the environment.
-pub fn unix_pair_command(hub: &str, token: &str, install_sh_sha256: &str, sums_sha256: &str) -> String {
+pub fn unix_pair_command(hub: &str, token: &str, install_sh_sha256: &str, sums_sha256: &str, cert_sha256: Option<&str>) -> String {
+    // a hub on a certificate it made itself: curl can't check it, which is fine for files whose
+    // sha256 the command already has; `inyon join` trusts only the certificate with this sha256
+    let cert = cert_sha256.map(|c| format!(" INYON_HUB_CERT={c}")).unwrap_or_default();
+    let curl = if cert_sha256.is_some() { "curl -fsSLk" } else { "curl -fsSL" };
     let run = concat!(
-        "f=$(mktemp) && curl -fsSL \"$1/node/install.sh\" -o \"$f\" && ",
+        "f=$(mktemp) && CURL \"$1/node/install.sh\" -o \"$f\" && ",
         "if [ \"$( (sha256sum \"$f\" 2>/dev/null || shasum -a 256 \"$f\") | cut -c1-64)\" = \"$2\" ]; then sh \"$f\" \"$1\"; ",
         "else echo \"install.sh did not match its checksum; get a new command from the hub\" >&2; false; fi; s=$?; rm -f \"$f\"; exit $s"
     );
-    format!("INYON_TOKEN={token} INYON_SUMS_SHA256={sums_sha256} sh -c '{run}' inyon {hub} {install_sh_sha256}")
+    let run = run.replace("CURL", curl);
+    format!("INYON_TOKEN={token} INYON_SUMS_SHA256={sums_sha256}{cert} sh -c '{run}' inyon {hub} {install_sh_sha256}")
+}
+
+/// TLS_CERT, the certificate file the hub serves.
+fn tls_cert() -> String {
+    std::env::var("TLS_CERT").unwrap_or_default()
 }
 
 fn plain(status: u16, body: impl Into<String>) -> Resp {
@@ -656,6 +688,23 @@ pub fn add(routes: &mut Routes) {
     routes.add("/node/install.sh", route(|_, _| async { Ok(plain(200, INSTALL_SH)) }));
     routes.add("/node/install.ps1", route(|_, _| async { Ok(plain(200, INSTALL_PS1)) }));
     routes.add("/node/SHA256SUMS", route(|d, _| async move { Ok(plain(200, d.unix_sums().await?)) }));
+    // the release's own list and its signature, as the release has them: a machine checks what it
+    // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
+    routes.add("/node/release/SHA256SUMS", route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, d.release_signed().await?.sums) }) }));
+    routes.add(
+        "/node/release/SHA256SUMS.minisig",
+        route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, d.release_signed().await?.sig) }) }),
+    );
+    // the certificate this hub serves, for a machine added with its sha256 (see tls::self_signed)
+    routes.add(
+        "/node/hub.crt",
+        route(|_, _| async move {
+            Ok(match crate::tls::served_pem(&tls_cert()) {
+                Some(pem) => plain(200, pem),
+                None => plain(404, "This hub has no certificate of its own.\n"),
+            })
+        }),
+    );
     // the inyon command: what install.sh, install.ps1 and `inyon update` on a machine take first
     routes.add(
         "/node/inyon",

@@ -121,9 +121,25 @@ struct HubBuilds {
     commands: BTreeMap<String, String>,
     sum_override: String,
     split: bool,
+    /// whether it hands out the release's signed list under /node/release/ (a hub from 0.20 on)
+    signed: bool,
+    /// the list as it was signed, when a test changes the builds afterwards
+    signed_list: Option<String>,
+    /// the key the list is signed with
+    signer: String,
 }
 
 impl HubBuilds {
+    /// The release's SHA256SUMS for what the hub hands out.
+    fn release_sums(&self) -> String {
+        if let Some(l) = &self.signed_list {
+            return l.clone();
+        }
+        let cli = self.commands.iter().map(|(t, b)| format!("{}  {}\n", sha(b.as_bytes()), update::release_files(t).cli));
+        let engine = self.engines.iter().map(|(t, b)| format!("{}  {}\n", sha(b.as_bytes()), update::release_files(t).engine));
+        cli.chain(engine).collect()
+    }
+
     fn engine_for(&self, os: &str, arch: &str) -> Option<String> {
         self.engines.get(&format!("{os}-{}", if os == "windows" { "x64" } else { arch })).cloned()
     }
@@ -160,6 +176,9 @@ impl Server {
                 .collect(),
             sum_override: String::new(),
             split: true,
+            signed: true,
+            signed_list: None,
+            signer: test_key(),
         }));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let (r, h, q) = (release.clone(), hub.clone(), requests.clone());
@@ -210,6 +229,8 @@ impl Server {
                         let command = if hb.split { hb.commands.get(&format!("{os}-{arch}")).cloned() } else { engine.clone() };
                         let engine_sum = engine.as_ref().map(|b| if hb.sum_override.is_empty() { sha(b.as_bytes()) } else { hb.sum_override.clone() });
                         match (path.as_str(), hb.split) {
+                            ("/node/release/SHA256SUMS", _) if hb.signed => ("200 OK", String::new(), hb.release_sums().into_bytes()),
+                            ("/node/release/SHA256SUMS.minisig", _) if hb.signed => ("200 OK", String::new(), sign(&hb.signer, hb.release_sums().as_bytes()).into_bytes()),
                             ("/node/inyon-engine.sha256", true) if engine.is_some() => ("200 OK", String::new(), engine_sum.unwrap().into_bytes()),
                             ("/node/inyon-engine.gz", true) if engine.is_some() => ("200 OK", String::new(), gzip(engine.unwrap().as_bytes())),
                             ("/node/inyon.sha256", split) if command.is_some() => {
@@ -861,7 +882,7 @@ fn nothing_running_in_the_background_the_new_file_is_in_place_for_the_next_start
 }
 
 #[test]
-fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_the_hub_sha256() {
+fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_the_signed_list() {
     let _g = lock();
     let f = Fixture::new();
     let install = find_install(&f.installed(), Some(f.server.base.clone()));
@@ -882,23 +903,67 @@ fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_
     assert!(!update::update(&install, &linux, &RealFiles).unwrap().changed);
     assert!(linux.restarts.borrow().is_empty());
 
-    // a checksum that doesn't match leaves the running copy alone
+    // a build swapped on the way, with the hub's own checksum swapped to match: the signed list
+    // still says what the release has, and the running copy is left alone
     {
         let mut hub = f.server.hub.lock().unwrap();
+        hub.engines.insert("linux-x64".into(), "newer linux build".into());
+        hub.signed_list = Some(hub.release_sums());
         hub.engines.insert("linux-x64".into(), "tampered".into());
-        hub.sum_override = sha(b"what the hub meant");
+        hub.sum_override = sha(b"tampered");
     }
     let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
-    assert!(err.contains("didn't match the hub's checksum"), "{err}");
+    assert!(err.contains("didn't match its checksum"), "{err}");
     assert_eq!(f.read(&f.engine()), "new linux build");
     assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
+}
+
+#[test]
+fn a_hub_with_no_signed_list_or_one_signed_by_another_key_changes_nothing_and_says_what_to_do() {
+    let _g = lock();
+    let f = Fixture::new();
+    let install = find_install(&f.installed(), Some(f.server.base.clone()));
+    let mut linux = FakeHost::new(&f.server, &[Role::Node]);
+    linux.platform = Platform::Linux;
+    linux.arch = Arch::X64;
+    // a hub from before 0.20, or one running from a checkout: only its own checksums
+    f.server.hub.lock().unwrap().signed = false;
+    let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
+    assert!(err.contains("doesn't hand out Inyon's signed list") && err.contains("Update the hub first") && err.contains("INYON_ALLOW_INSECURE=1"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
+    assert!(linux.restarts.borrow().is_empty());
+    assert!(!f.server.requests().iter().any(|r| r.contains(".gz")), "{:?}", f.server.requests());
+    // you can take them anyway
+    std::env::set_var("INYON_ALLOW_INSECURE", "1");
+    let r = update::update(&install, &linux, &RealFiles);
+    std::env::remove_var("INYON_ALLOW_INSECURE");
+    assert!(r.unwrap().changed);
+    assert_eq!(f.read(&f.installed()), "new linux cli");
+
+    // a list that's there but signed by someone else is refused, whatever INYON_ALLOW_INSECURE says
+    fs::write(f.installed(), "old build").unwrap();
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.signed = true;
+        hub.signer = other_key();
+    }
+    std::env::set_var("INYON_ALLOW_INSECURE", "1");
+    let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
+    std::env::remove_var("INYON_ALLOW_INSECURE");
+    assert!(err.contains("isn't signed by Inyon's key"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
 }
 
 #[test]
 fn a_hub_from_before_the_split_hands_out_one_program_so_nothing_is_changed_and_it_says_so() {
     let _g = lock();
     let f = Fixture::new();
-    f.server.hub.lock().unwrap().split = false;
+    // and so from before the signed list too
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.split = false;
+        hub.signed = false;
+    }
     let install = find_install(&f.installed(), Some(f.server.base.clone()));
     let mut linux = FakeHost::new(&f.server, &[Role::Node]);
     linux.platform = Platform::Linux;
@@ -967,7 +1032,11 @@ fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added
     assert!(!f.bin_names().iter().any(|n| n.ends_with(".download")));
 
     // a hub from before the split can't hand the engine out apart
-    f.server.hub.lock().unwrap().split = false;
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.split = false;
+        hub.signed = false;
+    }
     fs::remove_file(&to).unwrap();
     let err = download_to(&to, &say).unwrap_err();
     assert!(err.contains("Update the hub first"), "{err}");

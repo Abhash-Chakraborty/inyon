@@ -6,7 +6,7 @@ Where should it answer?
  ● This machine only
      localhost; put HTTPS in front to reach it from a phone
  ○ LAN
-     at 192.168.1.20
+     at 192.168.1.20, over HTTPS
  ○ Tailscale
      100.64.0.9 (laptop.tail1234.ts.net)
  Own address  …

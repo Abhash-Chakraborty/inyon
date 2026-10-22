@@ -25,6 +25,41 @@ pub fn insecure_tls() -> bool {
 /// the Bun engine did (a hub behind a company's own certificate authority). A file that can't be
 /// read is said once and left out, as Node does.
 pub fn extra_roots() -> Vec<rustls::pki_types::CertificateDer<'static>> {
+    let mut roots = node_extra_ca_certs();
+    // a hub that made its certificate itself, trusted by the sha256 its "Add a machine" command gave
+    roots.extend(pem_certs(&hub_cert_file()).unwrap_or_default());
+    roots
+}
+
+/// Where `inyon join` keeps the certificate of a hub that made it itself (see pinned_cert).
+pub fn hub_cert_file() -> std::path::PathBuf {
+    crate::paths::node_dir().join("hub.crt")
+}
+
+/// The certificate a hub served at /node/hub.crt, as PEM to keep, if its sha256 is `sha256` (hex,
+/// colons allowed, as browsers show it). It may come over a connection nobody checked: the sha256
+/// from the hub's "Add a machine" command is what vouches for it.
+pub fn pinned_cert(served: &[u8], sha256: &str) -> Result<String, String> {
+    use base64::Engine;
+    use rustls::pki_types::pem::PemObject;
+    use sha2::{Digest, Sha256};
+    let want: String = sha256.chars().filter(|c| *c != ':').collect::<String>().to_ascii_lowercase();
+    if want.len() != 64 || !want.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("INYON_HUB_CERT must be a certificate's SHA-256 (64 hex digits), not {sha256}."));
+    }
+    let cert = rustls::pki_types::CertificateDer::pem_slice_iter(served).next().and_then(Result::ok).ok_or("The hub didn't hand out a certificate.")?;
+    let got: String = Sha256::digest(&cert).iter().map(|b| format!("{b:02x}")).collect();
+    if got != want {
+        return Err(format!(
+            "The hub's certificate has SHA-256 {got}, not the {want} its command named, so this machine wasn't added. Get a new command from the hub, and check the address."
+        ));
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&cert);
+    let lines: Vec<&str> = b64.as_bytes().chunks(64).map(|c| std::str::from_utf8(c).unwrap_or("")).collect();
+    Ok(format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", lines.join("\n")))
+}
+
+fn node_extra_ca_certs() -> Vec<rustls::pki_types::CertificateDer<'static>> {
     static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let Some(path) = std::env::var_os("NODE_EXTRA_CA_CERTS").filter(|p| !p.is_empty()) else {
         return Vec::new();
@@ -294,6 +329,20 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyou
 openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout server.key -out server.csr -subj /CN=localhost
 printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\\nbasicConstraints=critical,CA:FALSE\\nkeyUsage=critical,digitalSignature\\nextendedKeyUsage=serverAuth\\n' > ext
 openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out server.pem -days 2 -extfile ext";
+        (dir.join("ca.pem"), serve(dir, script))
+    }
+
+    /// A server on a certificate it made itself, as `inyon setup` makes one for a hub on the LAN:
+    /// the certificate (the one a machine keeps as hub.crt) and the port. Not marked as an
+    /// authority, as setup's isn't: a certificate that is one can't also be the server's.
+    pub fn self_signed_server(dir: &Path) -> (PathBuf, u16) {
+        std::fs::create_dir_all(dir).unwrap();
+        let script = "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout server.key -out server.pem -days 2 -subj /CN=hub -addext subjectAltName=DNS:localhost,IP:127.0.0.1 -addext extendedKeyUsage=serverAuth -addext basicConstraints=critical,CA:FALSE";
+        (dir.join("server.pem"), serve(dir, script))
+    }
+
+    /// Runs `script` in `dir` to make server.pem and server.key, and serves "ok" over TLS with them.
+    fn serve(dir: &Path, script: &str) -> u16 {
         let made = std::process::Command::new("sh").arg("-c").arg(script).current_dir(dir).output().expect("sh");
         assert!(made.status.success(), "openssl: {}", String::from_utf8_lossy(&made.stderr));
         let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(dir.join("server.pem")).unwrap().map(Result::unwrap).collect();
@@ -325,7 +374,7 @@ openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out s
                 });
             }
         });
-        (dir.join("ca.pem"), port)
+        port
     }
 }
 
@@ -353,6 +402,32 @@ mod tests {
         let trusted = trusted.unwrap();
         assert_eq!((trusted.status, trusted.body.as_slice()), (200, &b"ok"[..]));
         assert!(missing.is_err());
+    }
+
+    #[test]
+    fn a_hub_on_a_certificate_it_made_itself_is_trusted_through_the_copy_join_kept() {
+        let _env = test_tls::env_lock();
+        let dir = std::env::temp_dir().join(format!("inyon-self-signed-{}", std::process::id()));
+        let (cert, port) = test_tls::self_signed_server(&dir);
+        let url = format!("https://127.0.0.1:{port}/");
+        // SAFETY: the tests that touch NODE_EXTRA_CA_CERTS hold env_lock
+        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        let unknown = request("GET", &url, &[], None, Duration::from_secs(10));
+        // what `inyon join` keeps, checked against the command's sha256, joins the roots as it is
+        let served = std::fs::read(&cert).unwrap();
+        let der = <rustls::pki_types::CertificateDer as rustls::pki_types::pem::PemObject>::from_pem_slice(&served).unwrap();
+        let sha: String = <sha2::Sha256 as sha2::Digest>::digest(&der).iter().map(|b| format!("{b:02x}")).collect();
+        let kept = dir.join("hub.crt");
+        std::fs::write(&kept, pinned_cert(&served, &sha).unwrap()).unwrap();
+        unsafe { std::env::set_var("NODE_EXTRA_CA_CERTS", &kept) };
+        let trusted = request("GET", &url, &[], None, Duration::from_secs(10));
+        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(unknown.is_err());
+        let trusted = trusted.unwrap();
+        assert_eq!((trusted.status, trusted.body.as_slice()), (200, &b"ok"[..]));
+        assert!(pinned_cert(&served, &"0".repeat(64)).is_err());
+        assert!(pinned_cert(b"not a certificate", &sha).is_err());
     }
 
     #[test]

@@ -31,7 +31,7 @@ import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { attemptAfter, backoff, INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
-import { privateHost } from './hub.ts'
+import { checkName, plainHost, plainRefusal } from './hub.ts'
 import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
@@ -85,7 +85,19 @@ function connectMode(hubArg?: string, tokenArg?: string) {
       () => false,
     )
 
-  function connect(attempt = 0) {
+  // a name on plain http may point elsewhere by now (an answer from someone on the network)
+  const lookUp = !secure(url) && !process.env.INYON_ALLOW_INSECURE && plainHost(url) === 'look up'
+
+  async function connect(attempt = 0) {
+    if (lookUp) {
+      const why = await checkName(url.hostname)
+      if (why) fail(why)
+      if (why === null) {
+        const delay = backoff(attempt, 1000, 30_000)
+        console.log(`couldn't look up ${url.hostname}; retrying in ${Math.round(delay / 1000)}s`)
+        return setTimeout(() => connect(attempt + 1), delay)
+      }
+    }
     const ws = new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` } } as any)
     const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     const ops = serveOps(send)
@@ -160,10 +172,13 @@ function showTray(role: 'link' | 'node') {
   }
 }
 
-/** Checks a hub address; refuses to send a token over plain http to a public address. */
 /** Whether the hub is reached with TLS: https and wss are, http and ws aren't. */
 const secure = (url: URL) => url.protocol === 'https:' || url.protocol === 'wss:'
 
+/**
+ * Checks a hub address; refuses to send a token over plain http to anything but this machine or a
+ * VPN address. A name is checked as the connection opens.
+ */
 function hubUrl(hub: string) {
   let url: URL
   try {
@@ -171,7 +186,7 @@ function hubUrl(hub: string) {
   } catch {
     fail(`${hub} isn't a web address.`)
   }
-  if (!secure(url) && !privateHost(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
+  if (!secure(url) && plainHost(url) === 'refused' && !process.env.INYON_ALLOW_INSECURE) fail(plainRefusal(url.hostname))
   return url
 }
 

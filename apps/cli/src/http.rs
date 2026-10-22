@@ -81,6 +81,12 @@ pub fn get_no_redirect(url: &str) -> Result<Response, String> {
     fetch(url, false, false, None)
 }
 
+/// GET with no certificate check, for what something else vouches for (a hub's certificate, by the
+/// sha256 its command names).
+pub fn get_unverified(url: &str) -> Result<Response, String> {
+    fetch(url, true, true, None)
+}
+
 /// GET from the hub on this machine, whose certificate may be its own.
 pub fn get_local(url: &str) -> Result<Response, String> {
     let c = ureq::Agent::config_builder().http_status_as_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());

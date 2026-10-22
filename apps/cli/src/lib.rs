@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod engine;
 pub mod http;
+pub mod hub_cert;
 pub mod networks;
 pub mod pages;
 pub mod paths;

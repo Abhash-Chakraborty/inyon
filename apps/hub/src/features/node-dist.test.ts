@@ -48,6 +48,22 @@ test('tether-node as a Bun script is told to run "Add a machine" again', async (
   await expect(updateScript('linux', 'x64')).rejects.toThrow('Add a machine')
 })
 
+test('a hub running from a checkout has no signed list to hand machines, and says why', async () => {
+  for (const r of ['/node/release/SHA256SUMS', '/node/release/SHA256SUMS.minisig'] as const) {
+    const res = await get(r)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toContain("isn't signed by Inyon's release key")
+  }
+  // and no certificate of its own without TLS_CERT
+  expect((await get('/node/hub.crt')).status).toBe(404)
+})
+
+test('the signed list keeps its signature, for machines to check themselves', async () => {
+  const { signedList } = await import('./node-dist.ts')
+  const get = (async (url: string) => new Response(url.endsWith('.minisig') ? SIGNED_SIG : SIGNED)) as unknown as typeof fetch
+  expect(await signedList('http://r', TEST_KEY, get)).toEqual({ sums: SIGNED, sig: SIGNED_SIG })
+})
+
 test('the installers are served as they are in the repository', async () => {
   expect(await (await get('/node/install.sh')).text()).toStartWith('#!/bin/sh\n')
   expect(await (await get('/node/install.ps1')).text()).toContain("$TaskName = 'Inyon node'")

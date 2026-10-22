@@ -15,8 +15,9 @@ use crate::output::{emit, error, fail, log, say};
 use crate::paths::{self, env_var, node_dir, running_file, saved_env, Role};
 use crate::{ops, VERSION, WIN};
 
-/// Checks a hub address; refuses to send a token over plain http to a public address.
-pub fn hub_url(hub: &str) -> Url {
+/// Checks a hub address; refuses to send a token over plain http to anything but this machine or a
+/// VPN address. True when its name has to be looked up and checked before each connection.
+pub fn hub_url(hub: &str) -> (Url, bool) {
     checked_hub(hub, env_var("INYON_ALLOW_INSECURE").is_some()).unwrap_or_else(|e| fail(&e, 2))
 }
 
@@ -25,12 +26,17 @@ fn secure(url: &Url) -> bool {
     matches!(url.scheme(), "https" | "wss")
 }
 
-fn checked_hub(hub: &str, insecure_ok: bool) -> Result<Url, String> {
+fn checked_hub(hub: &str, insecure_ok: bool) -> Result<(Url, bool), String> {
+    use crate::hub::Plain;
     let url = Url::parse(hub).map_err(|_| format!("{hub} isn't a web address."))?;
-    if !secure(&url) && !crate::hub::private_host(&url) && !insecure_ok {
-        return Err(format!("Refusing to send the token over plain http to {}. Use https, or a private network address.", url.host_str().unwrap_or("")));
+    if secure(&url) || insecure_ok {
+        return Ok((url, false));
     }
-    Ok(url)
+    match crate::hub::plain_host(&url) {
+        Plain::Ok => Ok((url, false)),
+        Plain::LookUp => Ok((url, true)),
+        Plain::Refused => Err(crate::hub::plain_refusal(url.host_str().unwrap_or(""))),
+    }
 }
 
 /// The hub's WebSocket and its plain address for `/node`, from any of http, https, ws or wss.
@@ -69,7 +75,7 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
     if token_arg.is_some() {
         error("Note: a token given as an argument shows in the process list. Prefer INYON_TOKEN=<token> inyon join <hub-url>.");
     }
-    let url = hub_url(&hub);
+    let (url, look_up) = hub_url(&hub);
     let host = host_of(&url);
     let (ws_url, http_url) = node_urls(&url);
     // who's running, for `inyon update` and the hub's update script: they wait for this file to name
@@ -80,9 +86,18 @@ pub async fn connect_mode(hub_arg: Option<String>, token_arg: Option<String>) {
     let bearer = format!("Bearer {token}");
     let mut attempt: u32 = 0;
     loop {
-        let (code, up) = session(&ws_url, &host, &bearer).await;
+        // a name on plain http may point elsewhere by now (an answer from someone on the network)
+        let checked = if look_up { crate::hub::check_name(url.host_str().unwrap_or(""), url.port_or_known_default().unwrap_or(80)).await } else { Ok(()) };
+        let (code, up) = match &checked {
+            Ok(()) => session(&ws_url, &host, &bearer).await,
+            Err(Some(why)) => fail(why, 2),
+            Err(None) => {
+                log(&format!("couldn't look up {}", url.host_str().unwrap_or("")));
+                (1006, None)
+            }
+        };
         let opened = up.is_some();
-        if code == 4001 || (!opened && removed_there(&http_url, &bearer).await) {
+        if code == 4001 || (!opened && checked.is_ok() && removed_there(&http_url, &bearer).await) {
             leave(&format!("This machine was removed from {host}.")).await;
         }
         if code == 4003 {
@@ -196,7 +211,8 @@ pub fn join(hub_arg: Option<&str>) {
     if hub.is_empty() || token.is_empty() {
         fail("usage: INYON_TOKEN=<token> inyon-engine join <hub-url>", 2);
     }
-    let url = hub_url(&hub);
+    // a name is checked when the connection opens
+    let (url, _) = hub_url(&hub);
     if let Err(e) = ops::ensure_shell() {
         say(&format!("! {e}"));
     }
@@ -248,14 +264,26 @@ mod tests {
 
     #[test]
     fn a_ws_address_is_plain_and_a_wss_one_is_tls_like_http_and_https() {
-        let urls = |h: &str| node_urls(&checked_hub(h, false).unwrap());
+        let urls = |h: &str| node_urls(&checked_hub(h, false).unwrap().0);
         assert_eq!(urls("https://hub.example.com"), ("wss://hub.example.com/node".into(), "https://hub.example.com/node".into()));
         assert_eq!(urls("wss://hub.example.com"), ("wss://hub.example.com/node".into(), "https://hub.example.com/node".into()));
         assert_eq!(urls("ws://100.64.1.2:4777"), ("ws://100.64.1.2:4777/node".into(), "http://100.64.1.2:4777/node".into()));
         // plain ws to a public address carries the token in the clear, as http would
-        for plain in ["http://hub.example.com", "ws://hub.example.com"] {
+        for plain in ["http://8.8.8.8", "ws://8.8.8.8"] {
             assert!(checked_hub(plain, false).unwrap_err().starts_with("Refusing to send the token over plain http"), "{plain}");
             assert!(checked_hub(plain, true).is_ok());
         }
+    }
+
+    #[test]
+    fn plain_http_goes_only_to_this_machine_or_a_vpn_and_a_name_is_checked_each_time() {
+        assert_eq!(checked_hub("http://100.70.1.2:4777", false).map(|(_, l)| l), Ok(false));
+        assert_eq!(checked_hub("http://127.0.0.1:4777", false).map(|(_, l)| l), Ok(false));
+        // a LAN address, as hubs set up with "LAN" before 0.20 were joined
+        let lan = checked_hub("http://192.168.1.5:4777", false).unwrap_err();
+        assert!(lan.contains("192.168.1.5") && lan.contains("INYON_ALLOW_INSECURE=1") && lan.contains("https"), "{lan}");
+        assert_eq!(checked_hub("http://192.168.1.5:4777", true).map(|(_, l)| l), Ok(false));
+        assert_eq!(checked_hub("http://hub.local:4777", false).map(|(_, l)| l), Ok(true));
+        assert_eq!(checked_hub("https://hub.local:4777", false).map(|(_, l)| l), Ok(false));
     }
 }
