@@ -1613,7 +1613,9 @@ mod tests {
         let file = dir.join("node-hub.crt");
         trust_hub_cert("https://192.168.1.20:4777", Some(&sha), &serve(pem.clone()), &file).unwrap();
         assert_eq!(*asked.borrow(), ["https://192.168.1.20:4777/node/hub.crt"]);
-        assert_eq!(fs::read_to_string(&file).unwrap().replace('\n', ""), String::from_utf8_lossy(&pem).replace('\n', ""));
+        // rcgen ends lines with \r\n on Windows, and the copy kept with \n
+        let flat = |s: &str| s.replace(['\r', '\n'], "");
+        assert_eq!(flat(&fs::read_to_string(&file).unwrap()), flat(&String::from_utf8_lossy(&pem)));
         // someone else's certificate on the way: refused, and the token isn't saved (join stops here)
         let other = crate::hub_cert::make(&dir.join("other"), &crate::hub_cert::names("studio", &[])).unwrap();
         let e = trust_hub_cert("https://192.168.1.20:4777", Some(&sha), &serve(fs::read(&other.cert).unwrap()), &file).unwrap_err();

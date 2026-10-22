@@ -170,7 +170,8 @@ openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyou
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -out ca.pem -days 2 -subj /CN=inyon-test-ca
 openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout leaf.key -out leaf.csr -subj /CN=hub
 openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out leaf.pem -days 2
-openssl x509 -in self.pem -outform der | sha256sum | cut -c1-64 > self.sha256",
+openssl x509 -in self.pem -outform der > self.der
+(sha256sum self.der 2>/dev/null || shasum -a 256 self.der) | cut -c1-64 > self.sha256",
         );
         let path = |f: &str| dir.join(f).to_string_lossy().into_owned();
         let own = self_signed(&path("self.pem")).expect("a self-signed certificate");
