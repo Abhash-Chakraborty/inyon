@@ -81,13 +81,17 @@ Choose *LAN* in setup (`BIND=0.0.0.0`) to answer on every interface of a home ne
 
 ## Pair the Android app
 
-Once you're signed in, **Open on your phone** shows a QR code and a typed code. It's on the overview until a phone is paired, under Machines, and in **Settings → Other devices**. In the app, tap **Add a computer**, then **Connect to a hub**, and scan it or type the hub's address and the code.
+Once you're signed in, **Open on your phone** shows a QR code and a typed code. It's on the overview until a phone is paired, under Machines, and in **Settings → Paired devices**. In the app, tap **Add a computer**, then **Connect to a hub**, and scan it or type the hub's address and the code.
 
 - Only someone who signed in within the last 10 minutes can show a code, so an old tab asks for the password first.
 - A code works once, for 10 minutes; five wrong tries cancel it.
-- The phone gets a token of its own. **Settings → Other devices** lists paired phones; **Forget** cuts one off at once.
+- The phone gets a token of its own. **Settings → Paired devices** lists paired phones; **Forget** cuts one off at once.
 
 The phone has to reach the hub's address the same way a browser does.
+
+## Pair a companion app
+
+From 0.20 an app like Legato can pair too, with **Settings → Paired devices → Pair a companion app** or `inyon hub companion-code` on the hub's computer. It types a six-character code that works once, for 5 minutes, and gets four permissions: the overview, chats, answering a question and sending text. See [Companion apps](companions.md).
 
 ## Adding machines
 

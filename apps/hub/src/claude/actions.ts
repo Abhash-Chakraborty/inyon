@@ -28,7 +28,7 @@ function agentPane(hostId: string, paneId: string) {
   return { host: registry.host(hostId), found }
 }
 
-async function currentScreen(hostId: string, paneId: string) {
+export async function currentScreen(hostId: string, paneId: string) {
   const caps = await capturePanes(registry.host(hostId), [paneId])
   const pane = registry.findPane(hostId, paneId)?.pane
   return parseScreen(caps.get(paneId) ?? [], pane?.width, pane?.agent?.kind)

@@ -31,7 +31,7 @@ const NAV: { title: string; pages: string[] }[] = [
   { title: "Start here", pages: ["index", "quick-start", "setups", "install"] },
   { title: "Using Inyon", pages: ["overview", "sessions", "controls", "terminal", "notifications", "settings", "skills", "pages"] },
   { title: "Phone", pages: ["android", "browser-copy"] },
-  { title: "Machines and hubs", pages: ["computers", "hub", "machines"] },
+  { title: "Machines and hubs", pages: ["computers", "hub", "machines", "companions"] },
   { title: "Reference", pages: ["cli", "configuration", "agents", "security", "troubleshooting", "changelog"] },
 ];
 

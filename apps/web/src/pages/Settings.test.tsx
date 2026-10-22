@@ -9,6 +9,7 @@ import { api, emit, setSocketUp } from '../test/fakes.ts'
 import { forgetHub } from '../lib/updates.ts'
 import { fresh, host } from '../test/fixtures.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
+import { ConfirmHost } from '../components/Confirm.tsx'
 
 const hosts = [host('box'), host('pi', { status: 'error' })]
 const poll = () => act(() => emit({ t: 'overview', hosts: fresh(hosts) }))
@@ -223,5 +224,56 @@ describe('Updates', () => {
       globalThis.fetch = realFetch
       window.open = open
     }
+  })
+})
+
+describe('Paired devices', () => {
+  const legato = { id: 'c1', name: 'Legato on test-laptop', app: 'Legato for Windows', scopes: ['overview', 'chat', 'answer', 'send'] as const, contractVersion: 1, pairedAt: Date.now() - 86_400_000, lastSeen: Date.now() - 120_000 }
+
+  test('lists each companion app with its contract and what it may do', async () => {
+    api.companions.mockResolvedValue([{ ...legato, scopes: [...legato.scopes] }])
+    api.phones.mockResolvedValue([])
+    await render(page())
+    await flush()
+    expect(screen.getByText('Legato on test-laptop')).toBeTruthy()
+    expect(screen.getByText('contract v1')).toBeTruthy()
+    expect(screen.getByText(/Legato for Windows · paired .* · seen 2 min ago/)).toBeTruthy()
+    for (const s of ['Overview', 'Chats', 'Answer', 'Send']) expect(screen.getAllByText(s).length).toBeGreaterThan(0)
+    expect(screen.getByText('No phones paired.')).toBeTruthy()
+  })
+
+  test('Remove asks first, then ends it at the hub', async () => {
+    const user = userEvent.setup()
+    api.companions.mockResolvedValue([{ ...legato, scopes: [...legato.scopes] }])
+    api.forgetCompanion.mockResolvedValue({ ok: true })
+    await render(
+      <>
+        {page()}
+        <ConfirmHost />
+      </>,
+    )
+    await flush()
+    await user.click(screen.getByRole('button', { name: 'Options for Legato on test-laptop' }))
+    await user.click(screen.getByText('Remove'))
+    await flush()
+    expect(api.forgetCompanion).not.toHaveBeenCalled()
+    expect(screen.getByText('Remove Legato on test-laptop?')).toBeTruthy()
+    api.companions.mockResolvedValue([])
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    await flush()
+    expect(api.forgetCompanion.mock.calls).toEqual([['c1']])
+    expect(screen.getByText(/No companion apps/)).toBeTruthy()
+  })
+
+  test('What it can do lists the scopes and what the hub refuses', async () => {
+    const user = userEvent.setup()
+    api.companions.mockResolvedValue([{ ...legato, scopes: [...legato.scopes] }])
+    await render(page())
+    await flush()
+    await user.click(screen.getByRole('button', { name: 'Options for Legato on test-laptop' }))
+    await user.click(screen.getByText('What it can do'))
+    await flush()
+    expect(screen.getByText('Answer a prompt, once, with its prompt key')).toBeTruthy()
+    expect(screen.getByText('Interrupt, terminal, files, settings')).toBeTruthy()
   })
 })

@@ -47,7 +47,8 @@ A shortcut to the list. The app calls them *Computers*; a hub calls them *Machin
 
 ## On a hub
 
-- **Other devices.** The hub's address with a copy button, **Show the code** to pair the Android app, and the paired phones, each with **Forget**.
+- **Other devices.** The hub's address with a copy button, and how to open it in a phone's browser.
+- **Paired devices.** From 0.20: **Show the code** to pair the Android app, **Pair a companion app** for an app like Legato, the paired phones, each with **Forget**, and the companion apps with their permissions. A companion's menu (⋯, or a right-click) has **What it can do** and **Remove**. See [Companion apps](companions.md).
 - **Account.** **Change password** (8 characters or more; signs out your other browsers) and **Sign out**.
 
 ## On the Android app

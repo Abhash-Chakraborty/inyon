@@ -40,7 +40,17 @@ What the sandbox doesn't stop:
 - Only a browser that signed in within the last 10 minutes can show a pairing code. A code works once, for 10 minutes, and five wrong tries cancel it.
 - The phone gets its own random token; the hub stores only its hash. Its WebSocket connections use a single-use ticket that lasts 30 seconds, so the token never travels in a URL.
 - A paired phone can use the hub's machines but not its account: it can't change the password or pair or forget other phones.
-- **Settings → Other devices → Forget** cuts a phone off at once. Changing the hub's password doesn't unpair phones; forget them separately.
+- **Settings → Paired devices → Forget** cuts a phone off at once. Changing the hub's password doesn't unpair phones; forget them separately.
+
+## Companion apps paired with a hub
+
+From 0.20 an app like Legato can pair with a hub. See [Companion apps](companions.md).
+
+- Only a browser that signed in within the last 10 minutes can make a companion code, as can `inyon hub companion-code` on the hub's computer. A code is six characters, works once, for 5 minutes, and a new code ends the last one. Eight wrong codes in a minute from one address, or thirty from all of them, stop claims for the rest of that minute.
+- The app gets its own random token; the hub stores only its SHA-256.
+- The hub checks the app's four permissions on every route and every WebSocket message. Everything else gets `403`, and a WebSocket frame it may not send closes the connection. It never gets terminal data, the chat history, files, uploads, settings, the account or how the hub reaches a machine (SSH targets, key files, relays), and it can't send `/` or `!` commands.
+- Its token never opens `/node`, the `/v/` pages or the `/api/local` routes of the `inyon` command.
+- **Settings → Paired devices → Remove** cuts it off at once and closes its connection. Changing the hub's password doesn't remove companion apps; remove them separately.
 
 ## Computers paired with the phone
 

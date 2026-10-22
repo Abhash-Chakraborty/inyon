@@ -207,6 +207,12 @@ pub fn get_local(url: &str, timeout: Duration) -> Result<Response, String> {
     request_with(timed_agent(config(true), limits), &limits, "GET", url, &[], None, false)
 }
 
+/// A POST with no body to the hub on this machine, unchecked like `get_local` (`inyon hub companion-code`).
+pub fn post_local(url: &str, timeout: Duration) -> Result<Response, String> {
+    let limits = Limits::new(timeout);
+    request_with(timed_agent(config(true), limits), &limits, "POST", url, &[], Some(&[]), false)
+}
+
 /// Sends the request and reads the answer. With `whole`, a body that breaks off is an error
 /// rather than whatever arrived (a download is checked against its checksum after this).
 fn request_with(a: ureq::Agent, limits: &Limits, method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, whole: bool) -> Result<Response, String> {

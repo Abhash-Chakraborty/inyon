@@ -46,7 +46,8 @@ fn agent_pane(host_id: &str, pane_id: &str) -> HubResult<(Host, FoundPane)> {
     Ok((registry().host(host_id)?, found))
 }
 
-async fn current_screen(host_id: &str, pane_id: &str) -> HubResult<ScreenState> {
+/// The pane's screen as it is now, read off a fresh capture.
+pub async fn current_screen(host_id: &str, pane_id: &str) -> HubResult<ScreenState> {
     let host = registry().host(host_id)?;
     let caps = capture_panes(&host, &[pane_id.to_owned()]).await?;
     let pane = registry().find_pane(host_id, pane_id).map(|f| f.pane);

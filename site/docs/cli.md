@@ -22,6 +22,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon hub start` | Run a hub here, as a service |
 | `inyon hub stop`, `restart` | Stop or restart the hub |
 | `inyon hub code` | Show the hub's setup code |
+| `inyon hub companion-code` | Make a code for a companion app, such as Legato |
 | `inyon hub reset-password` | Choose a new hub password |
 | `inyon push` | List the browsers this computer sends notifications to |
 | `inyon service install`, `uninstall`, `status` | Manage the background service |
@@ -147,10 +148,13 @@ inyon hub start              # install and start the hub service
 inyon hub stop               # stop it and remove the service; its records stay
 inyon hub restart
 inyon hub code               # the setup code for the first sign-in
+inyon hub companion-code     # a one-time code for a companion app, such as Legato
 inyon hub reset-password     # asks for the new password without showing it, then restarts the hub
 ```
 
 `hub start` waits until the hub answers, then prints its address and setup code. Hubs run on Linux and macOS. Plain `inyon hub` runs one in the foreground.
+
+From 0.20 `hub companion-code` asks the running hub for a pairing code, the one **Settings › Paired devices › Pair a companion app** shows, and prints it with the hub's address (a hub that listens only on `127.0.0.1` says to use the address you open it at). It works once, for 5 minutes, and a new code ends the last one. See [Companion apps](companions.md).
 
 ```sh
 INYON_TOKEN=… inyon join https://hub.example.ts.net

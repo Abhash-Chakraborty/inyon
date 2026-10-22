@@ -166,6 +166,8 @@ enum HubAction {
     Restart,
     /// Show the setup code a new hub asks for
     Code,
+    /// Make a one-time code for a companion app (Legato) to pair with this hub
+    CompanionCode,
     /// Choose a new password for a forgotten one
     ResetPassword {
         password: Option<String>,
@@ -238,7 +240,7 @@ enum ServiceAction {
 /// What goes straight to the engine, before the arguments are read here: built in, or the Bun
 /// engine with INYON_LEGACY_ENGINE=1.
 const FORWARDED: [&str; 2] = ["link", "connect"];
-const HUB_OWN: [&str; 7] = ["start", "stop", "restart", "install", "uninstall", "code", "reset-password"];
+const HUB_OWN: [&str; 8] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password"];
 
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
@@ -328,6 +330,7 @@ fn main() {
                 HubAction::Stop | HubAction::Uninstall => commands::hub_stop(&sys),
                 HubAction::Restart => commands::hub_restart(&sys),
                 HubAction::Code => commands::hub_code(),
+                HubAction::CompanionCode => commands::hub_companion_code(),
                 HubAction::ResetPassword { password } => commands::hub_reset_password(&sys, password.as_deref()),
             },
             json,

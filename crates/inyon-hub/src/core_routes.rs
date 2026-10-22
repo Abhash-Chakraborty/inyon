@@ -231,8 +231,14 @@ async fn node_update(r: Req) -> HubResult<Resp> {
 }
 
 /// The routes, each behind sign-in.
+/// What the overview shows, as the WebSocket's overview message carries it (a companion app reads this too).
+pub fn overview() -> Resp {
+    ok_json(&json!({ "hosts": registry().overview() }))
+}
+
 pub fn add(routes: &mut Routes) {
     use Method as M;
+    guarded(routes, "/api/overview", vec![(M::GET, h(|_r| async move { Ok(overview()) }))]);
     guarded(
         routes,
         "/api/refresh",

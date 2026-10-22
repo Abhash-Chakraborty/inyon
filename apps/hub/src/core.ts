@@ -261,6 +261,10 @@ export const coreRoutes: Routes = {
       return ok()
     }),
   },
+  // what the overview shows, as the WebSocket's overview message carries it (a companion app reads this too)
+  '/api/overview': {
+    GET: api(() => json({ hosts: registry.overview() })),
+  },
   '/api/hosts': {
     GET: api(() => json(registry.configs().map(publicConfig))),
     POST: api(async (req) => {

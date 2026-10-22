@@ -4,6 +4,7 @@
 //!
 //!   hub                 run it here
 //!   hub code            show the setup code a new hub asks for
+//!   hub companion-code  a one-time code for a companion app (Legato) to pair with
 //!   hub reset-password  choose a new password when the old one is forgotten
 
 use std::io::{BufRead, Write};
@@ -41,9 +42,10 @@ pub fn run(args: &[String]) -> i32 {
     load_env();
     match args.first().map(String::as_str) {
         Some("code") => show_setup_code(),
+        Some("companion-code") => show_companion_code(),
         Some("reset-password") => reset_password(args.get(1).cloned()),
         Some(_) => {
-            eprintln!("usage: inyon-engine hub [code|reset-password]");
+            eprintln!("usage: inyon-engine hub [code|companion-code|reset-password]");
             2
         }
         None => {
@@ -101,6 +103,59 @@ fn show_setup_code() -> i32 {
     0
 }
 
+/// "K7M2QX" as it is shown: K7M-2QX.
+pub fn show_code(code: &str) -> String {
+    if code.len() == 6 && code.is_ascii() {
+        format!("{}-{}", &code[..3], &code[3..])
+    } else {
+        code.to_owned()
+    }
+}
+
+/// What `inyon hub companion-code` says once the hub made a code. A hub on loopback sits behind a
+/// proxy or `tailscale serve`, whose address this program doesn't know, so it names none then.
+pub fn companion_code_message(code: &str, url: &str) -> String {
+    let host = url.split("://").nth(1).unwrap_or(url);
+    let address = if host.starts_with("127.") || host.starts_with("localhost") || host.starts_with("[::1]") {
+        "the address you open this hub at".to_owned()
+    } else {
+        format!("this hub's address, {url}")
+    };
+    format!("Companion code: {}\nType it into the companion app (Legato: Settings > Connections > Inyon) with {address}. It works once, for 5 minutes.", show_code(code))
+}
+
+/// `inyon hub companion-code`: asks the running hub for a companion code over its own address,
+/// with the token it wrote for the inyon command on this machine.
+fn show_companion_code() -> i32 {
+    let url = local_url();
+    let token = std::fs::read_to_string(data_dir().join("local-token")).map(|t| t.trim().to_owned()).unwrap_or_default();
+    if token.is_empty() {
+        fail("The hub hasn't started here yet. Run `inyon hub` or `inyon hub start` first.", 1);
+    }
+    let q: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
+    let Ok(res) = inyon_engine::http::post_local(&format!("{url}/api/local/companion-code?token={q}"), std::time::Duration::from_secs(5)) else {
+        fail(&format!("The hub isn't answering at {url}. Start it with `inyon hub start`."), 1);
+    };
+    if res.status == 404 {
+        fail("This hub is too old for companion apps. Update it with `inyon update`.", 1);
+    }
+    let body: Value = serde_json::from_slice(&res.body).unwrap_or(Value::Null);
+    let Some(code) = body.get("code").and_then(Value::as_str) else {
+        let said = body.get("error").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(|| format!("The hub answered {}.", res.status));
+        fail(&said, 1);
+    };
+    let message = companion_code_message(code, &url);
+    let mut out = Map::new();
+    out.insert("code".into(), Value::String(code.to_owned()));
+    if let Some(e) = body.get("expiresAt") {
+        out.insert("expiresAt".into(), e.clone());
+    }
+    out.insert("url".into(), Value::String(url));
+    out.insert("message".into(), Value::String(message.clone()));
+    emit(Value::Object(out), Some(&message));
+    0
+}
+
 /// A new password for a forgotten one, written straight to the hub's records; a running hub has
 /// to restart to pick it up. It comes as an argument, in INYON_NEW_PASSWORD, or from a prompt.
 fn reset_password(given: Option<String>) -> i32 {
@@ -133,6 +188,18 @@ fn reset_password(given: Option<String>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_companion_code_is_shown_in_two_halves() {
+        assert_eq!(show_code("K7M2QX"), "K7M-2QX");
+        assert_eq!(show_code("short"), "short");
+        assert_eq!(
+            companion_code_message("K7M2QX", "http://100.97.0.1:8787"),
+            "Companion code: K7M-2QX\nType it into the companion app (Legato: Settings > Connections > Inyon) with this hub's address, http://100.97.0.1:8787. It works once, for 5 minutes."
+        );
+        // behind a proxy the loopback address would reach nothing from the app's computer
+        assert!(companion_code_message("K7M2QX", "http://127.0.0.1:4777").contains("with the address you open this hub at."));
+    }
 
     #[test]
     fn the_setup_code_message_says_what_to_do() {
