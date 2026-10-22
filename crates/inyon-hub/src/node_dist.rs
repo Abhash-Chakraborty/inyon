@@ -198,13 +198,16 @@ pub fn signing_key(base: &str) -> String {
 
 /// The release's SHA256SUMS, refused unless SHA256SUMS.minisig signs it with `key`: the hub hands
 /// out what this list names, and puts its hash in every "Add a machine" command. Only the hashed
-/// kind of signature, which the release workflow makes, counts.
-pub async fn signed_sums(base: &str, key: &str, get: Get) -> HubResult<String> {
-    Ok(signed_list(base, key, get).await?.sums)
+/// kind of signature, which the release workflow makes, counts, and only the list of `version`.
+pub async fn signed_sums(base: &str, key: &str, version: &str, get: Get) -> HubResult<String> {
+    Ok(signed_list(base, key, version, get).await?.sums)
 }
 
 /// signed_sums, with the signature: machines check it themselves before an update (/node/release/).
-pub async fn signed_list(base: &str, key: &str, get: Get) -> HubResult<Signed> {
+/// Each release lists its APK as inyon-<version>.apk, the rule `inyon update` holds the website
+/// to: a list without the one for `version` (this hub's) is another release's, an old copy on a
+/// mirror or one caught mid-update, and nothing from it is handed out.
+pub async fn signed_list(base: &str, key: &str, version: &str, get: Get) -> HubResult<Signed> {
     let (status, sums) = get(format!("{base}/SHA256SUMS")).await.map_err(HubError::plain)?;
     if !(200..300).contains(&status) {
         return Err(http(502, format!("Could not get the checksums of Inyon {VERSION} ({status})")));
@@ -223,6 +226,10 @@ pub async fn signed_list(base: &str, key: &str, get: Get) -> HubResult<Signed> {
         return Err(http(502, format!("The checksums of Inyon {VERSION} at {base} aren't signed with Inyon's release key, so nothing from that release is handed out")));
     }
     let sums = String::from_utf8(sums).map_err(|_| http(502, format!("The checksums of Inyon {VERSION} aren't text")))?;
+    let apk = format!("inyon-{version}.apk");
+    if sum_for(&sums, &apk).is_none() {
+        return Err(http(502, format!("The signed checksums at {base} aren't the ones for Inyon {version} (they don't list {apk}), so nothing from that release is handed out")));
+    }
     Ok(Signed { sums, sig })
 }
 
@@ -347,7 +354,7 @@ impl Dist {
         let fut = existing.unwrap_or_else(|| {
             let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async {
                 let base = Self::release_base();
-                signed_list(&base, &signing_key(&base), net()).await
+                signed_list(&base, &signing_key(&base), VERSION, net()).await
             });
             let f = f.shared();
             *self.sums.borrow_mut() = Some(f.clone());
@@ -691,6 +698,8 @@ pub fn add(routes: &mut Routes) {
     // the release's own list and its signature, as the release has them: a machine checks what it
     // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
     routes.add("/node/release/SHA256SUMS", route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, d.release_signed().await?.sums) }) }));
+    // the version the list is for, which a machine holds the list to (it must name inyon-<version>.apk)
+    routes.add("/node/release/version", route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, format!("{VERSION}\n")) }) }));
     routes.add(
         "/node/release/SHA256SUMS.minisig",
         route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, d.release_signed().await?.sig) }) }),

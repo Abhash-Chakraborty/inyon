@@ -127,6 +127,10 @@ struct HubBuilds {
     signed_list: Option<String>,
     /// the key the list is signed with
     signer: String,
+    /// the version it says it hands out (/node/release/version), and its list names the APK of
+    version: String,
+    /// what /node/release/SHA256SUMS answers instead of the list, as a hub that can't reach GitHub
+    list_status: Option<&'static str>,
 }
 
 impl HubBuilds {
@@ -137,7 +141,8 @@ impl HubBuilds {
         }
         let cli = self.commands.iter().map(|(t, b)| format!("{}  {}\n", sha(b.as_bytes()), update::release_files(t).cli));
         let engine = self.engines.iter().map(|(t, b)| format!("{}  {}\n", sha(b.as_bytes()), update::release_files(t).engine));
-        cli.chain(engine).collect()
+        let apk = format!("{}  inyon-{}.apk\n", sha(b"apk"), self.version);
+        cli.chain(engine).chain([apk]).collect()
     }
 
     fn engine_for(&self, os: &str, arch: &str) -> Option<String> {
@@ -179,6 +184,8 @@ impl Server {
             signed: true,
             signed_list: None,
             signer: test_key(),
+            version: "0.20.0".into(),
+            list_status: None,
         }));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let (r, h, q) = (release.clone(), hub.clone(), requests.clone());
@@ -229,7 +236,9 @@ impl Server {
                         let command = if hb.split { hb.commands.get(&format!("{os}-{arch}")).cloned() } else { engine.clone() };
                         let engine_sum = engine.as_ref().map(|b| if hb.sum_override.is_empty() { sha(b.as_bytes()) } else { hb.sum_override.clone() });
                         match (path.as_str(), hb.split) {
+                            ("/node/release/SHA256SUMS", _) if hb.list_status.is_some() => (hb.list_status.unwrap(), String::new(), b"Could not get the checksums of Inyon 0.20.0 (503)\n".to_vec()),
                             ("/node/release/SHA256SUMS", _) if hb.signed => ("200 OK", String::new(), hb.release_sums().into_bytes()),
+                            ("/node/release/version", _) if hb.signed => ("200 OK", String::new(), format!("{}\n", hb.version).into_bytes()),
                             ("/node/release/SHA256SUMS.minisig", _) if hb.signed => ("200 OK", String::new(), sign(&hb.signer, hb.release_sums().as_bytes()).into_bytes()),
                             ("/node/inyon-engine.sha256", true) if engine.is_some() => ("200 OK", String::new(), engine_sum.unwrap().into_bytes()),
                             ("/node/inyon-engine.gz", true) if engine.is_some() => ("200 OK", String::new(), gzip(engine.unwrap().as_bytes())),
@@ -951,6 +960,41 @@ fn a_hub_with_no_signed_list_or_one_signed_by_another_key_changes_nothing_and_sa
     let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
     std::env::remove_var("INYON_ALLOW_INSECURE");
     assert!(err.contains("isn't signed by Inyon's key"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
+}
+
+#[test]
+fn a_hub_list_for_another_version_or_one_the_hub_could_not_get_changes_nothing_and_says_why() {
+    let _g = lock();
+    let f = Fixture::new();
+    let install = find_install(&f.installed(), Some(f.server.base.clone()));
+    let mut linux = FakeHost::new(&f.server, &[Role::Node]);
+    linux.platform = Platform::Linux;
+    linux.arch = Arch::X64;
+    // an older release's list, signed and all, passed off as the one for the version the hub runs
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.version = "0.19.0".into();
+        hub.signed_list = Some(hub.release_sums());
+        hub.version = "0.20.0".into();
+    }
+    let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
+    assert!(err.contains("isn't the one for Inyon 0.20.0") && err.contains("inyon-0.20.0.apk"), "{err}");
+    assert_eq!(f.read(&f.installed()), "old build");
+    assert!(!f.server.requests().iter().any(|r| r.contains(".gz")), "{:?}", f.server.requests());
+
+    // a hub from 0.20 that couldn't get the list is no older hub: INYON_ALLOW_INSECURE doesn't
+    // make it take the hub's own checksums
+    {
+        let mut hub = f.server.hub.lock().unwrap();
+        hub.signed_list = None;
+        hub.list_status = Some("502 Bad Gateway");
+    }
+    std::env::set_var("INYON_ALLOW_INSECURE", "1");
+    let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
+    std::env::remove_var("INYON_ALLOW_INSECURE");
+    assert!(err.contains("couldn't hand out Inyon's signed list") && err.contains("502: Could not get the checksums"), "{err}");
+    assert!(!err.contains("before 0.20"), "{err}");
     assert_eq!(f.read(&f.installed()), "old build");
 }
 

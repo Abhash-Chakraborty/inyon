@@ -49,7 +49,7 @@ test('tether-node as a Bun script is told to run "Add a machine" again', async (
 })
 
 test('a hub running from a checkout has no signed list to hand machines, and says why', async () => {
-  for (const r of ['/node/release/SHA256SUMS', '/node/release/SHA256SUMS.minisig'] as const) {
+  for (const r of ['/node/release/SHA256SUMS', '/node/release/SHA256SUMS.minisig', '/node/release/version'] as const) {
     const res = await get(r)
     expect(res.status).toBe(404)
     expect(await res.text()).toContain("isn't signed by Inyon's release key")
@@ -61,7 +61,7 @@ test('a hub running from a checkout has no signed list to hand machines, and say
 test('the signed list keeps its signature, for machines to check themselves', async () => {
   const { signedList } = await import('./node-dist.ts')
   const get = (async (url: string) => new Response(url.endsWith('.minisig') ? SIGNED_SIG : SIGNED)) as unknown as typeof fetch
-  expect(await signedList('http://r', TEST_KEY, get)).toEqual({ sums: SIGNED, sig: SIGNED_SIG })
+  expect(await signedList('http://r', TEST_KEY, get, '0.14.0')).toEqual({ sums: SIGNED, sig: SIGNED_SIG })
 })
 
 test('the installers are served as they are in the repository', async () => {
@@ -168,11 +168,11 @@ test('a checkout without a built command hands Windows the release command, and 
 
 // made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
 const TEST_KEY = 'RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm'
-const SIGNED = 'abc  file-a\n'
+const SIGNED = 'abc  file-a\nabc  inyon-0.14.0.apk\n'
 const SIGNED_SIG = `untrusted comment: signature from minisign secret key
-RUQqNVK9mQOKMsG6IaBxYN3yeR9DY8Kwq2+HGNkBa8PWTC7MyZVoH8WrwxnZc1dJUEhj/YiXuUfHK7DA/140uWusc6AMswmIuAk=
+RUQqNVK9mQOKMkab6flmvsRkTJgrMwvlSr3HLaTaxl1/BKaIsjpexn6/YRrw9Nco1CyBNYXpD14RN4tyV+x91G0EBDlaQWFoVgg=
 trusted comment: timestamp:1791906365\tfile:SUMS\thashed
-oVJ5Gs0ifXOH3A3LPOydH99Oy63a+zAnotC94agLquPv6YcFYKXEl61a2M7Kiba52Dq4ulBuTrygyBnx8RdFCw==
+hHmf6FdFURutVLVvePMp+3/HYEQlat81SrV37cY/HJXIVYmOh/WB1gOW4L2bQb9BQzY4ZopTYpjFX9UXykjRBw==
 `
 
 test('the release checksums count only with a good signature from the release key', async () => {
@@ -190,16 +190,21 @@ test('the release checksums count only with a good signature from the release ke
     return { asked, get }
   }
   const good = release(SIGNED, SIGNED_SIG)
-  expect(await signedSums('http://r', TEST_KEY, good.get)).toBe(SIGNED)
+  expect(await signedSums('http://r', TEST_KEY, good.get, '0.14.0')).toBe(SIGNED)
+  // a good list of another release, an old copy on a mirror, isn't this hub's
+  await expect(signedSums('http://r', TEST_KEY, release(SIGNED, SIGNED_SIG).get, '0.15.0')).rejects.toMatchObject({
+    status: 502,
+    message: expect.stringContaining("aren't the ones for Inyon 0.15.0 (they don't list inyon-0.15.0.apk)"),
+  })
   // a list changed by one byte, no signature, another key, and a changed trusted comment: each refused before any file
   for (const [sums, sig, key] of [
-    ['abd  file-a\n', SIGNED_SIG, TEST_KEY],
+    ['abd  file-a\nabc  inyon-0.14.0.apk\n', SIGNED_SIG, TEST_KEY],
     [SIGNED, undefined, TEST_KEY],
     [SIGNED, SIGNED_SIG, RELEASE_KEY],
     [SIGNED, SIGNED_SIG.replace('timestamp:1791906365', 'timestamp:1791906366'), TEST_KEY],
   ] as const) {
     const r = release(sums, sig)
-    await expect(signedSums('http://r', key, r.get)).rejects.toMatchObject({ status: 502 })
+    await expect(signedSums('http://r', key, r.get, '0.14.0')).rejects.toMatchObject({ status: 502 })
     expect(r.asked.every((n) => n.startsWith('SHA256SUMS'))).toBe(true)
   }
 })

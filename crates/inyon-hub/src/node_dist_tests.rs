@@ -718,11 +718,12 @@ fn windows_script_under_powershell_launch_only_starts_itself_as_a_one_off_task()
 
 // made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
 const TEST_KEY: &str = "RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm";
-const SIGNED: &str = "abc  file-a\n";
+const SIGNED: &str = "abc  file-a\nabc  inyon-0.14.0.apk\n";
 const SIGNED_SIG: &str = "untrusted comment: signature from minisign secret key\n\
-    RUQqNVK9mQOKMsG6IaBxYN3yeR9DY8Kwq2+HGNkBa8PWTC7MyZVoH8WrwxnZc1dJUEhj/YiXuUfHK7DA/140uWusc6AMswmIuAk=\n\
+    RUQqNVK9mQOKMkab6flmvsRkTJgrMwvlSr3HLaTaxl1/BKaIsjpexn6/YRrw9Nco1CyBNYXpD14RN4tyV+x91G0EBDlaQWFoVgg=\n\
     trusted comment: timestamp:1791906365\tfile:SUMS\thashed\n\
-    oVJ5Gs0ifXOH3A3LPOydH99Oy63a+zAnotC94agLquPv6YcFYKXEl61a2M7Kiba52Dq4ulBuTrygyBnx8RdFCw==\n";
+    hHmf6FdFURutVLVvePMp+3/HYEQlat81SrV37cY/HJXIVYmOh/WB1gOW4L2bQb9BQzY4ZopTYpjFX9UXykjRBw==\n\
+";
 
 /// A release with this list and signature (None: no .minisig); every name asked is noted.
 fn signed_release(asked: Rc<RefCell<Vec<String>>>, sums: &'static str, sig: Option<&'static str>) -> Get {
@@ -741,13 +742,17 @@ fn signed_release(asked: Rc<RefCell<Vec<String>>>, sums: &'static str, sig: Opti
 #[test]
 fn the_release_checksums_count_only_with_a_good_signature_from_the_release_key() {
     let asked = Rc::new(RefCell::new(Vec::new()));
-    let ok = block(signed_sums("http://r", TEST_KEY, signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG))));
+    let ok = block(signed_sums("http://r", TEST_KEY, "0.14.0", signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG))));
     assert_eq!(ok.unwrap(), SIGNED);
+    // a good list of another release, an old copy on a mirror, isn't this hub's
+    let e = block(signed_sums("http://r", TEST_KEY, "0.15.0", signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG)))).unwrap_err();
+    assert_eq!(e.status, Some(502));
+    assert!(e.message.contains("aren't the ones for Inyon 0.15.0 (they don't list inyon-0.15.0.apk)"), "{}", e.message);
     // a list changed by one byte, no signature, another key, and a changed trusted comment are each refused, before any file
     let retimed: &'static str = Box::leak(SIGNED_SIG.replace("timestamp:1791906365", "timestamp:1791906366").into_boxed_str());
-    for (sums, sig, key) in [("abd  file-a\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)] {
+    for (sums, sig, key) in [("abd  file-a\nabc  inyon-0.14.0.apk\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)] {
         let asked = Rc::new(RefCell::new(Vec::new()));
-        let e = block(signed_sums("http://r", key, signed_release(asked.clone(), sums, sig))).unwrap_err();
+        let e = block(signed_sums("http://r", key, "0.14.0", signed_release(asked.clone(), sums, sig))).unwrap_err();
         assert_eq!(e.status, Some(502), "{}", e.message);
         assert!(asked.borrow().iter().all(|n| n.starts_with("SHA256SUMS")), "{:?}", asked.borrow());
     }

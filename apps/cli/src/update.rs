@@ -782,24 +782,44 @@ pub fn hub_unsigned(hub: &str) -> String {
 }
 
 /// The release's SHA256SUMS as the hub has it (/node/release/), once SHA256SUMS.minisig signs it
-/// with `key`: a machine never takes a checksum only the hub, or someone between, vouches for.
-/// None when the hub has no list to give (a hub from before 0.20, or one running from a
-/// checkout); a list that's there but isn't signed is refused.
+/// with `key` and it lists the APK of the version the hub says it hands out (/node/release/version),
+/// the rule `inyon update` holds the website to: a machine never takes a checksum only the hub, or
+/// someone between, vouches for, nor an older release's list passed off as the hub's. None only
+/// when the hub has no list to give (404 from a hub running from a checkout, or an older hub's web
+/// page); any other failure is the hub's to fix and says so.
 pub fn hub_signed_sums(hub: &str, key: &str) -> Result<Option<String>, Error> {
+    let host = crate::http::host_of(hub);
     let base = format!("{hub}/node/release");
     let url = format!("{base}/SHA256SUMS");
     let res = http::get(&url).map_err(|e| err(format!("Couldn't reach {url} ({e}).")))?;
     let sums = String::from_utf8_lossy(&res.body).into_owned();
-    // an older hub answers 404, or its web page: neither lists a single checksum
-    let listed = sums.lines().any(|l| l.split_whitespace().next().is_some_and(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit())));
-    if !res.ok() || !listed {
+    if res.status == 404 {
+        return Ok(None);
+    }
+    if !res.ok() {
+        let why = sums.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(200).collect::<String>();
+        return Err(err(format!(
+            "{host} couldn't hand out Inyon's signed list of checksums (it answered {}{}), so nothing was changed. Try again later, or look at the hub's log.",
+            res.status,
+            if why.is_empty() { String::new() } else { format!(": {why}") }
+        )));
+    }
+    // an older hub answers with its web page, which doesn't list a single checksum
+    if !sums.lines().any(|l| l.split_whitespace().next().is_some_and(|h| h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit()))) {
         return Ok(None);
     }
     let sig_url = format!("{base}/SHA256SUMS.minisig");
     let sig = http::get(&sig_url).map_err(|e| err(format!("Couldn't reach {sig_url} ({e}).")))?;
     if !sig.ok() || signing::verify_sums(&sums, &String::from_utf8_lossy(&sig.body), key).is_err() {
-        return Err(err(format!("The list of checksums {} hands out isn't signed by Inyon's key, so nothing was changed.", crate::http::host_of(hub))));
+        return Err(err(format!("The list of checksums {host} hands out isn't signed by Inyon's key, so nothing was changed.")));
     }
+    let version_url = format!("{base}/version");
+    let said = http::get(&version_url).map_err(|e| err(format!("Couldn't reach {version_url} ({e}).")))?;
+    let version = String::from_utf8_lossy(&said.body).trim().trim_start_matches('v').to_string();
+    if !said.ok() || parse_version(&version).is_none() || !version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+')) {
+        return Err(err(format!("{host} didn't say which version of Inyon it hands out, so its list can't be matched to one and nothing was changed. Update the hub.")));
+    }
+    check_listed_version(&sums, &version)?;
     Ok(Some(sums))
 }
 

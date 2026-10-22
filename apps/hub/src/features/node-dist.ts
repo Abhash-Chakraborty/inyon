@@ -193,12 +193,17 @@ const releaseSums = () => releaseSigned().then((r) => r.sums)
  * The release's SHA256SUMS, refused unless SHA256SUMS.minisig signs it with `key`: the hub hands
  * out what this list names, and puts its hash in every "Add a machine" command.
  */
-export async function signedSums(base: string, key: string, get: typeof fetch = fetch): Promise<string> {
-  return (await signedList(base, key, get)).sums
+export async function signedSums(base: string, key: string, get: typeof fetch = fetch, version = VERSION): Promise<string> {
+  return (await signedList(base, key, get, version)).sums
 }
 
-/** signedSums, with the signature: machines check it themselves before an update (see /node/release/). */
-export async function signedList(base: string, key: string, get: typeof fetch = fetch): Promise<{ sums: string; sig: string }> {
+/**
+ * signedSums, with the signature: machines check it themselves before an update (see /node/release/).
+ * Each release lists its APK as inyon-<version>.apk, the rule `inyon update` holds the website to: a
+ * list without the one for `version` (this hub's) is another release's, an old copy on a mirror or
+ * one caught mid-update, and nothing from it is handed out.
+ */
+export async function signedList(base: string, key: string, get: typeof fetch = fetch, version = VERSION): Promise<{ sums: string; sig: string }> {
   const r = await get(`${base}/SHA256SUMS`)
   if (!r.ok) throw new HttpError(502, `Could not get the checksums of Inyon ${VERSION} (${r.status})`)
   const sums = new Uint8Array(await r.arrayBuffer())
@@ -206,7 +211,10 @@ export async function signedList(base: string, key: string, get: typeof fetch = 
   if (!s.ok) throw new HttpError(502, `Could not get the signature of Inyon ${VERSION}'s checksums (${s.status}), so nothing from that release is handed out`)
   const sig = await s.text()
   if (!verifyMinisign(sums, sig, key)) throw new HttpError(502, `The checksums of Inyon ${VERSION} at ${base} aren't signed with Inyon's release key, so nothing from that release is handed out`)
-  return { sums: new TextDecoder().decode(sums), sig }
+  const text = new TextDecoder().decode(sums)
+  const apk = `inyon-${version}.apk`
+  if (!sumFor(text, apk)) throw new HttpError(502, `The signed checksums at ${base} aren't the ones for Inyon ${version} (they don't list ${apk}), so nothing from that release is handed out`)
+  return { sums: text, sig }
 }
 
 /** What a machine hears when it asks a hub that runs from a checkout for the signed list. */
@@ -348,6 +356,8 @@ export const nodeRoutes = {
   // the release's own list and its signature, as the release has them: a machine checks what it
   // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
   '/node/release/SHA256SUMS': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain((await releaseSigned()).sums))),
+  // the version the list is for, which a machine holds the list to (it must name inyon-<version>.apk)
+  '/node/release/version': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain(`${VERSION}\n`))),
   '/node/release/SHA256SUMS.minisig': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain((await releaseSigned()).sig))),
   // the certificate this hub serves, for a machine added with its sha256 (see selfSignedCert)
   '/node/hub.crt': route(() => {
