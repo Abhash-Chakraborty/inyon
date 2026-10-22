@@ -162,7 +162,9 @@ pub fn lexical(p: &Path) -> PathBuf {
 fn absolute(dir: &Path) -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
-        std::path::absolute(dir).map(|p| lexical(&p)).map_err(|e| format!("{}: {e}", dir.display()))
+        // a path copied from somewhere Windows printed it as `\\?\C:\…` is taken in the form people type
+        let typed = dir.to_str().map_or_else(|| dir.to_path_buf(), |t| PathBuf::from(strip_verbatim(t)));
+        std::path::absolute(&typed).map(|p| lexical(&p)).map_err(|e| format!("{}: {e}", dir.display()))
     }
     #[cfg(not(windows))]
     {
