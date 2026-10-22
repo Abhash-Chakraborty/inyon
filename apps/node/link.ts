@@ -1,7 +1,7 @@
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, closeSync, existsSync, linkSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
@@ -78,17 +78,111 @@ function writeJson(name: string, value: unknown) {
   renameSync(tmp, file(name))
 }
 
-/** This machine's identity, made on first use. Its id is what the phone pairs with. */
+/**
+ * The lock every process takes around a read-modify-write of the node's files: `inyon forget` and
+ * `inyon pair` run as processes of their own beside the link, and without it one would write back
+ * what it read before the other's change (a forgotten phone back, a new code replaced by the old).
+ * Made with an exclusive create, the same file the built-in engine takes.
+ */
+export const FILES_LOCK = 'files.lock'
+const LOCK_STALE = 10_000
+const LOCK_WAIT = 15_000
+
+export function withNodeFiles<T>(fn: () => T): T {
+  mkdirSync(nodeDir(), { recursive: true, mode: 0o700 })
+  const lock = file(FILES_LOCK)
+  const mine = `${process.pid} ${crypto.randomBytes(8).toString('hex')}\n`
+  const until = Date.now() + LOCK_WAIT
+  let held = false
+  for (;;) {
+    try {
+      const fd = openSync(lock, 'wx', 0o600)
+      try {
+        writeSync(fd, mine)
+        held = true
+      } finally {
+        closeSync(fd)
+      }
+      if (!held) rmSync(lock, { force: true })
+      break
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      const busy = code === 'EEXIST' || (process.platform === 'win32' && code === 'EPERM')
+      if (!busy) {
+        console.error(`couldn't lock ${lock}: ${(err as Error).message}`)
+        break
+      }
+    }
+    if (takeOverStale(lock)) continue
+    if (Date.now() >= until) {
+      console.error(`${lock} stayed locked for ${LOCK_WAIT / 1000}s; going on without it`)
+      break
+    }
+    Bun.sleepSync(5)
+  }
+  try {
+    return fn()
+  } finally {
+    if (held) {
+      try {
+        if (readFileSync(lock, 'utf8') === mine) rmSync(lock, { force: true })
+      } catch {}
+    }
+  }
+}
+
+/** Removes a lock left by a writer that died, and only that one; true to try again at once. */
+function takeOverStale(lock: string) {
+  let old
+  try {
+    old = statSync(lock)
+  } catch {
+    return true
+  }
+  if (Date.now() - old.mtimeMs <= LOCK_STALE) return false
+  const aside = `${lock}.${process.pid}.stale`
+  try {
+    renameSync(lock, aside)
+  } catch {
+    return true
+  }
+  try {
+    const now = statSync(aside)
+    if (now.mtimeMs !== old.mtimeMs || now.size !== old.size) linkSync(aside, lock)
+  } catch {}
+  rmSync(aside, { force: true })
+  return true
+}
+
+/**
+ * This machine's identity, made on first use. Its id is what the phone pairs with. A file that is
+ * there but unreadable, or holds anything but a 64-digit hex seed, stops the link and stays as it
+ * is: a new identity would be a stranger to every paired phone.
+ */
 export function identity(): Identity {
-  const saved = readJson<{ seed?: string }>('identity.json', {})
-  if (saved.seed) return identityFromSeed(Uint8Array.from(Buffer.from(saved.seed, 'hex')))
-  const id = newIdentity()
-  writeJson('identity.json', { seed: Buffer.from(id.seed).toString('hex'), id: id.id })
-  return id
+  return withNodeFiles(() => {
+    let text: string
+    try {
+      text = readFileSync(file('identity.json'), 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`couldn't read ${file('identity.json')}: ${(err as Error).message}`)
+      const id = newIdentity()
+      writeJson('identity.json', { seed: Buffer.from(id.seed).toString('hex'), id: id.id })
+      return id
+    }
+    let seed: unknown
+    try {
+      seed = JSON.parse(text)?.seed
+    } catch {}
+    if (typeof seed !== 'string' || !/^[0-9a-fA-F]{64}$/.test(seed)) {
+      throw new Error(`${file('identity.json')} isn't a valid identity (it needs a 64-digit hex seed). Restore it from a backup; moving it away makes a new identity, and every phone then has to pair again.`)
+    }
+    return identityFromSeed(Uint8Array.from(Buffer.from(seed, 'hex')))
+  })
 }
 
 export const loadConfig = (): LinkConfig => ({ ...DEFAULT_CONFIG, ...readJson<Partial<LinkConfig>>('link.json', {}) })
-export const saveConfig = (c: LinkConfig) => writeJson('link.json', c)
+export const saveConfig = (c: LinkConfig) => withNodeFiles(() => writeJson('link.json', c))
 
 const phones = () => readJson<Record<string, Phone>>('phones.json', {})
 
@@ -113,7 +207,7 @@ type Pairing = { secret?: string; short?: string; failures?: number; expires?: n
 export function newPairing() {
   const secret = crypto.randomBytes(24).toString('base64url')
   const short = newShortCode()
-  writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing)
+  withNodeFiles(() => writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing))
   return { secret, short }
 }
 
@@ -155,10 +249,29 @@ export async function linkRunning(port?: number) {
   }
 }
 
+/** How often lastSeen is written for one phone; every write is one more race with `inyon forget`. */
+const SEEN_EVERY = 60_000
+
+/**
+ * Notes that a paired phone was here, once its first frame proved it holds its keys (message 1
+ * alone can be replayed). Read again under the lock, so a phone forgotten meanwhile stays gone.
+ */
+export function markSeen(key: string, every = SEEN_EVERY) {
+  withNodeFiles(() => {
+    const all = phones()
+    const p = all[key]
+    if (!p || Date.now() - (p.lastSeen ?? 0) < every) return
+    p.lastSeen = Date.now()
+    writeJson('phones.json', all)
+  })
+}
+
 export function forgetPhone(key: string) {
-  const all = phones()
-  delete all[key]
-  writeJson('phones.json', all)
+  withNodeFiles(() => {
+    const all = phones()
+    delete all[key]
+    writeJson('phones.json', all)
+  })
   endSessions(key)
   forgetPushes(key)
 }
@@ -204,20 +317,24 @@ function welcome() {
 }
 
 /** Who may come in: a phone paired before, or one bringing the secret from the code on screen. */
-function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
+export const check = (remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) => withNodeFiles(() => checkLocked(remoteStatic, hello))
+
+function checkLocked(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
   const key = hex(remoteStatic)
   const all = phones()
-  if (all[key]) {
-    all[key].lastSeen = Date.now()
-    writeJson('phones.json', all)
-    return welcome()
-  }
+  // nothing is written for a paired phone yet: lastSeen waits for its first frame (markSeen)
+  if (all[key]) return welcome()
   const pairing = readJson<Pairing>('pairing.json', {})
   const live = (pairing.expires ?? 0) > Date.now()
   const matches = (want?: string) => !!want && !!hello.pair && sameText(hello.pair, want)
   if (hello.pair && live && (matches(pairing.secret) || matches(pairing.short))) {
     all[key] = { name: phoneName(hello.name), pairedAt: Date.now(), lastSeen: Date.now() }
-    writeJson('phones.json', all)
+    try {
+      writeJson('phones.json', all)
+    } catch (err) {
+      // not saved, not paired: the phone is told, and the code stays good for another try
+      throw new LinkError('REFUSED', `${os.hostname()} couldn't save the pairing (${(err as Error).message}). Check the space and permissions of ~/.inyon/node, then try again.`)
+    }
     // one code, one phone
     rmSync(file('pairing.json'), { force: true })
     console.log(`paired with ${all[key].name}`)
@@ -226,7 +343,13 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
   if (hello.pair && live && pairing.short) {
     // a wrong code: count it, and stop taking short codes before guessing could pay off
     const failures = (pairing.failures ?? 0) + 1
-    writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    try {
+      writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    } catch (err) {
+      // a guess that can't be counted mustn't be free: the code stops working
+      console.error(`couldn't save pairing.json: ${(err as Error).message}`)
+      rmSync(file('pairing.json'), { force: true })
+    }
     if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
     throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
   }
@@ -253,7 +376,13 @@ async function session(id: Identity, wire: Wire, via: string) {
   active.get(key)!.add(end)
   // a stream can run with nothing coming in, so check now and then too, not only per message
   watching ??= setInterval(dropForgotten, 2000)
+  let proven = false
   channel.onmessage = (m) => {
+    // a frame that opens proves the phone holds its keys, which a replayed message 1 doesn't
+    if (!proven) {
+      proven = true
+      markSeen(key)
+    }
     dropForgotten()
     if (!open) return
     if (m?.op === 'ping') return channel.send({ type: 'pong', t: m.t })

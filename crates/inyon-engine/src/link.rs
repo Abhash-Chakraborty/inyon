@@ -54,19 +54,43 @@ pub fn pretty(value: &impl Serialize) -> String {
 /// Held around every read, change and write of a file in the node's folder. Phone sessions,
 /// relays and the publisher run on several threads at once, and the phone tries every address
 /// together, so without it two writers would lose each other's change: a guess not counted, a
-/// forgotten phone back, a new pairing gone.
+/// forgotten phone back, a new pairing gone. `inyon forget` and `inyon pair` run as processes of
+/// their own, so the threads' mutex isn't enough: the guard also holds `files.lock` in the folder,
+/// made with an exclusive create (the Bun engine takes the same file, so the two never mix).
 static NODE_FILES: Mutex<()> = Mutex::new(());
 
-pub fn node_files() -> std::sync::MutexGuard<'static, ()> {
-    NODE_FILES.lock().unwrap_or_else(|e| e.into_inner())
+/// The lock file every process takes around a read-modify-write of the node's files.
+pub const FILES_LOCK: &str = "files.lock";
+/// A lock this old belongs to a writer that died; a read-modify-write takes milliseconds.
+const LOCK_STALE: Duration = Duration::from_secs(10);
+/// Longer than LOCK_STALE, so a lock left behind is always taken over before this runs out.
+const LOCK_WAIT: Duration = Duration::from_secs(15);
+
+pub struct NodeFiles {
+    _file: Option<FileLock>,
+    _threads: std::sync::MutexGuard<'static, ()>,
 }
 
-/// Each write gets a temporary file of its own, so two threads never rename each other's.
-static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// `files.lock` while this process holds it: removed on drop, and only while it still holds our tag.
+struct FileLock {
+    path: PathBuf,
+    mine: String,
+}
 
-/// Written whole or not at all, readable only by this user (it holds keys and pairings). A file
-/// that couldn't be saved is an error the caller acts on, as the Bun engine's throw was.
-pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String> {
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        if std::fs::read_to_string(&self.path).is_ok_and(|t| t == self.mine) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+pub fn node_files() -> NodeFiles {
+    let threads = NODE_FILES.lock().unwrap_or_else(|e| e.into_inner());
+    NodeFiles { _file: take_files_lock(), _threads: threads }
+}
+
+fn ensure_node_dir() -> PathBuf {
     let dir = node_dir();
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
@@ -76,6 +100,75 @@ pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String>
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         }
     }
+    dir
+}
+
+/// None when the folder can't hold a lock at all (it can't hold the files either, so the write
+/// that follows fails and says why).
+fn take_files_lock() -> Option<FileLock> {
+    let path = ensure_node_dir().join(FILES_LOCK);
+    let mine = format!("{} {}\n", std::process::id(), crate::random_bytes(8).iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let until = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut fh) => {
+                use std::io::Write;
+                if fh.write_all(mine.as_bytes()).is_err() {
+                    drop(fh);
+                    let _ = std::fs::remove_file(&path);
+                    return None;
+                }
+                return Some(FileLock { path, mine });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            // Windows refuses to make a file another process is still deleting: busy, not broken
+            Err(e) if WIN && e.kind() == std::io::ErrorKind::PermissionDenied && std::time::Instant::now() < until => {
+                std::thread::sleep(Duration::from_millis(5));
+                continue;
+            }
+            Err(e) => {
+                error(&format!("couldn't lock {}: {e}", path.display()));
+                return None;
+            }
+        }
+        if take_over_stale(&path) {
+            continue;
+        }
+        if std::time::Instant::now() >= until {
+            error(&format!("{} stayed locked for {}s; going on without it", path.display(), LOCK_WAIT.as_secs()));
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Removes a lock older than LOCK_STALE, and only that one: it's renamed aside first, and put back
+/// if it turns out to be a newer lock another process made in the meantime. True when the caller
+/// should try again at once.
+fn take_over_stale(path: &Path) -> bool {
+    let Ok(old) = std::fs::metadata(path) else { return true };
+    if !old.modified().ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > LOCK_STALE) {
+        return false;
+    }
+    let aside = PathBuf::from(format!("{}.{}.stale", path.to_string_lossy(), std::process::id()));
+    if std::fs::rename(path, &aside).is_err() {
+        return true;
+    }
+    let same = std::fs::metadata(&aside).ok().is_some_and(|m| m.modified().ok() == old.modified().ok() && m.len() == old.len());
+    if !same {
+        let _ = std::fs::hard_link(&aside, path);
+    }
+    let _ = std::fs::remove_file(&aside);
+    true
+}
+
+/// Each write gets a temporary file of its own, so two threads never rename each other's.
+static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Written whole or not at all, readable only by this user (it holds keys and pairings). A file
+/// that couldn't be saved is an error the caller acts on, as the Bun engine's throw was.
+pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String> {
+    ensure_node_dir();
     let target = file(name);
     let n = TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = PathBuf::from(format!("{}.{}.{n}.tmp", target.to_string_lossy(), std::process::id()));
@@ -134,22 +227,45 @@ pub fn save_config(c: &LinkConfig) {
 
 /// This machine's identity, made on first use. Its id is what the phone pairs with.
 pub fn identity() -> Identity {
+    match load_identity() {
+        Ok(id) => id,
+        Err(e) => crate::output::fail(&e, 1),
+    }
+}
+
+/// The saved identity, or a new one when there's no file yet. A file that is there but can't be
+/// read, or holds anything but a 64-digit hex seed, is an error and stays as it is: a new identity
+/// would be a stranger to every paired phone, and a seed read with gaps would be guessable.
+pub fn load_identity() -> Result<Identity, String> {
     let _files = node_files();
-    let saved: Option<Value> = read_node_json("identity.json");
-    if let Some(seed) = saved.as_ref().and_then(|s| s.get("seed")).and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        let mut bytes = [0u8; 32];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = seed.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).unwrap_or(0);
+    let path = file("identity.json");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let seed = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("seed").and_then(Value::as_str).map(String::from)).and_then(|s| parse_seed(&s));
+            seed.map(Identity::from_seed).ok_or_else(|| {
+                format!("{} isn't a valid identity (it needs a 64-digit hex seed). Restore it from a backup; moving it away makes a new identity, and every phone then has to pair again.", path.display())
+            })
         }
-        return Identity::from_seed(bytes);
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let id = Identity::generate().expect("the system has no randomness to give");
+            let seed: String = id.seed.iter().map(|b| format!("{b:02x}")).collect();
+            // an identity that isn't kept would be a new computer to every paired phone next time
+            write_node_json("identity.json", &json!({ "seed": seed, "id": id.id }))?;
+            Ok(id)
+        }
+        Err(e) => Err(format!("couldn't read {}: {e}", path.display())),
     }
-    let id = Identity::generate().expect("the system has no randomness to give");
-    let seed: String = id.seed.iter().map(|b| format!("{b:02x}")).collect();
-    // an identity that isn't kept would be a new computer to every paired phone next time
-    if let Err(e) = write_node_json("identity.json", &json!({ "seed": seed, "id": id.id })) {
-        crate::output::fail(&e, 1);
+}
+
+fn parse_seed(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
     }
-    id
+    let mut bytes = [0u8; 32];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(bytes)
 }
 
 /// A paired phone as phones.json keeps it.
@@ -317,6 +433,24 @@ pub async fn link_running(port: Option<u16>) -> bool {
     }
 }
 
+/// How often lastSeen is written for one phone: it's for `inyon phones`, and every write is one
+/// more chance to race with `inyon forget`.
+const SEEN_EVERY: u64 = 60_000;
+
+/// Notes that a paired phone was here, at most once per `every` ms. Read again under the lock, so a
+/// phone forgotten meanwhile (by `inyon forget` in another process) is never written back.
+pub fn mark_seen(key: &str, every: u64) {
+    let _files = node_files();
+    let mut all = phones_raw();
+    let now = crate::now_ms();
+    let Some(Value::Object(p)) = all.get_mut(key) else { return };
+    if p.get("lastSeen").and_then(Value::as_u64).is_some_and(|t| now.saturating_sub(t) < every) {
+        return;
+    }
+    p.insert("lastSeen".into(), json!(now));
+    save_or_say("phones.json", &Value::Object(all));
+}
+
 pub fn forget_phone(key: &str) {
     {
         let _files = node_files();
@@ -390,9 +524,9 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
     let _files = node_files();
     let mut all = phones_raw();
     let now = crate::now_ms();
-    if let Some(Value::Object(p)) = all.get_mut(&key) {
-        p.insert("lastSeen".into(), json!(now));
-        save_or_say("phones.json", &Value::Object(all));
+    // nothing is written yet: message 1 can be replayed by anyone who saw it, so lastSeen waits
+    // until the phone's first frame proves it holds its keys (mark_seen)
+    if all.contains_key(&key) {
         return Ok(welcome());
     }
     let host = crate::hostname();
@@ -515,6 +649,7 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
         return out.close(4403, "unpaired");
     }
     let channel = Arc::new(Mutex::new(channel));
+    let mut proven = false;
     let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let send = sealing_sender(channel.clone(), out.clone(), open.clone());
     let ops = ops::Ops::new(send.clone());
@@ -544,6 +679,11 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
                             break;
                         }
                     };
+                    // a frame that opens proves the phone holds its keys, which a replayed message 1 doesn't
+                    if !proven {
+                        proven = true;
+                        mark_seen(&key, SEEN_EVERY);
+                    }
                     let Ok(m) = serde_json::from_slice::<Value>(&whole) else { continue };
                     drop_forgotten();
                     if !open.load(std::sync::atomic::Ordering::Relaxed) {
@@ -1178,7 +1318,7 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
 /// Starts the link: the listener, the tunnel, relays, private networks, notifications. Runs on
 /// the current tokio runtime for as long as it does. Fails when the port is taken.
 pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
-    let id = Arc::new(identity());
+    let id = Arc::new(load_identity()?);
     listen(id.clone(), if config.lan { "0.0.0.0" } else { "127.0.0.1" }, config.port).map_err(|e| format!("Can't listen on port {}: {e}", config.port))?;
     let live = Arc::new(Mutex::new(Live { tunnel_url: None, last_published: String::new(), last_seq: current_state().and_then(|s| s.last_seq), vpn: Vec::new() }));
     let config = Arc::new(config);
@@ -1435,6 +1575,7 @@ mod tests {
                     start.wait();
                     for _ in 0..20 {
                         let _ = check(&[9u8; 32], &json!({}));
+                        mark_seen(&"09".repeat(32), 0);
                     }
                 })
             };
@@ -1443,6 +1584,150 @@ mod tests {
             seen.join().unwrap();
             assert!(!list_phones().contains_key(&key), "the phone came back after it was forgotten");
         }
+    }
+
+    /// Runs one of the `child_*` tests below in a process of its own, with the home given, as
+    /// `inyon forget` and the running link are two processes.
+    fn child(name: &str, home: &Path) -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([&format!("link::tests::{name}"), "--exact", "--nocapture", "--test-threads=1"])
+            .env("INYON_TEST_CHILD", "1")
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    fn as_child() -> bool {
+        std::env::var_os("INYON_TEST_CHILD").is_some()
+    }
+
+    /// The running link, as an attacker holding a forgotten phone's key keeps it busy.
+    #[test]
+    fn child_keeps_marking_a_phone_seen() {
+        if !as_child() {
+            return;
+        }
+        let key = "09".repeat(32);
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            let _ = check(&[9u8; 32], &json!({}));
+            mark_seen(&key, 0);
+        }
+    }
+
+    /// The running link, taking wrong codes as fast as they come.
+    #[test]
+    fn child_keeps_guessing_codes() {
+        if !as_child() {
+            return;
+        }
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            let _ = check(&[5u8; 32], &json!({ "name": "Guesser", "pair": "ABCDEFGH:000000" }));
+        }
+    }
+
+    #[test]
+    fn a_phone_forgotten_by_another_process_while_the_link_writes_stays_forgotten() {
+        let h = testing::home("link-forget-procs");
+        let key = "09".repeat(32);
+        let add = || {
+            let _f = node_files();
+            write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
+        };
+        add();
+        let mut link = child("child_keeps_marking_a_phone_seen", &h.dir);
+        std::thread::sleep(Duration::from_millis(300));
+        let mut back = 0;
+        for _ in 0..200 {
+            add();
+            std::thread::sleep(Duration::from_millis(1));
+            forget_phone(&key);
+            std::thread::sleep(Duration::from_millis(2));
+            if list_phones().contains_key(&key) {
+                back += 1;
+            }
+        }
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = link.wait();
+        assert_eq!(back, 0, "the forgotten phone came back {back} times out of 200");
+    }
+
+    #[test]
+    fn a_new_pairing_made_by_another_process_survives_wrong_guesses() {
+        let h = testing::home("link-pair-procs");
+        new_pairing().unwrap();
+        let mut link = child("child_keeps_guessing_codes", &h.dir);
+        std::thread::sleep(Duration::from_millis(300));
+        let mut lost = 0;
+        for _ in 0..150 {
+            // two at once: the first is still taking guesses when the second is written
+            new_pairing().unwrap();
+            let p = new_pairing().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+            if pairing_secret().as_deref() != Some(p.secret.as_str()) {
+                lost += 1;
+            }
+        }
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = link.wait();
+        assert_eq!(lost, 0, "the code on screen was replaced by an older one {lost} times out of 150");
+    }
+
+    #[test]
+    fn a_lock_left_by_a_writer_that_died_is_taken_over_and_a_live_one_is_not() {
+        let _h = testing::home("link-stale-lock");
+        let lock = ensure_node_dir().join(FILES_LOCK);
+        std::fs::write(&lock, "1 dead\n").unwrap();
+        // a fresh lock is someone's: wait for it
+        assert!(!take_over_stale(&lock));
+        let old = std::fs::File::options().write(true).open(&lock).unwrap();
+        old.set_modified(std::time::SystemTime::now() - Duration::from_secs(60)).unwrap();
+        drop(old);
+        {
+            let _f = node_files();
+            assert_ne!(std::fs::read_to_string(&lock).unwrap(), "1 dead\n");
+        }
+        assert!(!lock.exists(), "released after use");
+    }
+
+    #[test]
+    fn a_replayed_message_1_changes_nothing_on_disk_and_a_proven_phone_is_seen_once_a_minute() {
+        let _h = testing::home("link-replay");
+        let key = "0a".repeat(32);
+        write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
+        let before = std::fs::read(node_dir().join("phones.json")).unwrap();
+        for _ in 0..3 {
+            assert_eq!(check(&[10u8; 32], &json!({})).unwrap()["ok"], json!(true));
+        }
+        assert_eq!(std::fs::read(node_dir().join("phones.json")).unwrap(), before, "check alone writes nothing");
+        mark_seen(&key, SEEN_EVERY);
+        let seen = list_phones().get(&key).unwrap().last_seen.clone();
+        assert!(seen.is_some());
+        let after = std::fs::read(node_dir().join("phones.json")).unwrap();
+        mark_seen(&key, SEEN_EVERY);
+        assert_eq!(std::fs::read(node_dir().join("phones.json")).unwrap(), after, "not again within a minute");
+        // a forgotten phone is never written back
+        forget_phone(&key);
+        mark_seen(&key, 0);
+        assert!(!list_phones().contains_key(&key));
+    }
+
+    #[test]
+    fn a_damaged_identity_is_an_error_and_stays_as_it_is() {
+        let _h = testing::home("link-identity");
+        let path = node_dir().join("identity.json");
+        for bad in ["{\"seed\":\"ab\"}".to_string(), format!("{{\"seed\":\"{}\"}}", "zz".repeat(32)), "not json".into(), format!("{{\"seed\":\"{}\"}}", "a".repeat(63))] {
+            std::fs::create_dir_all(node_dir()).unwrap();
+            std::fs::write(&path, &bad).unwrap();
+            assert!(load_identity().is_err(), "{bad}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bad, "left alone");
+        }
+        std::fs::remove_file(&path).unwrap();
+        let made = load_identity().unwrap();
+        assert_eq!(load_identity().unwrap().id, made.id);
     }
 
     #[cfg(unix)]
