@@ -791,7 +791,8 @@ pub fn ensure_cloudflared() -> Result<PathBuf, String> {
 fn download_cloudflared(bin: &Path) -> Result<PathBuf, String> {
     let asset = cloudflared_asset(crate::platform(), crate::arch());
     let (_, sum, inner) = CLOUDFLARED.iter().find(|(a, _, _)| *a == asset).copied().ok_or("no cloudflared for this system")?;
-    log(&format!("downloading cloudflared {CLOUDFLARED_VERSION} ({asset}) for the tunnel…"));
+    // on stderr: `inyon service install --json` prints its answer on stdout after this
+    error(&format!("downloading cloudflared {CLOUDFLARED_VERSION} ({asset}) for the tunnel…"));
     let res = crate::http::download(&format!("https://github.com/cloudflare/cloudflared/releases/download/{CLOUDFLARED_VERSION}/{asset}"))?;
     if !res.ok() {
         return Err(format!("couldn't download cloudflared: {}", res.status));

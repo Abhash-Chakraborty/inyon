@@ -250,7 +250,7 @@ where
                 return;
             }
             if started.elapsed() >= patience.until {
-                crate::output::error("The pairing code expired before the tunnel came up. `inyon logs` shows what the tunnel said.");
+                show(&json!({ "ok": false, "error": crate::output::PAIR_EXPIRED, "expired": true }));
                 return;
             }
             tokio::time::sleep(patience.tick).await;
@@ -528,8 +528,11 @@ mod tests {
         let config = LinkConfig { vpn: false, ..LinkConfig::default() };
         let started = std::time::Instant::now();
         let a = answers_while(config, vec![(0, vec![])]);
-        assert_eq!(a.len(), 2, "{a:?}");
+        assert_eq!(a.len(), 3, "{a:?}");
         assert!(a[1]["waiting"] == "tunnel" && urls(&a[1]).is_empty());
+        // the last answer says so, for the window and `pair --json`, which may show nothing else
+        assert_eq!(a[2], json!({ "ok": false, "error": crate::output::PAIR_EXPIRED, "expired": true }));
+        assert!(crate::output::render_pair(&a[2]).contains("expired before the tunnel came up"));
         assert!(started.elapsed() < Duration::from_secs(10));
     }
 

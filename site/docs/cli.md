@@ -225,11 +225,11 @@ From 0.17.7. `add` downloads the skill from the newest release, checks it agains
 
 `--json` makes every command answer one JSON object, for scripts. Success looks like `{"v":1,"ok":true,…}` and a failure like `{"v":1,"ok":false,"error":"…"}`, with exit code 1.
 
-`inyon pair --json` can answer more than once, one line each, and the last line is the current one. From 0.20, while the tunnel starts, it first prints `{"v":1,"ok":true,"waiting":"tunnel",…}`. If the tunnel takes longer than 30 seconds, a line with a code and `"waiting"` follows, carrying the addresses that work so far, and a last line has the code with the tunnel's address.
+`inyon pair --json` can answer more than once, one line each, and the last line is the current one. From 0.20, while the tunnel starts, it first prints `{"v":1,"ok":true,"waiting":"tunnel",…}`. If the tunnel takes longer than 30 seconds, a line with a code and `"waiting"` follows, carrying the addresses that work so far, and a last line has the code with the tunnel's address. If the code runs out before the tunnel comes up, the last line is `{"v":1,"ok":false,"error":"The pairing code expired before the tunnel came up. …","expired":true}`.
 
 ```sh
 inyon status --json | jq '.phones[].name'
-inyon pair --json | jq -r 'select(.waiting == null) | .link'
+inyon pair --json | jq -r 'select(.waiting == null and .ok) | .link'
 ```
 
 ## Environment

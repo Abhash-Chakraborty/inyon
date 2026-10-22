@@ -141,6 +141,8 @@ pub fn pair_result(o: &PairOutput, typed: bool) -> Value {
 pub const TUNNEL_STARTING: &str = "Starting the tunnel, so your phone can reach this computer from any network…";
 /// And once it has taken longer than it should.
 pub const TUNNEL_SLOW: &str = "The tunnel is still starting. The code shows here once it's up; `inyon logs` shows what the tunnel says.";
+/// The last answer when the code ran out while the tunnel was still starting.
+pub const PAIR_EXPIRED: &str = "The pairing code expired before the tunnel came up. `inyon logs` shows what the tunnel said.";
 /// Under a code that works on the same network or VPN while the tunnel starts.
 pub const TUNNEL_PENDING: &str = "The tunnel is still starting, so for now this code works on the same network or VPN. It's shown again once the tunnel is up.";
 
@@ -148,6 +150,9 @@ pub const TUNNEL_PENDING: &str = "The tunnel is still starting, so for now this 
 pub fn render_pair(v: &Value) -> String {
     let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let list = |k: &str| v.get(k).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+    if let Some(e) = v.get("error").and_then(Value::as_str) {
+        return format!("\n! {e}\n");
+    }
     let waiting = v.get("waiting").is_some();
     let no_address = list("urls") == 0 && list("relays") == 0;
     if waiting && v.get("qr").is_none() {

@@ -533,6 +533,11 @@ fn answer(v: Option<Value>, status: ExitStatus, stderr: &str, what: &str) -> Res
     }
 }
 
+/// The engine's answer that the code expired before the tunnel came up, shown as it comes.
+fn expired(v: &Value) -> bool {
+    v.get("expired").and_then(Value::as_bool) == Some(true)
+}
+
 /// Runs `pair` (with `args`) and calls `show` with each of the engine's answers as soon as it
 /// comes: one that says the tunnel is starting (`"waiting": "tunnel"`), then the code, and the code
 /// again once the tunnel's address arrives. The engine keeps running when it had to start the
@@ -555,8 +560,9 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
     if let Some(out) = child.stdout.take() {
         for line in BufReader::new(out).lines().map_while(Result::ok) {
             if let Some(v) = last_json(&line) {
-                // a failure is the engine's last word; it's said below
-                if v.get("ok").and_then(Value::as_bool) != Some(false) {
+                // a failure is the engine's last word and is said below, except a code that ran
+                // out while the tunnel started: the engine may keep running the link after it
+                if v.get("ok").and_then(Value::as_bool) != Some(false) || expired(&v) {
                     show(&v);
                 }
                 answered = Some(v);
@@ -564,6 +570,9 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
         }
     }
     let status = child.wait().map_err(|e| e.to_string())?;
+    if answered.as_ref().is_some_and(expired) {
+        return Ok(());
+    }
     let said = stderr.and_then(|t| t.join().ok()).unwrap_or_default();
     answer(answered, status, &said, "pair").map(|_| ())
 }

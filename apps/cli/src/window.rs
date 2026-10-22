@@ -89,6 +89,18 @@ pub fn code_card(v: &serde_json::Value) -> CodeCard {
     }
 }
 
+/// What the window shows when the pairing's engine ends, given how it ended and whether the last
+/// answer shown was only "the tunnel is starting" (None: nothing was shown). A usable code stays
+/// on screen; a card still waiting for the tunnel is replaced by why it never came.
+pub fn pairing_ended(r: Result<(), String>, last_starting: Option<bool>) -> Option<String> {
+    match (r, last_starting) {
+        (Err(e), None | Some(true)) => Some(e),
+        (Ok(()), None) => Some("The engine gave no code.".to_string()),
+        (Ok(()), Some(true)) => Some("The engine stopped before the tunnel came up. `inyon logs` shows what it said.".to_string()),
+        (_, Some(false)) => None,
+    }
+}
+
 /// The typed-in code as the app wants it: "ZS5C-3EPG" and "801 356".
 pub fn short_code(v: &serde_json::Value) -> Option<(String, String)> {
     let short = v.get("short")?;
@@ -398,16 +410,16 @@ mod win {
         std::thread::spawn(move || {
             // each answer is shown as it comes: the engine stays on when it started the link
             // itself, so it may never return
-            let mut shown = false;
+            let mut last_starting = None;
             let r = crate::engine::pair(&[], &mut |v| {
-                shown = true;
+                last_starting = Some(matches!(super::code_card(v), super::CodeCard::Starting(_)));
                 post(v.clone());
             });
-            match (r, shown) {
-                (Err(e), false) => post(serde_json::json!({ "error": e })),
-                (Ok(()), false) => post(serde_json::json!({ "error": "The engine gave no code." })),
-                (Err(e), true) => trace(&format!("the pairing's engine ended: {e}")),
-                (Ok(()), true) => {}
+            if let Err(e) = &r {
+                trace(&format!("the pairing's engine ended: {e}"));
+            }
+            if let Some(why) = super::pairing_ended(r, last_starting) {
+                post(serde_json::json!({ "error": why }));
             }
         });
     }
@@ -867,6 +879,18 @@ mod tests {
         let up = serde_json::json!({ "qr": "https://x/#pair", "urls": ["wss://a.trycloudflare.com/link"], "relays": [] });
         assert_eq!(code_card(&up), CodeCard::Code { note: "It works once, within 10 minutes." });
         assert_eq!(code_card(&serde_json::json!({ "error": "no" })), CodeCard::Failed("no".into()));
+    }
+
+    #[test]
+    fn a_pairing_that_ends_while_the_tunnel_starts_says_why_and_a_shown_code_stays() {
+        assert_eq!(pairing_ended(Err("no engine".into()), None).as_deref(), Some("no engine"));
+        assert_eq!(pairing_ended(Ok(()), None).as_deref(), Some("The engine gave no code."));
+        // only "Starting the tunnel…" was on screen: it doesn't stay there for good
+        assert_eq!(pairing_ended(Err("killed".into()), Some(true)).as_deref(), Some("killed"));
+        assert!(pairing_ended(Ok(()), Some(true)).is_some_and(|w| w.contains("before the tunnel came up")));
+        // a code the phone can use stays
+        assert_eq!(pairing_ended(Err("killed".into()), Some(false)), None);
+        assert_eq!(pairing_ended(Ok(()), Some(false)), None);
     }
 
     #[test]
