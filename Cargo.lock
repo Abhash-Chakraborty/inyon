@@ -1339,6 +1339,7 @@ dependencies = [
  "sha2 0.11.1",
  "tar",
  "ureq",
+ "url",
  "windows-sys 0.61.2",
 ]
 

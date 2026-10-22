@@ -209,19 +209,6 @@ pub fn hub_reset_password(sys: &Sys, password: Option<&str>) -> Outcome {
 
 // ---------- join, disconnect ----------
 
-/// Whether a hub's host (as in its address, IPv6 in brackets) may take the token over plain http:
-/// this machine, or a VPN address (see inyon_engine::hub::plain_http_ip). A name has to be looked
-/// up: Some(host) when it does.
-fn plain_host(host: &str) -> Result<Option<&str>, ()> {
-    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
-    match bare.parse::<std::net::IpAddr>() {
-        Ok(ip) => inyon_engine::hub::plain_http_ip(ip).then_some(None).ok_or(()),
-        Err(_) if bare.eq_ignore_ascii_case("localhost") => Ok(None),
-        Err(_) if host.starts_with('[') => Err(()),
-        Err(_) => Ok(Some(bare)),
-    }
-}
-
 /// Checks a hub address; refuses to send a token over plain http to anything but this machine or a
 /// VPN address. A name has to point only at those (a MagicDNS name does; a LAN's .local doesn't).
 pub fn check_hub_url(hub: &str) -> Result<(), String> {
@@ -231,36 +218,28 @@ pub fn check_hub_url(hub: &str) -> Result<(), String> {
 /// Looks a name up and checks where it points (inyon_engine::hub::check_name_now).
 type LookUp<'a> = &'a dyn Fn(&str, u16) -> Result<(), Option<String>>;
 
+/// Read the way the engine reads it (url::Url), so the host checked is the host connected to,
+/// whatever an `@`, `?` or `#` in the address says.
 fn check_hub_url_with(hub: &str, look_up: LookUp) -> Result<(), String> {
-    let (scheme, rest) = hub.split_once("://").ok_or_else(|| format!("{hub} isn't a web address."))?;
-    if scheme != "http" && scheme != "https" {
-        return Err(format!("{hub} isn't a web address."));
+    let bad = || format!("{hub} isn't a web address.");
+    let url = url::Url::parse(hub).map_err(|_| bad())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
+        return Err(bad());
     }
-    let host = rest.split('/').next().unwrap_or("");
-    let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
-    let (host, port) = if host.starts_with('[') {
-        let (h, p) = host.split_once(']').unwrap_or((host, ""));
-        (format!("{h}]"), p.strip_prefix(':'))
-    } else {
-        let (h, p) = host.split_once(':').map(|(h, p)| (h, Some(p))).unwrap_or((host, None));
-        (h.to_string(), p)
-    };
-    if host.is_empty() || host == "[]" {
-        return Err(format!("{hub} isn't a web address."));
-    }
-    if scheme == "https" || paths::env_var("INYON_ALLOW_INSECURE").is_some() {
+    if url.scheme() == "https" || paths::env_var("INYON_ALLOW_INSECURE").is_some() {
         return Ok(());
     }
-    match plain_host(&host) {
-        Ok(None) => Ok(()),
-        Ok(Some(name)) => match look_up(name, port.and_then(|p| p.parse().ok()).unwrap_or(80)) {
+    let host = url.host_str().unwrap_or_default();
+    match inyon_engine::hub::plain_host(&url) {
+        inyon_engine::hub::Plain::Ok => Ok(()),
+        inyon_engine::hub::Plain::LookUp => match look_up(host, url.port_or_known_default().unwrap_or(80)) {
             Ok(()) => Ok(()),
             Err(Some(why)) => Err(why),
             Err(None) => Err(format!(
-                "Couldn't look up {name}, so it can't be checked that plain http to it stays on this machine or a VPN. Check the address, or use the hub's https address."
+                "Couldn't look up {host}, so it can't be checked that plain http to it stays on this machine or a VPN. Check the address, or use the hub's https address."
             )),
         },
-        Err(()) => Err(inyon_engine::hub::plain_refusal(&host)),
+        inyon_engine::hub::Plain::Refused => Err(inyon_engine::hub::plain_refusal(host)),
     }
 }
 
@@ -1427,6 +1406,11 @@ mod tests {
         assert!(check_hub_url("https://192.168.1.2:4777").is_ok());
         assert!(check_hub_url("https://hub.example.com").is_ok());
         assert!(check_hub_url("hub.example.com").unwrap_err().contains("isn't a web address"));
+        // the host is the one connected to, whatever comes after an @ in the query or fragment
+        for tricky in ["http://8.8.8.8:4777?@100.100.1.1", "http://8.8.8.8:4777/#@100.100.1.1", "http://8.8.8.8:4777?x=1@[::1]"] {
+            assert!(check_hub_url_with(tricky, &no_dns).unwrap_err().starts_with("Refusing to send the token over plain http to 8.8.8.8"), "{tricky}");
+        }
+        assert!(check_hub_url_with("http://me:pw@100.100.1.1:4777/?next=@8.8.8.8", &no_dns).is_ok());
         // a name is looked up, and every address it has must pass
         let seen = std::cell::RefCell::new(Vec::new());
         let dns = |h: &str, p: u16| -> Result<(), Option<String>> {
