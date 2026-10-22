@@ -56,6 +56,41 @@ pub struct Status {
     pub log: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// how phones reach this computer, when it's only through the tunnel
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reach: Option<String>,
+}
+
+impl Status {
+    /// Whether the phone link runs, as a service or started by hand.
+    pub fn link_running(&self) -> bool {
+        self.jobs.iter().any(|j| j.role == "link" && j.running)
+    }
+
+    /// Where the link answers: the addresses it last published, while it runs. A link that has
+    /// stopped leaves them in state.json, and they don't answer any more.
+    pub fn answering(&self) -> Vec<&str> {
+        if !self.link_running() {
+            return Vec::new();
+        }
+        self.addresses.iter().chain(self.relays.iter()).map(String::as_str).collect()
+    }
+}
+
+/// What to say when phones reach this computer only through the tunnel: neither the LAN nor a
+/// VPN is on (the default on Windows, where both need a firewall rule) and there's no address of
+/// your own. Says how to let phones on the same network in.
+pub fn tunnel_only(cfg: &state::LinkConfig, windows: bool) -> Option<String> {
+    let tunnel = cfg.tunnel.unwrap_or(true);
+    let lan = cfg.lan.unwrap_or(false);
+    let vpn = cfg.vpn.unwrap_or(!windows);
+    let own = cfg.urls.as_ref().is_some_and(|u| !u.is_empty()) || cfg.relays.as_ref().is_some_and(|r| !r.is_empty());
+    if !tunnel || lan || vpn || own {
+        return None;
+    }
+    let mut s = "Phones reach this computer only through the tunnel, not over the same Wi-Fi or VPN. To let them in that way, run `inyon setup` and tick LAN or VPN".to_string();
+    s.push_str(if windows { "; Windows then asks to add the firewall rule." } else { "." });
+    Some(s)
 }
 
 /// Reads everything the screen shows. `agents` costs a tmux call, so it's optional.
@@ -98,6 +133,7 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
     let nodes = (role == "hub").then(hub_nodes).flatten();
     let agents = if with_agents { running_agents() } else { Vec::new() };
     let note = (bun && crate::engine::find().is_none()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string());
+    let reach = (role == "node" || has(Role::Link)).then(|| tunnel_only(&state::link_config(), cfg!(windows))).flatten();
     Status {
         v: 1,
         cli: VERSION.to_string(),
@@ -114,6 +150,7 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         pairing_open: state::pairing_open(),
         log: last_log_lines(&node_dir(), 6),
         note,
+        reach,
     }
 }
 
@@ -241,11 +278,18 @@ pub fn render(f: &mut Frame, s: &Status, theme: Theme) {
     left.push(Line::raw(""));
     left.extend(job_lines(s, theme));
     let left_w = if narrow { area.width as usize } else { (area.width as usize) * 58 / 100 };
-    if !s.addresses.is_empty() || !s.relays.is_empty() {
+    let answering = s.answering();
+    if !answering.is_empty() {
         left.push(Line::raw(""));
         left.push(Line::from(Span::styled("Answers on", theme.muted())));
-        for a in s.addresses.iter().chain(s.relays.iter()) {
+        for a in answering {
             left.push(Line::from(Span::raw(format!("  {}", fit(a, left_w.saturating_sub(2))))));
+        }
+    }
+    if let Some(r) = &s.reach {
+        left.push(Line::raw(""));
+        for l in super::wrap(r, left_w.saturating_sub(2)) {
+            left.push(Line::from(Span::styled(l, theme.muted())));
         }
     }
 
@@ -319,8 +363,11 @@ pub fn plain(s: &Status) -> String {
             out.push(format!("{}: {}{}", j.role, if j.running { "running" } else { "set up, not running" }, j.version.as_deref().map(|v| format!(" ({v})")).unwrap_or_default()));
         }
     }
-    for a in s.addresses.iter().chain(s.relays.iter()) {
+    for a in s.answering() {
         out.push(format!("answers on {a}"));
+    }
+    if let Some(r) = &s.reach {
+        out.push(r.clone());
     }
     if s.phones.is_empty() {
         out.push("no phones paired yet".into());
@@ -395,6 +442,64 @@ pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn status() -> Status {
+        Status {
+            v: 1,
+            cli: "0.19.0".into(),
+            engine: Some("0.19.0".into()),
+            role: "node".into(),
+            hub: None,
+            machine: Some("k7m2p9x4".into()),
+            jobs: vec![Job { role: "link".into(), service: true, running: true, version: Some("0.19.0".into()) }],
+            addresses: vec!["wss://quiet-otter.trycloudflare.com/link".into()],
+            relays: vec![],
+            phones: vec![],
+            nodes: None,
+            agents: vec![],
+            pairing_open: false,
+            log: vec![],
+            note: None,
+            reach: None,
+        }
+    }
+
+    fn screen(s: &Status) -> String {
+        let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| render(f, s, Theme::plain())).unwrap();
+        buffer_text(t.backend().buffer())
+    }
+
+    #[test]
+    fn a_link_that_has_stopped_answers_nowhere() {
+        let running = status();
+        assert!(plain(&running).contains("answers on wss://quiet-otter.trycloudflare.com/link"));
+        assert!(screen(&running).contains("Answers on"));
+        // state.json still names the tunnel it had, which is gone with it
+        let mut stopped = status();
+        stopped.jobs[0].running = false;
+        assert!(!plain(&stopped).contains("answers on"), "{}", plain(&stopped));
+        assert!(!screen(&stopped).contains("Answers on"));
+        assert!(!screen(&stopped).contains("trycloudflare"));
+    }
+
+    #[test]
+    fn tunnel_only_is_said_with_how_to_let_the_same_network_in() {
+        let cfg = |lan: Option<bool>, vpn: Option<bool>| state::LinkConfig { lan, vpn, ..Default::default() };
+        // the defaults: on Windows the tunnel only, elsewhere the VPN too
+        let windows = tunnel_only(&cfg(None, None), true).unwrap();
+        assert!(windows.contains("only through the tunnel") && windows.contains("`inyon setup`") && windows.contains("firewall rule"), "{windows}");
+        assert_eq!(tunnel_only(&cfg(None, None), false), None);
+        let elsewhere = tunnel_only(&cfg(None, Some(false)), false).unwrap();
+        assert!(!elsewhere.contains("firewall"));
+        assert_eq!(tunnel_only(&cfg(Some(true), None), true), None);
+        assert_eq!(tunnel_only(&cfg(None, Some(true)), true), None);
+        assert_eq!(tunnel_only(&state::LinkConfig { tunnel: Some(false), ..Default::default() }, true), None);
+        assert_eq!(tunnel_only(&state::LinkConfig { urls: Some(vec!["wss://a.example/link".into()]), ..Default::default() }, true), None);
+        let s = Status { reach: Some(windows.clone()), ..status() };
+        assert!(plain(&s).contains(&windows));
+        assert!(screen(&s).contains("only through the tunnel"));
+    }
 
     #[test]
     fn agents_are_picked_out_of_the_pane_list() {

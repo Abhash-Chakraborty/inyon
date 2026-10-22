@@ -466,7 +466,7 @@ fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
     c.env("INYON_CONSOLE", "1").stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = c.spawn()?;
     #[cfg(windows)]
-    let _job = job::ends_with_me(&child);
+    let _job = inyon_engine::winjob::ends_with_me(&child);
     let out = child.stdout.take().map(|mut o| std::thread::spawn(move || std::io::copy(&mut o, &mut std::io::stdout())));
     let err = child.stderr.take().map(|mut e| std::thread::spawn(move || std::io::copy(&mut e, &mut std::io::stderr())));
     let status = child.wait();
@@ -474,45 +474,6 @@ fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
         let _ = t.join();
     }
     status
-}
-
-#[cfg(windows)]
-mod job {
-    use std::os::windows::io::AsRawHandle;
-    use std::process::Child;
-
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    };
-
-    pub struct Job(HANDLE);
-
-    impl Drop for Job {
-        fn drop(&mut self) {
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-
-    /// A job holding `child` that Windows ends, with whatever it started, once this process has
-    /// gone and nothing holds the job any more.
-    pub fn ends_with_me(child: &Child) -> Option<Job> {
-        unsafe {
-            let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if h.is_null() {
-                return None;
-            }
-            let job = Job(h);
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let size = std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32;
-            if SetInformationJobObject(h, JobObjectExtendedLimitInformation, &info as *const _ as *const _, size) == 0 {
-                return None;
-            }
-            (AssignProcessToJobObject(h, child.as_raw_handle() as HANDLE) != 0).then_some(job)
-        }
-    }
 }
 
 /// Runs the engine and collects what it printed.
@@ -572,9 +533,11 @@ fn answer(v: Option<Value>, status: ExitStatus, stderr: &str, what: &str) -> Res
     }
 }
 
-/// Runs `pair` (with `args`) and calls `show` with the engine's answer as soon as it comes. The
-/// engine keeps running when it had to start the link itself, so this waits for it to end
-/// afterwards; Ctrl-C reaches both. Nothing shown means the engine failed, and this says why.
+/// Runs `pair` (with `args`) and calls `show` with each of the engine's answers as soon as it
+/// comes: one that says the tunnel is starting (`"waiting": "tunnel"`), then the code, and the code
+/// again once the tunnel's address arrives. The engine keeps running when it had to start the
+/// link itself, so this waits for it to end afterwards; Ctrl-C reaches both. Nothing shown means
+/// the engine failed, and this says why.
 pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String> {
     let (mut c, engine) = engine_command("pair", true)?;
     c.arg("pair").args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -591,11 +554,12 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
     let mut answered = None;
     if let Some(out) = child.stdout.take() {
         for line in BufReader::new(out).lines().map_while(Result::ok) {
-            if answered.is_none() {
-                if let Some(v) = last_json(&line) {
+            if let Some(v) = last_json(&line) {
+                // a failure is the engine's last word; it's said below
+                if v.get("ok").and_then(Value::as_bool) != Some(false) {
                     show(&v);
-                    answered = Some(v);
                 }
+                answered = Some(v);
             }
         }
     }

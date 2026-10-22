@@ -82,10 +82,17 @@ pub fn answer(value: &Value) -> String {
     Value::Object(m).to_string()
 }
 
+/// A line on stdout, wherever the log goes: an answer is for whoever reads this program's output.
+fn answer_line(line: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
+}
+
 /// A command's answer: `value` as JSON under --json, else `message` (when there is one).
 pub fn emit(value: Value, message: Option<&str>) {
     if json() {
-        log(&answer(&value));
+        answer_line(&answer(&value));
     } else if let Some(m) = message {
         log(m);
     }
@@ -100,7 +107,7 @@ pub fn failure(message: &str) -> String {
 /// stderr and exit `code`.
 pub fn fail(message: &str, code: i32) -> ! {
     if json() {
-        log(&failure(message));
+        answer_line(&failure(message));
         std::process::exit(1);
     }
     error(message);
@@ -130,10 +137,25 @@ pub fn pair_result(o: &PairOutput, typed: bool) -> Value {
     v
 }
 
-/// The pairing code as the terminal shows it, drawn from `pair --json`'s answer.
+/// What the terminal says while the tunnel starts, before there's a code worth scanning.
+pub const TUNNEL_STARTING: &str = "Starting the tunnel, so your phone can reach this computer from any network…";
+/// And once it has taken longer than it should.
+pub const TUNNEL_SLOW: &str = "The tunnel is still starting. The code shows here once it's up; `inyon logs` shows what the tunnel says.";
+/// Under a code that works on the same network or VPN while the tunnel starts.
+pub const TUNNEL_PENDING: &str = "The tunnel is still starting, so for now this code works on the same network or VPN. It's shown again once the tunnel is up.";
+
+/// The pairing code as the terminal shows it, drawn from one of `pair --json`'s answers.
 pub fn render_pair(v: &Value) -> String {
     let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let list = |k: &str| v.get(k).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+    let waiting = v.get("waiting").is_some();
+    let no_address = list("urls") == 0 && list("relays") == 0;
+    if waiting && v.get("qr").is_none() {
+        return format!("\n{TUNNEL_STARTING}\n");
+    }
+    if waiting && no_address {
+        return format!("\n{TUNNEL_SLOW}\n");
+    }
     let mut out = String::new();
     out.push_str("\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n\n");
     match crate::qr::render(&text("qr")) {
@@ -149,7 +171,9 @@ pub fn render_pair(v: &Value) -> String {
         out.push_str(&format!("\nCan't scan it? Choose \"Type a code\" in the app and enter\n\n    ID    {a}-{b}\n    Code  {c} {d}\n\n"));
     }
     out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
-    if list("urls") == 0 && list("relays") == 0 {
+    if waiting {
+        out.push_str(&format!("{TUNNEL_PENDING}\n\n"));
+    } else if no_address {
         out.push_str("No address yet: the phone will look this machine up once its tunnel is up.\n\n");
     }
     if v.get("service").and_then(Value::as_bool) == Some(false) {

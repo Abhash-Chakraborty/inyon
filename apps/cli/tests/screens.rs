@@ -58,6 +58,7 @@ fn status() -> Status {
         pairing_open: false,
         log: vec!["link.log: inyon 0.13.0 link service for k7m2p9x4 on port 4780".into(), "link.log: tunnel up at quiet-otter.trycloudflare.com".into()],
         note: None,
+        reach: None,
     }
 }
 

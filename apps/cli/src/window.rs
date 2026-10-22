@@ -39,10 +39,13 @@ pub fn summary(s: &Status) -> Vec<Line> {
         (false, false, _) => "Not set up yet: run inyon setup in a terminal",
     };
     let mut out = vec![Line { text: head.to_string(), headline: true, on: running }];
-    if let Some(a) = s.addresses.first().or(s.relays.first()) {
+    if let Some(a) = s.answering().first() {
         out.push(line(format!("Answers on {}", crate::http::host_of(a))));
-    } else if running {
+    } else if s.link_running() {
         out.push(line("No address yet: the tunnel is starting".to_string()));
+    }
+    if s.reach.is_some() {
+        out.push(line("Tunnel only: inyon doctor says how to allow the same Wi-Fi or VPN".to_string()));
     }
     if s.phones.is_empty() {
         out.push(line("No phones paired yet".to_string()));
@@ -58,6 +61,32 @@ pub fn summary(s: &Status) -> Vec<Line> {
         out.push(line("A pairing code is open".to_string()));
     }
     out
+}
+
+/// What the code card shows for one of the engine's answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeCard {
+    /// it couldn't make one
+    Failed(String),
+    /// no code worth scanning yet: the tunnel is starting
+    Starting(&'static str),
+    /// the QR code and the typed-in code, with a note while the tunnel still starts
+    Code { note: &'static str },
+}
+
+pub fn code_card(v: &serde_json::Value) -> CodeCard {
+    use inyon_engine::output::{TUNNEL_SLOW, TUNNEL_STARTING};
+    if let Some(e) = v.get("error").and_then(serde_json::Value::as_str) {
+        return CodeCard::Failed(e.to_string());
+    }
+    let waiting = v.get("waiting").is_some();
+    let none = |k: &str| v.get(k).and_then(serde_json::Value::as_array).is_none_or(|a| a.is_empty());
+    match (waiting, v.get("qr").is_some(), none("urls") && none("relays")) {
+        (true, false, _) => CodeCard::Starting(TUNNEL_STARTING),
+        (true, true, true) => CodeCard::Starting(TUNNEL_SLOW),
+        (true, true, false) => CodeCard::Code { note: "The tunnel is still starting: until it's up, this works on the same network or VPN." },
+        _ => CodeCard::Code { note: "It works once, within 10 minutes." },
+    }
 }
 
 /// The typed-in code as the app wants it: "ZS5C-3EPG" and "801 356".
@@ -85,8 +114,6 @@ pub fn trace(what: &str) {
 #[cfg(windows)]
 mod win {
     use std::cell::RefCell;
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
     use std::ptr::{null, null_mut};
 
     use qrcode::{Color, EcLevel, QrCode};
@@ -111,8 +138,8 @@ mod win {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, FindWindowW, GetClientRect, GetMessageW, GetSystemMetrics, LoadCursorW, PostMessageW, PostQuitMessage,
         RegisterClassW, SetForegroundWindow, SetWindowPos, ShowWindow, TranslateMessage, BS_OWNERDRAW, CW_USEDEFAULT, IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SWP_NOMOVE,
-        SWP_NOZORDER, SW_SHOW, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_MINIMIZEBOX, WS_OVERLAPPED,
-        WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+        SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_APP, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_ERASEBKGND, WM_PAINT, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_MINIMIZEBOX,
+        WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
     };
 
     use super::{trace, Line};
@@ -135,8 +162,6 @@ mod win {
     const BTN_RESTART: usize = 3;
     const BTN_QUIT: usize = 4;
     const LABELS: [&str; 4] = ["Pair a phone", "Show the log", "Restart", "Quit Inyon"];
-    /// CREATE_NO_WINDOW
-    const NO_WINDOW: u32 = 0x0800_0000;
 
     // silver and ink: text colours as COLORREF (0x00BBGGRR), shapes as ARGB
     const PAPER: COLORREF = 0x00EC_F0F1;
@@ -361,15 +386,29 @@ mod win {
         fit(hwnd, false);
         unsafe { InvalidateRect(hwnd, null(), 0) };
         let target = hwnd as usize;
+        let post = move |v: Value| {
+            let b = Box::into_raw(Box::new(v));
+            // SAFETY: the window takes the box with the message; if it's gone, it's ours to free
+            unsafe {
+                if PostMessageW(target as HWND, PAIRED, 0, b as LPARAM) == 0 {
+                    drop(Box::from_raw(b));
+                }
+            }
+        };
         std::thread::spawn(move || {
-            let mut answer = None;
-            let r = crate::engine::pair(&[], &mut |v| answer = Some(v.clone()));
-            let v = match (r, answer) {
-                (Ok(()), Some(v)) => v,
-                (Ok(()), None) => serde_json::json!({ "error": "The engine gave no code." }),
-                (Err(e), _) => serde_json::json!({ "error": e }),
-            };
-            unsafe { PostMessageW(target as HWND, PAIRED, 0, Box::into_raw(Box::new(v)) as LPARAM) };
+            // each answer is shown as it comes: the engine stays on when it started the link
+            // itself, so it may never return
+            let mut shown = false;
+            let r = crate::engine::pair(&[], &mut |v| {
+                shown = true;
+                post(v.clone());
+            });
+            match (r, shown) {
+                (Err(e), false) => post(serde_json::json!({ "error": e })),
+                (Ok(()), false) => post(serde_json::json!({ "error": "The engine gave no code." })),
+                (Err(e), true) => trace(&format!("the pairing's engine ended: {e}")),
+                (Ok(()), true) => {}
+            }
         });
     }
 
@@ -398,17 +437,11 @@ mod win {
             }
             BTN_QUIT => {
                 trace("quitting the engine");
-                // ended as a task, so Task Scheduler doesn't count it as a failure to start again from
-                if let Some(task) = service::task_name(role) {
-                    let _ = Command::new("schtasks.exe").args(["/End", "/TN", task]).creation_flags(NO_WINDOW).output();
-                }
-                if let Some(pid) = crate::update::read_running(role).and_then(|r| r.pid) {
-                    let proc = RealProc;
-                    let sys = Sys::new(&proc);
-                    if sys.proc.alive(pid) {
-                        sys.proc.signal(pid, crate::sys::Signal::Kill);
-                    }
-                }
+                unsafe { ShowWindow(hwnd, SW_HIDE) };
+                // the task, the engine and the tunnel it started, as Restart stops them
+                let proc = RealProc;
+                let sys = Sys::new(&proc);
+                service::quit(&sys, role, crate::update::read_running(role).and_then(|r| r.pid));
                 unsafe { DestroyWindow(hwnd) };
             }
             _ => {}
@@ -497,7 +530,14 @@ mod win {
             PAIRED => {
                 // SAFETY: as above, from the pairing thread
                 let v = unsafe { Box::from_raw(lparam as *mut Value) };
-                trace(&format!("pairing code {}", if v.get("error").is_some() { "failed" } else { "shown" }));
+                trace(&format!(
+                    "pairing code {}",
+                    match super::code_card(&v) {
+                        super::CodeCard::Failed(_) => "failed",
+                        super::CodeCard::Starting(_) => "waiting for the tunnel",
+                        super::CodeCard::Code { .. } => "shown",
+                    }
+                ));
                 STATE.with(|s| {
                     if let Some(st) = s.borrow_mut().as_mut() {
                         st.pairing = Some(*v);
@@ -703,42 +743,50 @@ mod win {
                 y = status_card.bottom;
                 if let (Some(v), Some(card)) = (&st.pairing, &code_card) {
                     let (cx, cy) = (card.left + px(CARD_PAD), card.top + px(CARD_PAD));
-                    if let Some(err) = v.get("error").and_then(Value::as_str) {
-                        let mut r = RECT { left: cx, top: cy, right: inner, bottom: cy + px(QR) };
-                        text(hdc, st.body, INK, &format!("Couldn't make a pairing code: {err}"), &mut r, DT_LEFT | DT_WORDBREAK);
-                    } else if let Some(code) = v.get("qr").and_then(Value::as_str).and_then(|t| QrCode::with_error_correction_level(t.as_bytes(), EcLevel::L).ok()) {
-                        // the code, crisp: whole pixels per module, with a quiet zone of two
-                        let n = code.width() as i32;
-                        let module = (px(QR) / (n + 4)).max(1);
-                        let ink = CreateSolidBrush(INK);
-                        let (ox, oy) = (cx + 2 * module, cy + (px(QR) - module * n) / 2);
-                        for (i, c) in code.to_colors().iter().enumerate() {
-                            if *c == Color::Dark {
-                                let (x, yy) = ((i as i32) % n, (i as i32) / n);
-                                let r = RECT { left: ox + x * module, top: oy + yy * module, right: ox + (x + 1) * module, bottom: oy + (yy + 1) * module };
-                                FillRect(hdc, &r, ink);
-                            }
+                    let view = super::code_card(v);
+                    let qr = v.get("qr").and_then(Value::as_str).and_then(|t| QrCode::with_error_correction_level(t.as_bytes(), EcLevel::L).ok());
+                    match (view, qr) {
+                        (super::CodeCard::Failed(err), _) => {
+                            let mut r = RECT { left: cx, top: cy, right: inner, bottom: cy + px(QR) };
+                            text(hdc, st.body, INK, &format!("Couldn't make a pairing code: {err}"), &mut r, DT_LEFT | DT_WORDBREAK);
                         }
-                        DeleteObject(ink as HGDIOBJ);
-                        // beside it: how to use it, then the typed-in code at the bottom
-                        let tx = cx + module * (n + 4) + px(16);
-                        let tw = inner - tx;
-                        let scan = "Scan this in the Inyon app, or with the phone's camera.";
-                        let h1 = height_of(hdc, st.body, scan, tw);
-                        let mut r = RECT { left: tx, top: cy, right: inner, bottom: cy + h1 };
-                        text(hdc, st.body, INK, scan, &mut r, DT_LEFT | DT_WORDBREAK);
-                        let once = "It works once, within 10 minutes.";
-                        let h2 = height_of(hdc, st.small, once, tw);
-                        let mut r = RECT { left: tx, top: cy + h1 + px(6), right: inner, bottom: cy + h1 + px(6) + h2 };
-                        text(hdc, st.small, MUTED, once, &mut r, DT_LEFT | DT_WORDBREAK);
-                        if let Some((id, pin)) = super::short_code(v) {
-                            let base = cy + px(QR) - px(LINE_H * 3);
-                            let mut r = RECT { left: tx, top: base, right: inner, bottom: base + px(LINE_H) };
-                            text(hdc, st.small, MUTED, "Or type this in the app", &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-                            let mut r = RECT { left: tx, top: base + px(LINE_H), right: inner, bottom: base + px(LINE_H * 2) };
-                            text(hdc, st.mono, INK, &format!("ID    {id}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
-                            let mut r = RECT { left: tx, top: base + px(LINE_H * 2), right: inner, bottom: base + px(LINE_H * 3) };
-                            text(hdc, st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                        (super::CodeCard::Starting(what), _) | (super::CodeCard::Code { note: what }, None) => {
+                            let mut r = RECT { left: cx, top: cy, right: inner, bottom: cy + px(QR) };
+                            text(hdc, st.body, MUTED, what, &mut r, DT_LEFT | DT_WORDBREAK);
+                        }
+                        (super::CodeCard::Code { note }, Some(code)) => {
+                            // the code, crisp: whole pixels per module, with a quiet zone of two
+                            let n = code.width() as i32;
+                            let module = (px(QR) / (n + 4)).max(1);
+                            let ink = CreateSolidBrush(INK);
+                            let (ox, oy) = (cx + 2 * module, cy + (px(QR) - module * n) / 2);
+                            for (i, c) in code.to_colors().iter().enumerate() {
+                                if *c == Color::Dark {
+                                    let (x, yy) = ((i as i32) % n, (i as i32) / n);
+                                    let r = RECT { left: ox + x * module, top: oy + yy * module, right: ox + (x + 1) * module, bottom: oy + (yy + 1) * module };
+                                    FillRect(hdc, &r, ink);
+                                }
+                            }
+                            DeleteObject(ink as HGDIOBJ);
+                            // beside it: how to use it, then the typed-in code at the bottom
+                            let tx = cx + module * (n + 4) + px(16);
+                            let tw = inner - tx;
+                            let scan = "Scan this in the Inyon app, or with the phone's camera.";
+                            let h1 = height_of(hdc, st.body, scan, tw);
+                            let mut r = RECT { left: tx, top: cy, right: inner, bottom: cy + h1 };
+                            text(hdc, st.body, INK, scan, &mut r, DT_LEFT | DT_WORDBREAK);
+                            let h2 = height_of(hdc, st.small, note, tw);
+                            let mut r = RECT { left: tx, top: cy + h1 + px(6), right: inner, bottom: cy + h1 + px(6) + h2 };
+                            text(hdc, st.small, MUTED, note, &mut r, DT_LEFT | DT_WORDBREAK);
+                            if let Some((id, pin)) = super::short_code(v) {
+                                let base = cy + px(QR) - px(LINE_H * 3);
+                                let mut r = RECT { left: tx, top: base, right: inner, bottom: base + px(LINE_H) };
+                                text(hdc, st.small, MUTED, "Or type this in the app", &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                                let mut r = RECT { left: tx, top: base + px(LINE_H), right: inner, bottom: base + px(LINE_H * 2) };
+                                text(hdc, st.mono, INK, &format!("ID    {id}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                                let mut r = RECT { left: tx, top: base + px(LINE_H * 2), right: inner, bottom: base + px(LINE_H * 3) };
+                                text(hdc, st.mono, INK, &format!("Code  {pin}"), &mut r, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+                            }
                         }
                     }
                 } else if st.pairing_busy {
@@ -778,6 +826,7 @@ mod tests {
             pairing_open: false,
             log: vec![],
             note: None,
+            reach: None,
         }
     }
 
@@ -795,6 +844,29 @@ mod tests {
         let lines = summary(&s);
         assert_eq!(lines[0], Line { text: "Set up, not running".into(), headline: true, on: false });
         assert_eq!(lines[1].text, "No phones paired yet");
+    }
+
+    #[test]
+    fn a_stopped_link_shows_no_address_and_tunnel_only_is_said() {
+        // state.json keeps the tunnel's address after the link stops; it answers nowhere then
+        let mut s = status();
+        s.jobs[0].running = false;
+        assert!(summary(&s).iter().all(|l| !l.text.starts_with("Answers on")), "{:?}", summary(&s));
+        let s = Status { reach: Some("only through the tunnel".into()), ..status() };
+        assert!(summary(&s).iter().any(|l| l.text.starts_with("Tunnel only")));
+    }
+
+    #[test]
+    fn the_code_card_waits_for_the_tunnel_and_then_shows_the_code() {
+        let starting = serde_json::json!({ "waiting": "tunnel", "service": false });
+        assert!(matches!(code_card(&starting), CodeCard::Starting(t) if t.starts_with("Starting the tunnel")));
+        let slow = serde_json::json!({ "waiting": "tunnel", "qr": "https://x/#pair", "urls": [], "relays": [] });
+        assert!(matches!(code_card(&slow), CodeCard::Starting(t) if t.contains("still starting")));
+        let lan = serde_json::json!({ "waiting": "tunnel", "qr": "https://x/#pair", "urls": ["ws://192.168.1.20:4780/link"], "relays": [] });
+        assert!(matches!(code_card(&lan), CodeCard::Code { note } if note.contains("same network")));
+        let up = serde_json::json!({ "qr": "https://x/#pair", "urls": ["wss://a.trycloudflare.com/link"], "relays": [] });
+        assert_eq!(code_card(&up), CodeCard::Code { note: "It works once, within 10 minutes." });
+        assert_eq!(code_card(&serde_json::json!({ "error": "no" })), CodeCard::Failed("no".into()));
     }
 
     #[test]

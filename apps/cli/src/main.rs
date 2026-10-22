@@ -308,13 +308,13 @@ fn main() {
         ),
         Some(Command::Service { action }) => commands::finish(
             match action {
-                ServiceAction::Install { role } => commands::service_install(&sys, role.as_deref()),
+                ServiceAction::Install { role } => commands::service_install_command(&sys, role.as_deref()),
                 ServiceAction::Uninstall { role } => commands::service_uninstall(&sys, role.as_deref()),
                 ServiceAction::Status => commands::service_status(&sys),
             },
             json,
         ),
-        Some(Command::Install { role }) => commands::finish(commands::service_install(&sys, role.as_deref()), json),
+        Some(Command::Install { role }) => commands::finish(commands::service_install_command(&sys, role.as_deref()), json),
         Some(Command::Logs { role, lines, follow }) => commands::finish(commands::logs(&sys, role.as_deref(), lines, follow), json),
         Some(Command::Doctor) => commands::finish(commands::doctor(&sys), json),
         Some(Command::Update { background }) => commands::finish(commands::update_command(&sys, background, json), json),

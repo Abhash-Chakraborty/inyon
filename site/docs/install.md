@@ -112,7 +112,7 @@ npm puts `inyon` on your `PATH` itself, so the installers' line isn't needed the
 
 | Path | What it holds |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared` once a tunnel is first used, and `inyon-engine` on a hub (or the copy described [below](#on-windows) on Windows) |
+| `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub (or the copy described [below](#on-windows) on Windows) |
 | `~/.inyon/node/` | This computer's identity key, paired phones, link settings, hub connection, logs (only you can read it) |
 | `~/.inyon/` | A hub's own records: password hash, machines, settings, `hub.env` |
 
@@ -144,10 +144,12 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 | Item | Does |
 |---|---|
 | Open Inyon | The Inyon window: whether it runs, where it answers, which phones are paired, with the same four actions as buttons |
-| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone) |
+| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone). It says "Starting the tunnel…" until the tunnel's address is in the code |
 | Show the log | Opens the log file |
 | Restart | Starts it again |
-| Quit Inyon | Stops it until you next sign in. `inyon service install` starts it sooner |
+| Quit Inyon | Stops it and its tunnel until you next sign in. `inyon service install` starts it sooner |
+
+From 0.20 **Quit Inyon** also stops `cloudflared`, as **Restart** does; in 0.19 it kept running after the link had stopped. The window shows a pairing code as soon as it's ready and draws it again when the tunnel's address arrives, lists where the computer answers only while the link runs, and says when phones reach it only through the tunnel. Before 0.20 its **Pair a phone** button could wait for good when the button had to start the link itself.
 
 From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens; when no phone is paired yet, it shows a pairing code without being asked. Nothing Inyon runs in the background opens a window either: from 0.17.3 every program the engine starts on Windows (psmux, PowerShell, the shell) runs hidden. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
 

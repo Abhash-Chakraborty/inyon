@@ -254,17 +254,19 @@ pub(crate) mod win {
                 });
             }
             QUIT => {
-                // ended as a task, Task Scheduler doesn't count it as a failure to start again from
-                if let Some(task) = service::task_name(role) {
-                    let _ = Command::new("schtasks.exe").args(["/End", "/TN", task]).creation_flags(NO_WINDOW).output();
-                }
+                let proc = RealProc;
+                let sys = Sys::new(&proc);
+                service::end_task(&sys, role);
                 if let Some(h) = engine {
                     unsafe {
                         if WaitForSingleObject(h, 1000) == WAIT_TIMEOUT {
                             TerminateProcess(h, 0);
+                            WaitForSingleObject(h, 2000);
                         }
                     }
                 }
+                // and the tunnel, as Restart does, once the engine can't start another
+                service::stop_tunnel(&sys, role);
                 unsafe { PostQuitMessage(0) };
             }
             _ => {}

@@ -465,3 +465,30 @@ fn restarting_a_hub_that_is_not_there_says_so_without_fetching_anything() {
     assert!(r.as_ref().is_err_and(|e| e.contains("no background service or process found")), "{r:?}");
     assert!(!home.dir.join(".inyon/bin/inyon-engine").exists());
 }
+
+#[test]
+#[cfg_attr(windows, ignore)]
+fn quit_on_windows_ends_the_task_then_the_engine_then_its_tunnel_as_restart_does() {
+    let _g = lock();
+    let home = setup(&["schtasks.exe", "powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, std::path::Path::new(BIN));
+    proc.set(4242, &["inyon-engine.exe", "link"]);
+    inyon_cli::service::quit(&sys, Role::Link, Some(4242));
+    let calls = home.calls();
+    assert_eq!(calls[0], v(&["schtasks.exe", "/End", "/TN", "Inyon link"]));
+    assert_eq!(proc.signals.borrow().as_slice(), &[(4242, "SIGKILL".to_string())]);
+    // cloudflared from ~/.inyon/bin, which kept answering for a link that had stopped
+    let tunnel = calls.iter().position(|c| c[0] == "powershell.exe" && c.last().unwrap().contains("Name='cloudflared.exe'")).expect("the tunnel is stopped");
+    assert!(calls[tunnel].last().unwrap().contains("Stop-Process"));
+    // Restart stops it the same way
+    home.clear_calls();
+    std::env::set_var("FAKE_PS_NO", "Get-ScheduledTask -TaskName 'Inyon link' -ErrorAction SilentlyContinue) -or");
+    restart_service(&sys, Role::Link, &v(&[BIN]));
+    std::env::remove_var("FAKE_PS_NO");
+    assert!(home.calls().iter().any(|c| c.last().unwrap().contains("Name='cloudflared.exe'")));
+    // the hub connection has no tunnel to stop
+    home.clear_calls();
+    inyon_cli::service::quit(&sys, Role::Node, None);
+    assert_eq!(home.calls(), vec![v(&["schtasks.exe", "/End", "/TN", "Inyon node"])]);
+}

@@ -31,6 +31,7 @@ Setup and `inyon update` list it there from 0.17.2. An install from 0.17.1 appea
 - **Five wrong typed codes** cancel the typed code. Scan the QR code instead, or run `inyon pair` again.
 - **The link isn't running.** `inyon service status` should show `link` running. If not, `inyon service install link`.
 - **The tunnel can't start.** Some networks block Cloudflare's tunnel. `inyon doctor` shows whether `cloudflared` is there; `inyon logs` shows its errors. On a VPN, the phone can connect on the VPN's address instead.
+- **The code had no address (0.19.0).** `inyon pair` could show a code before the tunnel was up, most often the first time, while it downloaded `cloudflared` (a download that could hang for minutes on an unreachable GitHub address). The phone then said it couldn't find the computer online. From 0.20 downloads give up on a dead address after a few seconds and try the next, setup fetches `cloudflared` ahead of time, and `inyon pair` waits for the tunnel. On 0.19.0, wait a minute and run `inyon pair` again.
 
 ## The phone can't reach a paired computer
 
@@ -39,7 +40,8 @@ The computer shows as connecting and never arrives.
 - Check the computer is on and the service is running (`inyon service status`).
 - Quick tunnels have no uptime promise. If Cloudflare is having a bad moment, a private network (Tailscale, NetBird, ZeroTier, WireGuard) is the steadier route; turn it on in `inyon setup`.
 - On a VPN, make sure the phone is connected to it too.
-- On Windows, the firewall blocks the LAN and the VPN unless the rule "Inyon link" is there. Run `inyon setup` again with *LAN* or *VPN* ticked and allow it when Windows asks, or see [The firewall on Windows](cli.md#the-firewall-on-windows).
+- On Windows, the firewall blocks the LAN and the VPN unless the rule "Inyon link" is there, and both are off by default, so the computer is reachable only through the tunnel. From 0.20 `inyon doctor` says so on its `reach` line. Run `inyon setup` again with *LAN* or *VPN* ticked and allow it when Windows asks, or see [The firewall on Windows](cli.md#the-firewall-on-windows).
+- On Windows in 0.19, **Quit Inyon** left the tunnel's `cloudflared` running, and `inyon status` still listed the tunnel's address after the link had stopped. From 0.20 Quit stops the tunnel too, and status lists addresses only while the link runs. On 0.19, **Restart** from the tray menu starts the link and a fresh tunnel.
 
 ## "Couldn't pair with the hub"
 
