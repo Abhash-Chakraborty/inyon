@@ -1,4 +1,4 @@
-// Builds inyon.abhashchakraborty.tech: the home page, the download page, the docs (site/docs/*.md)
+// Builds inyon.tech: the home page, the download page, the docs (site/docs/*.md)
 // and the changelog (from GitHub releases). Static files only; GitHub Pages serves them.
 //
 //   bun site/build.ts                 build into site/out, release details read from GitHub
@@ -22,7 +22,7 @@ const OUT = args.includes("--out") ? args[args.indexOf("--out") + 1] : join(SITE
 const MIRROR = args.includes("--mirror");
 const OFFLINE = args.includes("--offline");
 const REPO = "Abhash-Chakraborty/inyon";
-const ORIGIN = "https://inyon.abhashchakraborty.tech";
+const ORIGIN = "https://inyon.tech";
 const GITHUB = `https://github.com/${REPO}`;
 /** The 90-second video on YouTube. Once set, it takes the screenshot's place under the home hero. */
 const YOUTUBE_ID = "NKEb2Pn6ZvQ";

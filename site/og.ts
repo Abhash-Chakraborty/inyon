@@ -13,7 +13,7 @@ import { cards, ogKey, OG_SIZE, type Card } from "./build.ts";
 const SITE = import.meta.dir;
 const ROOT = join(SITE, "..");
 const OUT = join(SITE, "og");
-const HOST = "inyon.abhashchakraborty.tech";
+const HOST = "inyon.tech";
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const icon = readFileSync(join(ROOT, "apps/web/public/icon.svg"), "utf8");

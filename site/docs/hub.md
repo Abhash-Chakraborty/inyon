@@ -11,7 +11,7 @@ Hubs run on Linux and macOS. On Windows, run one in WSL.
 ## Install
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh -s -- --hub
+curl -fsSL https://inyon.tech/get.sh | sh -s -- --hub
 ```
 
 This installs `inyon`, runs `inyon setup --role hub`, and starts the hub as a user service that comes back after a reboot or a crash. It prints the address to open and a **setup code**.

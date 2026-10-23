@@ -31,9 +31,9 @@ mod ws;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The web app pairing QR codes open (INYON_WEB_URL points them at a copy you host).
-pub const WEB_URL: &str = "https://inyon.abhashchakraborty.tech/";
+pub const WEB_URL: &str = "https://inyon.tech/";
 /// The short address the one-line installers are typed with.
-pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
+pub const INSTALL_URL: &str = "https://inyon.tech";
 
 /// What the engine's commands are, as `inyon-engine --help` lists them.
 pub const USAGE: &str = "inyon-engine: the program behind the inyon command, which runs it for these.

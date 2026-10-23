@@ -1103,7 +1103,7 @@ pub const APP_KEY: &str = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Unin
 pub fn app_entry_script(exe: &str, version: &str, size_kb: u64) -> String {
     let dir = Path::new(exe).parent().map(path_str).unwrap_or_default();
     format!(
-        "$k = {k}\nNew-Item -Path $k -Force | Out-Null\n$p = [ordered]@{{ DisplayName = 'Inyon'; DisplayVersion = {v}; Publisher = 'Abhash Chakraborty'; DisplayIcon = {exe}; InstallLocation = {dir}; UninstallString = {u}; QuietUninstallString = {q}; URLInfoAbout = 'https://inyon.abhashchakraborty.tech'; HelpLink = 'https://inyon.abhashchakraborty.tech/docs/troubleshooting/'; InstallDate = (Get-Date -Format yyyyMMdd) }}\nforeach ($n in $p.Keys) {{ Set-ItemProperty -Path $k -Name $n -Value $p[$n] }}\nforeach ($n in 'NoModify', 'NoRepair') {{ Set-ItemProperty -Path $k -Name $n -Value 1 -Type DWord }}\nSet-ItemProperty -Path $k -Name EstimatedSize -Value {size} -Type DWord",
+        "$k = {k}\nNew-Item -Path $k -Force | Out-Null\n$p = [ordered]@{{ DisplayName = 'Inyon'; DisplayVersion = {v}; Publisher = 'Abhash Chakraborty'; DisplayIcon = {exe}; InstallLocation = {dir}; UninstallString = {u}; QuietUninstallString = {q}; URLInfoAbout = 'https://inyon.tech'; HelpLink = 'https://inyon.tech/docs/troubleshooting/'; InstallDate = (Get-Date -Format yyyyMMdd) }}\nforeach ($n in $p.Keys) {{ Set-ItemProperty -Path $k -Name $n -Value $p[$n] }}\nforeach ($n in 'NoModify', 'NoRepair') {{ Set-ItemProperty -Path $k -Name $n -Value 1 -Type DWord }}\nSet-ItemProperty -Path $k -Name EstimatedSize -Value {size} -Type DWord",
         k = psq(APP_KEY),
         v = psq(version),
         exe = psq(exe),

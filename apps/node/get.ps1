@@ -1,5 +1,5 @@
 # Gets inyon for this PC and sets it up for the Inyon phone app. In PowerShell:
-#   irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
+#   irm https://inyon.tech/get.ps1 | iex
 # It downloads the inyon command into %USERPROFILE%\.inyon\bin from the website's copy of the
 # newest release, checks it against the release's signed checksums, and runs its setup, which
 # starts it in the background when you sign in and shows a code to scan with the app. From 0.19
@@ -12,7 +12,7 @@ $listSha256 = ''
 $ProgressPreference = 'SilentlyContinue' # Invoke-WebRequest is very slow with the progress bar on PS 5.1
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-$base = if ($env:INYON_DOWNLOAD) { $env:INYON_DOWNLOAD } elseif ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://inyon.abhashchakraborty.tech/download' }
+$base = if ($env:INYON_DOWNLOAD) { $env:INYON_DOWNLOAD } elseif ($env:TETHER_DOWNLOAD) { $env:TETHER_DOWNLOAD } else { 'https://inyon.tech/download' }
 $dir = Join-Path $env:USERPROFILE '.inyon\bin'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 $exe = Join-Path $dir 'inyon.exe'
@@ -55,8 +55,9 @@ $lines = Get-Content $sums
 # the list is signed with minisign, with this key
 $key = 'RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6'
 # a mock release for tests signs with a key of its own; it only counts with downloads pointed
-# somewhere other than the website or GitHub (-match ignores case)
-$official = $base -match '^https?://inyon\.abhashchakraborty\.tech(/|$)|^https://github\.com/Abhash-Chakraborty/inyon/releases/'
+# somewhere other than the website (inyon.tech, or its earlier address, which redirects there) or
+# GitHub (-match ignores case)
+$official = $base -match '^https?://inyon\.(abhashchakraborty\.)?tech(/|$)|^https://github\.com/Abhash-Chakraborty/inyon/releases/'
 if (($env:INYON_DOWNLOAD -or $env:TETHER_DOWNLOAD) -and $env:INYON_SIGNING_KEY -and -not $official) { $key = $env:INYON_SIGNING_KEY }
 if ($listSha256 -and (Sum-Of $sums) -eq $listSha256) {
   # the list the website checked against the release key when it published this copy

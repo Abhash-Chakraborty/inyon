@@ -29,7 +29,7 @@ body:
       multiple: true
       options:
         - Android app
-        - Web app (inyon.abhashchakraborty.tech)
+        - Web app (from a hub, or a copy you host)
         - Hub in a browser
         - inyon on a computer
     validations:
