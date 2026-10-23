@@ -23,7 +23,7 @@ Use it for laptops, desktops and any machine you can install a program on. [Pair
 
 ## Hub
 
-A hub is one Bun process on a machine that stays on, such as a home server, a VPS or a desktop that doesn't sleep. It serves the full web app to any browser and reaches other machines:
+A hub is one process on a machine that stays on, such as a home server, a VPS or a desktop that doesn't sleep. It serves the full web app to any browser and reaches other machines:
 
 - its own machine, directly;
 - laptops and desktops that join it by running `inyon` (they connect out, so they need no open ports);

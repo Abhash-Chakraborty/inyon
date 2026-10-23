@@ -65,7 +65,7 @@ interface Release {
 const HOME = {
   title: "Inyon: your coding agents, from your phone",
   description:
-    "Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode and GitHub Copilot running in tmux on your own computers, from your phone or any browser.",
+    "Watch, answer and steer Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot and Antigravity CLI running in tmux on your own computers, from your phone or any browser.",
 };
 const DOWNLOAD_DESCRIPTION =
   "Download Inyon for Android, Linux, macOS and Windows. Every file is checked against the release's SHA256SUMS.";
@@ -460,9 +460,12 @@ async function releases(): Promise<GhRelease[]> {
 }
 
 /** A release's notes as HTML, headings demoted to sit under its version. */
+/** Links in notes written before the move to inyon.tech point here directly instead of through the old address's redirect. */
+export const oldSiteLinks = (md: string) => md.replace(/https?:\/\/inyon\.abhashchakraborty\.tech(?=[/?#)\s"'>]|$)/g, ORIGIN);
+
 function notes(r: GhRelease): string {
   // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead
-  const md = (r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
+  const md = oldSiteLinks(r.body || "").replace(/^#+\s.*\n/, "").replace(/^\*\*Full Changelog\*\*:.*$/m, "");
   // without their ids the headings' # links would point nowhere, so they go too
   return render(md)
     .html.replace(/<h[23] id="[^"]*"><a class="anchor"[^>]*>#<\/a>/g, "<h4>")

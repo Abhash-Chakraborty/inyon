@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stampInstaller } from "../apps/node/installers.ts";
-import { checkReleaseFile, mb, parseSums } from "./build.ts";
+import { checkReleaseFile, mb, oldSiteLinks, parseSums } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
 test("sizes read as a browser shows them", () => {
@@ -57,4 +57,17 @@ test("the installers served at the root carry the sha256 of the list the site ch
   expect(() => stampInstaller("get.sh", sh, list)).toThrow("expected one empty LIST_SHA256 line, found 0");
   expect(() => stampInstaller("get.sh", "LIST_SHA256=\nLIST_SHA256=\n", list)).toThrow("found 2");
   expect(() => stampInstaller("get.ps1", node("get.ps1"), "not a sha")).toThrow("isn't a sha256");
+});
+
+// release notes from before 23 Oct 2026 link to inyon.abhashchakraborty.tech; the changelog shows inyon.tech
+test("old release notes link to the site's new address", () => {
+  expect(oldSiteLinks("see [Install](https://inyon.abhashchakraborty.tech/docs/install/#x) or https://inyon.abhashchakraborty.tech")).toBe(
+    "see [Install](https://inyon.tech/docs/install/#x) or https://inyon.tech",
+  );
+  expect(oldSiteLinks("`curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh`")).toBe("`curl -fsSL https://inyon.tech/get.sh | sh`");
+  expect(oldSiteLinks("https://inyon.abhashchakraborty.tech?ref=release and https://inyon.abhashchakraborty.tech#install")).toBe(
+    "https://inyon.tech?ref=release and https://inyon.tech#install",
+  );
+  // a host that only starts the same stays as it is
+  expect(oldSiteLinks("https://inyon.abhashchakraborty.tech.example.com/")).toBe("https://inyon.abhashchakraborty.tech.example.com/");
 });

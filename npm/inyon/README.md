@@ -9,12 +9,13 @@ npm install -g @abhash-chakraborty/inyon
 inyon setup
 ```
 
-`inyon setup` downloads the engine, checks its signature, installs the background service and
-prints a QR code to pair the [Android app](https://inyon.tech/download/).
+`inyon setup` copies `inyon` into `~/.inyon/bin`, installs the background service and prints a
+QR code to pair the [Android app](https://inyon.tech/download/). Only a hub also downloads the
+engine, checked against the release's signed `SHA256SUMS`.
 
 ## What this package installs
 
-Only the `inyon` command, about 2 MB. npm picks the build for your system from
+Only the `inyon` command, 4 to 13 MB depending on the system. npm picks the build for your system from
 `@abhash-chakraborty/inyon-<platform>-<arch>` (Linux, macOS and Windows, x64 and arm64). Nothing
 runs at install time, so `--ignore-scripts` works. Every version is published from the release
 workflow on GitHub with provenance, and the programs are the ones in that release's signed

@@ -38,7 +38,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Prompts and spinners | The pane's screen, parsed into options |
 | Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex and Antigravity: their own status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
-| Typing and answering | `tmux send-keys`, exactly as if you typed it |
+| Typing and answering | tmux, exactly as if you typed it: keys with `send-keys`, and from 0.20 text through a tmux paste buffer, so it never shows on a command line |
 
 The agents never know Inyon is there. Close it and nothing breaks.
 
