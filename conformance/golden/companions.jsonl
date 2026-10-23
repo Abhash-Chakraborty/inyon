@@ -131,7 +131,7 @@
 {"body":{"code":"<cli-companion-code>","expiresAt":"<time>","ok":true,"v":1},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"anon","method":"POST","path":"/api/local/companion-code?token=<local-token>"},"status":200}
 {"step":"the browser removes it: its socket closes and its token stops working"}
 {"body":{"ok":true},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"method":"DELETE","path":"/api/companions/<companion-id>"},"status":200}
-{"body":{"error":"Not signed in"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"bearer","headers":{"x-inyon-contract":"1"},"method":"GET","path":"/api/overview"},"status":401}
+{"body":{"error":"Not signed in","reason":"revoked"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"bearer","headers":{"x-inyon-contract":"1"},"method":"GET","path":"/api/overview"},"status":401}
 {"body":"Not signed in","status":401,"upgrade":"/ws?contract=1","ws":"removed companion"}
 {"body":[],"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"method":"GET","path":"/api/companions"},"status":200}
 {"body":{"error":"Unknown companion app"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"method":"DELETE","path":"/api/companions/<companion-id>"},"status":404}

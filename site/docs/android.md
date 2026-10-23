@@ -20,7 +20,7 @@ Tap **Add a computer** (or **+** on the Computers tab). There are four ways in, 
 
 ### Scan its code
 
-Run the installer, or `inyon pair` if it's already installed, on the computer. Tap **Scan the code** and point the camera at the QR code. The app asks *Pair with &lt;name&gt;?*; tap yes. The camera is on only while the scanner is open, and nothing is recorded.
+Run the installer, or `inyon pair` if it's already installed, on the computer. Tap **Scan the code** and point the camera at the QR code. The app asks *Pair with &lt;name&gt;?* and shows the computer's ID, which `inyon pair` prints under the code from 0.20.2; tap **Pair** if they match. Nothing pairs until you tap, and a pasted link gets the same question. The camera is on only while the scanner is open, and nothing is recorded.
 
 If you scan with the phone's own camera app instead, the code opens this website, which offers to copy the pairing link for the app.
 
@@ -34,9 +34,13 @@ A code works once, for 10 minutes, and five wrong tries cancel it.
 
 If you run a [hub](hub.md), sign in to its web app and choose **Open on your phone** (on the overview, under Machines, or in Settings). In the app tap **Connect to a hub**, then scan the code, or type the hub's address and the ID and code it shows.
 
+From 0.20.2 a scanned or pasted code shows the hub's address, the name it gives itself, and its **Hub ID** (plus its **Certificate** when the hub serves HTTPS itself), and pairs only when you tap **Pair**. The hub shows the same ID under its code, so check they match: anyone can put any name in a code. A hub that answers with a different ID than its code said isn't kept.
+
 The hub's machines then appear next to the phone's own computers. The phone talks to the hub with a token of its own. A hub that's out of reach shows its machines as connecting until it answers, even when the app opens that way (off your VPN, say): the list stays as it was the last time the hub answered, and before it ever has, the Computers page says it's connecting to the hub. One that forgets the phone drops out with a message. **Settings → Hubs** lists them, each with **Forget**.
 
-The phone has to reach the hub's address: over your VPN, your LAN, or an HTTPS address. Plain `http://` addresses work from the app (0.13.3 and later).
+The phone has to reach the hub's address: over your VPN or an HTTPS address. From 0.20.2 the app uses plain `http://` only for a hub on this phone, on Tailscale or NetBird (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or at a name that points only there (a NetBird name's own IPv6 address, beside its `100.x` one, counts), such as `http://homebox` when that name is the machine on NetBird. It looks the name up first and says why when it won't. A LAN address like `http://192.168.1.5:4777` is refused, since anyone on that Wi-Fi could read the phone's token; give the hub HTTPS there (setup's *LAN* choice does) or use its VPN address.
+
+The phone forgets a hub only when that hub says it no longer knows the phone. A Wi-Fi sign-in page or a proxy that answers in its place doesn't unpair it.
 
 ### Connect over SSH
 
@@ -67,7 +71,7 @@ Removing the server from the phone (from 0.17) takes the phone key back out of i
 
 You can also connect *from a paired computer*: the phone asks that computer to SSH onward, using its own `~/.ssh/config`, keys and aliases.
 
-Passwords and keys stay in Android's encrypted storage, and the app's data is excluded from backups. The phone has to reach the server itself, so use the same Wi-Fi or a VPN. A server on Tailscale SSH lets the phone in with no key at all.
+Passwords and keys stay in Android's encrypted storage, and the app's data is excluded from backups and from moving to a new phone. The phone has to reach the server itself, so use the same Wi-Fi or a VPN. A server on Tailscale SSH lets the phone in with no key at all.
 
 ## Staying connected
 

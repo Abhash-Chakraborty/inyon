@@ -110,6 +110,7 @@ test('showing a code takes a sign-in from the last ten minutes, and an http(s) o
     ['u', base],
     ['c', `${shown.id}:${shown.code}`],
     ['n', 'Test hub'],
+    ['h', expect.stringMatching(/^[0-9a-f]{16}$/)],
   ])
   expect((await post('/api/phones/pair', { origin: 'file:///app' }, { cookie: true })).status).toBe(400)
   expect((await post('/api/phones/pair', { origin: base })).status).toBe(401)
@@ -236,7 +237,11 @@ test('removing a phone closes its connection and ends its token', async () => {
 
   expect((await del(`/api/phones/${me.id}`, { cookie: true })).status).toBe(200)
   expect(await live.closed).toBe(4001)
-  expect((await get('/api/hosts', { token: phone.token })).status).toBe(401)
+  const forgotten = await post('/api/phones/ticket', {}, { token: phone.token })
+  expect(forgotten.status).toBe(401)
+  // the answer the phone forgets the hub on, and the only one: a browser without a cookie gets no reason
+  expect(await json(forgotten)).toEqual({ error: 'Not signed in', reason: 'revoked' })
+  expect(await json(await get('/api/hosts'))).toEqual({ error: 'Not signed in' })
   expect(((await json(await get('/api/phones', { cookie: true }))) as PairedPhone[]).map((p) => p.name)).not.toContain('Old phone')
   expect((await del(`/api/phones/${me.id}`, { cookie: true })).status).toBe(404)
 })

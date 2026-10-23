@@ -1,7 +1,7 @@
 import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
-import { isHubHost, splitHostId, type PairedHub } from './hubs.ts'
+import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -24,8 +24,16 @@ function hubTarget(url: URL): { hub: PairedHub; url: string } | undefined {
  * sends it only over HTTP/2 and fails it on a hub's HTTP/1.1 before it leaves the phone.
  */
 async function toHub(req: Request, { hub, url }: { hub: PairedHub; url: string }): Promise<Response> {
+  // the token goes only where plain http is safe (hubs.ts), and only if this device still has it
+  try {
+    await checkPlain(hub.url)
+  } catch (e) {
+    throw new ApiError(0, (e as Error).message)
+  }
+  const token = await hubToken(hub.id)
+  if (!token) throw new ApiError(401, `${hub.name} no longer knows this phone. Pair it again.`)
   const headers = new Headers(req.headers)
-  headers.set('authorization', `Bearer ${hub.token}`)
+  headers.set('authorization', `Bearer ${token}`)
   const body = req.body ? await req.arrayBuffer() : undefined
   try {
     return await fetch(url, { method: req.method, headers, body, credentials: 'omit', signal: req.signal })

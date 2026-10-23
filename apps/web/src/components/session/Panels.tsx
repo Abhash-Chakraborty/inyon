@@ -18,6 +18,8 @@ import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { confirmAction } from '../Confirm.tsx'
 import { appOrigins, previewRefusal } from '../../lib/pages.ts'
+import { useFramesIsolated } from '../../lib/native.ts'
+import { FrameRefused } from '../FrameRefused.tsx'
 
 // ---------- changes ----------
 
@@ -309,6 +311,7 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
   const [phone, setPhone] = useState(false)
   // this frame runs with same-origin rights, so it never shows Inyon's own address
   const refused = url ? previewRefusal(url, appOrigins()) : null
+  const isolated = useFramesIsolated()
   const [n, setN] = useState(0)
   const go = (u: string) => {
     const v = /^https?:\/\//.test(u) ? u : u ? `http://${u}` : ''
@@ -340,7 +343,11 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
         </div>
       ) : url ? (
         <div className="flex min-h-0 flex-1 justify-center bg-sunken p-2.5 pt-0">
-          <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-xl border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
+          {isolated ? (
+            <iframe key={n} src={url} title="Preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" className={clsx('h-full rounded-xl border border-line bg-white', phone ? 'w-[390px] max-w-full' : 'w-full')} />
+          ) : (
+            <FrameRefused src={url} className="h-full w-full rounded-xl border border-line" />
+          )}
         </div>
       ) : (
         <div className="p-3">

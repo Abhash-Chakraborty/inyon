@@ -4,6 +4,7 @@ import { newShortCode, parseShortCode } from '@inyon/link'
 import { VERSION, type PairedPhone, type PhoneClaim, type PhoneClaimResult, type PhonePairCode } from '@inyon/protocol'
 import { HttpError } from './hosts/registry.ts'
 import { kv } from './platform/store.ts'
+import { servedFingerprint } from './tls.ts'
 
 /**
  * Phones paired with this hub. The hub's web app, signed in, shows a one-time code (a QR, or an ID
@@ -70,7 +71,9 @@ export function newPairCode(origin: unknown, now = Date.now()): PhonePairCode {
   const { id, code } = newShortCode()
   const expiresAt = now + CODE_TTL
   codes.set(id, { code, expiresAt, tries: 0 })
-  const link = 'inyon://hub?' + new URLSearchParams({ u: hub, c: `${id}:${code}`, n: hubName() })
+  // the hub's id and certificate go along, and the phone shows them next to the name for comparing
+  const fp = servedFingerprint()
+  const link = 'inyon://hub?' + new URLSearchParams({ u: hub, c: `${id}:${code}`, n: hubName(), h: hubId(), ...(fp ? { f: fp } : {}) })
   return { id, code, link, expiresAt }
 }
 

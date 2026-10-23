@@ -16,6 +16,8 @@ import androidx.activity.result.ActivityResult
 import androidx.core.content.ContextCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
 import androidx.core.view.inputmethod.InputContentInfoCompat
+import androidx.webkit.WebViewFeature
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
@@ -25,6 +27,7 @@ import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
 import com.getcapacitor.annotation.PermissionCallback
+import java.net.InetAddress
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
@@ -65,10 +68,11 @@ class InyonDevicePlugin : Plugin() {
     /** The in-app path a tapped notification carries, consumed so a recreated activity doesn't open it twice. */
     private fun openedHref(intent: Intent): String? {
         val href = intent.getStringExtra(Notifications.EXTRA_HREF) ?: return null
+        val nonce = intent.getStringExtra(HrefGate.EXTRA_NONCE)
         intent.removeExtra(Notifications.EXTRA_HREF)
-        // the activity is exported, so any app could send this: only in-app paths get through
-        if (!href.startsWith("/") || href.startsWith("//") || href.startsWith("/\\")) return null
-        return href
+        intent.removeExtra(HrefGate.EXTRA_NONCE)
+        // the activity is exported, so any app could send this: only Inyon's own notifications get through
+        return HrefGate.accept(intent.action, href, nonce, HrefGate.nonce(context))
     }
 
     override fun handleOnStop() {
@@ -87,6 +91,41 @@ class InyonDevicePlugin : Plugin() {
         // the WebView goes with the activity, so there is nothing left to keep alive
         if (KeepAliveService.running) context.stopService(Intent(context, KeepAliveService::class.java))
         pool.shutdown()
+    }
+
+    // ---- names and frames ----------------------------------------------------------------------
+
+    /**
+     * The addresses a name points to, for the web app's plain-http check: a hub at http://<name>
+     * is used only when every address is this phone, Tailscale or NetBird.
+     */
+    @PluginMethod
+    fun lookUp(call: PluginCall) {
+        val host = call.getString("host")?.trim().orEmpty()
+        if (host.isEmpty() || host.length > 253) {
+            call.reject("No name to look up", "BAD_HOST")
+            return
+        }
+        pool.execute {
+            val addresses = try {
+                InetAddress.getAllByName(host).mapNotNull { it.hostAddress?.substringBefore('%') }
+            } catch (_: Exception) {
+                emptyList()
+            }
+            call.resolve(JSObject().put("addresses", JSArray(addresses)))
+        }
+    }
+
+    /**
+     * Whether Capacitor's bridge is reachable only from the app's own top frame. It is when the
+     * WebView has WebMessageListener (every WebView from 2020 on); an older one makes Capacitor fall
+     * back to a JavaScript interface every frame can call, and then the web app shows no other
+     * site's page in a frame (agent pages and previews open in the browser instead).
+     */
+    @PluginMethod
+    fun framesIsolated(call: PluginCall) {
+        val isolated = WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER) && !bridge.config.isUsingLegacyBridge
+        call.resolve(JSObject().put("isolated", isolated))
     }
 
     // ---- files and text from the keyboard and the clipboard --------------------------------

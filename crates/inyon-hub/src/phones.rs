@@ -110,6 +110,18 @@ fn hub_origin(origin: Option<&Value>) -> HubResult<String> {
 }
 
 /// A fresh code for the web app to show.
+/// What the QR holds: inyon://hub?u=<origin>&c=<id:code>&n=<name>&h=<hub id>, and f=<sha256> when
+/// the hub serves HTTPS itself. The phone shows the id and the certificate next to the name, which
+/// anyone can write into a link.
+pub fn pair_link(hub: &str, code: &str, fingerprint: Option<&str>) -> String {
+    let mut q = url::form_urlencoded::Serializer::new(String::new());
+    q.append_pair("u", hub).append_pair("c", code).append_pair("n", &hub_name()).append_pair("h", &hub_id());
+    if let Some(fp) = fingerprint {
+        q.append_pair("f", fp);
+    }
+    format!("inyon://hub?{}", q.finish())
+}
+
 pub fn new_pair_code(origin: Option<&Value>, now: u64) -> HubResult<Value> {
     let hub = hub_origin(origin)?;
     let c = new_short_code().map_err(|e| http(500, e.to_string()))?;
@@ -118,9 +130,8 @@ pub fn new_pair_code(origin: Option<&Value>, now: u64) -> HubResult<Value> {
         s.codes.retain(|_, c| c.expires_at > now);
         s.codes.insert(c.id.clone(), Code { code: c.code.clone(), expires_at, tries: 0 });
     });
-    let query =
-        url::form_urlencoded::Serializer::new(String::new()).append_pair("u", &hub).append_pair("c", &format!("{}:{}", c.id, c.code)).append_pair("n", &hub_name()).finish();
-    Ok(json!({ "id": c.id, "code": c.code, "link": format!("inyon://hub?{query}"), "expiresAt": expires_at }))
+    let link = pair_link(&hub, &format!("{}:{}", c.id, c.code), crate::tls::served_sha256().as_deref());
+    Ok(json!({ "id": c.id, "code": c.code, "link": link, "expiresAt": expires_at }))
 }
 
 const EXPIRED: &str = "That code has expired. Show a new one on the hub.";

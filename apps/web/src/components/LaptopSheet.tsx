@@ -12,7 +12,7 @@ import { Button, Field, Segmented, Sheet, inputClass } from './ui/primitives.tsx
 import { isHosted } from '../lib/base.ts'
 import { keepData } from '../lib/install.ts'
 import { deviceName } from '../lib/deviceName.ts'
-import { claimHub, hubOriginOf, looksLikeHubLink, normalizeHubCode, parseHubLink } from '../lib/hubs.ts'
+import { claimHub, groupsOf, hubOriginOf, normalizeHubCode, parseHubLink, plainHost, plainRefusal } from '../lib/hubs.ts'
 import { Logo } from './AppShell.tsx'
 
 const PAIR_COMMAND = 'inyon pair'
@@ -22,15 +22,28 @@ export const SETUP_COMMANDS = {
   windows: { label: 'Windows', where: 'In PowerShell, run:', command: `irm ${INSTALL_URL}/get.ps1 | iex` },
 } as const
 // tether:// is how a laptop from before the rename to Inyon prints its code
-/** The computer's name in a pairing link, if it says. */
-const pairName = (link: string) => {
+/** The computer's name and id (its public key) in a pairing link, as far as it says. */
+const pairInfo = (link: string) => {
   try {
-    return new URL(link).searchParams.get('n') || 'this computer'
+    // inyon://pair?m=… as printed, https://…/#pair?m=… in the QR code
+    const u = new URL(link.trim())
+    const q = u.searchParams.has('m') ? u.searchParams : new URLSearchParams(u.hash.split('?')[1] ?? '')
+    return { name: q.get('n') || 'this computer', id: q.get('m') ?? '' }
   } catch {
-    return 'this computer'
+    return { name: 'this computer', id: '' }
   }
 }
-const looksLikeLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim()) || looksLikeHubLink(s)
+const looksLikeComputerLink = (s: string) => /^((?:inyon|tether):\/\/pair\?|https:\/\/\S+[?&]m=)/.test(s.trim())
+const looksLikeLink = (s: string) => looksLikeComputerLink(s) || !!parseHubLink(s)
+/** Why the app won't pair with a hub over plain http at this address, when the address alone says so. */
+const plainProblem = (url: string) => {
+  try {
+    const host = new URL(url).hostname
+    return url.startsWith('http:') && plainHost(host) === 'refused' ? plainRefusal(host) : undefined
+  } catch {
+    return undefined
+  }
+}
 /** inyon prints a one-time ID like K7Q4-MX2T (Crockford base32: no I, L, O or U) */
 const ID_CHARS = /[^0-9A-HJKMNP-TV-Z]/g
 const cleanId = (s: string) => s.toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/U/g, 'V').replace(ID_CHARS, '').slice(0, 8)
@@ -46,6 +59,8 @@ const splitCode = (s: string) => /^\s*([0-9a-z]{4})[\s-]*([0-9a-z]{4})[\s:,-]+(\
 export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { open: boolean; onClose: () => void; edit?: HostConfig; link?: string; onServer?: () => void }) {
   const [name, setName] = useState('')
   const [link, setLink] = useState('')
+  // a link scanned, pasted or opened, shown with what it says before anything is paired
+  const [pending, setPending] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [os, setOs] = useState<keyof typeof SETUP_COMMANDS>('unix')
   const [how, setHow] = useState<'type' | 'paste'>('type')
@@ -70,23 +85,30 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
   useOpened(open, edit?.id ?? given, () => {
     setName(edit?.name ?? '')
     setLink(given ?? '')
+    setPending(given && looksLikeLink(given) ? given.trim() : undefined)
     setHow(given ? 'paste' : 'type')
     setShortId('')
     setCode('')
-    setHub(!!given && looksLikeHubLink(given))
+    setHub(!!given && !!parseHubLink(given))
     setHubAddress('')
     setHubCode('')
   })
   const scanner = plugin('InyonDevice')?.scanQr
-  // opened from a scanned code: the computer's (or hub's) name, to confirm with one tap
-  const scannedHub = given && link === given ? parseHubLink(given) : undefined
-  const scanned = given && link === given && !scannedHub ? pairName(given) : undefined
+  // a link waiting for a yes: where it really goes (the hub's address, the computer's id) next to
+  // the name it gives itself, which anyone can write into a link
+  const pendingHub = pending ? parseHubLink(pending) : undefined
+  const pendingComputer = pending && !pendingHub ? pairInfo(pending) : undefined
+  const refusal = pendingHub ? plainProblem(pendingHub.url) : undefined
+  const show = (text: string) => {
+    if (looksLikeLink(text)) setPending(text.trim())
+    else toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
+  }
 
-  const pairHub = async (url: string, code: string) => {
+  const pairHub = async (url: string, code: string, hubId?: string) => {
     setBusy(true)
     try {
       // this phone's name as the hub will list it ("Nothing A142")
-      const h = await claimHub(url, code, await deviceName(isHosted() ? 'Browser' : 'Phone'))
+      const h = await claimHub(url, code, await deviceName(isHosted() ? 'Browser' : 'Phone'), { hubId })
       toast({ title: `Paired with ${h.name}`, body: 'Its machines show here now. Forget it any time in Settings.', tone: 'success' })
       onClose()
     } catch (err) {
@@ -98,7 +120,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const pair = async (text: string) => {
     const asHub = parseHubLink(text)
-    if (asHub) return pairHub(asHub.url, asHub.code)
+    if (asHub) return pairHub(asHub.url, asHub.code, asHub.hubId)
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
     try {
@@ -123,8 +145,9 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
       // the scanner buzzes on a hit or a wrong code, unless haptics are off in Settings
       const r = await scanner!({ haptics: !!useStore.getState().settings.haptics })
       if (r?.text) {
+        // nothing pairs until the code's details are confirmed with a tap
         setLink(r.text)
-        await pair(r.text)
+        show(r.text)
       } else if (r?.type) {
         setHow('type')
         setFocusBox('id')
@@ -144,8 +167,10 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
 
   const paste = async () => {
     const text = await readClipboard().catch(() => '')
-    if (text.trim()) setLink(text.trim())
-    else toast({ title: 'Nothing to paste', body: 'Copy the link inyon printed, then tap Paste.', tone: 'error' })
+    if (text.trim()) {
+      setLink(text.trim())
+      if (looksLikeLink(text)) setPending(text.trim())
+    } else toast({ title: 'Nothing to paste', body: 'Copy the link inyon printed, then tap Paste.', tone: 'error' })
   }
 
   /** A whole "ID code" pasted into either box fills both; a finished code pairs straight away. */
@@ -207,11 +232,11 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     <Sheet
       open={open}
       onClose={onClose}
-      title={hub || scannedHub ? 'Connect to a hub' : 'Add a computer'}
+      title={pendingHub || (hub && !pending) ? 'Connect to a hub' : 'Add a computer'}
       footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={scannedHub ? false : hub ? !hubOriginOf(hubAddress) || !normalizeHubCode(hubCode) : how === 'type' ? !typed : !looksLikeLink(link)}>
+          <Button variant="primary" type="submit" form="laptop-form" loading={busy} disabled={pending ? !!refusal : hub ? !hubOriginOf(hubAddress) || !normalizeHubCode(hubCode) : how === 'type' ? !typed : !looksLikeLink(link)}>
             {busy ? 'Connecting…' : 'Pair'}
           </Button>
         </div>
@@ -219,16 +244,57 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     >
       <form
         id="laptop-form"
-        onSubmit={(e) => (e.preventDefault(), scannedHub ? pairHub(scannedHub.url, scannedHub.code) : hub ? pairHub(hubOriginOf(hubAddress)!, normalizeHubCode(hubCode)!) : pair(how === 'type' ? typed ?? '' : link))}
+        onSubmit={(e) => (e.preventDefault(), pending ? pair(pending) : hub ? pairHub(hubOriginOf(hubAddress)!, normalizeHubCode(hubCode)!) : pair(how === 'type' ? typed ?? '' : link))}
         className="space-y-4"
       >
-        {scannedHub ? (
-          <p className="text-[14px] leading-relaxed text-fg-2">
-            Pair with the hub <span className="font-medium text-fg">{scannedHub.name ?? scannedHub.url.replace(/^https?:\/\//, '')}</span>? {isHosted() ? 'This browser' : 'The phone'} then reaches it and its machines itself.
-            <button type="button" onClick={() => setLink('')} className="mt-2 block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+        {pendingHub ? (
+          <div className="space-y-3">
+            <p className="text-[14px] leading-relaxed text-fg-2">
+              Pair with the hub at <span className="break-all font-medium text-fg">{pendingHub.url.replace(/^https?:\/\//, '')}</span>? {isHosted() ? 'This browser' : 'The phone'} then reaches it and its machines itself.
+            </p>
+            {pendingHub.name && pendingHub.name !== new URL(pendingHub.url).hostname && (
+              <p className="text-[13px] leading-relaxed text-fg-3">It calls itself “{pendingHub.name}”. Anyone can put any name in a code, so go by the address.</p>
+            )}
+            {pendingHub.hubId ? (
+              <div className="rounded-2xl border border-line bg-sunken px-4 py-3">
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 font-mono text-[13px]">
+                  <span className="text-fg-3">Hub ID</span>
+                  <span className="tabular text-right tracking-[0.04em] text-fg">{groupsOf(pendingHub.hubId)}</span>
+                  {pendingHub.tlsFingerprint && (
+                    <>
+                      <span className="text-fg-3">Certificate</span>
+                      <span className="tabular text-right tracking-[0.04em] text-fg">{groupsOf(pendingHub.tlsFingerprint)}</span>
+                    </>
+                  )}
+                </div>
+                <p className="mt-2 text-[12px] leading-relaxed text-fg-3">The hub shows the same under its code. Pair only if they match.</p>
+              </div>
+            ) : (
+              <p className="text-[12.5px] leading-relaxed text-fg-3">This code doesn't carry the hub's ID (hubs before 0.20.2 leave it out). Pair only with a code you made yourself.</p>
+            )}
+            {refusal && <p className="text-[12.5px] leading-relaxed text-danger">{refusal}</p>}
+            <button type="button" onClick={() => (setPending(undefined), setLink(''))} className="block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
               Use a different code
             </button>
-          </p>
+          </div>
+        ) : pendingComputer ? (
+          <div className="space-y-3">
+            <p className="text-[14px] leading-relaxed text-fg-2">
+              Pair with <span className="font-medium text-fg">{pendingComputer.name}</span>? {isHosted() ? 'This browser' : 'The phone'} connects to it directly from any network, end to end encrypted.
+            </p>
+            {pendingComputer.id && (
+              <div className="rounded-2xl border border-line bg-sunken px-4 py-3">
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 font-mono text-[13px]">
+                  <span className="text-fg-3">Computer ID</span>
+                  <span className="tabular text-right tracking-[0.04em] text-fg">{groupsOf(pendingComputer.id, 3)}</span>
+                </div>
+                <p className="mt-2 text-[12px] leading-relaxed text-fg-3">{PAIR_COMMAND} shows the same under its code. Pair only if they match.</p>
+              </div>
+            )}
+            <button type="button" onClick={() => (setPending(undefined), setLink(''), setHow('type'))} className="block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
+              Use a different code
+            </button>
+          </div>
         ) : hub ? (
           <div key="hub" className="animate-fade-in space-y-4">
             <p className="text-[13px] leading-relaxed text-fg-2">
@@ -249,13 +315,6 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
               Add a computer instead
             </button>
           </div>
-        ) : scanned ? (
-          <p className="text-[14px] leading-relaxed text-fg-2">
-            Pair with <span className="font-medium text-fg">{scanned}</span>? {isHosted() ? 'This browser' : 'The phone'} connects to it directly from any network, end to end encrypted.
-            <button type="button" onClick={() => (setLink(''), setHow('type'))} className="mt-2 block py-1.5 text-[12.5px] text-fg-3 underline-offset-2 hover:text-fg hover:underline">
-              Use a different code
-            </button>
-          </p>
         ) : (
         <>
         <p className="text-[13px] leading-relaxed text-fg-2">
@@ -334,7 +393,7 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
                 ref={linkBox}
                 className={clsx(inputClass, 'min-w-0 flex-1 font-mono text-[12.5px]')}
                 value={link}
-                onChange={(e) => setLink(e.target.value)}
+                onChange={(e) => (setLink(e.target.value), looksLikeLink(e.target.value) && setPending(e.target.value.trim()))}
                 placeholder="inyon://pair?m=…"
                 aria-label="Pairing link"
                 autoCapitalize="none"

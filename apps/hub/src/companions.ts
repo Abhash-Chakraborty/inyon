@@ -7,6 +7,7 @@ import { watchers } from './claude/watcher.ts'
 import { sendOnce } from './claude/send-receipts.ts'
 import { body, json, paneParam } from './core.ts'
 import { hubAbout, hubId } from './phones.ts'
+import { servedFingerprint } from './tls.ts'
 
 /**
  * Companion apps (Legato and the like), contract version 1. A companion pairs with a short code
@@ -16,6 +17,7 @@ import { hubAbout, hubId } from './phones.ts'
  * rest of the API answers 403. The token is kept as its hash only, as a phone's is.
  */
 
+/** 1.1 only adds fields (the certificate's SHA-256 in the code and the claim), so it is still 1 on the wire */
 export const CONTRACTS = [1]
 export const CONTRACT = 1
 export const SCOPES: CompanionScope[] = ['overview', 'chat', 'answer', 'send']
@@ -72,7 +74,8 @@ function newCode() {
 /** A fresh code for the web app or the inyon command to show. */
 export function newCompanionCode(now = Date.now()): CompanionPairCode {
   current = { code: newCode(), expiresAt: now + COMPANION_CODE_TTL }
-  return { ...current }
+  const fp = servedFingerprint()
+  return { ...current, ...(fp ? { tlsFingerprint: fp } : {}) }
 }
 
 const failures = new Map<string, { n: number; reset: number }>()
@@ -107,7 +110,9 @@ export function claimCompanion(ip: string, b: { code?: unknown; name?: unknown; 
   const app = typeof b.app === 'string' && b.app.trim() ? b.app.trim().slice(0, 60) : undefined
   companions.push({ id: crypto.randomBytes(6).toString('hex'), name, ...(app ? { app } : {}), tokenHash: sha256(token), scopes: [...SCOPES], contractVersion: CONTRACT, pairedAt: now, lastSeen: now })
   save()
-  const result: CompanionClaimResult = { token, hubId: hubId(), scopes: [...SCOPES], contractVersion: CONTRACT }
+  // a companion that pins the certificate gets it here too (contract 1.1)
+  const fp = servedFingerprint()
+  const result: CompanionClaimResult = { token, hubId: hubId(), scopes: [...SCOPES], contractVersion: CONTRACT, ...(fp ? { tlsFingerprint: fp } : {}) }
   return json(result)
 }
 

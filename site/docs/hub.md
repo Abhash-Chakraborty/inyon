@@ -64,7 +64,7 @@ INYON_ALLOW_HTTP=1
 
 `INYON_ALLOW_HTTP=1` allows plain `http://` on that address, which is fine on a VPN that already encrypts. Then open `http://<machine>:4777` from any device on the network. On a ZeroTier or WireGuard address, which machines can't tell apart from a LAN, setup makes a certificate as it does for [the LAN](#the-lan) (from 0.20), and the hub answers on `https://`. Names on Tailscale (`.ts.net`), NetBird and common home networks (`.local`, `.lan`, `.internal`, `.home.arpa`) are accepted automatically.
 
-From 0.20 a machine sends its token over plain `http://` only to a Tailscale or NetBird address (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or to a name that points only there, such as the machine's `.ts.net` name. On ZeroTier or WireGuard, whose addresses look like any LAN to the machine, setup gives the hub HTTPS, and the **Add a machine** command carries its certificate's SHA-256. See [Adding machines](machines.md#plain-http).
+From 0.20 a machine sends its token over plain `http://` only to a Tailscale or NetBird address (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or to a name that points only there, such as the machine's `.ts.net` name. From 0.20.2 a NetBird name that also has an IPv6 address passes: NetBird picks that address at random per network, in a unique-local range (`fd…`), so it's accepted next to the name's `100.x` address, though never alone. On ZeroTier or WireGuard, whose addresses look like any LAN to the machine, setup gives the hub HTTPS, and the **Add a machine** command carries its certificate's SHA-256. See [Adding machines](machines.md#plain-http).
 
 ### HTTPS
 
@@ -98,13 +98,14 @@ Once you're signed in, **Open on your phone** shows a QR code and a typed code. 
 
 - Only someone who signed in within the last 10 minutes can show a code, so an old tab asks for the password first.
 - A code works once, for 10 minutes; five wrong tries cancel it.
+- From 0.20.2 the code's panel also shows the **Hub ID**, and the **Certificate** when the hub serves HTTPS itself. The app shows the same before it pairs; check they match.
 - The phone gets a token of its own. **Settings → Paired devices** lists paired phones; **Forget** cuts one off at once.
 
-The phone has to reach the hub's address the same way a browser does.
+The phone has to reach the hub's address the same way a browser does. Over plain http that means a Tailscale or NetBird address, or a name that points to one; see [Connect to a hub](android.md#connect-to-a-hub).
 
 ## Pair a companion app
 
-From 0.20 an app like Legato can pair too, with **Settings → Paired devices → Pair a companion app** or `inyon hub companion-code` on the hub's computer. It types a six-character code that works once, for 5 minutes, and gets four permissions: the overview, chats, answering a question and sending text. See [Companion apps](companions.md).
+From 0.20 an app like Legato can pair too, with **Settings → Paired devices → Pair a companion app** or `inyon hub companion-code` on the hub's computer. It types a six-character code that works once, for 5 minutes, and gets four permissions: the overview, chats, answering a question and sending text. From 0.20.2 **Copy pairing link** puts the address, the code and the certificate's fingerprint in one string, for an app that takes a pasted link. See [Companion apps](companions.md).
 
 ## Adding machines
 

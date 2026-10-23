@@ -37,7 +37,7 @@ class FakeWS {
 ;(FakeWS as any).OPEN = 1
 ;(FakeWS as any).CLOSED = 3
 
-const hub: PairedHub = { id: 'h1', name: 'studio', url: 'http://box:4777', token: 'tok', pairedAt: 1 }
+const hub: PairedHub = { id: 'h1', name: 'studio', url: 'http://box:4777', pairedAt: 1 }
 const realWS = globalThis.WebSocket
 const realFetch = globalThis.fetch
 let heard: Tagged[] = []
@@ -45,7 +45,7 @@ let conn: InstanceType<typeof HubConn>
 beforeEach(() => {
   FakeWS.all = []
   heard = []
-  localStorage.setItem('inyon.hubs.v1', JSON.stringify([hub]))
+  localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ ...hub, token: 'tok' }]))
   globalThis.WebSocket = FakeWS as any
   globalThis.fetch = mock(async () => new Response(JSON.stringify({ ticket: 't' }))) as any
   conn = new HubConn(hub, (m) => heard.push(m), () => true, () => [])

@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
 import type { ScreenState, ServerMsg } from '@inyon/protocol'
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { claimCompanion, COMPANION_CODE_TTL, companionFor, companionFrame, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, SCOPES, sendReason, textRefusal } from './companions.ts'
 import { pasteText } from './tmux/tmux.ts'
 import { hubId } from './phones.ts'
@@ -27,6 +30,8 @@ test('a claim works once, in any case, and its token is kept as a hash', async (
   expect(r.status).toBe(200)
   expect(r.body.token).toHaveLength(43)
   expect(r.body).toMatchObject({ hubId: hubId(), scopes: ['overview', 'chat', 'answer', 'send'], contractVersion: 1 })
+  // plain http: no certificate to pin
+  expect(r.body.tlsFingerprint).toBeUndefined()
   const c = companionFor(asCompanion(r.body.token), T0 + 1000)!
   expect([c.name, c.app]).toEqual(['Legato on abhash-laptop', 'Legato for Windows'])
   expect(c.tokenHash).not.toBe(r.body.token)
@@ -181,4 +186,21 @@ test('removing a companion closes its connections only', async () => {
   expect(revokeCompanion(ca.id)).toBe(true)
   expect(closed).toEqual(['a 4001 Companion removed'])
   expect(revokeCompanion(cb.id)).toBe(true)
+})
+
+test('contract 1.1: a hub serving HTTPS itself sends its certificate with the code and the claim', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'inyon-tls-'))
+  expect(Bun.spawnSync(['sh', '-c', 'openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout k.pem -out c.pem -days 2 -subj /CN=hub'], { cwd: dir }).exitCode).toBe(0)
+  const sha = createHash('sha256').update(Buffer.from(readFileSync(join(dir, 'c.pem'), 'utf8').replace(/-----[^-]+-----|\s/g, ''), 'base64')).digest('hex')
+  Object.assign(process.env, { TLS_CERT: join(dir, 'c.pem'), TLS_KEY: join(dir, 'k.pem') })
+  try {
+    const c = newCompanionCode(T0)
+    expect(c.tlsFingerprint).toBe(sha)
+    const r = await read(claimCompanion('10.1.0.9', { code: c.code, name: 'Legato' }, T0))
+    expect(r.body).toMatchObject({ contractVersion: 1, tlsFingerprint: sha })
+  } finally {
+    delete process.env.TLS_CERT
+    delete process.env.TLS_KEY
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

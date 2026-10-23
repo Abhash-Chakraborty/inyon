@@ -83,7 +83,7 @@ export function watchPush() {
   if (!pushSupported()) return
   // a tapped notification, with the app already open: go to its session
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data?.t !== 'open' || typeof e.data.href !== 'string' || !e.data.href.startsWith('/')) return
+    if (e.data?.t !== 'open' || typeof e.data.href !== 'string' || !/^\/(?![/\\])/.test(e.data.href)) return
     window.history.pushState({}, '', appHref(e.data.href))
     window.dispatchEvent(new PopStateEvent('popstate'))
   })

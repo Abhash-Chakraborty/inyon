@@ -38,6 +38,13 @@ fn a_code_names_the_hub_and_only_an_http_origin_makes_one() {
     assert_eq!(q["u"], "https://hub.example:4777");
     assert_eq!(q["c"], format!("{}:{}", s(&c, "id"), s(&c, "code")));
     assert!(!q["n"].is_empty());
+    // the phone shows the hub's id before it pairs; plain http has no certificate to show
+    assert_eq!(q["h"], hub_id());
+    assert!(!q.contains_key("f"));
+    let fp = "ab".repeat(32);
+    let with: std::collections::HashMap<String, String> =
+        url::Url::parse(&pair_link("https://hub.example", "K7Q4MX2T:493812", Some(&fp))).unwrap().query_pairs().into_owned().collect();
+    assert_eq!((with["h"].as_str(), with["f"].as_str()), (hub_id().as_str(), fp.as_str()));
     for bad in [json!("ftp://hub.example"), json!("javascript:alert(1)"), json!("https://hub.example/app"), json!("hub.example"), json!("")] {
         assert_eq!(new_pair_code(Some(&bad), T0).unwrap_err().status, Some(400), "{bad}");
     }

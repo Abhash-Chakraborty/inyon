@@ -84,20 +84,50 @@ export const plainRefusal = (host: string) =>
   `Refusing to send the token over plain http to ${host}: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway.`
 
 /**
- * Looks up a hub's name and checks every address it has (a MagicDNS name pointing into the tailnet
- * passes). The addresses it was judged by, to connect to and nothing else; the refusal when it
- * points somewhere it mustn't; null when it couldn't be looked up, worth trying again.
+ * Looks up a hub's name for a connection made right after, to the addresses it returns and no
+ * others. Only the ones plain http may go to are kept, so a name that also has a LAN address or
+ * NetBird's own IPv6 still works: the connection never goes there. The refusal when no address is
+ * allowed; null when it couldn't be looked up, worth trying again.
  */
 export async function checkName(host: string): Promise<{ addrs: string[] } | { why: string } | null> {
-  let addrs: { address: string }[]
+  const all = await lookUp(host)
+  if (!all) return null
+  const kept = all.filter(plainHttpIp)
+  return kept.length ? { addrs: kept } : { why: refusedName(host, all[0]!) }
+}
+
+/** For something that looks the name up again itself: the refusal, '' when it may go, null when it didn't resolve. */
+export async function checkNameNow(host: string): Promise<string | null> {
+  const all = await lookUp(host)
+  if (!all) return null
+  const bad = notPlain(all)
+  return bad ? refusedName(host, bad) : ''
+}
+
+async function lookUp(host: string) {
   try {
-    addrs = await dns.lookup(host, { all: true })
+    const all = (await dns.lookup(host, { all: true })).map((a) => a.address)
+    return all.length ? all : null
   } catch {
     return null
   }
-  if (!addrs.length) return null
-  const bad = addrs.find((a) => !plainHttpIp(a.address))
-  return bad ? { why: `${plainRefusal(host).replace(/\.$/, '')} (${host} is ${bad.address})` } : { addrs: addrs.map((a) => a.address) }
+}
+
+const refusedName = (host: string, bad: string) => `${plainRefusal(host).replace(/\.$/, '')} (${host} is ${bad})`
+
+/**
+ * The first of a name's addresses plain http mustn't go to, when something looks the name up again
+ * and may use any of them. Every address must be allowed, with one exception: NetBird gives each
+ * peer an IPv6 address too, in a unique-local /64 picked at random per network (fd91:8fa2:…), so
+ * no fixed range names it. A unique-local IPv6 (fc00::/7) passes when the name also has an allowed
+ * IPv4 (100.64/10 or loopback): that is the VPN's own overlay next to its 100.x address. A LAN or
+ * public address anywhere still refuses, and so does a unique-local address alone. Same rule as
+ * `judge` in crates/inyon-engine/src/hub.rs.
+ */
+export function notPlain(addresses: string[]): string | undefined {
+  const vpnV4 = addresses.some((a) => isIPv4(a) && plainHttpIp(a))
+  const overlay = (a: string) => isIPv6(a) && /^f[cd]/i.test(expandIPv6(a.toLowerCase()))
+  return addresses.find((a) => !plainHttpIp(a) && !(vpnV4 && overlay(a)))
 }
 
 export async function hubCommand(args: string[]) {

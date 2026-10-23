@@ -78,27 +78,51 @@ pub fn plain_refusal(host: &str) -> String {
     )
 }
 
-/// Looks up a hub's name and checks that every address it has is one plain http may go to (a
-/// MagicDNS name that points into the tailnet is). Err(None) when the name couldn't be looked up,
-/// which is worth trying again; Err(Some(why)) when it points somewhere it mustn't.
+/// Looks up a hub's name for a connection made right after, to the addresses it returns and no
+/// others. Only the ones plain http may go to are kept, so a name that also has an address on the
+/// LAN or NetBird's own IPv6 still works: the connection never goes there. Err(None) when the name
+/// couldn't be looked up, which is worth trying again; Err(Some(why)) when no address is allowed.
 pub async fn check_name(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, Option<String>> {
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port)).await.map_err(|_| None)?.collect();
-    judge(host, addrs.iter().map(|a| a.ip()).collect())?;
-    Ok(addrs)
+    keep_allowed(host, tokio::net::lookup_host((host, port)).await.map_err(|_| None)?.collect())
 }
 
-/// check_name, for a program with no async threads (`inyon join`).
+fn keep_allowed(host: &str, addrs: Vec<std::net::SocketAddr>) -> Result<Vec<std::net::SocketAddr>, Option<String>> {
+    let first = addrs.first().ok_or(None)?.ip();
+    let kept: Vec<std::net::SocketAddr> = addrs.into_iter().filter(|a| plain_http_ip(a.ip())).collect();
+    if kept.is_empty() {
+        return Err(Some(refused_name(host, first)));
+    }
+    Ok(kept)
+}
+
+/// For a program that looks the name up again itself (`inyon join`), with no async threads.
 pub fn check_name_now(host: &str, port: u16) -> Result<(), Option<String>> {
     use std::net::ToSocketAddrs;
-    judge(host, (host, port).to_socket_addrs().map_err(|_| None)?.map(|a| a.ip()).collect())
+    judge(host, &(host, port).to_socket_addrs().map_err(|_| None)?.map(|a| a.ip()).collect::<Vec<_>>())
 }
 
-fn judge(host: &str, addrs: Vec<IpAddr>) -> Result<(), Option<String>> {
-    match addrs.iter().find(|ip| !plain_http_ip(**ip)) {
-        _ if addrs.is_empty() => Err(None),
-        Some(bad) => Err(Some(format!("{} ({host} is {bad})", plain_refusal(host).trim_end_matches('.')))),
+/// Whether plain http may go to a name that something else looks up again (the HTTP client here,
+/// the WebView in the app), so any of its addresses may be the one used. Every address must be
+/// allowed, with one exception: NetBird gives each peer an IPv6 address too, in a unique-local
+/// /64 picked at random per network (fd91:8fa2:…), so no fixed range names it. A unique-local
+/// IPv6 (fc00::/7) passes when the name also has an allowed IPv4 (100.64/10 or loopback): that is
+/// the VPN's own overlay next to its 100.x address. A LAN or public address anywhere still
+/// refuses, and so does a unique-local address alone. The app's rule (apps/web/src/lib/hubs.ts)
+/// is the same.
+fn judge(host: &str, addrs: &[IpAddr]) -> Result<(), Option<String>> {
+    if addrs.is_empty() {
+        return Err(None);
+    }
+    let vpn_v4 = addrs.iter().any(|ip| ip.is_ipv4() && plain_http_ip(*ip));
+    let overlay = |ip: &IpAddr| matches!(ip, IpAddr::V6(v6) if v6.segments()[0] & 0xfe00 == 0xfc00);
+    match addrs.iter().find(|ip| !plain_http_ip(**ip) && !(vpn_v4 && overlay(ip))) {
+        Some(bad) => Err(Some(refused_name(host, *bad))),
         None => Ok(()),
     }
+}
+
+fn refused_name(host: &str, bad: IpAddr) -> String {
+    format!("{} ({host} is {bad})", plain_refusal(host).trim_end_matches('.'))
 }
 
 #[cfg(test)]
@@ -141,7 +165,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_name_passes_only_when_every_address_it_has_is_allowed() {
+    async fn a_name_is_connected_to_only_at_its_allowed_addresses() {
         // the addresses it was judged by, to connect to and nothing else
         assert!(check_name("localhost", 4777).await.unwrap().iter().all(|a| a.ip().is_loopback() && a.port() == 4777));
         // 192.168.1.2 written as a name
@@ -151,6 +175,29 @@ mod tests {
         assert_eq!(check_name("nothing.invalid", 4777).await, Err(None));
         assert_eq!(check_name_now("localhost", 4777), Ok(()));
         assert!(check_name_now("192.168.1.2", 4777).unwrap_err().is_some());
+    }
+
+    #[test]
+    fn a_netbird_name_with_its_ipv6_passes_and_a_lan_address_beside_it_does_not() {
+        let ips = |l: &[&str]| l.iter().map(|s| s.parse().unwrap()).collect::<Vec<IpAddr>>();
+        let ok = |l: &[&str]| judge("hub", &ips(l)).is_ok();
+        // NetBird with IPv6 on: its 100.x address and a random unique-local one
+        assert!(ok(&["100.97.188.112", "fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402"]));
+        assert!(ok(&["fd7a:115c:a1e0::5"]), "Tailscale's IPv6 alone");
+        assert!(ok(&["100.97.188.112"]) && ok(&["127.0.0.1", "::1"]));
+        assert!(!ok(&["100.97.188.112", "192.168.1.5"]), "a LAN address beside it");
+        assert!(!ok(&["100.97.188.112", "2001:db8::1"]), "a public IPv6 beside it");
+        assert!(!ok(&["fd91:8fa2:3e51:2fcb::1"]), "a unique-local address alone is any LAN's");
+        assert!(!ok(&["fd7a:115c:a1e0::5", "fd91:8fa2:3e51:2fcb::1"]), "the exception needs a 100.x address");
+        let why = judge("hub", &ips(&["100.97.188.112", "192.168.1.5"])).unwrap_err().unwrap();
+        assert!(why.contains("hub is 192.168.1.5"), "{why}");
+        assert_eq!(judge("hub", &[]), Err(None));
+        // a connection made to the looked-up addresses goes only to the allowed ones
+        let at = |l: &[&str]| l.iter().map(|s| std::net::SocketAddr::new(s.parse().unwrap(), 4777)).collect::<Vec<_>>();
+        assert_eq!(keep_allowed("hub", at(&["192.168.1.5", "100.97.188.112", "fd91::1"])), Ok(at(&["100.97.188.112"])));
+        let none = keep_allowed("hub", at(&["192.168.1.5", "fd91::1"])).unwrap_err().unwrap();
+        assert!(none.contains("hub is 192.168.1.5"), "{none}");
+        assert_eq!(keep_allowed("hub", vec![]), Err(None));
     }
 
     #[test]

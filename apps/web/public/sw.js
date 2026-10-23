@@ -87,9 +87,22 @@ self.addEventListener('push', (e) => {
   )
 })
 
+// A push says which screen to open, as a path in the app. Anyone holding the push key could send
+// one, so only a path on this app's own address is opened: "//elsewhere.example" or a full URL to
+// another site opens the app's first screen instead.
+const appPath = (href) => {
+  try {
+    const u = new URL(typeof href === 'string' && href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\') ? BASE.replace(/\/$/, '') + href : 'x:', self.registration.scope)
+    if (u.origin === location.origin && u.pathname.startsWith(BASE)) return u
+  } catch {}
+  return new URL(BASE, self.registration.scope)
+}
+
 self.addEventListener('notificationclick', (e) => {
   e.notification.close()
-  const href = (e.notification.data && e.notification.data.href) || '/'
+  const target = appPath(e.notification.data && e.notification.data.href)
+  // the open app takes the path within its base, as the push gave it
+  const href = '/' + target.pathname.slice(BASE.length) + target.search + target.hash
   e.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
@@ -99,7 +112,7 @@ self.addEventListener('notificationclick', (e) => {
         win.postMessage({ t: 'open', href })
         return
       }
-      await self.clients.openWindow(BASE.replace(/\/$/, '') + href)
+      await self.clients.openWindow(target.href)
     })(),
   )
 })

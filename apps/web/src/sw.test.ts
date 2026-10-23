@@ -7,7 +7,7 @@ const source = readFileSync(path.join(import.meta.dir, '../public/sw.js'), 'utf8
 const ORIGIN = 'https://hub.example'
 
 /** The worker running in a stand-in browser: a cache store, and its install and activate events. */
-function worker(assets: string[], store = new Map<string, Map<string, true>>()) {
+function worker(assets: string[], store = new Map<string, Map<string, true>>(), windows: { url: string; focus(): Promise<void>; postMessage(m: unknown): void }[] = []) {
   const fetched: string[] = []
   const cache = (name: string) => {
     if (!store.has(name)) store.set(name, new Map())
@@ -30,8 +30,9 @@ function worker(assets: string[], store = new Map<string, Map<string, true>>()) 
     registration: { scope: ORIGIN + '/' },
     addEventListener: (ev: string, fn: (e: any) => void) => (handlers[ev] = fn),
     skipWaiting() {},
-    clients: { claim: async () => {} },
+    clients: { claim: async () => {}, matchAll: async () => windows, openWindow: async (url: string) => void opened.push(url) },
   }
+  const opened: string[] = []
   // the network, which these tests never reach
   const fetch = async () => new Response('')
   new Function('self', 'caches', 'location', 'navigator', 'fetch', withPrecacheList(source, assets))(self, caches, new URL(ORIGIN + '/'), { userAgent: 'test' }, fetch)
@@ -47,7 +48,13 @@ function worker(assets: string[], store = new Map<string, Map<string, true>>()) 
     handlers.fetch!({ request: { url: new URL(url, ORIGIN).href, mode, method }, respondWith: () => (answered = true) })
     return answered
   }
-  return { fetched, fire, cached, store, fetchEvent }
+  /** A tap on a notification whose push said `href`. */
+  const click = async (href: unknown) => {
+    let pending: Promise<unknown> = Promise.resolve()
+    handlers.notificationclick!({ notification: { close() {}, data: { href } }, waitUntil: (p: Promise<unknown>) => (pending = p) })
+    await pending
+  }
+  return { fetched, fire, cached, store, fetchEvent, click, opened }
 }
 
 test('installing caches the shell and every file of the build', async () => {
@@ -86,4 +93,22 @@ test('pages under /v/, the API and the WebSocket always go to the network', () =
   // the app's own screens, /pages among them, still fall back to the cached shell
   expect(w.fetchEvent('/pages/local/ghostex')).toBe(true)
   expect(w.fetchEvent('/assets/index-abc.js', 'no-cors')).toBe(true)
+})
+
+test("a tapped notification opens only a path on the app's own address", async () => {
+  const w = worker([])
+  await w.click('/m/box/p/3?x=1')
+  // a push from anyone holding the key: a scheme-relative address, another site, a backslash trick
+  for (const href of ['//evil.example/signin', 'https://evil.example/', '/\\evil.example', 'javascript:alert(1)', 42, undefined]) await w.click(href)
+  expect(w.opened).toEqual([`${ORIGIN}/m/box/p/3?x=1`, ...Array(6).fill(`${ORIGIN}/`)])
+})
+
+test('an open app is told the path, and nothing from another site', async () => {
+  const told: unknown[] = []
+  const win = { url: `${ORIGIN}/sessions`, focus: async () => {}, postMessage: (m: unknown) => void told.push(m) }
+  const w = worker([], undefined, [win])
+  await w.click('/m/box/p/3')
+  await w.click('//evil.example/x')
+  expect(told).toEqual([{ t: 'open', href: '/m/box/p/3' }, { t: 'open', href: '/' }])
+  expect(w.opened).toEqual([])
 })

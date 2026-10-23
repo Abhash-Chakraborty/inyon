@@ -346,8 +346,11 @@ pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::Comp
             if req.method != Method::GET && req.method != Method::HEAD && !phone && !same_origin(&req) {
                 return json(403, &serde_json::json!({ "error": "Cross-site request refused" }));
             }
+            // a bearer this hub doesn't know was forgotten here (or never was this hub's): the phone may
+            // forget the hub on this answer, and only on this one, not on any 401 a proxy gives
             if !o.open && !is_authed(&req) {
-                return cors(origin.as_deref(), phone, json(401, &serde_json::json!({ "error": "Not signed in" })));
+                let body = if has_bearer(&req) { serde_json::json!({ "error": "Not signed in", "reason": "revoked" }) } else { serde_json::json!({ "error": "Not signed in" }) };
+                return cors(origin.as_deref(), phone, json(401, &body));
             }
             let res = answer(f(req).await);
             cors(origin.as_deref(), phone, res)

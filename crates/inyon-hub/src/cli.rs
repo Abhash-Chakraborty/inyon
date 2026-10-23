@@ -150,6 +150,10 @@ fn show_companion_code() -> i32 {
     if let Some(e) = body.get("expiresAt") {
         out.insert("expiresAt".into(), e.clone());
     }
+    // contract 1.1: the certificate a companion can pin, when the hub serves https itself
+    if let Some(f) = body.get("tlsFingerprint") {
+        out.insert("tlsFingerprint".into(), f.clone());
+    }
     out.insert("url".into(), Value::String(url));
     out.insert("message".into(), Value::String(message.clone()));
     emit(Value::Object(out), Some(&message));
