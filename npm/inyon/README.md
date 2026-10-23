@@ -1,5 +1,7 @@
 # Inyon
 
+<a href="https://www.producthunt.com/products/inyon?utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-inyon"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1282413&amp;theme=light" width="250" height="54" alt="Inyon on Product Hunt"></a>
+
 Your coding agents keep running in tmux on your machines. Inyon lets you watch them, answer them
 and steer them from your phone or any browser. It works with Claude Code, Codex, Gemini CLI,
 OpenCode, GitHub Copilot CLI and Antigravity CLI.
