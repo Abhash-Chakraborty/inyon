@@ -292,4 +292,4 @@ inyon pair --json | jq -r 'select(.waiting == null and .ok) | .link'
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |
 | `NO_COLOR` | Turn colour off |
 
-Every `TETHER_*` name from before the rename is still read. [Configuration](configuration.md) lists the hub's settings.
+Every `TETHER_*` name from before the rename is still read. [Configuration](configuration.md) lists every variable, for computers and hubs, including `INYON_ALLOW_INSECURE`, `INYON_HUB_CERT` and `INYON_HUB_IMPL`.

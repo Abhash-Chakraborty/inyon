@@ -21,7 +21,7 @@ On the hub's computer you can make a code without a browser:
 ```sh
 inyon hub companion-code
 # Companion code: K7M-2QX
-# Type it into the companion app (Legato: Settings > Connections > Inyon) with this hub's address, http://100.97.188.112:4777. It works once, for 5 minutes.
+# Type it into the companion app (Legato: Settings > Connections > Inyon) with this hub's address, http://100.64.0.5:4777. It works once, for 5 minutes.
 ```
 
 A hub that listens only on `127.0.0.1`, behind a proxy or `tailscale serve`, doesn't know its outside address, so the command then says to use the address you open the hub at. With `--json` it prints `code`, `expiresAt`, `url` and `message`.

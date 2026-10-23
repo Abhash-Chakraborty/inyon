@@ -136,7 +136,8 @@ Checked against their docs in October 2026.
 
 3. In the app, tap *Add a computer* and scan it.
 
-From 0.19 that line installs one program, `inyon`, about 3.5 MB and written in Rust. It draws
+From 0.19 that line installs one program, `inyon`, written in Rust: about 4 MB on Windows and
+10 to 13 MB on Linux and macOS, where from 0.20 it also carries the Rust hub. It draws
 the setup, the status screen and the pairing code, and runs the link to your phone. Only a hub
 also fetches the engine (about 85 MB, with Bun inside) as `inyon-engine`. A 0.11 or 0.12 install
 crosses over on its next update, and an older one needs the line above again.

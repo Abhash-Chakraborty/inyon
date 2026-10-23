@@ -37,6 +37,9 @@ cd apps/web && bun test
 cd apps/node && bun test
 cd packages/link && bun test
 cd apps/web && bun run build && bun run e2e   # layout at phone widths, needs Playwright's Chromium
+cargo test --workspace            # the inyon command and the Rust crates (or bun run cli:test)
+bun conformance/run.ts            # both hubs against the recorded scenarios
+bun site/build.ts --offline       # the website and docs; fails on a broken link
 ```
 
 The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the
@@ -52,12 +55,20 @@ logs its size after each one to `window.log`, the only file it writes.
 ## Where things live
 
 ```
-apps/hub           Bun server: machines, tmux, agent readers, API, WebSocket
+apps/cli           the inyon command (Rust): setup, status, pairing, services, updates, the Windows window
+apps/hub           the Bun hub: machines, tmux, agent readers, API, WebSocket
                    (src/phone runs the same core inside the Android app)
+apps/node          inyon-engine, the Bun program a hub runs on (and INYON_LEGACY_ENGINE=1)
 apps/web           React + Vite app, also served by the hub
-apps/node          the inyon program: the phone link, the hub connection and the hub itself
-apps/mobile        Capacitor shell for Android and iOS; scripts/icons.ts renders every icon
+apps/mobile        Capacitor shell for Android (and an unshipped iOS project); scripts/icons.ts renders every icon
+crates/            the Rust side: inyon-core (readers, machines), inyon-hub (the opt-in Rust hub),
+                   inyon-engine and inyon-link (the phone link), inyon-backends, inyon-protocol
 packages/protocol  types and the agent registry shared by hub and app
+packages/link      the phone link in TypeScript (Noise, pkarr, relay)
+conformance/       recorded scenarios both hubs must answer the same way
+site/              the website and docs at inyon.tech
+npm/               the npm launcher and per-platform packages
+skills/            agent skills shipped with each release (Blueprint)
 ```
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
@@ -68,7 +79,8 @@ The pictures in the README are the real app fed a made-up set of machines: `bun 
 Most of what Inyon knows about an agent lives in one place: `packages/protocol/src/agents.ts`
 (how to detect it, its colours, commands, models and config files). A chat view also needs a
 reader that turns the agent's session files or API into chat items; see `apps/hub/src/agents/`
-for Codex, Gemini CLI and OpenCode.
+and its Rust twin `crates/inyon-core/src/agents/` for Codex, Gemini CLI, OpenCode, Copilot and
+Antigravity. Both hubs need the reader.
 
 ## Look and feel
 

@@ -39,7 +39,7 @@ body:
     attributes:
       label: Versions
       description: "`inyon --version`, the app version from Settings, and the agent with its version"
-      placeholder: inyon 0.10.0, app 0.10.0, Claude Code 2.1.0
+      placeholder: inyon 0.20.1, app 0.20.1, Claude Code 2.1.0
     validations:
       required: true
   - type: input
@@ -52,4 +52,4 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: For inyon on Linux, `journalctl --user -u 'inyon-*' -n 100`. Screenshots help for anything on screen.
+      description: "The output of `inyon doctor --json` and `inyon logs -n 100` (any system). Screenshots help for anything on screen."

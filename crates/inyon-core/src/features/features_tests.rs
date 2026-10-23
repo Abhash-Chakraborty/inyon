@@ -470,7 +470,7 @@ fn upload_usage_reads_sizes_counts_and_expired_files() {
         connected("u", "/home/me", json!([]));
         let f = crate::test_support::fake::Fake::install(|_, _, _| crate::test_support::fake::ok("12 3 1\n"));
         let u = upload_usage("u").await.unwrap();
-        assert_eq!(serde_json::to_value(&u).unwrap(), json!({ "bytes": 12288, "files": 3, "expired": 1, "dir": "/home/me/.inyon/uploads" }));
+        assert_eq!(serde_json::to_value(&u).unwrap(), json!({ "bytes": 12288, "files": 3, "expired": 1, "dir": "/home/me/.inyon/uploads", "days": 7 }));
         assert_eq!(
             f.cmds(),
             ["[ -d '/home/me/.inyon/uploads' ] || { echo \"0 0 0\"; exit 0; }; echo \"$(du -sk '/home/me/.inyon/uploads' | cut -f1) $(find '/home/me/.inyon/uploads' -type f | wc -l) $(find '/home/me/.inyon/uploads' -type f -mtime +7 | wc -l)\""]

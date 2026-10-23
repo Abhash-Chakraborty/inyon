@@ -204,6 +204,8 @@ pub struct UploadUsage {
     pub files: Num,
     pub expired: Num,
     pub dir: String,
+    /// The retention setting `expired` counts with, so the app's clean button cleans the same files
+    pub days: Num,
 }
 
 /// `Number(x) || 0`
@@ -224,7 +226,7 @@ pub async fn upload_usage(host_id: &str) -> HubResult<UploadUsage> {
     let r = host.run(&format!("[ -d {d} ] || {{ echo \"0 0 0\"; exit 0; }}; echo \"$(du -sk {d} | cut -f1) $(find {d} -type f | wc -l) {old}\"")).await?;
     let nums: Vec<f64> = re!(r"\s+").split(r.stdout.jtrim()).map(to_number).collect();
     let at = |i: usize| or_zero(nums.get(i).copied().unwrap_or(f64::NAN));
-    Ok(UploadUsage { bytes: Num(at(0) * 1024.0), files: Num(at(1)), expired: Num(at(2)), dir })
+    Ok(UploadUsage { bytes: Num(at(0) * 1024.0), files: Num(at(1)), expired: Num(at(2)), dir, days: Num(days) })
 }
 
 /// The shell that tidies a machine's uploads: files older than `days` (none when 0, all when -1),

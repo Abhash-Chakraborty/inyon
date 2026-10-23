@@ -114,7 +114,8 @@ export async function uploadUsage(hostId: string) {
   const old = days > 0 ? `$(find ${shq(dir)} -type f -mtime +${days} | wc -l)` : '0'
   const r = await host.exec(`[ -d ${shq(dir)} ] || { echo "0 0 0"; exit 0; }; echo "$(du -sk ${shq(dir)} | cut -f1) $(find ${shq(dir)} -type f | wc -l) ${old}"`)
   const [kb, files, expired] = r.stdout.trim().split(/\s+/).map(Number)
-  return { bytes: (kb || 0) * 1024, files: files || 0, expired: expired || 0, dir }
+  // days: the retention setting `expired` counts with, so the app's clean button cleans the same files
+  return { bytes: (kb || 0) * 1024, files: files || 0, expired: expired || 0, dir, days }
 }
 
 /**

@@ -62,7 +62,7 @@ BIND=100.64.0.5
 INYON_ALLOW_HTTP=1
 ```
 
-`INYON_ALLOW_HTTP=1` allows plain `http://` on that address, which is fine on a VPN that already encrypts. Then open `http://<machine>:4777` from any device on the network. On a ZeroTier or WireGuard address, which machines can't tell apart from a LAN, setup makes a certificate as it does for [the LAN](#the-lan) (from 0.20), and the hub answers on `https://`. Names on Tailscale (`.ts.net`), NetBird and common home networks (`.local`, `.lan`, `.home.arpa`) are accepted automatically.
+`INYON_ALLOW_HTTP=1` allows plain `http://` on that address, which is fine on a VPN that already encrypts. Then open `http://<machine>:4777` from any device on the network. On a ZeroTier or WireGuard address, which machines can't tell apart from a LAN, setup makes a certificate as it does for [the LAN](#the-lan) (from 0.20), and the hub answers on `https://`. Names on Tailscale (`.ts.net`), NetBird and common home networks (`.local`, `.lan`, `.internal`, `.home.arpa`) are accepted automatically.
 
 From 0.20 a machine sends its token over plain `http://` only to a Tailscale or NetBird address (`100.64.0.0/10`, or Tailscale's `fd7a:115c:a1e0::/48`), or to a name that points only there, such as the machine's `.ts.net` name. On ZeroTier or WireGuard, whose addresses look like any LAN to the machine, setup gives the hub HTTPS, and the **Add a machine** command carries its certificate's SHA-256. See [Adding machines](machines.md#plain-http).
 

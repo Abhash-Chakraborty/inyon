@@ -436,6 +436,9 @@ function ConfigTab({ host }: { host: HostState }) {
   )
 }
 
+/** The age the clean button cleans: the hub's retention setting, which its count of expired files uses; 7 days when the hub doesn't say or keeps uploads forever. */
+export const cleanDays = (u: UploadUsage) => (u.days && u.days > 0 ? u.days : 7)
+
 export function UploadsCard({ host, compact }: { host: HostState; compact?: boolean }) {
   const [usage, setUsage] = useState<UploadUsage | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -465,7 +468,7 @@ export function UploadsCard({ host, compact }: { host: HostState; compact?: bool
         <>
           <div className="mt-1 truncate font-mono text-[12px] text-fg-3">{usage.dir.replace(/^\/home\/[^/]+/, '~')}</div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => clean(7)} loading={busy === '7'} disabled={!usage.files}>Clean older than 7 days{usage.expired ? ` (${usage.expired})` : ''}</Button>
+            <Button size="sm" onClick={() => clean(cleanDays(usage))} loading={busy === String(cleanDays(usage))} disabled={!usage.files}>Clean older than {cleanDays(usage)} day{cleanDays(usage) === 1 ? '' : 's'}{usage.expired && usage.days ? ` (${usage.expired})` : ''}</Button>
             <Button size="sm" variant="danger" onClick={() => clean(0)} loading={busy === '0'} disabled={!usage.files}>Delete all</Button>
           </div>
         </>

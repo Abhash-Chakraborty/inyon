@@ -1,13 +1,16 @@
 # Security
 
 Inyon gives whoever signs in to the hub a shell on every connected machine, as the user the
-agents run as. Treat the hub like an SSH jump host.
+agents run as. Treat the hub like an SSH jump host. The full account of how each connection is
+protected is in [Security](https://inyon.tech/docs/security/) on the website; this page is the
+summary.
 
 ## How it is meant to be deployed
 
 - **Keep the hub private.** It binds to `127.0.0.1` by default. Reach it over a private network
-  (Tailscale, NetBird, WireGuard, your LAN) or put it behind HTTPS with a reverse proxy. Don't
-  expose plain HTTP to the internet.
+  (Tailscale, NetBird, ZeroTier, WireGuard) or your LAN, where from 0.20 setup gives it HTTPS on a
+  certificate of its own, or put it behind HTTPS with a reverse proxy. Don't expose plain HTTP to
+  the internet.
 - **One strong password.** The first visit creates it, with the setup code the hub prints. The hub
   stores only a scrypt hash. Sign-in attempts are rate limited per address and in total. Sessions
   are signed, HttpOnly cookies, and the API only accepts changes from the hub's own origin.
@@ -17,8 +20,17 @@ agents run as. Treat the hub like an SSH jump host.
 - **Laptops connect out, not in.** Machines running `inyon` open an outbound connection
   to the hub. Nothing on them listens for connections, so you never open SSH on a laptop. Each
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
-  revokes it. A token no machine has used stops working after a day. `inyon` refuses to send its token over plain HTTP unless the hub is on a
-  private address.
+  revokes it. A token no machine has used stops working after a day. `inyon` refuses to send its token over plain HTTP unless the hub is on
+  the same machine or on a Tailscale or NetBird address (from 0.20). A hub on a certificate it made
+  itself is pinned by the SHA-256 in its **Add a machine** command.
+- **Downloads are signed.** Releases, the one-line installers and the machine updates a hub hands
+  out are checked against Inyon's signed release list for the version asked for, and an older
+  signed list is refused.
+- **Typed text stays off command lines.** Messages, drafts and pasted API keys reach tmux through
+  a private file, so other users on the machine can't read them in the process list.
+- **Companion apps and Pages get less than you do.** A companion app such as Legato pairs with a
+  one-time code and sees only its four permissions; removing it cuts it off at once. A page an agent
+  made runs sandboxed under a link that lasts 12 hours and can't see your sign-in or call the hub.
 - **Servers can use SSH.** The hub uses your existing `ssh` config, keys and known hosts. It never
   stores SSH keys.
 
@@ -39,7 +51,7 @@ with a terminal app that has your keys.
 A paired phone gets a shell on the laptop as the user running `inyon`, the same as SSH.
 
 - **The pairing code is the secret.** It holds a one-time code that works for 10 minutes and for
-  one phone. Don't share a screenshot of it. Pairing again or `inyon forget` revokes a phone.
+  one phone. Don't share a screenshot of it. `inyon forget` revokes a phone.
 - **End-to-end encrypted.** Phone and laptop run Noise IK (X25519, ChaCha20-Poly1305, SHA-256).
   The phone already knows the laptop's key from the code, so a tunnel, relay or network in between
   can't read or change the traffic, or stand in for the laptop. The laptop only lets in phone keys

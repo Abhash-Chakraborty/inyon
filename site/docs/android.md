@@ -8,7 +8,7 @@ The Android app runs Inyon's core on the phone itself. It pairs with your comput
 
 ## Install
 
-Download the APK from the [download page](/download/) and open it. Android asks once to allow installs from your browser.
+Download the APK from the [download page](/download/) and open it. Android asks once to allow installs from your browser. The app needs Android 7.0 or later.
 
 Because it doesn't come from the Play Store, Google Play Protect may say *App scan recommended*. Scanning it is fine and takes a few seconds. To check the file yourself first, see [Downloads](security.md#downloads).
 

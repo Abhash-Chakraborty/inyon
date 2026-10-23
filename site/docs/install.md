@@ -3,7 +3,7 @@ title: Install
 description: How to install Inyon with the one-line installers or npm, where it lives on a computer, and how to update or remove it.
 ---
 
-Every computer that runs agents for you gets one program, `inyon` (about 3.5 MB, written in Rust). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. Only a [hub](hub.md) also gets `inyon-engine`, the larger program built with Bun that the hub runs on. Before 0.19 every computer had both. You only ever type `inyon`.
+Every computer that runs agents for you gets one program, `inyon` (written in Rust; about 4 MB on Windows, 10 to 13 MB on Linux and macOS, where from 0.20 it also holds the Rust hub). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. Only a [hub](hub.md) also gets `inyon-engine`, the larger program built with Bun that the hub runs on. Before 0.19 every computer had both. You only ever type `inyon`.
 
 ## The one-line installers
 
@@ -188,7 +188,7 @@ From 0.20.1 the window is the control panel for this computer:
 
 On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.
 
-The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. In 0.19 the window grew and shrank with every refresh.
+The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. Before 0.20.1 the window grew and shrank with every refresh.
 
 From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
 

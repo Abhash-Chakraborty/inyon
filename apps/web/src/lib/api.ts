@@ -96,6 +96,8 @@ export interface UploadUsage {
   files: number
   expired: number
   dir: string
+  /** the retention setting `expired` counts with (from 0.20.2; older hubs leave it out) */
+  days?: number
 }
 
 export interface ConfigFile {
