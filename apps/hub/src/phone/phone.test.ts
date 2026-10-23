@@ -40,7 +40,7 @@ const { ssh, secrets, calls } = fakeSsh()
 const realFetch = globalThis.fetch
 const releaseChecks: string[] = []
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-  if (!String(url).startsWith('https://inyon.abhashchakraborty.tech/')) return realFetch(url, init)
+  if (!String(url).startsWith('https://inyon.tech/')) return realFetch(url, init)
   releaseChecks.push(String(url))
   return Response.json({ version: '9.9.9', tag: 'v9.9.9', files: [] })
 }) as typeof fetch
@@ -66,7 +66,7 @@ const until = async (check: () => boolean) => {
 test('the phone looks up the newest inyon for laptops paired with it', async () => {
   const { nodeUpdates } = await import('../hosts/node-update.ts')
   await until(() => nodeUpdates.latestRelease === '9.9.9')
-  expect(releaseChecks).toEqual(['https://inyon.abhashchakraborty.tech/download/latest.json'])
+  expect(releaseChecks).toEqual(['https://inyon.tech/download/latest.json'])
 })
 
 test('the phone needs no sign-in', async () => {

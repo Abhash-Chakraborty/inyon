@@ -29,10 +29,13 @@ export function verifyMinisign(data: Uint8Array | string, sig: string, key: stri
 }
 
 /** Whether `base` is where real releases come from: the website, or the releases on GitHub. */
+// the website's earlier address, which redirects every path to INSTALL_URL, still counts as the website
+const OLD_SITE_HOST = 'inyon.abhashchakraborty.tech'
+
 function official(base: string) {
   try {
     const u = new URL(base.trim().toLowerCase())
-    return u.hostname === new URL(INSTALL_URL).hostname || (['github.com', 'www.github.com'].includes(u.hostname) && u.pathname.startsWith(`/${RELEASES_REPO.toLowerCase()}/releases/`))
+    return u.hostname === new URL(INSTALL_URL).hostname || u.hostname === OLD_SITE_HOST || (['github.com', 'www.github.com'].includes(u.hostname) && u.pathname.startsWith(`/${RELEASES_REPO.toLowerCase()}/releases/`))
   } catch {
     return false
   }

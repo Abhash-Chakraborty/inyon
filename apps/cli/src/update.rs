@@ -26,10 +26,10 @@ use crate::sys::{Libc, Platform, Proc};
 /// The GitHub repository the releases are published on. Every release stays there; the website
 /// keeps a copy of the newest one only.
 pub const RELEASES_REPO: &str = "Abhash-Chakraborty/inyon";
-pub const INSTALL_URL: &str = "https://inyon.abhashchakraborty.tech";
+pub const INSTALL_URL: &str = "https://inyon.tech";
 /// Where the newest release is downloaded from: the website's copy of it (INSTALL_URL/download),
 /// with latest.json naming its version next to the files.
-pub const RELEASES: &str = "https://inyon.abhashchakraborty.tech/download";
+pub const RELEASES: &str = "https://inyon.tech/download";
 
 /// What the app reads to follow an update it started: running, done <version>, current, failed: …
 pub fn status_file() -> PathBuf {
@@ -1120,8 +1120,8 @@ mod tests {
 
     #[test]
     fn reinstall_lines() {
-        assert_eq!(reinstall_command(Platform::Darwin), "curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh");
-        assert_eq!(reinstall_command(Platform::Windows), "irm https://inyon.abhashchakraborty.tech/get.ps1 | iex");
+        assert_eq!(reinstall_command(Platform::Darwin), "curl -fsSL https://inyon.tech/get.sh | sh");
+        assert_eq!(reinstall_command(Platform::Windows), "irm https://inyon.tech/get.ps1 | iex");
     }
 
     #[test]

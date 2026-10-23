@@ -767,6 +767,7 @@ fn only_a_mock_release_may_name_another_signing_key() {
     assert_eq!(signing_key("http://127.0.0.1:8000/download"), TEST_KEY);
     for base in [
         format!("https://github.com/{RELEASES_REPO}/releases/download/v{VERSION}"),
+        "https://inyon.tech/download".into(),
         "https://inyon.abhashchakraborty.tech/download".into(),
         "HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download".into(),
     ] {

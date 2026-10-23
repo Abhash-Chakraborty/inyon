@@ -11,7 +11,7 @@ test('a hub link from the QR, as the app or the camera gets it', () => {
     code: 'K7Q4MX2T:493812',
     name: 'studio',
   })
-  expect(parseHubLink(`https://inyon.abhashchakraborty.tech/#hub?u=http%3A%2F%2Fbox%3A4777&c=K7Q4MX2T%3A493812`)).toEqual({
+  expect(parseHubLink(`https://inyon.tech/#hub?u=http%3A%2F%2Fbox%3A4777&c=K7Q4MX2T%3A493812`)).toEqual({
     url: 'http://box:4777',
     code: 'K7Q4MX2T:493812',
     name: undefined,

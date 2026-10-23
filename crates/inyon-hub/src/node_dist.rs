@@ -177,11 +177,14 @@ pub fn net() -> Get {
 /// somewhere else (a mock release in tests and the container runs) may INYON_SIGNING_KEY name
 /// another key, as for `inyon update`, so an environment variable alone can't change the key for
 /// the real thing.
+/// The website's earlier address, which redirects every path to INSTALL_URL, still counts as the website.
+const OLD_SITE_HOST: &str = "inyon.abhashchakraborty.tech";
+
 fn official(base: &str) -> bool {
     let Ok(u) = url::Url::parse(&base.trim().to_ascii_lowercase()) else { return false };
     let host = u.host_str().unwrap_or("");
     let site = url::Url::parse(INSTALL_URL).ok().and_then(|s| s.host_str().map(str::to_owned)).unwrap_or_default();
-    host == site || (matches!(host, "github.com" | "www.github.com") && u.path().starts_with(&format!("/{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
+    host == site || host == OLD_SITE_HOST || (matches!(host, "github.com" | "www.github.com") && u.path().starts_with(&format!("/{}/releases/", RELEASES_REPO.to_ascii_lowercase())))
 }
 
 /// The key the release at `base` must be signed with.

@@ -390,7 +390,7 @@ impl NodeUpdates {
 /// `fetchLatestRelease`'s check of latest.json: its plain release number, or why not.
 pub fn latest_release_from(status: u16, body: &str) -> Result<String, String> {
     use crate::js::json::Js;
-    const SITE: &str = "inyon.abhashchakraborty.tech";
+    const SITE: &str = "inyon.tech";
     if !(200..300).contains(&status) {
         return Err(format!("{SITE} answered {status}"));
     }

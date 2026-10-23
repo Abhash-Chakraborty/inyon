@@ -16,7 +16,7 @@ try {
   console.error(
     `inyon: ${pkg} isn't installed. There's no build for ${process.platform} ${process.arch}, ` +
       "or optional dependencies were skipped (--omit=optional). Reinstall without that, or use " +
-      "the installer at https://inyon.abhashchakraborty.tech/docs/install/",
+      "the installer at https://inyon.tech/docs/install/",
   );
   process.exit(1);
 }

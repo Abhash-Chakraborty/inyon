@@ -33,7 +33,7 @@ These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
 | `INYON_JOINED` | Written by `inyon join` into `~/.inyon/node/env` with the version that joined (from 0.20). A machine whose file lacks it was added before 0.20, and keeps connecting to a hub on plain http, with a warning. See [Plain http](machines.md#plain-http) |
-| `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.abhashchakraborty.tech/download`) |
+| `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.tech/download`) |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
 | `INYON_LEGACY_ENGINE` | `1` runs the link and the hub connection on the Bun engine `inyon-engine`, as 0.18 does, instead of inside `inyon` (from 0.19). `inyon service install` writes it into the service and remembers it for commands started without it. See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_NO_SIGNATURE_CHECK` | Set to `1` before running `get.sh` or `get.ps1` to let them install without checking the checksum list's signature when minisign isn't installed (from 0.20; `get.sh` also takes `--no-signature-check`). See [Without minisign](install.md#without-minisign) |

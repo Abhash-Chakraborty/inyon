@@ -20,7 +20,7 @@ import { confirmAction } from '../Confirm.tsx'
 import { useOpened } from '../../lib/useOpened.ts'
 
 /** The docs page about Pages, for "How pages work". */
-export const PAGES_DOCS = 'https://inyon.abhashchakraborty.tech/docs/pages/'
+export const PAGES_DOCS = 'https://inyon.tech/docs/pages/'
 /** The one command an agent runs to add a page, as the empty states show it. */
 export const ADD_COMMAND = 'inyon pages add ./private/plans/my-plan --name "My plan"'
 

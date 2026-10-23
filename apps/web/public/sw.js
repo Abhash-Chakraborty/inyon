@@ -1,8 +1,7 @@
 // Inyon service worker: caches the app shell and every file of the build, so the installed app
 // opens instantly and a second open needs no network for the app itself. API calls, the
 // WebSocket and pages under /v/ always go to the network. Paths are under the worker's scope: `/`
-// on a hub and for the web app at inyon.abhashchakraborty.tech; a copy hosted under a folder works
-// too.
+// on a hub; a copy hosted under a folder works too.
 const CACHE = 'inyon-v3'
 const BASE = new URL(self.registration.scope).pathname
 const SHELL = [BASE, BASE + 'manifest.webmanifest', BASE + 'icon-192.png', BASE + 'badge-96.png']

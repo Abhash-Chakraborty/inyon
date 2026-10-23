@@ -18,13 +18,13 @@ Android asks once to allow installs from your browser. Later versions install ov
 On macOS or Linux, open a terminal (on a server, your SSH session) and run:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
+curl -fsSL https://inyon.tech/get.sh | sh
 ```
 
 On Windows, in PowerShell:
 
 ```powershell
-irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
+irm https://inyon.tech/get.ps1 | iex
 ```
 
 It downloads `inyon`, checks it against the release's checksums, installs it as a background service and prints a QR code. [Install](install.md) explains each step.

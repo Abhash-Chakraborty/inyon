@@ -81,7 +81,7 @@ async function main() {
       name,
       version,
       description: `The inyon command for ${OS_NAME[t.os]} on ${t.cpu}. Install ${SCOPE}/inyon instead of this one.`,
-      homepage: "https://inyon.abhashchakraborty.tech",
+      homepage: "https://inyon.tech",
       repository: { type: "git", url: `git+https://github.com/${REPO}.git`, directory: "npm" },
       license: "MIT",
       author: "Abhash Chakraborty",

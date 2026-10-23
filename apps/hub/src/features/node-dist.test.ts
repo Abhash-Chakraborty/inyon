@@ -227,7 +227,7 @@ test('only a mock release may name another signing key', async () => {
   process.env.INYON_SIGNING_KEY = `untrusted comment: test key\n${TEST_KEY}\n`
   try {
     expect(signingKey('http://127.0.0.1:8000/download')).toBe(TEST_KEY)
-    for (const base of [`https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`, 'https://inyon.abhashchakraborty.tech/download', 'HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download']) {
+    for (const base of [`https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`, 'https://inyon.tech/download', 'https://inyon.abhashchakraborty.tech/download', 'HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download']) {
       expect(signingKey(base)).toBe(RELEASE_KEY)
     }
     delete process.env.INYON_SIGNING_KEY

@@ -167,7 +167,7 @@ test('the phone learns the newest release from latest.json on the website', asyn
   const get = (async (url: string) => (urls.push(url), Response.json({ version: '0.7.2', tag: 'v0.7.2', files: [] }))) as unknown as typeof fetch
   clearInterval(u.watchReleases(get))
   await until(() => u.latestRelease === '0.7.2')
-  expect(urls).toEqual(['https://inyon.abhashchakraborty.tech/download/latest.json'])
+  expect(urls).toEqual(['https://inyon.tech/download/latest.json'])
 })
 
 test('a latest.json that fails or names no release leaves the last known version alone', async () => {

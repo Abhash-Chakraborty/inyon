@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gets inyon for this computer and sets it up for the Inyon phone app:
-#   curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh
+#   curl -fsSL https://inyon.tech/get.sh | sh
 # It downloads the inyon command for this system into ~/.inyon/bin from the website's copy of the
 # newest release, checks it against the release's signed checksums, and runs its setup, which
 # starts it in the background at login and shows a code to scan with the app. With --hub it sets
@@ -12,15 +12,17 @@ set -e
 # publishes a release, after checking the list's signature against the release key, so the copy
 # it serves needs no other tool to trust that list. Empty here: anywhere else, minisign checks it.
 LIST_SHA256=
-BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://inyon.abhashchakraborty.tech/download}}"
+BASE="${INYON_DOWNLOAD:-${TETHER_DOWNLOAD:-https://inyon.tech/download}}"
 # the minisign key a release's SHA256SUMS is signed with (the inyon command carries the same one)
 KEY=RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
-SITE=https://inyon.abhashchakraborty.tech
+SITE=https://inyon.tech
+# the website's earlier address, which redirects to the same path here, so it counts as the website
+OLD_SITE=https://inyon.abhashchakraborty.tech
 GITHUB=https://github.com/Abhash-Chakraborty/inyon/releases
 # a mock release for tests signs with a key of its own; it only counts with downloads pointed
 # somewhere other than the website or GitHub
 case "$BASE" in
-  "$SITE" | "$SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
+  "$SITE" | "$SITE"/* | http://inyon.tech | http://inyon.tech/* | "$OLD_SITE" | "$OLD_SITE"/* | http://inyon.abhashchakraborty.tech | http://inyon.abhashchakraborty.tech/* | "$GITHUB"/*) ;;
   *) if [ -n "${INYON_DOWNLOAD:-}${TETHER_DOWNLOAD:-}" ] && [ -n "${INYON_SIGNING_KEY:-}" ]; then KEY="$INYON_SIGNING_KEY"; fi ;;
 esac
 ROLE=setup
@@ -130,7 +132,7 @@ else
   # Either way the file is checked against the same list below
   plain="$BASE/$name"
   case "$BASE" in
-    "$SITE"/download | "$SITE"/download/)
+    "$SITE"/download | "$SITE"/download/ | "$OLD_SITE"/download | "$OLD_SITE"/download/)
       version="$(printf '%s\n' "$sums" | awk '{ f = $2; sub(/^\*/, "", f) } f ~ /^inyon-[0-9]+\.[0-9]+\.[0-9]+\.apk$/ { sub(/^inyon-/, "", f); sub(/\.apk$/, "", f); print f; exit }')"
       if [ -n "$version" ]; then plain="$GITHUB/download/v$version/$name"; fi ;;
   esac
