@@ -12,7 +12,7 @@ use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 use serde::Serialize;
 
-use super::{banner, fit, Theme, VERSION};
+use super::{banner, fit, pad, Theme, VERSION};
 use crate::paths::{node_dir, saved_hub};
 use crate::service::{self, Role, Sys};
 use crate::state;
@@ -235,6 +235,28 @@ fn dot(theme: Theme, on: bool, attention: bool) -> Span<'static> {
     }
 }
 
+/// How many rows each part of the screen keeps, whatever it shows: a refresh changes the text
+/// in a row, never where the rows are. A part with less to say leaves blank rows; one with more
+/// ends in "and N more".
+pub const JOB_ROWS: usize = 2;
+pub const ADDRESS_ROWS: usize = 2;
+pub const REACH_ROWS: usize = 2;
+pub const PHONE_ROWS: usize = 3;
+pub const NODE_ROWS: usize = 3;
+pub const AGENT_ROWS: usize = 3;
+pub const LOG_ROWS: usize = 5;
+
+/// `lines` in exactly `n` rows: blank rows after them, or the last row saying how many didn't fit.
+fn rows(mut lines: Vec<Line<'static>>, n: usize, theme: Theme) -> Vec<Line<'static>> {
+    if lines.len() > n && n > 0 {
+        let more = lines.len() - (n - 1);
+        lines.truncate(n - 1);
+        lines.push(Line::from(Span::styled(format!("  and {more} more"), theme.faint())));
+    }
+    lines.resize(n, Line::raw(""));
+    lines
+}
+
 fn job_lines(s: &Status, theme: Theme) -> Vec<Line<'static>> {
     let mut out = Vec::new();
     for j in &s.jobs {
@@ -265,92 +287,127 @@ fn job_lines(s: &Status, theme: Theme) -> Vec<Line<'static>> {
     out
 }
 
-/// The screen, for a terminal or a TestBackend.
+/// The left column: what this machine is, what runs, where it answers and how phones reach it.
+fn left_lines(s: &Status, theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let mut left: Vec<Line> = vec![Line::from(Span::styled(fit(&role_line(s), width), theme.body()))];
+    left.push(match &s.machine {
+        Some(m) => Line::from(Span::styled(format!("machine {}", fit(m, 28)), theme.faint())),
+        None => Line::raw(""),
+    });
+    left.push(Line::raw(""));
+    left.extend(rows(job_lines(s, theme), JOB_ROWS, theme));
+    left.push(Line::raw(""));
+    let answering = s.answering();
+    let head = if !answering.is_empty() {
+        "Answers on"
+    } else if s.link_running() {
+        "No address yet: the tunnel is starting"
+    } else if s.jobs.iter().any(|j| j.role == "link" && j.service) {
+        "Doesn't answer: the phone link isn't running"
+    } else {
+        ""
+    };
+    left.push(Line::from(Span::styled(fit(head, width), theme.muted())));
+    let addresses: Vec<Line> = answering.iter().map(|a| Line::from(Span::raw(format!("  {}", fit(a, width.saturating_sub(2)))))).collect();
+    left.extend(rows(addresses, ADDRESS_ROWS, theme));
+    left.push(Line::raw(""));
+    let reach: Vec<String> = s.reach.as_deref().map(|r| super::wrap(r, width)).unwrap_or_default();
+    // the advice is cut to its rows rather than counted: the last row ends in an ellipsis
+    let mut reach: Vec<Line> = reach.into_iter().map(|l| Line::from(Span::styled(l, theme.muted()))).collect();
+    if reach.len() > REACH_ROWS {
+        reach.truncate(REACH_ROWS);
+        if let Some(last) = reach.last_mut() {
+            let text: String = last.spans.iter().map(|sp| sp.content.as_ref()).collect();
+            *last = Line::from(Span::styled(fit(&format!("{text} …"), width), theme.muted()));
+        }
+    }
+    reach.resize(REACH_ROWS, Line::raw(""));
+    left.extend(reach);
+    left
+}
+
+/// The right column: who's paired, the hub's machines, and the agents in tmux.
+fn right_lines(s: &Status, theme: Theme, width: usize) -> Vec<Line<'static>> {
+    let mut right: Vec<Line> = Vec::new();
+    right.push(Line::from(Span::styled(if s.phones.is_empty() { "No phones paired yet".to_string() } else { format!("Phones ({})", s.phones.len()) }, theme.muted())));
+    // the names padded to the longest shown, so "seen" lines up; times short, as the window has them
+    let name_w = s.phones.iter().take(PHONE_ROWS).map(|p| unicode_width::UnicodeWidthStr::width(p.name.as_str())).max().unwrap_or(0).min(18).min(width.saturating_sub(4));
+    let today = state::format_date(state::now_ms());
+    let phones: Vec<Line> = s
+        .phones
+        .iter()
+        .map(|p| {
+            let seen = p.last_seen.as_deref().map(|t| format!("seen {}", crate::window::model::seen_short(t, &today))).unwrap_or_else(|| "never seen".to_string());
+            Line::from(vec![Span::raw(format!("  {}", pad(&p.name, name_w))), Span::styled(fit(&format!("  {seen}"), width.saturating_sub(name_w + 2)), theme.faint())])
+        })
+        .collect();
+    right.extend(rows(phones, PHONE_ROWS, theme));
+    right.push(if s.pairing_open { Line::from(vec![Span::styled("  ● ", theme.attention()), Span::styled("a pairing code is open", theme.muted())]) } else { Line::raw("") });
+    // a hub's machines: the role doesn't change while the screen is open, so neither does this
+    if s.role == "hub" {
+        right.push(Line::raw(""));
+        let nodes = s.nodes.clone().unwrap_or_default();
+        right.push(Line::from(Span::styled(format!("Machines on this hub ({})", nodes.len()), theme.muted())));
+        right.extend(rows(nodes.iter().map(|n| Line::from(Span::raw(format!("  {}", fit(n, width.saturating_sub(2)))))).collect(), NODE_ROWS, theme));
+    }
+    right.push(Line::raw(""));
+    right.push(Line::from(Span::styled(if s.agents.is_empty() { "No agents running in tmux" } else { "Agents running" }, theme.muted())));
+    right.extend(rows(s.agents.iter().map(|a| Line::from(Span::raw(format!("  {}", fit(a, width.saturating_sub(2)))))).collect(), AGENT_ROWS, theme));
+    right
+}
+
+/// The screen, for a terminal or a TestBackend. Every row has a fixed place for a given role and
+/// terminal size, so the refresh every 2 s changes text, never where it is.
 pub fn render(f: &mut Frame, s: &Status, theme: Theme) {
     let area = f.area();
     let narrow = area.width < 72;
     let head = banner(area.width);
-    let rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(head.len() as u16 + 1), Constraint::Min(4), Constraint::Length(1)]).split(area);
+    let rows_ = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(head.len() as u16 + 1), Constraint::Min(4), Constraint::Length(1)]).split(area);
     let mut top: Vec<Line> = head.iter().map(|l| Line::from(Span::styled(l.clone(), theme.strong()))).collect();
     top.push(Line::from(Span::styled("─".repeat(area.width as usize), theme.line())));
-    f.render_widget(Paragraph::new(top), rows[0]);
+    f.render_widget(Paragraph::new(top), rows_[0]);
 
-    let mut left: Vec<Line> = vec![Line::from(Span::styled(role_line(s), theme.body()))];
-    if let Some(m) = &s.machine {
-        left.push(Line::from(Span::styled(format!("machine {}", fit(m, 28)), theme.faint())));
-    }
-    left.push(Line::raw(""));
-    left.extend(job_lines(s, theme));
     let left_w = if narrow { area.width as usize } else { (area.width as usize) * 58 / 100 };
-    let answering = s.answering();
-    if !answering.is_empty() {
-        left.push(Line::raw(""));
-        left.push(Line::from(Span::styled("Answers on", theme.muted())));
-        for a in answering {
-            left.push(Line::from(Span::raw(format!("  {}", fit(a, left_w.saturating_sub(2))))));
-        }
-    }
-    if let Some(r) = &s.reach {
-        left.push(Line::raw(""));
-        for l in super::wrap(r, left_w.saturating_sub(2)) {
-            left.push(Line::from(Span::styled(l, theme.muted())));
-        }
-    }
-
-    let mut right: Vec<Line> = Vec::new();
-    right.push(Line::from(Span::styled(if s.phones.is_empty() { "No phones paired yet".to_string() } else { format!("Phones ({})", s.phones.len()) }, theme.muted())));
-    for p in &s.phones {
-        let seen = p.last_seen.as_deref().map(|t| format!("seen {t}")).unwrap_or_else(|| "never seen".to_string());
-        right.push(Line::from(vec![Span::raw(format!("  {}", fit(&p.name, 18))), Span::styled(format!("  {seen}"), theme.faint())]));
-    }
-    if s.pairing_open {
-        right.push(Line::from(vec![Span::styled("  ● ", theme.attention()), Span::styled("a pairing code is open", theme.muted())]));
-    }
-    if let Some(nodes) = &s.nodes {
-        right.push(Line::raw(""));
-        right.push(Line::from(Span::styled(format!("Machines on this hub ({})", nodes.len()), theme.muted())));
-        for n in nodes {
-            right.push(Line::from(Span::raw(format!("  {n}"))));
-        }
-    }
-    if !s.agents.is_empty() {
-        right.push(Line::raw(""));
-        right.push(Line::from(Span::styled("Agents running", theme.muted())));
-        for a in &s.agents {
-            right.push(Line::from(Span::raw(format!("  {a}"))));
-        }
-    }
-
-    // the content takes the height it needs; the log follows it, and the footer stays at the bottom
-    let content_h = if narrow { left.len() + 1 + right.len() } else { left.len().max(right.len()) } as u16;
-    let note_h = s.note.as_deref().map(|n| super::wrap(n, (area.width as usize).saturating_sub(2)).len() as u16 + 1).unwrap_or(0);
-    let log_h = note_h + if s.log.is_empty() { 0 } else { s.log.len().min(5) as u16 + 2 };
-    let body_rows = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(content_h), Constraint::Length(log_h), Constraint::Min(0)]).split(rows[1]);
+    let right_w = if narrow { area.width as usize } else { (area.width as usize) - left_w };
+    let left = left_lines(s, theme, left_w.saturating_sub(1));
+    let right = right_lines(s, theme, right_w.saturating_sub(1));
+    // the parts first, then the log in what's left (up to its rows), keeping three rows for it so a
+    // note always shows: both depend on the terminal's size and the role, never on a refresh
+    let body_h = rows_[1].height as usize;
+    let content_h = (if narrow { left.len() + 1 + right.len() } else { left.len().max(right.len()) }).min(body_h.saturating_sub(3));
+    let log_h = (body_h - content_h).min(2 + LOG_ROWS);
+    let body =
+        Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(content_h as u16), Constraint::Length(log_h as u16), Constraint::Min(0)]).split(rows_[1]);
     if narrow {
         let mut all = left;
         all.push(Line::raw(""));
         all.extend(right);
-        f.render_widget(Paragraph::new(all), body_rows[0]);
+        f.render_widget(Paragraph::new(all), body[0]);
     } else {
-        let cols = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(58), Constraint::Percentage(42)]).split(body_rows[0]);
+        let cols = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Length(left_w as u16), Constraint::Min(0)]).split(body[0]);
         f.render_widget(Paragraph::new(left), cols[0]);
         f.render_widget(Paragraph::new(right), cols[1]);
     }
-    let mut below: Vec<Line> = Vec::new();
-    if let Some(note) = &s.note {
-        below.push(Line::raw(""));
-        for (i, l) in super::wrap(note, (area.width as usize).saturating_sub(2)).into_iter().enumerate() {
-            below.push(Line::from(vec![Span::styled(if i == 0 { "! " } else { "  " }, theme.attention()), Span::raw(l)]));
-        }
-    }
-    if !s.log.is_empty() {
-        below.push(Line::raw(""));
-        below.push(Line::from(Span::styled("Log", theme.muted())));
-        for l in s.log.iter().rev().take(5).rev() {
-            below.push(Line::from(Span::styled(fit(l, area.width as usize), theme.faint())));
-        }
-    }
-    f.render_widget(Paragraph::new(below), body_rows[1]);
+    // the log section: a note (the engine isn't installed, the hub can't be reached) heads it in
+    // place of the oldest lines, so it shows on any terminal and nothing outside the log moves
+    let mut below: Vec<Line> = vec![Line::raw(""), Line::from(Span::styled(if s.log.is_empty() { "Log: nothing yet" } else { "Log" }, theme.muted()))];
+    let room = log_h.saturating_sub(2);
+    let note: Vec<Line> = s
+        .note
+        .as_deref()
+        .map(|n| super::wrap(n, (area.width as usize).saturating_sub(2)))
+        .unwrap_or_default()
+        .into_iter()
+        .take(2.min(room))
+        .enumerate()
+        .map(|(i, l)| Line::from(vec![Span::styled(if i == 0 { "! " } else { "  " }, theme.attention()), Span::raw(l)]))
+        .collect();
+    let lines = room - note.len();
+    below.extend(note);
+    let log: Vec<Line> = s.log.iter().rev().take(lines).rev().map(|l| Line::from(Span::styled(fit(l, area.width as usize), theme.faint()))).collect();
+    below.extend(rows(log, lines, theme));
+    below.truncate(log_h);
+    f.render_widget(Paragraph::new(below), body[1]);
     let foot = Rect { x: area.x, y: area.y + area.height - 1, width: area.width, height: 1 };
     f.render_widget(Paragraph::new(Line::from(Span::styled(fit("q quit · r refresh · s setup · p pair", area.width as usize), theme.faint()))), foot);
 }
@@ -410,9 +467,35 @@ pub fn buffer_text(buf: &Buffer) -> String {
     lines.join("\n")
 }
 
+/// What a key on the screen asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Key {
+    Quit,
+    Refresh,
+    /// leave the screen and run this command (`setup` goes through the wizard)
+    Run(&'static str),
+}
+
+/// The key's meaning. Only a press counts: Windows also reports each key's release, which used
+/// to run a command twice or quit straight after it.
+pub fn key_action(k: &crossterm::event::KeyEvent) -> Option<Key> {
+    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+    if k.kind != KeyEventKind::Press {
+        return None;
+    }
+    match k.code {
+        KeyCode::Char('q') | KeyCode::Esc => Some(Key::Quit),
+        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => Some(Key::Quit),
+        KeyCode::Char('r') => Some(Key::Refresh),
+        KeyCode::Char('s') => Some(Key::Run("setup")),
+        KeyCode::Char('p') => Some(Key::Run("pair")),
+        _ => None,
+    }
+}
+
 /// Shows the screen until q or Esc; r reads everything again.
 pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
-    use crossterm::event::{self, Event, KeyCode};
+    use crossterm::event::{self, Event};
     let mut terminal = ratatui::init();
     let mut status = gather(sys, true);
     let result = (|| -> std::io::Result<Option<&'static str>> {
@@ -420,12 +503,12 @@ pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
             terminal.draw(|f| render(f, &status, theme))?;
             if event::poll(std::time::Duration::from_secs(2))? {
                 if let Event::Key(k) = event::read()? {
-                    match k.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                        KeyCode::Char('c') if k.modifiers.contains(event::KeyModifiers::CONTROL) => return Ok(None),
-                        KeyCode::Char('s') => return Ok(Some("setup")),
-                        KeyCode::Char('p') => return Ok(Some("pair")),
-                        _ => {}
+                    match key_action(&k) {
+                        Some(Key::Quit) => return Ok(None),
+                        Some(Key::Run(next)) => return Ok(Some(next)),
+                        Some(Key::Refresh) => {}
+                        // a key that does nothing (or a release) doesn't read everything again
+                        None => continue,
                     }
                 }
             }
@@ -503,6 +586,84 @@ mod tests {
         let s = Status { reach: Some(windows.clone()), ..status() };
         assert!(plain(&s).contains(&windows));
         assert!(screen(&s).contains("only through the tunnel"));
+    }
+
+    fn row_of(screen: &str, starts: &str) -> usize {
+        screen.lines().position(|l| l.contains(starts)).unwrap_or_else(|| panic!("no row with {starts:?} in\n{screen}"))
+    }
+
+    #[test]
+    fn rows_keep_their_places_whatever_the_refresh_brings() {
+        let quiet = status();
+        // everything that changes between two refreshes, at once
+        let mut busy = status();
+        busy.jobs[0].running = false;
+        busy.addresses = vec!["ws://192.168.1.20:4780/link".into(), "ws://100.97.40.12:4780/link".into(), "wss://a.trycloudflare.com/link".into()];
+        busy.phones = (0..6).map(|i| PairedPhone { key: format!("k{i}"), name: format!("Phone {i}"), paired: "2026-10-14".into(), last_seen: None }).collect();
+        busy.pairing_open = true;
+        busy.agents = vec!["claude in work:1.0".into(), "codex in ops:0.0".into(), "gemini in a:0.0".into(), "aider in b:0.0".into()];
+        busy.log = (0..6).map(|i| format!("link.log: line {i}")).collect();
+        busy.reach = Some(tunnel_only(&state::LinkConfig::default(), true).unwrap());
+        for (w, h) in [(100, 30), (60, 48)] {
+            let draw = |s: &Status| {
+                let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+                t.draw(|f| render(f, s, Theme::plain())).unwrap();
+                buffer_text(t.backend().buffer())
+            };
+            let (a, b) = (draw(&quiet), draw(&busy));
+            assert_eq!(row_of(&a, "No phones paired yet"), row_of(&b, "Phones (6)"), "{a}\n---\n{b}");
+            assert_eq!(row_of(&a, "No agents running"), row_of(&b, "Agents running"), "{a}\n---\n{b}");
+            assert_eq!(row_of(&a, "Log"), row_of(&b, "Log"), "{a}\n---\n{b}");
+            assert_eq!(row_of(&a, "q quit"), row_of(&b, "q quit"));
+            // more than fits says so in its last row
+            assert!(b.contains("and 4 more") && b.contains("and 2 more"), "{b}");
+        }
+    }
+
+    #[test]
+    fn a_note_shows_on_a_short_terminal_without_moving_the_log() {
+        let mut s = status();
+        s.log = (0..6).map(|i| format!("link.log: line {i}")).collect();
+        let draw = |s: &Status| {
+            let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+            t.draw(|f| render(f, s, Theme::plain())).unwrap();
+            buffer_text(t.backend().buffer())
+        };
+        let before = draw(&s);
+        s.note = Some("The engine isn't installed yet: run `inyon setup`.".into());
+        let after = draw(&s);
+        assert!(after.contains("! The engine isn't installed yet"), "{after}");
+        assert_eq!(row_of(&before, "Log"), row_of(&after, "Log"), "{before}\n---\n{after}");
+        // the newest log line still shows, the oldest made room
+        assert!(after.contains("line 5") && before.contains("line 1") && !after.contains("line 1"), "{after}");
+    }
+
+    #[test]
+    fn only_a_key_press_counts_not_its_release() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let key = |c: char, kind: KeyEventKind| KeyEvent { code: KeyCode::Char(c), modifiers: KeyModifiers::NONE, kind, state: KeyEventState::NONE };
+        assert_eq!(key_action(&key('s', KeyEventKind::Press)), Some(Key::Run("setup")));
+        assert_eq!(key_action(&key('s', KeyEventKind::Release)), None);
+        assert_eq!(key_action(&key('p', KeyEventKind::Repeat)), None);
+        assert_eq!(key_action(&key('q', KeyEventKind::Press)), Some(Key::Quit));
+        assert_eq!(key_action(&key('x', KeyEventKind::Press)), None);
+    }
+
+    #[test]
+    fn a_phone_named_in_korean_keeps_its_last_seen_column_in_line() {
+        let mut s = status();
+        s.phones = vec![
+            PairedPhone { key: "a".into(), name: "갤럭시 탭 S9 울트라 플러스".into(), paired: "x".into(), last_seen: Some("22:27".into()) },
+            PairedPhone { key: "b".into(), name: "Pixel 8".into(), paired: "x".into(), last_seen: Some("09:01".into()) },
+        ];
+        let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        t.draw(|f| render(f, &s, Theme::plain())).unwrap();
+        let buf = t.backend().buffer().clone();
+        // the terminal column each "seen" starts in, counted in cells as the terminal draws them
+        let seen: Vec<u16> =
+            (0..buf.area.height).filter_map(|y| (0..buf.area.width.saturating_sub(4)).find(|&x| (0..4).map(|i| buf[(x + i, y)].symbol()).collect::<String>() == "seen")).collect();
+        assert_eq!(seen.len(), 2, "{}", buffer_text(&buf));
+        assert_eq!(seen[0], seen[1], "{}", buffer_text(&buf));
     }
 
     #[test]

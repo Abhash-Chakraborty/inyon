@@ -57,21 +57,40 @@ fn installed(r: &Installed) -> Value {
     json!({ "ok": r.ok, "how": r.how })
 }
 
+/// A command the status screen hands over to when you press its key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Named {
+    /// `wizard`: the screens that ask what to set up, as `inyon setup` typed in a terminal shows
+    Setup {
+        wizard: bool,
+    },
+    Pair,
+}
+
+pub fn named(name: &str) -> Option<Named> {
+    match name {
+        // pressed on a screen, so a person is there to answer the wizard
+        "setup" => Some(Named::Setup { wizard: true }),
+        "pair" => Some(Named::Pair),
+        _ => None,
+    }
+}
+
 /// Runs `name` as if typed, from the dashboard's shortcuts.
 pub fn run_named(name: &str) {
     let proc = RealProc;
     let sys = Sys::new(&proc);
     let theme = Theme::detect(true);
-    match name {
-        "setup" => {
-            let code = finish(setup(&sys, theme, None, false), false);
+    match named(name) {
+        Some(Named::Setup { wizard }) => {
+            let code = finish(setup(&sys, theme, None, wizard), false);
             std::process::exit(code);
         }
-        "pair" => {
+        Some(Named::Pair) => {
             let code = finish(pair(&[], false), false);
             std::process::exit(code);
         }
-        _ => {}
+        None => {}
     }
 }
 
@@ -1470,6 +1489,13 @@ mod tests {
         assert_eq!(*seen.borrow(), ["hub.tail1234.ts.net:4777", "box.local:80", "10.0.0.1.attacker.com:8080"]);
         // and the real lookup
         assert!(check_hub_url("http://localhost:4777").is_ok());
+    }
+
+    #[test]
+    fn s_on_the_status_screen_opens_the_setup_wizard() {
+        assert_eq!(named("setup"), Some(Named::Setup { wizard: true }));
+        assert_eq!(named("pair"), Some(Named::Pair));
+        assert_eq!(named("nope"), None);
     }
 
     #[test]
