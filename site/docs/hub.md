@@ -40,6 +40,19 @@ A source install builds the engine it hands to machines from the checkout. For t
 
 From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. The hub still lists its engine for them, and a machine fetches it only with `INYON_LEGACY_ENGINE=1` set (see [Going back to the Bun engine](install.md#going-back-to-the-bun-engine)). The hub itself still runs on the Bun engine, unless you [try the hub in Rust](#trying-the-hub-in-rust).
 
+### On Railway
+
+Without a machine that stays on, a hub can run on [Railway](https://railway.com/deploy/inyon). The template runs the release's engine behind Caddy on the HTTPS address Railway gives it, the way [a reverse proxy](#https) is set up below. Its container has tmux, git and ssh, and the home folder is on a volume, so agents you install there and their sign-ins survive a redeploy. Sessions running in tmux don't, the same as after a reboot.
+
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/inyon)
+
+- There's nothing to fill in. Railway generates `INYON_PASSWORD`, and the hub takes it as its password on first boot, using its own setup code over localhost. Copy it from the service's **Variables** to sign in, then change the password in **Settings → Account**. Editing the variable later does nothing.
+- On a custom domain, add the name to `INYON_ALLOWED_HOSTS`.
+- Machines join it with **Add machine**, as with any hub.
+- The version is pinned by the template's image; a newer Inyon comes with a new image.
+
+The template and its image live outside this repo, at [hmseeb/inyon-railway](https://github.com/hmseeb/inyon-railway).
+
 ## First sign-in
 
 The hub listens on `127.0.0.1:4777`. Open it, and the first visit asks you to create a password (8 characters or more), using the setup code it printed. Lost the code? `inyon hub code` shows it again. From 0.20.3 the hub prints the code itself only in a terminal; in a log it prints where the code is kept, so another user who can read the log can't use it first.
