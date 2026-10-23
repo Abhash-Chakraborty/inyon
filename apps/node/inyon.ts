@@ -31,7 +31,7 @@ import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { attemptAfter, backoff, INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
-import { checkName, plainHost, plainRefusal } from './hub.ts'
+import { checkName, plainBefore020, plainHost, plainRefusal } from './hub.ts'
 import { pinFor, tunnel } from './pin.ts'
 import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
@@ -113,7 +113,8 @@ function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
   }
   const insecureOk = !!process.env.INYON_ALLOW_INSECURE || (fromSaved && !!saved.INYON_ALLOW_INSECURE)
   // joined before 0.20: plain http that would be refused now still goes, with a warning
-  const legacy = fromSaved && saved.INYON_JOINED === undefined
+  // to an address that version sent the token to; a public one stays refused
+  const legacy = fromSaved && saved.INYON_JOINED === undefined && plainBefore020(url)
   const plain = secure(url) || insecureOk ? 'ok' : plainHost(url)
   if (plain === 'refused' && !legacy) return stop(plainRefusal(url.hostname))
   const host = url.host
@@ -131,23 +132,27 @@ function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
   if (plain === 'refused') warn()
   else if (legacy && plain === 'look up') strictRefusal(url).then((why) => why && warn())
 
-  // a hub on a certificate it made itself, kept at join: only that certificate, through the pin's port
+  // a hub on a certificate it made itself, kept at join: only that certificate, each connection
+  // through a port of its own that takes that one connection (pin.ts)
   const pin = pinFor(url, process.env.INYON_HUB || saved.INYON_HUB)
-  const pinned = pin ? tunnel(url.hostname, Number(port), pin) : null
-  let pinPort = 0
 
   /** `base` (ws://host/node), sent to `addr` instead of whatever the name says now; the name stays as Host. */
-  const at = (base: string, addr?: string) => {
-    if (pinPort) return base.replace(/^(wss|https):\/\/[^/]+\//, (_, p: string) => `${p === 'wss' ? 'ws' : 'http'}://127.0.0.1:${pinPort}/`)
+  const at = async (base: string, addr?: string) => {
+    if (pin) {
+      const t = await tunnel(url.hostname, Number(port), pin)
+      return base.replace(/^(wss|https):\/\/[^/]+\//, (_, p: string) => `${p === 'wss' ? 'ws' : 'http'}://127.0.0.1:${t.port}/`)
+    }
     return addr ? base.replace(`//${host}/`, `//${addr.includes(':') ? `[${addr}]` : addr}:${port}/`) : base
   }
 
   /** A hub answers 410 to a machine removed while it was off (a token it never knew gets 403). */
-  const removedThere = (addr?: string) =>
-    fetch(at(httpUrl, addr), { headers: { authorization: `Bearer ${token}`, host } }).then(
-      (r) => r.status === 410,
-      () => false,
-    )
+  const removedThere = async (addr?: string) => {
+    try {
+      return (await fetch(await at(httpUrl, addr), { headers: { authorization: `Bearer ${token}`, host } })).status === 410
+    } catch {
+      return false
+    }
+  }
 
   // a name on plain http may point elsewhere by now (an answer from someone on the network): it's
   // looked up once, and the connection goes to an address that passed, nowhere else
@@ -155,13 +160,6 @@ function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
 
   /** `rest`: addresses that passed the last check and haven't been tried yet. */
   async function connect(attempt = 0, rest: string[] = []) {
-    if (pinned && !pinPort) {
-      try {
-        pinPort = (await pinned).port
-      } catch (err) {
-        return stop(`Couldn't open a port on 127.0.0.1 for the connection to ${host}: ${(err as Error).message}.`)
-      }
-    }
     let addr: string | undefined
     let more: string[] = []
     if (lookUp && rest.length) [addr, ...more] = rest
@@ -177,7 +175,13 @@ function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
         warn()
       } else [addr, ...more] = c.addrs
     }
-    const ws = new WebSocket(at(wsUrl, addr), { headers: { authorization: `Bearer ${token}`, host } } as any)
+    let target: string
+    try {
+      target = await at(wsUrl, addr)
+    } catch (err) {
+      return stop(`Couldn't open a port on 127.0.0.1 for the connection to ${host}: ${(err as Error).message}.`)
+    }
+    const ws = new WebSocket(target, { headers: { authorization: `Bearer ${token}`, host } } as any)
     const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     const ops = serveOps(send)
     let opened = false
@@ -331,7 +335,11 @@ function linkOptions(args: string[]): LinkConfig {
     } else if (a === '--no-relay') c.relays = []
     else fail(`unknown option ${a}`)
   }
-  saveConfig(c)
+  try {
+    saveConfig(c)
+  } catch (err) {
+    fail((err as Error).message)
+  }
   return c
 }
 
@@ -349,7 +357,13 @@ async function pair(args: string[]) {
     startLink(config)
     startTidying()
   }
-  const { secret, short } = newPairing()
+  const { secret, short } = (() => {
+    try {
+      return newPairing()
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })()
   // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
   // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
   const wanted = config.tunnel || config.lan || config.vpn || config.urls.length || config.relays.length
@@ -391,7 +405,11 @@ function forget(which?: string) {
   const matches = Object.entries(listPhones()).filter(([key, p]) => key.startsWith(which.toLowerCase()) || p.name === which)
   if (matches.length !== 1) fail(matches.length ? `"${which}" matches ${matches.length} phones; use more of the key` : `No paired phone matches "${which}"`)
   const [key, phone] = matches[0]!
-  forgetPhone(key)
+  try {
+    forgetPhone(key)
+  } catch (err) {
+    fail((err as Error).message)
+  }
   emit({ forgotten: { key, name: phone.name } }, `Forgot ${phone.name}. It can't connect until it pairs again.`)
 }
 

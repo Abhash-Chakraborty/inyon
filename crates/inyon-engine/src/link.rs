@@ -64,7 +64,10 @@ static NODE_FILES: Mutex<()> = Mutex::new(());
 /// folder: removing it while another process waits on it would let a third lock a new one.
 pub const FILES_LOCK: &str = "files.lock";
 /// A read-modify-write takes milliseconds; a lock held longer belongs to a process that's stuck.
+#[cfg(not(test))]
 const LOCK_WAIT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const LOCK_WAIT: Duration = Duration::from_secs(3);
 /// How long a phone's hello waits for the files. The phone gives each address 4 s, and the
 /// handshake needs some of that.
 pub const CHECK_WAIT: Duration = Duration::from_millis(1000);
@@ -74,18 +77,18 @@ pub struct NodeFiles {
     _threads: std::sync::MutexGuard<'static, ()>,
 }
 
-/// Waits up to 15 s for the files, then goes on without the lock and says so in the log: a stuck
-/// process mustn't stop the link.
-pub fn node_files() -> NodeFiles {
-    let threads = NODE_FILES.lock().unwrap_or_else(|e| e.into_inner());
-    let file = match take_files_lock(std::time::Instant::now() + LOCK_WAIT) {
-        Ok(f) => Some(f),
-        Err(e) => {
-            error(&format!("{e}; going on without it"));
-            None
-        }
-    };
-    NodeFiles { _file: file, _threads: threads }
+/// The files, waiting up to 15 s for them; never without the lock. A change made without it could
+/// bring a forgotten phone back, so when another process keeps them that long the caller gets why
+/// and changes nothing: a command stops with it, the link skips that write.
+pub fn node_files() -> Result<NodeFiles, String> {
+    node_files_within(LOCK_WAIT).ok_or_else(|| {
+        let lock = node_dir().join(FILES_LOCK);
+        format!(
+            "The node's files are busy: another inyon process has held {} for over {} s. Try again in a moment; if it stays busy, stop the process whose pid is in that file.",
+            lock.display(),
+            LOCK_WAIT.as_secs()
+        )
+    })
 }
 
 /// The files within `wait`, or None (said in the log) when another thread or process holds them
@@ -233,16 +236,16 @@ pub fn load_config() -> LinkConfig {
 /// change another process made in the meantime (`inyon pair` adding a relay, the link) isn't
 /// written over with what was read before it. What's missing or unreadable starts as the default.
 pub fn change_node_json<T: DeserializeOwned + Serialize + Default>(name: &str, f: impl FnOnce(&mut T)) -> Result<T, String> {
-    let _files = node_files();
+    let _files = node_files()?;
     let mut value = read_node_json::<T>(name).unwrap_or_default();
     f(&mut value);
     write_node_json(name, &value)?;
     Ok(value)
 }
 
-pub fn save_config(c: &LinkConfig) {
-    let _files = node_files();
-    save_or_say("link.json", c)
+pub fn save_config(c: &LinkConfig) -> Result<(), String> {
+    let _files = node_files()?;
+    write_node_json("link.json", c)
 }
 
 /// This machine's identity, made on first use. Its id is what the phone pairs with.
@@ -257,7 +260,7 @@ pub fn identity() -> Identity {
 /// read, or holds anything but a 64-digit hex seed, is an error and stays as it is: a new identity
 /// would be a stranger to every paired phone, and a seed read with gaps would be guessable.
 pub fn load_identity() -> Result<Identity, String> {
-    let _files = node_files();
+    let _files = node_files()?;
     let path = file("identity.json");
     match std::fs::read_to_string(&path) {
         Ok(text) => {
@@ -367,7 +370,7 @@ pub struct Pairing {
 pub fn new_pairing() -> Result<Pairing, String> {
     let secret = URL_SAFE_NO_PAD.encode(crate::random_bytes(24));
     let short = inyon_link::new_short_code().expect("the system has no randomness to give");
-    let _files = node_files();
+    let _files = node_files()?;
     write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }))?;
     Ok(Pairing { secret, short })
 }
@@ -459,8 +462,10 @@ const SEEN_EVERY: u64 = 60_000;
 
 /// Notes that a paired phone was here, at most once per `every` ms. Read again under the lock, so a
 /// phone forgotten meanwhile (by `inyon forget` in another process) is never written back.
+/// It waits for the lock, so the link calls it off its async threads; when the files stay busy it
+/// skips this note, which only `inyon phones` shows.
 pub fn mark_seen(key: &str, every: u64) {
-    let _files = node_files();
+    let Ok(_files) = node_files() else { return };
     let mut all = phones_raw();
     let now = crate::now_ms();
     let Some(Value::Object(p)) = all.get_mut(key) else { return };
@@ -471,15 +476,16 @@ pub fn mark_seen(key: &str, every: u64) {
     save_or_say("phones.json", &Value::Object(all));
 }
 
-pub fn forget_phone(key: &str) {
+pub fn forget_phone(key: &str) -> Result<(), String> {
     {
-        let _files = node_files();
+        let _files = node_files()?;
         let mut all = phones_raw();
         all.shift_remove(key);
-        save_or_say("phones.json", &Value::Object(all));
+        write_node_json("phones.json", &Value::Object(all))?;
     }
     end_sessions(key);
     crate::push::forget_pushes(key);
+    Ok(())
 }
 
 // ---------- sessions ----------
@@ -705,7 +711,9 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
                     // a frame that opens proves the phone holds its keys, which a replayed message 1 doesn't
                     if !proven {
                         proven = true;
-                        mark_seen(&key, SEEN_EVERY);
+                        // it may wait for the lock: not on the threads every session runs on
+                        let k = key.clone();
+                        tokio::task::spawn_blocking(move || mark_seen(&k, SEEN_EVERY));
                     }
                     let Ok(m) = serde_json::from_slice::<Value>(&whole) else { continue };
                     drop_forgotten();
@@ -723,7 +731,12 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
                         // the phone removed this computer: it stops being trusted here too, as `inyon forget` would
                         Some("unpair") => {
                             log(&format!("a phone removed this computer; it is no longer paired ({}…)", &key[..12]));
-                            forget_phone(&key);
+                            let k = key.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Err(e) = forget_phone(&k) {
+                                    error(&e);
+                                }
+                            });
                         }
                         _ => ops.message(m),
                     }
@@ -1334,9 +1347,9 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         (urls.clone(), json!({ "urls": urls, "relays": config.relays }).to_string(), l.last_seq)
     };
     let state = State { urls: urls.clone(), relays: config.relays.clone(), updated_at: crate::now_ms(), pid: std::process::id(), version: Some(VERSION.into()), last_seq };
-    {
-        let _files = node_files();
-        save_or_say("state.json", &state);
+    match node_files() {
+        Ok(_files) => save_or_say("state.json", &state),
+        Err(e) => error(&e),
     }
     {
         let mut l = live.lock().unwrap_or_else(|e| e.into_inner());
@@ -1358,11 +1371,13 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         if let Some(seq) = publish_until_taken(&inyon_link::PKARR_RELAYS, &id, &record, last_seq, Duration::from_secs(10), wanted).await {
             {
                 live.lock().unwrap_or_else(|e| e.into_inner()).last_seq = Some(seq);
-                {
-                    let _files = node_files();
-                    let mut s = current_state().unwrap_or(state);
-                    s.last_seq = Some(seq);
-                    save_or_say("state.json", &s);
+                match node_files() {
+                    Ok(_files) => {
+                        let mut s = current_state().unwrap_or(state);
+                        s.last_seq = Some(seq);
+                        save_or_say("state.json", &s);
+                    }
+                    Err(e) => error(&e),
                 }
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
@@ -1571,7 +1586,7 @@ mod tests {
         assert_eq!(c, LinkConfig::default());
         c.port = 4790;
         c.extra.insert("later".into(), json!(1));
-        save_config(&c);
+        save_config(&c).unwrap();
         let text = std::fs::read_to_string(node_dir().join("link.json")).unwrap();
         let vpn = !WIN;
         assert_eq!(text, format!("{{\n  \"relays\": [],\n  \"tunnel\": true,\n  \"lan\": false,\n  \"vpn\": {vpn},\n  \"urls\": [],\n  \"port\": 4790,\n  \"later\": 1\n}}"));
@@ -1581,7 +1596,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            save_config(&load_config());
+            save_config(&load_config()).unwrap();
             assert_eq!(std::fs::metadata(node_dir().join("link.json")).unwrap().permissions().mode() & 0o777, 0o600);
         }
         // the identity stays the same from one start to the next
@@ -1636,7 +1651,7 @@ mod tests {
                 })
             };
             start.wait();
-            forget_phone(&key);
+            forget_phone(&key).unwrap();
             seen.join().unwrap();
             assert!(!list_phones().contains_key(&key), "the phone came back after it was forgotten");
         }
@@ -1690,7 +1705,7 @@ mod tests {
         let h = testing::home("link-forget-procs");
         let key = "09".repeat(32);
         let add = || {
-            let _f = node_files();
+            let _f = node_files().unwrap();
             write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
         };
         add();
@@ -1700,7 +1715,7 @@ mod tests {
         for _ in 0..200 {
             add();
             std::thread::sleep(Duration::from_millis(1));
-            forget_phone(&key);
+            forget_phone(&key).unwrap();
             std::thread::sleep(Duration::from_millis(2));
             if list_phones().contains_key(&key) {
                 back += 1;
@@ -1738,7 +1753,7 @@ mod tests {
         if !as_child() {
             return;
         }
-        let _f = node_files();
+        let _f = node_files().unwrap();
         std::fs::write(node_dir().join("held"), "").unwrap();
         let until = std::time::Instant::now() + Duration::from_secs(60);
         while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
@@ -1753,7 +1768,7 @@ mod tests {
             return;
         }
         for _ in 0..200 {
-            let _f = node_files();
+            let _f = node_files().unwrap();
             let n = read_node_json::<u64>("count.json").unwrap_or(0);
             write_node_json("count.json", &(n + 1)).unwrap();
         }
@@ -1796,6 +1811,30 @@ mod tests {
         let t = std::time::Instant::now();
         assert!(node_files_within(Duration::from_secs(5)).is_some());
         assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn with_the_files_held_too_long_a_writer_stops_with_why_and_never_writes_without_the_lock() {
+        let h = testing::home("link-lock-timeout");
+        let key = "0a".repeat(32);
+        write_node_json("phones.json", &json!({ &key: { "name": "Pixel", "pairedAt": 1, "lastSeen": 5 } })).unwrap();
+        let before = std::fs::read_to_string(file("phones.json")).unwrap();
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        let e = forget_phone(&key).unwrap_err();
+        assert!(e.contains("busy") && e.contains(FILES_LOCK), "{e}");
+        assert!(new_pairing().is_err());
+        assert!(change_node_json::<Value>("link.json", |c| c["tunnel"] = json!(false)).is_err());
+        assert!(save_config(&LinkConfig::default()).is_err());
+        // the link's note that a phone was here is skipped, not written past the lock
+        mark_seen(&key, 0);
+        assert_eq!(std::fs::read_to_string(file("phones.json")).unwrap(), before);
+        assert!(!file("link.json").exists() && !file("pairing.json").exists());
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = holder.wait();
+        forget_phone(&key).unwrap();
+        assert!(list_phones().0.is_empty());
+        let _ = holder.kill();
     }
 
     #[test]
@@ -1853,7 +1892,7 @@ mod tests {
         mark_seen(&key, SEEN_EVERY);
         assert_eq!(std::fs::read(node_dir().join("phones.json")).unwrap(), after, "not again within a minute");
         // a forgotten phone is never written back
-        forget_phone(&key);
+        forget_phone(&key).unwrap();
         mark_seen(&key, 0);
         assert!(!list_phones().contains_key(&key));
     }

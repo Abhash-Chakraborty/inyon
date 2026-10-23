@@ -174,6 +174,29 @@ test('the engine under test waits for a lock this engine holds, and goes on once
   expect(JSON.parse(readFileSync(path.join(node, 'phones.json'), 'utf8'))[KEY]).toBeUndefined()
 }, 15_000)
 
+test('a lock held past the wait stops `forget` with why, and the link skips its note: nothing is written past the lock', async () => {
+  await command('addPhone(); console.log(1)')
+  const before = readFileSync(path.join(node, 'phones.json'), 'utf8')
+  const held = path.join(node, 'held')
+  rmSync(held, { force: true })
+  const holder = runningLink(`link.withNodeFiles(() => { writeFileSync(path.join(node, 'held'), ''); Bun.sleepSync(60_000) })`)
+  try {
+    while (!existsSync(held)) await Bun.sleep(5)
+    // the link has phones to answer: its note waits a moment, then is skipped
+    const seen = await command('const t = Date.now(); link.markSeen(KEY, 0); console.log(Date.now() - t)')
+    expect(seen).toBeLessThan(1500)
+    const f = Bun.spawn([...ENGINE, 'forget', 'Pixel 9'], { env, stdout: 'pipe', stderr: 'pipe' })
+    const [err, code] = await Promise.all([new Response(f.stderr).text(), f.exited])
+    expect(code).not.toBe(0)
+    expect(err).toContain("The node's files are busy")
+    expect(err).toContain('files.lock')
+    expect(readFileSync(path.join(node, 'phones.json'), 'utf8')).toBe(before)
+  } finally {
+    holder.kill('SIGKILL')
+    await holder.exited
+  }
+}, 40_000)
+
 test('a dangling symlink in place of the lock is replaced, not spun on', async () => {
   const lock = path.join(node, 'files.lock')
   rmSync(lock, { force: true })

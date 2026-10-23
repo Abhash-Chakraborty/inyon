@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { checkName, companionCodeMessage, formatCompanionCode, plainHost, plainHttpIp, plainRefusal, setupCodeMessage } from './hub.ts'
+import { checkName, companionCodeMessage, formatCompanionCode, plainBefore020, plainHost, plainHttpIp, plainRefusal, setupCodeMessage } from './hub.ts'
 
 const url = 'http://127.0.0.1:4777'
 
@@ -52,4 +52,12 @@ test('companion code: shown in two halves, with where to type it and for how lon
   )
   // behind a proxy the loopback address would reach nothing from the app's computer
   expect(companionCodeMessage('K7M2QX', 'http://127.0.0.1:4777')).toContain('with the address you open this hub at.')
+})
+
+test('machines added before 0.20 keep only the addresses that version sent the token to', () => {
+  const before = (h: string) => plainBefore020(new URL(`http://${h}:4777`))
+  for (const h of ['localhost', '127.0.0.1', '10.0.0.1', '192.168.1.20', '172.16.0.1', '172.31.255.255', '100.64.0.1', '[::1]', '[fd7a:115c:a1e0::1]', '[fe80::1]', 'hub.ts.net', 'hub.local', 'hub.lan', 'hub.internal', 'hub'])
+    expect([h, before(h)]).toEqual([h, true])
+  for (const h of ['example.com', '8.8.8.8', '203.0.113.7', '172.32.0.1', '100.128.0.1', '10.0.0.1.attacker.com', '192.168.1.20.example.net', '127.0.0.1.nip.io', '[2001:db8::1]'])
+    expect([h, before(h)]).toEqual([h, false])
 })

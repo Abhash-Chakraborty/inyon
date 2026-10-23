@@ -69,6 +69,17 @@ test('the installers are served as they are in the repository', async () => {
   expect(await (await get('/node/install.ps1')).text()).toContain("$TaskName = 'Inyon node'")
 })
 
+test('the Windows installer saves the hub through inyon join, so a new machine is held to its check', async () => {
+  const ps1 = await (await get('/node/install.ps1')).text()
+  // join writes INYON_JOINED and refuses plain http anyone could answer; the script never writes
+  // the token itself, which would let it in as a machine added before 0.20
+  expect(ps1).toContain('& $exe join $Hub --no-autostart')
+  expect(ps1).toContain('if ($joined -ne 0)')
+  expect(ps1).not.toMatch(/"INYON_TOKEN=\$Token"/)
+  expect(ps1).not.toMatch(/Set-Content -Path \$envFile/)
+  expect(ps1.indexOf('& $exe join')).toBeLessThan(ps1.indexOf('Register-ScheduledTask'))
+})
+
 test('earlier builds go, with their .gz and .sha256; this build, this release and busybox stay', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inyon-node-dist-'))
   const stale = [

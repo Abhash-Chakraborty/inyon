@@ -62,7 +62,7 @@ pub fn saved_hub_check() -> Option<Result<Option<String>, String>> {
     }
     let from_saved = env_var("INYON_HUB").is_none();
     let insecure_ok = env_var("INYON_ALLOW_INSECURE").is_some() || (from_saved && saved.get("INYON_ALLOW_INSECURE").is_some_and(|v| !v.is_empty()));
-    let legacy = from_saved && !saved.contains_key("INYON_JOINED");
+    let legacy = from_saved && !saved.contains_key("INYON_JOINED") && Url::parse(&hub).is_ok_and(|u| crate::hub::plain_before_0_20(&u));
     if insecure_ok {
         return Some(Url::parse(&hub).map(|_| None).map_err(|_| format!("{hub} isn't a web address.")));
     }
@@ -162,7 +162,8 @@ fn settings(hub_arg: Option<String>, token_arg: Option<String>) -> Result<Settin
         error("Note: a token given as an argument shows in the process list. Prefer INYON_TOKEN=<token> inyon join <hub-url>.");
     }
     let insecure_ok = env_var("INYON_ALLOW_INSECURE").is_some() || (from_saved && saved.get("INYON_ALLOW_INSECURE").is_some_and(|v| !v.is_empty()));
-    let legacy = from_saved && !saved.contains_key("INYON_JOINED");
+    // saved before 0.20, to an address that version sent the token to: it keeps connecting
+    let legacy = from_saved && !saved.contains_key("INYON_JOINED") && Url::parse(&hub).is_ok_and(|u| crate::hub::plain_before_0_20(&u));
     let (url, look_up) = match (checked_hub(&hub, insecure_ok), Url::parse(&hub)) {
         (Ok(c), _) => c,
         (Err(_), Ok(url)) if legacy => (url, false),
@@ -468,6 +469,12 @@ mod tests {
         assert_eq!(saved_hub_check(), Some(Ok(None)));
         save(&["INYON_HUB=https://192.168.1.5:4777", "INYON_TOKEN=t"]);
         assert_eq!(saved_hub_check(), Some(Ok(None)));
+        // a public address, which 0.19 refused too, stays refused however old the file
+        for hub in ["http://203.0.113.7:4777", "http://[2001:db8::1]:4777"] {
+            save(&[&format!("INYON_HUB={hub}"), "INYON_TOKEN=t"]);
+            let why = saved_hub_check().unwrap().unwrap_err();
+            assert!(why.starts_with("Refusing to send the token over plain http") && why.contains("https"), "{why}");
+        }
         // join notes INYON_ALLOW_INSECURE only for an address that needed it
         let joined = format!("INYON_JOINED={VERSION}");
         assert_eq!(join_marks("http://192.168.1.5:4777"), vec![joined.clone()]);

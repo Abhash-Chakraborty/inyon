@@ -61,6 +61,25 @@ export function plainHost(url: URL): 'ok' | 'look up' | 'refused' {
 }
 
 /** Why a hub address can't take the token over plain http, and what to do instead. */
+/**
+ * Whether Inyon before 0.20 sent the token over plain http to this address: a private one (10/8,
+ * 172.16/12, 192.168/16, 100.64/10, loopback, fc00::/7, fe80::/10), localhost, a single-label name,
+ * or one ending in .ts.net, .netbird.cloud, .netbird.selfhosted, .local, .lan or .internal. A
+ * machine added then keeps connecting to such a hub, with a warning; a public address it never went
+ * to stays refused. The same rule as plain_before_0_20 in crates/inyon-engine/src/hub.rs.
+ */
+export function plainBefore020(url: URL) {
+  const h = url.hostname.toLowerCase()
+  if (h.startsWith('[')) return /^\[(::1\]|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/.test(h)
+  const v4 = h.split('.')
+  if (v4.length === 4 && v4.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) {
+    const [a, b] = v4.map(Number) as [number, number]
+    return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127)
+  }
+  if (h === 'localhost' || /\.(ts\.net|netbird\.cloud|netbird\.selfhosted|local|lan|internal)$/.test(h)) return true
+  return !h.includes('.')
+}
+
 export const plainRefusal = (host: string) =>
   `Refusing to send the token over plain http to ${host}: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway.`
 

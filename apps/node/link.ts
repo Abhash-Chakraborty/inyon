@@ -110,16 +110,25 @@ function takeFilesLock(until: number): Held | string {
   }
 }
 
-/** Runs `fn` holding the files. After 15 s it goes on without the lock and says so: a stuck process mustn't stop the link. */
+/**
+ * Runs `fn` holding the files, waiting up to 15 s; never without the lock. A change made without it
+ * could bring a forgotten phone back, so when another process keeps them that long this throws why
+ * and changes nothing: a command stops with it.
+ */
 export function withNodeFiles<T>(fn: () => T): T {
   const held = takeFilesLock(Date.now() + LOCK_WAIT)
-  if (typeof held === 'string') console.error(`${held}; going on without it`)
+  if (typeof held === 'string') {
+    throw new Error(`The node's files are busy: another inyon process has held ${file(FILES_LOCK)} for over ${LOCK_WAIT / 1000} s. Try again in a moment; if it stays busy, stop the process whose pid is in that file.`)
+  }
   try {
     return fn()
   } finally {
-    if (typeof held !== 'string') held.release()
+    held.release()
   }
 }
+
+/** How long the running link waits for the files before it skips a note (lastSeen, state.json): it has one thread, and phones to answer. */
+const LINK_WAIT = 200
 
 /** Runs `fn` holding the files, or returns `busy` when they aren't free within `wait` ms. */
 export function withNodeFilesWithin<T, B>(wait: number, fn: () => T, busy: () => B): T | B {
@@ -238,13 +247,18 @@ const SEEN_EVERY = 60_000
  * alone can be replayed). Read again under the lock, so a phone forgotten meanwhile stays gone.
  */
 export function markSeen(key: string, every = SEEN_EVERY) {
-  withNodeFiles(() => {
-    const all = phones()
-    const p = all[key]
-    if (!p || Date.now() - (p.lastSeen ?? 0) < every) return
-    p.lastSeen = Date.now()
-    writeJson('phones.json', all)
-  })
+  // only `inyon phones` shows it: skipped when the files are busy, never written past the lock
+  withNodeFilesWithin(
+    LINK_WAIT,
+    () => {
+      const all = phones()
+      const p = all[key]
+      if (!p || Date.now() - (p.lastSeen ?? 0) < every) return
+      p.lastSeen = Date.now()
+      writeJson('phones.json', all)
+    },
+    () => undefined,
+  )
 }
 
 export function forgetPhone(key: string) {
@@ -374,7 +388,11 @@ async function session(id: Identity, wire: Wire, via: string) {
     // the phone removed this computer: it stops being trusted here too, as `inyon forget` would
     if (m?.op === 'unpair') {
       console.log(`a phone removed this computer; it is no longer paired (${key.slice(0, 12)}…)`)
-      return forgetPhone(key)
+      try {
+        return forgetPhone(key)
+      } catch (err) {
+        return console.error((err as Error).message)
+      }
     }
     ops.message(m)
   }
@@ -652,7 +670,7 @@ export function startLink(config: LinkConfig) {
       ]),
     ]
     const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION, lastSeq }
-    withNodeFiles(() => writeJson('state.json', state))
+    withNodeFilesWithin(LINK_WAIT, () => writeJson('state.json', state), () => undefined)
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return
     lastPublished = key
@@ -660,7 +678,7 @@ export function startLink(config: LinkConfig) {
     publishUntilTaken(PKARR_RELAYS, id, { urls, relays: config.relays }, lastSeq, 10_000, () => publishing === mine).then((seq) => {
       if (seq === undefined) return
       lastSeq = seq
-      withNodeFiles(() => writeJson('state.json', { ...(currentState() ?? state), lastSeq }))
+      withNodeFilesWithin(LINK_WAIT, () => writeJson('state.json', { ...(currentState() ?? state), lastSeq }), () => undefined)
       console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
     })
   }

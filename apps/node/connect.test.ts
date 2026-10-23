@@ -128,6 +128,14 @@ test.skipIf(!lanIp || process.platform === 'win32')('a machine joined to a LAN h
     const sent = await runFor({}, allowed, 2500)
     expect(hello?.type).toBe('hello')
     expect(sent.status.problem).toBeUndefined()
+
+    // a public address, which 0.19 refused too, stays refused however old the file
+    const pub = fs.mkdtempSync(path.join(dir, 'home-'))
+    saveEnv(pub, ['INYON_HUB=http://203.0.113.7:4777', 'INYON_TOKEN=tok'])
+    const public_ = await runFor({}, pub, 2500)
+    expect(public_.code).toBe('still running')
+    expect(public_.status.problem).toContain('Refusing to send the token over plain http to 203.0.113.7')
+    expect(public_.status.warning).toBeUndefined()
   } finally {
     srv.stop(true)
   }

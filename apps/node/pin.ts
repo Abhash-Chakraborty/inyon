@@ -12,8 +12,9 @@ import { nodeDir } from './paths.ts'
  * to nothing else, accepts exactly that certificate. It's never an authority: nothing it could sign
  * is trusted. A certificate the hub gets later from an authority still counts the usual way.
  *
- * Bun's WebSocket and fetch can't be given a check of their own, so the hub connection goes
- * through a port on 127.0.0.1 that carries it on over TLS once the hub has shown its certificate.
+ * Bun's WebSocket and fetch can't be given a check of their own, so each hub connection goes
+ * through a port on 127.0.0.1 that takes that one connection and carries it on over TLS once the
+ * hub has shown its certificate.
  */
 
 export const hubCertFile = () => path.join(nodeDir(), 'hub.crt')
@@ -58,17 +59,23 @@ function accepted(sock: tls.TLSSocket, name: string, want: string): boolean {
 export interface Tunnel {
   /** The port on 127.0.0.1 to send the hub connection to, as plain ws:// or http://. */
   port: number
-  close(): void
 }
 
+/** How long a tunnel's port waits for the connection it was opened for. */
+const TAKE_WAIT = 10_000
+
 /**
- * A port on 127.0.0.1 that carries each connection on to `host`:`port` over TLS, once the hub has
+ * A port on 127.0.0.1 for one connection, carried on to `host`:`port` over TLS once the hub has
  * shown the certificate with sha256 `want` (or one an authority vouches for under its name).
- * Anything else is cut before a byte goes either way.
+ * Anything else is cut before a byte goes either way. The port takes the first connection and
+ * closes at once, so no other user on this machine can go through it; one that got there first
+ * only makes this connection fail, and it's tried again.
  */
 export function tunnel(host: string, port: number, want: string): Promise<Tunnel> {
   const name = host.replace(/^\[|\]$/g, '')
   const server = net.createServer({ pauseOnConnect: true }, (local) => {
+    server.close()
+    clearTimeout(unused)
     const remote = tls.connect({ host: name, port, servername: net.isIP(name) ? undefined : name, rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] })
     const cut = () => {
       local.destroy()
@@ -88,11 +95,17 @@ export function tunnel(host: string, port: number, want: string): Promise<Tunnel
     remote.on('close', () => local.destroy())
     local.on('close', () => remote.destroy())
   })
+  server.maxConnections = 1
+  const unused = setTimeout(() => server.close(), TAKE_WAIT)
+  unused.unref?.()
   return new Promise((resolve, reject) => {
-    server.once('error', reject)
+    server.once('error', (err) => {
+      clearTimeout(unused)
+      reject(err)
+    })
     server.listen(0, '127.0.0.1', () => {
       const a = server.address()
-      resolve({ port: typeof a === 'object' && a ? a.port : 0, close: () => server.close() })
+      resolve({ port: typeof a === 'object' && a ? a.port : 0 })
     })
   })
 }

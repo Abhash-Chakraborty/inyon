@@ -48,6 +48,29 @@ fn ok_if(ok: bool) -> Plain {
     }
 }
 
+/// Whether Inyon before 0.20 sent the token over plain http to this address: a private one (10/8,
+/// 172.16/12, 192.168/16, 100.64/10, loopback, fc00::/7, fe80::/10), localhost, a single-label
+/// name, or one ending in .ts.net, .netbird.cloud, .netbird.selfhosted, .local, .lan or .internal.
+/// A machine added then keeps connecting to such a hub, with a warning; a public address it never
+/// went to stays refused.
+pub fn plain_before_0_20(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            a == 10 || a == 127 || (a == 192 && b == 168) || (a == 172 && (16..=31).contains(&b)) || (a == 100 && (64..=127).contains(&b))
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+        Some(url::Host::Domain(d)) => {
+            let h = d.to_ascii_lowercase();
+            h == "localhost" || [".ts.net", ".netbird.cloud", ".netbird.selfhosted", ".local", ".lan", ".internal"].iter().any(|s| h.ends_with(s)) || !h.contains('.')
+        }
+        None => false,
+    }
+}
+
 /// Why a hub address can't take the token over plain http, and what to do instead.
 pub fn plain_refusal(host: &str) -> String {
     format!(
@@ -128,5 +151,32 @@ mod tests {
         assert_eq!(check_name("nothing.invalid", 4777).await, Err(None));
         assert_eq!(check_name_now("localhost", 4777), Ok(()));
         assert!(check_name_now("192.168.1.2", 4777).unwrap_err().is_some());
+    }
+
+    #[test]
+    fn machines_added_before_0_20_keep_only_the_addresses_that_version_sent_the_token_to() {
+        let before = |h: &str| plain_before_0_20(&Url::parse(&format!("http://{h}:4777")).unwrap());
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "10.0.0.1",
+            "192.168.1.20",
+            "172.16.0.1",
+            "172.31.255.255",
+            "100.64.0.1",
+            "[::1]",
+            "[fd7a:115c:a1e0::1]",
+            "[fe80::1]",
+            "hub.ts.net",
+            "hub.local",
+            "hub.lan",
+            "hub.internal",
+            "hub",
+        ] {
+            assert!(before(h), "{h}");
+        }
+        for h in ["example.com", "8.8.8.8", "203.0.113.7", "172.32.0.1", "100.128.0.1", "10.0.0.1.attacker.com", "192.168.1.20.example.net", "127.0.0.1.nip.io", "[2001:db8::1]"] {
+            assert!(!before(h), "{h}");
+        }
     }
 }
