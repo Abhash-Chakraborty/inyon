@@ -55,6 +55,19 @@ test('typing the ID and code pairs as soon as the last digit is in', async () =>
   pairLaptop.mockRestore()
 })
 
+test("after a typed code, the computer's ID shows, to check against the one inyon printed", async () => {
+  const user = userEvent.setup()
+  const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'box', machineId: 'ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u' })
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.type(screen.getByRole('textbox', { name: 'ID' }), 'K7Q4MX2T')
+  await user.keyboard('493812')
+  await flush()
+  const toast = useStore.getState().toasts.at(-1)!
+  expect(toast.title).toBe('Paired')
+  expect(toast.body).toContain('Its ID is ybnd rfg8 ejkm.')
+  pairLaptop.mockRestore()
+})
+
 test('an ID and code pasted together fill both boxes', async () => {
   const user = userEvent.setup()
   const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'box' } as any)

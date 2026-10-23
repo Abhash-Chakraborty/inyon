@@ -11,7 +11,7 @@ import { HOOK_STATE_SH, PROBE, pasteCommand, typedCommand } from './tmux/tmux.ts
 import { LINK_UPDATE, READ_STATUS, SELF_UPDATE, WINDOWS_LAUNCHER } from './hosts/node-update.ts'
 import { SCRIPT as CLAUDE_USAGE } from './agents/claude-usage.ts'
 import { copilotCatalogScript } from './agents/copilot-rpc-sh.ts'
-import { VIEW_KEYS } from './terminal/terminal.ts'
+import { VIEW_KEYS, viewCommand } from './terminal/terminal.ts'
 import { PATHS } from './features/setup.ts'
 import { viaCommand } from './hosts/via-backend.ts'
 import { dropAuthorizedKey } from './hosts/tidy.ts'
@@ -129,6 +129,8 @@ export function scripts() {
       remainOffWindows: remainOnExit(true, "'%1'", false),
       respawn: respawnShell(false, "'%1'", '/home/o b'),
       respawnWindows: respawnShell(true, "'%1'"),
+      respawnHash: respawnShell(false, "'%1'", '/srv/x#(id)'),
+      view: viewCommand('inyon-view-t', '@1', '%1'),
       resumeClaude: resumeCommand('claude', '0f7c9d2e-1111-4222-8333-944455556666', ['node', '/x/claude', '--model', 'opus', '--resume', 'abc', 'hello there', '--add-dir=/a b']),
       resumeCodex: resumeCommand('codex', '0f7c9d2e-1111-4222-8333-944455556666', '/usr/bin/codex resume 0f7c9d2e-1111-4222-8333-944455556666 -m gpt-5 --yolo'),
       resumeAgy: resumeCommand('antigravity', undefined, ['agy', '--model', 'gemini-3', '-i', 'hi', '--continue']),

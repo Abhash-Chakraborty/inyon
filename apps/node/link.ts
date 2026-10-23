@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import {
-  accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
+  accept, authMessage, formatShortId, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, resolve, shortCodeIdentity, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
 import { attemptAfter, backoff } from '@inyon/protocol'
@@ -315,7 +315,7 @@ function welcome() {
 export const check = (remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) =>
   // the phone gives each address a few seconds: say busy in time rather than miss them all
   withNodeFilesWithin(CHECK_WAIT, () => checkLocked(remoteStatic, hello), () => {
-    throw new LinkError('REFUSED', `${os.hostname()} is busy saving its files. Try again in a moment.`)
+    throw new LinkError('REFUSED', 'This computer is busy saving its files. Try again in a moment.')
   })
 
 function checkLocked(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
@@ -349,11 +349,11 @@ function checkLocked(remoteStatic: Uint8Array, hello: { name?: string; pair?: st
       console.error(`couldn't save pairing.json: ${(err as Error).message}`)
       rmSync(file('pairing.json'), { force: true })
     }
-    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
-    throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
+    if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', 'Too many wrong codes, so that one no longer works. Run `inyon pair` on the computer for a new one.')
+    throw new LinkError('NOT_PAIRED', "That code doesn't match. Check it against the one on the computer and try again.")
   }
-  if (hello.pair) throw new LinkError('NOT_PAIRED', `That pairing code has expired or was already used. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
-  throw new LinkError('NOT_PAIRED', `This phone isn't paired with ${os.hostname()} any more. Run \`inyon pair\` there and scan the code again.`)
+  if (hello.pair) throw new LinkError('NOT_PAIRED', 'That pairing code has expired or was already used. Run `inyon pair` on the computer for a new one.')
+  throw new LinkError('NOT_PAIRED', "This phone isn't paired with this computer any more. Run `inyon pair` there and scan the code again.")
 }
 
 /** One phone session: the encrypted handshake, then the same commands the hub sends. */
@@ -452,8 +452,20 @@ function lanUrls(port: number) {
   return Object.entries(os.networkInterfaces())
     .filter(([name]) => !VIRTUAL.test(name))
     .flatMap(([, list]) => list ?? [])
-    .filter((a) => a.family === 'IPv4' && !a.internal)
+    .filter((a) => a.family === 'IPv4' && !a.internal && lanAddress(a.address))
     .map((a) => `ws://${a.address}:${port}/link`)
+}
+
+/**
+ * What `--lan` publishes: private (10/8, 172.16/12, 192.168/16), link-local and VPN (100.64/10)
+ * addresses. Never a public one, such as a server's: the record is public, and a phone on the
+ * internet reaches the machine through the tunnel anyway.
+ */
+export function lanAddress(ip: string) {
+  const m = ip.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (!m) return false
+  const [a, b] = [Number(m[1]), Number(m[2])]
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127)
 }
 
 // ---------- the Cloudflare quick tunnel ----------
@@ -529,6 +541,28 @@ const stopChildren = () => {
 process.on('exit', stopChildren)
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(sig, () => (stopChildren(), process.exit(0)))
 
+/**
+ * Reads one cloudflared run's stderr for its address. Only the first counts: after the banner,
+ * cloudflared's log could carry a URL someone else chose (a request it logs), which mustn't be
+ * published as this machine's address. A restarted cloudflared gets a new reader.
+ */
+export function tunnelAddressReader() {
+  const dec = new TextDecoder()
+  let carry = ''
+  let found = false
+  return (chunk: Uint8Array): string | undefined => {
+    if (found) return
+    carry += dec.decode(chunk, { stream: true })
+    const m = carry.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
+    if (m) {
+      found = true
+      carry = ''
+      return `wss://${new URL(m[0]).host}/link`
+    }
+    if (carry.length > 65536) carry = carry.slice(-4096)
+  }
+}
+
 /** Keeps a quick tunnel to the listener running; calls back with each new public address. */
 function tunnel(port: number, onUrl: (url: string | undefined) => void) {
   let attempt = 0
@@ -544,15 +578,11 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
     children.add(p)
     const started = Date.now()
     ;(async () => {
-      const dec = new TextDecoder()
-      let carry = ''
+      const address = tunnelAddressReader()
+      // read to the end even after the address, so cloudflared never blocks on a full pipe
       for await (const chunk of p.stderr as unknown as ReadableStream<Uint8Array>) {
-        carry += dec.decode(chunk, { stream: true })
-        const m = carry.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
-        if (m) {
-          onUrl(`wss://${new URL(m[0]).host}/link`)
-          carry = ''
-        } else if (carry.length > 65536) carry = carry.slice(-4096)
+        const url = address(chunk)
+        if (url) onUrl(url)
       }
     })().catch(() => {})
     await p.exited
@@ -649,6 +679,41 @@ export async function publishUntilTaken(relays: string[], id: Identity, rec: { u
   }
 }
 
+/**
+ * The typed code's record is signed with a key anyone who saw the ID and code can work out, so
+ * they could publish a newer one naming their own computer, and a phone typing the code would pair
+ * with theirs. While a code is open, the link looks at the record now and then: once it names
+ * another computer, the code stops working here (the QR code, which names this machine itself,
+ * still does). What it said, when it stopped the code.
+ */
+export async function watchShortCode(machine: string, relays: string[] = PKARR_RELAYS, fetcher: typeof fetch = fetch): Promise<string | undefined> {
+  const pairing = readJson<{ short?: string; expires?: number }>('pairing.json', {})
+  if (!pairing.short || (pairing.expires ?? 0) <= Date.now()) return
+  const [id = '', code = ''] = pairing.short.split(':')
+  const codeId = shortCodeIds.get(pairing.short) ?? (await shortCodeIdentity({ id, code })).id
+  shortCodeIds.clear()
+  shortCodeIds.set(pairing.short, codeId)
+  const rec = await resolve(codeId, relays, fetcher).catch(() => undefined)
+  if (!rec || rec.machine === machine) return
+  const stopped = withNodeFiles(() => {
+    const now = readJson<{ short?: string }>('pairing.json', {})
+    if (now.short !== pairing.short) return false
+    try {
+      writeJson('pairing.json', { ...now, short: undefined })
+    } catch (err) {
+      console.error(`couldn't save pairing.json: ${(err as Error).message}`)
+      rmSync(file('pairing.json'), { force: true })
+    }
+    return true
+  })
+  if (!stopped) return
+  const said = `Another computer was published under the pairing code ${formatShortId(id)}, so that code no longer works here (someone who saw it may be trying to pair your phone with their computer). The QR code still works, or run \`inyon pair\` for a new code.`
+  console.error(said)
+  return said
+}
+/** the code's identity takes scrypt to work out: kept for the code that's open */
+const shortCodeIds = new Map<string, string>()
+
 export function startLink(config: LinkConfig) {
   const id = identity()
   listen(id, config.lan ? '0.0.0.0' : '127.0.0.1', config.port)
@@ -693,6 +758,8 @@ export function startLink(config: LinkConfig) {
   for (const r of config.relays) relay(id, r, () => update())
   // notifications for paired browsers while their page is closed
   startPush()
+  // an open short code whose record someone else took over stops working
+  setInterval(() => void watchShortCode(id.id).catch(() => {}), 20_000)
 
   // networks come and go (NetBird often connects after this starts), so look again now and then
   const networks = async () => {

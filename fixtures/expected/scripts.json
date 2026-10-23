@@ -29,6 +29,8 @@
     "remainOffWindows": "tmux set-option -w -t '%1' -u remain-on-exit",
     "respawn": "tmux respawn-pane -t '%1' -c '/home/o b' \"${SHELL:-/bin/sh}\" -l",
     "respawnWindows": "tmux respawn-pane -k -t '%1'  \"$(command -v pwsh.exe >/dev/null 2>&1 && echo pwsh.exe || echo powershell.exe)\"",
+    "respawnHash": "tmux respawn-pane -t '%1' -c '/srv/x##(id)' \"${SHELL:-/bin/sh}\" -l",
+    "view": "tmux bind-key -T inyon-view WheelUpPane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -e'; tmux bind-key -T inyon-view MouseDown1Pane 'select-pane -t = ; send-keys -M'; tmux bind-key -T inyon-view MouseDrag1Pane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'; exec tmux -u new-session -s 'inyon-view-t' -n inyon-tmp \\; link-window -s '@1' -t 'inyon-view-t:' \\; kill-window -t 'inyon-view-t:inyon-tmp' \\; set-option -t 'inyon-view-t' status off \\; set-option -t 'inyon-view-t' key-table inyon-view \\; set-option -t 'inyon-view-t' prefix None \\; set-option -t 'inyon-view-t' prefix2 None \\; set-option -t 'inyon-view-t' destroy-unattached on \\; select-pane -t '%1'",
     "resumeClaude": "claude --resume 0f7c9d2e-1111-4222-8333-944455556666 '--model' 'opus' '--add-dir=/a b'",
     "resumeCodex": "codex resume 0f7c9d2e-1111-4222-8333-944455556666 '-m' 'gpt-5' '--yolo'",
     "resumeAgy": "agy '--model' 'gemini-3'"

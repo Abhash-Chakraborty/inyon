@@ -16,6 +16,19 @@ pub fn shq(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// `tmuxLiteral`: a name or folder as tmux should take it literally. tmux expands formats in
+/// `new-session -s/-c`, `new-window -c/-n`, `respawn-pane -c` and `rename-window`, and `#(cmd)`
+/// runs a command, so a folder an agent made called `x#(curl …|sh)` would run that on Fork or
+/// Restart. `##` is a plain `#`. psmux is left alone: whether it expands formats there isn't known
+/// yet, and a doubled `#` would send a `C#` folder astray.
+pub fn tmux_literal(s: &str, psmux: bool) -> String {
+    if psmux {
+        s.to_owned()
+    } else {
+        s.replace('#', "##")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ExecResult {
     pub code: i32,

@@ -49,6 +49,9 @@ export class Channel {
         // a forged or out-of-order message: the session can't be trusted any more
         return this.close(4400, 'bad message')
       }
+      // a frame without even the flag byte carries nothing; counting it as -1 byte would let the
+      // other side raise the cap below a little at a time (the Rust side skips it too)
+      if (!plain.length) return
       this.parts.push(plain.subarray(1))
       this.buffered += plain.length - 1
       if (this.buffered > MAX_MESSAGE) {

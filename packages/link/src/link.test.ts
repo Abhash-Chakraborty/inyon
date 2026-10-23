@@ -85,6 +85,26 @@ test('a message that keeps coming in pieces is cut off at 16 MiB', () => {
   expect(mc.closed).toBe(true)
 })
 
+test('empty frames count for nothing, so they can\'t raise the 16 MiB cap', () => {
+  const machine = newIdentity()
+  const init = new Initiator(generateKeyPair(), machine.noise.publicKey)
+  const resp = new Responder(machine.noise)
+  resp.readMessage1(init.writeMessage1(new Uint8Array(0)))
+  const { message, transport: mt } = resp.writeMessage2(new Uint8Array(0))
+  const { transport: pt } = init.readMessage2(message)
+  const closed: [number, string][] = []
+  const wire: Wire = { send() {}, close: (c = 1000, r = '') => closed.push([c, r]) }
+  new Channel(wire, mt)
+  for (let i = 0; i < 1000; i++) wire.onmessage!(pt.send.encrypt(new Uint8Array(0), new Uint8Array(0)))
+  expect(closed).toEqual([])
+  // then exactly one byte over the cap, never marked as the last piece
+  const piece = new Uint8Array(1 + 1024 * 1024)
+  for (let i = 0; i < 16; i++) wire.onmessage!(pt.send.encrypt(new Uint8Array(0), piece))
+  expect(closed).toEqual([])
+  wire.onmessage!(pt.send.encrypt(new Uint8Array(0), new Uint8Array(2)))
+  expect(closed).toEqual([[4413, 'message too large']])
+})
+
 test('an unpaired phone is told why, encrypted', async () => {
   const machine = newIdentity()
   const [pw, mw] = wires()

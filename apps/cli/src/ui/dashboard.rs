@@ -158,11 +158,18 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
     }
 }
 
+/// The request for the hub's machines: the local token in a header, not in the address, where a
+/// proxy's or the hub's log would keep it (every hub since 0.13 takes either).
+fn hub_nodes_request(hub: &str, token: &str) -> (String, Vec<(String, String)>) {
+    (format!("{hub}/api/local/nodes"), vec![("authorization".to_owned(), format!("Bearer {token}"))])
+}
+
 /// The hub's machines, through its loopback API (hub 0.13 and on; older hubs have none).
 fn hub_nodes() -> Option<Vec<String>> {
     let token = fs::read_to_string(crate::paths::data_dir().join("local-token")).ok()?.trim().to_string();
     let env = crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env"));
-    let res = crate::http::get_local(&format!("{}/api/local/nodes?token={token}", crate::commands::hub_local_url(&env))).ok()?;
+    let (url, headers) = hub_nodes_request(&crate::commands::hub_local_url(&env), &token);
+    let res = crate::http::get_local(&url, &headers).ok()?;
     if !res.ok() {
         return None;
     }
@@ -528,6 +535,14 @@ pub fn run_screen(sys: &Sys, theme: Theme) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_local_token_goes_in_a_header_not_the_address() {
+        let (url, headers) = super::hub_nodes_request("http://127.0.0.1:4777", "s3cret-local-token");
+        assert_eq!(url, "http://127.0.0.1:4777/api/local/nodes");
+        assert!(!url.contains("s3cret"));
+        assert_eq!(headers, [("authorization".to_owned(), "Bearer s3cret-local-token".to_owned())]);
+    }
+
     use super::*;
 
     fn status() -> Status {

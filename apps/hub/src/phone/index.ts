@@ -1,6 +1,6 @@
 import { ed25519 } from '@noble/curves/ed25519.js'
 import type { HostConfig } from '@inyon/protocol'
-import { useStore } from '../platform/store.ts'
+import { kv, useStore } from '../platform/store.ts'
 import { setHostBackends } from '../hosts/host.ts'
 import { setLocalHost } from '../config.ts'
 import { splitTarget, sshBackend, toBase64, fromBase64, type Credentials } from './ssh-backend.ts'
@@ -9,7 +9,7 @@ import type { PhoneRuntime, StartPhone, SshPlugin } from './types.ts'
 import { identityFromSeed, parsePairLink, parseShortCode, resolveShortCode } from '@inyon/link'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { viaBackend } from '../hosts/via-backend.ts'
-import { linkConnector } from './link.ts'
+import { linkConnector, type PendingUnpair } from './link.ts'
 
 /**
  * The phone app runs Inyon's core itself and SSHes straight into your servers: no hub, no
@@ -34,7 +34,10 @@ export const startPhone: StartPhone = async ({ store, ssh, name }) => {
   lookup = (id) => registry.get(id)?.host.config
   const { api, body, json, ok, newHostId, clients, newClient, clientMessage, closeClient, coreRoutes, saveEverything, startCore } = core
 
-  const links = linkConnector(keys.noise, name || phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }))
+  const links = linkConnector(keys.noise, name || phoneName(), (id, urls, relays) => registry.note(id, { urls, relays }), {
+    // computers removed while out of reach, told to forget the phone once they answer
+    pending: { load: () => kv.get<PendingUnpair[]>('pending-unpairs') ?? [], save: (list) => (list.length ? kv.set('pending-unpairs', list) : kv.del('pending-unpairs')) },
+  })
   const ensureLinks = () => {
     for (const c of registry.configs()) if (c.kind === 'link') links.ensure(c)
   }
@@ -124,12 +127,14 @@ export const startPhone: StartPhone = async ({ store, ssh, name }) => {
         if (same) {
           registry.note(same.id, addresses)
           links.resume()
-          return json({ id: same.id })
+          return json({ id: same.id, machineId: info.id })
         }
         const name = String(b.name ?? '').trim() || welcome.hostname || info.name || 'Laptop'
         const id = newHostId(name)
         registry.add({ id, name, kind: 'link', machineId: info.id, ...addresses })
-        return json({ id })
+        // the machine's id, for the app to show after a typed code: anyone who saw the code could
+        // have published their own computer under it
+        return json({ id, machineId: info.id })
       }),
     },
     '/api/hosts/:id': {
@@ -162,11 +167,16 @@ export const startPhone: StartPhone = async ({ store, ssh, name }) => {
           const { dropAuthorizedKey, tidyMachine } = await import('../hosts/tidy.ts')
           await tidyMachine(rt.host, rt.state, rt.host.config.auth === 'phone-key' ? dropAuthorizedKey(await keys.publicLine()) : '')
         }
-        links.forget(id)
+        const told = rt?.host.config.kind === 'link' ? links.forget(id, rt.host.config) : (links.forget(id), true)
         await conn.forget(id)
         await keys.drop(id)
         registry.remove(id)
-        return ok()
+        // it was handed this browser's push signing key and subscription, and may keep them: the
+        // page makes new ones and hands them to the computers left (apps/web/src/lib/push.ts)
+        const { registrations } = await import('../push/registrations.ts')
+        if (registrations().length) (globalThis as { dispatchEvent?: (e: Event) => boolean }).dispatchEvent?.(new Event('inyon:push-rotate'))
+        // a computer out of reach still trusts the phone until it hears; the app says so
+        return json({ ok: true, ...(told ? {} : { untold: rt?.host.config.name }) })
       }),
     },
   }

@@ -11,9 +11,9 @@ use inyon_core::platform::rt::sleep;
 use inyon_protocol::{HostConfig, HostKind, HostState, VERSION};
 use serde_json::{json, Map, Value};
 
-use crate::auth::{clear_cookie, client_address, close_sockets, is_authed, issue_cookie, loopback, recent_sign_in, refresh_cookie, revoke_session, try_login};
+use crate::auth::{clear_cookie, client_address, close_sockets, is_authed, issue_cookie, loopback, recent_sign_in, refresh_cookie, revoke_session, try_login, TOO_MANY};
 use crate::http::{field, json as answer, ok, ok_json, random_base64url, same, set_header, sha256, str_or_empty, Req, Resp};
-use crate::password::{check_password, has_password, password_problem, set_password};
+use crate::password::{has_password, password_problem, set_password};
 use crate::phones::{claim_phone, hub_about, issue_ticket, list_phones, new_pair_code, phone_for, revoke_phone, CODE_TTL};
 use crate::server::{api, ctx, h, raw, ApiHandler, Opts, Route, Routes, OPEN, OPEN_OWNER, OWNER};
 
@@ -65,6 +65,7 @@ fn from_this_machine(req: &Req) -> bool {
     if !loopback(&ip) && ip.strip_prefix("::ffff:").unwrap_or(&ip) != ctx().bind {
         return false;
     }
+    // the header; `?token=` only for inyon commands before 0.20.3, which sent it in the address
     let given = req.query_get("token").unwrap_or_else(|| {
         let auth = req.header("authorization").unwrap_or_default();
         inyon_core::re!(r"(?i)^Bearer\s+").replace(&auth, "").into_owned()
@@ -120,15 +121,19 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
             let c = ctx();
             if c.setup_attempts.get().1 < now {
                 c.setup_attempts.set((0, now + 60_000));
+                c.setup_tries.borrow_mut().clear();
             }
             let Some(setup_code) = c.setup_code.borrow().clone() else { return Err(http(409, ALREADY)) };
             let code = str_or_empty(field(&b, "code")?).trim().to_lowercase();
-            if c.setup_attempts.get().0 >= 8 {
+            let client = client_address(&req.ip(), req.header("x-forwarded-for").as_deref());
+            let mine = c.setup_tries.borrow().get(&client).copied().unwrap_or(0);
+            if mine >= 8 || !crate::limits::shared_cap_allows("setup code", &client, c.setup_attempts.get().0, 8, now) {
                 return Err(http(429, "Too many attempts. Try again in a minute."));
             }
             if code.len() != setup_code.len() || !same(&code, &setup_code) {
                 let (n, reset) = c.setup_attempts.get();
                 c.setup_attempts.set((n + 1, reset));
+                *c.setup_tries.borrow_mut().entry(client).or_insert(0) += 1;
                 sleep(400).await;
                 return Err(http(401, "That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in the hub log and in ~/.inyon/setup-code."));
             }
@@ -151,9 +156,13 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
         "/api/password",
         h(|mut req| async move {
             let b = req.json_body(8 * 1024).await?;
-            if !check_password(&str_or_empty(field(&b, "current")?)).await {
-                sleep(400).await;
-                return Err(http(401, "Your current password is not right"));
+            // the current password counts against the sign-in limits: a stolen cookie mustn't be a
+            // way to guess it at full speed
+            let client = client_address(&req.ip(), req.header("x-forwarded-for").as_deref());
+            match try_login(&client, &str_or_empty(field(&b, "current")?)).await {
+                Err(TOO_MANY) => return Err(http(429, TOO_MANY)),
+                Err(_) => return Err(http(401, "Your current password is not right")),
+                Ok(()) => {}
             }
             let next = str_or_empty(field(&b, "next")?);
             if let Some(problem) = password_problem(&next) {
@@ -187,7 +196,7 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
         "/api/logout",
         h(|req| async move {
             revoke_session(&req);
-            Ok(with_cookie(ok(), &clear_cookie()))
+            Ok(with_cookie(ok(), &clear_cookie(secure_request(&req))))
         }),
         OPEN,
     );
@@ -326,6 +335,46 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
             Ok(ok_json(&json!({ "id": id, "token": token, "command": unix, "commands": { "unix": unix, "windows": windows } })))
         }),
         Opts::default(),
+    );
+    // `inyon join` swaps the token in the "Add a machine" command for one only it knows, before the
+    // machine first connects: the pasted command (in shell history, a support paste, a screen
+    // share) is dead once used. Older commands that skip this still connect with the pasted token.
+    r.methods(
+        "/node/claim",
+        vec![(
+            Method::POST,
+            raw(|req| async move {
+                let auth = req.header("authorization").unwrap_or_default();
+                let token = inyon_core::re!(r"(?i)^Bearer\s+").replace(&auth, "").into_owned();
+                let hash = if token.is_empty() { String::new() } else { sha256(&token) };
+                let cfg = (!hash.is_empty())
+                    .then(|| registry().configs().into_iter().find(|c| c.kind == HostKind::Node && c.token_hash.as_deref().is_some_and(|h| !h.is_empty() && same(h, &hash))))
+                    .flatten();
+                let cfg = match cfg {
+                    Some(c) if !inyon_core::hosts::registry::token_expired(&c, now_ms()) => c,
+                    other => {
+                        sleep(500).await;
+                        return crate::http::text(
+                            403,
+                            if other.is_some() {
+                                "This pairing command expired; get a new one from the hub\n"
+                            } else {
+                                "Unknown token; the command was used already or replaced. Get a new one from the hub.\n"
+                            },
+                        );
+                    }
+                };
+                // a machine already connected with it (an older inyon): swapping now would cut it off
+                if cfg.paired_at.is_some_and(|p| p != 0) {
+                    return crate::http::text(409, "This machine is paired already\n");
+                }
+                let fresh = random_base64url(32);
+                if let Err(e) = registry().set_node_token(&cfg.id, &sha256(&fresh)) {
+                    return crate::http::text(e.status.unwrap_or(500), format!("{}\n", e.message));
+                }
+                ok_json(&json!({ "token": fresh }))
+            }),
+        )],
     );
     // ---------- the inyon command on this machine, over loopback with the local token ----------
     r.add(

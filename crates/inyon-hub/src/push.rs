@@ -61,9 +61,19 @@ pub fn valid_registration(b: &Value) -> HubResult<Registration> {
     })
 }
 
+/// How many browsers a hub sends to. Each one is a URL the hub POSTs to whenever an agent needs
+/// you, and only signed-in browsers and phones may add one, but there's no reason for the list to
+/// grow without end: past this, the oldest goes.
+pub const MAX_REGISTRATIONS: usize = 20;
+
 pub fn add_registration(r: &Registration) {
     if let Err(e) = kv::set(&key(&r.subscription.endpoint), r) {
         console::error(&format!("push: couldn't save a registration: {e}"));
+    }
+    let mut all = registrations();
+    all.sort_by_key(|r| r.at);
+    for old in all.iter().take(all.len().saturating_sub(MAX_REGISTRATIONS)) {
+        kv::del(&key(&old.subscription.endpoint));
     }
 }
 
@@ -258,6 +268,26 @@ mod tests {
             assert_eq!(push_all(payload_for("h", "%1", "waiting", "t", "b"), Some(send), Some("https://push.example.net/2")).await, 1);
             assert_eq!(*to.borrow(), ["2"]);
         });
+    }
+
+    #[test]
+    fn a_hub_sends_to_at_most_twenty_browsers_dropping_the_one_that_registered_longest_ago() {
+        crate::test_util::core();
+        let add = |n: u32, at: u64| add_registration(&Registration { at, ..valid_registration(&browser(n, true)).unwrap() });
+        for n in 1..=(MAX_REGISTRATIONS as u32 + 2) {
+            add(n, 1000 + u64::from(n));
+        }
+        let ends = || {
+            let mut e: Vec<u32> = registrations().iter().map(|r| r.subscription.endpoint.rsplit('/').next().unwrap().parse().unwrap()).collect();
+            e.sort_unstable();
+            e
+        };
+        assert_eq!(MAX_REGISTRATIONS, 20);
+        assert_eq!(ends(), (3..=22).collect::<Vec<_>>());
+        // a browser registering again moves to the end of the queue instead of taking a second place
+        add(3, 5000);
+        add(99, 5001);
+        assert!(ends().contains(&3) && !ends().contains(&4));
     }
 
     #[test]

@@ -548,12 +548,14 @@ fn same_text(a: &str, b: &str) -> bool {
 const SHORT_TRIES: u64 = 5;
 
 /// Who may come in: a phone paired before, or one bringing the secret from the code on screen.
+/// What it tells a phone it doesn't know never names this machine: anyone with the machine's id
+/// can ask.
 pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError> {
     let key: String = remote_static.iter().map(|b| format!("{b:02x}")).collect();
     let host = crate::hostname();
     // the phone gives each address a few seconds: say busy in time rather than miss them all
     let Some(_files) = node_files_within(CHECK_WAIT) else {
-        return Err(LinkError::Refused(format!("{host} is busy saving its files. Try again in a moment.")));
+        return Err(LinkError::Refused("This computer is busy saving its files. Try again in a moment.".into()));
     };
     let mut all = phones_raw();
     let now = crate::now_ms();
@@ -599,14 +601,14 @@ pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError
             let _ = std::fs::remove_file(file("pairing.json"));
         }
         if failures >= SHORT_TRIES {
-            return Err(LinkError::NotPaired(format!("Too many wrong codes, so that one no longer works. Run `inyon pair` on {host} for a new one.")));
+            return Err(LinkError::NotPaired("Too many wrong codes, so that one no longer works. Run `inyon pair` on the computer for a new one.".into()));
         }
-        return Err(LinkError::NotPaired(format!("That code doesn't match. Check it against the one on {host} and try again.")));
+        return Err(LinkError::NotPaired("That code doesn't match. Check it against the one on the computer and try again.".into()));
     }
     if pair.is_some() {
-        return Err(LinkError::NotPaired(format!("That pairing code has expired or was already used. Run `inyon pair` on {host} for a new one.")));
+        return Err(LinkError::NotPaired("That pairing code has expired or was already used. Run `inyon pair` on the computer for a new one.".into()));
     }
-    Err(LinkError::NotPaired(format!("This phone isn't paired with {host} any more. Run `inyon pair` there and scan the code again.")))
+    Err(LinkError::NotPaired("This phone isn't paired with this computer any more. Run `inyon pair` there and scan the code again.".into()))
 }
 
 /// What comes in over a wire: one binary message, or its end.
@@ -914,7 +916,14 @@ fn is_virtual(name: &str) -> bool {
 }
 
 fn lan_urls(port: u16) -> Vec<String> {
-    crate::networks::interfaces().into_iter().filter(|i| !is_virtual(&i.name) && !i.internal).map(|i| format!("ws://{}:{port}/link", i.ip)).collect()
+    crate::networks::interfaces().into_iter().filter(|i| !is_virtual(&i.name) && !i.internal && lan_address(&i.ip)).map(|i| format!("ws://{}:{port}/link", i.ip)).collect()
+}
+
+/// What `--lan` publishes: private (10/8, 172.16/12, 192.168/16), link-local and VPN (100.64/10)
+/// addresses. Never a public one, such as a server's: the record is public, and a phone on the
+/// internet reaches the machine through the tunnel anyway.
+fn lan_address(ip: &str) -> bool {
+    ip.parse::<std::net::Ipv4Addr>().is_ok_and(|a| a.is_private() || a.is_link_local() || (a.octets()[0] == 100 && (64..=127).contains(&a.octets()[1])))
 }
 
 // ---------- the Cloudflare quick tunnel ----------
@@ -1048,6 +1057,44 @@ pub fn tunnel_address(text: &str) -> Option<String> {
     Some(format!("wss://{}/link", &m.as_str()["https://".len()..]))
 }
 
+/// Reads one cloudflared run's stderr for its address. Only the first counts: after the banner,
+/// cloudflared's log could carry a URL someone else chose (a request it logs), which mustn't be
+/// published as this machine's address. A restarted cloudflared gets a new reader.
+#[derive(Default)]
+pub struct AddressReader {
+    carry: String,
+    pending: Vec<u8>,
+    found: bool,
+}
+
+impl AddressReader {
+    /// Takes the next bytes; the address once it has come whole, and never again after that.
+    pub fn feed(&mut self, bytes: &[u8]) -> Option<String> {
+        if self.found {
+            return None;
+        }
+        self.pending.extend_from_slice(bytes);
+        let cut = match std::str::from_utf8(&self.pending) {
+            Ok(_) => self.pending.len(),
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => self.pending.len(),
+        };
+        self.carry.push_str(&String::from_utf8_lossy(&self.pending[..cut]));
+        self.pending.drain(..cut);
+        if let Some(url) = tunnel_address(&self.carry) {
+            self.found = true;
+            self.carry = String::new();
+            return Some(url);
+        }
+        if self.carry.len() > 65536 {
+            let keep = self.carry.len() - 4096;
+            let at = (keep..self.carry.len()).find(|i| self.carry.is_char_boundary(*i)).unwrap_or(self.carry.len());
+            self.carry.drain(..at);
+        }
+        None
+    }
+}
+
 /// Keeps a quick tunnel to the listener running; calls back with each new public address.
 fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
     let on_url = Arc::new(on_url);
@@ -1083,28 +1130,15 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                     if let Some(mut stderr) = child.stderr.take() {
                         let on_url = on_url.clone();
                         let reader = tokio::spawn(async move {
-                            let mut carry = String::new();
-                            let mut pending: Vec<u8> = Vec::new();
+                            let mut address = AddressReader::default();
                             let mut buf = vec![0u8; 8192];
+                            // read to the end even after the address, so cloudflared never blocks on a full pipe
                             while let Ok(n) = stderr.read(&mut buf).await {
                                 if n == 0 {
                                     break;
                                 }
-                                pending.extend_from_slice(&buf[..n]);
-                                let cut = match std::str::from_utf8(&pending) {
-                                    Ok(_) => pending.len(),
-                                    Err(e) if e.error_len().is_none() => e.valid_up_to(),
-                                    Err(_) => pending.len(),
-                                };
-                                carry.push_str(&String::from_utf8_lossy(&pending[..cut]));
-                                pending.drain(..cut);
-                                if let Some(url) = tunnel_address(&carry) {
+                                if let Some(url) = address.feed(&buf[..n]) {
                                     on_url(Some(url));
-                                    carry.clear();
-                                } else if carry.len() > 65536 {
-                                    let keep = carry.len() - 4096;
-                                    let at = (keep..carry.len()).find(|i| carry.is_char_boundary(*i)).unwrap_or(carry.len());
-                                    carry.drain(..at);
                                 }
                             }
                         });
@@ -1319,6 +1353,64 @@ pub async fn publish_short_code(short: &ShortCode, machine: &str, name: &str, ur
     publish(&identity, &record, None).await.map(|_| ())
 }
 
+/// Whether the newest record the relays hold under `identity` names `machine`. None when no relay
+/// has one (not published yet, or none answered).
+async fn record_names(relays: &[&str], identity: &str, machine: &str) -> Option<bool> {
+    let mut bodies = Vec::new();
+    for r in relays {
+        if let Ok(res) = crate::http::fetch("GET", format!("{r}/{identity}"), Vec::new(), None, Duration::from_secs(15)).await {
+            if res.ok() {
+                bodies.push(res.body);
+            }
+        }
+    }
+    let newest = inyon_link::pkarr::newest(identity, bodies.iter().map(Vec::as_slice))?;
+    Some(newest.record.machine.as_deref() == Some(machine))
+}
+
+/// How often an open short code's record is looked at.
+const SHORT_WATCH: Duration = Duration::from_secs(20);
+
+/// The typed code's record is signed with a key anyone who saw the ID and code can work out, so
+/// they could publish a newer one naming their own computer, and a phone typing the code would
+/// pair with theirs. While a code is open, the link looks at the record now and then: once it names
+/// another computer, the code stops working here (the QR code, which names this machine itself,
+/// still does). `cache` keeps the code's identity, which takes scrypt to work out. What it said,
+/// when it stopped the code.
+pub async fn watch_short_code(relays: &[&str], machine: &str, cache: &mut Option<(String, String)>) -> Option<String> {
+    let pairing: Value = read_node_json("pairing.json")?;
+    let short = pairing.get("short")?.as_str()?.to_string();
+    if pairing.get("expires").and_then(Value::as_u64).unwrap_or(0) <= crate::now_ms() {
+        return None;
+    }
+    let (id, code) = short.split_once(':')?;
+    if cache.as_ref().is_none_or(|(s, _)| *s != short) {
+        let c = ShortCode { id: id.into(), code: code.into() };
+        let identity = tokio::task::spawn_blocking(move || inyon_link::short_code_identity(&c).id).await.ok()?;
+        *cache = Some((short.clone(), identity));
+    }
+    let identity = cache.as_ref()?.1.clone();
+    if record_names(relays, &identity, machine).await != Some(false) {
+        return None;
+    }
+    let _files = node_files().ok()?;
+    let mut now: Map<String, Value> = read_node_json("pairing.json")?;
+    if now.get("short").and_then(Value::as_str) != Some(short.as_str()) {
+        return None;
+    }
+    now.shift_remove("short");
+    if let Err(e) = write_node_json("pairing.json", &Value::Object(now)) {
+        error(&e);
+        let _ = std::fs::remove_file(file("pairing.json"));
+    }
+    let said = format!(
+        "Another computer was published under the pairing code {}, so that code no longer works here (someone who saw it may be trying to pair your phone with their computer). The QR code still works, or run `inyon pair` for a new code.",
+        inyon_link::format_short_id(id)
+    );
+    error(&said);
+    Some(said)
+}
+
 // ---------- the service ----------
 
 struct Live {
@@ -1409,6 +1501,18 @@ pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
     }
     // notifications for paired browsers while their page is closed
     crate::push::start_push(crate::push::PushOptions::default());
+    // an open short code whose record someone else took over stops working
+    {
+        let machine = id.id.clone();
+        tokio::spawn(async move {
+            let mut cache = None;
+            let mut tick = tokio::time::interval(SHORT_WATCH);
+            loop {
+                tick.tick().await;
+                watch_short_code(&inyon_link::PKARR_RELAYS, &machine, &mut cache).await;
+            }
+        });
+    }
 
     // networks come and go (NetBird often connects after this starts), so look again now and then
     if config.vpn {
@@ -1543,6 +1647,16 @@ mod tests {
     }
 
     #[test]
+    fn lan_publishes_private_addresses_never_a_public_one() {
+        for ip in ["192.168.1.20", "10.0.0.5", "172.16.4.1", "172.31.255.1", "169.254.10.2", "100.70.1.2"] {
+            assert!(lan_address(ip), "{ip}");
+        }
+        for ip in ["203.0.113.7", "8.8.8.8", "172.32.0.1", "100.128.0.1", "127.0.0.1", "not an address"] {
+            assert!(!lan_address(ip), "{ip}");
+        }
+    }
+
+    #[test]
     fn every_platform_downloads_a_pinned_cloudflared_with_a_checksum() {
         let cases = [
             ("linux", "x64", "cloudflared-linux-amd64"),
@@ -1561,6 +1675,20 @@ mod tests {
             assert_eq!(asset.ends_with(".tgz"), inner.is_some_and(hex64));
         }
         assert!(Regex::new(r"^\d{4}\.\d+\.\d+$").unwrap().is_match(CLOUDFLARED_VERSION));
+    }
+
+    #[test]
+    fn only_the_first_address_cloudflared_prints_is_taken_until_it_restarts() {
+        let mut r = AddressReader::default();
+        assert_eq!(r.feed(b"2026-10-18T10:00:00Z INF Requesting new quick Tunnel on trycloudflare.com...\n"), None);
+        // the banner, split mid-line as a pipe may hand it over
+        assert_eq!(r.feed(b"INF |  https://quiet-river-12"), None);
+        assert_eq!(r.feed(b"34.trycloudflare.com   |\n").as_deref(), Some("wss://quiet-river-1234.trycloudflare.com/link"));
+        // later lines naming another address (a request it logged, say) change nothing
+        assert_eq!(r.feed(b"ERR request to https://someone-elses.trycloudflare.com failed\n"), None);
+        assert_eq!(r.feed(b"INF |  https://quiet-river-9999.trycloudflare.com   |\n"), None);
+        // a restarted cloudflared is read afresh
+        assert_eq!(AddressReader::default().feed(b"INF |  https://new-one.trycloudflare.com |\n").as_deref(), Some("wss://new-one.trycloudflare.com/link"));
     }
 
     #[test]
@@ -1945,6 +2073,75 @@ mod tests {
         (url, puts)
     }
 
+    /// A pkarr relay that keeps what it's given, newest seq first, as the real ones do.
+    fn keeping_pkarr() -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            let mut kept: HashMap<String, Vec<u8>> = HashMap::new();
+            for mut stream in listener.incoming().flatten() {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 4096];
+                let (head, body) = loop {
+                    let Ok(k) = stream.read(&mut buf) else { break (String::new(), Vec::new()) };
+                    if k == 0 {
+                        break (String::new(), Vec::new());
+                    }
+                    got.extend_from_slice(&buf[..k]);
+                    let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
+                    let head = String::from_utf8_lossy(&got[..end]).to_string();
+                    let len = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                    if got.len() >= end + 4 + len {
+                        break (head, got[end + 4..end + 4 + len].to_vec());
+                    }
+                };
+                let mut words = head.split(' ');
+                let (method, path) = (words.next().unwrap_or(""), words.next().unwrap_or("").to_string());
+                let answer = match method {
+                    "PUT" => {
+                        kept.insert(path, body);
+                        Vec::new()
+                    }
+                    _ => kept.get(&path).cloned().unwrap_or_default(),
+                };
+                let status = if method == "GET" && answer.is_empty() { 404 } else { 200 };
+                let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", answer.len()).as_bytes());
+                let _ = stream.write_all(&answer);
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_short_code_whose_record_another_computer_took_over_stops_working_here() {
+        let _h = testing::home("link-short-watch");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let relay = keeping_pkarr();
+        let relays = [relay.as_str()];
+        let me = Identity::generate().unwrap();
+        let p = new_pairing().unwrap();
+        let mut cache = None;
+        // not published yet, then published naming this machine: the code stays
+        assert_eq!(rt.block_on(watch_short_code(&relays, &me.id, &mut cache)), None);
+        let code_identity = inyon_link::short_code_identity(&p.short);
+        let ours = Record { urls: vec!["wss://x/link".into()], relays: vec![], machine: Some(me.id.clone()), name: Some("box".into()) };
+        rt.block_on(publish_to(&relays, &code_identity, &ours, None)).unwrap();
+        assert_eq!(rt.block_on(watch_short_code(&relays, &me.id, &mut cache)), None);
+        assert!(read_node_json::<Value>("pairing.json").unwrap().get("short").is_some());
+        // someone who saw the code publishes a newer record naming their computer
+        let theirs = Record { urls: vec!["wss://evil/link".into()], relays: vec![], machine: Some(Identity::generate().unwrap().id), name: Some("box".into()) };
+        rt.block_on(publish_to(&relays, &code_identity, &theirs, Some(u64::MAX / 2))).unwrap();
+        let said = rt.block_on(watch_short_code(&relays, &me.id, &mut cache)).expect("the code is stopped");
+        assert!(said.contains(&inyon_link::format_short_id(&p.short.id)) && said.contains("QR code still works"), "{said}");
+        let left: Value = read_node_json("pairing.json").unwrap();
+        assert!(left.get("short").is_none() && left["secret"] == json!(p.secret), "{left}");
+        // the typed code is refused now; the QR code's secret still pairs
+        let phone = [5u8; 32];
+        assert!(check(&phone, &json!({ "name": "Pixel", "pair": inyon_link::short_secret(&p.short) })).is_err());
+        assert_eq!(check(&phone, &json!({ "name": "Pixel", "pair": p.secret })).unwrap()["ok"], json!(true));
+    }
+
     #[test]
     fn a_publish_the_relays_refuse_is_tried_again_soon_until_one_takes_it() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -1986,6 +2183,21 @@ mod tests {
         assert!(node_dir().join("pairing.json").exists(), "the code is still good for another try");
         std::fs::remove_dir(node_dir().join("phones.json")).unwrap();
         assert_eq!(check(&[3u8; 32], &json!({ "name": "Pixel 9", "pair": p.secret })).unwrap()["ok"], json!(true));
+    }
+
+    #[test]
+    fn a_phone_it_doesnt_know_isnt_told_this_machines_name() {
+        let _h = testing::home("link-anonymous");
+        let host = crate::hostname();
+        let stranger = [9u8; 32];
+        let mut said = vec![check(&stranger, &json!({ "name": "Stranger" })).unwrap_err().message().to_string()];
+        said.push(check(&stranger, &json!({ "name": "Stranger", "pair": "expired-secret" })).unwrap_err().message().to_string());
+        let p = new_pairing().unwrap();
+        for _ in 0..SHORT_TRIES {
+            said.push(check(&stranger, &json!({ "name": "Guesser", "pair": format!("{}:000000", p.short.id) })).unwrap_err().message().to_string());
+        }
+        assert!(said.iter().all(|m| !m.contains(&host)), "{host}: {said:?}");
+        assert!(said[0].starts_with("This phone isn't paired with this computer any more."), "{said:?}");
     }
 
     #[test]

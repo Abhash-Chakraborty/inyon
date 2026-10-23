@@ -128,6 +128,9 @@ function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
     record(undefined, warning)
   }
   record()
+  // Bun honours it for every request this engine makes, not just the hub's
+  if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === '0' && attempt === 0)
+    console.error(`Warning: NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so no certificate is checked: not ${host}'s, and not those of relays, push services or downloads. Anyone on the network could answer in their place. Unset it, or use the inyon command's connection, which checks everything but the hub.`)
   if (plain === 'refused') warn()
   else if (legacy && plain === 'look up') strictRefusal(url).then((why) => why && warn())
 
@@ -349,7 +352,12 @@ function linkOptions(args: string[]): LinkConfig {
  * `service` says whether a link was already running, which the command shows as "keep this
  * running" when it wasn't.
  */
+export const LINK_HIDDEN =
+  "This terminal is in tmux, which Inyon can show on other screens, so the link that pairs a phone by itself isn't printed (`inyon pair --show-link` prints it). The QR code and the code above work once, for 10 minutes."
+
 async function pair(args: string[]) {
+  const hideLink = !!process.env.TMUX && !args.includes('--show-link')
+  args = args.filter((a) => a !== '--show-link')
   const config = linkOptions(args)
   const service = await linkRunning(config.port)
   if (!service) {
@@ -384,7 +392,9 @@ async function pair(args: string[]) {
   say(`\nScan this with your phone's camera, or in the Inyon app (Add a computer → Scan the code), within 10 minutes:\n`)
   say(renderUnicodeCompact(qr, { border: 2 }))
   if (typed) say(`\nCan't scan it? Choose "Type a code" in the app and enter\n\n    ID    ${formatShortId(short.id)}\n    Code  ${short.code.slice(0, 3)} ${short.code.slice(3)}\n`)
-  say(`\nOr paste this link into the app:\n${link}\n`)
+  // Inyon shows every tmux pane on other screens, and the link pairs a phone by itself
+  if (hideLink) say(`\n${LINK_HIDDEN}\n`)
+  else say(`\nOr paste this link into the app:\n${link}\n`)
   if (!s?.urls.length && !s?.relays.length) say('No address yet: the phone will look this machine up once its tunnel is up.\n')
   emit(pairResult({ link, qr, short, typed, ...where, service }))
   if (service) return true

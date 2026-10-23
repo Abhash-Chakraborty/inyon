@@ -9,7 +9,7 @@ import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
 import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
 import { CLI_TARGETS, cliFile, engineFile, HUB_TARGETS, type CliTarget, type HubTarget, type Target } from '../../../node/targets.ts'
 import { DATA_DIR, TLS } from '../env.ts'
-import { HttpError } from '../hosts/registry.ts'
+import { HttpError, registry, tokenExpired } from '../hosts/registry.ts'
 import { fillUpdateScript, nodeUpdates } from '../hosts/node-update.ts'
 import { signingKey, verifyMinisign } from './minisign.ts'
 import { unixPairCommand } from './pair-command.ts'
@@ -330,6 +330,62 @@ async function busybox(arch: string) {
   })
 }
 
+/**
+ * Whether a request nobody signed may make this hub build or download Inyon for `os`. The /node
+ * routes are open (install.sh, install.ps1 and `inyon update` on older machines send no token),
+ * so without this anyone who reaches the hub could make it fetch about 100 MB per system from
+ * GitHub, or build every engine on a checkout. What's already here is always handed out; a new
+ * system is prepared only while an "Add a machine" command is waiting to be used, or when a
+ * machine of that system is paired (an update), or one whose system isn't known yet.
+ */
+export function mayPrepare(os: string, configs = registry.configs(), osOf = (id: string) => registry.get(id)?.state?.os, now = Date.now()) {
+  const nodes = configs.filter((c) => c.kind === 'node')
+  if (nodes.some((c) => !c.pairedAt && c.tokenIssuedAt && !tokenExpired(c, now))) return true
+  return nodes.some((c) => {
+    if (!c.pairedAt) return false
+    const o = systemOf(osOf(c.id))
+    return !o || o === os
+  })
+}
+
+/** `uname -s` as a machine's probe reports it (Linux, Darwin, Windows_NT, MINGW64_NT…), as a target's system */
+const systemOf = (uname?: string) => {
+  const u = (uname ?? '').toLowerCase()
+  if (!u) return undefined
+  if (u.startsWith('linux')) return 'linux'
+  if (u.startsWith('darwin')) return 'darwin'
+  if (/^(windows|win32|mingw|msys|cygwin)/.test(u)) return 'windows'
+  return u
+}
+
+const NOT_READY = (t: string) => `This hub hasn't fetched Inyon for ${t} yet. Open "Add a machine" on the hub, then run the command again.\n`
+
+/** 503 unless `ready` (the file is here already) or a machine may be waiting for it (mayPrepare). */
+function gate(t: string, ready: boolean) {
+  if (!ready && !mayPrepare(t.split('-')[0]!)) throw new HttpError(503, NOT_READY(t).trim())
+}
+
+const engineReady = (t: Target) => fs.existsSync(path.join(OUT, `${tag()}-${engineFile(t)}`))
+const commandReady = (t: CliTarget) =>
+  fs.existsSync(path.join(OUT, `v${VERSION}-${cliFile(t)}`)) || (FROM_SOURCE && (!!builtCommand(t) || (!t.startsWith('windows') && engineReady(t as Target))))
+const busyboxReady = (arch: string) => fs.existsSync(path.join(OUT, BUSYBOX[arch]!.file))
+
+/** The engine a request asks for, once gate() lets it through. */
+async function engineFor(req: Request) {
+  const t = engineOf(req)
+  gate(t, engineReady(t))
+  return engine(t)
+}
+async function commandFor(req: Request) {
+  const t = commandOf(req)
+  gate(t, commandReady(t))
+  return command(t)
+}
+async function windowsProgram() {
+  gate('windows-x64', engineReady('windows-x64'))
+  return windows()
+}
+
 const plain = (body: string, status = 200) => new Response(body, { status, headers: { 'content-type': 'text/plain; charset=utf-8' } })
 const binary = (file: string, name: string) =>
   new Response(Bun.file(file), { headers: { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${name}"` } })
@@ -352,7 +408,11 @@ const REPLACED = 'Inyon replaced tether-node with the inyon program. Copy the "A
 export const nodeRoutes = {
   '/node/install.sh': route(() => plain(INSTALL_SH)),
   '/node/install.ps1': route(() => plain(INSTALL_PS1)),
-  '/node/SHA256SUMS': route(async () => plain(await unixSums())),
+  // a checkout works these out by building every Unix engine, so it waits for a machine to be added
+  '/node/SHA256SUMS': route(async () => {
+    if (FROM_SOURCE && !UNIX.every(engineReady) && !mayPrepare('linux') && !mayPrepare('darwin')) throw new HttpError(503, NOT_READY('Linux and macOS').trim())
+    return plain(await unixSums())
+  }),
   // the release's own list and its signature, as the release has them: a machine checks what it
   // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
   '/node/release/SHA256SUMS': route(async () => (FROM_SOURCE ? plain(NOT_SIGNED, 404) : plain((await releaseSigned()).sums))),
@@ -365,20 +425,24 @@ export const nodeRoutes = {
     return pem ? plain(pem) : plain('This hub has no certificate of its own.\n', 404)
   }),
   // the inyon command: what install.sh, install.ps1 and `inyon update` on a machine take first
-  '/node/inyon': route(async (req) => binary(await command(commandOf(req)), cliFile(commandOf(req)))),
-  '/node/inyon.gz': route(async (req) => binary(await gzipped(await command(commandOf(req))), `${cliFile(commandOf(req))}.gz`)),
-  '/node/inyon.sha256': route(async (req) => plain(await sha256(await command(commandOf(req))))),
+  '/node/inyon': route(async (req) => binary(await commandFor(req), cliFile(commandOf(req)))),
+  '/node/inyon.gz': route(async (req) => binary(await gzipped(await commandFor(req)), `${cliFile(commandOf(req))}.gz`)),
+  '/node/inyon.sha256': route(async (req) => plain(await sha256(await commandFor(req)))),
   // the engine behind it, which the command fetches from here rather than from GitHub
-  '/node/inyon-engine': route(async (req) => binary(await engine(engineOf(req)), engineFile(engineOf(req)))),
-  '/node/inyon-engine.gz': route(async (req) => binary(await gzipped(await engine(engineOf(req))), `${engineFile(engineOf(req))}.gz`)),
-  '/node/inyon-engine.sha256': route(async (req) => plain(await sha256(await engine(engineOf(req))))),
-  '/node/busybox.exe': route(async (req) => binary(await busybox(archOf(new URL(req.url))), 'busybox.exe')),
+  '/node/inyon-engine': route(async (req) => binary(await engineFor(req), engineFile(engineOf(req)))),
+  '/node/inyon-engine.gz': route(async (req) => binary(await gzipped(await engineFor(req)), `${engineFile(engineOf(req))}.gz`)),
+  '/node/inyon-engine.sha256': route(async (req) => plain(await sha256(await engineFor(req)))),
+  '/node/busybox.exe': route(async (req) => {
+    const arch = archOf(new URL(req.url))
+    gate(`windows-${arch}`, busyboxReady(arch))
+    return binary(await busybox(arch), 'busybox.exe')
+  }),
   // its pinned checksum, which install.ps1 checks the download against (known without downloading it)
   '/node/busybox.exe.sha256': route((req) => plain(BUSYBOX[archOf(new URL(req.url))]!.sha256)),
   // a Windows machine set up before the rename updates through these (see hub-update.ps1)
-  '/node/tether-node.exe': route(async () => binary(await windows(), 'tether-node.exe')),
-  '/node/tether-node.exe.gz': route(async () => binary(await gzipped(await windows()), 'tether-node.exe.gz')),
-  '/node/tether-node.exe.sha256': route(async () => plain(await sha256(await windows()))),
+  '/node/tether-node.exe': route(async () => binary(await windowsProgram(), 'tether-node.exe')),
+  '/node/tether-node.exe.gz': route(async () => binary(await gzipped(await windowsProgram()), 'tether-node.exe.gz')),
+  '/node/tether-node.exe.sha256': route(async () => plain(await sha256(await windowsProgram()))),
   // tether-node as a Bun script (install.sh before the rename) has no update to the program
   '/node/tether-node.ts': route(() => plain(REPLACED, 410)),
   '/node/tether-node.ts.sha256': route(() => plain(REPLACED, 410)),

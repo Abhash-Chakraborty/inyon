@@ -8,6 +8,7 @@ import { sendOnce } from './claude/send-receipts.ts'
 import { body, json, paneParam } from './core.ts'
 import { hubAbout, hubId } from './phones.ts'
 import { servedFingerprint } from './tls.ts'
+import { sharedCapAllows } from './limits.ts'
 
 /**
  * Companion apps (Legato and the like), contract version 1. A companion pairs with a short code
@@ -96,7 +97,7 @@ const cleanCode = (s: unknown) => String(s ?? '').replace(/[\s-]+/g, '').toUpper
 /** A companion hands in the code. Wrong and expired codes read the same; failures are counted per address and in all. */
 export function claimCompanion(ip: string, b: { code?: unknown; name?: unknown; app?: unknown }, now = Date.now()): Response {
   const a = failures.get(ip)
-  if ((a && a.reset >= now && a.n >= CLAIMS_PER_MINUTE) || (allFailures.reset >= now && allFailures.n >= ALL_CLAIMS_PER_MINUTE)) {
+  if ((a && a.reset >= now && a.n >= CLAIMS_PER_MINUTE) || !sharedCapAllows('companion code', ip, allFailures.reset >= now ? allFailures.n : 0, ALL_CLAIMS_PER_MINUTE, now)) {
     return refuse(429, 'rate-limit', 'Too many attempts. Try again in a minute.')
   }
   const code = cleanCode(b.code)

@@ -15,10 +15,18 @@ impl Response {
     }
 }
 
-/// NODE_TLS_REJECT_UNAUTHORIZED=0 turns certificate checks off, as it did for the Bun engine (a
-/// hub on a self-signed certificate, for testing).
+/// NODE_TLS_REJECT_UNAUTHORIZED=0, set: certificate checks off for the hub this machine joined (a
+/// hub on a self-signed certificate, for testing), as the Bun engine had them. See insecure_tls_for.
 pub fn insecure_tls() -> bool {
     std::env::var("NODE_TLS_REJECT_UNAUTHORIZED").is_ok_and(|v| v == "0")
+}
+
+/// Whether to skip the certificate check for `url`: only with NODE_TLS_REJECT_UNAUTHORIZED=0, and
+/// only for the saved hub. Everything else this program fetches (pkarr relays, push services,
+/// GitHub, a hub's own downloads) is still checked, so a variable meant for a test hub can't open
+/// all of them to whoever is on the network.
+pub fn insecure_tls_for(url: &str) -> bool {
+    insecure_tls() && crate::hub_tls::is_saved_hub(url)
 }
 
 /// The certificates in the file NODE_EXTRA_CA_CERTS names, trusted besides Mozilla's roots, as
@@ -156,7 +164,7 @@ fn timed_agent_to(
     limits: Limits,
     resolver: impl ureq::unversioned::resolver::Resolver,
 ) -> ureq::Agent {
-    let pin = if insecure_tls() { None } else { crate::hub_tls::config_for(url) };
+    let pin = if insecure_tls_for(url) { None } else { crate::hub_tls::config_for(url) };
     timed_agent_pinned(config, limits, resolver, pin)
 }
 
@@ -292,14 +300,14 @@ fn config(insecure: bool) -> ureq::config::ConfigBuilder<ureq::typestate::AgentS
 /// A request and its whole answer. `headers` go with it; `body` makes it a request with one.
 pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, timeout: Duration) -> Result<Response, String> {
     let limits = Limits::new(timeout);
-    request_with(timed_agent_for(url, config(insecure_tls()), limits), &limits, method, url, headers, body, false)
+    request_with(timed_agent_for(url, config(insecure_tls_for(url)), limits), &limits, method, url, headers, body, false)
 }
 
 /// `request`, sent only to `addrs` (the hub's name, already looked up and checked), with the name
 /// kept for the Host header and the certificate.
 pub fn request_to(method: &str, url: &str, headers: &[(&str, &str)], timeout: Duration, addrs: Vec<std::net::SocketAddr>) -> Result<Response, String> {
     let limits = Limits::new(timeout);
-    request_with(timed_agent_to(url, config(insecure_tls()), limits, Addrs(addrs)), &limits, method, url, headers, None, false)
+    request_with(timed_agent_to(url, config(insecure_tls_for(url)), limits, Addrs(addrs)), &limits, method, url, headers, None, false)
 }
 
 /// A GET to the hub on this machine over loopback (`inyon hub code`). Its certificate is made out
@@ -310,10 +318,12 @@ pub fn get_local(url: &str, timeout: Duration) -> Result<Response, String> {
     request_with(timed_agent(config(true), limits), &limits, "GET", url, &[], None, false)
 }
 
-/// A POST with no body to the hub on this machine, unchecked like `get_local` (`inyon hub companion-code`).
-pub fn post_local(url: &str, timeout: Duration) -> Result<Response, String> {
+/// A POST with no body to the hub on this machine, unchecked like `get_local` (`inyon hub
+/// companion-code`). The local token goes in `headers`, never in the address, where a proxy's log
+/// would keep it.
+pub fn post_local(url: &str, headers: &[(&str, &str)], timeout: Duration) -> Result<Response, String> {
     let limits = Limits::new(timeout);
-    request_with(timed_agent(config(true), limits), &limits, "POST", url, &[], Some(&[]), false)
+    request_with(timed_agent(config(true), limits), &limits, "POST", url, headers, Some(&[]), false)
 }
 
 /// Sends the request and reads the answer. With `whole`, a body that breaks off is an error
@@ -379,7 +389,7 @@ pub fn download(url: &str) -> Result<Response, String> {
 }
 
 fn download_with(url: &str, limits: Limits, resolver: impl ureq::unversioned::resolver::Resolver) -> Result<Response, String> {
-    request_with(timed_agent_to(url, config(insecure_tls()), limits, resolver), &limits, "GET", url, &[], None, true)
+    request_with(timed_agent_to(url, config(insecure_tls_for(url)), limits, resolver), &limits, "GET", url, &[], None, true)
 }
 
 /// A server on a certificate from a certificate authority of its own, made with openssl for the
@@ -542,6 +552,30 @@ mod tests {
         // not even as the hub: only the very certificate counts
         save(&format!("https://127.0.0.1:{forged_port}"));
         assert!(get(format!("https://127.0.0.1:{forged_port}/")).is_err());
+    }
+
+    #[test]
+    fn node_tls_reject_unauthorized_turns_checks_off_for_the_joined_hub_only() {
+        let _env = test_tls::env_lock();
+        let home = crate::paths::testing::home("insecure-tls");
+        // SAFETY: the tests that touch these variables hold env_lock
+        unsafe { std::env::remove_var("NODE_EXTRA_CA_CERTS") };
+        let (_hub_cert, hub_port) = test_tls::self_signed_server(&home.dir.join("hub"));
+        let (_other_cert, other_port) = test_tls::self_signed_server(&home.dir.join("relay"));
+        let get = |url: String| request("GET", &url, &[], None, Duration::from_secs(10)).map(|r| r.status);
+        let hub = format!("https://127.0.0.1:{hub_port}");
+        std::fs::create_dir_all(crate::paths::node_dir()).unwrap();
+        std::fs::write(crate::paths::node_dir().join(if crate::WIN { ".env" } else { "env" }), format!("INYON_HUB={hub}\nINYON_TOKEN=t\n")).unwrap();
+        unsafe { std::env::set_var("NODE_TLS_REJECT_UNAUTHORIZED", "0") };
+        let joined = get(format!("{hub}/node"));
+        // a relay, a push service, a download: still checked
+        let elsewhere = get(format!("https://127.0.0.1:{other_port}/"));
+        let downloaded = download(&format!("https://127.0.0.1:{other_port}/inyon")).map(|r| r.status);
+        unsafe { std::env::remove_var("NODE_TLS_REJECT_UNAUTHORIZED") };
+        let checked = get(format!("{hub}/node"));
+        assert_eq!(joined, Ok(200));
+        assert!(elsewhere.is_err() && downloaded.is_err(), "{elsewhere:?} {downloaded:?}");
+        assert!(checked.is_err());
     }
 
     #[test]

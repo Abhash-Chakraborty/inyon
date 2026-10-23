@@ -8,7 +8,8 @@ import { connect, generateKeyPair, noiseKeyOf, parsePairLink, wsWire, type Chann
 // the real CLI in a throwaway home, reached the way a phone on the same network would
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-test-'))
 const port = 4790 + Math.floor(Math.random() * 100)
-const env = { ...process.env, HOME: home, USERPROFILE: home }
+// TMUX empty: in tmux, `pair` leaves the link out
+const env = { ...process.env, HOME: home, USERPROFILE: home, TMUX: '' }
 const cli = (...args: string[]) => Bun.spawn([...ENGINE, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
 const service = cli('link', '--no-tunnel', '--no-vpn', '--lan', '--port', String(port))
 afterAll(() => {
@@ -48,7 +49,11 @@ test('a phone pairs with the code, runs commands, and comes back without it', as
     // the runner's first adapter may be a Hyper-V switch, which the link leaves out
     expect(info.urls.some((u) => u.startsWith('ws://') && u.endsWith(`:${port}/link`))).toBe(true)
   } else {
-    expect(info.urls).toContain(`ws://${Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal)!.address}:${port}/link`)
+    // --lan publishes private addresses only
+    const { lanAddress } = await import('./link.ts')
+    const lan = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal && lanAddress(a.address))
+    if (lan) expect(info.urls).toContain(`ws://${lan.address}:${port}/link`)
+    for (const u of info.urls.filter((u) => u.startsWith('ws://'))) expect(lanAddress(new URL(u).hostname)).toBe(true)
   }
   const phone = generateKeyPair()
 
@@ -149,3 +154,17 @@ test('the typed-in ID and code pair a phone, and five wrong codes cancel it', as
   expect(short()).toBeUndefined()
   await expect(open(generateKeyPair(), info.id, { name: 'Late', pair: next })).rejects.toMatchObject({ code: 'NOT_PAIRED' })
 }, 40_000)
+
+test('in tmux, where Inyon shows the pane on other screens, the link is printed only with --show-link', async () => {
+  const pair = async (...args: string[]) => {
+    const p = Bun.spawn([...ENGINE, 'pair', ...args], { env: { ...env, TMUX: '/tmp/tmux-test/default,1,0' }, stdout: 'pipe', stderr: 'pipe' })
+    const out = await new Response(p.stdout).text()
+    await p.exited
+    return out
+  }
+  const hidden = await pair()
+  expect(hidden).not.toMatch(/inyon:\/\/pair\?\S*s=/)
+  expect(hidden).toContain('inyon pair --show-link')
+  expect(hidden).toContain('Type a code')
+  expect(await pair('--show-link')).toMatch(/Or paste this link into the app:\ninyon:\/\/pair\?\S+/)
+}, 30_000)

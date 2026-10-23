@@ -94,9 +94,13 @@ pub fn get_unverified(url: &str) -> Result<Response, String> {
 }
 
 /// GET from the hub on this machine, whose certificate may be its own.
-pub fn get_local(url: &str) -> Result<Response, String> {
+pub fn get_local(url: &str, headers: &[(String, String)]) -> Result<Response, String> {
     let c = ureq::Agent::config_builder().http_status_as_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
-    let mut res = inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(3))).get(url).call().map_err(|e| e.to_string())?;
+    let mut req = inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(3))).get(url);
+    for (k, v) in headers {
+        req = req.header(k, v);
+    }
+    let mut res = req.call().map_err(|e| e.to_string())?;
     let status = res.status().as_u16();
     let body = res.body_mut().read_to_vec().map_err(|e| e.to_string())?;
     Ok(Response { status, location: None, body })

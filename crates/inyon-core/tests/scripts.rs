@@ -54,6 +54,8 @@ fn the_scripts_and_command_builders_send_the_bytes_the_ts_sends() {
             "remainOffWindows": remain_on_exit(true, "'%1'", false),
             "respawn": respawn_shell(false, "'%1'", Some("/home/o b")),
             "respawnWindows": respawn_shell(true, "'%1'", None),
+            "respawnHash": respawn_shell(false, "'%1'", Some("/srv/x#(id)")),
+            "view": terminal::view_command("inyon-view-t", "@1", "%1"),
             "resumeClaude": resume_command_argv(AgentKind::Claude, Some(id), &argv(&["node", "/x/claude", "--model", "opus", "--resume", "abc", "hello there", "--add-dir=/a b"])),
             "resumeCodex": resume_command(AgentKind::Codex, Some(id), "/usr/bin/codex resume 0f7c9d2e-1111-4222-8333-944455556666 -m gpt-5 --yolo"),
             "resumeAgy": resume_command_argv(AgentKind::Antigravity, None, &argv(&["agy", "--model", "gemini-3", "-i", "hi", "--continue"])),

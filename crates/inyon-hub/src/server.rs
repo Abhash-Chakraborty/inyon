@@ -13,7 +13,7 @@
 //! moves frames, and every frame is handled on the core thread in the order it came.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -129,6 +129,8 @@ pub struct HubCtx {
     /// the first-run code, while the hub has no password
     pub setup_code: RefCell<Option<String>>,
     pub setup_attempts: Cell<(u32, u64)>,
+    /// wrong setup codes per address this minute (`setup_attempts` covers all of them)
+    pub setup_tries: RefCell<HashMap<String, u32>>,
     pub local_token: String,
     pub hub_commit: String,
     pub core: CoreHandle,
@@ -180,6 +182,7 @@ pub fn install_ctx(i: CtxInit, routes: Routes) {
         refused_hosts: RefCell::new(HashSet::new()),
         setup_code: RefCell::new(i.setup_code),
         setup_attempts: Cell::new((0, 0)),
+        setup_tries: RefCell::new(HashMap::new()),
         local_token: i.local_token,
         hub_commit: i.hub_commit,
         core: i.core,

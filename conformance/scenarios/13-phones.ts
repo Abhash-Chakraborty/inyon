@@ -30,6 +30,11 @@ export default {
     await ctx.rest('GET', '/api/session', undefined, { as: older })
     await ctx.rest('POST', '/api/phones/pair', { origin: ctx.hub.base }, { as: older, origin: ctx.hub.base })
 
+    await ctx.step('a cookie from before the sign-in time was kept shows no code either, however fresh')
+    const legacyPayload = Buffer.from(JSON.stringify({ exp: Date.now() + 86_400_000, n: 'legacy', iat: Date.now() })).toString('base64url')
+    const legacy = { cookie: `inyon_session=${legacyPayload}.${crypto.createHmac('sha256', ctx.hub.secret() ?? '').update(legacyPayload).digest('base64url')}` }
+    await ctx.rest('POST', '/api/phones/pair', { origin: ctx.hub.base }, { as: legacy, origin: ctx.hub.base })
+
     await ctx.step('the phone asks before claiming (CORS preflight)')
     await ctx.rest('OPTIONS', '/api/phones/claim', undefined, { as: 'anon', origin: APP, headers: { 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type' } })
 

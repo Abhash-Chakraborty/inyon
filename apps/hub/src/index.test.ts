@@ -4,6 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { VERSION, type PairedPhone, type PhoneClaimResult, type PhonePairCode } from '@inyon/protocol'
+import { engineFile, HUB_TARGETS } from '../../node/targets.ts'
+import { tag } from './features/node-dist.ts'
 
 // The real hub, started as a process on a free port with a throwaway data folder: what a browser
 // and the phone app get over HTTP, with cookies, bearer tokens and the WebSocket.
@@ -13,8 +15,17 @@ let base = ''
 let ws = ''
 /** the browser's session, from setting the password */
 let cookie = ''
+/** what the hub printed */
+let hubOut = ''
+let setupCodeSeen = ''
 
 beforeAll(async () => {
+  // An "Add a machine" command carries the checksum of every Unix engine, which a hub run from a
+  // checkout builds the first time (Bun's runtime for five systems: minutes in CI, past a test's
+  // 5 seconds). Stand-ins in its cache, as a hub that built them already has.
+  const dist = path.join(dataDir, 'node-dist')
+  fs.mkdirSync(dist, { recursive: true })
+  for (const t of HUB_TARGETS.filter((t) => !t.startsWith('windows'))) fs.writeFileSync(path.join(dist, `${tag()}-${engineFile(t)}`), `stand-in for ${t}\n`)
   hub = Bun.spawn([process.execPath, path.join(import.meta.dir, 'index.ts')], {
     env: { ...process.env, INYON_DATA_DIR: dataDir, PORT: '0', BIND: '127.0.0.1', INYON_HUB_NAME: 'Test hub', NODE_ENV: 'test' },
     stdout: 'pipe',
@@ -32,11 +43,13 @@ beforeAll(async () => {
   base = out.match(/listening on (\S+)/)![1]!
   ws = base.replace(/^http/, 'ws')
   // keep reading, so the hub never blocks on a full pipe
+  hubOut = out
   void (async () => {
-    while (!(await reader.read()).done);
+    for (let r = await reader.read(); !r.done; r = await reader.read()) hubOut += new TextDecoder().decode(r.value)
   })()
   // first run: the setup code is written to the data folder
   const code = fs.readFileSync(path.join(dataDir, 'setup-code'), 'utf8').trim()
+  setupCodeSeen = code
   const r = await post('/api/setup', { password: 'correct horse battery', code })
   expect(r.status).toBe(200)
   cookie = r.headers.get('set-cookie')!.split(';')[0]!
@@ -210,6 +223,12 @@ test('preflights are answered for the phone; a cookie from another site is still
   expect(corsOf(csrf)).toEqual(NO_CORS)
 })
 
+test('the current password on a password change counts against the sign-in limits', async () => {
+  const guess = (n: number) => fetch(`${base}/api/password`, { method: 'POST', body: JSON.stringify({ current: `guess ${n}`, next: 'a whole new password' }), headers: { ...headers({ cookie: true }), 'x-forwarded-for': '203.0.113.77' } })
+  const statuses = (await Promise.all(Array.from({ length: 9 }, (_, i) => guess(i)))).map((r) => r.status).sort()
+  expect(statuses).toEqual([401, 401, 401, 401, 401, 401, 401, 401, 429])
+})
+
 test('the inyon command on this machine reads the machines over loopback with the local token', async () => {
   const token = fs.readFileSync(path.join(dataDir, 'local-token'), 'utf8').trim()
   expect(token.length).toBeGreaterThanOrEqual(32)
@@ -258,4 +277,34 @@ test('a removed machine is told so when it calls again; a token the hub never kn
   expect((await call(token)).status).toBe(410)
   // a hub that lost its data doesn't make every machine uninstall itself
   expect((await call(crypto.randomBytes(32).toString('base64url'))).status).toBe(403)
+})
+
+test("inyon join swaps the pasted token for one the hub hands out once, and the pasted one stops working", async () => {
+  const { token } = await json(await post('/api/hosts/pair', { name: 'New box' }, { cookie: true }))
+  const claim = (t: string) => fetch(`${base}/node/claim`, { method: 'POST', headers: { authorization: `Bearer ${t}` } })
+  const call = (t: string) => fetch(`${base}/node`, { headers: { authorization: `Bearer ${t}` } })
+  const r = await claim(token)
+  expect(r.status).toBe(200)
+  const fresh = (await json(r)).token as string
+  expect(fresh).toMatch(/^[A-Za-z0-9_-]{43}$/)
+  expect(fresh).not.toBe(token)
+  // the one in shell history is dead, for the WebSocket and for another swap
+  expect((await call(token)).status).toBe(403)
+  expect((await claim(token)).status).toBe(403)
+  // the new one gets as far as the upgrade
+  expect((await call(fresh)).status).toBe(400)
+  expect((await claim('')).status).toBe(403)
+})
+
+test("the app's pages run only the app's own scripts, never one an agent wrote under /v/", async () => {
+  const r = await fetch(`${base}/`, { headers: { host: 'evil.example' } })
+  expect(r.status).toBe(421)
+  const scripts = r.headers.get('content-security-policy')!.split('; ').find((d) => d.startsWith('script-src '))
+  expect(scripts).toBe('script-src *:*/assets/ *:*/theme.js *:*/sw.js')
+})
+
+test('the setup code goes to a terminal only; a log gets the file it is in', () => {
+  expect(hubOut).toContain(`It will ask for the setup code in ${path.join(dataDir, 'setup-code')}`)
+  expect(setupCodeSeen).toMatch(/^[0-9a-f]{8}$/)
+  expect(hubOut).not.toContain(setupCodeSeen)
 })

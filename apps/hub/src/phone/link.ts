@@ -135,8 +135,65 @@ export async function reach(o: { noise: KeyPair; id: string; urls: string[]; rel
 const addresses = (worked: string, listed: string[]) =>
   [...new Set([...(worked.startsWith('ws://') || listed.includes(worked) ? [worked] : []), ...listed])]
 
-export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, saveAddresses: (id: string, urls: string[], relays: string[]) => void, o: { resolve?: Resolve } = {}) {
+/** A computer removed on the phone that hasn't heard yet that it should stop trusting the phone. */
+export interface PendingUnpair {
+  machineId: string
+  name: string
+  urls: string[]
+  relays: string[]
+  at: number
+}
+
+/** Where pending unpairs are kept, so they outlive the app being closed. */
+export interface PendingStore {
+  load(): PendingUnpair[]
+  save(list: PendingUnpair[]): void
+}
+
+export function linkConnector(
+  noise: () => Promise<KeyPair>,
+  phoneName: string,
+  saveAddresses: (id: string, urls: string[], relays: string[]) => void,
+  o: { resolve?: Resolve; pending?: PendingStore } = {},
+) {
   const conns = new Map<string, Conn>()
+
+  // Removing a computer tells it to forget the phone, but only a computer that can be reached hears
+  // it. The rest are kept here and told the next time they answer, until one says the phone isn't
+  // paired there (which is how a told computer answers).
+  const pendingStore = o.pending ?? { load: () => [], save: () => {} }
+  const unpairTries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout>; running?: boolean }>()
+  const pendingList = () => pendingStore.load()
+  const done = (machineId: string) => {
+    pendingStore.save(pendingList().filter((p) => p.machineId !== machineId))
+    const t = unpairTries.get(machineId)
+    clearTimeout(t?.timer)
+    unpairTries.delete(machineId)
+  }
+  const tell = async (p: PendingUnpair) => {
+    const t = unpairTries.get(p.machineId) ?? { attempt: 0 }
+    unpairTries.set(p.machineId, t)
+    if (t.running) return
+    t.running = true
+    clearTimeout(t.timer)
+    let again = backoff(t.attempt++, 5000, 10 * 60_000)
+    try {
+      const r = await reach({ noise: await noise(), id: p.machineId, urls: p.urls, relays: p.relays, hello: { name: phoneName }, resolve: o.resolve })
+      r.channel.send({ op: 'unpair' })
+      // it forgets the phone in a moment; the next try hears that it isn't paired any more
+      setTimeout(() => r.channel.close(1000, 'unpaired'), 1000)
+      again = 3000
+    } catch (err) {
+      if (err instanceof LinkError && err.code === 'NOT_PAIRED') {
+        t.running = false
+        return done(p.machineId)
+      }
+    }
+    t.running = false
+    if (pendingList().some((x) => x.machineId === p.machineId)) t.timer = setTimeout(() => void tell(p), again)
+  }
+  // ones left from before the app was closed
+  setTimeout(() => pendingList().forEach((p) => void tell(p)), 0)
 
   const drop = (c: Conn, why: string) => {
     clearInterval(c.ping)
@@ -231,20 +288,36 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
       conns.set(config.id, (c = { config, attempt: 0 }))
       open(c)
     },
-    forget(id: string) {
+    /**
+     * Stops connecting to a removed computer and tells it to forget the phone. True when it was
+     * connected right then; otherwise it hears once it's back (see PendingUnpair).
+     */
+    forget(id: string, config?: HostConfig): boolean {
       const c = conns.get(id)
-      if (!c) return
-      // the computer forgets the phone too, so its key stops working there (computers before 0.17 ignore this)
-      try {
-        c.channel?.send({ op: 'unpair' })
-      } catch {}
-      c.stopped = true
-      clearTimeout(c.timer)
-      drop(c, 'removed')
-      conns.delete(id)
+      const cfg = c?.config ?? config
+      const connected = !!c?.channel
+      if (c) {
+        // the computer forgets the phone too, so its key stops working there (computers before 0.17 ignore this)
+        try {
+          c.channel?.send({ op: 'unpair' })
+        } catch {}
+        c.stopped = true
+        clearTimeout(c.timer)
+        drop(c, 'removed')
+        conns.delete(id)
+      }
       // a computer added again under this id starts without the old one's error
       nodeLinks.clearError(id)
+      if (cfg?.machineId) {
+        const p: PendingUnpair = { machineId: cfg.machineId, name: cfg.name, urls: cfg.urls ?? [], relays: cfg.relays ?? [], at: Date.now() }
+        pendingStore.save([...pendingList().filter((x) => x.machineId !== p.machineId), p])
+        // even one that was connected is asked again, until it says the phone isn't paired there
+        setTimeout(() => void tell(p), connected ? 1500 : 0)
+      }
+      return connected
     },
+    /** The computers removed here that still trust the phone, as far as it knows. */
+    pendingUnpairs: () => pendingList(),
     /** Back in the foreground: check every connection now instead of waiting out a backoff. */
     resume() {
       for (const c of conns.values()) {
@@ -253,6 +326,12 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
           c.attempt = 0
           schedule(c, true)
         }
+      }
+      // and tell removed computers again
+      for (const p of pendingList()) {
+        const t = unpairTries.get(p.machineId)
+        if (t) t.attempt = 0
+        void tell(p)
       }
     },
     /** First contact, with the code from the laptop's screen. */

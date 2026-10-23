@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { VERSION } from '@inyon/protocol'
-import { cliTargetOf, nodeRoutes, pruneOld, releaseFile, sourceCommand, tag, targetOf, updateScript } from './node-dist.ts'
+import { cliTargetOf, mayPrepare, nodeRoutes, pruneOld, releaseFile, sourceCommand, tag, targetOf, updateScript } from './node-dist.ts'
 
 const url = (q: string) => new URL(`http://hub/node/inyon?${q}`)
 const get = (route: keyof typeof nodeRoutes) => nodeRoutes[route](new Request(`http://hub${route}`))
@@ -39,6 +39,37 @@ test('the pinned busybox-w32 checksum is served per architecture, without a down
   expect(x64).not.toBe(arm64)
   expect(await (await sum('')).text()).toBe(x64)
   expect((await sum('arch=x86')).status).toBe(400)
+})
+
+test("nobody signed in can make the hub build or download Inyon for a system no machine needs", async () => {
+  const ask = (route: keyof typeof nodeRoutes, q: string) => nodeRoutes[route](new Request(`http://hub${route}?${q}`))
+  for (const [route, q] of [['/node/inyon-engine', 'os=linux&arch=arm64'], ['/node/inyon.gz', 'os=darwin&arch=x64'], ['/node/inyon-engine.sha256', 'os=windows&arch=x64'], ['/node/busybox.exe', 'arch=arm64'], ['/node/tether-node.exe', ''], ['/node/SHA256SUMS', '']] as const) {
+    const t0 = Date.now()
+    const res = await ask(route, q)
+    expect([route, res.status]).toEqual([route, 503])
+    expect(await res.text()).toContain('Open "Add a machine" on the hub')
+    // refused at once, not after a build or a download
+    expect(Date.now() - t0).toBeLessThan(1000)
+  }
+})
+
+test('a new system is prepared while an "Add a machine" command waits, or for a paired machine of that system', () => {
+  const now = 1_800_000_000_000
+  const node = (id: string, extra: object) => ({ id, name: id, kind: 'node', ...extra }) as any
+  const os = (map: Record<string, string>) => (id: string) => map[id]
+  // nothing paired, nothing waiting: no
+  expect(mayPrepare('linux', [{ id: 'local', name: 'hub', kind: 'local' } as any], os({}), now)).toBe(false)
+  // an unused token from the last day: any system
+  expect(mayPrepare('windows', [node('new', { tokenIssuedAt: now - 3600_000 })], os({}), now)).toBe(true)
+  expect(mayPrepare('windows', [node('old', { tokenIssuedAt: now - 2 * 86_400_000 })], os({}), now)).toBe(false)
+  // a paired Linux machine updates; it doesn't open Windows
+  const paired = [node('box', { pairedAt: now - 1000 })]
+  expect(mayPrepare('linux', paired, os({ box: 'Linux' }), now)).toBe(true)
+  expect(mayPrepare('windows', paired, os({ box: 'Linux' }), now)).toBe(false)
+  expect(mayPrepare('darwin', paired, os({ box: 'Darwin' }), now)).toBe(true)
+  expect(mayPrepare('windows', paired, os({ box: 'Windows' }), now)).toBe(true)
+  // one that hasn't said what it runs yet could be anything
+  expect(mayPrepare('windows', paired, os({}), now)).toBe(true)
 })
 
 test('tether-node as a Bun script is told to run "Add a machine" again', async () => {

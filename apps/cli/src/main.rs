@@ -242,6 +242,31 @@ enum ServiceAction {
 const FORWARDED: [&str; 2] = ["link", "connect"];
 const HUB_OWN: [&str; 8] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password"];
 
+/// A reader that stops early (`inyon status --plain | grep -q hub`) closes the pipe, and the next
+/// print fails. Rust ignores SIGPIPE, so that failure panicked (exit 101). A command that only
+/// prints gets SIGPIPE back on Unix and ends quietly, as `ls` does. The others keep it ignored: one
+/// that runs the link (`inyon pair`) or writes to a program it started must see the error instead
+/// of being killed. On Windows, and for those others, a failed print ends the program quietly
+/// rather than as a crash.
+fn closed_pipe_is_not_a_crash(only_prints: bool) {
+    #[cfg(unix)]
+    if only_prints {
+        // SAFETY: called once at start, before any other thread exists
+        unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
+    }
+    #[cfg(not(unix))]
+    let _ = only_prints;
+    let crash = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let said = info.payload().downcast_ref::<String>().map(String::as_str).or_else(|| info.payload().downcast_ref::<&str>().copied()).unwrap_or("");
+        // std's own words when println! can't write
+        if said.starts_with("failed printing to stdout") || said.starts_with("failed printing to stderr") {
+            std::process::exit(if cfg!(unix) { 141 } else { 0 });
+        }
+        crash(info)
+    }));
+}
+
 fn main() {
     let argv: Vec<String> = std::env::args().collect();
     // started as inyon-engine (Windows' logon tasks run a windowless copy of this program under
@@ -275,6 +300,9 @@ fn main() {
         }
     }
     let cli = Cli::parse();
+    closed_pipe_is_not_a_crash(
+        cli.version || matches!(cli.command, None | Some(Command::Status { .. } | Command::Phones | Command::Logs { .. } | Command::Doctor | Command::Version)),
+    );
     let proc = RealProc;
     let sys = Sys::new(&proc);
     let tty = std::io::stdout().is_terminal() && std::io::stdin().is_terminal();

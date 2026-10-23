@@ -18,7 +18,7 @@ prints a QR code, an ID like `K7Q4-MX2T` with a 6-digit code, and a link. Scan t
 
 - A code pairs one phone, once, within 10 minutes.
 - Five wrong typed codes cancel the typed code (the QR code still works until it expires).
-- `inyon phones` lists paired phones by maker and model (such as *Nothing A142*) and when each was last seen (updated at most once a minute, and only after the phone has proved its key); `inyon forget <name>` unpairs one at once, and from 0.20 it holds even while that phone keeps trying to connect. From 0.17, removing the computer in the app unpairs the phone on the computer too.
+- `inyon phones` lists paired phones by maker and model (such as *Nothing A142*) and when each was last seen (updated at most once a minute, and only after the phone has proved its key); `inyon forget <name>` unpairs one at once, and from 0.20 it holds even while that phone keeps trying to connect. From 0.17, removing the computer in the app unpairs the phone on the computer too. From 0.20.3, if the computer is off then, the app says *&lt;name&gt; still trusts this phone* and tells the computer once it's back online; `inyon forget` there ends it at once.
 
 Pair as many phones as you like, and pair the same phone with as many computers as you like.
 
@@ -41,6 +41,8 @@ The computer can answer in several ways at once, and the phone races them:
 | Private network: Tailscale, Headscale, NetBird, ZeroTier, WireGuard | On (off on Windows) | `--vpn`, `--no-vpn` |
 | Local network | Off | `--lan`, `--no-lan` |
 | An address you publish yourself | None | `--url wss://…/link` |
+
+With the local network on, the link listens on every interface. From 0.20.3 it publishes only private, link-local and VPN (`100.64.0.0/10`) addresses, so a server's public address stays out of its record; a phone on the same network finds it by its private address.
 
 Pass options to `inyon pair`, or choose them in `inyon setup`; they're saved. The link listens on port 4780 (`--port` changes it). `cloudflared`, which runs the tunnel, is downloaded into `~/.inyon/bin`, pinned to a known version and checked. From 0.20 `inyon setup` and `inyon service install` download it, so the first pairing doesn't wait for it; before, the link fetched it the first time it opened a tunnel. On Windows from 0.20, `cloudflared` stops with the link however the link ends.
 

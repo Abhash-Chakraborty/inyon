@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from 'bun:test'
 import { kv } from '../platform/store.ts'
 import { pushAll } from './hub-push.ts'
 import { pushRoutes } from './routes.ts'
-import { addRegistration, payloadFor, registrations, validRegistration } from './registrations.ts'
+import { addRegistration, MAX_REGISTRATIONS, payloadFor, registrations, validRegistration } from './registrations.ts'
 
 const jwk = { kty: 'EC', crv: 'P-256', d: 'd', x: 'x', y: 'y' }
 const browser = (n: number, done = true) => ({
@@ -58,4 +58,16 @@ test("in the web app a new subscription replaces the browser's last one; a hub k
   const hub = pushRoutes(async () => 0)
   await post(hub, 3)
   expect(registrations()).toHaveLength(2)
+})
+
+test('a hub sends to at most twenty browsers, dropping the one that registered longest ago', () => {
+  for (let n = 1; n <= MAX_REGISTRATIONS + 2; n++) addRegistration({ ...validRegistration(browser(n)), at: 1000 + n })
+  const left = registrations().map((r) => Number(r.subscription.endpoint.split('/').pop())).sort((a, b) => a - b)
+  expect(MAX_REGISTRATIONS).toBe(20)
+  expect(left).toEqual(Array.from({ length: 20 }, (_, i) => i + 3))
+  // a browser registering again moves to the end of the queue instead of taking a second place
+  addRegistration({ ...validRegistration(browser(3)), at: 5000 })
+  addRegistration({ ...validRegistration(browser(99)), at: 5001 })
+  expect(registrations().map((r) => r.subscription.endpoint.split('/').pop())).toContain('3')
+  expect(registrations().map((r) => r.subscription.endpoint.split('/').pop())).not.toContain('4')
 })

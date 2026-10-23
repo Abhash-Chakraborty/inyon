@@ -29,7 +29,7 @@ use crate::agents::opencode_models::{model_from_footer, opencode_cli_models};
 use crate::clock::now_ms;
 use crate::features::paths::is_task_file;
 use crate::features::setup::PATHS;
-use crate::hosts::host::{shq, ExecOptions, Host};
+use crate::hosts::host::{shq, tmux_literal, ExecOptions, Host};
 use crate::hosts::http_error::{http, HubError, HubResult};
 use crate::hosts::names::{bare_title, original_title, owns_title, pending_name, set_session_name};
 use crate::hosts::registry::{registry, width_of, FoundPane, RegistryEvent};
@@ -1690,7 +1690,7 @@ pub async fn restart_agent(host_id: &str, pane_id: &str) -> HubResult<()> {
             return Err(http(504, "It did not exit; restart it from the terminal"));
         }
         if direct {
-            let cwd = proc.cwd.as_deref().filter(|c| !c.is_empty()).map(|c| format!("-c {}", shq(c))).unwrap_or_default();
+            let cwd = proc.cwd.as_deref().filter(|c| !c.is_empty()).map(|c| format!("-c {}", shq(&tmux_literal(c, win)))).unwrap_or_default();
             pane_dead(&host, &p).await?;
             host.run(&format!("tmux respawn-pane {}-t {p} {cwd} {}", if win { "-k " } else { "" }, shq(&cmd))).await?;
         } else {
@@ -1725,7 +1725,7 @@ pub fn remain_on_exit(win: bool, p: &str, on: bool) -> String {
 
 /// The command that gives a pane its shell back once the agent it ran has exited.
 pub fn respawn_shell(win: bool, p: &str, cwd: Option<&str>) -> String {
-    let c = cwd.filter(|c| !c.is_empty()).map(|c| format!("-c {}", shq(c))).unwrap_or_default();
+    let c = cwd.filter(|c| !c.is_empty()).map(|c| format!("-c {}", shq(&tmux_literal(c, win)))).unwrap_or_default();
     if win {
         format!(r#"tmux respawn-pane -k -t {p} {c} "$(command -v pwsh.exe >/dev/null 2>&1 && echo pwsh.exe || echo powershell.exe)""#)
     } else {
@@ -2004,15 +2004,20 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         None => None,
     };
     let cwd = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
-    let dir = if cwd == "~" || cwd.starts_with("~/") { format!("\"$HOME\"{}", shq(&cwd[1..])) } else { shq(cwd) };
+    let home = cwd == "~" || cwd.starts_with("~/");
+    let dir = if home { format!("\"$HOME\"{}", shq(&cwd[1..])) } else { shq(cwd) };
+    // the same folder as tmux reads it, where `#` would start a format
+    let win = on_psmux(host_id);
+    let tdir = if home { format!("\"$HOME\"{}", shq(&tmux_literal(&cwd[1..], win))) } else { shq(&tmux_literal(cwd, win)) };
     let fmt = shq("#{pane_id}");
     let cmd = match opts.session.as_deref().filter(|s| !s.is_empty()) {
-        Some(session) => format!("tmux new-window -t {} -c {dir} -P -F {fmt}", shq(session)),
+        Some(session) => format!("tmux new-window -t {} -c {tdir} -P -F {fmt}", shq(session)),
         None => {
             let raw = opts.name.as_deref().map(JsStr::jtrim).filter(|n| !n.is_empty()).or(agent_name).unwrap_or("shell");
-            let q = shq(&raw.replace(['.', ':'], "-"));
+            // tmux won't take . or : in a session name, and # would start a format
+            let q = shq(&raw.replace(['.', ':', '#'], "-"));
             // a second "claude" becomes "claude-2" rather than failing on the taken name
-            format!(r#"n={q}; i=2; while tmux has-session -t "=$n" 2>/dev/null; do n={q}-$i; i=$((i+1)); done; tmux new-session -d -s "$n" -c {dir} -P -F {fmt}"#)
+            format!(r#"n={q}; i=2; while tmux has-session -t "=$n" 2>/dev/null; do n={q}-$i; i=$((i+1)); done; tmux new-session -d -s "$n" -c {tdir} -P -F {fmt}"#)
         }
     };
     let shown = cwd.replace(['"', '$', '`', '\\'], "");
@@ -2098,7 +2103,7 @@ pub async fn fork_conversation(host_id: &str, pane_id: &str) -> HubResult<String
         AgentKind::Codex => re!(r"^(\S+) resume ").replacen(&resume(AgentKind::Codex).await, 1, "$1 fork ").into_owned(),
         _ => format!("{} --session {session} --fork", AgentKind::Opencode.def().launch),
     };
-    let r = host.run(&format!("tmux new-window -t {} -c {} -P -F {}", shq(&found.session.name), shq(&cwd), shq("#{pane_id}"))).await?;
+    let r = host.run(&format!("tmux new-window -t {} -c {} -P -F {}", shq(&found.session.name), shq(&tmux_literal(&cwd, on_psmux(host_id))), shq("#{pane_id}"))).await?;
     let new_pane = r.stdout.jtrim().to_owned();
     if r.code != 0 || !new_pane.starts_with('%') {
         let err = r.stderr.jtrim();
@@ -2200,7 +2205,7 @@ pub async fn rename_pane(host_id: &str, pane_id: &str, raw: &str) -> HubResult<(
         let cmd = if name.is_empty() {
             format!("tmux set-window-option -t {} automatic-rename on", shq(pane_id))
         } else {
-            format!("tmux rename-window -t {} {}", shq(pane_id), shq(&name))
+            format!("tmux rename-window -t {} {}", shq(pane_id), shq(&tmux_literal(&name, on_psmux(host_id))))
         };
         let r = host.run(&cmd).await?;
         if r.code != 0 {

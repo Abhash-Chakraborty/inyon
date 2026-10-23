@@ -19,6 +19,11 @@ use crate::password::{check_password, session_secret};
 use crate::phones::{has_bearer, phone_for};
 
 pub const COOKIE: &str = "inyon_session";
+/// The name over HTTPS. A `__Host-` cookie is only taken with Secure, Path=/ and no Domain, so a
+/// service on a sibling subdomain or on plain http on the same host can't set one to shadow it.
+/// Plain http (a VPN address) can't use it and keeps `inyon_session`; a request with both reads
+/// this one first.
+pub const SECURE_COOKIE: &str = "__Host-inyon_session";
 /// the cookie's name before the rename to Inyon: still signs you in, and is swapped for the new one
 const OLD_COOKIE: &str = "tether_session";
 /// a session ends after 30 days without use; using it pushes the end back (see refresh_cookie)
@@ -90,7 +95,8 @@ fn save_revoked() {
 
 fn cookie_for(session: &Map<String, Value>, secure: bool) -> String {
     let payload = B64U.encode(inyon_core::js::stringify(&Value::Object(session.clone())));
-    format!("{COOKIE}={payload}.{}; Path=/; HttpOnly; SameSite=Lax; Max-Age={MAX_AGE}{}", sign(&payload), if secure { "; Secure" } else { "" })
+    let name = if secure { SECURE_COOKIE } else { COOKIE };
+    format!("{name}={payload}.{}; Path=/; HttpOnly; SameSite=Lax; Max-Age={MAX_AGE}{}", sign(&payload), if secure { "; Secure" } else { "" })
 }
 
 pub fn issue_cookie(secure: bool) -> String {
@@ -99,8 +105,12 @@ pub fn issue_cookie(secure: bool) -> String {
     cookie_for(s.as_object().expect("an object"), secure)
 }
 
-pub fn clear_cookie() -> String {
-    format!("{COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+pub fn clear_cookie(secure: bool) -> String {
+    if secure {
+        format!("{SECURE_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure")
+    } else {
+        format!("{COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+    }
 }
 
 /// `raw.match(/(?:^|;\s*)name=([^;]+)/)?.[1]`
@@ -124,11 +134,12 @@ fn cookie_value(raw: &str, name: &str) -> Option<String> {
 
 fn credential(req: &Req) -> Option<String> {
     let raw = req.header("cookie").unwrap_or_default();
-    cookie_value(&raw, COOKIE).or_else(|| cookie_value(&raw, OLD_COOKIE))
+    cookie_value(&raw, SECURE_COOKIE).or_else(|| cookie_value(&raw, COOKIE)).or_else(|| cookie_value(&raw, OLD_COOKIE))
 }
 
-fn old_cookie_only(req: &Req) -> bool {
-    cookie_value(&req.header("cookie").unwrap_or_default(), COOKIE).is_none()
+/// the cookie isn't under the name this request should use yet (an older name, or plain where HTTPS is)
+fn old_cookie_only(req: &Req, secure: bool) -> bool {
+    cookie_value(&req.header("cookie").unwrap_or_default(), if secure { SECURE_COOKIE } else { COOKIE }).is_none()
 }
 
 /// The session a request's cookie carries, if it's signed, current and not revoked.
@@ -163,8 +174,9 @@ pub fn is_authed(req: &Req) -> bool {
 /// The password was typed within `ms`: pairing a phone asks for that, not a session left from weeks ago.
 pub fn recent_sign_in(req: &Req, ms: u64) -> bool {
     let Some(s) = session(req) else { return false };
-    let at = s.num("at").or_else(|| s.num("iat"));
-    at.is_some_and(|at| now_ms() as f64 - at <= ms as f64)
+    // only `at` says when the password was typed: a cookie from before it has just `iat`, which a
+    // daily refresh moves to now, so it never counts as recent
+    s.num("at").is_some_and(|at| now_ms() as f64 - at <= ms as f64)
 }
 
 /// Keeps `close` until the connection ends (call the returned function then), so signing out (or
@@ -198,7 +210,7 @@ pub fn close_sockets(nonce: Option<&str>) {
 pub fn refresh_cookie(req: &Req, secure: bool) -> Option<String> {
     let s = session(req)?;
     let iat = s.num("iat").unwrap_or(0.0);
-    if (now_ms() as f64 - iat) < REFRESH_AFTER_MS as f64 && !old_cookie_only(req) {
+    if (now_ms() as f64 - iat) < REFRESH_AFTER_MS as f64 && !old_cookie_only(req, secure) {
         return None;
     }
     let now = now_ms();
@@ -218,31 +230,37 @@ pub fn revoke_session(req: &Req) {
 }
 
 // Slow down password guessing: a few attempts per minute per address, and a cap on failures from
-// all addresses together, so guesses spread over many addresses can't go faster either.
+// all addresses together, past which addresses that never signed in are slowed right down
+// (limits.rs), so guesses spread over many addresses can't go faster either.
 const PER_CLIENT: u32 = 8;
 const ALL_CLIENTS: u32 = 30;
+/// what `try_login` answers when the password wasn't even checked
+pub const TOO_MANY: &str = "Too many attempts. Try again in a minute.";
 
-/// `tryLogin`: Ok, or the error the app shows.
+/// `tryLogin`: Ok, or the error the app shows (`TOO_MANY` when it wasn't checked).
 pub async fn try_login(ip: &str, password: &str) -> Result<(), &'static str> {
     let now = now_ms();
-    let refused = STATE.with(|st| {
+    let (failures, over) = STATE.with(|st| {
         let mut st = st.borrow_mut();
         st.attempts.retain(|_, (_, reset)| *reset >= now);
         if st.failures.1 < now {
             st.failures = (0, now + 60_000);
         }
         let failures = st.failures.0;
-        let a = st.attempts.entry(ip.to_owned()).or_insert((0, now + 60_000));
-        if a.0 >= PER_CLIENT || failures >= ALL_CLIENTS {
-            return true;
-        }
-        // counted before the slow hash, so guesses sent all at once are each counted
-        a.0 += 1;
-        st.failures.0 += 1;
-        false
+        (failures, st.attempts.get(ip).is_some_and(|a| a.0 >= PER_CLIENT))
     });
+    let refused = over
+        || !crate::limits::shared_cap_allows("password", ip, failures, ALL_CLIENTS, now)
+        || STATE.with(|st| {
+            let mut st = st.borrow_mut();
+            let a = st.attempts.entry(ip.to_owned()).or_insert((0, now + 60_000));
+            // counted before the slow hash, so guesses sent all at once are each counted
+            a.0 += 1;
+            st.failures.0 += 1;
+            false
+        });
     if refused {
-        return Err("Too many attempts. Try again in a minute.");
+        return Err(TOO_MANY);
     }
     if password.encode_utf16().count() <= 1024 && check_password(password).await {
         STATE.with(|st| {
@@ -250,6 +268,7 @@ pub async fn try_login(ip: &str, password: &str) -> Result<(), &'static str> {
             st.attempts.remove(ip);
             st.failures.0 = st.failures.0.saturating_sub(1);
         });
+        crate::limits::remember_address(ip, now_ms());
         return Ok(());
     }
     inyon_core::platform::rt::sleep(400).await;

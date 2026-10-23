@@ -34,11 +34,36 @@ fn guesses_sent_all_at_once_are_each_counted_and_spread_ones_hit_a_shared_cap() 
         // the right password doesn't get through either until the minute is up
         assert!(try_login("203.0.113.1", "correct horse battery").await.is_err());
 
-        // 8 failures so far; 22 more are allowed across all addresses this minute
+        // 8 failures so far; 22 more are allowed across all addresses this minute, then one every few seconds
         let all = futures_util::future::join_all((0..10).map(|i| async move { errors(&format!("198.51.100.{i}"), 4).await })).await;
         let out: Vec<_> = all.into_iter().flatten().collect();
-        assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 22);
-        assert!(try_login("192.0.2.7", "correct horse battery").await.is_err());
+        assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 23);
+        assert_eq!(try_login("192.0.2.7", "correct horse battery").await, Err(TOO_MANY));
+        // a few seconds on, a new address with the right password gets in; a wrong one is refused
+        let t = now_ms();
+        inyon_core::clock::set_now(Some(t + crate::limits::SLOW_LANE_MS));
+        assert!(try_login("192.0.2.7", "correct horse battery").await.is_ok());
+        inyon_core::clock::set_now(Some(t + 2 * crate::limits::SLOW_LANE_MS));
+        assert_eq!(try_login("192.0.2.8", "not it").await, Err("Wrong password"));
+        assert_eq!(try_login("192.0.2.9", "correct horse battery").await, Err(TOO_MANY));
+        inyon_core::clock::set_now(None);
+    });
+}
+
+#[test]
+fn past_the_shared_cap_an_address_that_signed_in_before_and_this_machine_carry_on() {
+    crate::test_util::core();
+    setup();
+    block(async {
+        assert!(try_login("192.0.2.50", "correct horse battery").await.is_ok());
+        let all = futures_util::future::join_all((0..10).map(|i| async move { errors(&format!("198.51.100.{i}"), 4).await })).await;
+        assert_eq!(all.into_iter().flatten().filter(|e| *e == Some("Wrong password")).count(), 31);
+        assert_eq!(try_login("192.0.2.11", "correct horse battery").await, Err(TOO_MANY));
+        assert!(try_login("192.0.2.50", "correct horse battery").await.is_ok());
+        assert!(try_login("127.0.0.1", "correct horse battery").await.is_ok());
+        // its own limit still holds
+        let out = errors("192.0.2.50", 10).await;
+        assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 8);
     });
 }
 
@@ -113,7 +138,26 @@ fn a_tampered_or_signed_out_cookie_is_refused_and_a_bearer_is_judged_alone() {
     // a cookie sent along with a bad bearer doesn't sign it in
     assert!(!is_authed(&test_req("GET", "/", &[("cookie", &c), ("authorization", "Bearer nope")], "")));
     assert!(issue_cookie(true).ends_with("; Secure"));
-    assert_eq!(clear_cookie(), "inyon_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    assert_eq!(clear_cookie(false), "inyon_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+}
+
+#[test]
+fn over_https_the_cookie_is_host_prefixed_and_read_before_a_plain_one() {
+    crate::test_util::core();
+    setup();
+    let secure = issue_cookie(true);
+    assert!(secure.starts_with("__Host-inyon_session=") && secure.contains("; Path=/;") && !secure.contains("Domain"));
+    assert_eq!(clear_cookie(true), "__Host-inyon_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure");
+    let value = secure.split(';').next().unwrap().split_once('=').unwrap().1.to_owned();
+    // a junk inyon_session set by a neighbour doesn't hide the real one
+    let both = test_req("GET", "/api/session", &[("cookie", &format!("inyon_session=junk.value; __Host-inyon_session={value}"))], "");
+    assert!(is_authed(&both));
+    assert!(refresh_cookie(&both, true).is_none());
+    // a browser signed in before keeps its session, and gets it back under the new name over HTTPS
+    let plain = test_req("GET", "/api/session", &[("cookie", &format!("inyon_session={value}"))], "");
+    assert!(is_authed(&plain));
+    assert!(refresh_cookie(&plain, true).unwrap().starts_with("__Host-inyon_session="));
+    assert!(refresh_cookie(&plain, false).is_none());
 }
 
 fn signed_at(at: u64) -> String {
@@ -132,4 +176,14 @@ fn pairing_a_phone_takes_a_sign_in_from_the_last_ten_minutes() {
     assert!(is_authed(&old));
     assert!(!recent_sign_in(&old, ten));
     assert!(recent_sign_in(&test_req("POST", "/", &[("cookie", &signed_at(now_ms() - 9 * 60_000))], ""), ten));
+}
+
+#[test]
+fn a_cookie_with_no_at_never_counts_as_a_fresh_sign_in_however_recently_it_was_refreshed() {
+    crate::test_util::core();
+    setup();
+    let payload = B64U.encode(serde_json::to_string(&json!({ "exp": now_ms() + 86_400_000, "n": "legacy", "iat": now_ms() })).unwrap());
+    let legacy = test_req("POST", "/api/phones/pair", &[("cookie", &format!("{COOKIE}={payload}.{}", sign(&payload)))], "");
+    assert!(is_authed(&legacy));
+    assert!(!recent_sign_in(&legacy, crate::phones::CODE_TTL));
 }

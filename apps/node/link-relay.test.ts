@@ -9,7 +9,8 @@ import { ENGINE } from './engine-under-test.ts'
 // The engine's link reached only through a relay: a stand-in relay here, speaking the relay's side
 // of packages/link/src/relay.ts, and a phone (the real @inyon/link) whose session it carries.
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-relay-'))
-const env = { ...process.env, HOME: home, USERPROFILE: home }
+// TMUX empty: in tmux, `pair` leaves the link out
+const env = { ...process.env, HOME: home, USERPROFILE: home, TMUX: '' }
 const nonce = 'b9f7c1d2e3a4f5061728394a5b6c7d8e'
 
 let machine: ServerWebSocket<{ id: string }> | undefined

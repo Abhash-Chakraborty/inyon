@@ -16,6 +16,7 @@ pub mod http;
 pub mod hub_update;
 pub mod idle;
 pub mod index;
+pub mod limits;
 pub mod multipart;
 pub mod node_dist;
 pub mod pages;

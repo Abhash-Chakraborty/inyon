@@ -207,7 +207,8 @@ async function showCompanionCode() {
     token = readFileSync(path.join(dataDir(), 'local-token'), 'utf8').trim()
   } catch {}
   if (!token) fail("The hub hasn't started here yet. Run `inyon hub` or `inyon hub start` first.", 1)
-  const r = await fetch(`${url}/api/local/companion-code?token=${encodeURIComponent(token)}`, { method: 'POST', tls: { rejectUnauthorized: false } } as any)
+  // the token in a header, not the address, where a proxy's log would keep it
+  const r = await fetch(`${url}/api/local/companion-code`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, tls: { rejectUnauthorized: false } } as any)
     .then(async (res) => ({ status: res.status, body: (await res.json().catch(() => ({}))) as { code?: string; expiresAt?: number; error?: string } }))
     .catch(() => undefined)
   if (!r) fail(`The hub isn't answering at ${url}. Start it with \`inyon hub start\`.`, 1)

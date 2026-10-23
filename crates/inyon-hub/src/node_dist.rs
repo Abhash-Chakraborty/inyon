@@ -624,6 +624,89 @@ impl Dist {
     }
 }
 
+/// Whether a request nobody signed may make this hub build or download Inyon for `os` (mayPrepare
+/// in node-dist.ts). The /node routes are open (install.sh, install.ps1 and `inyon update` on
+/// older machines send no token), so without this anyone who reaches the hub could make it fetch
+/// about 100 MB per system from GitHub, or build every engine on a checkout. What's already here
+/// is always handed out; a new system is prepared only while an "Add a machine" command is waiting
+/// to be used, or when a machine of that system is paired (an update), or one whose system isn't
+/// known yet.
+pub fn may_prepare(os: &str, configs: &[inyon_protocol::HostConfig], os_of: impl Fn(&str) -> Option<String>, now: u64) -> bool {
+    use inyon_protocol::HostKind;
+    let nodes: Vec<_> = configs.iter().filter(|c| c.kind == HostKind::Node).collect();
+    let paired = |c: &inyon_protocol::HostConfig| c.paired_at.is_some_and(|p| p != 0);
+    if nodes.iter().any(|c| !paired(c) && c.token_issued_at.is_some_and(|t| t != 0) && !inyon_core::hosts::registry::token_expired(c, now)) {
+        return true;
+    }
+    nodes.iter().any(|c| paired(c) && system_of(os_of(&c.id).as_deref()).is_none_or(|o| o == os))
+}
+
+/// `uname -s` as a machine's probe reports it (Linux, Darwin, Windows_NT, MINGW64_NT…), as a target's system
+fn system_of(uname: Option<&str>) -> Option<String> {
+    let u = uname.unwrap_or_default().to_lowercase();
+    if u.is_empty() {
+        return None;
+    }
+    Some(if u.starts_with("linux") {
+        "linux".into()
+    } else if u.starts_with("darwin") {
+        "darwin".into()
+    } else if ["windows", "win32", "mingw", "msys", "cygwin"].iter().any(|p| u.starts_with(p)) {
+        "windows".into()
+    } else {
+        u
+    })
+}
+
+fn not_ready(t: &str) -> String {
+    format!("This hub hasn't fetched Inyon for {t} yet. Open \"Add a machine\" on the hub, then run the command again.")
+}
+
+/// 503 unless `ready` (the file is here already) or a machine may be waiting for it (may_prepare).
+fn gate(t: &str, ready: bool) -> HubResult<()> {
+    let reg = inyon_core::hosts::registry::registry();
+    let os = t.split('-').next().unwrap_or_default();
+    if ready || may_prepare(os, &reg.configs(), |id| reg.get(id).and_then(|r| r.borrow().state.os.clone()), inyon_core::clock::now_ms()) {
+        Ok(())
+    } else {
+        Err(http(503, not_ready(t)))
+    }
+}
+
+impl Dist {
+    fn engine_ready(&self, t: &str) -> bool {
+        self.out.join(format!("{}-{}", self.tag, engine_file(t))).exists()
+    }
+    fn command_ready(&self, t: &str) -> bool {
+        self.out.join(format!("v{VERSION}-{}", cli_file(t))).exists()
+            || (self.runs_from_source() && (self.built_command(t).is_some() || (!t.starts_with("windows") && self.engine_ready(t))))
+    }
+    /// The engine a request asks for, once gate() lets it through.
+    async fn engine_for(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        gate(t, self.engine_ready(t))?;
+        self.engine(t).await
+    }
+    async fn command_for(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
+        gate(t, self.command_ready(t))?;
+        self.command(t).await
+    }
+    async fn windows_program(self: &Rc<Self>) -> HubResult<PathBuf> {
+        gate("windows-x64", self.engine_ready("windows-x64"))?;
+        self.windows().await
+    }
+    async fn busybox_for(self: &Rc<Self>, arch: &str) -> HubResult<PathBuf> {
+        gate(&format!("windows-{arch}"), self.out.join(busybox_pin(arch).0).exists())?;
+        self.busybox(arch).await
+    }
+    /// a checkout works the list out by building every Unix engine, so it waits for a machine to be added
+    async fn unix_sums_for(self: &Rc<Self>) -> HubResult<String> {
+        if self.runs_from_source() && !unix().all(|t| self.engine_ready(t)) {
+            gate("linux", false).or_else(|_| gate("darwin", false)).map_err(|_| http(503, not_ready("Linux and macOS")))?;
+        }
+        self.unix_sums().await
+    }
+}
+
 const REPLACED: &str = "Inyon replaced tether-node with the inyon program. Copy the \"Add a machine\" command from the hub again and run it on this machine.\n";
 
 /// The Unix "Add a machine" one-liner (pair-command.ts). It checks install.sh against its sha256
@@ -699,7 +782,7 @@ where
 pub fn add(routes: &mut Routes) {
     routes.add("/node/install.sh", route(|_, _| async { Ok(plain(200, INSTALL_SH)) }));
     routes.add("/node/install.ps1", route(|_, _| async { Ok(plain(200, INSTALL_PS1)) }));
-    routes.add("/node/SHA256SUMS", route(|d, _| async move { Ok(plain(200, d.unix_sums().await?)) }));
+    routes.add("/node/SHA256SUMS", route(|d, _| async move { Ok(plain(200, d.unix_sums_for().await?)) }));
     // the release's own list and its signature, as the release has them: a machine checks what it
     // updates to against Inyon's key, never against a checksum the hub (or someone in between) gives
     routes.add("/node/release/SHA256SUMS", route(|d, _| async move { Ok(if d.runs_from_source() { plain(404, NOT_SIGNED) } else { plain(200, d.release_signed().await?.sums) }) }));
@@ -724,14 +807,14 @@ pub fn add(routes: &mut Routes) {
         "/node/inyon",
         route(|d, q| async move {
             let t = cli_target_of(&q)?;
-            binary(&d.command(&t).await?, &cli_file(&t)).await
+            binary(&d.command_for(&t).await?, &cli_file(&t)).await
         }),
     );
     routes.add(
         "/node/inyon.gz",
         route(|d, q| async move {
             let t = cli_target_of(&q)?;
-            let f = d.command(&t).await?;
+            let f = d.command_for(&t).await?;
             binary(&d.gzipped(&f).await?, &format!("{}.gz", cli_file(&t))).await
         }),
     );
@@ -739,7 +822,7 @@ pub fn add(routes: &mut Routes) {
         "/node/inyon.sha256",
         route(|d, q| async move {
             let t = cli_target_of(&q)?;
-            Ok(plain(200, d.sha256(&d.command(&t).await?).await?))
+            Ok(plain(200, d.sha256(&d.command_for(&t).await?).await?))
         }),
     );
     // the engine behind it, which the command fetches from here rather than from GitHub
@@ -747,14 +830,14 @@ pub fn add(routes: &mut Routes) {
         "/node/inyon-engine",
         route(|d, q| async move {
             let t = target_of(&q)?;
-            binary(&d.engine(&t).await?, &engine_file(&t)).await
+            binary(&d.engine_for(&t).await?, &engine_file(&t)).await
         }),
     );
     routes.add(
         "/node/inyon-engine.gz",
         route(|d, q| async move {
             let t = target_of(&q)?;
-            let f = d.engine(&t).await?;
+            let f = d.engine_for(&t).await?;
             binary(&d.gzipped(&f).await?, &format!("{}.gz", engine_file(&t))).await
         }),
     );
@@ -762,22 +845,22 @@ pub fn add(routes: &mut Routes) {
         "/node/inyon-engine.sha256",
         route(|d, q| async move {
             let t = target_of(&q)?;
-            Ok(plain(200, d.sha256(&d.engine(&t).await?).await?))
+            Ok(plain(200, d.sha256(&d.engine_for(&t).await?).await?))
         }),
     );
-    routes.add("/node/busybox.exe", route(|d, q| async move { binary(&d.busybox(&arch_of(&q)?).await?, "busybox.exe").await }));
+    routes.add("/node/busybox.exe", route(|d, q| async move { binary(&d.busybox_for(&arch_of(&q)?).await?, "busybox.exe").await }));
     // its pinned checksum, which install.ps1 checks the download against
     routes.add("/node/busybox.exe.sha256", route(|_, q| async move { Ok(plain(200, busybox_pin(&arch_of(&q)?).1)) }));
     // a Windows machine set up before the rename updates through these (see hub-update.ps1)
-    routes.add("/node/tether-node.exe", route(|d, _| async move { binary(&d.windows().await?, "tether-node.exe").await }));
+    routes.add("/node/tether-node.exe", route(|d, _| async move { binary(&d.windows_program().await?, "tether-node.exe").await }));
     routes.add(
         "/node/tether-node.exe.gz",
         route(|d, _| async move {
-            let f = d.windows().await?;
+            let f = d.windows_program().await?;
             binary(&d.gzipped(&f).await?, "tether-node.exe.gz").await
         }),
     );
-    routes.add("/node/tether-node.exe.sha256", route(|d, _| async move { Ok(plain(200, d.sha256(&d.windows().await?).await?)) }));
+    routes.add("/node/tether-node.exe.sha256", route(|d, _| async move { Ok(plain(200, d.sha256(&d.windows_program().await?).await?)) }));
     // tether-node as a Bun script (install.sh before the rename) has no update to the program
     routes.add("/node/tether-node.ts", route(|_, _| async { Ok(plain(410, REPLACED)) }));
     routes.add("/node/tether-node.ts.sha256", route(|_, _| async { Ok(plain(410, REPLACED)) }));

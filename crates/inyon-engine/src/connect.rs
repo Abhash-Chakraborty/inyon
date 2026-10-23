@@ -43,6 +43,11 @@ fn strict_refusal(hub: &str) -> Option<String> {
     }
 }
 
+/// What the log says when NODE_TLS_REJECT_UNAUTHORIZED=0 is set (crate::http::insecure_tls_for).
+pub fn insecure_warning(host: &str) -> String {
+    format!("NODE_TLS_REJECT_UNAUTHORIZED=0 is set, so the certificate of {host} isn't checked and anyone on the network could answer in its place. Only the hub's: relays, push services and downloads are still checked. Unset it once the hub has a real certificate, or run setup's LAN choice on the hub and add this machine again.")
+}
+
 /// What the log, `inyon doctor` and `inyon status` say about a machine joined to a hub on plain
 /// http before 0.20 refused it: it still connects, and how to move to https.
 pub fn plain_warning(host: &str) -> String {
@@ -197,6 +202,9 @@ async fn run(s: Settings) -> String {
         error(&format!("Warning: {w}"));
     }
     record(None, warning.as_deref());
+    if crate::http::insecure_tls() {
+        error(&format!("Warning: {}", insecure_warning(&host)));
+    }
     let bearer = format!("Bearer {}", s.token);
     let name = s.url.host_str().unwrap_or("").to_string();
     let port = s.url.port_or_known_default().unwrap_or(80);
