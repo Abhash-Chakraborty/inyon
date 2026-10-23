@@ -42,6 +42,13 @@ cd apps/web && bun run build && bun run e2e   # layout at phone widths, needs Pl
 The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the
 agents' terminal apps. If you change it, add a capture to `screen.test.ts` that shows the case.
 
+The Inyon window on Windows (`apps/cli/src/window/`) places every control from the display scale
+and the work area alone, in `layout.rs`, and `model.rs` works out what each place says.
+`INYON_WINDOW_SVG=<dir> cargo test -p inyon-cli window::svg` draws every state as an SVG, so the
+layout can be checked without Windows. On Windows, `INYON_WINDOW_DEMO=<file> inyon window link`
+opens a separate window that reads lines such as `state=code dpi=144 theme=dark` from the file and
+logs its size after each one to `window.log`, the only file it writes.
+
 ## Where things live
 
 ```

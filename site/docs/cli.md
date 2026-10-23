@@ -43,12 +43,16 @@ inyon
 inyon status --plain
 ```
 
-In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses while the link runs, whether phones reach it only through the tunnel and how to change that (from 0.20), the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. Times are in this computer's time zone. At 72 columns or wider it uses two columns.
+In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. It shows this computer's role (hub, joined to a hub, paired with phones, or not set up), its addresses while the link runs, whether phones reach it only through the tunnel and how to change that (from 0.20), the background jobs and their versions, paired phones, a hub's machines, the agents running in tmux, and the last lines of the log. Times are in this computer's time zone. At 72 columns or wider it uses two columns. From 0.20.1 every part keeps its rows, so a refresh changes what a row says but never moves it: a part with less to show leaves blank rows, one with more ends in "and 3 more", and a note (the hub can't be reached, say) shows at the top of the log.
 
 | Key | Does |
 |---|---|
 | `p` | Show the pairing code |
+| `s` | Open setup, with its questions |
+| `r` | Read everything again now |
 | `q`, `Esc`, `Ctrl-C` | Quit |
+
+On Windows before 0.20.1 a key could act twice, because Windows also reports a key's release.
 
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
 

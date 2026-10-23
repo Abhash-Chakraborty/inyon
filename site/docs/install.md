@@ -163,7 +163,7 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 
 | Item | Does |
 |---|---|
-| Open Inyon | The Inyon window: whether it runs, where it answers, which phones are paired, with the same four actions as buttons |
+| Open Inyon | [The Inyon window](#the-inyon-window) |
 | Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone). It says "Starting the tunnel…" until the tunnel's address is in the code |
 | Show the log | Opens the log file |
 | Restart | Starts it again |
@@ -172,6 +172,23 @@ While it runs, the Inyon icon sits in the notification area of the taskbar. Clic
 From 0.20 **Quit Inyon** also stops `cloudflared`, as **Restart** does; in 0.19 it kept running after the link had stopped. The window shows a pairing code as soon as it's ready and draws it again when the tunnel's address arrives, lists where the computer answers only while the link runs, and says when phones reach it only through the tunnel. Before 0.20 its **Pair a phone** button could wait for good when the button had to start the link itself.
 
 From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens; when no phone is paired yet, it shows a pairing code without being asked. Nothing Inyon runs in the background opens a window either: from 0.17.3 every program the engine starts on Windows (psmux, PowerShell, the shell) runs hidden. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+
+### The Inyon window
+
+From 0.20.1 the window is the control panel for this computer:
+
+| Part | Shows | Buttons |
+|---|---|---|
+| Header | The version, the computer's name, and Running, Starting, Stopped or Not set up | |
+| Pair a phone | The QR code and the ID and code to type in the app. It says so while the tunnel starts, and until the tunnel is up the code works on the same network or VPN. A used code names the phone that paired, an expired one says so, and in its last minute the note counts down ("gone in 42s") | Make a code, Copy link, and Show the log when the tunnel is slow or the code failed |
+| Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change opens `inyon setup` in a terminal |
+| Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. Show all opens `inyon phones` in a terminal when there are more |
+| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which opens `inyon doctor` |
+| Footer | The newest log line | Open the log, Quit Inyon |
+
+On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.
+
+The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. In 0.19 the window grew and shrank with every refresh.
 
 From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
 

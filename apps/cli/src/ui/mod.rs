@@ -90,21 +90,43 @@ pub fn banner(width: u16) -> Vec<String> {
     vec![format!("  {}", MARK[0]), format!("  {}    inyon {VERSION}", MARK[1])]
 }
 
-/// A line cut to `width` cells, with an ellipsis when it had to be.
+/// How many terminal columns `s` takes: two for a CJK character or most emoji, none for a
+/// combining mark.
+pub fn columns(s: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(s)
+}
+
+/// A line cut to `width` columns, with an ellipsis when it had to be.
 pub fn fit(s: &str, width: usize) -> String {
-    let n = s.chars().count();
-    if n <= width {
+    if columns(s) <= width {
         return s.to_string();
     }
     if width == 0 {
         return String::new();
     }
-    let mut out: String = s.chars().take(width - 1).collect();
+    let mut out = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + w > width - 1 {
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
     out.push('…');
     out
 }
 
-/// `text` as lines no wider than `width`, broken between words.
+/// `s` cut to `width` columns and filled out with spaces to exactly that, so what follows it
+/// lines up.
+pub fn pad(s: &str, width: usize) -> String {
+    let mut out = fit(s, width);
+    out.push_str(&" ".repeat(width.saturating_sub(columns(&out))));
+    out
+}
+
+/// `text` as lines no wider than `width` columns, broken between words.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![String::new()];
@@ -112,7 +134,7 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let next = if line.is_empty() { word.chars().count() } else { line.chars().count() + 1 + word.chars().count() };
+        let next = if line.is_empty() { columns(word) } else { columns(&line) + 1 + columns(word) };
         if next > width && !line.is_empty() {
             lines.push(std::mem::take(&mut line));
         }
@@ -171,23 +193,15 @@ pub fn ask_hidden(prompt: &str) -> Result<String, String> {
     let raw = crossterm::terminal::enable_raw_mode().is_ok();
     let mut text = String::new();
     if raw {
-        use crossterm::event::{read, Event, KeyCode, KeyModifiers};
         loop {
-            match read().map_err(|e| e.to_string())? {
-                Event::Key(k) if k.code == KeyCode::Enter => break,
-                Event::Key(k) if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL) => {
+            let crossterm::event::Event::Key(k) = crossterm::event::read().map_err(|e| e.to_string())? else { continue };
+            match hidden_key(&mut text, k) {
+                Hidden::More => {}
+                Hidden::Done => break,
+                Hidden::Stopped => {
                     let _ = crossterm::terminal::disable_raw_mode();
                     return Err("Stopped.".into());
                 }
-                Event::Key(k) if k.code == KeyCode::Backspace => {
-                    text.pop();
-                }
-                Event::Key(k) => {
-                    if let KeyCode::Char(c) = k.code {
-                        text.push(c);
-                    }
-                }
-                _ => {}
             }
         }
         let _ = crossterm::terminal::disable_raw_mode();
@@ -197,6 +211,36 @@ pub fn ask_hidden(prompt: &str) -> Result<String, String> {
     }
     let _ = writeln!(err);
     Ok(text.trim_end_matches(['\r', '\n']).to_string())
+}
+
+/// What a key did to a secret being typed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Hidden {
+    More,
+    Done,
+    Stopped,
+}
+
+/// One key of a secret typed with no echo. Windows reports a key's release as well as its press,
+/// so only presses (and a held key's repeats) count, or every letter would be typed twice.
+pub fn hidden_key(text: &mut String, k: crossterm::event::KeyEvent) -> Hidden {
+    use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
+    if k.kind == KeyEventKind::Release {
+        return Hidden::More;
+    }
+    match k.code {
+        KeyCode::Enter => Hidden::Done,
+        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => Hidden::Stopped,
+        KeyCode::Backspace => {
+            text.pop();
+            Hidden::More
+        }
+        KeyCode::Char(c) => {
+            text.push(c);
+            Hidden::More
+        }
+        _ => Hidden::More,
+    }
 }
 
 /// Prints `frames` one after another while `work` runs on another thread, then its result.
@@ -252,10 +296,44 @@ mod tests {
     }
 
     #[test]
+    fn widths_are_terminal_columns_not_characters() {
+        // a Korean name takes two columns a character, an emoji two, a combining accent none
+        assert_eq!(columns("인연"), 4);
+        assert_eq!(columns("📱"), 2);
+        assert_eq!(columns("e\u{301}"), 1);
+        assert_eq!(fit("인연 폰", 4), "인…");
+        assert!(columns(&fit("인연 폰", 4)) <= 4);
+        assert_eq!(fit("📱 Pixel", 3), "📱…");
+        assert_eq!(pad("인연", 6), "인연  ");
+        assert_eq!(columns(&pad("갤럭시 탭 S9 울트라", 10)), 10);
+        // wrapped lines stay within the width in columns
+        for l in wrap("갤럭시 탭 울트라 휴대폰 이름이 길다", 8) {
+            assert!(columns(&l) <= 8, "{l}");
+        }
+    }
+
+    #[test]
     fn wrap_breaks_between_words() {
         assert_eq!(wrap("the hub signs you in from a browser", 12), vec!["the hub", "signs you in", "from a", "browser"]);
         assert_eq!(wrap("short", 40), vec!["short"]);
         assert_eq!(wrap("averyveryverylongword", 8), vec!["averyve…"]);
+    }
+
+    #[test]
+    fn a_secret_counts_each_key_once_when_windows_reports_the_release_too() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+        let key = |c: KeyCode, kind: KeyEventKind| KeyEvent { code: c, modifiers: KeyModifiers::NONE, kind, state: KeyEventState::NONE };
+        let mut text = String::new();
+        for c in ['a', 'b'] {
+            assert_eq!(hidden_key(&mut text, key(KeyCode::Char(c), KeyEventKind::Press)), Hidden::More);
+            assert_eq!(hidden_key(&mut text, key(KeyCode::Char(c), KeyEventKind::Release)), Hidden::More);
+        }
+        assert_eq!(text, "ab");
+        hidden_key(&mut text, key(KeyCode::Backspace, KeyEventKind::Press));
+        hidden_key(&mut text, key(KeyCode::Backspace, KeyEventKind::Release));
+        assert_eq!(text, "a");
+        assert_eq!(hidden_key(&mut text, key(KeyCode::Enter, KeyEventKind::Release)), Hidden::More);
+        assert_eq!(hidden_key(&mut text, key(KeyCode::Enter, KeyEventKind::Press)), Hidden::Done);
     }
 
     #[test]
