@@ -189,6 +189,9 @@
     })
   }
 
+  // an old pairing link or app address lands on the 404 page: the home page explains what to do with it
+  if ($('.notfound') && /^#(pair|hub)\?/.test(location.hash)) location.replace('/' + location.hash)
+
   // A computer's or hub's pairing QR, scanned with the phone's own camera, opens this site with the
   // code after the #, which browsers never send to a server. Offer to copy it for the app, then
   // take it out of the address bar.
