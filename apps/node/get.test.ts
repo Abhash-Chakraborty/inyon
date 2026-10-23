@@ -340,14 +340,14 @@ test.skipIf(!SIGNED)("the website's earlier address is still the website, and lo
   // INYON_SIGNING_KEY names the test key, which signed this list: ignored for the website at
   // either address, over https or http
   for (const INYON_DOWNLOAD of [OLD_SITE, OLD_SITE.slice(0, -1), OLD_SITE.replace('https:', 'http:'), SITE.replace('https:', 'http:')]) {
-    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
+    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' }, [], 'plain')
     expect(r.code).toBe(1)
-    expect(r.out).toContain("isn't signed by Inyon's release key, so nothing was installed")
+    expect(r.out).toContain(REFUSED_UNSIGNED)
     expect(existsSync(installed())).toBe(false)
   }
   // an address that only looks like the website's is somewhere else, where the key counts
   for (const INYON_DOWNLOAD of LOOKALIKES.map((l) => l.slice(0, -1))) {
-    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' })
+    const r = await run({ PATH, INYON_DOWNLOAD, TETHER_DOWNLOAD: '' }, [], 'plain')
     expect(r.code).toBe(0)
     rmSync(installed())
   }

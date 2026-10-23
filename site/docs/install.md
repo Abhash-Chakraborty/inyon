@@ -58,13 +58,13 @@ From 0.20 that needs [minisign](https://jedisct1.github.io/minisign/) (`brew ins
 To install from somewhere else on a computer without minisign, tell the installer to go on without the signature:
 
 ```sh
-curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh -s -- --no-signature-check
+curl -fsSL https://inyon.tech/get.sh | INYON_DOWNLOAD=https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0 sh -s -- --no-signature-check
 ```
 
 ```powershell
 $env:INYON_DOWNLOAD = 'https://github.com/Abhash-Chakraborty/inyon/releases/download/v0.17.0'
 $env:INYON_NO_SIGNATURE_CHECK = '1'
-irm https://inyon.abhashchakraborty.tech/get.ps1 | iex
+irm https://inyon.tech/get.ps1 | iex
 ```
 
 `--no-signature-check` (or `INYON_NO_SIGNATURE_CHECK=1`) only skips a check nothing on the computer can make. Every download is still checked against the list, and with minisign installed a list with a bad signature is refused all the same. `inyon` checks the signature itself on every update from then on.
