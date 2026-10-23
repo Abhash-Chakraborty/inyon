@@ -42,7 +42,7 @@ From 0.19 machines that join a hub take only the `inyon` command, which connects
 
 ## First sign-in
 
-The hub listens on `127.0.0.1:4777`. Open it, and the first visit asks you to create a password (8 characters or more), using the setup code it printed. Lost the code? `inyon hub code` shows it again.
+The hub listens on `127.0.0.1:4777`. Open it, and the first visit asks you to create a password (8 characters or more), using the setup code it printed. Lost the code? `inyon hub code` shows it again. From 0.20.3 the hub prints the code itself only in a terminal; in a log it prints where the code is kept, so another user who can read the log can't use it first.
 
 - Sign-ins last 30 days and are renewed as you use the hub.
 - Change the password in **Settings → Account**; that signs out your other browsers.

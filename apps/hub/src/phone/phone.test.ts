@@ -120,6 +120,29 @@ test('adding, editing and removing a server keeps its secret in the keystore', a
   expect((await call('GET', '/api/hosts')).data.some((h: any) => h.id === id)).toBe(false)
 })
 
+test("removing a computer has the page make a new push key, since that computer may keep the old one", async () => {
+  let rotations = 0
+  const count = () => void rotations++
+  globalThis.addEventListener('inyon:push-rotate', count)
+  try {
+    const add = async (name: string) => (await call('POST', '/api/hosts', { name, target: 'me@10.0.0.9', hostKey: FINGERPRINT, auth: 'none' })).data.id as string
+    // no notifications yet: nothing to make again
+    expect((await call('DELETE', `/api/hosts/${await add('Before')}`)).status).toBe(200)
+    expect(rotations).toBe(0)
+    const browser = {
+      subscription: { endpoint: 'https://push.example.net/phone', keys: { p256dh: 'p', auth: 'a' } },
+      vapid: { privateJwk: { kty: 'EC', crv: 'P-256', d: 'd', x: 'x', y: 'y' }, subject: 'https://inyon.tech' },
+      done: true,
+    }
+    expect((await call('POST', '/api/push', browser)).status).toBe(200)
+    expect((await call('DELETE', `/api/hosts/${await add('After')}`)).status).toBe(200)
+    expect(rotations).toBe(1)
+    await call('DELETE', '/api/push', { endpoint: browser.subscription.endpoint })
+  } finally {
+    globalThis.removeEventListener('inyon:push-rotate', count)
+  }
+})
+
 test('a server that needs no key or password signs in with neither', async () => {
   const add = await call('POST', '/api/hosts', { name: 'Open', target: 'me@10.0.0.7', hostKey: FINGERPRINT, auth: 'none' })
   expect(add.status).toBe(200)

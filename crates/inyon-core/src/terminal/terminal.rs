@@ -17,7 +17,9 @@ pub const VIEW_KEYS: &str = concat!(
     "tmux bind-key -T inyon-view MouseDrag1Pane if-shell -F '#{||:#{pane_in_mode},#{mouse_any_flag}}' 'send-keys -M' 'copy-mode -M'",
 );
 
-/// The command that opens the view: a throwaway session `view` linking window `window`, showing `pane`.
+/// The command that opens the view: a throwaway session `view` linking window `window`, showing
+/// `pane`. tmux checks the prefix before the key table, so the view turns the prefix off as well;
+/// otherwise C-b s or C-b : would still reach other sessions and the command prompt.
 pub fn view_command(view: &str, window: &str, pane: &str) -> String {
     let v = shq(view);
     [
@@ -26,6 +28,8 @@ pub fn view_command(view: &str, window: &str, pane: &str) -> String {
         format!(r"\; kill-window -t {}", shq(&format!("{view}:inyon-tmp"))),
         format!(r"\; set-option -t {v} status off"),
         format!(r"\; set-option -t {v} key-table inyon-view"),
+        format!(r"\; set-option -t {v} prefix None"),
+        format!(r"\; set-option -t {v} prefix2 None"),
         format!(r"\; set-option -t {v} destroy-unattached on"),
         format!(r"\; select-pane -t {}", shq(pane)),
     ]
@@ -33,7 +37,7 @@ pub fn view_command(view: &str, window: &str, pane: &str) -> String {
 }
 
 /// Opens a terminal on one pane's window, and only that window: a throwaway session that holds just
-/// a link to it, with no status bar and a key table without the prefix, so the phone can't wander
+/// a link to it, with no status bar, no prefix and a key table of its own, so the phone can't wander
 /// off to other windows or sessions (or switch the laptop's view). The window itself is shared, so
 /// what you type shows on the laptop too. The view session dies when we detach.
 pub fn open_terminal(host_id: &str, pane_id: &str, cols: u16, rows: u16, on_data: impl FnMut(Vec<u8>) + 'static) -> HubResult<PtyHandle> {

@@ -150,9 +150,8 @@ fn clean_code(v: Option<&Value>) -> String {
 /// A companion hands in the code. Wrong and expired codes read the same; failures are counted per
 /// address and in all.
 pub fn claim_companion(ip: &str, b: &Value, now: u64) -> Resp {
-    let limited =
-        with(|s| s.failures.get(ip).is_some_and(|(n, reset)| *reset >= now && *n >= CLAIMS_PER_MINUTE) || (s.all_failures.1 >= now && s.all_failures.0 >= ALL_CLAIMS_PER_MINUTE));
-    if limited {
+    let (mine, all) = with(|s| (s.failures.get(ip).is_some_and(|(n, reset)| *reset >= now && *n >= CLAIMS_PER_MINUTE), if s.all_failures.1 >= now { s.all_failures.0 } else { 0 }));
+    if mine || !crate::limits::shared_cap_allows("companion code", ip, all, ALL_CLAIMS_PER_MINUTE, now) {
         return refuse(429, "rate-limit", "Too many attempts. Try again in a minute.");
     }
     let code = clean_code(b.get("code"));

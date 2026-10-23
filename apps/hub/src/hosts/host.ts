@@ -3,6 +3,15 @@ import type { HostConfig } from '@inyon/protocol'
 /** POSIX single-quote a string for a shell command line. */
 export const shq = (s: string) => `'${String(s).replace(/'/g, `'\\''`)}'`
 
+/**
+ * A name or folder as tmux should take it literally. tmux expands formats in `new-session -s/-c`,
+ * `new-window -c/-n`, `respawn-pane -c` and `rename-window`, and `#(cmd)` runs a command, so a
+ * folder an agent made called `x#(curl …|sh)` would run that on Fork or Restart. `##` is a plain
+ * `#`. psmux is left alone: whether it expands formats there isn't known yet, and a doubled `#`
+ * would send a `C#` folder astray.
+ */
+export const tmuxLiteral = (s: string, psmux = false) => (psmux ? s : s.replace(/#/g, '##'))
+
 export interface ExecResult {
   code: number
   stdout: string

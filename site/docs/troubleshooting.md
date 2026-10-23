@@ -63,13 +63,16 @@ The app explains what it found:
 - **"couldn't hand out Inyon's signed list of checksums"** from `inyon update` on a machine: the hub couldn't fetch its release's list from GitHub, or the list it got isn't the one for its version. The hub's log says which. Try again later; the machine changes nothing meanwhile.
 - **"This hub doesn't answer to that address"** under a domain name: add it to `INYON_ALLOWED_HOSTS`. Behind a proxy on another hostname, add the origin to `INYON_ALLOWED_ORIGINS`.
 - **A port-forwarding rule** (say, port 80 to 4777) only applies to traffic arriving from other machines. Opening the name from the hub's own machine reaches whatever else listens on port 80 there.
-- **Forgot the password:** `inyon hub reset-password`. **Lost the setup code:** `inyon hub code`.
+- **"Too many attempts. Try again in a minute."** when you sign in: many wrong passwords reached the hub. From 0.20.3, the hub's own machine and an address that signed in within the last 30 days carry on under their own limit; a new address gets one try every few seconds until it calms down, and the hub's log says it happened.
+- **Forgot the password:** `inyon hub reset-password`. **Lost the setup code:** `inyon hub code`. From 0.20.3 the hub's log names the file the code is in rather than the code, unless the hub runs in a terminal.
 
 ## A machine shows as offline
 
 - A joined machine: is it on, and is `inyon service status` showing `node` running? `inyon logs --role node` shows why it can't connect.
 - The log says the hub's certificate isn't trusted, and the hub's certificate comes from your organisation's own authority: put that authority's certificate in a PEM file and set `NODE_EXTRA_CA_CERTS` to its path, for the service too (see [Computer settings](configuration.md#computer-settings)).
 - The hub removed it, or its pairing command expired unused (after 24 hours): use **New pairing command** on its page.
+- **"The hub refused this token"** from `inyon join`: from 0.20.3 a pairing command works once, since `join` trades its token for a new one. Get a new command from **New pairing command**. Running the same command again on a machine it already added keeps that machine's token.
+- **"This hub hasn't fetched Inyon for … yet"** while installing: from 0.20.3 the hub fetches Inyon for a new system only while an **Add a machine** command is waiting. Open **Add a machine** on the hub (or **New pairing command**), then run the command again.
 - An SSH server: check you can `ssh` to it from the hub's machine as the hub's user, without a password prompt.
 
 ## A session doesn't appear

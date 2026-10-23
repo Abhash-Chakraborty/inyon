@@ -15,15 +15,22 @@ use url::Url;
 /// The TLS settings for a connection to `url`: the pin when `url` is the saved hub and its
 /// certificate was kept, else None (the usual roots).
 pub fn config_for(url: &str) -> Option<Arc<rustls::ClientConfig>> {
-    let hub = crate::paths::saved_hub()?;
     let want = pinned_sha256(&crate::http::hub_cert_file())?;
+    Some(config(want, saved_hub_host(url)?))
+}
+
+/// Whether `url` goes to the saved hub: the same host and port.
+pub fn is_saved_hub(url: &str) -> bool {
+    saved_hub_host(url).is_some()
+}
+
+/// The saved hub's host, as a certificate's name is compared, when `url` goes to it.
+fn saved_hub_host(url: &str) -> Option<String> {
+    let hub = crate::paths::saved_hub()?;
     let target = Url::parse(url).ok()?;
     let saved = Url::parse(&hub).ok()?;
     let host = host_key(&saved)?;
-    if host_key(&target)? != host || target.port_or_known_default() != saved.port_or_known_default() {
-        return None;
-    }
-    Some(config(want, host))
+    (host_key(&target)? == host && target.port_or_known_default() == saved.port_or_known_default()).then_some(host)
 }
 
 /// `host` lowercased, IPv6 without brackets, as a certificate's name is compared.

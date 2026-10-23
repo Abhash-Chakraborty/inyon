@@ -26,7 +26,7 @@ If you scan with the phone's own camera app instead, the code opens this website
 
 ### Type a code
 
-When the terminal is on the same phone, tap **Type a code** and enter the ID (like `K7Q4-MX2T`) and the 6-digit code printed under the QR code. It pairs as soon as both are complete. Or tap **Paste the link** and paste the link the computer printed.
+When the terminal is on the same phone, tap **Type a code** and enter the ID (like `K7Q4-MX2T`) and the 6-digit code printed under the QR code. It pairs as soon as both are complete, and from 0.20.3 says *Its ID is …*: if that isn't the ID `inyon pair` printed, remove that computer. Or tap **Paste the link** and paste the link the computer printed.
 
 A code works once, for 10 minutes, and five wrong tries cancel it.
 

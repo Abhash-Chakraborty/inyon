@@ -215,3 +215,17 @@ test.skipIf(process.platform === 'win32')('a hub joined by its certificate is re
     forged.srv.stop(true)
   }
 }, 20_000)
+
+test('NODE_TLS_REJECT_UNAUTHORIZED=0 is said at the start, with the hub it concerns', async () => {
+  const srv = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response('no', { status: 503 }) })
+  try {
+    const home = fs.mkdtempSync(path.join(dir, 'home-'))
+    const r = await runFor({ INYON_HUB: `http://127.0.0.1:${srv.port}`, INYON_TOKEN: 'tok', NODE_TLS_REJECT_UNAUTHORIZED: '0' }, home, 1500)
+    expect(r.stderr).toContain('Warning: NODE_TLS_REJECT_UNAUTHORIZED=0 is set')
+    expect(r.stderr).toContain(`127.0.0.1:${srv.port}`)
+    const quiet = await runFor({ INYON_HUB: `http://127.0.0.1:${srv.port}`, INYON_TOKEN: 'tok', NODE_TLS_REJECT_UNAUTHORIZED: '' }, fs.mkdtempSync(path.join(dir, 'home-')), 1500)
+    expect(quiet.stderr).not.toContain('NODE_TLS_REJECT_UNAUTHORIZED')
+  } finally {
+    srv.stop(true)
+  }
+}, 15_000)

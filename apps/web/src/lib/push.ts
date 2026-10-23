@@ -12,7 +12,9 @@ import { useStore } from './store.ts'
  * ciphertext.
  *
  * A subscription is tied to one signing (VAPID) key, and every computer has to sign with the same
- * one, so this page makes the key and hands it out with the subscription.
+ * one, so this page makes the key and hands it out with the subscription. A computer that is
+ * removed may keep both, so then the page makes a new key and subscription and hands them to the
+ * computers left; the old subscription ends, and what the removed one kept is useless.
  */
 
 /** Safari only has push for an app added to the Home Screen; elsewhere it needs HTTPS and a worker. */
@@ -71,6 +73,23 @@ export async function enablePush(done = useStore.getState().settings.notifyDone)
   }
 }
 
+/** A new key and subscription, after a computer that had the old ones was removed. */
+export async function rotatePush(done = useStore.getState().settings.notifyDone, waits = [5_000, 30_000, 120_000]) {
+  try {
+    localStorage.removeItem(KEY)
+  } catch {}
+  // the old subscription is gone by now, so a failed hand-over would leave no alerts at all until
+  // the app opens again: try a few more times, then say so
+  let r = await enablePush(done)
+  for (const wait of waits) {
+    if (!r.error || r.error === 'unsupported' || r.error === 'not allowed') return r
+    await new Promise((ok) => setTimeout(ok, wait))
+    r = await enablePush(done)
+  }
+  if (r.error) console.warn(`Couldn't hand the new push key to the computers: ${r.error}. Alerts come back the next time the app opens.`)
+  return r
+}
+
 /** A test through the push service: how many senders delivered it (0 if push isn't on). */
 export async function testPush() {
   const r = await enablePush()
@@ -88,6 +107,8 @@ export function watchPush() {
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
   let done = useStore.getState().settings.notifyDone
+  // a computer was removed (apps/hub/src/phone/index.ts)
+  window.addEventListener('inyon:push-rotate', () => void rotatePush(done))
   void enablePush(done)
   useStore.subscribe((s) => {
     if (s.settings.notifyDone === done) return

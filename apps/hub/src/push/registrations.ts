@@ -41,8 +41,17 @@ export function validRegistration(b: any): Registration {
   }
 }
 
+/**
+ * How many browsers a hub sends to. Each one is a URL the hub POSTs to whenever an agent needs you,
+ * and only signed-in browsers and phones may add one, but there's no reason for the list to grow
+ * without end: past this, the oldest goes.
+ */
+export const MAX_REGISTRATIONS = 20
+
 export function addRegistration(r: Registration) {
   kv.set(key(r.subscription.endpoint), r)
+  const all = registrations().sort((a, b) => a.at - b.at)
+  for (const old of all.slice(0, Math.max(0, all.length - MAX_REGISTRATIONS))) kv.del(key(old.subscription.endpoint))
   changed()
 }
 

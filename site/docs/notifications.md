@@ -34,13 +34,13 @@ A fully closed app gets no alerts yet. That needs a push server, which Inyon doe
 
 ### A hub in a browser
 
-The hub sends standard Web Push itself, so alerts reach a closed tab or an installed web app. This needs the hub on HTTPS (a VPN's HTTPS name, a reverse proxy, or its own certificate; see [Running a hub](hub.md#https)). Each browser that allows notifications registers with the hub, and every alert goes to every registered browser.
+The hub sends standard Web Push itself, so alerts reach a closed tab or an installed web app. This needs the hub on HTTPS (a VPN's HTTPS name, a reverse proxy, or its own certificate; see [Running a hub](hub.md#https)). Each browser that allows notifications registers with the hub, and every alert goes to every registered browser. From 0.20.3 a hub keeps up to 20 browsers; a 21st drops the one that registered longest ago, which registers again the next time it opens the app.
 
 On iPhone and iPad, web notifications only work after you add the page to the Home Screen.
 
 ### A browser copy
 
-A [browser copy](browser-copy.md) has no hub, so each paired computer sends alerts straight to the browser's push service, encrypted for that browser (RFC 8291). This covers Claude Code (needs you, and finished) and needs `inyon` 0.10 or later on the computer. `inyon push` lists the browsers a computer sends to.
+A [browser copy](browser-copy.md) has no hub, so each paired computer sends alerts straight to the browser's push service, encrypted for that browser (RFC 8291). This covers Claude Code (needs you, and finished) and needs `inyon` 0.10 or later on the computer. `inyon push` lists the browsers a computer sends to. From 0.20.3, removing a computer from the page makes the browser a new push key and hands it to the computers that remain, so the removed one can't send it anything.
 
 ## Haptics
 

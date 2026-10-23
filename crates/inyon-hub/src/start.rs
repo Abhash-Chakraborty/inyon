@@ -157,7 +157,8 @@ pub fn serve() -> i32 {
             let host = if exposed { bind.as_str() } else { "localhost" };
             console::log(&format!("\n  First run: open {scheme}://{host}:{port} and create your password."));
             if let Some(code) = &setup_code {
-                console::log(&format!("  It will ask for this setup code: {code} (also in {})\n", setup_file.display()));
+                use std::io::IsTerminal;
+                console::log(&setup_code_note(code, &setup_file, std::io::stdout().is_terminal()));
             }
         }
 
@@ -174,4 +175,28 @@ pub fn serve() -> i32 {
         crate::core_routes::save_everything();
         0
     })
+}
+
+/// What the first start says about the setup code. The code itself only to a terminal: a log
+/// (launchd's, nohup's, the journal) may be readable by other users of this machine, who could set
+/// the password before you do.
+fn setup_code_note(code: &str, file: &std::path::Path, terminal: bool) -> String {
+    if terminal {
+        format!("  It will ask for this setup code: {code} (also in {})\n", file.display())
+    } else {
+        format!("  It will ask for the setup code in {} (`inyon hub code` shows it)\n", file.display())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_setup_code_goes_to_a_terminal_and_only_its_file_to_a_log() {
+        let file = std::path::Path::new("/home/me/.inyon/setup-code");
+        assert!(setup_code_note("1a2b3c4d", file, true).contains("1a2b3c4d"));
+        let logged = setup_code_note("1a2b3c4d", file, false);
+        assert!(!logged.contains("1a2b3c4d") && logged.contains("/home/me/.inyon/setup-code") && logged.contains("inyon hub code"), "{logged}");
+    }
 }

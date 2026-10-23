@@ -69,7 +69,9 @@ async function updateMachine(h: HostState) {
 export async function removeMachine(h: HostState, after?: () => void) {
   if (!(await confirmAction({ title: `Remove ${h.config.name}?`, body: 'Its tmux sessions keep running. If it can be reached, Inyon first takes its hooks, uploads and prompt log off it.', yes: 'Remove', danger: true }))) return
   try {
-    await api.removeHost(h.config.id)
+    const r = await api.removeHost(h.config.id)
+    // removed on the phone while it was out of reach: it still lets the phone in until it hears
+    if (r?.untold) toast({ title: `${r.untold} still trusts this phone`, body: 'Inyon tells it to forget this phone once it is back online. To end it now, run inyon forget on that computer.', tone: 'info' })
     after?.()
   } catch (e) {
     toast({ title: 'Could not remove', body: (e as Error).message, tone: 'error' })

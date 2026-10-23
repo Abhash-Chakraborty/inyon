@@ -129,9 +129,11 @@ fn through(args: Vec<String>) -> Outcome {
 }
 
 /// The pairing code as the terminal shows it: one of the engine's answers (`pair --json`) drawn
-/// here, or the line that the tunnel is still starting.
-pub fn render_pair(v: &Value) -> String {
-    inyon_engine::output::render_pair(v)
+/// here, or the line that the tunnel is still starting. The link is left out in tmux unless
+/// `--show-link` (inyon_engine::output::link_hidden).
+#[cfg(test)]
+fn render_pair(v: &Value) -> String {
+    inyon_engine::output::render_pair_with(v, false)
 }
 
 /// `inyon pair`: the engine makes the secret and publishes it; the code is drawn here, again when
@@ -139,12 +141,15 @@ pub fn render_pair(v: &Value) -> String {
 /// it comes, one JSON line each; the last one is current.
 pub fn pair(args: &[String], json: bool) -> Outcome {
     use std::io::{IsTerminal, Write};
-    let args = pair_args(args, json, std::io::stdout().is_terminal());
+    // the command's own flag: an engine from before 0.20.3 wouldn't know it
+    let hide_link = inyon_engine::output::link_hidden(args.iter().any(|a| a == "--show-link"));
+    let args: Vec<String> = args.iter().filter(|a| *a != "--show-link").cloned().collect();
+    let args = pair_args(&args, json, std::io::stdout().is_terminal());
     engine::pair(&args, &mut |v| {
         if json {
             println!("{}", serde_json::to_string(&with_v(v.clone())).unwrap_or_default());
         } else {
-            print!("{}", render_pair(v));
+            print!("{}", inyon_engine::output::render_pair_with(v, hide_link));
         }
         let _ = std::io::stdout().flush();
     })?;
@@ -283,6 +288,40 @@ fn trust_hub_cert(hub: &str, sha256: Option<&str>, get: &dyn Fn(&str) -> Result<
     fs::write(file, pem).map_err(|e| format!("Couldn't save the hub's certificate to {}: {e}", file.display()))
 }
 
+/// What the hub said to `inyon join` swapping the pasted token for its own.
+#[derive(Debug, PartialEq)]
+enum Claim {
+    /// the token to keep; the pasted one no longer works
+    Swapped(String),
+    /// keep the pasted one: a hub from before 0.20.3, a machine an older inyon already paired with
+    /// it, or a hub that couldn't be reached just now
+    Kept,
+    /// the pasted token was used already, replaced or expired
+    Refused(String),
+}
+
+/// The token in the "Add a machine" command sits in shell history, a terminal's scrollback and, on
+/// Windows, a task's command line. `inyon join` trades it for one the hub hands out once, over the
+/// connection its certificate was just checked on, so the pasted one stops working.
+fn claim_token(hub: &str, token: &str, post: &dyn Fn(&str, &str) -> Result<inyon_engine::http::Response, String>) -> Claim {
+    let Ok(res) = post(&format!("{hub}/node/claim"), token) else {
+        return Claim::Kept;
+    };
+    match res.status {
+        200 => serde_json::from_slice::<Value>(&res.body)
+            .ok()
+            .and_then(|v| v["token"].as_str().map(str::to_owned))
+            .filter(|t| t.len() >= 32 && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+            // an older hub answers with its web page
+            .map_or(Claim::Kept, Claim::Swapped),
+        403 => Claim::Refused(format!(
+            "The hub refused this token: {}. Get a new command from the hub's Add a machine.",
+            String::from_utf8_lossy(&res.body).trim().trim_end_matches('.')
+        )),
+        _ => Claim::Kept,
+    }
+}
+
 /// `inyon join <hub-url>`, what the hub's "Add a machine" command runs: saves the hub and token
 /// (readable only by you) and runs the connection in the background.
 pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
@@ -292,24 +331,46 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
     }
     check_hub_url(hub)?;
     let dir = paths::ensure_node_dir().map_err(|e| e.to_string())?;
+    let before = paths::saved_env();
     let pin = paths::env_var("INYON_HUB_CERT").filter(|c| !c.trim().is_empty());
     trust_hub_cert(hub, pin.as_deref(), &|url| http::get_unverified(url), &inyon_engine::http::hub_cert_file())?;
     let win = sys.platform == Platform::Windows;
-    let mut lines = vec![format!("INYON_HUB={hub}"), format!("INYON_TOKEN={token}")];
     // the version that joined, so the connection knows this address passed this check (one saved
     // before 0.20 on plain http still connects, with a warning); and INYON_ALLOW_INSECURE if it was needed
-    lines.extend(inyon_engine::connect::join_marks(hub));
-    if win {
-        if let Some(sh) = paths::env_var("INYON_SH") {
-            lines.push(format!("INYON_SH={sh}"));
-        }
-    }
+    let marks = inyon_engine::connect::join_marks(hub);
     let file = dir.join(if win { ".env" } else { "env" });
-    write_secret(&file, &format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())?;
+    let save = |token: &str| -> Result<(), String> {
+        let mut lines = vec![format!("INYON_HUB={hub}"), format!("INYON_TOKEN={token}")];
+        lines.extend(marks.iter().cloned());
+        if win {
+            if let Some(sh) = paths::env_var("INYON_SH") {
+                lines.push(format!("INYON_SH={sh}"));
+            }
+        }
+        write_secret(&file, &format!("{}\n", lines.join("\n"))).map_err(|e| e.to_string())
+    };
+    save(token)?;
     // the other file name may hold a token from an earlier pairing
     let _ = fs::remove_file(dir.join(if win { "env" } else { ".env" }));
     if win {
         sys::run(&["icacls", &file.to_string_lossy(), "/inheritance:r", "/grant:r", &format!("{}:(R,W)", sys::username()), "SYSTEM:(F)"]);
+    }
+    // saved first, so the swap goes over the hub's pinned certificate like the connection will
+    let post = |url: &str, t: &str| inyon_engine::http::request("POST", url, &[("authorization", &format!("Bearer {t}"))], Some(&[]), std::time::Duration::from_secs(10));
+    match claim_token(hub, token, &post) {
+        Claim::Swapped(fresh) => save(&fresh)?,
+        Claim::Kept => {}
+        Claim::Refused(why) => {
+            // the same command run again on a machine it already added: keep what that saved
+            let same_hub = before.get("INYON_HUB").is_some_and(|h| h.trim_end_matches('/') == hub);
+            match before.get("INYON_TOKEN").filter(|t| same_hub && !t.is_empty() && t.as_str() != token) {
+                Some(kept) => save(kept)?,
+                None => {
+                    let _ = fs::remove_file(&file);
+                    return Err(why);
+                }
+            }
+        }
     }
     for role in service::old_services(sys) {
         if role == Role::Node {
@@ -486,7 +547,7 @@ pub fn hub_local_url(env: &std::collections::BTreeMap<String, String>) -> String
 }
 
 fn ask_hub(url: &str) -> Option<Value> {
-    let res = http::get_local(&format!("{url}/api/session")).ok()?;
+    let res = http::get_local(&format!("{url}/api/session"), &[]).ok()?;
     serde_json::from_slice(&res.body).ok()
 }
 
@@ -1651,6 +1712,32 @@ mod tests {
         trust_hub_cert("https://hub.example.com", None, &serve(Vec::new()), &file).unwrap();
         assert!(!file.exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn join_keeps_the_token_the_hub_hands_out_once_and_an_older_hubs_page_changes_nothing() {
+        use inyon_engine::http::Response;
+        let answer = |status: u16, body: &str| {
+            let body = body.as_bytes().to_vec();
+            move |url: &str, token: &str| {
+                assert_eq!(url, "https://hub.example.com/node/claim");
+                assert_eq!(token, "pasted-token");
+                Ok(Response { status, body: body.clone() })
+            }
+        };
+        let fresh = "Zm9yLXRoZS1qb2luLXRlc3QtMDEyMzQ1Njc4OWFiY2RlZg";
+        let claim = |post: &dyn Fn(&str, &str) -> Result<Response, String>| claim_token("https://hub.example.com", "pasted-token", post);
+        assert_eq!(claim(&answer(200, &format!(r#"{{"token":"{fresh}"}}"#))), Claim::Swapped(fresh.into()));
+        // a hub from before 0.20.3 serves its web page, a machine an older inyon paired keeps its token
+        assert_eq!(claim(&answer(200, "<!doctype html><title>Inyon</title>")), Claim::Kept);
+        assert_eq!(claim(&answer(409, "This machine is paired already")), Claim::Kept);
+        assert_eq!(claim(&answer(421, "")), Claim::Kept);
+        assert_eq!(claim(&|_: &str, _: &str| Err("connection refused".into())), Claim::Kept);
+        // a token the hub could put on a line of the env file, or nothing like one: not taken
+        assert_eq!(claim(&answer(200, r#"{"token":"short"}"#)), Claim::Kept);
+        assert_eq!(claim(&answer(200, &format!(r#"{{"token":"{fresh}\nINYON_HUB=http://evil"}}"#))), Claim::Kept);
+        let Claim::Refused(why) = claim(&answer(403, "Unknown token; the command was used already or replaced. Get a new one from the hub.\n")) else { panic!() };
+        assert!(why.contains("used already") && why.contains("Add a machine"), "{why}");
     }
 
     #[test]

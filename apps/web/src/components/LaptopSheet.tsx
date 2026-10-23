@@ -124,10 +124,17 @@ export function LaptopSheet({ open, onClose, edit, link: given, onServer }: { op
     if (!looksLikeLink(text) && !splitCode(text)) return toast({ title: "That isn't a pairing code", body: `Run ${PAIR_COMMAND} on the computer and scan the code it shows.`, tone: 'error' })
     setBusy(true)
     try {
-      await api.pairLaptop(text.trim())
+      const paired = await api.pairLaptop(text.trim())
       // the web app: ask the browser to keep this pairing when it clears space
       if (isHosted()) keepData()
-      toast({ title: 'Paired', body: 'It stays paired until you remove it here or run inyon forget there.', tone: 'success' })
+      // a typed code was never confirmed by its ID, and anyone who saw it could have put their own
+      // computer behind it: the ID to check against the one inyon printed
+      const typedCode = !looksLikeLink(text) && !!splitCode(text)
+      toast(
+        typedCode && paired.machineId
+          ? { title: 'Paired', body: `Its ID is ${groupsOf(paired.machineId, 3)}. If inyon showed another ID, remove this computer now.`, tone: 'success' }
+          : { title: 'Paired', body: 'It stays paired until you remove it here or run inyon forget there.', tone: 'success' },
+      )
       // alerts only arrive while the app runs; the first pairing is the moment to say so
       if (keepAliveSupported() && !keepAliveWanted()) {
         setTimeout(() => toast({ title: 'Want alerts while Inyon is closed?', body: 'Turn on Stay connected in Settings. Tap to open it.', tone: 'info', href: '/settings#background' }), 1200)

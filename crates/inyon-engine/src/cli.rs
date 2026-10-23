@@ -277,11 +277,13 @@ where
 /// when the link runs elsewhere.
 async fn pair(args: &[String]) -> bool {
     let json = crate::output::json();
-    make_pairing(args, &mut |v| {
+    let hide_link = crate::output::link_hidden(args.iter().any(|a| a == "--show-link"));
+    let args: Vec<String> = args.iter().filter(|a| *a != "--show-link").cloned().collect();
+    make_pairing(&args, &mut |v| {
         if json {
             emit(v.clone(), None);
         } else {
-            log(&crate::output::render_pair(v));
+            log(&crate::output::render_pair_with(v, hide_link));
         }
     })
     .await

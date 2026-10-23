@@ -777,3 +777,70 @@ fn only_a_mock_release_may_name_another_signing_key() {
     unsafe { std::env::remove_var("INYON_SIGNING_KEY") };
     assert_eq!(signing_key("http://127.0.0.1:8000/download"), RELEASE_KEY);
 }
+
+#[test]
+fn a_new_system_is_prepared_while_an_add_a_machine_command_waits_or_for_a_paired_machine_of_that_system() {
+    let now = 1_800_000_000_000u64;
+    let node = |id: &str, v: serde_json::Value| -> inyon_protocol::HostConfig {
+        let mut c = serde_json::json!({ "id": id, "name": id, "kind": "node" });
+        c.as_object_mut().unwrap().extend(v.as_object().unwrap().clone());
+        serde_json::from_value(c).unwrap()
+    };
+    let os = |m: &'static [(&'static str, &'static str)]| move |id: &str| m.iter().find(|(k, _)| *k == id).map(|(_, v)| v.to_string());
+    let local: inyon_protocol::HostConfig = serde_json::from_value(serde_json::json!({ "id": "local", "name": "hub", "kind": "local" })).unwrap();
+    // nothing paired, nothing waiting: no
+    assert!(!may_prepare("linux", &[local], os(&[]), now));
+    // an unused token from the last day: any system
+    assert!(may_prepare("windows", &[node("new", serde_json::json!({ "tokenIssuedAt": now - 3_600_000 }))], os(&[]), now));
+    assert!(!may_prepare("windows", &[node("old", serde_json::json!({ "tokenIssuedAt": now - 2 * 86_400_000 }))], os(&[]), now));
+    // a paired Linux machine updates; it doesn't open Windows
+    let paired = [node("box", serde_json::json!({ "pairedAt": now - 1000 }))];
+    assert!(may_prepare("linux", &paired, os(&[("box", "Linux")]), now));
+    assert!(!may_prepare("windows", &paired, os(&[("box", "Linux")]), now));
+    assert!(may_prepare("darwin", &paired, os(&[("box", "Darwin")]), now));
+    assert!(may_prepare("windows", &paired, os(&[("box", "Windows")]), now));
+    // one that hasn't said what it runs yet could be anything
+    assert!(may_prepare("windows", &paired, os(&[]), now));
+}
+
+#[cfg(unix)]
+#[test]
+fn nobody_signed_in_can_make_the_hub_build_or_download_inyon_for_a_system_no_machine_needs() {
+    let (dir, d) = checkout_dist();
+    let asked = Rc::new(std::cell::Cell::new(false));
+    let a = asked.clone();
+    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async move {
+        a.set(true);
+        Err(http(502, "the release was asked"))
+    });
+    *d.sums.borrow_mut() = Some(f.shared());
+    let results = block(async {
+        vec![
+            d.engine_for("linux-arm64").await.map(|_| ()),
+            d.command_for("darwin-x64").await.map(|_| ()),
+            d.windows_program().await.map(|_| ()),
+            d.busybox_for("arm64").await.map(|_| ()),
+            d.unix_sums_for().await.map(|_| ()),
+        ]
+    });
+    let built = std::fs::read_dir(&d.out).map(|r| r.count()).unwrap_or(0);
+    let _ = std::fs::remove_dir_all(&dir);
+    for r in results {
+        let e = r.unwrap_err();
+        assert_eq!(e.status, Some(503));
+        assert!(e.message.contains("Open \"Add a machine\" on the hub"), "{}", e.message);
+    }
+    assert!(!asked.get());
+    assert_eq!(built, 0, "something was built");
+}
+
+#[test]
+fn a_paired_linux_machine_doesnt_make_a_checkout_build_macos_engines_for_the_list_of_checksums() {
+    let targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
+    let linux_only = |os: &str| os == "linux";
+    assert_eq!(unprepared(targets, |_| false, linux_only), Some("darwin-x64"));
+    // what's built already is handed out
+    assert_eq!(unprepared(targets, |t| t.starts_with("darwin"), linux_only), None);
+    // while an "Add a machine" command waits, any system
+    assert_eq!(unprepared(targets, |_| false, |_| true), None);
+}

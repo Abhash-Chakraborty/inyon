@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { checkPassword, hasPassword, passwordProblem, sessionSecret, setPassword } from './password.ts'
+import { hasPassword, passwordProblem, sessionSecret, setPassword } from './password.ts'
 import { clearCookie, clientAddress, closeSockets, holdSocket, isAuthed, issueCookie, recentSignIn, refreshCookie, revokeSession, tryLogin } from './auth.ts'
 import { claimPhone, CODE_TTL, hasBearer, holdPhoneSocket, hubAbout, issueTicket, listPhones, newPairCode, phoneFor, phonePaired, redeemTicket, revokePhone } from './phones.ts'
 import { HttpError, registry, tokenExpired } from './hosts/registry.ts'
@@ -24,6 +24,7 @@ import { asCompanion, claimCompanion, companionFor, companionFrame, companionMe,
 import type { CompanionScope } from '@inyon/protocol'
 import { kv } from './platform/store.ts'
 import { servedFingerprint } from './tls.ts'
+import { sharedCapAllows } from './limits.ts'
 
 /** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
 
@@ -177,9 +178,13 @@ type SocketData = AppSocket | (NodeSocketData & { kind: 'node' })
 // ---------- static files (production build of apps/web) ----------
 
 // no framing by other sites; images only from the hub itself, so agent output can't make the
-// browser fetch an outside URL (a prompt-injected agent could put data in one)
+// browser fetch an outside URL (a prompt-injected agent could put data in one). Scripts only from
+// the app's own files: the page's `script-src 'self'` alone would also take a script an agent wrote
+// under /v/. A path needs a host in CSP; `*:*` is any host on any port, and the page's own policy still
+// holds it to this hub, so together they leave the app's files on this hub (checked in Chromium).
+const PAGE_CSP = "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/assets/ *:*/theme.js *:*/sw.js"
 const PAGE_HEADERS = {
-  'Content-Security-Policy': "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'",
+  'Content-Security-Policy': PAGE_CSP,
   'X-Content-Type-Options': 'nosniff',
   'Referrer-Policy': 'same-origin',
 }
@@ -217,6 +222,8 @@ if (exposed && !TLS && !/^(1|true|yes)$/i.test(process.env.INYON_ALLOW_HTTP ?? '
 const setupCode = !hasPassword() ? crypto.randomBytes(4).toString('hex') : undefined
 if (setupCode) fs.writeFileSync(SETUP_CODE_FILE, setupCode + '\n', { mode: 0o600 })
 const setupAttempts = { n: 0, reset: 0 }
+/** wrong setup codes per address this minute (the shared count above covers all of them) */
+const setupTries = new Map<string, number>()
 startCore()
 startHubPush()
 
@@ -232,6 +239,7 @@ const loopback = (ip: string) => /^(127\.|::1$|::ffff:127\.)/.test(ip)
 const thisMachine = (ip: string) => loopback(ip) || (ip !== '' && ip.replace(/^::ffff:/, '') === BIND)
 function fromThisMachine(req: Request) {
   if (!thisMachine(server.requestIP(req)?.address ?? '')) return false
+  // the header; `?token=` only for inyon commands before 0.20.3, which sent it in the address
   const given = new URL(req.url).searchParams.get('token') ?? (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
   return given.length === localToken.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(localToken))
 }
@@ -290,14 +298,19 @@ const server = Bun.serve<SocketData>({
         if (hasPassword()) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
         const b = await body<{ password: string; code?: string }>(req, 8 * 1024)
         const now = Date.now()
-        if (setupAttempts.reset < now) Object.assign(setupAttempts, { n: 0, reset: now + 60_000 })
+        if (setupAttempts.reset < now) {
+          Object.assign(setupAttempts, { n: 0, reset: now + 60_000 })
+          setupTries.clear()
+        }
         if (!setupCode) throw new HttpError(409, 'This hub already has a password. Sign in instead.')
         const code = String(b.code ?? '').trim().toLowerCase()
-        if (setupAttempts.n >= 8) throw new HttpError(429, 'Too many attempts. Try again in a minute.')
+        const client = clientAddress(server.requestIP(req)?.address ?? '?', req.headers.get('x-forwarded-for'))
+        if ((setupTries.get(client) ?? 0) >= 8 || !sharedCapAllows('setup code', client, setupAttempts.n, 8)) throw new HttpError(429, 'Too many attempts. Try again in a minute.')
         if (code.length !== setupCode.length || !crypto.timingSafeEqual(Buffer.from(code), Buffer.from(setupCode))) {
           setupAttempts.n++
+          setupTries.set(client, (setupTries.get(client) ?? 0) + 1)
           await Bun.sleep(400)
-          throw new HttpError(401, 'That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in the hub log and in ~/.inyon/setup-code.')
+          throw new HttpError(401, 'That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in ~/.inyon/setup-code.')
         }
         const password = String(b.password ?? '')
         const problem = passwordProblem(password)
@@ -312,10 +325,12 @@ const server = Bun.serve<SocketData>({
     '/api/password': {
       POST: api(async (req) => {
         const b = await body<{ current: string; next: string }>(req, 8 * 1024)
-        if (!(await checkPassword(String(b.current ?? '')))) {
-          await Bun.sleep(400)
-          throw new HttpError(401, 'Your current password is not right')
-        }
+        // the current password counts against the sign-in limits: a stolen cookie mustn't be a
+        // way to guess it at full speed
+        const client = clientAddress(server.requestIP(req)?.address ?? '?', req.headers.get('x-forwarded-for'))
+        const r = await tryLogin(client, String(b.current ?? ''))
+        if (r.limited) throw new HttpError(429, r.error!)
+        if (!r.ok) throw new HttpError(401, 'Your current password is not right')
         const problem = passwordProblem(String(b.next ?? ''))
         if (problem) throw new HttpError(400, problem)
         // a new password signs out every other browser; this one gets a fresh sign-in
@@ -338,7 +353,7 @@ const server = Bun.serve<SocketData>({
     '/api/logout': {
       POST: api((req) => {
         revokeSession(req)
-        return json({ ok: true }, { headers: { 'Set-Cookie': clearCookie() } })
+        return json({ ok: true }, { headers: { 'Set-Cookie': clearCookie(secureRequest(req)) } })
       }, { open: true }),
     },
     // ---------- phones: the app pairs by scanning a code this hub's web app shows ----------
@@ -429,6 +444,25 @@ const server = Bun.serve<SocketData>({
         registry.setNodeToken(req.params.id, sha256(token))
         return json({ id: req.params.id, token, command: commands.unix, commands })
       }),
+    },
+    // `inyon join` swaps the token in the "Add a machine" command for one only it knows, before the
+    // machine first connects: the pasted command (in shell history, a support paste, a screen
+    // share) is dead once used. Older commands that skip this still connect with the pasted token.
+    '/node/claim': {
+      POST: async (req: Request) => {
+        const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '')
+        const hash = token ? sha256(token) : ''
+        const cfg = hash ? registry.configs().find((c) => c.kind === 'node' && c.tokenHash && crypto.timingSafeEqual(Buffer.from(c.tokenHash), Buffer.from(hash))) : undefined
+        if (!cfg || tokenExpired(cfg)) {
+          await Bun.sleep(500)
+          return new Response(cfg ? 'This pairing command expired; get a new one from the hub\n' : 'Unknown token; the command was used already or replaced. Get a new one from the hub.\n', { status: 403 })
+        }
+        // a machine already connected with it (an older inyon): swapping now would cut it off
+        if (cfg.pairedAt) return new Response('This machine is paired already\n', { status: 409 })
+        const fresh = crypto.randomBytes(32).toString('base64url')
+        registry.setNodeToken(cfg.id, sha256(fresh))
+        return json({ token: fresh })
+      },
     },
     // ---------- the inyon command on this machine, over loopback with the local token ----------
     '/api/local/nodes': local(() => json({ v: 1, ok: true, nodes: registry.overview().map(localNode) })),
@@ -540,6 +574,12 @@ if (!hasPassword()) {
   const where = `${TLS ? 'https' : 'http'}://${exposed ? server.hostname : 'localhost'}:${server.port}`
   console.log(`
   First run: open ${where} and create your password.`)
-  if (setupCode) console.log(`  It will ask for this setup code: ${setupCode} (also in ${SETUP_CODE_FILE})
-`)
+  // the code itself only to a terminal: a log (launchd's, nohup's, the journal) may be readable by
+  // other users of this machine, who could set the password before you do
+  if (setupCode)
+    console.log(
+      process.stdout.isTTY
+        ? `  It will ask for this setup code: ${setupCode} (also in ${SETUP_CODE_FILE})\n`
+        : `  It will ask for the setup code in ${SETUP_CODE_FILE} (\`inyon hub code\` shows it)\n`,
+    )
 }

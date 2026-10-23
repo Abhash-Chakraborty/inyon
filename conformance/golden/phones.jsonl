@@ -5,6 +5,8 @@
 {"step":"a sign-in from more than ten minutes ago shows no code"}
 {"body":{"authed":true,"commit":"","setup":false,"setupCode":false,"version":"<version>"},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"other cookie","method":"GET","path":"/api/session"},"status":200}
 {"body":{"error":"Sign in again to pair a phone."},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"other cookie","body":{"origin":"<hub>"},"method":"POST","origin":"<hub>","path":"/api/phones/pair"},"status":403}
+{"step":"a cookie from before the sign-in time was kept shows no code either, however fresh"}
+{"body":{"error":"Sign in again to pair a phone."},"headers":{"content-type":"application/json;charset=utf-8"},"rest":{"as":"other cookie","body":{"origin":"<hub>"},"method":"POST","origin":"<hub>","path":"/api/phones/pair"},"status":403}
 {"step":"the phone asks before claiming (CORS preflight)"}
 {"body":"","headers":{"access-control-allow-headers":"authorization, content-type","access-control-allow-methods":"GET, POST, PUT, PATCH, DELETE","access-control-allow-origin":"https://localhost","access-control-max-age":"600","vary":"Origin"},"rest":{"as":"anon","headers":{"access-control-request-headers":"content-type","access-control-request-method":"POST"},"method":"OPTIONS","origin":"https://localhost","path":"/api/phones/claim"},"status":204}
 {"step":"wrong digits, an unknown code, then the right one"}

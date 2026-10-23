@@ -130,12 +130,14 @@ INYON_TOKEN=… inyon setup --yes --hub https://hub.example.ts.net
 inyon pair
 ```
 
-Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. While the tunnel starts it says "Starting the tunnel…" first; from 0.20 it waits for the tunnel's address and shows the code again if the address arrives after the first 30 seconds (see [How the phone finds it](computers.md#how-the-phone-finds-it)). When its output isn't a terminal, as in an installer run by a script, the code it shows after those 30 seconds is the last one, and the phone finds the computer by its ID once the tunnel is up. `--json` keeps waiting either way. Any link options you add are saved, the same ones `inyon link` takes:
+Shows the QR code, the one-time ID and 6-digit code, and the link. A code works once, for 10 minutes, and five wrong tries cancel it. While the tunnel starts it says "Starting the tunnel…" first; from 0.20 it waits for the tunnel's address and shows the code again if the address arrives after the first 30 seconds (see [How the phone finds it](computers.md#how-the-phone-finds-it)). When its output isn't a terminal, as in an installer run by a script, the code it shows after those 30 seconds is the last one, and the phone finds the computer by its ID once the tunnel is up. `--json` keeps waiting either way. It also prints the computer's ID, which the app shows before it pairs.
+
+From 0.20.3, inside tmux it leaves the link out and says why: Inyon shows every tmux pane in the app and to companion apps, and the link pairs a phone by itself. `inyon pair --show-link` prints it anyway, and `--json` always carries it. Any link options you add are saved, the same ones `inyon link` takes:
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--tunnel`, `--no-tunnel` | On | Use a free Cloudflare quick tunnel |
-| `--lan`, `--no-lan` | Off | Answer on the local network |
+| `--lan`, `--no-lan` | Off | Answer on the local network: it listens on every interface, and from 0.20.3 publishes only private, link-local and VPN addresses |
 | `--vpn`, `--no-vpn` | On (off on Windows) | Answer on a private network's address |
 | `--url <wss://…/link>` | | An address you publish yourself (repeatable); `--no-url` clears them |
 | `--port <n>` | 4780 | The link's local port |
@@ -167,7 +169,7 @@ INYON_TOKEN=… inyon join https://hub.example.ts.net
 inyon disconnect
 ```
 
-`join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
+`join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. From 0.20.3 it first trades the pasted token for a new one the hub hands out once, so the command in your shell history no longer works; running the same command again on the machine keeps the token it got. An older hub doesn't trade, and the pasted token stays. When the hub says the token was used already or replaced, `join` stops with "The hub refused this token", and you need a new command from **Add a machine**. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
 
 ## Notifications to browsers
 
@@ -273,7 +275,7 @@ If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the sa
 
 ## JSON output
 
-`--json` makes every command answer one JSON object, for scripts. Success looks like `{"v":1,"ok":true,…}` and a failure like `{"v":1,"ok":false,"error":"…"}`, with exit code 1.
+`--json` makes every command answer one JSON object, for scripts. From 0.20.3 a command piped into one that stops reading early, such as `inyon status --plain | grep -q hub`, ends quietly instead of with a "Broken pipe" panic. Success looks like `{"v":1,"ok":true,…}` and a failure like `{"v":1,"ok":false,"error":"…"}`, with exit code 1.
 
 `inyon pair --json` can answer more than once, one line each, and the last line is the current one. From 0.20, while the tunnel starts, it first prints `{"v":1,"ok":true,"waiting":"tunnel",…}`. If the tunnel takes longer than 30 seconds, a line with a code and `"waiting"` follows, carrying the addresses that work so far, and a last line has the code with the tunnel's address. If the code runs out before the tunnel comes up, the last line is `{"v":1,"ok":false,"error":"The pairing code expired before the tunnel came up. …","expired":true}`.
 

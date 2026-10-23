@@ -143,6 +143,29 @@ pub fn log_file(role: Role) -> PathBuf {
     node_dir().join(format!("{role}.log"))
 }
 
+/// `log_file(role)`, made ready for launchd or nohup: the node's folder closed to other users of
+/// this machine (0700) and the log readable only by you (0600). A log names hubs and sessions, and
+/// an older hub wrote its setup code there.
+fn private_log(role: Role) -> PathBuf {
+    let file = log_file(role);
+    make_private(&node_dir(), &file);
+    file
+}
+
+fn make_private(dir: &Path, file: &Path) {
+    let _ = fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        let _ = fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file);
+        // one made before keeps its mode when opened
+        let _ = fs::set_permissions(file, fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = file;
+}
+
 /// The PID of a job started in the background where there are no user services.
 fn pid_file(role: Role) -> PathBuf {
     node_dir().join(format!("{role}.pid"))
@@ -297,8 +320,7 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
             if let Some(dir) = file.parent() {
                 let _ = fs::create_dir_all(dir);
             }
-            let _ = fs::create_dir_all(node_dir());
-            let log = xml(&path_str(&log_file(role)));
+            let log = xml(&path_str(&private_log(role)));
             let program = args.iter().map(|a| format!("<string>{}</string>", xml(a))).collect::<String>();
             let env = if crate::engine::legacy() { "\n  <key>EnvironmentVariables</key><dict><key>INYON_LEGACY_ENGINE</key><string>1</string></dict>" } else { "" };
             let text = format!(
@@ -501,16 +523,19 @@ pub fn firewall_allows(port: u16) -> bool {
 /// Runs `script` as administrator: Windows asks first (UAC), or runs it straight away for an
 /// administrator's elevated session. False when it was refused or couldn't ask.
 fn as_admin(script: &str) -> bool {
-    let file = node_dir().join("admin.ps1");
-    if fs::create_dir_all(node_dir()).is_err() || fs::write(&file, script).is_err() {
-        return false;
-    }
-    let r = ps(&format!(
-        "$ErrorActionPreference='Stop'\ntry {{ $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File \"' + {} + '\"'); exit $p.ExitCode }} catch {{ exit 1 }}",
-        psq(&path_str(&file))
-    ));
-    let _ = fs::remove_file(&file);
-    r.ok
+    ps(&as_admin_command(script)).ok
+}
+
+/// What `as_admin` runs. The script goes inside the elevated command itself (-EncodedCommand), not
+/// in a file: any program running as you could rewrite a file between writing it and the yes on
+/// the UAC prompt, and have its own script run as administrator.
+fn as_admin_command(script: &str) -> String {
+    use base64::Engine;
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(utf16);
+    format!(
+        "$ErrorActionPreference='Stop'\ntry {{ $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile -NonInteractive -EncodedCommand {encoded}'; exit $p.ExitCode }} catch {{ exit 1 }}"
+    )
 }
 
 /// Windows Firewall lets nothing in to a program it hasn't been told about, and VPNs such as
@@ -561,17 +586,13 @@ pub fn remove_firewall_rule(sys: &Sys) -> Option<String> {
 /// Each start writes its PID to ~/.inyon/node/<role>.pid, so uninstall can stop that process and
 /// no other.
 fn background(sys: &Sys, role: Role, args: &[String]) -> Installed {
-    let _ = fs::create_dir_all(node_dir());
+    let log = private_log(role);
     // installing again replaces the copy started last time instead of adding another
     if let Err(note) = stop_background(sys, role) {
         return failed(note);
     }
-    let line = format!(
-        "nohup {} >> {} 2>&1 < /dev/null & echo $! > {}",
-        args.iter().map(|a| shq(a)).collect::<Vec<_>>().join(" "),
-        shq(&path_str(&log_file(role))),
-        shq(&path_str(&pid_file(role)))
-    );
+    let line =
+        format!("nohup {} >> {} 2>&1 < /dev/null & echo $! > {}", args.iter().map(|a| shq(a)).collect::<Vec<_>>().join(" "), shq(&path_str(&log)), shq(&path_str(&pid_file(role))));
     if !run(&["sh", "-c", &line]).ok {
         return failed("this system has no user services and inyon couldn't start in the background");
     }
@@ -1207,8 +1228,9 @@ pub fn detach(sys: &Sys, args: &[String], task: &str) -> Installed {
             return ok("a one-off task");
         }
     }
-    let _ = fs::create_dir_all(node_dir());
-    match sys::spawn_detached(args, &node_dir().join("update.log")) {
+    let log = node_dir().join("update.log");
+    make_private(&node_dir(), &log);
+    match sys::spawn_detached(args, &log) {
         Ok(()) => ok("a background process"),
         Err(err) => failed(err.to_string()),
     }
@@ -1251,6 +1273,41 @@ pub fn active_roles(sys: &Sys) -> Vec<Role> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_for_launchd_or_nohup_is_yours_alone_in_a_folder_only_you_can_open() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("inyon-private-log-{}", std::process::id())).join("node");
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+        let log = dir.join("hub.log");
+        make_private(&dir, &log);
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!((mode(&dir), mode(&log)), (0o700, 0o600));
+        // one an older version left open to everyone is closed too, and keeps what it holds
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(&log, "kept\n").unwrap();
+        fs::set_permissions(&log, fs::Permissions::from_mode(0o644)).unwrap();
+        make_private(&dir, &log);
+        assert_eq!((mode(&dir), mode(&log)), (0o700, 0o600));
+        assert_eq!(fs::read_to_string(&log).unwrap(), "kept\n");
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+    }
+
+    #[test]
+    fn the_script_run_as_administrator_goes_in_the_command_not_a_file_anyone_could_rewrite() {
+        use base64::Engine;
+        let script = firewall_rule_script(8765);
+        let cmd = as_admin_command(&script);
+        assert!(cmd.contains("-Verb RunAs") && cmd.contains("-EncodedCommand "), "{cmd}");
+        assert!(!cmd.contains("-File ") && !cmd.contains("admin.ps1"), "{cmd}");
+        let b64 = cmd.split("-EncodedCommand ").nth(1).unwrap().split('\'').next().unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let utf16: Vec<u16> = bytes.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        assert_eq!(String::from_utf16(&utf16).unwrap(), script);
+        // base64 only, so nothing in it can end the quoted argument
+        assert!(b64.bytes().all(|b| b.is_ascii_alphanumeric() || b"+/=".contains(&b)));
+    }
 
     #[test]
     fn the_settings_apps_entry_names_the_program_and_how_to_remove_it() {

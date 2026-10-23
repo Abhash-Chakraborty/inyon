@@ -105,6 +105,8 @@ export default {
       ['POST', '/api/password', { current: 'x', next: 'y' }],
       ['POST', '/api/logout'],
       ['GET', '/api/pages'],
+      ['POST', '/api/push', {}],
+      ['DELETE', '/api/push', {}],
       ['POST', '/api/push/test'],
       ['GET', '/api/local/nodes'],
       ['POST', '/api/local/companion-code'],

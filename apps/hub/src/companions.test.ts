@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { claimCompanion, COMPANION_CODE_TTL, companionFor, companionFrame, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, SCOPES, sendReason, textRefusal } from './companions.ts'
 import { pasteText } from './tmux/tmux.ts'
 import { hubId } from './phones.ts'
+import { rememberAddress, SLOW_LANE_MS } from './limits.ts'
 
 // The code, the claim, the contract header and what a companion may send and receive, against a
 // fixed clock; the routes themselves are covered by the conformance scenario, against both hubs.
@@ -203,4 +204,19 @@ test('contract 1.1: a hub serving HTTPS itself sends its certificate with the co
     delete process.env.TLS_KEY
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// last: it leaves the shared count full for the rest of the file's clock
+test('wrong codes from many addresses slow new addresses down, and an address that signed in carries on', async () => {
+  const t = T0 + 20 * 60_000
+  for (let i = 0; i < 30; i++) expect((await read(claimCompanion(`10.2.0.${i}`, { code: 'AAAAAA' }, t))).status).toBe(401)
+  const good = newCompanionCode(t).code
+  // the shared cap is reached: one try from a new address every few seconds
+  expect((await read(claimCompanion('10.2.1.1', { code: 'AAAAAA' }, t))).status).toBe(401)
+  expect((await read(claimCompanion('10.2.1.2', { code: good }, t))).body.reason).toBe('rate-limit')
+  // the owner's own computer, where the password was typed, isn't held up
+  rememberAddress('10.2.1.3')
+  expect((await read(claimCompanion('10.2.1.3', { code: good, name: 'Legato' }, t))).status).toBe(200)
+  const next = newCompanionCode(t).code
+  expect((await read(claimCompanion('10.2.1.2', { code: next, name: 'Legato' }, t + SLOW_LANE_MS))).status).toBe(200)
 })

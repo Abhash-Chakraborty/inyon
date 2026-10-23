@@ -279,3 +279,21 @@ fn contract_1_1_adds_the_served_certificate_to_the_code_and_the_claim() {
     assert_eq!(with_tls(json!({ "code": "K7M2QX" }), Some(fp.clone())), json!({ "code": "K7M2QX", "tlsFingerprint": fp }));
     assert_eq!(with_tls(json!({ "code": "K7M2QX" }), None), json!({ "code": "K7M2QX" }));
 }
+
+#[test]
+fn wrong_codes_from_many_addresses_slow_new_addresses_down_and_an_address_that_signed_in_carries_on() {
+    crate::test_util::core();
+    let t = T0 + 20 * 60_000;
+    for i in 0..30 {
+        assert_eq!(read(claim_companion(&format!("10.2.0.{i}"), &json!({ "code": "AAAAAA" }), t)).0, 401);
+    }
+    let good = code_now(t);
+    // the shared cap is reached: one try from a new address every few seconds
+    assert_eq!(read(claim_companion("10.2.1.1", &json!({ "code": "AAAAAA" }), t)).0, 401);
+    assert_eq!(read(claim_companion("10.2.1.2", &json!({ "code": good }), t)).1["reason"], "rate-limit");
+    // the owner's own computer, where the password was typed, isn't held up
+    crate::limits::remember_address("10.2.1.3", t);
+    assert_eq!(read(claim_companion("10.2.1.3", &json!({ "code": good, "name": "Legato" }), t)).0, 200);
+    let next = code_now(t);
+    assert_eq!(read(claim_companion("10.2.1.2", &json!({ "code": next, "name": "Legato" }), t + crate::limits::SLOW_LANE_MS)).0, 200);
+}

@@ -10,7 +10,7 @@ use tokio_tungstenite::{Connector, MaybeTlsStream, WebSocketStream};
 
 pub type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Accepts any certificate, for NODE_TLS_REJECT_UNAUTHORIZED=0 (which Bun honoured too).
+/// Accepts any certificate, for NODE_TLS_REJECT_UNAUTHORIZED=0 and the saved hub (crate::http::insecure_tls_for).
 #[derive(Debug)]
 struct NoCheck(Arc<rustls::crypto::CryptoProvider>);
 
@@ -49,10 +49,10 @@ impl rustls::client::danger::ServerCertVerifier for NoCheck {
     }
 }
 
-fn tls() -> Arc<rustls::ClientConfig> {
+fn tls(insecure: bool) -> Arc<rustls::ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let builder = rustls::ClientConfig::builder_with_provider(provider.clone()).with_safe_default_protocol_versions().expect("ring supports TLS 1.2 and 1.3");
-    let config = if crate::http::insecure_tls() {
+    let config = if insecure {
         builder.dangerous().with_custom_certificate_verifier(Arc::new(NoCheck(provider))).with_no_client_auth()
     } else {
         let mut roots = rustls::RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
@@ -79,8 +79,9 @@ pub async fn connect_to(url: &str, headers: &[(&str, &str)], addrs: Option<Vec<s
         req.headers_mut().insert(name, value);
     }
     let config = WebSocketConfig::default().max_message_size(Some(64 << 20)).max_frame_size(Some(64 << 20));
-    let pin = if crate::http::insecure_tls() { None } else { crate::hub_tls::config_for(url) };
-    let tls = Connector::Rustls(pin.unwrap_or_else(tls));
+    let insecure = crate::http::insecure_tls_for(url);
+    let pin = if insecure { None } else { crate::hub_tls::config_for(url) };
+    let tls = Connector::Rustls(pin.unwrap_or_else(|| tls(insecure)));
     let connect = async {
         match addrs {
             // no Nagle: keys typed into a terminal go out at once instead of waiting for more to send
@@ -112,7 +113,7 @@ mod tests {
         let (ca, port) = crate::http::test_tls::server(&dir);
         let get = || -> Result<String, String> {
             let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
-            let conn = rustls::ClientConnection::new(tls(), "localhost".try_into().unwrap()).map_err(|e| e.to_string())?;
+            let conn = rustls::ClientConnection::new(tls(false), "localhost".try_into().unwrap()).map_err(|e| e.to_string())?;
             let mut s = rustls::StreamOwned::new(conn, tcp);
             s.write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n").map_err(|e| e.to_string())?;
             let mut out = String::new();

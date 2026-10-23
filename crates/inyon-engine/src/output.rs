@@ -155,8 +155,28 @@ pub fn computer_id(link: &str) -> Option<String> {
     (id.len() == 12 && id.chars().all(|c| c.is_ascii_alphanumeric())).then(|| format!("{} {} {}", &id[..4], &id[4..8], &id[8..]))
 }
 
+/// Whether `pair` leaves the link out: inside tmux, unless `--show-link` asked for it. Inyon shows
+/// every tmux pane on other screens (the app, and a companion app reading an agent's screen), and
+/// the link pairs a phone by itself, a shell on this machine for whoever reads it first.
+pub fn link_hidden(show_link: bool) -> bool {
+    link_hidden_in(show_link, std::env::var_os("TMUX").is_some_and(|v| !v.is_empty()))
+}
+
+fn link_hidden_in(show_link: bool, in_tmux: bool) -> bool {
+    in_tmux && !show_link
+}
+
+/// Said in place of the link when it's left out.
+pub const LINK_HIDDEN: &str =
+    "This terminal is in tmux, which Inyon can show on other screens, so the link that pairs a phone by itself isn't printed (`inyon pair --show-link` prints it). The QR code and the code above work once, for 10 minutes.";
+
 /// The pairing code as the terminal shows it, drawn from one of `pair --json`'s answers.
 pub fn render_pair(v: &Value) -> String {
+    render_pair_with(v, link_hidden(false))
+}
+
+/// `render_pair`, with the link left out when `hide_link`.
+pub fn render_pair_with(v: &Value, hide_link: bool) -> String {
     let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let list = |k: &str| v.get(k).and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
     if let Some(e) = v.get("error").and_then(Value::as_str) {
@@ -187,7 +207,11 @@ pub fn render_pair(v: &Value) -> String {
     if let Some(id) = computer_id(&text("link")) {
         out.push_str(&format!("\nThis computer's ID is {id}. The app shows it before it pairs: pair only if they match.\n"));
     }
-    out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
+    if hide_link {
+        out.push_str(&format!("\n{LINK_HIDDEN}\n\n"));
+    } else {
+        out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
+    }
     if waiting {
         out.push_str(&format!("{TUNNEL_PENDING}\n\n"));
     } else if no_address {
@@ -211,6 +235,18 @@ mod tests {
         assert_eq!(computer_id("inyon://pair?m=short"), None);
         let shown = render_pair(&json!({ "link": link, "qr": "https://web/#pair?m=x", "urls": ["wss://x"], "relays": [], "service": true }));
         assert!(shown.contains("This computer's ID is ybnd rfg8 ejkm."), "{shown}");
+    }
+
+    #[test]
+    fn in_tmux_the_link_that_pairs_a_phone_by_itself_is_printed_only_when_asked_for() {
+        let link = "inyon://pair?m=ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u&s=s3cret&n=box";
+        let v = json!({ "link": link, "qr": "https://web/#pair?m=x", "urls": ["wss://x"], "relays": [], "service": true });
+        assert!(link_hidden_in(false, true));
+        assert!(!link_hidden_in(true, true) && !link_hidden_in(false, false));
+        let hidden = render_pair_with(&v, true);
+        assert!(!hidden.contains(link) && hidden.contains("--show-link"), "{hidden}");
+        assert!(hidden.contains("This computer's ID is ybnd rfg8 ejkm."), "{hidden}");
+        assert!(render_pair_with(&v, false).contains(&format!("Or paste this link into the app:\n{link}\n")));
     }
 
     #[test]

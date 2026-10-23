@@ -195,6 +195,26 @@ fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     });
 }
 
+#[test]
+fn a_folder_or_name_holding_a_tmux_format_reaches_tmux_as_plain_text() {
+    run(|| async {
+        let fake = Fake::install(|_, _, _| ok("%5\n"));
+        pane("local", json!([{ "id": "%3", "agent": null, "command": "zsh" }]));
+        let opts = LaunchOpts { cwd: Some("/w/x#(touch /tmp/p)".into()), name: Some("a#(id)".into()), ..Default::default() };
+        launch("local", &opts).await.unwrap();
+        let cmd = fake.cmds().last().cloned().unwrap();
+        // the folder test reads it as is; tmux gets every # doubled; # is out of session names
+        assert!(cmd.contains("[ -d '/w/x#(touch /tmp/p)' ]"), "{cmd}");
+        assert!(cmd.contains("-c '/w/x##(touch /tmp/p)'"), "{cmd}");
+        assert!(cmd.contains("n='a-(id)'"), "{cmd}");
+        rename_pane("local", "%3", "build #(id)").await.unwrap();
+        assert!(fake.cmds().iter().any(|c| c == "tmux rename-window -t '%3' 'build ##(id)'"), "{:?}", fake.cmds());
+        assert!(respawn_shell(false, "'%1'", Some("/srv/x#y")).contains("-c '/srv/x##y'"));
+        // psmux is left as it was
+        assert!(respawn_shell(true, "'%1'", Some("C:/code/C#")).contains("-c 'C:/code/C#'"));
+    });
+}
+
 // ---------- answer.test.ts ----------
 
 fn screen_for(body: &str) -> Vec<String> {

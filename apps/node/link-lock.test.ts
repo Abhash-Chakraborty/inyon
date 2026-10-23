@@ -239,3 +239,51 @@ test('a publish the relays refuse is tried again soon until one takes it', async
   expect(r.stopped).toBeNull()
   expect(r.puts).toBe(2)
 })
+
+test("a phone it doesn't know isn't told this machine's name", async () => {
+  const said = await command(`
+    const said = []
+    const stranger = new Uint8Array(32).fill(8)
+    for (const hello of [{ name: 'Stranger' }, { name: 'Stranger', pair: 'expired-secret' }]) {
+      try { link.check(stranger, hello) } catch (e) { said.push(e.message) }
+    }
+    console.log(JSON.stringify({ said, host: os.hostname() }))
+  `)
+  expect(said.said).toHaveLength(2)
+  for (const m of said.said) expect(m).not.toContain(said.host)
+  expect(said.said[0]).toStartWith("This phone isn't paired with this computer any more.")
+})
+
+test('a short code whose record another computer took over stops working here; the QR code still pairs', async () => {
+  const r = await command(`
+    const { newIdentity, publish, shortCodeIdentity } = await import('@inyon/link')
+    const kept = new Map()
+    const fetcher = async (url, init) => {
+      if (init?.method === 'PUT') return (kept.set(String(url), new Uint8Array(await new Response(init.body).arrayBuffer())), new Response(''))
+      const b = kept.get(String(url))
+      return b ? new Response(b) : new Response('', { status: 404 })
+    }
+    const relays = ['https://relay.test']
+    const me = newIdentity().id
+    const { secret, short } = link.newPairing()
+    const said = []
+    said.push(await link.watchShortCode(me, relays, fetcher) ?? null)
+    const codeId = await shortCodeIdentity(short)
+    await publish(codeId, { urls: ['wss://x/link'], relays: [], machine: me, name: 'box' }, relays, fetcher)
+    said.push(await link.watchShortCode(me, relays, fetcher) ?? null)
+    await publish(codeId, { urls: ['wss://evil/link'], relays: [], machine: newIdentity().id, name: 'box' }, relays, fetcher, Date.now() * 1000 + 1e6)
+    said.push(await link.watchShortCode(me, relays, fetcher) ?? null)
+    const left = JSON.parse(readFileSync(path.join(node, 'pairing.json'), 'utf8'))
+    let typed = ''
+    try { link.check(new Uint8Array(32).fill(3), { name: 'Pixel', pair: short.id + ':' + short.code }) } catch (e) { typed = e.code }
+    const qr = link.check(new Uint8Array(32).fill(3), { name: 'Pixel', pair: secret })
+    console.log(JSON.stringify({ said, left, typed, qr: !!qr.hostname, id: short.id }))
+  `)
+  expect(r.said[0]).toBeNull()
+  expect(r.said[1]).toBeNull()
+  expect(r.said[2]).toContain(`${r.id.slice(0, 4)}-${r.id.slice(4)}`)
+  expect(r.said[2]).toContain('QR code still works')
+  expect(r.left.short).toBeUndefined()
+  expect(r.typed).toBe('NOT_PAIRED')
+  expect(r.qr).toBe(true)
+}, 20_000)

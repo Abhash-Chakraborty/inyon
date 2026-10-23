@@ -15,9 +15,14 @@ use crate::http::{set_header, text, Resp};
 struct Web;
 
 /// No framing by other sites; images only from the hub itself, so agent output can't make the
-/// browser fetch an outside URL (a prompt-injected agent could put data in one).
+/// browser fetch an outside URL (a prompt-injected agent could put data in one). Scripts only from
+/// the app's own files: the page's `script-src 'self'` alone would also take a script an agent
+/// wrote under /v/. A path needs a host in CSP; `*:*` is any host on any port, and the page's own
+/// policy still holds it to this hub, so together they leave the app's files on this hub.
+pub const PAGE_CSP: &str = "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/assets/ *:*/theme.js *:*/sw.js";
+
 pub fn page_headers(r: &mut Resp) {
-    set_header(r, "content-security-policy", "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'");
+    set_header(r, "content-security-policy", PAGE_CSP);
     set_header(r, "x-content-type-options", "nosniff");
     set_header(r, "referrer-policy", "same-origin");
 }
@@ -114,6 +119,20 @@ mod tests {
         assert_eq!(normalize("/../../etc/passwd"), "/etc/passwd");
         assert_eq!(normalize("/a/%2e%2e/b"), "/b");
         assert_eq!(normalize("/m/x/p/1"), "/m/x/p/1");
+    }
+
+    #[test]
+    fn the_app_runs_only_its_own_scripts_never_a_pages_under_v() {
+        let mut r = Resp::new(Body::empty());
+        page_headers(&mut r);
+        let csp = r.headers()["content-security-policy"].to_str().unwrap().to_owned();
+        let scripts = csp.split("; ").find_map(|d| d.strip_prefix("script-src ")).unwrap();
+        assert_eq!(scripts.split(' ').collect::<Vec<_>>(), ["*:*/assets/", "*:*/theme.js", "*:*/sw.js"]);
+        assert!(!scripts.contains("'self'") && !scripts.contains("/v/"));
+        // the files the app loads are all under those
+        let index = include_str!("../../../apps/web/index.html");
+        assert!(index.contains(r#"<script src="/theme.js">"#) && index.contains("script-src 'self'"));
+        assert!(include_str!("../../../apps/web/src/main.tsx").contains("publicFile('sw.js')"));
     }
 
     #[test]

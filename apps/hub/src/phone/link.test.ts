@@ -1,17 +1,18 @@
 import { afterAll, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { generateKeyPair, parsePairLink } from '@inyon/link'
 import type { HostConfig } from '@inyon/protocol'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { nodeLinks } from '../hosts/node-link.ts'
-import { linkConnector, usable } from './link.ts'
+import { linkConnector, UNPAIR_GIVE_UP_MS, usable, type PendingUnpair } from './link.ts'
 
 // the phone's connector against the real inyon, in a throwaway home on a LAN address
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-phone-link-'))
 const port = 4890 + Math.floor(Math.random() * 100)
-const env = { ...process.env, HOME: home, USERPROFILE: home }
+// TMUX empty: in tmux, `pair` leaves the link out
+const env = { ...process.env, HOME: home, USERPROFILE: home, TMUX: '' }
 const NODE = path.resolve(import.meta.dir, '../../../node/inyon.ts')
 const cli = (...args: string[]) => Bun.spawn([process.execPath, NODE, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
 let service = cli('link', '--no-tunnel', '--lan', '--port', String(port))
@@ -166,3 +167,60 @@ test('of a batch, only the address something else answered at is named, not one 
     silent.stop(true)
   }
 }, 30_000)
+
+test('a computer removed while it was off forgets the phone once it is back', async () => {
+  await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))
+  const p = cli('pair')
+  const info = parsePairLink((await new Response(p.stdout).text()).match(/inyon:\/\/pair\?\S+/)![0])!
+  const phone = generateKeyPair()
+  const key = Buffer.from(phone.publicKey).toString('hex')
+  const phones = () => readFileSync(path.join(home, '.inyon', 'node', 'phones.json'), 'utf8')
+  let kept: PendingUnpair[] = []
+  const store = { load: () => kept, save: (list: PendingUnpair[]) => void (kept = list) }
+  const links = linkConnector(async () => phone, 'Offline test', () => {}, { pending: store })
+  const welcome = await links.pair(info)
+  const config: HostConfig = { id: 'away', name: 'Away', kind: 'link', machineId: info.id, urls: welcome.urls, relays: [] }
+  links.ensure(config)
+  expect(await until(() => nodeLinks.isUp('away'))).toBe(true)
+
+  // off when it's removed: nobody could tell it, and the phone says so
+  service.kill()
+  await service.exited
+  expect(await until(() => !nodeLinks.isUp('away'))).toBe(true)
+  expect(links.forget('away', config)).toBe(false)
+  expect(links.pendingUnpairs().map((u) => u.machineId)).toEqual([info.id])
+  expect(phones()).toContain(key)
+
+  // back: told, and it stops trusting the phone
+  service = cli('link', '--no-tunnel', '--lan', '--port', String(port))
+  await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))
+  links.resume()
+  expect(await until(() => !phones().includes(key) && links.pendingUnpairs().length === 0, 15_000)).toBe(true)
+}, 40_000)
+
+test('paired again before it heard, a removed computer keeps the new pairing', async () => {
+  await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))
+  const code = async () => parsePairLink((await new Response(cli('pair').stdout).text()).match(/inyon:\/\/pair\?\S+/)![0])!
+  const info = await code()
+  const phone = generateKeyPair()
+  const key = Buffer.from(phone.publicKey).toString('hex')
+  const phones = () => readFileSync(path.join(home, '.inyon', 'node', 'phones.json'), 'utf8')
+  let kept: PendingUnpair[] = []
+  const store = { load: () => kept, save: (list: PendingUnpair[]) => void (kept = list) }
+  const links = linkConnector(async () => phone, 'Again test', () => {}, { pending: store })
+  await links.pair(info)
+  // removed while the phone thinks it's off (nothing connected), then paired again from a new code
+  kept = [{ machineId: info.id, name: 'Again', urls: [`ws://127.0.0.1:${port}/link`], relays: [], at: Date.now() }]
+  await links.pair(await code())
+  expect(links.pendingUnpairs()).toEqual([])
+  links.resume()
+  await Bun.sleep(3000)
+  expect(phones()).toContain(key)
+}, 30_000)
+
+test('a computer that never says it forgot the phone is given up on after a month', async () => {
+  let kept: PendingUnpair[] = [{ machineId: 'gone'.padEnd(52, 'x'), name: 'Old', urls: ['ws://127.0.0.1:9/link'], relays: [], at: Date.now() - UNPAIR_GIVE_UP_MS - 1000 }]
+  const store = { load: () => kept, save: (list: PendingUnpair[]) => void (kept = list) }
+  const links = linkConnector(async () => generateKeyPair(), 'Old test', () => {}, { pending: store })
+  expect(await until(() => links.pendingUnpairs().length === 0, 2000)).toBe(true)
+})

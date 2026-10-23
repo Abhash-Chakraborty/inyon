@@ -1321,6 +1321,7 @@ dependencies = [
 name = "inyon-cli"
 version = "0.20.2"
 dependencies = [
+ "base64 0.23.1",
  "clap",
  "crossterm",
  "flate2",

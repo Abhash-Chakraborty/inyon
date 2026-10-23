@@ -15,8 +15,28 @@ export const VIEW_KEYS = [
 ].map((c) => `tmux ${c}`).join('; ')
 
 /**
+ * The command that opens the view: a throwaway session `view` linking window `window`, showing
+ * `pane`. tmux checks the prefix before the key table, so the view turns the prefix off as well;
+ * otherwise C-b s or C-b : would still reach other sessions and the command prompt.
+ */
+export function viewCommand(view: string, window: string, pane: string) {
+  const v = shq(view)
+  return [
+    `${VIEW_KEYS}; exec tmux -u new-session -s ${v} -n inyon-tmp`,
+    `\\; link-window -s ${shq(window)} -t ${shq(`${view}:`)}`,
+    `\\; kill-window -t ${shq(`${view}:inyon-tmp`)}`,
+    `\\; set-option -t ${v} status off`,
+    `\\; set-option -t ${v} key-table inyon-view`,
+    `\\; set-option -t ${v} prefix None`,
+    `\\; set-option -t ${v} prefix2 None`,
+    `\\; set-option -t ${v} destroy-unattached on`,
+    `\\; select-pane -t ${shq(pane)}`,
+  ].join(' ')
+}
+
+/**
  * Opens a terminal on one pane's window, and only that window: a throwaway session that holds just
- * a link to it, with no status bar and a key table without the prefix, so the phone can't wander
+ * a link to it, with no status bar, no prefix and a key table of its own, so the phone can't wander
  * off to other windows or sessions (or switch the laptop's view). The window itself is shared, so
  * what you type shows on the laptop too. The view session dies when we detach.
  */
@@ -37,15 +57,5 @@ export function openTerminal(
     )
   }
   const view = `${VIEW_PREFIX}${Math.random().toString(36).slice(2, 8)}`
-  const v = shq(view)
-  const cmd = [
-    `${VIEW_KEYS}; exec tmux -u new-session -s ${v} -n inyon-tmp`,
-    `\\; link-window -s ${shq(found.window.id)} -t ${shq(`${view}:`)}`,
-    `\\; kill-window -t ${shq(`${view}:inyon-tmp`)}`,
-    `\\; set-option -t ${v} status off`,
-    `\\; set-option -t ${v} key-table inyon-view`,
-    `\\; set-option -t ${v} destroy-unattached on`,
-    `\\; select-pane -t ${shq(paneId)}`,
-  ].join(' ')
-  return host.pty(cmd, Math.max(10, cols), Math.max(4, rows), onData)
+  return host.pty(viewCommand(view, found.window.id, paneId), Math.max(10, cols), Math.max(4, rows), onData)
 }

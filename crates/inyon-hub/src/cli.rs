@@ -132,8 +132,8 @@ fn show_companion_code() -> i32 {
     if token.is_empty() {
         fail("The hub hasn't started here yet. Run `inyon hub` or `inyon hub start` first.", 1);
     }
-    let q: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
-    let Ok(res) = inyon_engine::http::post_local(&format!("{url}/api/local/companion-code?token={q}"), std::time::Duration::from_secs(5)) else {
+    let auth = format!("Bearer {token}");
+    let Ok(res) = inyon_engine::http::post_local(&format!("{url}/api/local/companion-code"), &[("authorization", &auth)], std::time::Duration::from_secs(5)) else {
         fail(&format!("The hub isn't answering at {url}. Start it with `inyon hub start`."), 1);
     };
     if res.status == 404 {

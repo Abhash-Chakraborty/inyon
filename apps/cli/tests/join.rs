@@ -82,3 +82,60 @@ fn a_join_notes_its_version_and_refuses_plain_http_that_anyone_could_answer() {
     let saved = h.saved().unwrap();
     assert!(saved.contains(&format!("INYON_JOINED={version}\n")) && saved.contains("INYON_ALLOW_INSECURE=1\n"), "{saved}");
 }
+
+/// The token the test hub hands out: plain words, long enough to pass for one.
+const FRESH: &str = "fresh-token-the-test-hub-hands-out-once";
+
+/// A hub on 127.0.0.1 that swaps the test's token once, then refuses it as used, as /node/claim does.
+fn claiming_hub() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        let mut used = false;
+        for conn in listener.incoming() {
+            let Ok(mut conn) = conn else { continue };
+            let mut buf = [0u8; 4096];
+            let n = conn.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let line = req.lines().next().unwrap_or("").to_string();
+            let bearer = req.lines().find_map(|l| l.to_ascii_lowercase().starts_with("authorization:").then(|| l[14..].trim().to_string())).unwrap_or_default();
+            log.lock().unwrap().push(format!("{line} {bearer}"));
+            let (status, body) = if line.starts_with("POST /node/claim ") && bearer == "Bearer t0k3n-for-the-join-test-0123456789" && !used {
+                used = true;
+                ("200 OK", format!(r#"{{"token":"{FRESH}"}}"#))
+            } else {
+                ("403 Forbidden", "Unknown token; the command was used already or replaced. Get a new one from the hub.\n".to_string())
+            };
+            let _ = write!(conn, "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+        }
+    });
+    (format!("http://127.0.0.1:{port}"), seen)
+}
+
+#[test]
+fn the_pasted_token_is_swapped_for_the_hubs_once_and_running_the_command_again_keeps_the_swapped_one() {
+    let (hub, seen) = claiming_hub();
+    let h = Home::new("claim");
+    let (ok, said) = h.join(&hub, &[]);
+    assert!(ok, "{said}");
+    let saved = h.saved().unwrap();
+    assert!(saved.contains(&format!("INYON_TOKEN={FRESH}\n")), "{saved}");
+    assert!(!saved.contains("t0k3n-for-the-join-test"), "{saved}");
+    assert_eq!(seen.lock().unwrap()[0], "POST /node/claim HTTP/1.1 Bearer t0k3n-for-the-join-test-0123456789");
+
+    // the same command again (install.sh run twice): the hub refuses the used token, and the one
+    // saved the first time stays
+    let (ok, said) = h.join(&hub, &[]);
+    assert!(ok, "{said}");
+    assert!(h.saved().unwrap().contains(&format!("INYON_TOKEN={FRESH}\n")));
+
+    // on another machine the used command is refused, and nothing is saved
+    let other = Home::new("claim-used");
+    let (ok, said) = other.join(&hub, &[]);
+    assert!(!ok, "{said}");
+    assert!(said.contains("used already") && said.contains("Add a machine"), "{said}");
+    assert_eq!(other.saved(), None);
+}

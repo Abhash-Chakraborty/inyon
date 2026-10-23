@@ -1,6 +1,6 @@
 import { sleep } from '../platform/store.ts'
 import { AGENTS, CONFIRM_OPTION, agyModelId, promptKey, type AgentCatalog, type AgentKind, type ScreenPrompt, type ScreenState } from '@inyon/protocol'
-import { shq, type Host } from '../hosts/host.ts'
+import { shq, tmuxLiteral, type Host } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
 import { capturePanes, sendKeys, typeText } from '../tmux/tmux.ts'
 import { codexBrowsing, parseScreen } from './screen.ts'
@@ -1057,7 +1057,7 @@ export async function restartAgent(hostId: string, paneId: string) {
     }
     if (!gone) throw new HttpError(504, 'It did not exit; restart it from the terminal')
     if (direct) {
-      const cwd = proc.cwd ? `-c ${shq(proc.cwd)}` : ''
+      const cwd = proc.cwd ? `-c ${shq(tmuxLiteral(proc.cwd, win))}` : ''
       await paneDead(host, p)
       await host.exec(`tmux respawn-pane ${win ? '-k ' : ''}-t ${p} ${cwd} ${shq(cmd)}`)
     } else {
@@ -1080,8 +1080,8 @@ export const remainOnExit = (win: boolean, p: string, on: boolean) => `tmux set-
 /** The command that gives a pane its shell back once the agent it ran has exited. */
 export const respawnShell = (win: boolean, p: string, cwd?: string) =>
   win
-    ? `tmux respawn-pane -k -t ${p} ${cwd ? `-c ${shq(cwd)}` : ''} "$(command -v pwsh.exe >/dev/null 2>&1 && echo pwsh.exe || echo powershell.exe)"`
-    : `tmux respawn-pane -t ${p} ${cwd ? `-c ${shq(cwd)}` : ''} "\${SHELL:-/bin/sh}" -l`
+    ? `tmux respawn-pane -k -t ${p} ${cwd ? `-c ${shq(tmuxLiteral(cwd, win))}` : ''} "$(command -v pwsh.exe >/dev/null 2>&1 && echo pwsh.exe || echo powershell.exe)"`
+    : `tmux respawn-pane -t ${p} ${cwd ? `-c ${shq(tmuxLiteral(cwd))}` : ''} "\${SHELL:-/bin/sh}" -l`
 
 /** tmux marks a pane dead a moment after its process is gone, and refuses to respawn it before that. */
 async function paneDead(host: { exec: (cmd: string) => Promise<{ stdout: string }> }, p: string) {
@@ -1256,15 +1256,20 @@ export async function launch(hostId: string, opts: LaunchOpts) {
   // before anything is created: an unknown agent would fail after the window exists
   if (agent && (typeof agent !== 'string' || !Object.hasOwn(AGENTS, agent))) throw new HttpError(400, 'Unknown agent')
   const cwd = opts.cwd?.trim() || '~'
-  const dir = cwd === '~' || cwd.startsWith('~/') ? `"$HOME"${shq(cwd.slice(1))}` : shq(cwd)
+  const home = cwd === '~' || cwd.startsWith('~/')
+  const dir = home ? `"$HOME"${shq(cwd.slice(1))}` : shq(cwd)
+  // the same folder as tmux reads it, where `#` would start a format
+  const win = onPsmux(hostId)
+  const tdir = home ? `"$HOME"${shq(tmuxLiteral(cwd.slice(1), win))}` : shq(tmuxLiteral(cwd, win))
   const fmt = shq('#{pane_id}')
   let cmd: string
   if (opts.session) {
-    cmd = `tmux new-window -t ${shq(opts.session)} -c ${dir} -P -F ${fmt}`
+    cmd = `tmux new-window -t ${shq(opts.session)} -c ${tdir} -P -F ${fmt}`
   } else {
-    const name = (opts.name?.trim() || agent || 'shell').replace(/[.:]/g, '-')
+    // tmux won't take . or : in a session name, and # would start a format
+    const name = (opts.name?.trim() || agent || 'shell').replace(/[.:#]/g, '-')
     // a second "claude" becomes "claude-2" rather than failing on the taken name
-    cmd = `n=${shq(name)}; i=2; while tmux has-session -t "=$n" 2>/dev/null; do n=${shq(name)}-$i; i=$((i+1)); done; tmux new-session -d -s "$n" -c ${dir} -P -F ${fmt}`
+    cmd = `n=${shq(name)}; i=2; while tmux has-session -t "=$n" 2>/dev/null; do n=${shq(name)}-$i; i=$((i+1)); done; tmux new-session -d -s "$n" -c ${tdir} -P -F ${fmt}`
   }
   const r = await host.exec(`[ -d ${dir} ] || { echo "No such folder: ${cwd.replace(/["$`\\]/g, '')}" >&2; exit 3; }; ${cmd}`)
   const paneId = r.stdout.trim()
@@ -1313,7 +1318,7 @@ export async function forkConversation(hostId: string, paneId: string) {
   const cmd = a.kind === 'claude' ? `${resumeCommand('claude', a.sessionId, args)} --fork-session`
     : a.kind === 'codex' ? resumeCommand('codex', a.sessionId, args).replace(/^(\S+) resume /, '$1 fork ')
     : `${AGENTS.opencode.launch} --session ${a.sessionId} --fork`
-  const r = await host.exec(`tmux new-window -t ${shq(found.session.name)} -c ${shq(cwd)} -P -F ${shq('#{pane_id}')}`)
+  const r = await host.exec(`tmux new-window -t ${shq(found.session.name)} -c ${shq(tmuxLiteral(cwd, onPsmux(hostId)))} -P -F ${shq('#{pane_id}')}`)
   const newPane = r.stdout.trim()
   if (r.code !== 0 || !newPane.startsWith('%')) throw new HttpError(500, r.stderr.trim() || 'Could not open a window')
   await shellReady(host, newPane)
@@ -1388,7 +1393,7 @@ export async function renamePane(hostId: string, paneId: string, raw: string) {
   const { host, found } = agentPane(hostId, paneId)
   const a = found.pane.agent
   if (!a) {
-    const r = await host.exec(name ? `tmux rename-window -t ${shq(paneId)} ${shq(name)}` : `tmux set-window-option -t ${shq(paneId)} automatic-rename on`)
+    const r = await host.exec(name ? `tmux rename-window -t ${shq(paneId)} ${shq(tmuxLiteral(name, onPsmux(hostId)))}` : `tmux set-window-option -t ${shq(paneId)} automatic-rename on`)
     if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not rename the window')
     return registry.refresh(hostId, 0)
   }

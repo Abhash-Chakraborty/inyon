@@ -256,11 +256,13 @@ export const api = {
   editServer: (id: string, b: Partial<ServerForm>) => request('PATCH', h(id), b),
   probe: (target: string, port?: number) => request<{ fingerprint: string; keyType: string }>('POST', '/api/phone/probe', { target, port }, 20_000),
   phoneKey: () => request<{ publicKey: string }>('GET', '/api/phone/key'),
-  pairLaptop: (link: string) => request<{ id: string }>('POST', '/api/phone/pair', { link }, 60_000),
+  /** `machineId` from 0.20.3: the computer's own id, as `inyon pair` shows its start */
+  pairLaptop: (link: string) => request<{ id: string; machineId?: string }>('POST', '/api/phone/pair', { link }, 60_000),
   updateHost: (id: string, b: Record<string, unknown>) => request('PATCH', h(id), b),
   repair: (id: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', `${h(id)}/pair`, { origin: hubOrigin() }),
   pair: (name: string) => request<{ id: string; token: string; command: string; commands?: { unix: string; windows: string } }>('POST', '/api/hosts/pair', { name, origin: hubOrigin() }),
-  removeHost: (id: string) => request('DELETE', h(id)),
+  /** `untold`, on the phone: the computer was out of reach, so it trusts the phone until it hears */
+  removeHost: (id: string) => request<{ ok?: boolean; untold?: string }>('DELETE', h(id)),
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
   /** brings the machine's inyon up to date (it restarts and reconnects by itself) */
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
