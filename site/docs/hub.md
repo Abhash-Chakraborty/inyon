@@ -46,7 +46,8 @@ Without a machine that stays on, a hub can run on [Railway](https://railway.com/
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/inyon)
 
-- There's nothing to fill in. Railway generates `INYON_PASSWORD`, and the hub takes it as its password on first boot, using its own setup code over localhost. Copy it from the service's **Variables** to sign in, then change the password in **Settings → Account**. Editing the variable later does nothing.
+- The deploy form asks for `INYON_PASSWORD`, the password you'll sign in with. The hub takes it as its password on first boot, using its own setup code over localhost, so a new address never waits for its first visitor. A password the hub refuses (under 8 characters) fails the deploy instead.
+- Change the password in **Settings → Account**. Editing `INYON_PASSWORD` later does nothing, since the hub keeps its own password from then on. Forgot it? Run `inyon-engine hub reset-password <new password>` as the hub's user over `railway ssh` (the template's page has the exact command), then restart the deployment to use it.
 - On a custom domain, add the name to `INYON_ALLOWED_HOSTS`.
 - Machines join it with **Add machine**, as with any hub.
 - The version is pinned by the template's image; a newer Inyon comes with a new image.
