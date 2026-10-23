@@ -65,6 +65,9 @@ test("old release notes link to the site's new address", () => {
     "see [Install](https://inyon.tech/docs/install/#x) or https://inyon.tech",
   );
   expect(oldSiteLinks("`curl -fsSL https://inyon.abhashchakraborty.tech/get.sh | sh`")).toBe("`curl -fsSL https://inyon.tech/get.sh | sh`");
+  expect(oldSiteLinks("https://inyon.abhashchakraborty.tech?ref=release and https://inyon.abhashchakraborty.tech#install")).toBe(
+    "https://inyon.tech?ref=release and https://inyon.tech#install",
+  );
   // a host that only starts the same stays as it is
   expect(oldSiteLinks("https://inyon.abhashchakraborty.tech.example.com/")).toBe("https://inyon.abhashchakraborty.tech.example.com/");
 });

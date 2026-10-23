@@ -32,11 +32,11 @@ no npm or pnpm step.
 
 ```sh
 bun run typecheck
-cd apps/hub && bun test
-cd apps/web && bun test
-cd apps/node && bun test
-cd packages/link && bun test
-cd apps/web && bun run build && bun run e2e   # layout at phone widths, needs Playwright's Chromium
+(cd apps/hub && bun test)
+(cd apps/web && bun test)
+(cd apps/node && bun test)
+(cd packages/link && bun test)
+(cd apps/web && bun run build && bun run e2e)   # layout at phone widths, needs Playwright's Chromium
 cargo test --workspace            # the inyon command and the Rust crates (or bun run cli:test)
 bun conformance/run.ts            # both hubs against the recorded scenarios
 bun site/build.ts --offline       # the website and docs; fails on a broken link

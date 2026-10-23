@@ -461,7 +461,7 @@ async function releases(): Promise<GhRelease[]> {
 
 /** A release's notes as HTML, headings demoted to sit under its version. */
 /** Links in notes written before the move to inyon.tech point here directly instead of through the old address's redirect. */
-export const oldSiteLinks = (md: string) => md.replace(/https?:\/\/inyon\.abhashchakraborty\.tech(?=[/)\s"'>]|$)/g, ORIGIN);
+export const oldSiteLinks = (md: string) => md.replace(/https?:\/\/inyon\.abhashchakraborty\.tech(?=[/?#)\s"'>]|$)/g, ORIGIN);
 
 function notes(r: GhRelease): string {
   // GitHub's "Full Changelog" line is a bare URL; each release links to its page instead

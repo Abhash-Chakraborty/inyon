@@ -22,7 +22,9 @@ summary.
   machine gets its own random token, the hub stores only its SHA-256, and removing the machine
   revokes it. A token no machine has used stops working after a day. `inyon` refuses to send its token over plain HTTP unless the hub is on
   the same machine or on a Tailscale or NetBird address (from 0.20). A hub on a certificate it made
-  itself is pinned by the SHA-256 in its **Add a machine** command.
+  itself is pinned by the SHA-256 in its **Add a machine** command on Linux and macOS. The
+  Windows command and the Android app can't check that certificate yet, so they reach such a hub
+  through a VPN address or a certificate the device trusts.
 - **Downloads are signed.** Releases, the one-line installers and the machine updates a hub hands
   out are checked against Inyon's signed release list for the version asked for, and an older
   signed list is refused.

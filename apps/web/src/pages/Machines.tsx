@@ -272,7 +272,7 @@ export function MachinePage() {
           {tab === 'sessions' && <SessionsTab host={host} onNew={() => setNewOpen(true)} />}
           {tab === 'setup' && <SetupPanel host={host} />}
           {tab === 'config' && <ConfigTab host={host} />}
-          {tab === 'uploads' && <UploadsCard host={host} />}
+          {tab === 'uploads' && <UploadsCard key={host.config.id} host={host} />}
           {tab === 'integration' && <IntegrationCard host={host} />}
         </div>
         <MachinePages host={host.config.id} />
