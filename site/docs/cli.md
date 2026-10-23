@@ -54,6 +54,8 @@ In a terminal, plain `inyon` opens a dashboard that refreshes every 2 seconds. I
 
 On Windows before 0.20.1 a key could act twice, because Windows also reports a key's release.
 
+The dashboard and setup draw in greys that suit the terminal's background. From 0.20.2 they ask the terminal whether it's light or dark and use darker greys on a light one, so muted text stays readable on white. A terminal that doesn't answer gets the greys for a dark one; set `INYON_THEME=light` to say otherwise.
+
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
 
 From 0.17.2 the link counts as running when something answers on its port the way the engine does, not only when the process it last recorded is alive, so a stale record never shows a running link as stopped.
@@ -290,6 +292,7 @@ inyon pair --json | jq -r 'select(.waiting == null and .ok) | .link'
 | `INYON_LEGACY_ENGINE` | `1` runs everything on the Bun engine, as 0.18 does (from 0.19). See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_DATA_DIR` | Where a hub keeps its records (default `~/.inyon`) |
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |
+| `INYON_THEME` | `light` or `dark`: the terminal's background, instead of asking the terminal (from 0.20.2) |
 | `NO_COLOR` | Turn colour off |
 
 Every `TETHER_*` name from before the rename is still read. [Configuration](configuration.md) lists every variable, for computers and hubs, including `INYON_ALLOW_INSECURE`, `INYON_HUB_CERT` and `INYON_HUB_IMPL`.

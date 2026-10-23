@@ -26,6 +26,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 sha2 = "0.11"
 tar = { version = "0.4", default-features = false }
+# asks the terminal for its background (OSC 11), so the greys suit a light or dark one
+terminal-colorsaurus = "1.0.3"
 unicode-width = "0.2"
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 
