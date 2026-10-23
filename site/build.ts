@@ -16,11 +16,6 @@ const SITE = import.meta.dir;
 const assetVersion = (name: string) =>
   createHash("sha256").update(readFileSync(join(SITE, "assets", name))).digest("hex").slice(0, 10);
 const CSS_URL = `/assets/site.css?v=${assetVersion("site.css")}`;
-/** Geist and Geist Mono, Latin only, from the packages the app uses too */
-const FONTS: [string, string][] = [
-  ["geist/files/geist-latin-wght-normal.woff2", "geist.woff2"],
-  ["geist-mono/files/geist-mono-latin-wght-normal.woff2", "geist-mono.woff2"],
-];
 /**
  * Every page's Content-Security-Policy. Pages load only this site's own files; the exceptions are
  * the Product Hunt badge on the home page and the video, which loads from YouTube when it's played.
@@ -1003,7 +998,7 @@ async function main() {
       slug: "license",
       title: "MIT licence",
       description: LICENSE_DESCRIPTION,
-      html: `<pre class="licence"><code>${esc(readFileSync(join(ROOT, "LICENSE"), "utf8").trim())}</code></pre>\n<p>Inyon is built on open-source libraries, each under its own licence. The repository’s <code>Cargo.lock</code> and <code>bun.lock</code> list every one.</p>`,
+      html: `<pre class="licence"><code>${esc(readFileSync(join(ROOT, "LICENSE"), "utf8").trim())}</code></pre>\n<p>Inyon is built on open-source libraries, each under its own licence. The repository’s <code>Cargo.lock</code> and <code>bun.lock</code> list every one. This site uses the Geist and Geist Mono fonts, under the <a href="/assets/fonts/geist-OFL.txt">SIL Open Font License</a>.</p>`,
       updated: lastChanged("LICENSE"),
       version,
       source: "LICENSE",
@@ -1026,9 +1021,6 @@ async function main() {
   // static files
   cpSync(join(SITE, "assets"), join(OUT, "assets"), { recursive: true });
   cpSync(join(SITE, "sw.js"), join(OUT, "sw.js"));
-  // the fonts are served from here, so a page asks no other server for anything
-  mkdirSync(join(OUT, "assets/fonts"), { recursive: true });
-  for (const [from, to] of FONTS) cpSync(join(ROOT, "node_modules/@fontsource-variable", from), join(OUT, "assets/fonts", to));
   cpSync(join(ROOT, "apps/web/public/icon.svg"), join(OUT, "icon.svg"));
   mkdirSync(join(OUT, "img"), { recursive: true });
   for (const f of readdirSync(join(ROOT, "docs")).filter((f) => /\.(webp|png|svg)$/.test(f)))
