@@ -22,6 +22,10 @@
   <a href="https://github.com/Abhash-Chakraborty/inyon/releases">Releases</a>
 </p>
 
+<p align="center">
+  <a href="https://www.producthunt.com/products/inyon?utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-inyon"><picture><source media="(prefers-color-scheme: dark)" srcset="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1282413&amp;theme=dark"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1282413&amp;theme=light" width="250" height="54" alt="Inyon on Product Hunt"></picture></a>
+</p>
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/hero-dark.webp">
   <img src="docs/hero-light.webp" alt="Inyon on a desktop, a tablet and a phone: the overview of every agent session across four machines, a Claude Code session read as a chat, and Codex asking to run the tests">
