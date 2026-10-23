@@ -833,3 +833,14 @@ fn nobody_signed_in_can_make_the_hub_build_or_download_inyon_for_a_system_no_mac
     assert!(!asked.get());
     assert_eq!(built, 0, "something was built");
 }
+
+#[test]
+fn a_paired_linux_machine_doesnt_make_a_checkout_build_macos_engines_for_the_list_of_checksums() {
+    let targets = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"];
+    let linux_only = |os: &str| os == "linux";
+    assert_eq!(unprepared(targets, |_| false, linux_only), Some("darwin-x64"));
+    // what's built already is handed out
+    assert_eq!(unprepared(targets, |t| t.starts_with("darwin"), linux_only), None);
+    // while an "Add a machine" command waits, any system
+    assert_eq!(unprepared(targets, |_| false, |_| true), None);
+}

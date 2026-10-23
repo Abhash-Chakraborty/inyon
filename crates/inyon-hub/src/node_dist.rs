@@ -662,6 +662,12 @@ fn not_ready(t: &str) -> String {
     format!("This hub hasn't fetched Inyon for {t} yet. Open \"Add a machine\" on the hub, then run the command again.")
 }
 
+/// The first of `targets` that isn't here and that no machine may be waiting for. The list of
+/// checksums builds every one, so each counts on its own: a paired Linux machine doesn't open macOS.
+pub fn unprepared<'a>(targets: impl IntoIterator<Item = &'a str>, ready: impl Fn(&str) -> bool, may: impl Fn(&str) -> bool) -> Option<&'a str> {
+    targets.into_iter().find(|t| !ready(t) && !may(t.split('-').next().unwrap_or_default()))
+}
+
 /// 503 unless `ready` (the file is here already) or a machine may be waiting for it (may_prepare).
 fn gate(t: &str, ready: bool) -> HubResult<()> {
     let reg = inyon_core::hosts::registry::registry();
@@ -700,8 +706,13 @@ impl Dist {
     }
     /// a checkout works the list out by building every Unix engine, so it waits for a machine to be added
     async fn unix_sums_for(self: &Rc<Self>) -> HubResult<String> {
-        if self.runs_from_source() && !unix().all(|t| self.engine_ready(t)) {
-            gate("linux", false).or_else(|_| gate("darwin", false)).map_err(|_| http(503, not_ready("Linux and macOS")))?;
+        if self.runs_from_source() {
+            let reg = inyon_core::hosts::registry::registry();
+            let (configs, now) = (reg.configs(), inyon_core::clock::now_ms());
+            let may = |os: &str| may_prepare(os, &configs, |id| reg.get(id).and_then(|r| r.borrow().state.os.clone()), now);
+            if let Some(t) = unprepared(unix(), |t| self.engine_ready(t), may) {
+                return Err(http(503, not_ready(t)));
+            }
         }
         self.unix_sums().await
     }

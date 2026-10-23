@@ -410,7 +410,8 @@ export const nodeRoutes = {
   '/node/install.ps1': route(() => plain(INSTALL_PS1)),
   // a checkout works these out by building every Unix engine, so it waits for a machine to be added
   '/node/SHA256SUMS': route(async () => {
-    if (FROM_SOURCE && !UNIX.every(engineReady) && !mayPrepare('linux') && !mayPrepare('darwin')) throw new HttpError(503, NOT_READY('Linux and macOS').trim())
+    // each system it would build for on its own: a paired Linux machine doesn't open macOS
+    if (FROM_SOURCE) for (const t of UNIX) gate(t, engineReady(t))
     return plain(await unixSums())
   }),
   // the release's own list and its signature, as the release has them: a machine checks what it

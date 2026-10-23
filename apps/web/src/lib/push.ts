@@ -74,11 +74,20 @@ export async function enablePush(done = useStore.getState().settings.notifyDone)
 }
 
 /** A new key and subscription, after a computer that had the old ones was removed. */
-export async function rotatePush(done = useStore.getState().settings.notifyDone) {
+export async function rotatePush(done = useStore.getState().settings.notifyDone, waits = [5_000, 30_000, 120_000]) {
   try {
     localStorage.removeItem(KEY)
   } catch {}
-  return enablePush(done)
+  // the old subscription is gone by now, so a failed hand-over would leave no alerts at all until
+  // the app opens again: try a few more times, then say so
+  let r = await enablePush(done)
+  for (const wait of waits) {
+    if (!r.error || r.error === 'unsupported' || r.error === 'not allowed') return r
+    await new Promise((ok) => setTimeout(ok, wait))
+    r = await enablePush(done)
+  }
+  if (r.error) console.warn(`Couldn't hand the new push key to the computers: ${r.error}. Alerts come back the next time the app opens.`)
+  return r
 }
 
 /** A test through the push service: how many senders delivered it (0 if push isn't on). */

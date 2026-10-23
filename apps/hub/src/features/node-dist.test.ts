@@ -1,4 +1,4 @@
-import { afterAll, expect, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -6,6 +6,8 @@ import path from 'node:path'
 import zlib from 'node:zlib'
 import { VERSION } from '@inyon/protocol'
 import { cliTargetOf, mayPrepare, nodeRoutes, pruneOld, releaseFile, sourceCommand, tag, targetOf, updateScript } from './node-dist.ts'
+
+afterAll(() => mock.restore())
 
 const url = (q: string) => new URL(`http://hub/node/inyon?${q}`)
 const get = (route: keyof typeof nodeRoutes) => nodeRoutes[route](new Request(`http://hub${route}`))
@@ -50,6 +52,22 @@ test("nobody signed in can make the hub build or download Inyon for a system no 
     expect(await res.text()).toContain('Open "Add a machine" on the hub')
     // refused at once, not after a build or a download
     expect(Date.now() - t0).toBeLessThan(1000)
+  }
+})
+
+test("a paired Linux machine doesn't make a checkout build macOS's engines for the list of checksums", async () => {
+  const { registry } = await import('../hosts/registry.ts')
+  const configs = spyOn(registry, 'configs').mockReturnValue([{ id: 'box', name: 'box', kind: 'node', pairedAt: Date.now() } as any])
+  const get = spyOn(registry, 'get').mockReturnValue({ state: { os: 'Linux' } } as any)
+  try {
+    const t0 = Date.now()
+    const res = await nodeRoutes['/node/SHA256SUMS'](new Request('http://hub/node/SHA256SUMS'))
+    expect(res.status).toBe(503)
+    expect(await res.text()).toContain('for darwin-')
+    expect(Date.now() - t0).toBeLessThan(1000)
+  } finally {
+    configs.mockRestore()
+    get.mockRestore()
   }
 })
 

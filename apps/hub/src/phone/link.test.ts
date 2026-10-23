@@ -6,7 +6,7 @@ import { generateKeyPair, parsePairLink } from '@inyon/link'
 import type { HostConfig } from '@inyon/protocol'
 import { nodeBackend } from '../hosts/node-backend.ts'
 import { nodeLinks } from '../hosts/node-link.ts'
-import { linkConnector, usable, type PendingUnpair } from './link.ts'
+import { linkConnector, UNPAIR_GIVE_UP_MS, usable, type PendingUnpair } from './link.ts'
 
 // the phone's connector against the real inyon, in a throwaway home on a LAN address
 const home = mkdtempSync(path.join(os.tmpdir(), 'inyon-phone-link-'))
@@ -197,3 +197,30 @@ test('a computer removed while it was off forgets the phone once it is back', as
   links.resume()
   expect(await until(() => !phones().includes(key) && links.pendingUnpairs().length === 0, 15_000)).toBe(true)
 }, 40_000)
+
+test('paired again before it heard, a removed computer keeps the new pairing', async () => {
+  await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))
+  const code = async () => parsePairLink((await new Response(cli('pair').stdout).text()).match(/inyon:\/\/pair\?\S+/)![0])!
+  const info = await code()
+  const phone = generateKeyPair()
+  const key = Buffer.from(phone.publicKey).toString('hex')
+  const phones = () => readFileSync(path.join(home, '.inyon', 'node', 'phones.json'), 'utf8')
+  let kept: PendingUnpair[] = []
+  const store = { load: () => kept, save: (list: PendingUnpair[]) => void (kept = list) }
+  const links = linkConnector(async () => phone, 'Again test', () => {}, { pending: store })
+  await links.pair(info)
+  // removed while the phone thinks it's off (nothing connected), then paired again from a new code
+  kept = [{ machineId: info.id, name: 'Again', urls: [`ws://127.0.0.1:${port}/link`], relays: [], at: Date.now() }]
+  await links.pair(await code())
+  expect(links.pendingUnpairs()).toEqual([])
+  links.resume()
+  await Bun.sleep(3000)
+  expect(phones()).toContain(key)
+}, 30_000)
+
+test('a computer that never says it forgot the phone is given up on after a month', async () => {
+  let kept: PendingUnpair[] = [{ machineId: 'gone'.padEnd(52, 'x'), name: 'Old', urls: ['ws://127.0.0.1:9/link'], relays: [], at: Date.now() - UNPAIR_GIVE_UP_MS - 1000 }]
+  const store = { load: () => kept, save: (list: PendingUnpair[]) => void (kept = list) }
+  const links = linkConnector(async () => generateKeyPair(), 'Old test', () => {}, { pending: store })
+  expect(await until(() => links.pendingUnpairs().length === 0, 2000)).toBe(true)
+})

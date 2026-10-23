@@ -310,7 +310,7 @@ const server = Bun.serve<SocketData>({
           setupAttempts.n++
           setupTries.set(client, (setupTries.get(client) ?? 0) + 1)
           await Bun.sleep(400)
-          throw new HttpError(401, 'That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in the hub log and in ~/.inyon/setup-code.')
+          throw new HttpError(401, 'That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in ~/.inyon/setup-code.')
         }
         const password = String(b.password ?? '')
         const problem = passwordProblem(password)

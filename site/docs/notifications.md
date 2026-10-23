@@ -34,7 +34,7 @@ A fully closed app gets no alerts yet. That needs a push server, which Inyon doe
 
 ### A hub in a browser
 
-The hub sends standard Web Push itself, so alerts reach a closed tab or an installed web app. This needs the hub on HTTPS (a VPN's HTTPS name, a reverse proxy, or its own certificate; see [Running a hub](hub.md#https)). Each browser that allows notifications registers with the hub, and every alert goes to every registered browser. From 0.20.3 a hub keeps up to 20 browsers; allowing a 21st drops the one that allowed longest ago, which then needs **Allow** again.
+The hub sends standard Web Push itself, so alerts reach a closed tab or an installed web app. This needs the hub on HTTPS (a VPN's HTTPS name, a reverse proxy, or its own certificate; see [Running a hub](hub.md#https)). Each browser that allows notifications registers with the hub, and every alert goes to every registered browser. From 0.20.3 a hub keeps up to 20 browsers; a 21st drops the one that registered longest ago, which registers again the next time it opens the app.
 
 On iPhone and iPad, web notifications only work after you add the page to the Home Screen.
 

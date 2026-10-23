@@ -135,7 +135,7 @@ pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
                 c.setup_attempts.set((n + 1, reset));
                 *c.setup_tries.borrow_mut().entry(client).or_insert(0) += 1;
                 sleep(400).await;
-                return Err(http(401, "That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in the hub log and in ~/.inyon/setup-code."));
+                return Err(http(401, "That setup code is not right. `inyon hub code` on the hub machine shows it; it is also in ~/.inyon/setup-code."));
             }
             let password = str_or_empty(field(&b, "password")?);
             if let Some(problem) = password_problem(&password) {

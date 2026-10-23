@@ -51,3 +51,23 @@ test('once a computer is removed, the page signs with a new key and hands the co
   expect(now.vapid.privateJwk.d).not.toBe(handed.vapid.privateJwk.d)
   expect(now.subscription.endpoint).toBe('https://push.example.net/2')
 })
+
+test('a new subscription the computers missed is handed over again, a few times at most', async () => {
+  browserWithPush()
+  await enablePush(true)
+  const push = api.push as any
+  const calls = push.mock.calls.length
+  push.mockImplementationOnce(async () => {
+    throw new Error('offline')
+  })
+  const r = await rotatePush(true, [0, 0])
+  expect(r.error).toBeUndefined()
+  expect(push.mock.calls.length).toBe(calls + 2)
+  // still failing after the last try: it stops, and says why
+  push.mockImplementation(async () => {
+    throw new Error('offline')
+  })
+  const gave = await rotatePush(true, [0, 0])
+  expect(gave.error).toBe('offline')
+  expect(push.mock.calls.length).toBe(calls + 5)
+})

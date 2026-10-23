@@ -13,6 +13,8 @@ import { nodeLinks } from '../hosts/node-link.ts'
 const DIRECT_MS = 4000
 const PING_MS = 20_000
 const PONG_MS = 8000
+/** how long a removed computer is told to forget the phone before the phone stops trying */
+export const UNPAIR_GIVE_UP_MS = 30 * 24 * 60 * 60 * 1000
 
 export interface Welcome {
   hostname?: string
@@ -162,7 +164,8 @@ export function linkConnector(
   // it. The rest are kept here and told the next time they answer, until one says the phone isn't
   // paired there (which is how a told computer answers).
   const pendingStore = o.pending ?? { load: () => [], save: () => {} }
-  const unpairTries = new Map<string, { attempt: number; timer?: ReturnType<typeof setTimeout>; running?: boolean }>()
+  const unpairTries = new Map<string, { attempt: number; sent?: number; timer?: ReturnType<typeof setTimeout>; running?: boolean }>()
+  const pending = (machineId: string) => pendingList().some((x) => x.machineId === machineId)
   const pendingList = () => pendingStore.load()
   const done = (machineId: string) => {
     pendingStore.save(pendingList().filter((p) => p.machineId !== machineId))
@@ -171,6 +174,9 @@ export function linkConnector(
     unpairTries.delete(machineId)
   }
   const tell = async (p: PendingUnpair) => {
+    // a computer before 0.17 lets the phone in and ignores `unpair`, so it never says the phone
+    // isn't paired: give up on one after a month
+    if (Date.now() - p.at > UNPAIR_GIVE_UP_MS) return done(p.machineId)
     const t = unpairTries.get(p.machineId) ?? { attempt: 0 }
     unpairTries.set(p.machineId, t)
     if (t.running) return
@@ -179,10 +185,16 @@ export function linkConnector(
     let again = backoff(t.attempt++, 5000, 10 * 60_000)
     try {
       const r = await reach({ noise: await noise(), id: p.machineId, urls: p.urls, relays: p.relays, hello: { name: phoneName }, resolve: o.resolve })
+      // paired with it again meanwhile: that pairing stands
+      if (!pending(p.machineId)) {
+        t.running = false
+        return void r.channel.close(1000, 'paired again')
+      }
       r.channel.send({ op: 'unpair' })
-      // it forgets the phone in a moment; the next try hears that it isn't paired any more
+      // it forgets the phone in a moment; the first check comes soon after, later ones back off
       setTimeout(() => r.channel.close(1000, 'unpaired'), 1000)
-      again = 3000
+      t.sent = (t.sent ?? 0) + 1
+      if (t.sent === 1) again = 3000
     } catch (err) {
       if (err instanceof LinkError && err.code === 'NOT_PAIRED') {
         t.running = false
@@ -190,7 +202,7 @@ export function linkConnector(
       }
     }
     t.running = false
-    if (pendingList().some((x) => x.machineId === p.machineId)) t.timer = setTimeout(() => void tell(p), again)
+    if (pending(p.machineId)) t.timer = setTimeout(() => void tell(p), again)
   }
   // ones left from before the app was closed
   setTimeout(() => pendingList().forEach((p) => void tell(p)), 0)
@@ -338,6 +350,8 @@ export function linkConnector(
     async pair(info: PairInfo): Promise<Welcome> {
       const r = await reach({ noise: await noise(), id: info.id, urls: info.urls, relays: info.relays, hello: { name: phoneName, pair: info.secret }, resolve: o.resolve })
       r.channel.close(1000, 'paired')
+      // a computer removed earlier and paired again: it mustn't be told to forget this pairing
+      if (pending(info.id)) done(info.id)
       const w = r.welcome as Welcome
       return { ...w, urls: addresses(r.url, w.urls?.length ? w.urls : r.urls) }
     },

@@ -294,7 +294,12 @@ mod stall {
 
 fn config(insecure: bool) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
     let c = ureq::Agent::config_builder().http_status_as_error(false).user_agent(format!("inyon/{}", crate::VERSION));
-    c.tls_config(if insecure { ureq::tls::TlsConfig::builder().disable_verification(true).build() } else { ureq::tls::TlsConfig::builder().root_certs(ureq_roots()).build() })
+    if insecure {
+        // unchecked for the hub only: a redirect elsewhere would go unchecked too, so none is
+        // followed (the 3xx comes back as the answer)
+        return c.max_redirects(0).max_redirects_will_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
+    }
+    c.tls_config(ureq::tls::TlsConfig::builder().root_certs(ureq_roots()).build())
 }
 
 /// A request and its whole answer. `headers` go with it; `body` makes it a request with one.
@@ -576,6 +581,10 @@ mod tests {
         assert_eq!(joined, Ok(200));
         assert!(elsewhere.is_err() && downloaded.is_err(), "{elsewhere:?} {downloaded:?}");
         assert!(checked.is_err());
+        // and a redirect from the hub isn't followed with the checks off
+        let unchecked = config(true).build();
+        assert_eq!((unchecked.max_redirects(), unchecked.max_redirects_will_error()), (0, false));
+        assert!(config(false).build().max_redirects() > 0);
     }
 
     #[test]

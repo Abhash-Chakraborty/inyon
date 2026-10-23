@@ -294,6 +294,9 @@ test("inyon join swaps the pasted token for one the hub hands out once, and the 
   // the new one gets as far as the upgrade
   expect((await call(fresh)).status).toBe(400)
   expect((await claim('')).status).toBe(403)
+  // two at once (the command run twice in a hurry): one gets a token, the other is refused
+  const { token: next } = await json(await post('/api/hosts/pair', { name: 'Twice box' }, { cookie: true }))
+  expect((await Promise.all([claim(next), claim(next)])).map((r) => r.status).sort()).toEqual([200, 403])
 })
 
 test("the app's pages run only the app's own scripts, never one an agent wrote under /v/", async () => {
