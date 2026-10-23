@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, type FocusEvent, type PointerEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
@@ -20,13 +20,12 @@ import { tmuxTarget } from '../lib/groups.ts'
 const samePane = (a: { r: PaneRef; showHost?: boolean }, b: { r: PaneRef; showHost?: boolean }) =>
   a.r.pane === b.r.pane && a.r.window === b.r.window && a.r.host.config === b.r.host.config && a.r.host.status === b.r.host.status && a.r.host.hostname === b.r.host.hostname && a.showHost === b.showHost
 
-/** A session waiting on you, with its answers as buttons. */
-export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
+/** Answers a waiting agent: Sending… while the request runs, then Sent until the agent moves on. */
+function useAnswer(r: PaneRef) {
   const a = r.pane.agent!
-  const nav = useNavigate()
   const [busy, setBusy] = useState<number | null>(null)
   const [done, setDone] = useState(false)
-  // pressed, then sent, then the agent took it: the card leaves, with two short pulses, once
+  // pressed, then sent, then the agent took it: two short pulses, once
   const sent = useRef(false)
   useEffect(() => {
     if (!sent.current || a.state === 'waiting') return
@@ -39,7 +38,7 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
       await api.answer(r.host.config.id, r.pane.id, n)
       sent.current = true
       setDone(true)
-      // a card still here after a moment means the agent is still asking: show the choices again
+      // still asking after a moment: show the choices again
       setTimeout(() => setDone(false), 4000)
     } catch (e) {
       toast({ title: 'Could not answer', body: (e as Error).message, tone: 'error' })
@@ -47,56 +46,47 @@ export const NeedsYouCard = memo(function NeedsYouCard({ r }: { r: PaneRef }) {
       setBusy(null)
     }
   }
-  const opts = a.options ?? []
+  return { busy, done, answer }
+}
+
+/** A waiting session's answers, in the row where the card shows its model and cost, so the card keeps its size. */
+function Answers({ r }: { r: PaneRef }) {
+  const nav = useNavigate()
+  const { busy, done, answer } = useAnswer(r)
+  const opts = r.pane.agent!.options ?? []
+  if (done) return <span className="animate-fade-in flex items-center gap-1.5 font-sans text-[13px] text-fg-2"><Check className="size-4" /> Sent</span>
   return (
-    <div className="rounded-3xl border border-warn/35 bg-elev p-5 shadow-card">
-      <div className="flex items-center gap-3">
-        {/* the session's name opens its chat, as Open does */}
-        <Link to={paneHref(r.host.config.id, r.pane.id)} className="group/open -my-1 flex min-w-0 flex-1 items-center gap-3 py-1">
-          <AgentLogo kind={a.kind} size={30} />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[14.5px] font-semibold tracking-tight group-hover/open:underline group-hover/open:decoration-line-strong group-hover/open:underline-offset-4">{paneTitle(r)}</div>
-            <div className="truncate text-[12px] text-fg-3">
-              {AGENTS[a.kind].name} · {r.host.config.name} · {shortPath(r.pane.cwd, 28)}
-            </div>
-          </div>
-        </Link>
-        <Link to={paneHref(r.host.config.id, r.pane.id)} className="hidden shrink-0 items-center gap-1 text-[12.5px] text-fg-2 hover:text-fg sm:flex">
-          Open <ArrowRight className="size-3.5" />
-        </Link>
-      </div>
-      {a.waitingFor && <div className="mt-4 rounded-2xl border border-line bg-sunken px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed break-words text-fg">{a.waitingFor}</div>}
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {done ? (
-          <span className="animate-fade-in flex h-8 items-center gap-1.5 text-[13px] text-fg-2"><Check className="size-4" /> Sent</span>
-        ) : opts.length ? (
-          opts.map((o, i) => (
-            <button
-              key={o.n}
-              type="button"
-              disabled={busy !== null}
-              onClick={() => answer(o.n)}
-              className={clsx(
-                'press h-9 max-w-full truncate rounded-full px-4 text-[13px] font-medium disabled:opacity-50',
-                i === 0 ? 'bg-fg text-bg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
-              )}
-            >
-              {busy === o.n ? 'Sending…' : o.label}
-            </button>
-          ))
-        ) : (
-          <button type="button" onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="press h-9 rounded-full bg-fg px-4 text-[13px] font-medium text-bg hover:opacity-90">
-            Answer
+    <span className="pointer-events-auto relative flex min-w-0 flex-1 gap-1.5 overflow-hidden font-sans">
+      {opts.length ? (
+        opts.map((o, i) => (
+          <button
+            key={o.n}
+            type="button"
+            data-answer={i === 0 || undefined}
+            disabled={busy !== null}
+            onClick={() => answer(o.n)}
+            title={o.label}
+            className={clsx(
+              'press h-8 min-w-0 shrink truncate rounded-full px-3.5 text-[13px] font-medium disabled:opacity-50',
+              i === 0 ? 'shrink-0 bg-fg text-bg hover:opacity-90' : /^no\b/i.test(o.label) ? 'border border-line-strong text-danger hover:bg-danger-soft' : 'border border-line-strong hover:bg-hover',
+            )}
+          >
+            {busy === o.n ? 'Sending…' : o.label}
           </button>
-        )}
-      </div>
-    </div>
+        ))
+      ) : (
+        <button type="button" data-answer onClick={() => nav(paneHref(r.host.config.id, r.pane.id))} className="press h-8 shrink-0 rounded-full bg-fg px-3.5 text-[13px] font-medium text-bg hover:opacity-90">
+          Answer
+        </button>
+      )}
+    </span>
   )
-}, samePane)
+}
 
 /**
  * An agent session as a card. The whole card opens it; ⋯ (shown on hover with a mouse, always on a
- * touch screen) and a long-press offer the actions that don't need the session open.
+ * touch screen) and a long-press offer the actions that don't need the session open. A session
+ * that asks something shows its answers in place and keeps its size, so nothing around it moves.
  */
 export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r: PaneRef; showHost?: boolean }) {
   const a = r.pane.agent!
@@ -115,7 +105,11 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
         context.onContextMenu(e)
       }}
       // a tap sinks the whole card a touch, as a button sinks under a press
-      className="group relative flex flex-col gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card transition-[color,background-color,border-color,transform] [-webkit-touch-callout:none] hover:border-line-strong active:scale-[0.99] sm:gap-4 sm:p-5">
+      data-waiting={a.state === 'waiting' || undefined}
+      className={clsx(
+        'group relative flex flex-col gap-3 rounded-3xl border bg-elev p-4 shadow-card transition-[color,background-color,border-color,transform] [-webkit-touch-callout:none] active:scale-[0.99] sm:gap-4 sm:p-5',
+        a.state === 'waiting' ? 'border-warn/35' : 'border-line hover:border-line-strong',
+      )}>
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
@@ -153,7 +147,11 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       <div className="pointer-events-none truncate text-[13.5px] text-fg-2">
         {a.state === 'working' ? a.activity ?? 'Working…' : a.state === 'waiting' ? a.waitingFor : a.background ? backgroundText(a.background) : `Active ${timeAgo(r.window.activity * 1000)}`}
       </div>
-      <div className="pointer-events-none mt-auto flex items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
+      <div className="pointer-events-none mt-auto flex h-[calc(2rem+0.875rem+1px)] items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
+        {a.state === 'waiting' && r.host.status === 'online' ? (
+          <Answers r={r} />
+        ) : (
+          <>
         <span className="truncate">{[st?.model, st?.effort].filter(Boolean).join(' · ') || ' '}</span>
         {st?.costUsd !== undefined && <span className="tabular shrink-0">{money(st.costUsd)}</span>}
         {pct !== undefined && (
@@ -161,6 +159,8 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
             <span className="tabular">{Math.round(pct)}%</span>
             <Meter value={pct} tone="auto" className="w-12" />
           </span>
+        )}
+          </>
         )}
       </div>
     </div>
@@ -326,16 +326,37 @@ export function activityLabel(e: ActivityEvent, activity: ActivityEvent[], hosts
   return pane.agent.state === 'waiting' && latest === e ? 'needs you' : 'answered'
 }
 
+/** How many events the feed shows. */
+const FEED_ROWS = 8
+
+/**
+ * The latest events, newest first. While the pointer or focus is on it the list holds still, and
+ * what arrived meanwhile waits behind a "new" button, so a click lands on the row it aimed at.
+ */
 export function ActivityFeed() {
-  const activity = useStore((s) => s.activity)
+  const live = useStore((s) => s.activity)
   const hosts = useStore((s) => s.hosts)
-  if (!activity.length) return null
+  const [held, setHeld] = useState<ActivityEvent[] | null>(null)
+  const activity = held ?? live
+  const fresh = held ? live.filter((e) => e.at > (held[0]?.at ?? 0)).length : 0
+  const hold = () => setHeld((h) => h ?? live)
+  // let go once neither the pointer nor the focus is on it
+  const leave = (e: PointerEvent<HTMLElement>) => !e.currentTarget.contains(document.activeElement) && setHeld(null)
+  const blur = (e: FocusEvent<HTMLElement>) => !e.currentTarget.contains(e.relatedTarget as Node | null) && !e.currentTarget.matches(':hover') && setHeld(null)
+  if (!live.length) return null
   return (
-    <section className="rounded-3xl border border-line bg-elev shadow-card p-5">
-      <h2 className="mb-4 text-[15px] font-semibold tracking-[-0.02em]">Recent activity</h2>
+    <section onPointerEnter={hold} onPointerLeave={leave} onFocus={hold} onBlur={blur} className="rounded-3xl border border-line bg-elev shadow-card p-5">
+      <h2 className="mb-4 flex h-6 items-center gap-2 text-[15px] font-semibold tracking-[-0.02em]">
+        Recent activity
+        {fresh > 0 && (
+          <button type="button" onClick={() => setHeld(live)} className="animate-fade-in ml-auto rounded-full border border-line px-2.5 font-mono text-[12px] leading-6 font-normal text-fg-2 hover:bg-hover">
+            {fresh} new
+          </button>
+        )}
+      </h2>
       <div className="space-y-3">
-        {activity.slice(0, 8).map((e) => (
-          <Link key={e.id} to={paneHref(e.host, e.pane)} className="flex gap-2.5">
+        {activity.slice(0, FEED_ROWS).map((e) => (
+          <Link key={e.id} to={paneHref(e.host, e.pane)} className="flex h-[2.4rem] gap-2.5">
             <AgentLogo kind={e.agent as any} size={18} />
             <div className="min-w-0">
               <div className="truncate text-[13px]">

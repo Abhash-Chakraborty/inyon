@@ -1,24 +1,23 @@
 ---
 title: The overview
 nav: Overview
-description: Every agent session on every machine in one place, with the ones that need you on top.
+description: Every agent session on every machine in one place, each in a spot that doesn't move, answered from its own card.
 ---
 
-The overview is the first screen. It lists every agent running in tmux on every machine you've added, sorted so whatever needs you is at the top.
+The overview is the first screen. It lists every agent running in tmux on every machine you've added. Each session keeps its place while agents work and ask, so a click lands where you aimed.
 
 ![Three phones: the overview with a Codex prompt waiting for an answer, a Claude Code session as a chat with its to-do list, and the Machines page with four machines, one offline](../../docs/phones-light.webp)
 
 ## What's on it
 
-- **The status line.** How many machines, agent sessions and tmux panes there are, and what's happening: *2 sessions need you*, *1 session is working*, *1 working, 1 in the background*, or *All quiet. Every session is idle.* Work left running behind an idle prompt (a subagent, a shell) is counted, so it never says *All quiet* while something still runs.
-- **Needs you.** Every session waiting on a prompt, as a card with the agent's question and its options as buttons. Tap an option to answer without opening the session. The first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on. A Claude Code session you let go on counts as working until it finishes its turn. Tap the session's name to open its chat instead.
-- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now (or when it was last active), the model and effort, the cost so far and how full its context is. A session is **Working**, **Needs you** or **Idle**. One whose turn ended with subagents or shells still running is **Background** instead, and the card says what's running: *1 shell and 1 agent running in the background*. The *Working* filter includes it. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one. When every session is under **Needs you**, this list is left out.
+- **The status line.** How many machines, agent sessions and tmux panes there are, and what's happening: *2 sessions need you*, *1 session is working*, *1 working, 1 in the background*, or *All quiet. Every session is idle.* Work left running behind an idle prompt (a subagent, a shell) is counted, so it never says *All quiet* while something still runs. When a session needs you, **Show** scrolls to it and puts the focus on its first answer; press it again for the next one (from 0.20.3).
+- **Agent sessions.** A card per session: the agent, its state, the title, the machine and tmux target, the folder, what it's doing now (or when it was last active), the model and effort, the cost so far and how full its context is. A session is **Working**, **Needs you** or **Idle**. One whose turn ended with subagents or shells still running is **Background** instead, and the card says what's running: *1 shell and 1 agent running in the background*. The *Working* filter includes it. With more than three, an *All · Working · Idle* filter appears; with more than six, a search box. Sessions group by machine when you have more than one. A session waiting on a prompt shows the agent's question on its card and the options as buttons where the model and cost were, so the card keeps its size. Tap an option to answer without opening the session: the first option is the filled one, and the card shows **Sending…**, then **Sent** once the agent has moved on. A Claude Code session you let go on counts as working until it finishes its turn. Until 0.20.2 these sessions moved to a **Needs you** section at the top.
 - **Plan limits.** Each machine's 5-hour and weekly limits per agent, with when they reset.
-- **Recent activity.** The last few times an agent needed you or finished. A question reads *needs you* only while the session is still waiting on it, then *answered*.
+- **Recent activity.** The last few times an agent needed you or finished. A question reads *needs you* only while the session is still waiting on it, then *answered*. While the pointer or keyboard focus is on the list it holds still, and anything newer waits behind a **1 new** button (from 0.20.3).
 - **Machines.** Each machine with its agents and tmux state, and on a wide screen its **Response** time: how long the machine took to report its sessions at the last check. That includes running the check on the machine, so it isn't a network ping; a Windows machine often takes over a second. **Manage →** opens the list.
 - **The integration.** A machine with Claude Code but without Inyon's integration gets a card with **Turn on** (or **Update** for an older one). It shows a spinner until the machine has answered, then says whether it worked.
 
-Sessions waiting on you come first, then working ones, then idle ones, newest activity first within each. Online machines come before offline ones.
+Machines keep the order you added them in, and sessions the order tmux started them in. Nothing re-sorts when an agent starts working, asks something or goes quiet; only its state changes. Until 0.20.2 the list put waiting sessions first and then sorted by activity, so cards moved while you aimed at them. The sidebar's session list keeps the same order.
 
 ## Right-click menus
 

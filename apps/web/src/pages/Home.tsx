@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, Plug, Plus, Search, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { agentPanes } from '../lib/overview.ts'
-import { ActivityFeed, LimitsCard, MachinesTable, NeedsYouCard, SessionCard } from '../components/Overview.tsx'
+import { ActivityFeed, LimitsCard, MachinesTable, SessionCard } from '../components/Overview.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { Button, Empty, Segmented, SectionLabel } from '../components/ui/primitives.tsx'
 import { api } from '../lib/api.ts'
@@ -55,9 +55,10 @@ export function Home() {
       saveFolded(n)
       return n
     })
-  // the cards below "Needs you", grouped by machine; a search looks through every machine
+  // every agent session, grouped by machine, each in a place that doesn't change; one that asks
+  // something answers from its own card. A search looks through every machine.
   const groups = useMemo(
-    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && r.pane.agent.state !== 'waiting' && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
+    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
     [hosts, q, filter],
   )
   const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
@@ -160,7 +161,8 @@ export function Home() {
               {isHosted() && <InstallCard />}
               <div>
               <h1 className="text-[1.75rem] leading-[0.95] font-semibold tracking-[-0.04em] md:text-[44px] md:tracking-[-0.045em]">Overview</h1>
-              <p className="mt-1.5 truncate text-[14px] text-fg-2 md:mt-3 md:text-[15px]">
+              <p className="mt-1.5 flex items-center gap-2 text-[14px] text-fg-2 md:mt-3 md:text-[15px]">
+                <span className="min-w-0 truncate">
                 {waiting.length
                   ? `${waiting.length} session${waiting.length > 1 ? 's need' : ' needs'} you.`
                   : inFront && behind
@@ -172,6 +174,12 @@ export function Home() {
                     : panes.length
                       ? 'All quiet. Every session is idle.'
                       : 'No agents are running right now.'}
+                </span>
+                {waiting.length > 0 && (
+                  <button type="button" onClick={showNext} className="-my-1 shrink-0 rounded-full px-2 py-1 text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg">
+                    Show
+                  </button>
+                )}
               </p>
               </div>
 
@@ -194,19 +202,6 @@ export function Home() {
                 )
               })}
 
-              {waiting.length > 0 && (
-                <section>
-                  <SectionLabel>
-                    <span className="flex items-center gap-2">
-                      <span className="size-1.5 rounded-full bg-warn" /> Needs you
-                    </span>
-                  </SectionLabel>
-                  <AnimatedList className="grid grid-cols-1 gap-3" items={waiting.map((r) => ({ key: r.host.config.id + r.pane.id, node: <NeedsYouCard r={r} /> }))} />
-                </section>
-              )}
-
-              {/* every session is under Needs you: an empty list here would only repeat that */}
-              {!(waiting.length === panes.length && panes.length > 0 && filter === 'all' && !q) && (
               <section>
                 <SectionLabel
                   right={
@@ -267,7 +262,6 @@ export function Home() {
                   </div>
                 )}
               </section>
-              )}
 
               <section>
                 <SectionLabel right={<Link to="/machines" className="-my-2 px-1 py-2 text-[13px] text-fg-2 hover:text-fg">Manage →</Link>}>{isPhone() ? 'Computers' : 'Machines'}</SectionLabel>
@@ -284,6 +278,18 @@ export function Home() {
       </div>
     </PullRefresh>
   )
+}
+
+/** Brings the next session that needs you into view, in the order they're shown; each press moves on. */
+let shown = -1
+function showNext() {
+  // a card in a folded machine group isn't on screen
+  const cards = [...document.querySelectorAll<HTMLElement>('[data-waiting]')].filter((c) => !c.closest('[inert]'))
+  if (!cards.length) return
+  shown = (shown + 1) % cards.length
+  const card = cards[shown]!
+  card.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  card.querySelector<HTMLElement>('[data-answer]')?.focus({ preventScroll: true })
 }
 
 const PHONE_CARD_KEY = 'inyon.phoneCard.dismissed'

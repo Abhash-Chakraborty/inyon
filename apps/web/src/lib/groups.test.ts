@@ -27,23 +27,35 @@ describe('grouping sessions', () => {
   test('machine, then tmux session, then panes in window order', () => {
     const [g] = groupPanes([machine('box')])
     expect(g.host.config.id).toBe('box')
-    // the most recently active session first
-    expect(g.sessions.map((s) => s.session.name)).toEqual(['web', 'api'])
-    expect(g.sessions[1].panes.map((r) => r.pane.id)).toEqual(['%1', '%2'])
+    // in the order tmux started them, though "web" was active more recently
+    expect(g.sessions.map((s) => s.session.name)).toEqual(['api', 'web'])
+    expect(g.sessions[0].panes.map((r) => r.pane.id)).toEqual(['%1', '%2'])
     expect(g.panes).toBe(4)
   })
 
-  test('a session with an agent waiting on you comes first, and counts it', () => {
+  // rows moved up and down as agents worked and asked, so clicks landed on the wrong session
+  test('nothing moves when an agent asks something, works or goes quiet', () => {
+    const order = (h: HostState) => groupPanes([h])[0]!.sessions.map((s) => s.session.name)
     const h = machine('box')
-    h.sessions[0].windows[0].panes[0].agent!.state = 'waiting'
+    expect(order(h)).toEqual(['api', 'web'])
+    h.sessions[1].windows[0].panes[0].agent!.state = 'waiting'
+    h.sessions[1].windows[0].activity = 900
     const [g] = groupPanes([h])
-    expect(g.sessions.map((s) => s.session.name)).toEqual(['api', 'web'])
-    expect([g.waiting, g.sessions[0].waiting]).toEqual([1, 1])
+    expect(order(h)).toEqual(['api', 'web'])
+    expect([g.waiting, g.sessions[1].waiting]).toEqual([1, 1])
+    h.sessions[0].windows[0].panes[0].agent!.state = 'working'
+    h.sessions[0].windows[0].activity = 1000
+    expect(order(h)).toEqual(['api', 'web'])
   })
 
-  test('machines that answer come before the ones that don’t', () => {
+  test('sessions follow tmux\'s numbering, not their names; machines keep the order they were added in, online or not', () => {
+    const h = machine('box')
+    h.sessions.reverse()
+    h.sessions[0]!.id = '$10'
+    h.sessions[1]!.id = '$9'
+    expect(groupPanes([h])[0]!.sessions.map((s) => s.session.id)).toEqual(['$9', '$10'])
     const groups = groupPanes([machine('old', { status: 'error' }), machine('new')])
-    expect(groups.map((g) => g.host.config.id)).toEqual(['new', 'old'])
+    expect(groups.map((g) => g.host.config.id)).toEqual(['old', 'new'])
   })
 
   test('a search looks through every machine and session, by title, session, machine or folder', () => {

@@ -1,9 +1,9 @@
 import { beforeEach, expect, test } from 'bun:test'
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { fireEvent } from '@testing-library/react'
-import { MachinesTable, NeedsYouCard, SessionCard, activityLabel } from './Overview.tsx'
+import { ActivityFeed, MachinesTable, SessionCard, activityLabel } from './Overview.tsx'
 import { ContextMenuHost } from './ui/ContextMenu.tsx'
 import { ActionSheets } from './menus.tsx'
 import { useStore } from '../lib/store.ts'
@@ -36,7 +36,7 @@ test('an answer reads Sending…, then Sent', async () => {
   const r = allPanes(useStore.getState().hosts)[0]!
   await render(
     <MemoryRouter>
-      <NeedsYouCard r={r} />
+      <SessionCard r={r} />
     </MemoryRouter>,
   )
   await userEvent.click(screen.getByRole('button', { name: 'Yes' }))
@@ -46,6 +46,27 @@ test('an answer reads Sending…, then Sent', async () => {
   await flush()
   expect(screen.getByText('Sent')).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'No' })).toBeNull()
+})
+
+// rows of Recent activity slid down under the pointer as new events came in
+test('recent activity holds still while the pointer is on it, and offers what came in meanwhile', async () => {
+  const ev = (id: number, title: string) => ({ id, at: id, host: 'box', pane: '%1', kind: 'done' as const, title, body: '' })
+  useStore.setState({ activity: [ev(2, 'Second'), ev(1, 'First')] })
+  await render(
+    <MemoryRouter>
+      <ActivityFeed />
+    </MemoryRouter>,
+  )
+  const rows = () => [...document.querySelectorAll('section a .font-medium')].map((e) => e.textContent)
+  const feed = screen.getByText('Recent activity').closest('section')!
+  fireEvent.pointerEnter(feed)
+  await act(() => useStore.setState({ activity: [ev(3, 'Third'), ev(2, 'Second'), ev(1, 'First')] }))
+  expect(rows()).toEqual(['Second', 'First'])
+  await userEvent.click(screen.getByRole('button', { name: '1 new' }))
+  expect(rows()).toEqual(['Third', 'Second', 'First'])
+  fireEvent.pointerLeave(feed)
+  await act(() => useStore.setState({ activity: [ev(4, 'Fourth'), ev(3, 'Third'), ev(2, 'Second'), ev(1, 'First')] }))
+  expect(rows()[0]).toBe('Fourth')
 })
 
 test('a session card and a machine offer the same actions on a right-click as in their menus', async () => {
