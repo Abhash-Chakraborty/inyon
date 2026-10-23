@@ -41,6 +41,7 @@ What the sandbox doesn't stop:
 
 - Only a browser that signed in within the last 10 minutes can show a pairing code. A code works once, for 10 minutes, and five wrong tries cancel it.
 - The phone gets its own random token; the hub stores only its hash. Its WebSocket connections use a single-use ticket that lasts 30 seconds, so the token never travels in a URL.
+- The code carries the hub's ID, and from 0.20.2 its certificate's SHA-256 when the hub serves HTTPS itself. The app shows both before it pairs, next to the hub's address, and refuses a hub that answers with another ID.
 - A paired phone can use the hub's machines but not its account: it can't change the password or pair or forget other phones.
 - **Settings → Paired devices → Forget** cuts a phone off at once. Changing the hub's password doesn't unpair phones; forget them separately.
 
@@ -71,13 +72,18 @@ A paired phone gets a shell on the computer as the user running `inyon`, the sam
 The app is its own hub, so whoever holds the unlocked phone can reach your computers and servers, as with a terminal app that has your keys.
 
 - **Host keys are pinned.** The app shows a server's fingerprint before the first sign-in and stores the one you trust. A different key later stops the connection until you confirm it.
-- **Secrets stay on the phone.** The app's ed25519 key, passwords and pasted keys live in Android's encrypted storage. Android backups are off for the app.
+- **Secrets stay on the phone.** The app's ed25519 key, passwords, pasted keys and, from 0.20.2, each paired hub's token live in Android's encrypted storage, under a key in the phone's Keystore. Backups and moving to a new phone (device transfer, Android 12 and later) copy none of the app's data.
+- **Plain http only where it's private.** From 0.20.2 the app sends nothing to a plain `http://` hub unless it's this phone, a Tailscale or NetBird address, or a name that points only there, the same rule as `inyon join`. A NetBird name may also have an IPv6 address, which NetBird picks at random in a unique-local range (`fd…`), so one is accepted beside the name's `100.x` address and refused alone. Android can't allow cleartext by address range, so the app checks each hub itself before it sends anything. A name is looked up on every new connection; a name that answers differently to the app than to the WebView a moment later isn't caught.
+- **A pairing code shows where it leads.** From 0.20.2 the app shows a hub's address and ID, and a computer's ID, before it pairs, and pairs only on a tap. The hub's web app and `inyon pair` show the same ID under their code.
+- **Only Inyon's own notifications open a screen.** The app opens a path from a notification only when the tap carries a random value this install made, so another app on the phone can't send it to a pairing screen.
+- **Agent pages can't reach the app.** A page under `/v/` shown in the app's sandboxed frame sees no native object: Capacitor's bridge answers only the app's own top frame, and from 0.20.2 the app removes the two JavaScript interfaces Capacitor adds to every frame. On a WebView too old for that (before WebMessageListener), the app opens pages and previews in the browser instead of a frame. The release build checks this on an emulator.
 - **Nothing in between.** SSH goes straight from the phone to the server.
 
 ## Notifications
 
 - **A hub** sends Web Push to the browsers registered with it.
 - **A computer** sending to a [browser copy](browser-copy.md) keeps that browser's push subscription in `~/.inyon/node/push.json`, readable only by you. Each message is encrypted to that browser (RFC 8291), so the push service (Google, Mozilla or Apple) sees only ciphertext. `inyon forget` drops that phone's subscriptions.
+- **A tap opens Inyon, and only Inyon.** From 0.20.2 a notification opens a screen of the Inyon it came from; a link to another site or another path in the message is ignored and the tap opens Inyon's home.
 
 ## What Inyon changes on a machine
 

@@ -13,13 +13,25 @@ use tokio::sync::mpsc;
 use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
 
+/// The TLS config the hub serves, and the certificate's SHA-256 recorded for pairing links.
 pub fn config(cert: &str, key: &str) -> Result<Arc<rustls::ServerConfig>, String> {
+    let (c, sha256) = load(cert, key)?;
+    *SERVED.lock().unwrap_or_else(|e| e.into_inner()) = Some(sha256);
+    Ok(c)
+}
+
+/// The config, and the SHA-256 of the certificate in it (not of the file, which may change).
+fn load(cert: &str, key: &str) -> Result<(Arc<rustls::ServerConfig>, String), String> {
     let certs: Vec<CertificateDer<'static>> =
         CertificateDer::pem_file_iter(cert).map_err(|e| format!("{cert}: {e}"))?.collect::<Result<_, _>>().map_err(|e| format!("{cert}: {e}"))?;
     if certs.is_empty() {
         return Err(format!("{cert} has no certificate"));
     }
     let key = PrivateKeyDer::from_pem_file(key).map_err(|e| format!("{key}: {e}"))?;
+    let sha256 = {
+        use sha2::{Digest, Sha256};
+        crate::http::hex(&Sha256::digest(&certs[0]))
+    };
     let mut c = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
@@ -27,8 +39,11 @@ pub fn config(cert: &str, key: &str) -> Result<Arc<rustls::ServerConfig>, String
         .with_single_cert(certs, key)
         .map_err(|e| e.to_string())?;
     c.alpn_protocols = vec![b"http/1.1".to_vec()];
-    Ok(Arc::new(c))
+    Ok((Arc::new(c), sha256))
 }
+
+/// The SHA-256 of the certificate in the TLS config the hub serves, set with that config.
+static SERVED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 pub struct TlsListener {
     rx: mpsc::Receiver<(TlsStream<TcpStream>, SocketAddr)>,
@@ -102,6 +117,21 @@ fn pem_of(der: &[u8]) -> String {
 /// The first certificate in TLS_CERT, as PEM (nothing else the file may hold).
 pub fn served_pem(file: &str) -> Option<String> {
     first_cert(file).map(|c| pem_of(&c))
+}
+
+/// The SHA-256 of the certificate the hub serves itself (the first in TLS_CERT, as DER), lowercase
+/// hex. None on plain http, and behind a proxy, which serves its own. Taken from the certificate
+/// loaded with the TLS config, not the file now, so a file replaced while the hub runs can't put a
+/// certificate it doesn't serve in a link. Phone pairing links and companion apps (contract 1.1)
+/// carry it.
+pub fn served_sha256() -> Option<String> {
+    SERVED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// The SHA-256 of the first certificate in a PEM file, lowercase hex.
+pub fn sha256_of(file: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    first_cert(file).map(|der| crate::http::hex(&Sha256::digest(&der)))
 }
 
 /// The hub's certificate when it made it itself (setup's LAN choice): a machine can't check it
@@ -184,6 +214,14 @@ openssl x509 -in self.pem -outform der > self.der
         assert!(self_signed(&path("leaf.pem")).is_none());
         assert!(served_pem(&path("leaf.pem")).is_some());
         assert!(self_signed("").is_none() && served_pem(&path("nothing.pem")).is_none());
+        // what phones and companion apps are shown: any served certificate's SHA-256, an authority's too
+        assert_eq!(sha256_of(&path("self.pem")).as_deref(), Some(own.sha256.as_str()));
+        assert_eq!(sha256_of(&path("leaf.pem")).map(|s| s.len()), Some(64));
+        assert!(sha256_of(&path("nothing.pem")).is_none());
+        // links carry the certificate the hub loaded, taken from the config rather than the file
+        // (load, not config, so other tests never see a fingerprint in SERVED)
+        let (_, loaded) = load(&path("self.pem"), &path("self.key")).expect("a TLS config");
+        assert_eq!(loaded, own.sha256);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

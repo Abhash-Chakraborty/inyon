@@ -146,6 +146,15 @@ pub const PAIR_EXPIRED: &str = "The pairing code expired before the tunnel came 
 /// Under a code that works on the same network or VPN while the tunnel starts.
 pub const TUNNEL_PENDING: &str = "The tunnel is still starting, so for now this code works on the same network or VPN. It's shown again once the tunnel is up.";
 
+/// The first twelve characters of this computer's id (its public key) from its pairing link, in
+/// groups of four, as the phone shows them before it pairs: "ybnd rfg8 ejkm".
+pub fn computer_id(link: &str) -> Option<String> {
+    let q = link.split_once('?')?.1;
+    let id = q.split('&').find_map(|kv| kv.strip_prefix("m="))?;
+    let id: String = id.chars().take(12).collect();
+    (id.len() == 12 && id.chars().all(|c| c.is_ascii_alphanumeric())).then(|| format!("{} {} {}", &id[..4], &id[4..8], &id[8..]))
+}
+
 /// The pairing code as the terminal shows it, drawn from one of `pair --json`'s answers.
 pub fn render_pair(v: &Value) -> String {
     let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -175,6 +184,9 @@ pub fn render_pair(v: &Value) -> String {
         let (c, d) = code.split_at(code.len().min(3));
         out.push_str(&format!("\nCan't scan it? Choose \"Type a code\" in the app and enter\n\n    ID    {a}-{b}\n    Code  {c} {d}\n\n"));
     }
+    if let Some(id) = computer_id(&text("link")) {
+        out.push_str(&format!("\nThis computer's ID is {id}. The app shows it before it pairs: pair only if they match.\n"));
+    }
     out.push_str(&format!("\nOr paste this link into the app:\n{}\n\n", text("link")));
     if waiting {
         out.push_str(&format!("{TUNNEL_PENDING}\n\n"));
@@ -190,6 +202,16 @@ pub fn render_pair(v: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_terminal_shows_the_computer_id_the_phone_shows() {
+        let link = "inyon://pair?m=ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u&s=secret&n=box";
+        assert_eq!(computer_id(link).as_deref(), Some("ybnd rfg8 ejkm"));
+        assert_eq!(computer_id("inyon://pair?n=box"), None);
+        assert_eq!(computer_id("inyon://pair?m=short"), None);
+        let shown = render_pair(&json!({ "link": link, "qr": "https://web/#pair?m=x", "urls": ["wss://x"], "relays": [], "service": true }));
+        assert!(shown.contains("This computer's ID is ybnd rfg8 ejkm."), "{shown}");
+    }
 
     #[test]
     fn the_pairing_answer_carries_the_short_code_only_once_published() {

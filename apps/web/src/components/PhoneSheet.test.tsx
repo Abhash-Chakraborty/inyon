@@ -21,6 +21,14 @@ test('shows the code as the app expects it, with the hub address', async () => {
   expect(api.phonePair).toHaveBeenCalledWith(location.origin)
 })
 
+test("shows the hub's ID and certificate the phone will show before it pairs", async () => {
+  api.phonePair.mockImplementation(async () => ({ ...code, link: `${code.link}&h=3f9c1a7e2b6d4c80&f=${'cd'.repeat(32)}` }))
+  await render(<PhoneSheet open onClose={() => {}} />)
+  await flush()
+  expect(screen.getByText('3f9c 1a7e 2b6d 4c80')).toBeTruthy()
+  expect(screen.getByText('cdcd cdcd cdcd cdcd')).toBeTruthy()
+})
+
 test('an old sign-in asks for the password, then shows the code', async () => {
   api.phonePair.mockImplementationOnce(async () => {
     throw new ApiError(403, 'Sign in again to pair a phone.')

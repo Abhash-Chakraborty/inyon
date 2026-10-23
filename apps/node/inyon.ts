@@ -31,7 +31,7 @@ import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
 import { attemptAfter, backoff, INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
-import { checkName, plainBefore020, plainHost, plainRefusal } from './hub.ts'
+import { checkName, checkNameNow, plainBefore020, plainHost, plainRefusal } from './hub.ts'
 import { pinFor, tunnel } from './pin.ts'
 import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
@@ -76,8 +76,7 @@ async function strictRefusal(url: URL): Promise<string> {
   const p = plainHost(url)
   if (p === 'refused') return plainRefusal(url.hostname)
   if (p === 'ok') return ''
-  const c = await checkName(url.hostname)
-  return c && 'why' in c ? c.why : ''
+  return (await checkNameNow(url.hostname)) ?? ''
 }
 
 /**

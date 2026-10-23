@@ -1,5 +1,6 @@
-import { expect, test } from 'bun:test'
-import { checkName, companionCodeMessage, formatCompanionCode, plainBefore020, plainHost, plainHttpIp, plainRefusal, setupCodeMessage } from './hub.ts'
+import { expect, spyOn, test } from 'bun:test'
+import dns from 'node:dns/promises'
+import { checkName, checkNameNow, notPlain, companionCodeMessage, formatCompanionCode, plainBefore020, plainHost, plainHttpIp, plainRefusal, setupCodeMessage } from './hub.ts'
 
 const url = 'http://127.0.0.1:4777'
 
@@ -19,7 +20,29 @@ test('a LAN address or a public one is refused, and a name is looked up', () => 
   for (const h of ['hub.local', 'hub.lan', 'hub', 'hub.tail1234.ts.net', '10.0.0.1.attacker.com']) expect(plain(`http://${h}:4777`)).toBe('look up')
 })
 
-test('a name passes only when every address it has is allowed', async () => {
+test("a NetBird name with its own IPv6 passes, and a LAN or public address beside it doesn't", async () => {
+  expect(notPlain(['100.97.188.112', 'fd91:8fa2:3e51:2fcb:2587:6cbd:82:4402'])).toBeUndefined()
+  expect(notPlain(['fd7a:115c:a1e0::5'])).toBeUndefined()
+  expect(notPlain(['100.97.188.112', '192.168.1.5'])).toBe('192.168.1.5')
+  expect(notPlain(['100.97.188.112', '2001:db8::1'])).toBe('2001:db8::1')
+  expect(notPlain(['fd91:8fa2:3e51:2fcb::1'])).toBe('fd91:8fa2:3e51:2fcb::1')
+  expect(notPlain(['fd7a:115c:a1e0::5', 'fd91::1'])).toBe('fd91::1')
+  expect(await checkNameNow('localhost')).toBe('')
+  expect(await checkNameNow('192.168.1.2')).toContain('(192.168.1.2 is 192.168.1.2)')
+  expect(await checkNameNow('nothing.invalid')).toBeNull()
+  // the connection itself goes only to the allowed addresses, whatever else the name has
+  const answer = (...ips: string[]) => ips.map((address) => ({ address, family: address.includes(':') ? 6 : 4 }))
+  const lookup = spyOn(dns, 'lookup').mockResolvedValue(answer('192.168.1.5', '100.97.188.112', 'fd91::1') as never)
+  try {
+    expect(await checkName('peer.netbird.selfhosted')).toEqual({ addrs: ['100.97.188.112'] })
+    lookup.mockResolvedValue(answer('192.168.1.5', 'fd91::1') as never)
+    expect(await checkName('peer.netbird.selfhosted')).toEqual({ why: expect.stringContaining('(peer.netbird.selfhosted is 192.168.1.5)') })
+  } finally {
+    lookup.mockRestore()
+  }
+})
+
+test('a name is connected to only at its allowed addresses', async () => {
   // the addresses it was judged by, to connect to and nothing else
   const local = await checkName('localhost')
   expect(local && 'addrs' in local && local.addrs.length > 0 && local.addrs.every((a) => a === '::1' || a.startsWith('127.'))).toBe(true)

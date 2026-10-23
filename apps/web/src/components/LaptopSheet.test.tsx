@@ -88,6 +88,34 @@ test('a scanned code asks to pair with that computer by name, in one tap', async
   pairLaptop.mockRestore()
 })
 
+test("a scanned computer code shows the computer's ID and pairs only after a tap", async () => {
+  const user = userEvent.setup()
+  const pairLaptop = spyOn(api, 'pairLaptop').mockResolvedValue({ id: 'x' })
+  const link = 'inyon://pair?m=ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u&s=secretsecretsecret&n=build-box'
+  phone(async () => ({ text: link }))
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.click(screen.getByRole('button', { name: /Scan the code/ }))
+  await flush()
+  expect(screen.getByText('build-box')).toBeTruthy()
+  expect(screen.getByText('ybnd rfg8 ejkm')).toBeTruthy()
+  expect(pairLaptop).not.toHaveBeenCalled()
+  await user.click(screen.getByRole('button', { name: 'Pair' }))
+  await flush()
+  expect(pairLaptop).toHaveBeenCalledWith(link)
+  pairLaptop.mockRestore()
+})
+
+test("the QR code's own form, with the link in its hash, shows the computer's ID too", async () => {
+  const user = userEvent.setup()
+  const link = 'https://app.example/#pair?m=ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u&s=secretsecretsecret&n=build-box'
+  phone(async () => ({ text: link }))
+  await render(<LaptopSheet open onClose={() => {}} />)
+  await user.click(screen.getByRole('button', { name: /Scan the code/ }))
+  await flush()
+  expect(screen.getByText('build-box')).toBeTruthy()
+  expect(screen.getByText('ybnd rfg8 ejkm')).toBeTruthy()
+})
+
 test('a paste request from the scanner goes to the link box, which reads the clipboard', async () => {
   const user = userEvent.setup()
   phone(async () => ({ paste: true }), ' inyon://pair?m=abc \n')
@@ -96,7 +124,8 @@ test('a paste request from the scanner goes to the link box, which reads the cli
   const box = screen.getByRole('textbox', { name: 'Pairing link' }) as HTMLInputElement
   expect(document.activeElement).toBe(box)
   await user.click(screen.getByRole('button', { name: 'Paste' }))
-  expect(box.value).toBe('inyon://pair?m=abc')
+  // a pasted link is shown for a yes like a scanned one
+  expect(screen.getByRole('button', { name: 'Use a different code' })).toBeTruthy()
 })
 
 test('no camera access points to typing the ID and code', async () => {

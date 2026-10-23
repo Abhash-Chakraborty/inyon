@@ -523,6 +523,8 @@ export interface CompanionPairCode {
   code: string
   /** unix ms; five minutes after the code was made */
   expiresAt: number
+  /** from 1.1: the SHA-256 of the certificate the hub serves itself (its DER, lowercase hex), for the pairing link */
+  tlsFingerprint?: string
 }
 
 /** POST /api/companions/claim, sent with `X-Inyon-Contract`. */
@@ -541,6 +543,8 @@ export interface CompanionClaimResult {
   hubId: string
   scopes: CompanionScope[]
   contractVersion: number
+  /** from 1.1, when the hub serves HTTPS itself: the SHA-256 of its certificate's DER, lowercase hex, to pin */
+  tlsFingerprint?: string
 }
 
 /** GET /api/companions: a companion app that paired, as the hub lists it. */

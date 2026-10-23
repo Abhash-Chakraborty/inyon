@@ -1,7 +1,7 @@
 import { attemptAfter, backoff, type ClientMsg, type HostState, type ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
-import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, splitHostId, type PairedHub } from './hubs.ts'
+import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, PlainRefused, splitHostId, type PairedHub } from './hubs.ts'
 import { loadOverview } from './snapshot.ts'
 
 /** A hub message as this app sees it: the hub's machines carry the hub's id, and the message says where it came from. */
@@ -273,8 +273,9 @@ export class HubConn {
     } catch (err) {
       if (attempt !== this.attempts) return
       if (err instanceof HubRevoked) return this.revoked()
-      // a hub that can't be reached at all is as gone as one whose connection dropped
-      this.offline()
+      // a hub that can't be reached at all is as gone as one whose connection dropped; one the
+      // app won't use plain http with says why on its machines
+      this.offline(err instanceof PlainRefused ? err.message : undefined)
       return this.later()
     }
     if (this.stopped || attempt !== this.attempts) return
@@ -335,9 +336,9 @@ export class HubConn {
   }
 
   /** The hub's machines, as last seen, shown as connecting while the hub itself is out of reach. */
-  private offline() {
+  private offline(why?: string) {
     if (!this.last.length) return
-    const error = this.heard ? `Reconnecting to ${this.hub.name}` : `Connecting to ${this.hub.name}…`
+    const error = why ?? (this.heard ? `Reconnecting to ${this.hub.name}` : `Connecting to ${this.hub.name}…`)
     this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error })), source: this.source })
   }
 

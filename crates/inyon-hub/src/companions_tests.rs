@@ -58,6 +58,8 @@ fn a_claim_works_once_in_any_case_and_its_token_is_kept_as_a_hash() {
     assert_eq!(body["hubId"], json!(crate::phones::hub_id()));
     assert_eq!(body["scopes"], json!(["overview", "chat", "answer", "send"]));
     assert_eq!(body["contractVersion"], json!(1));
+    // plain http: no certificate to pin
+    assert!(body.get("tlsFingerprint").is_none());
     let c = companion_for(&as_companion_req(&token, None)).unwrap();
     assert_eq!((c.name.as_str(), c.app.as_deref()), ("Legato on abhash-laptop", Some("Legato for Windows")));
     assert_ne!(c.token_hash, token);
@@ -269,4 +271,11 @@ fn removing_a_companion_closes_its_connections_only() {
     assert!(revoke_companion(&a.id));
     assert_eq!(*closed.borrow(), vec![("a".to_owned(), 4001, "Companion removed".to_owned())]);
     assert!(revoke_companion(&b.id));
+}
+
+#[test]
+fn contract_1_1_adds_the_served_certificate_to_the_code_and_the_claim() {
+    let fp = "cd".repeat(32);
+    assert_eq!(with_tls(json!({ "code": "K7M2QX" }), Some(fp.clone())), json!({ "code": "K7M2QX", "tlsFingerprint": fp }));
+    assert_eq!(with_tls(json!({ "code": "K7M2QX" }), None), json!({ "code": "K7M2QX" }));
 }

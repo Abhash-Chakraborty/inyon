@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, CircleCheck, Copy, Mic, Minus, RefreshCw } from 'lucide-react'
+import { Check, CircleCheck, Copy, Link2, Mic, Minus, RefreshCw } from 'lucide-react'
 import type { PairedCompanion } from '@inyon/protocol'
 import { api, ApiError } from '../lib/api.ts'
 import { hubOrigin } from '../lib/hub.ts'
@@ -7,11 +7,19 @@ import { toast } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { Button, Field, Pulse, Sheet, Waiting, inputClass } from './ui/primitives.tsx'
 
-type Code = { code: string; expiresAt: number }
+type Code = { code: string; expiresAt: number; tlsFingerprint?: string }
 
 /** What a companion may do under contract 1, as the paired summary and the details sheet say it. */
 export const COMPANION_CAN = ['Reads the session overview and the chats you open in it', 'Answers prompts and sends text to a session'] as const
 export const COMPANION_CANT = "Can't open terminals, files or settings"
+
+/**
+ * The code, the hub's address and (when the hub serves HTTPS itself) its certificate's SHA-256 in
+ * one string, for an app that takes a pasted link: it can pin the certificate before it sends the
+ * code. Contract 1.1: inyon://companion?u=<hub origin>&c=<code>&f=<sha256 hex>.
+ */
+export const companionLink = (origin: string, code: string, tlsFingerprint?: string) =>
+  'inyon://companion?' + new URLSearchParams({ u: origin, c: code, ...(tlsFingerprint ? { f: tlsFingerprint } : {}) })
 
 /** 5:00, 0:42 */
 export const mmss = (ms: number) => {
@@ -121,6 +129,7 @@ export function CompanionSheet({ open, onClose, onPaired }: { open: boolean; onC
 
   const address = hubOrigin()
   const copyAddress = () => copyText(address).then((ok) => ok && toast({ title: 'Hub address copied', tone: 'success' }))
+  const copyLink = () => code && copyText(companionLink(address, code.code, code.tlsFingerprint)).then((ok) => ok && toast({ title: 'Pairing link copied', body: 'It works once, like the code.', tone: 'success' }))
   const footer =
     code && !needPassword ? (
       <div className="flex items-center justify-end gap-2">
@@ -186,6 +195,11 @@ export function CompanionSheet({ open, onClose, onPaired }: { open: boolean; onC
               <Copy className="size-3.5" />
             </button>
           </div>
+          {!paired && (
+            <button type="button" onClick={copyLink} className="press mx-auto flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12.5px] text-fg-3 hover:bg-hover hover:text-fg">
+              <Link2 className="size-3.5" /> Copy pairing link
+            </button>
+          )}
           {paired ? (
             <div className="rounded-2xl border border-line bg-elev px-4 py-3" role="status">
               <div className="flex items-center gap-2 text-[14px] font-medium">

@@ -16,6 +16,12 @@ The first half of this page is for pairing one. The second half is the contract,
 
 The code works once, for 5 minutes, and the sheet makes a new one when it runs out. **New code** ends the old one straight away.
 
+From 0.20.2 **Copy pairing link** copies the hub's address, the code and, when the hub serves HTTPS itself, its certificate's fingerprint as one link, for an app that takes a pasted link instead of two boxes:
+
+```text
+inyon://companion?u=https%3A%2F%2Fhub.example%3A4777&c=K7M2QX&f=5e0c…64 hex digits
+```
+
 On the hub's computer you can make a code without a browser:
 
 ```sh
@@ -24,7 +30,7 @@ inyon hub companion-code
 # Type it into the companion app (Legato: Settings > Connections > Inyon) with this hub's address, http://100.64.0.5:4777. It works once, for 5 minutes.
 ```
 
-A hub that listens only on `127.0.0.1`, behind a proxy or `tailscale serve`, doesn't know its outside address, so the command then says to use the address you open the hub at. With `--json` it prints `code`, `expiresAt`, `url` and `message`.
+A hub that listens only on `127.0.0.1`, behind a proxy or `tailscale serve`, doesn't know its outside address, so the command then says to use the address you open the hub at. With `--json` it prints `code`, `expiresAt`, `url` and `message`, and from 0.20.2 `tlsFingerprint` when the hub serves HTTPS itself.
 
 ## What a companion can do
 
@@ -42,6 +48,8 @@ Interrupting, keys, the terminal, uploads, files, model and mode switches, past 
 ## The contract, version 1
 
 Everything below is version 1. Changes within a version only add things: a new field, a new frame, a new `reason`. Ignore what you don't know.
+
+Version 1.1, from 0.20.2, adds `tlsFingerprint` to the claim and the code, the pairing link, and `"reason": "revoked"` on a token the hub doesn't know. The header still says `1`.
 
 ### Every request
 
@@ -62,13 +70,14 @@ The claim carries `X-Inyon-Contract` too. It needs no token, and one sent along 
 { "error": "This hub doesn't support companion contract 2. It supports 1.", "reason": "contract", "supported": [1] }
 ```
 
-A token the hub doesn't know, or one that was removed, gets `401 {"error":"Not signed in"}`. Pair again.
+A token the hub doesn't know, or one that was removed, gets `401 {"error":"Not signed in","reason":"revoked"}` (hubs before 0.20.2 leave out the `reason`). Forget the token and pair again only on that answer: a `401` or `403` without it came from something in between, such as a Wi-Fi sign-in page or a proxy.
 
 Errors are JSON with an `error` written for people, which you can show as it is, and a `reason` to act on:
 
 | `reason` | Means |
 |---|---|
 | `contract` | the `X-Inyon-Contract` header is missing or names a version the hub doesn't speak |
+| `revoked` | the hub doesn't know the token, or it was removed; pair again |
 | `scope` | companions can't do this |
 | `bad-code` | the pairing code is wrong, used or expired |
 | `rate-limit` | too many wrong codes; wait a minute |
@@ -96,6 +105,12 @@ The code may come in any case, with or without a space or dash. `name` is what I
 
 ```json
 { "token": "Jb2y…43 characters", "hubId": "3f9c1a7e2b6d4c80", "scopes": ["overview", "chat", "answer", "send"], "contractVersion": 1 }
+```
+
+When the hub serves HTTPS itself, the answer also has `tlsFingerprint`: the SHA-256 of its certificate (the leaf, in DER form) as 64 lowercase hex digits, the same value as `f` in the pairing link. Pin it, and refuse the hub if the certificate ever changes without a new pairing. It's left out on plain http and behind a proxy or `tailscale serve`, where the hub doesn't hold the certificate.
+
+```json
+{ "token": "Jb2y…43 characters", "hubId": "3f9c1a7e2b6d4c80", "scopes": ["overview", "chat", "answer", "send"], "contractVersion": 1, "tlsFingerprint": "5e0c…64 hex digits" }
 ```
 
 Keep the token somewhere safe; the hub keeps only its hash. A wrong, used or expired code gets `401`:

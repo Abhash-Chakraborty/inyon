@@ -5,6 +5,7 @@
  */
 import { backHandled } from './back.ts'
 import { appHref } from './base.ts'
+import { useSyncExternalStore } from 'react'
 
 type Plugin = Record<string, (...args: any[]) => Promise<any>>
 
@@ -27,6 +28,29 @@ const openUrl = (url: string | undefined) => {
   // a hub's code, scanned with the camera: pair this phone with the hub
   else if (url && /^inyon:\/\/hub\?/.test(url)) go(`/machines?hub=${encodeURIComponent(url)}`)
 }
+
+// whether the Android WebView keeps Capacitor's bridge to the app's own top frame; unknown until
+// the app answers, and treated as no until then
+let isolated: boolean | undefined
+const isolationHeard = new Set<() => void>()
+const setIsolated = (v: boolean) => {
+  isolated = v
+  for (const fn of isolationHeard) fn()
+}
+
+/**
+ * Whether a frame may show another site's page (an agent's page under /v/, a dev server preview).
+ * A browser has no native bridge to reach. The Android app's WebView keeps the bridge to the app's
+ * own top frame when it supports WebMessageListener; an older one exposes it to every frame, so
+ * there a page opens in the browser instead.
+ */
+export const framesIsolated = () => !isNative() || isolated === true
+export const useFramesIsolated = () =>
+  useSyncExternalStore(
+    (fn) => (isolationHeard.add(fn), () => void isolationHeard.delete(fn)),
+    framesIsolated,
+    framesIsolated,
+  )
 
 let fragmentLink: string | undefined
 
@@ -58,6 +82,9 @@ export function installNative() {
   // tapping a notification opens the session it's about: an event while the app runs, a stored
   // link when the tap started the app
   const device = plugin('InyonDevice')
+  void Promise.resolve(device?.framesIsolated?.())
+    .then((r: { isolated?: boolean } | undefined) => setIsolated(r?.isolated === true))
+    .catch(() => setIsolated(false))
   device?.addListener('pushOpened', ({ href }: { href?: string }) => href && go(href))
   device
     ?.takeLaunchHref?.()

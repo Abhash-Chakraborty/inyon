@@ -862,12 +862,16 @@ pub enum CompanionScope {
 }
 
 /// A short one-time code for a companion to type: six characters, no 0, O, 1, I or L.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct CompanionPairCode {
     pub code: String,
     /// unix ms; five minutes after the code was made
     pub expires_at: u64,
+    /// from 1.1: the SHA-256 of the certificate the hub serves itself (its DER, lowercase hex), for the pairing link
+    pub tls_fingerprint: Option<String>,
 }
 
 /// POST /api/companions/claim, sent with `X-Inyon-Contract`.
@@ -883,14 +887,18 @@ pub struct CompanionClaim {
     pub app: Option<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
 pub struct CompanionClaimResult {
     /// sent as `Authorization: Bearer` from then on; the hub keeps only its hash
     pub token: String,
     pub hub_id: String,
     pub scopes: Vec<CompanionScope>,
     pub contract_version: u32,
+    /// from 1.1, when the hub serves HTTPS itself: the SHA-256 of its certificate's DER, lowercase hex, to pin
+    pub tls_fingerprint: Option<String>,
 }
 
 /// GET /api/companions: a companion app that paired, as the hub lists it.

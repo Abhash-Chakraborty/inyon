@@ -114,6 +114,8 @@ internal object Notifications {
         if (href != null) {
             // its own action, so Android never treats it as "just bring the task to the front"
             intent.setAction(ACTION_OPEN_HREF).putExtra(EXTRA_HREF, href)
+            // the nonce only this install knows: another app's Intent with an href opens nothing (HrefGate)
+            intent.putExtra(HrefGate.EXTRA_NONCE, HrefGate.nonce(ctx))
         } else {
             intent.setAction(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         }

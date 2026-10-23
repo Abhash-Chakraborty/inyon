@@ -2,8 +2,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- usesCleartextTraffic stays on: a computer on the same network is reached at ws://, with the
+         link's own end-to-end encryption on top, and a hub on Tailscale or NetBird at http://<name>,
+         which Android can't allow by address range. The web app checks every plain-http hub before
+         it sends anything (apps/web/src/lib/hubs.ts: loopback, 100.64.0.0/10, fd7a:115c:a1e0::/48,
+         and names that point only there). -->
+
     <application
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

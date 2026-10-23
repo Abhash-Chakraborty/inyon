@@ -14,7 +14,7 @@ From 0.19 the link runs inside `inyon` itself, so a paired computer has no separ
 inyon pair
 ```
 
-prints a QR code, an ID like `K7Q4-MX2T` with a 6-digit code, and a link. Scan the QR code in the app, or type the ID and code, or paste the link.
+prints a QR code, an ID like `K7Q4-MX2T` with a 6-digit code, and a link. Scan the QR code in the app, or type the ID and code, or paste the link. From 0.20.2 it also prints the computer's own ID (*This computer's ID is ybnd rfg8 ejkm*), and the app shows the same before a scanned or pasted code pairs.
 
 - A code pairs one phone, once, within 10 minutes.
 - Five wrong typed codes cancel the typed code (the QR code still works until it expires).

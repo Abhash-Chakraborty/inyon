@@ -116,11 +116,20 @@ fn new_code() -> String {
 }
 
 /// A fresh code for the web app or the inyon command to show.
+/// Contract 1.1: the code and the claim carry the SHA-256 of the certificate the hub serves itself,
+/// for a companion to pin. Left out on plain http and behind a proxy.
+pub fn with_tls(mut v: Value, fingerprint: Option<String>) -> Value {
+    if let Some(fp) = fingerprint {
+        v["tlsFingerprint"] = json!(fp);
+    }
+    v
+}
+
 pub fn new_companion_code(now: u64) -> Value {
     let code = new_code();
     let expires_at = now + COMPANION_CODE_TTL;
     with(|s| s.current = Some((code.clone(), expires_at)));
-    json!({ "code": code, "expiresAt": expires_at })
+    with_tls(json!({ "code": code, "expiresAt": expires_at }), crate::tls::served_sha256())
 }
 
 fn count_failure(s: &mut State, ip: &str, now: u64) {
@@ -177,7 +186,8 @@ pub fn claim_companion(ip: &str, b: &Value, now: u64) -> Resp {
         })
     });
     save();
-    ok_json(&json!({ "token": token, "hubId": crate::phones::hub_id(), "scopes": SCOPES, "contractVersion": CONTRACT }))
+    // a companion that pins the certificate gets it here too (contract 1.1)
+    ok_json(&with_tls(json!({ "token": token, "hubId": crate::phones::hub_id(), "scopes": SCOPES, "contractVersion": CONTRACT }), crate::tls::served_sha256()))
 }
 
 // ---------- a companion's requests ----------

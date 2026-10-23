@@ -1,4 +1,9 @@
 import { expect, test } from 'bun:test'
+import { createHash } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { servedFingerprint } from './tls.ts'
 import { VERSION } from '@inyon/protocol'
 import { HttpError } from './hosts/registry.ts'
 import { claimPhone, CODE_TTL, holdPhoneSocket, hubId, issueTicket, listPhones, newPairCode, phoneFor, redeemTicket, revokePhone, TICKET_TTL } from './phones.ts'
@@ -30,6 +35,9 @@ test('a code names the hub, and only an http(s) origin makes one', () => {
   expect(link.searchParams.get('u')).toBe('https://hub.example:4777')
   expect(link.searchParams.get('c')).toBe(`${c.id}:${c.code}`)
   expect(link.searchParams.get('n')).not.toBe('')
+  // the phone shows the hub's id before it pairs; plain http has no certificate to show
+  expect(link.searchParams.get('h')).toBe(hubId())
+  expect(link.searchParams.has('f')).toBe(false)
   for (const bad of ['ftp://hub.example', 'javascript:alert(1)', 'https://hub.example/app', 'hub.example', '', undefined]) expect(refused(() => newPairCode(bad)).status).toBe(400)
 })
 
@@ -110,4 +118,25 @@ test('removing a phone ends its token, its tickets and its connections', () => {
   expect(redeemTicket(ticket, T0)).toBeUndefined()
   expect(listPhones(asPhone(other.token)).map((p) => p.name)).not.toContain('Doomed')
   expect(revokePhone(phone.id)).toBe(false)
+})
+
+test("a hub serving HTTPS itself puts its certificate's SHA-256 in the link", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'inyon-tls-'))
+  const made = Bun.spawnSync(['sh', '-c', 'openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout k.pem -out c.pem -days 2 -subj /CN=hub'], { cwd: dir, stderr: 'pipe' })
+  expect(made.exitCode).toBe(0)
+  const der = Buffer.from(readFileSync(join(dir, 'c.pem'), 'utf8').replace(/-----[^-]+-----|\s/g, ''), 'base64')
+  const sha = createHash('sha256').update(der).digest('hex')
+  Object.assign(process.env, { TLS_CERT: join(dir, 'c.pem'), TLS_KEY: join(dir, 'k.pem') })
+  try {
+    expect(servedFingerprint()).toBe(sha)
+    expect(new URL(newPairCode('https://hub.example', T0).link).searchParams.get('f')).toBe(sha)
+    // a new file under a running hub isn't what it serves, so links keep the one it loaded
+    expect(Bun.spawnSync(['sh', '-c', 'openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout k.pem -out c.pem -days 2 -subj /CN=other'], { cwd: dir }).exitCode).toBe(0)
+    expect(servedFingerprint()).toBe(sha)
+  } finally {
+    delete process.env.TLS_CERT
+    delete process.env.TLS_KEY
+    rmSync(dir, { recursive: true, force: true })
+  }
+  expect(servedFingerprint()).toBeUndefined()
 })

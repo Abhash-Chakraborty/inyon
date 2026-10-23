@@ -4,6 +4,7 @@ import { Smartphone } from 'lucide-react'
 import { WEB_URL } from '@inyon/protocol'
 import { api, ApiError } from '../lib/api.ts'
 import { hubOrigin } from '../lib/hub.ts'
+import { groupsOf, parseHubLink } from '../lib/hubs.ts'
 import { toast } from '../lib/store.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { Button, Field, Sheet, Waiting, inputClass } from './ui/primitives.tsx'
@@ -63,6 +64,8 @@ export function PhoneSheet({ open, onClose }: { open: boolean; onClose: () => vo
   // reads the same link straight from the page
   const qr = code ? renderSVG(`${WEB_URL}#hub?${code.link.slice('inyon://hub?'.length)}`, { border: 1, pixelSize: 6 }) : undefined
   const left = code ? Math.max(0, Math.round((code.expiresAt - Date.now()) / 60_000)) : 0
+  // the phone shows these from the code before it pairs, to compare with what's here
+  const about = code ? parseHubLink(code.link) : undefined
 
   return (
     <Sheet open={open} onClose={onClose} title="Open on your phone" icon={<Smartphone className="size-4" />}>
@@ -102,7 +105,20 @@ export function PhoneSheet({ open, onClose }: { open: boolean; onClose: () => vo
               <span className="tabular text-right tracking-[0.08em] text-fg">{showId(code.id)}</span>
               <span className="text-fg-3">Code</span>
               <span className="tabular text-right tracking-[0.2em] text-fg">{showCode(code.code)}</span>
+              {about?.hubId && (
+                <>
+                  <span className="text-fg-3">Hub ID</span>
+                  <span className="tabular text-right tracking-[0.04em] text-fg">{groupsOf(about.hubId)}</span>
+                </>
+              )}
+              {about?.tlsFingerprint && (
+                <>
+                  <span className="text-fg-3">Certificate</span>
+                  <span className="tabular text-right tracking-[0.04em] text-fg">{groupsOf(about.tlsFingerprint)}</span>
+                </>
+              )}
             </div>
+            {about?.hubId && <p className="mt-2 text-[12px] leading-relaxed text-fg-3">The phone shows the hub ID before it pairs. Check they match.</p>}
           </div>
           <div className="flex items-center justify-between gap-3">
             <p className="text-[12px] text-fg-3">Works once, for {left} more minute{left === 1 ? '' : 's'}. Five wrong codes cancel it.</p>

@@ -7,7 +7,8 @@ import type { HostState } from '@inyon/protocol'
 import { api, ApiError } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
-import { isNative } from '../../lib/native.ts'
+import { isNative, useFramesIsolated } from '../../lib/native.ts'
+import { FrameRefused } from '../FrameRefused.tsx'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
   PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
@@ -215,8 +216,11 @@ export function PageFrame({ src, title, className, style }: { src: string; title
     window.addEventListener('message', on)
     return () => window.removeEventListener('message', on)
   }, [post])
+  const isolated = useFramesIsolated()
+  if (!isolated) return <FrameRefused src={src} className={className} style={style} />
   return <iframe ref={ref} src={src} title={title} sandbox="allow-scripts allow-forms allow-popups allow-downloads" referrerPolicy="no-referrer" allow="" onLoad={post} className={className} style={style} />
 }
+
 
 // ---------- what can be done to a page ----------
 

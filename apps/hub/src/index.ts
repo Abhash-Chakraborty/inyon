@@ -23,6 +23,7 @@ import { pagesFeature } from './features/pages.ts'
 import { asCompanion, claimCompanion, companionFor, companionFrame, companionMe, companionRoutes, contractRefusal, holdCompanionSocket, inboundRefusal, listCompanions, newCompanionCode, revokeCompanion, type CompanionRoute } from './companions.ts'
 import type { CompanionScope } from '@inyon/protocol'
 import { kv } from './platform/store.ts'
+import { servedFingerprint } from './tls.ts'
 
 /** The hub: Inyon's API and live updates over HTTP and a WebSocket, behind a password. */
 
@@ -140,7 +141,9 @@ const api =
       if (!phoneRequest(req) && framedCaller(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
       // a bearer request carries no ambient credential, so CSRF doesn't apply to it
       if (req.method !== 'GET' && req.method !== 'HEAD' && !phoneRequest(req) && !sameOrigin(req)) return json({ error: 'Cross-site request refused' }, { status: 403 })
-      if (!open && !isAuthed(req)) return cors(req, json({ error: 'Not signed in' }, { status: 401 }))
+      // a bearer this hub doesn't know was forgotten here (or never was this hub's): the phone may
+      // forget the hub on this answer, and only on this one, not on any 401 a proxy gives
+      if (!open && !isAuthed(req)) return cors(req, json(hasBearer(req) ? { error: 'Not signed in', reason: 'revoked' } : { error: 'Not signed in' }, { status: 401 }))
       return cors(req, await run(req))
     }
   }
@@ -265,6 +268,8 @@ const pages = pagesFeature({
   secure: secureRequest,
 })
 
+// read the certificate's fingerprint now, with the certificate, for pairing links (tls.ts)
+servedFingerprint()
 const server = Bun.serve<SocketData>({
   port: PORT,
   hostname: BIND,

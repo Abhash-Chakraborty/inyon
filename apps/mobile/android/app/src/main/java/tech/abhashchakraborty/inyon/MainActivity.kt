@@ -24,6 +24,16 @@ class MainActivity : BridgeActivity() {
         bridge.webView.setBackgroundColor(ground)
         // a camera-capture photo input falls back to the gallery when the camera is refused
         bridge.webView.webChromeClient = InyonChromeClient(bridge)
+        // Capacitor's cookie and HTTP plugins add JavaScript interfaces, which Android puts in every
+        // frame of every page, a sandboxed agent page under /v/ included; setCookie() would let one
+        // write cookies for any site. The app uses neither (both are off), so they go before the
+        // first page loads.
+        for (name in BRIDGELESS) bridge.webView.removeJavascriptInterface(name)
+    }
+
+    companion object {
+        /** the JavaScript interfaces Capacitor adds that the app doesn't use */
+        val BRIDGELESS = listOf("CapacitorCookiesAndroidInterface", "CapacitorHttpAndroidInterface")
     }
 
     // a foldable opening or closing changes the shortest side without recreating the activity

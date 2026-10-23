@@ -2,7 +2,7 @@ import { beforeEach, expect, test } from 'bun:test'
 import { act, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { PairedCompanion } from '@inyon/protocol'
-import { CompanionSheet, mmss } from './CompanionSheet.tsx'
+import { CompanionSheet, companionLink, mmss } from './CompanionSheet.tsx'
 import { api } from '../test/fakes.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
 import { ApiError } from '../lib/api.ts'
@@ -86,6 +86,28 @@ test('the code is asked for only once the companions already paired are known', 
   await act(async () => listed([legato]))
   await flush()
   expect(api.companionPair).toHaveBeenCalledTimes(1)
+})
+
+test('the pairing link holds the address, the code and the certificate', () => {
+  expect(companionLink('https://100.97.188.112:4777', 'K7M2QX', 'ab'.repeat(32))).toBe(`inyon://companion?u=https%3A%2F%2F100.97.188.112%3A4777&c=K7M2QX&f=${'ab'.repeat(32)}`)
+  // a hub without its own certificate (plain http on a VPN, or behind a proxy) leaves f out
+  expect(companionLink('http://abhash-arm:4777', 'K7M2QX')).toBe('inyon://companion?u=http%3A%2F%2Fabhash-arm%3A4777&c=K7M2QX')
+})
+
+test('Copy pairing link copies the link for this code', async () => {
+  api.companionPair.mockImplementation(async () => ({ code: 'K7M2QX', expiresAt: Date.now() + 300_000, tlsFingerprint: 'cd'.repeat(32) }))
+  const copied: string[] = []
+  Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true })
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t: string) => void copied.push(t) }, configurable: true })
+  try {
+    await render(<CompanionSheet open onClose={() => {}} />)
+    await flush()
+    await userEvent.click(screen.getByRole('button', { name: /Copy pairing link/ }))
+    expect(copied).toEqual([companionLink(location.origin, 'K7M2QX', 'cd'.repeat(32))])
+  } finally {
+    delete (window as any).isSecureContext
+    delete (navigator as any).clipboard
+  }
 })
 
 test('the countdown reads as minutes and seconds', () => {
