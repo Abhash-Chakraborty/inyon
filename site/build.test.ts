@@ -1,9 +1,10 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stampInstaller } from "../apps/node/installers.ts";
-import { checkReleaseFile, mb, oldSiteLinks, parseSums } from "./build.ts";
+import { CSP, checkReleaseFile, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
 test("sizes read as a browser shows them", () => {
@@ -70,4 +71,44 @@ test("old release notes link to the site's new address", () => {
   );
   // a host that only starts the same stays as it is
   expect(oldSiteLinks("https://inyon.abhashchakraborty.tech.example.com/")).toBe("https://inyon.abhashchakraborty.tech.example.com/");
+});
+
+// pages asked fonts.googleapis.com for their fonts on every visit, there was no privacy policy or
+// terms, and security.txt was missing: check the built site for each
+test("the built site asks no other server for anything, links its legal pages and says how to report a flaw", () => {
+  const out = join(tmpdir(), `inyon-site-${process.pid}`);
+  rmSync(out, { recursive: true, force: true });
+  const run = Bun.spawnSync(["bun", join(import.meta.dir, "build.ts"), "--offline", "--out", out], { stderr: "pipe", stdout: "pipe" });
+  expect(run.exitCode).toBe(0);
+  try {
+    const html = (p: string) => readFileSync(join(out, p), "utf8");
+    const pages = ["index.html", "download/index.html", "docs/index.html", "docs/security/index.html", "privacy/index.html", "terms/index.html", "license/index.html", "404.html"];
+    for (const p of pages) {
+      const page = html(p);
+      expect(page).not.toContain("fonts.googleapis.com");
+      expect(page).toContain(`<meta http-equiv="Content-Security-Policy" content="${CSP}">`);
+      // every script is a file from this site, or JSON-LD data that never runs
+      for (const [tag] of page.matchAll(/<script\b[^>]*>/g)) expect(tag).toMatch(/src="\/assets\/|type="application\/ld\+json"/);
+      for (const href of ["/privacy/", "/terms/", "/license/", "/docs/security/"]) expect(page).toContain(`href="${href}"`);
+      expect(page).toMatch(/© 20\d\d(–20\d\d)? <a [^>]*>Abhash Chakraborty<\/a>/);
+    }
+    expect(html("privacy/index.html")).toContain("<h1>Privacy policy</h1>");
+    expect(html("terms/index.html")).toContain("<h1>Terms of use</h1>");
+    expect(html("license/index.html")).toContain("Permission is hereby granted, free of charge");
+    for (const f of ["geist.woff2", "geist-mono.woff2"]) expect(existsSync(join(out, "assets/fonts", f))).toBe(true);
+    const sitemap = html("sitemap.xml");
+    for (const p of ["/privacy/", "/terms/", "/license/"]) expect(sitemap).toContain(`<loc>https://inyon.tech${p}</loc>`);
+    const expires = Date.parse(html(".well-known/security.txt").match(/^Expires: (.*)$/m)![1]!);
+    expect(expires - Date.now()).toBeGreaterThan(364 * 24 * 3600 * 1000);
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("security.txt names a contact and the policy, and expires a year after the build", () => {
+  const txt = securityTxt(new Date("2026-10-23T12:00:00Z"));
+  expect(txt).toContain("Contact: https://github.com/Abhash-Chakraborty/inyon/security/advisories/new\n");
+  expect(txt).toContain("Expires: 2027-10-23T12:00:00Z\n");
+  expect(txt).toContain("Policy: https://inyon.tech/docs/security/#reporting-a-vulnerability\n");
+  expect(txt).toContain("Canonical: https://inyon.tech/.well-known/security.txt\n");
 });

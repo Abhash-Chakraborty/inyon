@@ -1,5 +1,7 @@
 /* inyon.tech: silver and ink, no accent colour, the same tokens as the app
    (apps/web/src/styles.css). Motion is opacity and transform only. */
+@font-face { font-family: Geist; font-style: normal; font-display: swap; font-weight: 100 900; src: url(/assets/fonts/geist.woff2) format("woff2"); }
+@font-face { font-family: "Geist Mono"; font-style: normal; font-display: swap; font-weight: 100 900; src: url(/assets/fonts/geist-mono.woff2) format("woff2"); }
 :root {
   --bg: #e9e8e4; --panel: #f4f3f0; --raised: #ecebe7; --hover: #e2e1dc;
   --line: #d6d5cf; --line-strong: #bdbcb5;
@@ -258,6 +260,11 @@ a.card .more { margin-top: auto; font-size: 14px; color: var(--fg); font-weight:
 .foot-base { border-top: 1px solid var(--line); }
 .foot-base-in { max-width: var(--wrap); margin: 0 auto; padding: 18px 20px 28px; display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; font-size: 13.5px; color: var(--fg-3); }
 .foot-base a { color: var(--fg-2); text-decoration: none; }
+.foot-base a:hover { color: var(--fg); }
+.foot-legal { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.legal .doc { margin: 0 auto; max-width: 720px; }
+.legal .prose table { font-size: 14.5px; }
+.prose pre.licence { white-space: pre-wrap; font-size: 13.5px; line-height: 1.6; }
 
 /* ---------- search ---------- */
 .search { position: fixed; inset: 0; z-index: 40; background: var(--scrim); display: flex; justify-content: center; align-items: flex-start; padding: 12vh 16px 16px; }

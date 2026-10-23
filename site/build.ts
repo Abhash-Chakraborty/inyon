@@ -16,6 +16,30 @@ const SITE = import.meta.dir;
 const assetVersion = (name: string) =>
   createHash("sha256").update(readFileSync(join(SITE, "assets", name))).digest("hex").slice(0, 10);
 const CSS_URL = `/assets/site.css?v=${assetVersion("site.css")}`;
+/** Geist and Geist Mono, Latin only, from the packages the app uses too */
+const FONTS: [string, string][] = [
+  ["geist/files/geist-latin-wght-normal.woff2", "geist.woff2"],
+  ["geist-mono/files/geist-mono-latin-wght-normal.woff2", "geist-mono.woff2"],
+];
+/**
+ * Every page's Content-Security-Policy. Pages load only this site's own files; the exceptions are
+ * the Product Hunt badge on the home page and the video, which loads from YouTube when it's played.
+ * GitHub Pages can't send headers, so it goes in a meta tag (which can't set frame-ancestors).
+ */
+export const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https://api.producthunt.com",
+  "font-src 'self'",
+  "connect-src 'self'",
+  "frame-src https://www.youtube-nocookie.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+/** the year the code was first published, through this one */
+const COPYRIGHT_YEAR = new Date().getUTCFullYear() > 2026 ? `2026–${new Date().getUTCFullYear()}` : "2026";
 const JS_URL = `/assets/site.js?v=${assetVersion("site.js")}`;
 const args = process.argv.slice(2);
 const OUT = args.includes("--out") ? args[args.indexOf("--out") + 1] : join(SITE, "out");
@@ -72,6 +96,14 @@ const DOWNLOAD_DESCRIPTION =
 const CHANGELOG_DESCRIPTION = "Every release of Inyon, newest first.";
 const AUTHOR = { "@type": "Person", name: "Abhash Chakraborty", url: "https://abhashchakraborty.tech" };
 
+/** The pages outside the docs that say what Inyon sends where and on what terms: site/legal/*.md, and the licence. */
+const LEGAL = ["privacy", "terms"] as const;
+const LICENSE_DESCRIPTION = "Inyon's code is free to use, change and share under the MIT licence.";
+
+function legalMeta(slug: (typeof LEGAL)[number]) {
+  return frontmatter(readFileSync(join(SITE, "legal", `${slug}.md`), "utf8"));
+}
+
 // ---------- link previews ----------
 
 export const OG_SIZE = { width: 1200, height: 630 };
@@ -99,6 +131,11 @@ export function cards(): Card[] {
       chip: "Download",
     },
   ];
+  for (const slug of LEGAL) {
+    const { meta } = legalMeta(slug);
+    list.push({ id: slug, path: `/${slug}/`, title: meta.title, description: meta.description ?? "", eyebrow: "Inyon", chip: "Legal" });
+  }
+  list.push({ id: "license", path: "/license/", title: "MIT licence", description: LICENSE_DESCRIPTION, eyebrow: "Inyon", chip: "Legal" });
   for (const group of NAV)
     for (const slug of group.pages) {
       const meta =
@@ -536,7 +573,7 @@ function layout(opts: {
   const full = opts.title;
   const canonical = `${ORIGIN}${opts.path}`;
   const image = opts.card && ogImage(opts.card);
-  const alt = opts.card?.id === "home" ? `${HOME.title}, beside two phones showing Inyon` : `${opts.card?.title}: Inyon docs`;
+  const alt = opts.card?.id === "home" ? `${HOME.title}, beside two phones showing Inyon` : opts.card?.chip === "Legal" ? `${opts.card.title}: Inyon` : `${opts.card?.title}: Inyon docs`;
   const head = opts.card
     ? `<link rel="canonical" href="${canonical}">
 <meta property="og:type" content="${opts.type ?? "website"}">
@@ -578,9 +615,9 @@ ${head}
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="alternate" type="application/atom+xml" title="Inyon releases" href="/releases.xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta http-equiv="Content-Security-Policy" content="${CSP}">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="preload" href="/assets/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="${CSS_URL}">
 <script src="${JS_URL}" defer></script>
 </head>
@@ -626,8 +663,8 @@ ${opts.body}
   </div>
   <div class="foot-base">
     <div class="foot-base-in">
-      <span>MIT licence${opts.version ? ` · Inyon ${esc(opts.version)}` : ""} · <a href="/docs/security/">Security</a></span>
-      <span>Made by <a href="https://abhashchakraborty.tech" rel="noopener">Abhash Chakraborty</a></span>
+      <span>© ${COPYRIGHT_YEAR} <a href="https://abhashchakraborty.tech" rel="noopener">Abhash Chakraborty</a>${opts.version ? ` · Inyon ${esc(opts.version)}` : ""}</span>
+      <nav class="foot-legal" aria-label="Legal"><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/docs/security/">Security</a><a href="/license/">MIT licence</a></nav>
     </div>
   </div>
 </footer>
@@ -640,6 +677,50 @@ ${opts.body}
 </body>
 </html>
 `;
+}
+
+/** A page outside the docs: one column, no sidebar, with the date it last changed. */
+function legalPage(opts: { slug: string; title: string; description: string; html: string; updated?: string; version?: string; source?: string }): string {
+  const path = `/${opts.slug}/`;
+  const card = cardFor(path);
+  const body = `
+<main id="main" class="page legal">
+  <div class="doc">
+    <p class="eyebrow">Inyon${opts.updated ? ` · Updated ${esc(longDate(opts.updated))}` : ""}</p>
+    <h1>${esc(opts.title)}</h1>
+    <p class="lede">${esc(opts.description)}</p>
+    <div class="prose">${opts.html}</div>
+    ${opts.source ? `<p class="edit"><a class="ext" href="${GITHUB}/blob/main/${opts.source}" rel="noopener">See this page's history on GitHub</a></p>` : ""}
+  </div>
+</main>`;
+  return layout({
+    title: `${opts.title} · Inyon`,
+    description: opts.description,
+    path,
+    body,
+    version: opts.version,
+    card,
+    modified: opts.updated,
+    data: [{ "@type": "WebPage", name: opts.title, description: opts.description, url: `${ORIGIN}${path}`, inLanguage: "en", publisher: AUTHOR, isPartOf: { "@id": `${ORIGIN}/#website` }, ...(opts.updated ? { dateModified: opts.updated } : {}) }],
+  });
+}
+
+const longDate = (iso: string) => new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+/**
+ * How to reach me about a vulnerability, in the format scanners and researchers look for (RFC 9116).
+ * It has to say when it expires; the site is rebuilt with every release, well inside a year.
+ */
+export function securityTxt(now: Date): string {
+  const expires = new Date(now.getTime() + 365 * 24 * 3600 * 1000);
+  return [
+    `Contact: ${GITHUB}/security/advisories/new`,
+    `Expires: ${expires.toISOString().replace(/\.\d+Z$/, "Z")}`,
+    `Policy: ${ORIGIN}/docs/security/#reporting-a-vulnerability`,
+    `Canonical: ${ORIGIN}/.well-known/security.txt`,
+    "Preferred-Languages: en",
+    "",
+  ].join("\n");
 }
 
 function sidebar(current: string): string {
@@ -906,6 +987,31 @@ async function main() {
       JSON.stringify({ version: r.version, tag: r.tag, date: r.date, files: r.assets }, null, 2),
     );
   }
+  for (const slug of LEGAL) {
+    const { meta, body } = legalMeta(slug);
+    if (!meta.title || !meta.description || !meta.updated) throw new Error(`site/legal/${slug}.md needs a title, description and updated date`);
+    mkdirSync(join(OUT, slug), { recursive: true });
+    writeFileSync(
+      join(OUT, slug, "index.html"),
+      legalPage({ slug, title: meta.title, description: meta.description, html: render(body).html, updated: meta.updated, version, source: `site/legal/${slug}.md` }),
+    );
+  }
+  mkdirSync(join(OUT, "license"), { recursive: true });
+  writeFileSync(
+    join(OUT, "license", "index.html"),
+    legalPage({
+      slug: "license",
+      title: "MIT licence",
+      description: LICENSE_DESCRIPTION,
+      html: `<pre class="licence"><code>${esc(readFileSync(join(ROOT, "LICENSE"), "utf8").trim())}</code></pre>\n<p>Inyon is built on open-source libraries, each under its own licence. The repository’s <code>Cargo.lock</code> and <code>bun.lock</code> list every one.</p>`,
+      updated: lastChanged("LICENSE"),
+      version,
+      source: "LICENSE",
+    }),
+  );
+  mkdirSync(join(OUT, ".well-known"), { recursive: true });
+  writeFileSync(join(OUT, ".well-known/security.txt"), securityTxt(new Date()));
+
   writeFileSync(
     join(OUT, "404.html"),
     layout({
@@ -920,6 +1026,9 @@ async function main() {
   // static files
   cpSync(join(SITE, "assets"), join(OUT, "assets"), { recursive: true });
   cpSync(join(SITE, "sw.js"), join(OUT, "sw.js"));
+  // the fonts are served from here, so a page asks no other server for anything
+  mkdirSync(join(OUT, "assets/fonts"), { recursive: true });
+  for (const [from, to] of FONTS) cpSync(join(ROOT, "node_modules/@fontsource-variable", from), join(OUT, "assets/fonts", to));
   cpSync(join(ROOT, "apps/web/public/icon.svg"), join(OUT, "icon.svg"));
   mkdirSync(join(OUT, "img"), { recursive: true });
   for (const f of readdirSync(join(ROOT, "docs")).filter((f) => /\.(webp|png|svg)$/.test(f)))
@@ -936,6 +1045,8 @@ async function main() {
   const sitemap: [string, string | undefined][] = [
     ["/", lastChanged("site/pages/home.html")],
     ["/download/", newest(lastChanged("site/pages/download.html"), latest?.raw.published_at)],
+    ...LEGAL.map((slug): [string, string | undefined] => [`/${slug}/`, legalMeta(slug).meta.updated]),
+    ["/license/", lastChanged("LICENSE")],
     ...order.map((slug): [string, string | undefined] => [url(slug), pages.get(slug)!.modified]),
   ];
   writeFileSync(

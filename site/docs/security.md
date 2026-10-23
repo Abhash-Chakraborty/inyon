@@ -139,3 +139,9 @@ RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 ## Reporting a vulnerability
 
 Please report it privately through [GitHub's vulnerability reporting](https://github.com/Abhash-Chakraborty/inyon/security/advisories/new) rather than in a public issue, with steps to reproduce. You'll get a reply within a few days.
+
+The same address is in [`/.well-known/security.txt`](https://inyon.tech/.well-known/security.txt) (RFC 9116), for scanners and researchers that look there. What this site, `inyon` and the Android app send to other services is listed in the [privacy policy](/privacy/).
+
+## This website
+
+The site is static files on GitHub Pages. It sets no cookies and has no analytics. Its fonts, styles and scripts are served from the site itself, and every page carries a Content-Security-Policy that lets it load nothing else, apart from the Product Hunt badge on the home page and the video, which loads from YouTube's privacy-enhanced domain only when you press play.
