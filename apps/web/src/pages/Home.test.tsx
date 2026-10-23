@@ -24,26 +24,41 @@ const home = () =>
 beforeEach(() => useStore.setState({ hostsLoaded: true, toasts: [], connected: true }))
 
 describe('agent sessions', () => {
-  test('when every session is under Needs you, the list below adds nothing, not an empty filter', async () => {
-    useStore.setState({ hosts: [host('box', { panes: [asking()] })] })
+  // a Needs-you section above the list grew and shrank as agents asked, moving every card under the pointer
+  test('a session that asks something answers from its own card, in its own place', async () => {
+    useStore.setState({ hosts: [host('box', { panes: [agentPane('%2', 'claude', { title: 'Write docs' }), asking('%3')] })] })
     await home()
-    expect(screen.getByText('Needs you')).toBeTruthy()
-    expect(screen.queryByText('Nothing here')).toBeNull()
-    expect(screen.queryByText('Try another filter.')).toBeNull()
-    expect(screen.queryByText('Agent sessions')).toBeNull()
+    // shown once, as its card, not again in a section of its own
+    expect(screen.getAllByText('Failing tests')).toHaveLength(1)
+    const titles = () => screen.getAllByRole('link').map((l) => l.getAttribute('aria-label')).filter(Boolean)
+    expect(titles()).toEqual(['Write docs', 'Failing tests'])
+    await userEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(api.answer).toHaveBeenCalledWith('box', '%3', 1)
+    // the agent moves on: the same two cards, in the same order
+    await act(() => useStore.setState({ hosts: [host('box', { panes: [agentPane('%2', 'claude', { title: 'Write docs' }), agentPane('%3', 'claude', { title: 'Failing tests' })] })] }))
+    expect(titles()).toEqual(['Write docs', 'Failing tests'])
   })
 
-  test('with others idle, the list shows them', async () => {
-    useStore.setState({ hosts: [host('box', { panes: [asking(), agentPane('%2', 'claude', { title: 'Write docs' })] })] })
+  test('Show brings the session that needs you into view and puts the focus on its answer', async () => {
+    useStore.setState({ hosts: [host('box', { panes: [agentPane('%2', 'claude', { title: 'Write docs' }), asking('%3')] })] })
     await home()
-    expect(screen.getByText('Agent sessions')).toBeTruthy()
-    expect(screen.getByText('Write docs')).toBeTruthy()
+    expect(screen.getByText('1 session needs you.')).toBeTruthy()
+    const into: Element[] = []
+    const was = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function () { into.push(this) }
+    try {
+      await userEvent.click(screen.getByRole('button', { name: 'Show' }))
+    } finally {
+      Element.prototype.scrollIntoView = was
+    }
+    expect(into[0]?.textContent).toContain('Failing tests')
+    expect(document.activeElement?.textContent).toBe('Yes')
   })
 
-  test("a Needs-you card's session name opens its chat", async () => {
+  test("a waiting session's name opens its chat", async () => {
     useStore.setState({ hosts: [host('box', { panes: [asking()] })] })
     await home()
-    await userEvent.click(screen.getByText('Failing tests'))
+    await userEvent.click(screen.getByRole('link', { name: 'Failing tests' }))
     expect(screen.getByText('chat open')).toBeTruthy()
   })
 })

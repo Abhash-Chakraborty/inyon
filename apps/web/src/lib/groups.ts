@@ -48,13 +48,20 @@ export function searchText(r: PaneRef) {
     .join(' ')
 }
 
+/** tmux numbers sessions as it makes them ("$4"), so the number is the order they were started in. */
+export const sessionOrder = (s: { id: string; name: string }) => {
+  const n = Number(s.id.replace(/^\$/, ''))
+  return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER
+}
+
 /** tmux's own address for a pane: session:window, plus .pane when the window is split. */
 export const tmuxTarget = (r: PaneRef) => `${r.session.name}:${r.window.index}${r.window.panes.length > 1 ? `.${r.pane.index}` : ''}`
 
 /**
  * Groups panes by machine and tmux session, keeping only those that pass `keep` and match `query`.
- * Machines that answer come first; inside a machine, sessions with an agent waiting on you come
- * first, then the most recently active. Panes keep tmux's window and pane order.
+ * Everything keeps its place: machines in the order they were added, sessions in the order tmux
+ * started them, panes in tmux's window and pane order. Nothing moves when an agent starts working
+ * or asks something, so a row is still where you aimed when the click lands.
  */
 export function groupPanes(hosts: HostState[], o: { query?: string; keep?: (r: PaneRef) => boolean } = {}): HostGroup[] {
   const refs = allPanes(hosts).filter((r) => (!o.keep || o.keep(r)) && (!o.query || matchesQuery(searchText(r), o.query)))
@@ -76,11 +83,10 @@ export function groupPanes(hosts: HostState[], o: { query?: string; keep?: (r: P
     hg.panes++
     hg.waiting += waiting
   }
-  const active = (s: SessionGroup) => Math.max(...s.session.windows.map((w) => w.activity))
   const order = new Map(hosts.map((h, i) => [h.config.id, i]))
   const groups = [...byHost.values()]
-  for (const g of groups) g.sessions.sort((a, b) => Number(b.waiting > 0) - Number(a.waiting > 0) || active(b) - active(a))
-  return groups.sort((a, b) => Number(b.host.status === 'online') - Number(a.host.status === 'online') || order.get(a.key)! - order.get(b.key)!)
+  for (const g of groups) g.sessions.sort((a, b) => sessionOrder(a.session) - sessionOrder(b.session))
+  return groups.sort((a, b) => order.get(a.key)! - order.get(b.key)!)
 }
 
 /** Folded groups, kept per browser. A search shows every match, folded or not. */
