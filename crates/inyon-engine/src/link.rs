@@ -71,6 +71,9 @@ const LOCK_WAIT: Duration = Duration::from_secs(3);
 /// How long a phone's hello waits for the files. The phone gives each address 4 s, and the
 /// handshake needs some of that.
 pub const CHECK_WAIT: Duration = Duration::from_millis(1000);
+/// How long the running link waits for the files before it skips its state.json note: it runs on
+/// the threads that answer phones, as the Bun engine's one thread does.
+const LINK_WAIT: Duration = Duration::from_millis(200);
 
 pub struct NodeFiles {
     _file: Option<std::fs::File>,
@@ -1347,9 +1350,8 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         (urls.clone(), json!({ "urls": urls, "relays": config.relays }).to_string(), l.last_seq)
     };
     let state = State { urls: urls.clone(), relays: config.relays.clone(), updated_at: crate::now_ms(), pid: std::process::id(), version: Some(VERSION.into()), last_seq };
-    match node_files() {
-        Ok(_files) => save_or_say("state.json", &state),
-        Err(e) => error(&e),
+    if let Some(_files) = node_files_within(LINK_WAIT) {
+        save_or_say("state.json", &state);
     }
     {
         let mut l = live.lock().unwrap_or_else(|e| e.into_inner());
@@ -1371,13 +1373,10 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         if let Some(seq) = publish_until_taken(&inyon_link::PKARR_RELAYS, &id, &record, last_seq, Duration::from_secs(10), wanted).await {
             {
                 live.lock().unwrap_or_else(|e| e.into_inner()).last_seq = Some(seq);
-                match node_files() {
-                    Ok(_files) => {
-                        let mut s = current_state().unwrap_or(state);
-                        s.last_seq = Some(seq);
-                        save_or_say("state.json", &s);
-                    }
-                    Err(e) => error(&e),
+                if let Some(_files) = node_files_within(LINK_WAIT) {
+                    let mut s = current_state().unwrap_or(state);
+                    s.last_seq = Some(seq);
+                    save_or_say("state.json", &s);
                 }
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
