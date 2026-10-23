@@ -172,17 +172,26 @@ impl Initiator {
 /// The machine's side: it learns who is calling from message 1.
 pub struct Responder {
     hs: HandshakeState,
+    secret: [u8; 32],
+}
+
+/// Whether X25519 of our secret with `public` comes out all zero: a low-order point, which makes
+/// that DH a public value. snow doesn't refuse it, so a caller could claim a static key whose
+/// private half nobody needs (noble, on the TS side, throws on it).
+fn low_order(secret: &[u8; 32], public: &[u8]) -> bool {
+    let Ok(p) = <[u8; 32]>::try_from(public) else { return true };
+    MontgomeryPoint(p).mul_clamped(*secret).to_bytes() == [0u8; 32]
 }
 
 impl Responder {
     pub fn new(s: &KeyPair, prologue: &[u8]) -> Result<Self, NoiseError> {
-        Ok(Responder { hs: builder(s, prologue, None)?.build_responder()? })
+        Ok(Responder { hs: builder(s, prologue, None)?.build_responder()?, secret: s.secret })
     }
 
     /// A fixed ephemeral key, for the test vectors only.
     #[doc(hidden)]
     pub fn with_ephemeral(s: &KeyPair, prologue: &[u8], e: &[u8; 32]) -> Result<Self, NoiseError> {
-        Ok(Responder { hs: builder(s, prologue, Some(e))?.build_responder()? })
+        Ok(Responder { hs: builder(s, prologue, Some(e))?.build_responder()?, secret: s.secret })
     }
 
     /// -> e, es, s, ss, payload
@@ -190,9 +199,16 @@ impl Responder {
         if msg.len() < DH + DH + TAG + TAG || msg.len() > MAX_MESSAGE {
             return Err(NoiseError::BadMessage);
         }
+        // the ephemeral key travels in the clear at the start
+        if low_order(&self.secret, &msg[..DH]) {
+            return Err(NoiseError::BadMessage);
+        }
         let mut payload = vec![0u8; msg.len()];
         let n = self.hs.read_message(msg, &mut payload)?;
         payload.truncate(n);
+        if self.hs.get_remote_static().is_none_or(|rs| low_order(&self.secret, rs)) {
+            return Err(NoiseError::BadMessage);
+        }
         Ok(payload)
     }
 

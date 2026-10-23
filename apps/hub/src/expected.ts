@@ -7,7 +7,7 @@ import { codexBrowsing, parseScreen, promptSummary } from './claude/screen.ts'
 import { UTF8_TMUX } from './hosts/host.ts'
 import { ACCOUNT_SH, CURRENT_SH, MARKER, MOVE_OLD_FOLDER_SH, PANE_SH } from './claude/integration-sh.ts'
 import { AGY_STATUS_SCRIPT, HOOK_SCRIPT, STATUS_SCRIPT } from './claude/integration.ts'
-import { HOOK_STATE_SH, PROBE, pasteCommand } from './tmux/tmux.ts'
+import { HOOK_STATE_SH, PROBE, pasteCommand, typedCommand } from './tmux/tmux.ts'
 import { LINK_UPDATE, READ_STATUS, SELF_UPDATE, WINDOWS_LAUNCHER } from './hosts/node-update.ts'
 import { SCRIPT as CLAUDE_USAGE } from './agents/claude-usage.ts'
 import { copilotCatalogScript } from './agents/copilot-rpc-sh.ts'
@@ -120,6 +120,7 @@ export function scripts() {
     CLAUDE_USAGE, COPILOT_CATALOG: copilotCatalogScript, VIEW_KEYS, PATHS,
     commands: {
       paste: pasteCommand('inyon-1', "%1 it's"),
+      typed: typedCommand("%1 it's", 'hi', true, 'inyon-1'),
       via: viaCommand({ id: 's', name: 's', kind: 'ssh', target: "o'brien@db", port: 2222, via: 'j' }, `echo "$HOME" 'x'`),
       viaTty: viaCommand({ id: 's', name: 's', kind: 'ssh', target: 'db', via: 'j' }, 'tmux attach', true),
       dropKey: dropAuthorizedKey("ssh-ed25519 AAAA it's me"),

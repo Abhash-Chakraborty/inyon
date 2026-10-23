@@ -307,15 +307,18 @@ impl Wizard {
                         },
                         Item::Radio {
                             label: "LAN".into(),
-                            note: p.lan_ip().map(|ip| format!("at {ip}")).unwrap_or_else(|| "every address".into()),
+                            // anyone on the Wi-Fi could read plain http: setup makes a certificate
+                            note: format!("{}, over HTTPS", p.lan_ip().map(|ip| format!("at {ip}")).unwrap_or_else(|| "every address".into())),
                             on: p.bind == Bind::Lan,
                             disabled: false,
                         },
                     ];
                     for n in p.vpn_networks() {
+                        // plain http only on Tailscale and NetBird; ZeroTier and WireGuard get a certificate as the LAN does
+                        let https = if n.ip.parse().is_ok_and(inyon_engine::hub::plain_http_ip) { "" } else { ", over HTTPS" };
                         v.push(Item::Radio {
                             label: n.kind.label().into(),
-                            note: n.name.clone().map(|name| format!("{} ({name})", n.ip)).unwrap_or_else(|| n.ip.clone()),
+                            note: format!("{}{https}", n.name.clone().map(|name| format!("{} ({name})", n.ip)).unwrap_or_else(|| n.ip.clone())),
                             on: p.bind == Bind::Vpn(n.ip.clone()),
                             disabled: false,
                         });

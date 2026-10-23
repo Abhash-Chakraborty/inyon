@@ -50,7 +50,7 @@ When you pair, the computer and the phone swap long-term keys. After that, nothi
 2. **A private network.** On Tailscale, Headscale, NetBird, ZeroTier or WireGuard, the computer also answers on that network's address, and the phone connects straight to it with no tunnel. Setup says which networks it found.
 3. **The local network**, if you turned on LAN.
 
-The phone tries the addresses it knows first, then fresh ones from pkarr. Whichever answers, the two run a Noise IK handshake (X25519, ChaCha20-Poly1305), so a tunnel or network in between only ever carries ciphertext. [Pairing a computer](computers.md) has the details and the options.
+The phone tries the addresses it knows first, then fresh ones from pkarr. Whichever answers, the two run a Noise IK handshake (X25519, ChaCha20-Poly1305), so a tunnel or network in between only ever carries ciphertext. From 0.20, an address where something other than your computer answers (another device now has that IP) no longer stops the search: the phone tries the rest and keeps trying, and if nothing works the message names the address that answered wrongly. A lost connection is tried again after a random wait that grows to 30 seconds, so a computer that restarts isn't met by every app at the same moment. [Pairing a computer](computers.md) has the details and the options.
 
 ## A server over SSH
 

@@ -6,8 +6,10 @@ import {
   accept, authMessage, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
+import { attemptAfter, backoff } from '@inyon/protocol'
 import { detectNetworks, LABEL, type Network } from '../hub/src/networks.ts'
 import { serveOps, WIN } from './ops.ts'
+import { tryLock, type Held } from './oslock.ts'
 import { forgetPushes, startPush } from './push.ts'
 import { binDir, nodeDir } from './paths.ts'
 
@@ -78,17 +80,99 @@ function writeJson(name: string, value: unknown) {
   renameSync(tmp, file(name))
 }
 
-/** This machine's identity, made on first use. Its id is what the phone pairs with. */
+/**
+ * The lock every process takes around a read-modify-write of the node's files: `inyon forget` and
+ * `inyon pair` run as processes of their own beside the link, and without it one would write back
+ * what it read before the other's change (a forgotten phone back, a new code replaced by the old).
+ * An OS lock on the file (oslock.ts), the same one the built-in engine takes. The file stays: removing
+ * it while another process waits on it would let a third lock a new one.
+ */
+export const FILES_LOCK = 'files.lock'
+const LOCK_WAIT = 15_000
+/** How long a phone's hello waits: the phone gives each address 4 s, and the handshake needs some. */
+export const CHECK_WAIT = 1000
+
+/** The lock, or why not by `until`. Every way through ends by then. */
+function takeFilesLock(until: number): Held | string {
+  mkdirSync(nodeDir(), { recursive: true, mode: 0o700 })
+  const lock = file(FILES_LOCK)
+  let why = 'another process holds it'
+  for (;;) {
+    try {
+      const held = tryLock(lock)
+      if (held) return held
+      why = 'another process holds it'
+    } catch (err) {
+      why = (err as Error).message
+    }
+    if (Date.now() >= until) return `couldn't lock ${lock} in time (${why})`
+    Bun.sleepSync(5)
+  }
+}
+
+/**
+ * Runs `fn` holding the files, waiting up to 15 s; never without the lock. A change made without it
+ * could bring a forgotten phone back, so when another process keeps them that long this throws why
+ * and changes nothing: a command stops with it.
+ */
+export function withNodeFiles<T>(fn: () => T): T {
+  const held = takeFilesLock(Date.now() + LOCK_WAIT)
+  if (typeof held === 'string') {
+    throw new Error(`The node's files are busy: another inyon process has held ${file(FILES_LOCK)} for over ${LOCK_WAIT / 1000} s. Try again in a moment; if it stays busy, stop the process whose pid is in that file.`)
+  }
+  try {
+    return fn()
+  } finally {
+    held.release()
+  }
+}
+
+/** How long the running link waits for the files before it skips a note (lastSeen, state.json): it has one thread, and phones to answer. */
+const LINK_WAIT = 200
+
+/** Runs `fn` holding the files, or returns `busy` when they aren't free within `wait` ms. */
+export function withNodeFilesWithin<T, B>(wait: number, fn: () => T, busy: () => B): T | B {
+  const held = takeFilesLock(Date.now() + wait)
+  if (typeof held === 'string') {
+    console.error(held)
+    return busy()
+  }
+  try {
+    return fn()
+  } finally {
+    held.release()
+  }
+}
+
+/**
+ * This machine's identity, made on first use. Its id is what the phone pairs with. A file that is
+ * there but unreadable, or holds anything but a 64-digit hex seed, stops the link and stays as it
+ * is: a new identity would be a stranger to every paired phone.
+ */
 export function identity(): Identity {
-  const saved = readJson<{ seed?: string }>('identity.json', {})
-  if (saved.seed) return identityFromSeed(Uint8Array.from(Buffer.from(saved.seed, 'hex')))
-  const id = newIdentity()
-  writeJson('identity.json', { seed: Buffer.from(id.seed).toString('hex'), id: id.id })
-  return id
+  return withNodeFiles(() => {
+    let text: string
+    try {
+      text = readFileSync(file('identity.json'), 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`couldn't read ${file('identity.json')}: ${(err as Error).message}`)
+      const id = newIdentity()
+      writeJson('identity.json', { seed: Buffer.from(id.seed).toString('hex'), id: id.id })
+      return id
+    }
+    let seed: unknown
+    try {
+      seed = JSON.parse(text)?.seed
+    } catch {}
+    if (typeof seed !== 'string' || !/^[0-9a-fA-F]{64}$/.test(seed)) {
+      throw new Error(`${file('identity.json')} isn't a valid identity (it needs a 64-digit hex seed). Restore it from a backup; moving it away makes a new identity, and every phone then has to pair again.`)
+    }
+    return identityFromSeed(Uint8Array.from(Buffer.from(seed, 'hex')))
+  })
 }
 
 export const loadConfig = (): LinkConfig => ({ ...DEFAULT_CONFIG, ...readJson<Partial<LinkConfig>>('link.json', {}) })
-export const saveConfig = (c: LinkConfig) => writeJson('link.json', c)
+export const saveConfig = (c: LinkConfig) => withNodeFiles(() => writeJson('link.json', c))
 
 const phones = () => readJson<Record<string, Phone>>('phones.json', {})
 
@@ -113,7 +197,7 @@ type Pairing = { secret?: string; short?: string; failures?: number; expires?: n
 export function newPairing() {
   const secret = crypto.randomBytes(24).toString('base64url')
   const short = newShortCode()
-  writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing)
+  withNodeFiles(() => writeJson('pairing.json', { secret, short: shortSecret(short), expires: Date.now() + PAIR_MINUTES * 60_000 } satisfies Pairing))
   return { secret, short }
 }
 
@@ -155,10 +239,34 @@ export async function linkRunning(port?: number) {
   }
 }
 
+/** How often lastSeen is written for one phone; every write is one more race with `inyon forget`. */
+const SEEN_EVERY = 60_000
+
+/**
+ * Notes that a paired phone was here, once its first frame proved it holds its keys (message 1
+ * alone can be replayed). Read again under the lock, so a phone forgotten meanwhile stays gone.
+ */
+export function markSeen(key: string, every = SEEN_EVERY) {
+  // only `inyon phones` shows it: skipped when the files are busy, never written past the lock
+  withNodeFilesWithin(
+    LINK_WAIT,
+    () => {
+      const all = phones()
+      const p = all[key]
+      if (!p || Date.now() - (p.lastSeen ?? 0) < every) return
+      p.lastSeen = Date.now()
+      writeJson('phones.json', all)
+    },
+    () => undefined,
+  )
+}
+
 export function forgetPhone(key: string) {
-  const all = phones()
-  delete all[key]
-  writeJson('phones.json', all)
+  withNodeFiles(() => {
+    const all = phones()
+    delete all[key]
+    writeJson('phones.json', all)
+  })
   endSessions(key)
   forgetPushes(key)
 }
@@ -204,20 +312,28 @@ function welcome() {
 }
 
 /** Who may come in: a phone paired before, or one bringing the secret from the code on screen. */
-function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
+export const check = (remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) =>
+  // the phone gives each address a few seconds: say busy in time rather than miss them all
+  withNodeFilesWithin(CHECK_WAIT, () => checkLocked(remoteStatic, hello), () => {
+    throw new LinkError('REFUSED', `${os.hostname()} is busy saving its files. Try again in a moment.`)
+  })
+
+function checkLocked(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }) {
   const key = hex(remoteStatic)
   const all = phones()
-  if (all[key]) {
-    all[key].lastSeen = Date.now()
-    writeJson('phones.json', all)
-    return welcome()
-  }
+  // nothing is written for a paired phone yet: lastSeen waits for its first frame (markSeen)
+  if (all[key]) return welcome()
   const pairing = readJson<Pairing>('pairing.json', {})
   const live = (pairing.expires ?? 0) > Date.now()
   const matches = (want?: string) => !!want && !!hello.pair && sameText(hello.pair, want)
   if (hello.pair && live && (matches(pairing.secret) || matches(pairing.short))) {
     all[key] = { name: phoneName(hello.name), pairedAt: Date.now(), lastSeen: Date.now() }
-    writeJson('phones.json', all)
+    try {
+      writeJson('phones.json', all)
+    } catch (err) {
+      // not saved, not paired: the phone is told, and the code stays good for another try
+      throw new LinkError('REFUSED', `${os.hostname()} couldn't save the pairing (${(err as Error).message}). Check the space and permissions of ~/.inyon/node, then try again.`)
+    }
     // one code, one phone
     rmSync(file('pairing.json'), { force: true })
     console.log(`paired with ${all[key].name}`)
@@ -226,7 +342,13 @@ function check(remoteStatic: Uint8Array, hello: { name?: string; pair?: string }
   if (hello.pair && live && pairing.short) {
     // a wrong code: count it, and stop taking short codes before guessing could pay off
     const failures = (pairing.failures ?? 0) + 1
-    writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    try {
+      writeJson('pairing.json', failures >= SHORT_TRIES ? { ...pairing, short: undefined, failures } : { ...pairing, failures })
+    } catch (err) {
+      // a guess that can't be counted mustn't be free: the code stops working
+      console.error(`couldn't save pairing.json: ${(err as Error).message}`)
+      rmSync(file('pairing.json'), { force: true })
+    }
     if (failures >= SHORT_TRIES) throw new LinkError('NOT_PAIRED', `Too many wrong codes, so that one no longer works. Run \`inyon pair\` on ${os.hostname()} for a new one.`)
     throw new LinkError('NOT_PAIRED', `That code doesn't match. Check it against the one on ${os.hostname()} and try again.`)
   }
@@ -253,14 +375,24 @@ async function session(id: Identity, wire: Wire, via: string) {
   active.get(key)!.add(end)
   // a stream can run with nothing coming in, so check now and then too, not only per message
   watching ??= setInterval(dropForgotten, 2000)
+  let proven = false
   channel.onmessage = (m) => {
+    // a frame that opens proves the phone holds its keys, which a replayed message 1 doesn't
+    if (!proven) {
+      proven = true
+      markSeen(key)
+    }
     dropForgotten()
     if (!open) return
     if (m?.op === 'ping') return channel.send({ type: 'pong', t: m.t })
     // the phone removed this computer: it stops being trusted here too, as `inyon forget` would
     if (m?.op === 'unpair') {
       console.log(`a phone removed this computer; it is no longer paired (${key.slice(0, 12)}…)`)
-      return forgetPhone(key)
+      try {
+        return forgetPhone(key)
+      } catch (err) {
+        return console.error((err as Error).message)
+      }
     }
     ops.message(m)
   }
@@ -406,7 +538,7 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
       bin = await cloudflared()
     } catch (err) {
       console.error(`tunnel: ${(err as Error).message}`)
-      return setTimeout(run, Math.min(300_000, 10_000 * 2 ** attempt++))
+      return setTimeout(run, backoff(attempt++, 10_000, 300_000))
     }
     const p = Bun.spawn([bin, 'tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${port}`], { stdout: 'ignore', stderr: 'pipe', windowsHide: true } as any)
     children.add(p)
@@ -418,7 +550,6 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
         carry += dec.decode(chunk, { stream: true })
         const m = carry.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/)
         if (m) {
-          attempt = 0
           onUrl(`wss://${new URL(m[0]).host}/link`)
           carry = ''
         } else if (carry.length > 65536) carry = carry.slice(-4096)
@@ -427,8 +558,10 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
     await p.exited
     children.delete(p)
     onUrl(undefined)
-    // quick tunnels are rate limited; back off if it keeps dying young
-    const delay = Date.now() - started > 60_000 ? 2000 : Math.min(300_000, 5000 * 2 ** attempt++)
+    // quick tunnels are rate limited; back off if it keeps dying young, even after it gave an
+    // address, and start over only after a run that lasted
+    if (Date.now() - started > 60_000) attempt = 0
+    const delay = Date.now() - started > 60_000 ? 2000 + backoff(0, 2000, 2000) : backoff(attempt++, 5000, 300_000)
     console.log(`tunnel stopped; restarting in ${Math.round(delay / 1000)}s`)
     setTimeout(run, delay)
   }
@@ -441,6 +574,7 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
 function relay(id: Identity, url: string, onState: (up: boolean) => void) {
   let attempt = 0
   const connect = () => {
+    let readyAt: number | undefined
     const ws = new WebSocket(relayWs(url, machinePath(id.id)))
     ws.binaryType = 'arraybuffer'
     const sessions = new Map<number, Wire>()
@@ -459,7 +593,7 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
       if (m.t === 'challenge') {
         ws.send(JSON.stringify({ t: 'auth', id: id.id, sig: Buffer.from(sign(id, authMessage(m.nonce))).toString('base64') }))
       } else if (m.t === 'ready') {
-        attempt = 0
+        readyAt = Date.now()
         console.log(`relay ${new URL(url).host}: connected`)
         onState(true)
       } else if (m.t === 'open') {
@@ -483,7 +617,9 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
       for (const w of sessions.values()) w.onclose?.(1001, 'relay disconnected')
       sessions.clear()
       onState(false)
-      const delay = Math.min(60_000, 1000 * 2 ** attempt++)
+      // a relay that lets the machine in and drops it at once keeps being backed off from
+      attempt = attemptAfter(attempt, readyAt)
+      const delay = backoff(attempt++, 1000, 60_000)
       console.log(`relay ${new URL(url).host}: disconnected (${e.code}); retrying in ${Math.round(delay / 1000)}s`)
       setTimeout(connect, delay)
     }
@@ -494,12 +630,33 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
 
 // ---------- the service ----------
 
+/**
+ * Publishes until a relay takes the record, backing off from `base` up to 60 times that with
+ * jitter: the phone only learns a new tunnel address from pkarr, so a failed publish can't wait for
+ * the 30-minute republish. Stops (undefined) when `wanted` says a newer record took over.
+ */
+export async function publishUntilTaken(relays: string[], id: Identity, rec: { urls: string[]; relays: string[] }, lastSeq: number | undefined, base: number, wanted: () => boolean, fetcher: typeof fetch = fetch) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await publish(id, rec, relays, fetcher, lastSeq)
+    } catch (e) {
+      if (!wanted()) return
+      const delay = backoff(attempt, base, base * 60)
+      console.error(`publish: ${(e as Error).message}; trying again in ${Math.round(delay / 1000)}s`)
+      await Bun.sleep(delay)
+      if (!wanted()) return
+    }
+  }
+}
+
 export function startLink(config: LinkConfig) {
   const id = identity()
   listen(id, config.lan ? '0.0.0.0' : '127.0.0.1', config.port)
   let tunnelUrl: string | undefined
   let lastPublished = ''
   let lastSeq = currentState()?.lastSeq
+  /** counts publishes started; a retrying one stops once a newer one has begun */
+  let publishing = 0
   // private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
   const vpn = new Map<string, { stop(): void }>()
 
@@ -513,20 +670,17 @@ export function startLink(config: LinkConfig) {
       ]),
     ]
     const state: State = { urls, relays: config.relays, updatedAt: Date.now(), pid: process.pid, version: VERSION, lastSeq }
-    writeJson('state.json', state)
+    withNodeFilesWithin(LINK_WAIT, () => writeJson('state.json', state), () => undefined)
     const key = JSON.stringify({ urls, relays: config.relays })
     if (key === lastPublished || (!urls.length && !config.relays.length)) return
     lastPublished = key
-    publish(id, { urls, relays: config.relays }, PKARR_RELAYS, fetch, lastSeq)
-      .then((seq) => {
-        lastSeq = seq
-        writeJson('state.json', { ...(currentState() ?? state), lastSeq })
-        console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
-      })
-      .catch((e) => {
-        lastPublished = ''
-        console.error(`publish: ${e.message}`)
-      })
+    const mine = ++publishing
+    publishUntilTaken(PKARR_RELAYS, id, { urls, relays: config.relays }, lastSeq, 10_000, () => publishing === mine).then((seq) => {
+      if (seq === undefined) return
+      lastSeq = seq
+      withNodeFilesWithin(LINK_WAIT, () => writeJson('state.json', { ...(currentState() ?? state), lastSeq }), () => undefined)
+      console.log(`published: ${[...urls, ...config.relays].join(' ') || 'nothing'}`)
+    })
   }
 
   if (config.tunnel) {

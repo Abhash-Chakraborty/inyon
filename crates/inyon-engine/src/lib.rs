@@ -13,6 +13,7 @@ pub mod cli;
 pub mod connect;
 pub mod http;
 pub mod hub;
+pub mod hub_tls;
 pub mod link;
 pub mod networks;
 pub mod ops;
@@ -147,6 +148,32 @@ pub fn random_bytes(n: usize) -> Vec<u8> {
     out
 }
 
+/// How long to wait before trying again: capped exponential backoff with full jitter, a random
+/// time between 0 and min(cap, base·2^attempt). After a hub restarts, or the pkarr relays come
+/// back, every machine would otherwise try again at the same moments.
+pub fn backoff(attempt: u32, base: std::time::Duration, cap: std::time::Duration) -> std::time::Duration {
+    let r = u64::from_le_bytes(random_bytes(8).try_into().unwrap_or([0; 8]));
+    backoff_at(attempt, base, cap, r as f64 / (u64::MAX as f64 + 1.0))
+}
+
+/// `backoff` with the random draw given (0 ≤ r < 1).
+pub fn backoff_at(attempt: u32, base: std::time::Duration, cap: std::time::Duration, r: f64) -> std::time::Duration {
+    cap.min(base.saturating_mul(1u32 << attempt.min(20))).mul_f64(r.clamp(0.0, 1.0))
+}
+
+/// How long a connection has to stay up before its backoff starts from the first step again; one
+/// that opens and drops at once (a crash loop, a proxy that cuts upgrades) keeps backing off.
+pub const STABLE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The attempt number after a try that stayed up for `up` (None: it never opened).
+pub fn next_attempt(attempt: u32, up: Option<std::time::Duration>) -> u32 {
+    if up.is_some_and(|u| u >= STABLE) {
+        0
+    } else {
+        attempt.saturating_add(1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +183,28 @@ mod tests {
         assert_eq!(iso(0), "1970-01-01T00:00:00.000Z");
         assert_eq!(iso(1_760_440_883_456), "2025-10-14T11:21:23.456Z");
         assert_eq!(iso(951_782_400_000), "2000-02-29T00:00:00.000Z");
+    }
+
+    #[test]
+    fn retries_back_off_exponentially_up_to_the_cap_with_full_jitter() {
+        use std::time::Duration;
+        let (s1, s30) = (Duration::from_secs(1), Duration::from_secs(30));
+        let top: Vec<u128> = [0, 1, 2, 3, 4, 5, 40].iter().map(|a| backoff_at(*a, s1, s30, 1.0).as_millis()).collect();
+        assert_eq!(top, [1000, 2000, 4000, 8000, 16000, 30000, 30000]);
+        assert_eq!(backoff_at(3, s1, s30, 0.0), Duration::ZERO);
+        assert_eq!(backoff_at(3, s1, s30, 0.5), Duration::from_secs(4));
+        for _ in 0..1000 {
+            assert!(backoff(4, s1, s30) < Duration::from_secs(16));
+        }
+    }
+
+    #[test]
+    fn the_backoff_starts_over_only_after_a_connection_stayed_up_a_while() {
+        use std::time::Duration;
+        assert_eq!(next_attempt(3, None), 4);
+        // a hub that accepts and drops at once keeps being backed off from
+        assert_eq!(next_attempt(3, Some(Duration::from_millis(200))), 4);
+        assert_eq!(next_attempt(3, Some(STABLE)), 0);
     }
 
     #[test]

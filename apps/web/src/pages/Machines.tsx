@@ -240,6 +240,13 @@ export function MachinePage() {
           {host.latencyMs !== undefined && <span title={RESPONSE_TITLE}>{` · responds in ${responseTime(host.latencyMs)}`}</span>}
         </p>
         <NodeUpdate host={host} />
+        {/* the machine's own warning about how it reaches the hub (plain http, added before 0.20) */}
+        {host.nodeWarning && (
+          <div className="animate-slide-up mb-4 flex items-start gap-2 rounded-2xl bg-warn-soft px-3.5 py-3 text-[13px] text-warn">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <span className="min-w-0 flex-1 break-words">{host.nodeWarning}</span>
+          </div>
+        )}
         {host.error && host.status !== 'online' && (
           <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
             {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center"><Pulse /></span>}

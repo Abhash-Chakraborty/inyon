@@ -118,3 +118,46 @@ test('with INYON_LEGACY_ENGINE=1 the engine comes from the hub too, checked the 
     fixedList = undefined
   }
 })
+
+test('a hub on a certificate it made itself: the downloads get past it, still checked, and join gets its sha256', async () => {
+  // the hub as setup's LAN choice leaves it: HTTPS on a self-signed certificate
+  const dir = mkdtempSync(join(root, 'tls-'))
+  const made = Bun.spawnSync(['sh', '-c', 'openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout k.pem -out c.pem -days 2 -subj /CN=hub -addext subjectAltName=IP:127.0.0.1'], { cwd: dir, stderr: 'pipe' })
+  expect(made.exitCode).toBe(0)
+  const { selfSignedCert } = await import('./node-dist.ts')
+  const cert = selfSignedCert(join(dir, 'c.pem'))!
+  const der = Buffer.from(readFileSync(join(dir, 'c.pem'), 'utf8').replace(/-----[^-]+-----|\s/g, ''), 'base64')
+  expect(cert.sha256).toBe(sha(der))
+  const saved = { program, fixedList, split }
+  program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_HUB_CERT" > "$HOME/ran"\n'
+  fixedList = undefined
+  split = false
+  const tls = Bun.serve({ port: 0, hostname: '127.0.0.1', tls: { cert: Bun.file(join(dir, 'c.pem')), key: Bun.file(join(dir, 'k.pem')) }, fetch: (req) => server.fetch(req) as Response | Promise<Response> })
+  try {
+    const https = `https://127.0.0.1:${tls.port}`
+    // without the sha256, curl stops at the certificate, as it should
+    expect((await run(unixPairCommand(https, 'tok', sha(installSh), sha(sums())))).code).not.toBe(0)
+    const r = await run(unixPairCommand(https, 'tok', sha(installSh), sha(sums()), cert.sha256))
+    expect(r.err).not.toContain('checksum')
+    expect(r.code).toBe(0)
+    expect(r.ran).toBe(`join ${https}\n${cert.sha256}\n`)
+    // and a program swapped on the way is still refused
+    fixedList = sums()
+    program = '#!/bin/sh\necho "not what the hub built" > "$HOME/ran"\n'
+    const swapped = await run(unixPairCommand(https, 'tok', sha(installSh), sha(fixedList), cert.sha256))
+    expect(swapped.err).toContain('inyon did not match its checksum')
+    expect(swapped.ran).toBeUndefined()
+  } finally {
+    tls.stop(true)
+    ;({ program, fixedList, split } = saved)
+  }
+  // a certificate from an authority gets no sha256 in the command
+  expect(selfSignedCert(join(dir, 'nothing.pem'))).toBeUndefined()
+})
+
+test('the command names the certificate only when there is one, in the form both hubs write', () => {
+  expect(unixPairCommand('https://192.168.1.5:4777', 'tok', 'aaa', 'bbb', 'cc')).toBe(
+    `INYON_TOKEN=tok INYON_SUMS_SHA256=bbb INYON_HUB_CERT=cc sh -c 'f=$(mktemp) && curl -fsSLk "$1/node/install.sh" -o "$f" && if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s' inyon https://192.168.1.5:4777 aaa`,
+  )
+  expect(unixPairCommand('http://hub:4777', 'tok', 'aaa', 'bbb')).not.toContain('INYON_HUB_CERT')
+})

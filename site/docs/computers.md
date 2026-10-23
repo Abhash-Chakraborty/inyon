@@ -18,16 +18,16 @@ prints a QR code, an ID like `K7Q4-MX2T` with a 6-digit code, and a link. Scan t
 
 - A code pairs one phone, once, within 10 minutes.
 - Five wrong typed codes cancel the typed code (the QR code still works until it expires).
-- `inyon phones` lists paired phones by maker and model (such as *Nothing A142*) and when each was last seen; `inyon forget <name>` unpairs one at once. From 0.17, removing the computer in the app unpairs the phone on the computer too.
+- `inyon phones` lists paired phones by maker and model (such as *Nothing A142*) and when each was last seen (updated at most once a minute, and only after the phone has proved its key); `inyon forget <name>` unpairs one at once, and from 0.20 it holds even while that phone keeps trying to connect. From 0.17, removing the computer in the app unpairs the phone on the computer too.
 
 Pair as many phones as you like, and pair the same phone with as many computers as you like.
 
 ## How it stays private
 
-- **Keys.** Each computer has an ed25519 key made on it, stored in `~/.inyon/node/identity.json` and readable only by you. Its public half is the computer's ID. Pairing tells the phone that key, and tells the computer the phone's.
+- **Keys.** Each computer has an ed25519 key made on it, stored in `~/.inyon/node/identity.json` and readable only by you. Its public half is the computer's ID. From 0.20, a damaged or unreadable `identity.json` stops the link with a message and is left as it is, so restore it from a backup; Inyon only makes a new key when the file is missing, and every phone then has to pair again. Pairing tells the phone that key, and tells the computer the phone's.
 - **The handshake.** Every connection starts with a Noise IK handshake (X25519, ChaCha20-Poly1305) between those two keys. Only a phone the computer has paired, or one holding a live pairing code, gets through. Everything after the handshake is encrypted end to end.
 - **The tunnel.** A Cloudflare quick tunnel reaches only the computer's link port on `127.0.0.1`, and carries only ciphertext.
-- **Addresses.** The computer publishes where it can be reached on [pkarr](https://pkarr.org), signed with its key, every 30 minutes. A record that isn't signed by that key is ignored.
+- **Addresses.** The computer publishes where it can be reached on [pkarr](https://pkarr.org), signed with its key, every 30 minutes and whenever an address changes. A record that isn't signed by that key is ignored. From 0.20, a publish the pkarr relays turn down is tried again after a few seconds, then less often, until one takes it; before, a new tunnel address could stay unpublished until the next half hour.
 
 [Security](security.md) covers the whole model.
 

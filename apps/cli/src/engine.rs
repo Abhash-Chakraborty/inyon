@@ -336,7 +336,8 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
         Source::Hub(hub) => {
             let t = update::target(Platform::current(), Arch::current()).map_err(|e| e.to_string())?;
             let q = format!("?os={}&arch={}", t.os, t.arch);
-            let want = update::hub_sum(&hub, "inyon-engine", &q)
+            let signed = update::hub_signed_sums(&hub, &signing::signing_key(&format!("{hub}/node/release"))).map_err(|e| e.to_string())?;
+            let want = update::hub_checksum(&hub, signed.as_deref(), "inyon-engine", &update::hub_files(&t).engine, &q)
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first."))?;
             say(&format!("Getting the Inyon engine from {}…", crate::http::host_of(&hub)));
@@ -354,6 +355,8 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
     std::fs::rename(&tmp, to).map_err(|e| e.to_string())
 }
 
+/// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by whichever engine
+/// connects (crates/inyon-engine/src/hub_tls.rs, apps/node/pin.ts), never made an authority here.
 fn command(engine: &Path) -> Command {
     let mut c = Command::new(engine);
     c.env("INYON_CLI", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());

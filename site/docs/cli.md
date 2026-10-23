@@ -74,7 +74,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
-   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. To join a hub, type the hub's address.
+   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, type the hub's address.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
@@ -199,7 +199,7 @@ inyon doctor
 
 Checks, one line each: the engine (from 0.19 "built in", plus the hub's engine on a hub) and the command, tmux (psmux on Windows), which agents are on the `PATH`, each service, leftovers from tether-node, the link's and the hub's ports, the private networks found, `cloudflared`, the clock and the last update. A line starting with `!` needs attention. With `--json`, `ok` is `false` when any check failed.
 
-From 0.20 a `reach` line says when phones reach the computer only through the tunnel (the default on Windows), and how to let phones on the same Wi-Fi or VPN in. On Windows with *LAN* or *VPN* on, doctor also checks the link's port and the firewall rule "Inyon link", and prints the command that adds the rule when it's missing.
+From 0.20 a `reach` line says when phones reach the computer only through the tunnel (the default on Windows), and how to let phones on the same Wi-Fi or VPN in. On Windows with *LAN* or *VPN* on, doctor also checks the link's port and the firewall rule "Inyon link", and prints the command that adds the rule when it's missing. On a machine added to a hub, a `hub` line says whether its connection may go to the saved address, and repeats a warning or problem the connection reported, such as a hub on plain http (see [Plain http](machines.md#plain-http)).
 
 ## Update and uninstall
 

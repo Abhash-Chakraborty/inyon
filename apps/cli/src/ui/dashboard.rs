@@ -132,7 +132,11 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         .collect();
     let nodes = (role == "hub").then(hub_nodes).flatten();
     let agents = if with_agents { running_agents() } else { Vec::new() };
-    let note = (bun && crate::engine::find().is_none()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string());
+    let note = (bun && crate::engine::find().is_none()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string()).or_else(|| {
+        // why the hub connection can't connect, or the plain http it warns about
+        let running = jobs.iter().any(|j| j.role == Role::Node.name() && j.running);
+        (role == "joined" && running).then(crate::commands::connection_note).flatten().map(|(_, s)| s)
+    });
     let reach = (role == "node" || has(Role::Link)).then(|| tunnel_only(&state::link_config(), cfg!(windows))).flatten();
     Status {
         v: 1,

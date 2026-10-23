@@ -3,6 +3,7 @@ import type { AgentKind } from './agents.ts'
 
 export * from './agents.ts'
 export * from './versions.ts'
+export * from './backoff.ts'
 
 /** local: the hub itself · ssh: the hub connects out over SSH · node: the machine connects in to the hub (no open ports) */
 export type HostKind = 'local' | 'ssh' | 'node' | 'link'
@@ -190,6 +191,11 @@ export interface HostState {
   machineKind?: MachineKind
   /** the inyon version a paired machine or laptop runs */
   nodeVersion?: string
+  /**
+   * what that machine's inyon warns about its connection to the hub (plain http, from a machine
+   * added before 0.20), with how to fix it
+   */
+  nodeWarning?: string
   /** set when that inyon is behind, or while an update runs */
   nodeUpdate?: NodeUpdate
   latencyMs?: number

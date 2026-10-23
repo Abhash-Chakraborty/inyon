@@ -1,6 +1,8 @@
 import os from 'node:os'
 import path from 'node:path'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import dns from 'node:dns/promises'
+import { isIPv4, isIPv6 } from 'node:net'
 import { VERSION } from './link.ts'
 import { nodeDir, readEnvFile, runningFile } from './paths.ts'
 import { emit, fail } from './output.ts'
@@ -19,25 +21,83 @@ import { emit, fail } from './output.ts'
 const dataDir = () => process.env.INYON_DATA_DIR || path.join(os.homedir(), '.inyon')
 export const hubEnvFile = () => path.join(dataDir(), 'hub.env')
 
-/** A private IPv4 address: a whole dotted quad (10.0.0.1.example.com is a name, not one) in a private range. */
-function privateIPv4(h: string) {
-  const parts = h.split('.')
-  if (parts.length !== 4 || !parts.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) return false
-  const [a, b] = parts.map(Number) as [number, number]
-  if (a === 10 || a === 127) return true
-  if (a === 192 && b === 168) return true
-  if (a === 172 && b >= 16 && b <= 31) return true
-  return a === 100 && b >= 64 && b <= 127 // CGNAT range used by Tailscale and NetBird
+/**
+ * An address plain http may carry the token to: this machine, or a VPN that encrypts on its own
+ * (Tailscale and NetBird's 100.64.0.0/10, Tailscale's fd7a:115c:a1e0::/48). A LAN address isn't:
+ * anyone on the Wi-Fi can read the token there, or answer in the hub's place.
+ */
+export function plainHttpIp(ip: string) {
+  const v6 = ip.replace(/^\[|\]$/g, '').toLowerCase()
+  const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)
+  if (mapped) return plainHttpIp(mapped[1]!)
+  if (isIPv4(v6)) {
+    const [a, b] = v6.split('.').map(Number) as [number, number]
+    return a === 127 || (a === 100 && b >= 64 && b <= 127)
+  }
+  if (!isIPv6(v6)) return false
+  const full = expandIPv6(v6)
+  // an IPv4 address in IPv6 form, as URL writes it (::ffff:6464:101)
+  if (full.startsWith('0000:0000:0000:0000:0000:ffff:')) {
+    const [hi, lo] = full.split(':').slice(6).map((g) => parseInt(g, 16)) as [number, number]
+    return plainHttpIp(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+  }
+  return full === '0000:0000:0000:0000:0000:0000:0000:0001' || full.startsWith('fd7a:115c:a1e0:')
 }
 
-/** Whether a hub's address is on your own network, where plain http:// is accepted for the token. */
-export function privateHost(url: URL) {
+function expandIPv6(ip: string) {
+  const [head, tail = ''] = ip.split('::') as [string, string?]
+  const h = head ? head.split(':') : []
+  const t = ip.includes('::') && tail ? tail.split(':') : []
+  const parts = ip.includes('::') ? [...h, ...Array(8 - h.length - t.length).fill('0'), ...t] : h
+  return parts.map((p) => p.padStart(4, '0')).join(':')
+}
+
+/** What a hub address on plain http is: fine, a name to look up and check before each connection, or refused. */
+export function plainHost(url: URL): 'ok' | 'look up' | 'refused' {
   const h = url.hostname
-  // IPv6 literals: loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
-  if (h.startsWith('[')) return /^\[(::1|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/i.test(h)
-  if (h === 'localhost' || h === '::1' || privateIPv4(h)) return true
-  if (/\.(ts\.net|netbird\.cloud|netbird\.selfhosted|local|lan|internal)$/.test(h)) return true
-  return !h.includes('.') // single-label names on your private network
+  if (h.startsWith('[') || isIPv4(h)) return plainHttpIp(h) ? 'ok' : 'refused'
+  if (h === 'localhost') return 'ok'
+  return 'look up'
+}
+
+/** Why a hub address can't take the token over plain http, and what to do instead. */
+/**
+ * Whether Inyon before 0.20 sent the token over plain http to this address: a private one (10/8,
+ * 172.16/12, 192.168/16, 100.64/10, loopback, fc00::/7, fe80::/10), localhost, a single-label name,
+ * or one ending in .ts.net, .netbird.cloud, .netbird.selfhosted, .local, .lan or .internal. A
+ * machine added then keeps connecting to such a hub, with a warning; a public address it never went
+ * to stays refused. The same rule as plain_before_0_20 in crates/inyon-engine/src/hub.rs.
+ */
+export function plainBefore020(url: URL) {
+  const h = url.hostname.toLowerCase()
+  if (h.startsWith('[')) return /^\[(::1\]|f[cd][0-9a-f]{0,2}:|fe[89ab][0-9a-f]?:)/.test(h)
+  const v4 = h.split('.')
+  if (v4.length === 4 && v4.every((p) => /^\d{1,3}$/.test(p) && Number(p) <= 255)) {
+    const [a, b] = v4.map(Number) as [number, number]
+    return a === 10 || a === 127 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 100 && b >= 64 && b <= 127)
+  }
+  if (h === 'localhost' || /\.(ts\.net|netbird\.cloud|netbird\.selfhosted|local|lan|internal)$/.test(h)) return true
+  return !h.includes('.')
+}
+
+export const plainRefusal = (host: string) =>
+  `Refusing to send the token over plain http to ${host}: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway.`
+
+/**
+ * Looks up a hub's name and checks every address it has (a MagicDNS name pointing into the tailnet
+ * passes). The addresses it was judged by, to connect to and nothing else; the refusal when it
+ * points somewhere it mustn't; null when it couldn't be looked up, worth trying again.
+ */
+export async function checkName(host: string): Promise<{ addrs: string[] } | { why: string } | null> {
+  let addrs: { address: string }[]
+  try {
+    addrs = await dns.lookup(host, { all: true })
+  } catch {
+    return null
+  }
+  if (!addrs.length) return null
+  const bad = addrs.find((a) => !plainHttpIp(a.address))
+  return bad ? { why: `${plainRefusal(host).replace(/\.$/, '')} (${host} is ${bad.address})` } : { addrs: addrs.map((a) => a.address) }
 }
 
 export async function hubCommand(args: string[]) {

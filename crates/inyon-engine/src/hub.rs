@@ -1,73 +1,161 @@
 //! The part of hub.ts a machine needs without the hub: which hub addresses may take its token
 //! over plain http. The hub itself (`inyon hub`) still runs from the Bun engine.
 
+use std::net::IpAddr;
+
 use url::Url;
 
-/// A private IPv4 address: a whole dotted quad (10.0.0.1.example.com is a name, not one) in a
-/// private range.
-fn private_ipv4(h: &str) -> bool {
-    let parts: Vec<&str> = h.split('.').collect();
-    if parts.len() != 4 || !parts.iter().all(|p| (1..=3).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_digit()) && p.parse::<u16>().is_ok_and(|n| n <= 255)) {
-        return false;
+/// An address plain http may carry the token to: this machine, or a VPN that encrypts on its own
+/// (Tailscale and NetBird's 100.64.0.0/10, Tailscale's fd7a:115c:a1e0::/48). A LAN address isn't:
+/// anyone on the Wi-Fi can read the token there, or answer in the hub's place.
+pub fn plain_http_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            v4.is_loopback() || (a == 100 && (64..=127).contains(&b))
+        }
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => plain_http_ip(IpAddr::V4(v4)),
+            None => v6.is_loopback() || v6.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0],
+        },
     }
-    let a: u16 = parts[0].parse().unwrap_or(0);
-    let b: u16 = parts[1].parse().unwrap_or(0);
-    if a == 10 || a == 127 {
-        return true;
-    }
-    if a == 192 && b == 168 {
-        return true;
-    }
-    if a == 172 && (16..=31).contains(&b) {
-        return true;
-    }
-    // the CGNAT range Tailscale and NetBird use
-    a == 100 && (64..=127).contains(&b)
 }
 
-/// Whether a hub's address is on your own network, where plain http:// is accepted for the token.
-pub fn private_host(url: &Url) -> bool {
-    let h = url.host_str().unwrap_or("").to_lowercase();
-    // IPv6 literals: loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
-    if let Some(inner) = h.strip_prefix('[') {
-        let hex = |c: char| c.is_ascii_hexdigit();
-        if inner.starts_with("::1") {
-            return true;
-        }
-        let b: Vec<char> = inner.chars().collect();
-        // f[cd][0-9a-f]{0,2}:
-        if b.len() >= 3 && b[0] == 'f' && (b[1] == 'c' || b[1] == 'd') {
-            let rest: String = b[2..].iter().take_while(|c| hex(**c)).collect();
-            if rest.len() <= 2 && b.get(2 + rest.len()) == Some(&':') {
-                return true;
-            }
-        }
-        // fe[89ab][0-9a-f]?:
-        if b.len() >= 4 && b[0] == 'f' && b[1] == 'e' && matches!(b[2], '8' | '9' | 'a' | 'b') {
-            return b[3] == ':' || (hex(b[3]) && b.get(4) == Some(&':'));
-        }
-        return false;
+/// What a hub address on plain http is: fine as it is (an address above, or localhost), a name
+/// whose addresses have to be looked up and checked before every connection, or refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plain {
+    Ok,
+    LookUp,
+    Refused,
+}
+
+pub fn plain_host(url: &Url) -> Plain {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => ok_if(plain_http_ip(ip.into())),
+        Some(url::Host::Ipv6(ip)) => ok_if(plain_http_ip(ip.into())),
+        Some(url::Host::Domain(d)) if d.eq_ignore_ascii_case("localhost") => Plain::Ok,
+        Some(url::Host::Domain(_)) => Plain::LookUp,
+        None => Plain::Refused,
     }
-    if h == "localhost" || h == "::1" || private_ipv4(&h) {
-        return true;
+}
+
+fn ok_if(ok: bool) -> Plain {
+    if ok {
+        Plain::Ok
+    } else {
+        Plain::Refused
     }
-    if [".ts.net", ".netbird.cloud", ".netbird.selfhosted", ".local", ".lan", ".internal"].iter().any(|s| h.ends_with(s)) {
-        return true;
+}
+
+/// Whether Inyon before 0.20 sent the token over plain http to this address: a private one (10/8,
+/// 172.16/12, 192.168/16, 100.64/10, loopback, fc00::/7, fe80::/10), localhost, a single-label
+/// name, or one ending in .ts.net, .netbird.cloud, .netbird.selfhosted, .local, .lan or .internal.
+/// A machine added then keeps connecting to such a hub, with a warning; a public address it never
+/// went to stays refused.
+pub fn plain_before_0_20(url: &Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            a == 10 || a == 127 || (a == 192 && b == 168) || (a == 172 && (16..=31).contains(&b)) || (a == 100 && (64..=127).contains(&b))
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+        Some(url::Host::Domain(d)) => {
+            let h = d.to_ascii_lowercase();
+            h == "localhost" || [".ts.net", ".netbird.cloud", ".netbird.selfhosted", ".local", ".lan", ".internal"].iter().any(|s| h.ends_with(s)) || !h.contains('.')
+        }
+        None => false,
     }
-    // single-label names on your private network
-    !h.contains('.')
+}
+
+/// Why a hub address can't take the token over plain http, and what to do instead.
+pub fn plain_refusal(host: &str) -> String {
+    format!(
+        "Refusing to send the token over plain http to {host}: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway."
+    )
+}
+
+/// Looks up a hub's name and checks that every address it has is one plain http may go to (a
+/// MagicDNS name that points into the tailnet is). Err(None) when the name couldn't be looked up,
+/// which is worth trying again; Err(Some(why)) when it points somewhere it mustn't.
+pub async fn check_name(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, Option<String>> {
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host, port)).await.map_err(|_| None)?.collect();
+    judge(host, addrs.iter().map(|a| a.ip()).collect())?;
+    Ok(addrs)
+}
+
+/// check_name, for a program with no async threads (`inyon join`).
+pub fn check_name_now(host: &str, port: u16) -> Result<(), Option<String>> {
+    use std::net::ToSocketAddrs;
+    judge(host, (host, port).to_socket_addrs().map_err(|_| None)?.map(|a| a.ip()).collect())
+}
+
+fn judge(host: &str, addrs: Vec<IpAddr>) -> Result<(), Option<String>> {
+    match addrs.iter().find(|ip| !plain_http_ip(**ip)) {
+        _ if addrs.is_empty() => Err(None),
+        Some(bad) => Err(Some(format!("{} ({host} is {bad})", plain_refusal(host).trim_end_matches('.')))),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn is_private(hub: &str) -> bool {
-        private_host(&Url::parse(hub).unwrap())
+    fn plain(hub: &str) -> Plain {
+        plain_host(&Url::parse(hub).unwrap())
     }
 
     #[test]
-    fn plain_http_is_for_private_addresses() {
+    fn plain_http_is_for_this_machine_and_the_vpn_ranges() {
+        for h in ["localhost", "127.0.0.1", "127.8.0.1", "100.64.0.1", "100.127.255.255", "[::1]", "[fd7a:115c:a1e0::1]", "[fd7a:115c:a1e0:ab12::5]", "[::ffff:100.100.1.1]"] {
+            assert_eq!(plain(&format!("http://{h}:4777")), Plain::Ok, "{h}");
+        }
+    }
+
+    #[test]
+    fn a_lan_address_or_a_public_one_is_refused_and_a_name_is_looked_up() {
+        // a LAN can be listened to, and answered by anyone on it
+        for h in [
+            "10.0.0.1",
+            "192.168.1.20",
+            "172.16.0.1",
+            "8.8.8.8",
+            "100.128.0.1",
+            "100.63.255.255",
+            "[fd00::1]",
+            "[fe80::1]",
+            "[fd7a:115c:a1e1::1]",
+            "[2001:db8::1]",
+            "[::ffff:192.168.1.2]",
+        ] {
+            assert_eq!(plain(&format!("http://{h}:4777")), Plain::Refused, "{h}");
+        }
+        // mDNS, LLMNR and the Wi-Fi's DNS answer names: what they point to is checked each time
+        for h in ["hub.local", "hub.lan", "hub", "hub.tail1234.ts.net", "10.0.0.1.attacker.com"] {
+            assert_eq!(plain(&format!("http://{h}:4777")), Plain::LookUp, "{h}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_name_passes_only_when_every_address_it_has_is_allowed() {
+        // the addresses it was judged by, to connect to and nothing else
+        assert!(check_name("localhost", 4777).await.unwrap().iter().all(|a| a.ip().is_loopback() && a.port() == 4777));
+        // 192.168.1.2 written as a name
+        let lan = check_name("192.168.1.2", 4777).await.unwrap_err().unwrap();
+        assert!(lan.starts_with("Refusing to send the token over plain http to 192.168.1.2") && lan.contains("is 192.168.1.2"), "{lan}");
+        assert_eq!(check_name("100.100.1.1", 4777).await, Ok(vec!["100.100.1.1:4777".parse().unwrap()]));
+        assert_eq!(check_name("nothing.invalid", 4777).await, Err(None));
+        assert_eq!(check_name_now("localhost", 4777), Ok(()));
+        assert!(check_name_now("192.168.1.2", 4777).unwrap_err().is_some());
+    }
+
+    #[test]
+    fn machines_added_before_0_20_keep_only_the_addresses_that_version_sent_the_token_to() {
+        let before = |h: &str| plain_before_0_20(&Url::parse(&format!("http://{h}:4777")).unwrap());
         for h in [
             "localhost",
             "127.0.0.1",
@@ -76,7 +164,6 @@ mod tests {
             "172.16.0.1",
             "172.31.255.255",
             "100.64.0.1",
-            "100.127.255.255",
             "[::1]",
             "[fd7a:115c:a1e0::1]",
             "[fe80::1]",
@@ -86,14 +173,10 @@ mod tests {
             "hub.internal",
             "hub",
         ] {
-            assert!(is_private(&format!("http://{h}:4777")), "{h}");
+            assert!(before(h), "{h}");
         }
-    }
-
-    #[test]
-    fn a_public_address_or_a_lookalike_name_is_not() {
-        for h in ["example.com", "8.8.8.8", "172.32.0.1", "100.128.0.1", "10.0.0.1.attacker.com", "192.168.1.20.example.net", "127.0.0.1.nip.io", "[2001:db8::1]"] {
-            assert!(!is_private(&format!("http://{h}:4777")), "{h}");
+        for h in ["example.com", "8.8.8.8", "203.0.113.7", "172.32.0.1", "100.128.0.1", "10.0.0.1.attacker.com", "192.168.1.20.example.net", "127.0.0.1.nip.io", "[2001:db8::1]"] {
+            assert!(!before(h), "{h}");
         }
     }
 }

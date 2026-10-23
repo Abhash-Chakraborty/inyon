@@ -358,11 +358,22 @@ export async function capturePanes(host: Host, paneIds: string[]): Promise<Map<s
  * buffers live in one server, so on Windows the buffer is loaded into the pane's own session (the
  * -t before the command, which psmux takes for any command); otherwise paste-buffer can't find it.
  */
-export function pasteCommand(buffer: string, pane: string) {
+export const pasteCommand = (buffer: string, pane: string) => throughBuffer(buffer, pane, '-p ')
+
+/**
+ * Types what comes in on stdin into a pane as keys would, through a buffer as a paste does but
+ * without the paste markers. Text never goes on a command line: another user on the machine can
+ * read every process's arguments (in /proc), and this is how messages, drafts and API
+ * keys typed into a sign-in reach the pane.
+ */
+export const typeCommand = (buffer: string, pane: string) => throughBuffer(buffer, pane, '')
+
+function throughBuffer(buffer: string, pane: string, flags: string) {
   const b = shq(buffer)
   const t = `\${s:+-t "$s"}`
-  // the trap deletes the file (it holds what was pasted) even when the connection drops half way
-  return `umask 077; f=$(mktemp) && trap 'rm -f "$f"' EXIT HUP INT TERM && { s=; [ "$OS" = Windows_NT ] && s=${shq(pane)}; cat > "$f" && tmux ${t} load-buffer -b ${b} "$f" && tmux paste-buffer -d -p -b ${b} -t ${shq(pane)}; r=$?; rm -f "$f"; [ $r = 0 ] || tmux ${t} delete-buffer -b ${b} 2>/dev/null; [ $r = 0 ]; }`
+  // the trap deletes the file (it holds what was pasted) even when the connection drops half way;
+  // once it's gone f is emptied, so the trap doesn't start a second rm (each start costs on Windows)
+  return `umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && { s=; [ "$OS" = Windows_NT ] && s=${shq(pane)}; cat > "$f" && tmux ${t} load-buffer -b ${b} "$f" && tmux paste-buffer -d ${flags}-b ${b} -t ${shq(pane)}; r=$?; rm -f "$f"; f=; [ $r = 0 ] || tmux ${t} delete-buffer -b ${b} 2>/dev/null; [ $r = 0 ]; }`
 }
 
 /**
@@ -398,18 +409,18 @@ export async function typeText(host: Host, pane: string, text: string, submit = 
     }
     return
   }
-  const parts: string[] = []
-  const lines = text.replace(/\r\n?/g, '\n').split('\n')
-  lines.forEach((line, i) => {
-    if (i > 0) parts.push(`tmux send-keys -t ${shq(pane)} C-j`)
-    for (let o = 0; o < line.length; o += 800) {
-      parts.push(`tmux send-keys -t ${shq(pane)} -l -- ${shq(line.slice(o, o + 800))}`)
-    }
-  })
-  if (submit) parts.push('sleep 0.12', `tmux send-keys -t ${shq(pane)} Enter`)
-  if (!parts.length) return
-  const r = await host.exec(parts.join(' && '))
+  const cmd = typedCommand(pane, text, submit, `inyon-${crypto.randomUUID()}`)
+  if (!cmd) return
+  const r = await host.exec(cmd, { input: text })
   if (r.code !== 0) throw new Error(r.stderr.trim() || 'send-keys failed')
+}
+
+/** One line of text typed through `buffer`, and Enter after it with `submit`; the text goes on stdin. */
+export function typedCommand(pane: string, text: string, submit: boolean, buffer: string) {
+  const parts: string[] = []
+  if (text) parts.push(typeCommand(buffer, pane))
+  if (submit) parts.push('sleep 0.12', `tmux send-keys -t ${shq(pane)} Enter`)
+  return parts.join(' && ')
 }
 
 // letters, the named keys, function keys, and Ctrl/Alt chords (OpenCode's bindings can be remapped to those)

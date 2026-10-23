@@ -1,4 +1,4 @@
-import type { ClientMsg, HostState, ServerMsg } from '@inyon/protocol'
+import { attemptAfter, backoff, type ClientMsg, type HostState, type ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
 import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, splitHostId, type PairedHub } from './hubs.ts'
@@ -19,6 +19,8 @@ class Socket {
   private chats = new Map<string, { host: string; pane: string; refs: number }>()
   private overview = false
   private retry = 0
+  /** when the open connection came up: the backoff only starts over once it stayed up a while */
+  private openedAt?: number
   private timer?: ReturnType<typeof setTimeout>
   private pingTimer?: ReturnType<typeof setInterval>
   private started = false
@@ -120,7 +122,7 @@ class Socket {
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
-      this.retry = 0
+      this.openedAt = Date.now()
       this.setUp(true)
       if (this.overview) this.raw({ t: 'sub.overview' })
       for (const c of this.chats.values()) this.raw({ t: 'sub.chat', host: c.host, pane: c.pane })
@@ -147,7 +149,9 @@ class Socket {
       if (this.ws !== ws) return
       clearInterval(this.pingTimer)
       this.setUp(false)
-      const delay = Math.min(8000, 400 * 2 ** this.retry++)
+      this.retry = attemptAfter(this.retry, this.openedAt)
+      this.openedAt = undefined
+      const delay = backoff(this.retry++, 400, 8000)
       this.timer = setTimeout(() => this.connect(), delay)
       // the hub rejects the upgrade when the session expired
       if (isPhone()) return
@@ -230,6 +234,7 @@ export const socket = new Socket()
 export class HubConn {
   private ws?: WebSocket
   private retry = 0
+  private openedAt?: number
   private timer?: ReturnType<typeof setTimeout>
   private stopped = false
   /** the hub's machines as last heard, starting from the copy this device kept of them */
@@ -279,7 +284,7 @@ export class HubConn {
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
-      this.retry = 0
+      this.openedAt = Date.now()
       this.heard = Date.now()
       if (this.wantOverview()) this.sendRaw({ t: 'sub.overview' })
       for (const c of this.chats()) {
@@ -307,6 +312,8 @@ export class HubConn {
       if (this.ws !== ws) return
       clearInterval(this.pingTimer)
       if (e.code === 4001) return this.revoked()
+      this.retry = attemptAfter(this.retry, this.openedAt)
+      this.openedAt = undefined
       this.offline()
       this.later()
     }
@@ -315,7 +322,7 @@ export class HubConn {
 
   private later() {
     if (this.stopped) return
-    const delay = Math.min(30000, 1000 * 2 ** this.retry++)
+    const delay = backoff(this.retry++, 1000, 30_000)
     this.timer = setTimeout(() => this.connect(), delay)
   }
 

@@ -537,6 +537,31 @@ fn a_paste_loads_its_buffer_into_the_panes_own_psmux_server_since_each_session_h
     assert_eq!(go(&[]), "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-p][-b][b1][-t][$14:.%1]\n");
 }
 
+#[test]
+fn typed_text_reaches_tmux_through_a_file_and_never_in_any_arguments() {
+    let bin = TempDir::new("typed-");
+    let log = bin.path("argv");
+    // the fake tmux keeps its arguments, and the buffer it was handed
+    bin.write(
+        "tmux",
+        &format!(
+            "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\" >> \"{0}\"; done; echo >> \"{0}\"\n[ \"$1\" = load-buffer ] && cat \"$4\" > \"{0}.buffer\"; exit 0\n",
+            log.display()
+        ),
+    );
+    std::fs::set_permissions(bin.path("tmux"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    bin.write("argv", "");
+    let secret = "typed words that stay out of argv";
+    let crate::tmux::tmux::TypeText::Keys { command, input } = crate::tmux::tmux::type_text("%1", secret, true, "b1") else { panic!() };
+    let path = format!("{}:/usr/bin:/bin", bin.s());
+    // sh -c <command> is what other users could read in /proc/*/cmdline, and so is every tmux run
+    assert!(!command.contains(secret));
+    sh(&command, Some(input.as_bytes()), &[("PATH", &path)]);
+    let argv = Regex::new(r"\[[^\]]*tmp[^\]]*\]").unwrap().replace(&bin.read("argv"), "[file]").into_owned();
+    assert_eq!(argv, "[load-buffer][-b][b1][file]\n[paste-buffer][-d][-b][b1][-t][%1]\n[send-keys][-t][%1][Enter]\n");
+    assert_eq!(std::fs::read_to_string(bin.path("argv.buffer")).unwrap(), secret);
+}
+
 // ---------- taking turns per pane (review) ----------
 
 #[test]

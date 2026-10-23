@@ -443,12 +443,25 @@ pub fn parse_captures(stdout: &str) -> IndexMap<String, Vec<String>> {
 /// session (the -t before the command, which psmux takes for any command); otherwise paste-buffer
 /// can't find it.
 pub fn paste_command(buffer: &str, pane: &str) -> String {
+    through_buffer(buffer, pane, "-p ")
+}
+
+/// Types what comes in on stdin into a pane as keys would, through a buffer as a paste does but
+/// without the paste markers. Text never goes on a command line: another user on the machine can
+/// read every process's arguments (/proc/*/cmdline), and this is how messages, drafts and API keys
+/// typed into a sign-in reach the pane.
+pub fn type_command(buffer: &str, pane: &str) -> String {
+    through_buffer(buffer, pane, "")
+}
+
+fn through_buffer(buffer: &str, pane: &str, flags: &str) -> String {
     let b = shq(buffer);
     let t = r#"${s:+-t "$s"}"#;
     let p = shq(pane);
-    // the trap deletes the file (it holds what was pasted) even when the connection drops half way
+    // the trap deletes the file (it holds what was pasted) even when the connection drops half way;
+    // once it's gone f is emptied, so the trap doesn't start a second rm (each start costs on Windows)
     format!(
-        r#"umask 077; f=$(mktemp) && trap 'rm -f "$f"' EXIT HUP INT TERM && {{ s=; [ "$OS" = Windows_NT ] && s={p}; cat > "$f" && tmux {t} load-buffer -b {b} "$f" && tmux paste-buffer -d -p -b {b} -t {p}; r=$?; rm -f "$f"; [ $r = 0 ] || tmux {t} delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
+        r#"umask 077; f=$(mktemp) && trap '[ -z "$f" ] || rm -f "$f"' EXIT HUP INT TERM && {{ s=; [ "$OS" = Windows_NT ] && s={p}; cat > "$f" && tmux {t} load-buffer -b {b} "$f" && tmux paste-buffer -d {flags}-b {b} -t {p}; r=$?; rm -f "$f"; f=; [ $r = 0 ] || tmux {t} delete-buffer -b {b} 2>/dev/null; [ $r = 0 ]; }}"#
     )
 }
 
@@ -471,8 +484,8 @@ pub fn paste_text(text: &str) -> String {
 pub enum TypeText {
     /// one bracketed paste: run `command` with `input` on stdin, then Enter after 150 ms if `submit`
     Paste { command: String, input: String, submit: bool },
-    /// send-keys, the Enter (if any) included
-    Keys(String),
+    /// typed through a buffer: run `command` with `input` on stdin; the Enter (if any) is in it
+    Keys { command: String, input: String },
     /// nothing to type
     Nothing,
 }
@@ -487,25 +500,19 @@ pub fn type_text(pane: &str, text: &str, submit: bool, buffer: &str) -> TypeText
         // preserve long/multiline text atomically and display its own collapsed paste preview.
         return TypeText::Paste { command: paste_command(buffer, pane), input: paste_text(text), submit };
     }
-    let mut parts: Vec<String> = vec![];
-    for (i, line) in normal.split('\n').enumerate() {
-        if i > 0 {
-            parts.push(format!("tmux send-keys -t {} C-j", shq(pane)));
-        }
-        let mut o = 0;
-        while o < line.len16() {
-            parts.push(format!("tmux send-keys -t {} -l -- {}", shq(pane), shq(line.slice16(o as isize, Some(o as isize + 800)))));
-            o += 800;
-        }
+    // one line from here on (a line end makes it a paste)
+    let mut command = String::new();
+    if !normal.is_empty() {
+        command = type_command(buffer, pane);
     }
     if submit {
-        parts.push("sleep 0.12".into());
-        parts.push(format!("tmux send-keys -t {} Enter", shq(pane)));
+        let enter = format!("sleep 0.12 && tmux send-keys -t {} Enter", shq(pane));
+        command = if command.is_empty() { enter } else { format!("{command} && {enter}") };
     }
-    if parts.is_empty() {
+    if command.is_empty() {
         TypeText::Nothing
     } else {
-        TypeText::Keys(parts.join(" && "))
+        TypeText::Keys { command, input: normal }
     }
 }
 
@@ -734,8 +741,8 @@ pub async fn capture_panes(host: &Host, pane_ids: &[String]) -> HubResult<IndexM
 pub async fn type_into(host: &Host, pane: &str, text: &str, submit: bool) -> HubResult<()> {
     match type_text(pane, text, submit, &format!("inyon-{}", crate::ids::random_uuid())) {
         TypeText::Nothing => Ok(()),
-        TypeText::Keys(cmd) => {
-            let r = host.run(&cmd).await?;
+        TypeText::Keys { command, input } => {
+            let r = host.exec(&command, ExecOptions::input(input)).await?;
             if r.code != 0 {
                 return Err(HubError::plain(nonempty_or(r.stderr.jtrim(), "send-keys failed")));
             }
@@ -981,11 +988,37 @@ mod tests {
         let c = parse_captures("junk\n@@CAP %1\na\nb\n@@CAP %2\n");
         assert_eq!(c["%1"], vec!["a", "b"]);
         assert_eq!(c["%2"], vec![""]);
-        assert_eq!(type_text("%1", "hi", true, "b"), TypeText::Keys("tmux send-keys -t '%1' -l -- 'hi' && sleep 0.12 && tmux send-keys -t '%1' Enter".into()));
+        assert_eq!(
+            type_text("%1", "hi", true, "b"),
+            TypeText::Keys { command: format!("{} && sleep 0.12 && tmux send-keys -t '%1' Enter", type_command("b", "%1")), input: "hi".into() }
+        );
+        assert_eq!(type_text("%1", "", true, "b"), TypeText::Keys { command: "sleep 0.12 && tmux send-keys -t '%1' Enter".into(), input: String::new() });
         assert_eq!(type_text("%1", "", false, "b"), TypeText::Nothing);
         assert!(matches!(type_text("%1", "a\r\nb", false, "b"), TypeText::Paste { input, .. } if input == "a\nb"));
         assert_eq!(send_keys_command("%1", &["Enter", "rm"]), Err("key not allowed: rm".into()));
         assert_eq!(claude_slug("/home/u/my.app"), "-home-u-my-app");
+    }
+
+    #[test]
+    fn typed_text_never_reaches_a_command_line() {
+        // other users on the machine can read every process's arguments: messages, drafts and API keys go on stdin
+        let samples = ["a pasted API key", "hello world", "it's \"quoted\" $HOME `id`", "ünïcødé 🙂", &"x".repeat(799), &"y".repeat(900), "two\nlines"];
+        for text in samples {
+            match type_text("%1", text, true, "inyon-b") {
+                TypeText::Keys { command, input } => {
+                    assert!(!command.contains(text), "{text} in {command}");
+                    assert_eq!(input, text);
+                }
+                TypeText::Paste { command, input, .. } => {
+                    assert!(!command.contains(text));
+                    assert_eq!(input, paste_text(text));
+                }
+                TypeText::Nothing => panic!("{text}"),
+            }
+        }
+        // typed, not pasted: no paste markers around it
+        assert!(type_command("b", "%1").contains("paste-buffer -d -b 'b'"));
+        assert!(paste_command("b", "%1").contains("paste-buffer -d -p -b 'b'"));
     }
 
     #[test]

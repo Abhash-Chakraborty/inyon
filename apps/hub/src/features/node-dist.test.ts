@@ -48,9 +48,36 @@ test('tether-node as a Bun script is told to run "Add a machine" again', async (
   await expect(updateScript('linux', 'x64')).rejects.toThrow('Add a machine')
 })
 
+test('a hub running from a checkout has no signed list to hand machines, and says why', async () => {
+  for (const r of ['/node/release/SHA256SUMS', '/node/release/SHA256SUMS.minisig', '/node/release/version'] as const) {
+    const res = await get(r)
+    expect(res.status).toBe(404)
+    expect(await res.text()).toContain("isn't signed by Inyon's release key")
+  }
+  // and no certificate of its own without TLS_CERT
+  expect((await get('/node/hub.crt')).status).toBe(404)
+})
+
+test('the signed list keeps its signature, for machines to check themselves', async () => {
+  const { signedList } = await import('./node-dist.ts')
+  const get = (async (url: string) => new Response(url.endsWith('.minisig') ? SIGNED_SIG : SIGNED)) as unknown as typeof fetch
+  expect(await signedList('http://r', TEST_KEY, get, '0.14.0')).toEqual({ sums: SIGNED, sig: SIGNED_SIG })
+})
+
 test('the installers are served as they are in the repository', async () => {
   expect(await (await get('/node/install.sh')).text()).toStartWith('#!/bin/sh\n')
   expect(await (await get('/node/install.ps1')).text()).toContain("$TaskName = 'Inyon node'")
+})
+
+test('the Windows installer saves the hub through inyon join, so a new machine is held to its check', async () => {
+  const ps1 = await (await get('/node/install.ps1')).text()
+  // join writes INYON_JOINED and refuses plain http anyone could answer; the script never writes
+  // the token itself, which would let it in as a machine added before 0.20
+  expect(ps1).toContain('& $exe join $Hub --no-autostart')
+  expect(ps1).toContain('if ($joined -ne 0)')
+  expect(ps1).not.toMatch(/"INYON_TOKEN=\$Token"/)
+  expect(ps1).not.toMatch(/Set-Content -Path \$envFile/)
+  expect(ps1.indexOf('& $exe join')).toBeLessThan(ps1.indexOf('Register-ScheduledTask'))
 })
 
 test('earlier builds go, with their .gz and .sha256; this build, this release and busybox stay', () => {
@@ -147,5 +174,66 @@ test('a checkout without a built command hands Windows the release command, and 
     await expect(sourceCommand('windows-arm64', offline)).rejects.toThrow('has no inyon command for windows-arm64')
   } finally {
     console.warn = warn
+  }
+})
+
+// made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
+const TEST_KEY = 'RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm'
+const SIGNED = 'abc  file-a\nabc  inyon-0.14.0.apk\n'
+const SIGNED_SIG = `untrusted comment: signature from minisign secret key
+RUQqNVK9mQOKMkab6flmvsRkTJgrMwvlSr3HLaTaxl1/BKaIsjpexn6/YRrw9Nco1CyBNYXpD14RN4tyV+x91G0EBDlaQWFoVgg=
+trusted comment: timestamp:1791906365\tfile:SUMS\thashed
+hHmf6FdFURutVLVvePMp+3/HYEQlat81SrV37cY/HJXIVYmOh/WB1gOW4L2bQb9BQzY4ZopTYpjFX9UXykjRBw==
+`
+
+test('the release checksums count only with a good signature from the release key', async () => {
+  const { signedSums } = await import('./node-dist.ts')
+  const { RELEASE_KEY } = await import('@inyon/protocol')
+  const release = (sums: string, sig?: string) => {
+    const asked: string[] = []
+    const get = (async (url: string) => {
+      const name = url.split('/').pop()!
+      asked.push(name)
+      if (name === 'SHA256SUMS') return new Response(sums)
+      if (name === 'SHA256SUMS.minisig' && sig) return new Response(sig)
+      return new Response('no', { status: 404 })
+    }) as unknown as typeof fetch
+    return { asked, get }
+  }
+  const good = release(SIGNED, SIGNED_SIG)
+  expect(await signedSums('http://r', TEST_KEY, good.get, '0.14.0')).toBe(SIGNED)
+  // a good list of another release, an old copy on a mirror, isn't this hub's
+  await expect(signedSums('http://r', TEST_KEY, release(SIGNED, SIGNED_SIG).get, '0.15.0')).rejects.toMatchObject({
+    status: 502,
+    message: expect.stringContaining("aren't the ones for Inyon 0.15.0 (they don't list inyon-0.15.0.apk)"),
+  })
+  // a list changed by one byte, no signature, another key, and a changed trusted comment: each refused before any file
+  for (const [sums, sig, key] of [
+    ['abd  file-a\nabc  inyon-0.14.0.apk\n', SIGNED_SIG, TEST_KEY],
+    [SIGNED, undefined, TEST_KEY],
+    [SIGNED, SIGNED_SIG, RELEASE_KEY],
+    [SIGNED, SIGNED_SIG.replace('timestamp:1791906365', 'timestamp:1791906366'), TEST_KEY],
+  ] as const) {
+    const r = release(sums, sig)
+    await expect(signedSums('http://r', key, r.get, '0.14.0')).rejects.toMatchObject({ status: 502 })
+    expect(r.asked.every((n) => n.startsWith('SHA256SUMS'))).toBe(true)
+  }
+})
+
+test('only a mock release may name another signing key', async () => {
+  const { signingKey } = await import('./minisign.ts')
+  const { RELEASE_KEY, RELEASES_REPO, VERSION } = await import('@inyon/protocol')
+  const old = process.env.INYON_SIGNING_KEY
+  process.env.INYON_SIGNING_KEY = `untrusted comment: test key\n${TEST_KEY}\n`
+  try {
+    expect(signingKey('http://127.0.0.1:8000/download')).toBe(TEST_KEY)
+    for (const base of [`https://github.com/${RELEASES_REPO}/releases/download/v${VERSION}`, 'https://inyon.tech/download', 'https://inyon.abhashchakraborty.tech/download', 'HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download']) {
+      expect(signingKey(base)).toBe(RELEASE_KEY)
+    }
+    delete process.env.INYON_SIGNING_KEY
+    expect(signingKey('http://127.0.0.1:8000/download')).toBe(RELEASE_KEY)
+  } finally {
+    if (old === undefined) delete process.env.INYON_SIGNING_KEY
+    else process.env.INYON_SIGNING_KEY = old
   }
 })

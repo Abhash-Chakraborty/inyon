@@ -209,56 +209,59 @@ pub fn hub_reset_password(sys: &Sys, password: Option<&str>) -> Outcome {
 
 // ---------- join, disconnect ----------
 
-/// Whether a hub address is on a private network, where plain http is accepted.
-pub fn is_private(host: &str) -> bool {
-    let h = host.to_lowercase();
-    if let Some(inner) = h.strip_prefix('[') {
-        // loopback, unique-local (fc00::/7, Tailscale uses fd7a:115c:a1e0::/48), link-local
-        return inner.starts_with("::1")
-            || inner.starts_with("fc")
-            || inner.starts_with("fd")
-            || inner.starts_with("fe8")
-            || inner.starts_with("fe9")
-            || inner.starts_with("fea")
-            || inner.starts_with("feb");
-    }
-    if h == "localhost" || h == "::1" {
-        return true;
-    }
-    // an address only when every part is a number: 10.0.0.1.attacker.com is a name
-    let p: Vec<u8> = h.split('.').map(|o| o.parse().ok()).collect::<Option<Vec<_>>>().unwrap_or_default();
-    if p.len() == 4 {
-        if p[0] == 127 || p[0] == 10 || (p[0] == 192 && p[1] == 168) || (p[0] == 172 && (16..=31).contains(&p[1])) {
-            return true;
-        }
-        // the CGNAT range Tailscale and NetBird use
-        if p[0] == 100 && (64..=127).contains(&p[1]) {
-            return true;
-        }
-    }
-    if [".ts.net", ".netbird.cloud", ".netbird.selfhosted", ".local", ".lan", ".internal"].iter().any(|s| h.ends_with(s)) {
-        return true;
-    }
-    // single-label names on your private network
-    !h.contains('.')
+/// Checks a hub address; refuses to send a token over plain http to anything but this machine or a
+/// VPN address. A name has to point only at those (a MagicDNS name does; a LAN's .local doesn't).
+pub fn check_hub_url(hub: &str) -> Result<(), String> {
+    check_hub_url_with(hub, &|host, port| inyon_engine::hub::check_name_now(host, port))
 }
 
-/// Checks a hub address; refuses to send a token over plain http to a public address.
-pub fn check_hub_url(hub: &str) -> Result<(), String> {
-    let (scheme, rest) = hub.split_once("://").ok_or_else(|| format!("{hub} isn't a web address."))?;
-    if scheme != "http" && scheme != "https" {
-        return Err(format!("{hub} isn't a web address."));
+/// Looks a name up and checks where it points (inyon_engine::hub::check_name_now).
+type LookUp<'a> = &'a dyn Fn(&str, u16) -> Result<(), Option<String>>;
+
+/// Read the way the engine reads it (url::Url), so the host checked is the host connected to,
+/// whatever an `@`, `?` or `#` in the address says.
+fn check_hub_url_with(hub: &str, look_up: LookUp) -> Result<(), String> {
+    let bad = || format!("{hub} isn't a web address.");
+    let url = url::Url::parse(hub).map_err(|_| bad())?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
+        return Err(bad());
     }
-    let host = rest.split('/').next().unwrap_or("");
-    let host = host.rsplit_once('@').map(|(_, h)| h).unwrap_or(host);
-    let host = if host.starts_with('[') { host.split(']').next().map(|h| format!("{h}]")).unwrap_or_default() } else { host.split(':').next().unwrap_or("").to_string() };
-    if host.is_empty() {
-        return Err(format!("{hub} isn't a web address."));
+    if url.scheme() == "https" || paths::env_var("INYON_ALLOW_INSECURE").is_some() {
+        return Ok(());
     }
-    if scheme == "http" && !is_private(&host) && paths::env_var("INYON_ALLOW_INSECURE").is_none() {
-        return Err(format!("Refusing to send the token over plain http to {host}. Use https, or a private network address."));
+    let host = url.host_str().unwrap_or_default();
+    match inyon_engine::hub::plain_host(&url) {
+        inyon_engine::hub::Plain::Ok => Ok(()),
+        inyon_engine::hub::Plain::LookUp => match look_up(host, url.port_or_known_default().unwrap_or(80)) {
+            Ok(()) => Ok(()),
+            Err(Some(why)) => Err(why),
+            Err(None) => Err(format!(
+                "Couldn't look up {host}, so it can't be checked that plain http to it stays on this machine or a VPN. Check the address, or use the hub's https address."
+            )),
+        },
+        inyon_engine::hub::Plain::Refused => Err(inyon_engine::hub::plain_refusal(host)),
     }
-    Ok(())
+}
+
+/// A hub on a certificate it made itself (setup's LAN choice) puts the certificate's sha256 in its
+/// "Add a machine" command as INYON_HUB_CERT: the certificate it hands out is kept if it has that
+/// sha256, and from then on everything this machine asks the hub checks against it. Joining
+/// without one forgets the certificate of a hub joined before.
+fn trust_hub_cert(hub: &str, sha256: Option<&str>, get: &dyn Fn(&str) -> Result<http::Response, String>, file: &std::path::Path) -> Result<(), String> {
+    let Some(sha256) = sha256 else {
+        let _ = fs::remove_file(file);
+        return Ok(());
+    };
+    if !hub.starts_with("https://") {
+        return Err(format!("INYON_HUB_CERT names a certificate, but {hub} isn't an https address."));
+    }
+    let url = format!("{hub}/node/hub.crt");
+    let res = get(&url).map_err(|e| format!("Couldn't reach {url} ({e})."))?;
+    if !res.ok() {
+        return Err(format!("{url} answered {}. Update the hub, then get a new command from it.", res.status));
+    }
+    let pem = inyon_engine::http::pinned_cert(&res.body, sha256)?;
+    fs::write(file, pem).map_err(|e| format!("Couldn't save the hub's certificate to {}: {e}", file.display()))
 }
 
 /// `inyon join <hub-url>`, what the hub's "Add a machine" command runs: saves the hub and token
@@ -270,8 +273,13 @@ pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
     }
     check_hub_url(hub)?;
     let dir = paths::ensure_node_dir().map_err(|e| e.to_string())?;
+    let pin = paths::env_var("INYON_HUB_CERT").filter(|c| !c.trim().is_empty());
+    trust_hub_cert(hub, pin.as_deref(), &|url| http::get_unverified(url), &inyon_engine::http::hub_cert_file())?;
     let win = sys.platform == Platform::Windows;
     let mut lines = vec![format!("INYON_HUB={hub}"), format!("INYON_TOKEN={token}")];
+    // the version that joined, so the connection knows this address passed this check (one saved
+    // before 0.20 on plain http still connects, with a warning); and INYON_ALLOW_INSECURE if it was needed
+    lines.extend(inyon_engine::connect::join_marks(hub));
     if win {
         if let Some(sh) = paths::env_var("INYON_SH") {
             lines.push(format!("INYON_SH={sh}"));
@@ -318,6 +326,7 @@ pub fn disconnect(sys: &Sys) -> Outcome {
         let _ = fs::remove_file(dir.join(name));
     }
     let _ = fs::remove_file(dir.join("node.json"));
+    let _ = fs::remove_file(inyon_engine::http::hub_cert_file());
     let r = service::uninstall_service(sys, Role::Node);
     let what = hub.as_deref().map(http::host_of).unwrap_or_else(|| "the hub".into());
     if !r.ok {
@@ -699,6 +708,17 @@ pub fn doctor(sys: &Sys) -> Outcome {
     let cloudflared = which("cloudflared").is_some() || bin_dir().join("cloudflared").exists() || bin_dir().join("cloudflared.exe").exists();
     checks.push((true, "tunnel".into(), if cloudflared { "cloudflared is here".into() } else { "cloudflared isn't here yet; the link fetches it on first use".into() }));
     checks.push((true, "clock".into(), format!("{} UTC", state::format_utc(state::now_ms()))));
+    if let Some(check) = inyon_engine::connect::saved_hub_check() {
+        let host = saved_hub().map(|h| http::host_of(&h)).unwrap_or_default();
+        // what the running connection last said, when it has a problem of its own
+        let said = connection_note().filter(|(problem, _)| *problem);
+        checks.push(match (check, said) {
+            (Err(why), _) => (false, "hub".into(), why),
+            (Ok(Some(warning)), _) => (false, "hub".into(), warning),
+            (Ok(None), Some((_, why))) => (false, "hub".into(), why),
+            (Ok(None), None) => (true, "hub".into(), host),
+        });
+    }
     if let Ok(s) = fs::read_to_string(update::status_file()) {
         let s = s.trim().to_string();
         checks.push((!s.starts_with("failed"), "last update".into(), s));
@@ -707,6 +727,15 @@ pub fn doctor(sys: &Sys) -> Outcome {
     let list: Vec<Value> = checks.iter().map(|(ok, name, detail)| json!({ "ok": ok, "check": name, "detail": detail })).collect();
     let all_ok = checks.iter().all(|c| c.0);
     Ok(json!({ "ok": all_ok, "checks": list, "message": lines.join("\n") }))
+}
+
+/// What the hub connection last wrote about itself in node.json, while it runs: (true, why) when
+/// it can't connect, (false, warning) when it connects in a way worth knowing about (plain http to a
+/// hub joined before 0.20).
+pub fn connection_note() -> Option<(bool, String)> {
+    let v: Value = serde_json::from_str(&fs::read_to_string(paths::node_dir().join("node.json")).ok()?).ok()?;
+    let text = |k: &str| v.get(k).and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from);
+    text("problem").map(|p| (true, p)).or_else(|| text("warning").map(|w| (false, w)))
 }
 
 // ---------- update ----------
@@ -1138,17 +1167,12 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
         RoleChoice::Hub => {
             let file = hub_env_file();
             let mut env = read_env_file(&file);
-            let bind = match &plan.bind {
-                Bind::Localhost => "127.0.0.1".to_string(),
-                Bind::Lan => "0.0.0.0".to_string(),
-                Bind::Vpn(ip) => ip.clone(),
-                Bind::Own(a) => a.clone(),
-            };
-            env.insert("BIND".into(), bind.clone());
             env.insert("PORT".into(), plan.port_number().to_string());
-            if bind != "127.0.0.1" && !(env.contains_key("TLS_CERT") && env.contains_key("TLS_KEY")) {
-                env.insert("INYON_ALLOW_HTTP".into(), "1".into());
-            }
+            let make = || {
+                let ips = cert_ips(plan.networks.iter().map(|n| n.ip.as_str()), &plan.bind);
+                crate::hub_cert::make(&data_dir().join("tls"), &crate::hub_cert::names(&inyon_engine::hostname(), &ips))
+            };
+            lines.extend(hub_settings(&plan.bind, &mut env, &make)?);
             let _ = fs::create_dir_all(data_dir());
             fs::write(&file, env.iter().map(|(k, v)| format!("{k}={v}\n")).collect::<String>()).map_err(|e| e.to_string())?;
             if !plan.autostart {
@@ -1162,14 +1186,16 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
         }
         RoleChoice::Node => {
             // the link reads its settings as it starts; setup is the one time this program writes them
-            let mut cfg = state::link_config();
-            let before = cfg.clone();
-            cfg.tunnel = Some(plan.tunnel);
-            cfg.lan = Some(plan.lan);
-            cfg.vpn = Some(plan.vpn);
-            cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
-            cfg.port = Some(plan.port_number());
-            state::write_json("link.json", &cfg).map_err(|e| e.to_string())?;
+            // read and written under the node's lock, so a relay `inyon pair` adds meanwhile stays
+            let mut before = state::LinkConfig::default();
+            let cfg = inyon_engine::link::change_node_json("link.json", |cfg: &mut state::LinkConfig| {
+                before = cfg.clone();
+                cfg.tunnel = Some(plan.tunnel);
+                cfg.lan = Some(plan.lan);
+                cfg.vpn = Some(plan.vpn);
+                cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
+                cfg.port = Some(plan.port_number());
+            })?;
             engine::ready("link", &|l| eprintln!("{l}"))?;
             if plan.tunnel {
                 lines.extend(fetch_tunnel());
@@ -1221,6 +1247,58 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
             Ok(json!({ "role": "node", "message": "" }))
         }
     }
+}
+
+/// The hub's BIND and how it's reached, for setup's network choice. Plain http only on a Tailscale
+/// or NetBird address (INYON_ALLOW_HTTP), the ones a machine sends its token to over plain http; on
+/// the LAN, ZeroTier, WireGuard or any other address, the hub serves HTTPS on TLS_CERT and TLS_KEY,
+/// a certificate `make` makes unless you named your own. The lines to show: the certificate's
+/// fingerprint, for comparing in the browser.
+/// The addresses a hub's own certificate is made for: the private networks found, and the address
+/// it was told to listen on, which may be none of them (a public one, typed in setup).
+fn cert_ips<'a>(networks: impl Iterator<Item = &'a str>, bind: &Bind) -> Vec<std::net::IpAddr> {
+    let mut ips: Vec<std::net::IpAddr> = networks.filter_map(|ip| ip.parse().ok()).collect();
+    if let Bind::Vpn(a) | Bind::Own(a) = bind {
+        if let Ok(ip) = a.trim().trim_start_matches('[').trim_end_matches(']').parse::<std::net::IpAddr>() {
+            if !ip.is_unspecified() && !ips.contains(&ip) {
+                ips.push(ip);
+            }
+        }
+    }
+    ips
+}
+
+pub fn hub_settings(bind: &Bind, env: &mut std::collections::BTreeMap<String, String>, make: &dyn Fn() -> Result<crate::hub_cert::Made, String>) -> Result<Vec<String>, String> {
+    let address = match bind {
+        Bind::Localhost => "127.0.0.1".to_string(),
+        Bind::Lan => "0.0.0.0".to_string(),
+        Bind::Vpn(ip) => ip.clone(),
+        Bind::Own(a) => a.clone(),
+    };
+    env.insert("BIND".into(), address.clone());
+    let ip: Option<std::net::IpAddr> = address.parse().ok();
+    let local = ip.is_some_and(|ip| ip.is_loopback()) || address == "localhost";
+    // the same rule machines hold plain http to: a ZeroTier or WireGuard address gets a certificate too
+    let vpn = !local && ip.is_some_and(|ip| !ip.is_unspecified() && inyon_engine::hub::plain_http_ip(ip));
+    // set by an earlier setup for the LAN, it would serve plain http again
+    if !vpn {
+        env.remove("INYON_ALLOW_HTTP");
+    }
+    let has_tls = env.get("TLS_CERT").is_some_and(|v| !v.is_empty()) && env.get("TLS_KEY").is_some_and(|v| !v.is_empty());
+    let mut lines = Vec::new();
+    if vpn && !has_tls {
+        env.insert("INYON_ALLOW_HTTP".into(), "1".into());
+    } else if !local && !has_tls {
+        let made = make()?;
+        env.insert("TLS_CERT".into(), made.cert.to_string_lossy().into_owned());
+        env.insert("TLS_KEY".into(), made.key.to_string_lossy().into_owned());
+    }
+    if !local && !vpn {
+        if let Some(fp) = env.get("TLS_CERT").and_then(|c| crate::hub_cert::fingerprint(std::path::Path::new(c))) {
+            lines.push(format!("✓ HTTPS, on a certificate made for this machine. The browser warns about it once; check that its SHA-256 fingerprint is\n  {fp}"));
+        }
+    }
+    Ok(lines)
 }
 
 /// Everything the engine still has to say, for `inyon hub …` forms this program doesn't handle.
@@ -1331,6 +1409,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_hub_certificate_covers_the_address_it_was_told_to_listen_on() {
+        let nets = ["192.168.1.20", "100.70.1.2"];
+        let ips = |bind: &Bind| cert_ips(nets.iter().copied(), bind).iter().map(|i| i.to_string()).collect::<Vec<_>>();
+        assert_eq!(ips(&Bind::Lan), ["192.168.1.20", "100.70.1.2"]);
+        assert_eq!(ips(&Bind::Own("203.0.113.7".into())), ["192.168.1.20", "100.70.1.2", "203.0.113.7"]);
+        assert_eq!(ips(&Bind::Vpn("10.147.17.5".into())), ["192.168.1.20", "100.70.1.2", "10.147.17.5"]);
+        assert_eq!(ips(&Bind::Own("192.168.1.20".into())), ["192.168.1.20", "100.70.1.2"]);
+        assert_eq!(ips(&Bind::Own("0.0.0.0".into())), ["192.168.1.20", "100.70.1.2"]);
+    }
+
+    #[test]
     fn only_setting_up_the_hub_touches_its_inyon_hub_impl_note() {
         assert!(hub_impl_follows(Role::Hub));
         assert!(!hub_impl_follows(Role::Link));
@@ -1347,24 +1436,40 @@ mod tests {
     }
 
     #[test]
-    fn private_addresses_may_use_plain_http() {
-        for h in ["localhost", "127.0.0.1", "10.1.2.3", "192.168.0.4", "172.20.0.1", "100.100.1.1", "laptop.tail1234.ts.net", "box", "[fd7a:115c:a1e0::1]", "[::1]"] {
-            assert!(is_private(h), "{h}");
+    fn plain_http_goes_only_to_this_machine_or_a_vpn() {
+        let no_dns = |_: &str, _: u16| -> Result<(), Option<String>> { panic!("an address isn't looked up") };
+        for h in ["localhost", "127.0.0.1", "100.100.1.1", "100.64.0.1", "[fd7a:115c:a1e0::1]", "[::1]"] {
+            assert!(check_hub_url_with(&format!("http://{h}:4777"), &no_dns).is_ok(), "{h}");
         }
-        for h in ["example.com", "8.8.8.8", "100.200.1.1", "172.32.0.1", "[2001:db8::1]"] {
-            assert!(!is_private(h), "{h}");
+        // a LAN can be listened to, and anyone on it can answer as the hub
+        for h in ["10.1.2.3", "192.168.0.4", "172.20.0.1", "8.8.8.8", "100.200.1.1", "[fd00::1]", "[fe80::1]", "[2001:db8::1]"] {
+            let e = check_hub_url_with(&format!("http://{h}:4777"), &no_dns).unwrap_err();
+            assert!(e.starts_with("Refusing to send the token over plain http") && e.contains("INYON_ALLOW_INSECURE=1"), "{h}: {e}");
         }
-        // a public name that starts like a private address is still a public name
-        for h in ["10.0.0.1.attacker.com", "127.0.0.1.evil.io", "192.168.1.5.example.com"] {
-            assert!(!is_private(h), "{h}");
-        }
-        for h in ["10.0.0.1", "192.168.1.5", "100.64.0.1"] {
-            assert!(is_private(h), "{h}");
-        }
-        assert!(check_hub_url("http://192.168.1.2:4777").is_ok());
+        assert!(check_hub_url("https://192.168.1.2:4777").is_ok());
         assert!(check_hub_url("https://hub.example.com").is_ok());
-        assert!(check_hub_url("http://hub.example.com").unwrap_err().contains("plain http"));
         assert!(check_hub_url("hub.example.com").unwrap_err().contains("isn't a web address"));
+        // the host is the one connected to, whatever comes after an @ in the query or fragment
+        for tricky in ["http://8.8.8.8:4777?@100.100.1.1", "http://8.8.8.8:4777/#@100.100.1.1", "http://8.8.8.8:4777?x=1@[::1]"] {
+            assert!(check_hub_url_with(tricky, &no_dns).unwrap_err().starts_with("Refusing to send the token over plain http to 8.8.8.8"), "{tricky}");
+        }
+        assert!(check_hub_url_with("http://me:pw@100.100.1.1:4777/?next=@8.8.8.8", &no_dns).is_ok());
+        // a name is looked up, and every address it has must pass
+        let seen = std::cell::RefCell::new(Vec::new());
+        let dns = |h: &str, p: u16| -> Result<(), Option<String>> {
+            seen.borrow_mut().push(format!("{h}:{p}"));
+            match h {
+                "hub.tail1234.ts.net" => Ok(()),
+                "box.local" => Err(Some(inyon_engine::hub::plain_refusal(h))),
+                _ => Err(None),
+            }
+        };
+        assert!(check_hub_url_with("http://hub.tail1234.ts.net:4777", &dns).is_ok());
+        assert!(check_hub_url_with("http://box.local", &dns).unwrap_err().starts_with("Refusing"));
+        assert!(check_hub_url_with("http://10.0.0.1.attacker.com:8080", &dns).unwrap_err().starts_with("Couldn't look up 10.0.0.1.attacker.com"));
+        assert_eq!(*seen.borrow(), ["hub.tail1234.ts.net:4777", "box.local:80", "10.0.0.1.attacker.com:8080"]);
+        // and the real lookup
+        assert!(check_hub_url("http://localhost:4777").is_ok());
     }
 
     #[test]
@@ -1438,6 +1543,88 @@ mod tests {
         let lines = reach_advice(&nets, 4777, "/h/.inyon/hub.env");
         assert!(lines[1].contains("BIND=100.64.0.9"));
         assert!(lines[1].contains("http://laptop.tail1.ts.net:4777"));
+    }
+
+    #[test]
+    fn setup_serves_plain_http_only_on_a_vpn_and_https_on_its_own_certificate_everywhere_else() {
+        use std::collections::BTreeMap;
+        let dir = std::env::temp_dir().join(format!("inyon-setup-tls-{}", std::process::id()));
+        let made = std::cell::Cell::new(0);
+        let make = || {
+            made.set(made.get() + 1);
+            crate::hub_cert::make(&dir, &crate::hub_cert::names("studio", &["192.168.1.20".parse().unwrap()]))
+        };
+        let run = |bind: Bind, mut env: BTreeMap<String, String>| {
+            let lines = hub_settings(&bind, &mut env, &make).unwrap();
+            (env, lines)
+        };
+        let keys = |env: &BTreeMap<String, String>| env.keys().cloned().collect::<Vec<_>>().join(" ");
+
+        // the LAN, as `inyon setup --role hub --network lan --yes` picks it: HTTPS, never plain http
+        let (env, lines) = run(Bind::Lan, BTreeMap::from([("INYON_ALLOW_HTTP".into(), "1".into())]));
+        assert_eq!(keys(&env), "BIND TLS_CERT TLS_KEY");
+        assert_eq!(env["BIND"], "0.0.0.0");
+        assert_eq!(env["TLS_CERT"], dir.join("hub.crt").to_string_lossy());
+        let fp = crate::hub_cert::fingerprint(&dir.join("hub.crt")).unwrap();
+        assert!(lines.len() == 1 && lines[0].contains(&fp), "{lines:?}");
+        // set up again: the same certificate, so the machines added with it keep working
+        let (again, _) = run(Bind::Lan, env.clone());
+        assert_eq!((again, made.get()), (env, 1));
+        // an address of your own on the LAN, or a public one, is the same; and so are ZeroTier and
+        // WireGuard, which machines don't send their token to over plain http
+        for bind in
+            [Bind::Own("192.168.1.20".into()), Bind::Own("203.0.113.7".into()), Bind::Own("0.0.0.0".into()), Bind::Vpn("10.147.17.5".into()), Bind::Own("10.147.17.5".into())]
+        {
+            let (env, _) = run(bind.clone(), BTreeMap::from([("INYON_ALLOW_HTTP".into(), "1".into())]));
+            assert_eq!(keys(&env), "BIND TLS_CERT TLS_KEY", "{bind:?}");
+        }
+        // Tailscale and NetBird encrypt on their own: plain http, as before
+        for bind in [Bind::Vpn("100.64.0.9".into()), Bind::Own("100.70.1.2".into()), Bind::Vpn("fd7a:115c:a1e0::9".into())] {
+            let (env, lines) = run(bind.clone(), BTreeMap::new());
+            assert_eq!((keys(&env), env["INYON_ALLOW_HTTP"].as_str(), lines.len()), ("BIND INYON_ALLOW_HTTP".into(), "1", 0), "{bind:?}");
+        }
+        // this machine only: neither
+        let (env, _) = run(Bind::Localhost, BTreeMap::from([("INYON_ALLOW_HTTP".into(), "1".into())]));
+        assert_eq!(keys(&env), "BIND");
+        // a certificate of your own is kept, on the LAN and on a VPN
+        let own = BTreeMap::from([("TLS_CERT".to_string(), "/etc/hub.pem".to_string()), ("TLS_KEY".to_string(), "/etc/hub.key".to_string())]);
+        for bind in [Bind::Lan, Bind::Vpn("100.64.0.9".into())] {
+            let (env, _) = run(bind, own.clone());
+            assert_eq!((keys(&env), env["TLS_CERT"].as_str()), ("BIND TLS_CERT TLS_KEY".into(), "/etc/hub.pem"));
+        }
+        assert_eq!(made.get(), 6);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hub_on_its_own_certificate_is_trusted_only_with_the_sha256_its_command_named() {
+        let dir = std::env::temp_dir().join(format!("inyon-join-cert-{}", std::process::id()));
+        let made = crate::hub_cert::make(&dir, &crate::hub_cert::names("studio", &[])).unwrap();
+        let pem = fs::read(&made.cert).unwrap();
+        let sha = crate::hub_cert::fingerprint(&made.cert).unwrap().replace(':', "").to_lowercase();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let serve = |body: Vec<u8>| {
+            let asked = &asked;
+            move |url: &str| -> Result<http::Response, String> {
+                asked.borrow_mut().push(url.to_string());
+                Ok(http::Response { status: 200, location: None, body: body.clone() })
+            }
+        };
+        let file = dir.join("node-hub.crt");
+        trust_hub_cert("https://192.168.1.20:4777", Some(&sha), &serve(pem.clone()), &file).unwrap();
+        assert_eq!(*asked.borrow(), ["https://192.168.1.20:4777/node/hub.crt"]);
+        // rcgen ends lines with \r\n on Windows, and the copy kept with \n
+        let flat = |s: &str| s.replace(['\r', '\n'], "");
+        assert_eq!(flat(&fs::read_to_string(&file).unwrap()), flat(&String::from_utf8_lossy(&pem)));
+        // someone else's certificate on the way: refused, and the token isn't saved (join stops here)
+        let other = crate::hub_cert::make(&dir.join("other"), &crate::hub_cert::names("studio", &[])).unwrap();
+        let e = trust_hub_cert("https://192.168.1.20:4777", Some(&sha), &serve(fs::read(&other.cert).unwrap()), &file).unwrap_err();
+        assert!(e.contains("wasn't added"), "{e}");
+        assert!(trust_hub_cert("http://100.64.0.9:4777", Some(&sha), &serve(pem.clone()), &file).unwrap_err().contains("isn't an https address"));
+        // joining a hub without one forgets the old hub's certificate
+        trust_hub_cert("https://hub.example.com", None, &serve(Vec::new()), &file).unwrap();
+        assert!(!file.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

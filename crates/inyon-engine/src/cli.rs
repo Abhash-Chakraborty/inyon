@@ -137,7 +137,7 @@ pub fn link_options(args: &[String]) -> LinkConfig {
         }
         i += 1;
     }
-    link::save_config(&c);
+    link::save_config(&c).unwrap_or_else(|e| fail(&e, 1));
     c
 }
 
@@ -322,7 +322,7 @@ pub fn forget(which: Option<&str>) -> Result<(String, String), String> {
         return Err(if matches.is_empty() { format!("No paired phone matches \"{which}\"") } else { format!("\"{which}\" matches {} phones; use more of the key", matches.len()) });
     }
     let Some((key, phone)) = matches.into_iter().next() else { return Err(format!("No paired phone matches \"{which}\"")) };
-    link::forget_phone(&key);
+    link::forget_phone(&key)?;
     Ok((key, phone.name))
 }
 

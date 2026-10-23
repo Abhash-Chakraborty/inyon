@@ -27,7 +27,8 @@ class NodeLinks {
   private handlers = new Map<string, Op>()
   private seq = 0
   private listeners = new Set<(hostId: string, up: boolean) => void>()
-  info = new Map<string, { version?: string; os?: string; connectedAt: number }>()
+  /** what each machine said in its hello; `warning`: plain http to a hub it was added to before 0.20 */
+  info = new Map<string, { version?: string; os?: string; warning?: string; connectedAt: number }>()
 
   onChange(fn: (hostId: string, up: boolean) => void) {
     this.listeners.add(fn)
@@ -98,7 +99,7 @@ class NodeLinks {
 
   receive(hostId: string, msg: any) {
     if (msg?.type === 'hello') {
-      this.info.set(hostId, { version: msg.version, os: msg.os, connectedAt: Date.now() })
+      this.info.set(hostId, { version: msg.version, os: msg.os, ...(typeof msg.warning === 'string' && msg.warning ? { warning: msg.warning } : {}), connectedAt: Date.now() })
       return
     }
     this.handlers.get(`${hostId}:${msg.id}`)?.onMsg(msg)

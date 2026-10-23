@@ -1,5 +1,5 @@
 import { connect, LinkError, noiseKeyOf, phonePath, relayWs, resolve, wsWire, type Channel, type KeyPair, type PairInfo } from '@inyon/link'
-import type { HostConfig } from '@inyon/protocol'
+import { attemptAfter, backoff, type HostConfig } from '@inyon/protocol'
 import { nodeLinks } from '../hosts/node-link.ts'
 
 /**
@@ -26,6 +26,8 @@ interface Conn {
   channel?: Channel
   connecting?: Promise<void>
   attempt: number
+  /** when the open channel came up, so a backoff only starts over after it stayed up a while */
+  openedAt?: number
   timer?: ReturnType<typeof setTimeout>
   ping?: ReturnType<typeof setInterval>
   awaitingPong?: ReturnType<typeof setTimeout>
@@ -43,8 +45,17 @@ export function usable(urls: string[], page: { protocol?: string; native?: boole
 }
 const here = () => ({ protocol: (globalThis as { location?: { protocol: string } }).location?.protocol, native: !!(globalThis as { Capacitor?: { isNativePlatform?(): boolean } }).Capacitor?.isNativePlatform?.() })
 
+/**
+ * What only the real computer can answer: a refusal needs a message 2 that decrypts. BAD_KEY says
+ * only that whatever answered at that address wasn't the computer (another device on a café's
+ * network holding the LAN address the computer had at home, say), so the next address is tried.
+ */
+const final = (err: unknown) => err instanceof LinkError && (err.code === 'NOT_PAIRED' || err.code === 'REFUSED')
+
+type Resolve = (id: string) => Promise<{ urls: string[]; relays: string[] } | undefined>
+
 /** Opens a channel through the first address that answers; LAN and tunnel race, relays come last. */
-async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: string[]; hello: object }) {
+export async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: string[]; hello: object; resolve?: Resolve }) {
   const machineKey = noiseKeyOf(o.id)
   const via = (url: string, ms: number) =>
     new Promise<Awaited<ReturnType<typeof connect>> & { url: string }>((ok, fail) => {
@@ -60,6 +71,8 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
         (err) => (clearTimeout(timer), fail(err)),
       )
     })
+  // addresses where something other than the computer answered, said as a detail at the end
+  const others = new Set<string>()
   /** The first address to answer wins; the others are closed, even ones that answer later. */
   const firstOf = (urls: string[], ms: number) =>
     new Promise<Awaited<ReturnType<typeof via>>>((ok, fail) => {
@@ -75,32 +88,44 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
           },
           (err) => {
             errors.push(err)
+            // only where it happened: another address of the batch may just have timed out
+            if (err instanceof LinkError && err.code === 'BAD_KEY') others.add(new URL(u).host)
             if (won || errors.length < urls.length) return
-            // a refusal (not paired, wrong machine) says more than a timeout
-            fail(errors.find((e) => e instanceof LinkError && (e.code === 'NOT_PAIRED' || e.code === 'BAD_KEY' || e.code === 'REFUSED')) ?? errors[0])
+            // a refusal from the computer says more than a timeout, and more than something else answering
+            fail(errors.find(final) ?? errors.find((e) => e instanceof LinkError && e.code === 'BAD_KEY') ?? errors[0])
           },
         )
       }
     })
   const tried = new Set<string>()
+  const failed = (err: unknown) => {
+    if (final(err)) throw err
+  }
   try {
     o.urls.forEach((u) => tried.add(u))
     return { ...(await firstOf(usable(o.urls), DIRECT_MS)), urls: o.urls }
   } catch (err) {
-    if (err instanceof LinkError && err.code !== 'TIMEOUT' && err.code !== 'CLOSED') throw err
+    failed(err)
   }
-  const found = await resolve(o.id).catch(() => undefined)
+  const found = await (o.resolve ?? resolve)(o.id).catch(() => undefined)
   const fresh = usable((found?.urls ?? []).filter((u) => !tried.has(u)))
   const relays = [...new Set([...(found?.relays ?? []), ...o.relays])]
   if (fresh.length) {
     try {
       return { ...(await firstOf(fresh, DIRECT_MS * 2)), urls: found!.urls }
     } catch (err) {
-      if (err instanceof LinkError && err.code !== 'TIMEOUT' && err.code !== 'CLOSED') throw err
+      failed(err)
     }
   }
-  if (relays.length) return { ...(await firstOf(relays.map((r) => relayWs(r, phonePath(o.id))), DIRECT_MS * 2)), urls: found?.urls ?? o.urls }
-  throw new LinkError('TIMEOUT', found ? "The computer isn't answering at its addresses. Is `inyon link` running there?" : "Couldn't find the computer online. Is `inyon link` running there? It needs to be on and connected to the internet.")
+  if (relays.length) {
+    try {
+      return { ...(await firstOf(relays.map((r) => relayWs(r, phonePath(o.id))), DIRECT_MS * 2)), urls: found?.urls ?? o.urls }
+    } catch (err) {
+      failed(err)
+    }
+  }
+  const elsewhere = others.size ? ` (something else answered at ${[...others].join(', ')})` : ''
+  throw new LinkError('TIMEOUT', (found ? "The computer isn't answering at its addresses. Is `inyon link` running there?" : "Couldn't find the computer online. Is `inyon link` running there? It needs to be on and connected to the internet.") + elsewhere)
 }
 
 /**
@@ -110,7 +135,7 @@ async function reach(o: { noise: KeyPair; id: string; urls: string[]; relays: st
 const addresses = (worked: string, listed: string[]) =>
   [...new Set([...(worked.startsWith('ws://') || listed.includes(worked) ? [worked] : []), ...listed])]
 
-export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, saveAddresses: (id: string, urls: string[], relays: string[]) => void) {
+export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, saveAddresses: (id: string, urls: string[], relays: string[]) => void, o: { resolve?: Resolve } = {}) {
   const conns = new Map<string, Conn>()
 
   const drop = (c: Conn, why: string) => {
@@ -128,7 +153,7 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
   const schedule = (c: Conn, now = false) => {
     clearTimeout(c.timer)
     if (c.stopped) return
-    const delay = now ? 0 : Math.min(30_000, 1000 * 2 ** c.attempt++)
+    const delay = now ? 0 : backoff(c.attempt++, 1000, 30_000)
     c.timer = setTimeout(() => open(c), delay)
   }
 
@@ -136,9 +161,9 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
     (c.connecting ??= (async () => {
       try {
         const id = c.config.machineId!
-        const r = await reach({ noise: await noise(), id, urls: c.config.urls ?? [], relays: c.config.relays ?? [], hello: { name: phoneName } })
+        const r = await reach({ noise: await noise(), id, urls: c.config.urls ?? [], relays: c.config.relays ?? [], hello: { name: phoneName }, resolve: o.resolve })
         if (c.stopped) return r.channel.close()
-        c.attempt = 0
+        c.openedAt = Date.now()
         c.lastError = undefined
         c.channel = r.channel
         const welcome = r.welcome as Welcome
@@ -156,6 +181,8 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
           nodeLinks.receive(hostId, m)
         }
         r.channel.onclose = () => {
+          c.attempt = attemptAfter(c.attempt, c.openedAt)
+          c.openedAt = undefined
           clearInterval(c.ping)
           clearTimeout(c.awaitingPong)
           c.awaitingPong = undefined
@@ -171,8 +198,9 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
         if (c.stopped) return
         c.lastError = (err as Error).message
         // not paired any more: retrying won't help until it pairs again (coming back to the app
-        // still tries once more, in case it was paired again meanwhile)
-        if (err instanceof LinkError && (err.code === 'NOT_PAIRED' || err.code === 'BAD_KEY')) nodeLinks.fail(c.config.id, c.lastError)
+        // still tries once more, in case it was paired again meanwhile). Anything else, an
+        // address that something else answered included, is tried again.
+        if (err instanceof LinkError && err.code === 'NOT_PAIRED') nodeLinks.fail(c.config.id, c.lastError)
         else {
           nodeLinks.fail(c.config.id, `Connecting to ${c.config.name}… (${c.lastError})`)
           schedule(c)
@@ -229,7 +257,7 @@ export function linkConnector(noise: () => Promise<KeyPair>, phoneName: string, 
     },
     /** First contact, with the code from the laptop's screen. */
     async pair(info: PairInfo): Promise<Welcome> {
-      const r = await reach({ noise: await noise(), id: info.id, urls: info.urls, relays: info.relays, hello: { name: phoneName, pair: info.secret } })
+      const r = await reach({ noise: await noise(), id: info.id, urls: info.urls, relays: info.relays, hello: { name: phoneName, pair: info.secret }, resolve: o.resolve })
       r.channel.close(1000, 'paired')
       const w = r.welcome as Welcome
       return { ...w, urls: addresses(r.url, w.urls?.length ? w.urls : r.urls) }

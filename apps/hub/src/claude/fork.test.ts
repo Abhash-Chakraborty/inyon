@@ -1,6 +1,7 @@
 import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { registry } from '../hosts/registry.ts'
 import { forkConversation } from './actions.ts'
+import { asKeys } from '../tmux/as-keys.ts'
 
 afterAll(() => mock.restore())
 
@@ -9,7 +10,8 @@ const ran: string[] = []
 // what was typed, with send-keys' own quoting taken off
 const typed = () => ran.filter((c) => c.includes('send-keys')).map((c) => c.replaceAll("'\\''", "'")).join('\n')
 const host = {
-  exec: async (cmd: string) => {
+  exec: async (typed: string, opts: { input?: string } = {}) => {
+    const { cmd } = asKeys(typed, opts.input)
     ran.push(cmd)
     if (cmd.startsWith('test -s')) return { code: 0, stdout: 'yes\n', stderr: '' }
     if (cmd.includes('new-window')) return { code: 0, stdout: '%9\n', stderr: '' }

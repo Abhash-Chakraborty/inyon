@@ -134,7 +134,7 @@ npm puts `inyon` on your `PATH` itself, so the installers' line isn't needed the
 |---|---|
 | `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub (or the copy described [below](#on-windows) on Windows) |
 | `~/.inyon/node/` | This computer's identity key, paired phones, link settings, hub connection, logs (only you can read it) |
-| `~/.inyon/` | A hub's own records: password hash, machines, settings, `hub.env` |
+| `~/.inyon/` | A hub's own records: password hash, machines, settings, `hub.env`, and from 0.20 `tls/`, the certificate setup makes for a hub on the LAN |
 
 `INYON_DATA_DIR` moves the hub's records elsewhere. The [Configuration](configuration.md) page lists every setting.
 
@@ -183,7 +183,7 @@ inyon update
 
 It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon`, and on a hub the new `inyon-engine`, checks them against that list, and only then swaps them in. From 0.19 a computer that isn't a hub doesn't download the engine, and an update removes the one an older version left (on Windows it's replaced by the copy of `inyon.exe`). A computer whose hub still hands out an `inyon` from before 0.19 keeps the engine, or gets the hub's, because that `inyon` still runs on it. Every running role restarts on the new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
 
-Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
+Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. From 0.20 it checks those files against the release's signed `SHA256SUMS`, which the hub passes on, and changes nothing when the hub has none (a hub from before 0.20): update the hub first. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
 
 `inyon update --background` does the same without keeping your terminal open, which is how the app and the hub start an update remotely.
 

@@ -36,8 +36,12 @@ fn a_bracketed_paste_goes_in_as_one_paste_with_the_text_around_it_kept_in_order(
 }
 
 #[test]
-fn text_is_quoted_for_the_shell_so_it_cant_run_as_a_command() {
-    assert_eq!(input_command("%1", &text("'; rm -rf ~; echo '")).0, r"tmux send-keys -t '%1' -l -- ''\''; rm -rf ~; echo '\'''");
+fn typed_text_goes_on_stdin_never_on_the_command_line() {
+    // a password typed at a sudo prompt in the terminal view must not show in /proc/*/cmdline
+    let (cmd, input) = input_command("%1", &text("'; rm -rf ~; echo '"));
+    assert!(!cmd.contains("rm -rf"), "{cmd}");
+    assert!(regex::Regex::new(r#"load-buffer -b 'inyon-term-\w+' "\$f" && tmux paste-buffer -d -b 'inyon-term-\w+' -t '%1'"#).unwrap().is_match(&cmd), "{cmd}");
+    assert_eq!(input.as_deref(), Some("'; rm -rf ~; echo '"));
     assert_eq!(input_command("%1", &keys(&["C-\\"])).0, r"tmux send-keys -t '%1' 'C-\'");
 }
 
@@ -83,4 +87,19 @@ fn the_terminals_commands_reach_the_right_psmux_pane() {
          [send-keys][-t][$14:.%1][C-c][Up]\n\
          [send-keys][-t][$14:.%1][-H][1b][5b]\n"
     );
+}
+
+#[test]
+fn a_keystroke_batch_is_one_shell_and_each_more_piece_of_text_starts_the_next() {
+    let b = batch_commands("%1", &to_input("ls -la\r"));
+    assert_eq!(b.len(), 1);
+    assert_eq!(b[0].1.as_deref(), Some("ls -la"));
+    assert!(b[0].0.starts_with("{ umask 077; f=$(mktemp) && "), "{}", b[0].0);
+    assert!(b[0].0.ends_with("; [ $r = 0 ]; }; } && tmux send-keys -t '%1' 'Enter'"), "{}", b[0].0);
+    // the file goes once: the trap starts no second rm
+    assert_eq!(b[0].0.matches(r#"rm -f "$f""#).count(), 2);
+    assert!(b[0].0.contains(r#"trap '[ -z "$f" ] || rm -f "$f"'"#) && b[0].0.contains(r#"rm -f "$f"; f=;"#));
+    let inputs: Vec<_> = batch_commands("%1", &to_input("a\x1b[Ab")).into_iter().map(|(_, i)| i).collect();
+    assert_eq!(inputs, [Some("a".to_string()), Some("b".to_string())]);
+    assert_eq!(batch_commands("%1", &to_input("\x1b[A")), [("tmux send-keys -t '%1' 'Up'".to_string(), None)]);
 }

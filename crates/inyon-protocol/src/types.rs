@@ -313,6 +313,9 @@ pub struct HostState {
     pub machine_kind: Option<MachineKind>,
     /// the inyon version a paired machine or laptop runs
     pub node_version: Option<String>,
+    /// what that machine's inyon warns about its connection to the hub (plain http, from a machine
+    /// added before 0.20), with how to fix it
+    pub node_warning: Option<String>,
     /// set when that inyon is behind, or while an update runs
     pub node_update: Option<NodeUpdate>,
     pub latency_ms: Option<u64>,

@@ -23,8 +23,12 @@ test('a bracketed paste goes in as one paste, with the text around it kept in or
   expect(c.input).toBe('x\ny')
 })
 
-test("text is quoted for the shell, so it can't run as a command", () => {
-  expect(inputCommand('%1', { text: "'; rm -rf ~; echo '" }).cmd).toBe(`tmux send-keys -t '%1' -l -- ''\\''; rm -rf ~; echo '\\'''`)
+test('typed text goes on stdin, never on the command line', () => {
+  // a password typed at a sudo prompt in the terminal view must not show in /proc/*/cmdline
+  const c = inputCommand('%1', { text: "'; rm -rf ~; echo '" })
+  expect(c.cmd).not.toContain('rm -rf')
+  expect(c.cmd).toMatch(/load-buffer -b 'inyon-term-\w+' "\$f" && tmux paste-buffer -d -b 'inyon-term-\w+' -t '%1'/)
+  expect(c.input).toBe("'; rm -rf ~; echo '")
   expect(inputCommand('%1', { keys: ['C-\\'] }).cmd).toBe(`tmux send-keys -t '%1' 'C-\\'`)
 })
 

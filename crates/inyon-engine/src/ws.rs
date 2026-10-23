@@ -65,6 +65,13 @@ fn tls() -> Arc<rustls::ClientConfig> {
 /// Opens a WebSocket to `url` with extra `headers`. The error is a WebSocket close code the way a
 /// browser reports a socket that never opened (1006), plus why.
 pub async fn connect(url: &str, headers: &[(&str, &str)]) -> Result<Socket, (u16, String)> {
+    connect_to(url, headers, None).await
+}
+
+/// `connect`, and with `addrs` only to those addresses (a name already looked up and checked), the
+/// name kept for the Host header and the certificate. A hub whose certificate is pinned is held to
+/// it (crate::hub_tls); everything else to the usual roots.
+pub async fn connect_to(url: &str, headers: &[(&str, &str)], addrs: Option<Vec<std::net::SocketAddr>>) -> Result<Socket, (u16, String)> {
     let mut req = url.into_client_request().map_err(|e| (1006, e.to_string()))?;
     for (k, v) in headers {
         let name = tokio_tungstenite::tungstenite::http::HeaderName::from_bytes(k.as_bytes()).map_err(|e| (1006, e.to_string()))?;
@@ -72,11 +79,22 @@ pub async fn connect(url: &str, headers: &[(&str, &str)]) -> Result<Socket, (u16
         req.headers_mut().insert(name, value);
     }
     let config = WebSocketConfig::default().max_message_size(Some(64 << 20)).max_frame_size(Some(64 << 20));
-    // no Nagle: keys typed into a terminal go out at once instead of waiting for more to send
-    let connect = tokio_tungstenite::connect_async_tls_with_config(req, Some(config), true, Some(Connector::Rustls(tls())));
+    let pin = if crate::http::insecure_tls() { None } else { crate::hub_tls::config_for(url) };
+    let tls = Connector::Rustls(pin.unwrap_or_else(tls));
+    let connect = async {
+        match addrs {
+            // no Nagle: keys typed into a terminal go out at once instead of waiting for more to send
+            None => tokio_tungstenite::connect_async_tls_with_config(req, Some(config), true, Some(tls)).await.map_err(|e| e.to_string()),
+            Some(addrs) => {
+                let stream = TcpStream::connect(&addrs[..]).await.map_err(|e| e.to_string())?;
+                let _ = stream.set_nodelay(true);
+                tokio_tungstenite::client_async_tls_with_config(req, stream, Some(config), Some(tls)).await.map_err(|e| e.to_string())
+            }
+        }
+    };
     match tokio::time::timeout(std::time::Duration::from_secs(30), connect).await {
         Ok(Ok((ws, _))) => Ok(ws),
-        Ok(Err(e)) => Err((1006, e.to_string())),
+        Ok(Err(e)) => Err((1006, e)),
         Err(_) => Err((1006, "timed out".into())),
     }
 }
@@ -110,6 +128,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert!(unknown.is_err());
         assert!(trusted.is_ok(), "{trusted:?}");
+    }
+
+    #[tokio::test]
+    async fn a_name_already_checked_is_not_looked_up_again_and_stays_the_host() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let host = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let seen = host.clone();
+            #[allow(clippy::result_large_err)] // the callback's type is tungstenite's
+            let cb = move |req: &tokio_tungstenite::tungstenite::handshake::server::Request, res| {
+                *seen.lock().unwrap() = req.headers().get("host").and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+                Ok(res)
+            };
+            let _ws = tokio_tungstenite::accept_hdr_async(tcp, cb).await.unwrap();
+            let h = host.lock().unwrap().clone();
+            h
+        });
+        // .invalid never resolves: the socket opens only because it goes to the address given
+        let url = format!("ws://hub.invalid:{port}/node");
+        assert!(connect(&url, &[]).await.is_err());
+        let ws = connect_to(&url, &[("authorization", "Bearer t")], Some(vec![format!("127.0.0.1:{port}").parse().unwrap()])).await;
+        assert!(ws.is_ok(), "{:?}", ws.err());
+        assert_eq!(server.await.unwrap(), format!("hub.invalid:{port}"));
     }
 
     #[tokio::test]

@@ -14,6 +14,8 @@ export default {
     await ctx.rest('GET', '/node/install.sh', undefined, { as: 'anon' })
     await ctx.rest('GET', '/node/install.ps1', undefined, { as: 'anon' })
     await ctx.rest('GET', '/node/SHA256SUMS', undefined, { as: 'anon' })
+    // a hub running from a checkout has no signed release list, nor a certificate of its own
+    for (const r of ['/node/release/SHA256SUMS', '/node/release/SHA256SUMS.minisig', '/node/release/version', '/node/hub.crt']) await ctx.rest('GET', r, undefined, { as: 'anon' })
 
     await ctx.step('the inyon command and the engine for Linux and macOS')
     for (const q of ['os=linux&arch=x64', 'os=linux&arch=arm64', 'os=darwin&arch=arm64']) {

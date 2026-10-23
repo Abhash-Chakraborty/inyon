@@ -157,9 +157,35 @@ fn checksum_lists_are_read_as_sha256sum_writes_them() {
 fn the_unix_one_liner_carries_the_token_in_the_environment_and_both_checksums() {
     // unixPairCommand('http://hub:4777', 'tok', 'aaa', 'bbb') in Bun
     assert_eq!(
-        unix_pair_command("http://hub:4777", "tok", "aaa", "bbb"),
+        unix_pair_command("http://hub:4777", "tok", "aaa", "bbb", None),
         r#"INYON_TOKEN=tok INYON_SUMS_SHA256=bbb sh -c 'f=$(mktemp) && curl -fsSL "$1/node/install.sh" -o "$f" && if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s' inyon http://hub:4777 aaa"#
     );
+}
+
+#[test]
+fn a_hub_on_its_own_certificate_puts_its_sha256_in_the_command() {
+    // unixPairCommand('https://192.168.1.5:4777', 'tok', 'aaa', 'bbb', 'cc') in Bun
+    assert_eq!(
+        unix_pair_command("https://192.168.1.5:4777", "tok", "aaa", "bbb", Some("cc")),
+        r#"INYON_TOKEN=tok INYON_SUMS_SHA256=bbb INYON_HUB_CERT=cc sh -c 'f=$(mktemp) && curl -fsSLk "$1/node/install.sh" -o "$f" && if [ "$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -c1-64)" = "$2" ]; then sh "$f" "$1"; else echo "install.sh did not match its checksum; get a new command from the hub" >&2; false; fi; s=$?; rm -f "$f"; exit $s' inyon https://192.168.1.5:4777 aaa"#
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hub_on_its_own_certificate_hands_its_sha256_to_join_and_every_download_is_still_checked() {
+    let (hub, state) = pair_hub(false);
+    state.lock().unwrap().program = "#!/bin/sh\nprintf \"%s\\n\" \"$*\" \"$INYON_HUB_CERT\" > \"$HOME/ran\"\n".into();
+    let sums = state.lock().unwrap().sums();
+    let pin = "ab".repeat(32);
+    let r = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&sums), Some(&pin)), &[]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert_eq!(r.ran.as_deref(), Some(format!("join {hub}\n{pin}\n").as_str()));
+    // curl skips its own check only where the command's checksums cover every download
+    let unchecked = run_pair(&format!("INYON_TOKEN=tok INYON_HUB_CERT={pin} sh -c 'curl -fsSL \"$1/node/install.sh\" | sh -s -- \"$1\"' inyon {hub}"), &[]);
+    assert_eq!(unchecked.code, 2, "{}", unchecked.err);
+    assert!(unchecked.err.contains("INYON_HUB_CERT needs INYON_SUMS_SHA256"), "{}", unchecked.err);
+    assert_eq!(unchecked.ran, None);
 }
 
 #[test]
@@ -219,7 +245,7 @@ fn checkout_dist() -> (std::path::PathBuf, Rc<Dist>) {
 
 /// The release's checksums, as a release that can't be had answers.
 fn sums_fail(d: &Dist) {
-    let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async { Err(http(502, "Could not get the checksums of Inyon 0.17.0 (404)")) });
+    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async { Err(http(502, "Could not get the checksums of Inyon 0.17.0 (404)")) });
     *d.sums.borrow_mut() = Some(f.shared());
 }
 
@@ -233,7 +259,7 @@ fn a_checkout_without_a_built_command_hands_windows_the_release_command_and_the_
     // anything that asks the release for its checksums trips this
     let asked = Rc::new(std::cell::Cell::new(false));
     let a = asked.clone();
-    let f: LocalBoxFuture<'static, Result<String, HubError>> = Box::pin(async move {
+    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async move {
         a.set(true);
         Err(http(502, "the release was asked"))
     });
@@ -443,7 +469,7 @@ fn sha(s: &str) -> String {
 #[test]
 fn the_one_liner_installs_what_the_hub_vouched_for_and_has_it_join_with_the_token_kept_out_of_argv() {
     let (hub, state) = pair_hub(false);
-    let cmd = unix_pair_command(&hub, "tok_123-abc", &sha(INSTALL_SH), &sha(&state.lock().unwrap().sums()));
+    let cmd = unix_pair_command(&hub, "tok_123-abc", &sha(INSTALL_SH), &sha(&state.lock().unwrap().sums()), None);
     assert!(!cmd.split(" sh -c '").nth(1).unwrap().contains("tok_123-abc"));
     let r = run_pair(&cmd, &[]);
     assert!(!r.err.contains("checksum"), "{}", r.err);
@@ -458,12 +484,12 @@ fn the_one_liner_installs_what_the_hub_vouched_for_and_has_it_join_with_the_toke
 fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
     let (hub, state) = pair_hub(false);
     let sums = state.lock().unwrap().sums();
-    let swapped_installer = run_pair(&unix_pair_command(&hub, "tok", &sha("something else"), &sha(&sums)), &[]);
+    let swapped_installer = run_pair(&unix_pair_command(&hub, "tok", &sha("something else"), &sha(&sums), None), &[]);
     assert_ne!(swapped_installer.code, 0);
     assert!(swapped_installer.err.contains("install.sh did not match"), "{}", swapped_installer.err);
     assert_eq!(swapped_installer.ran, None);
 
-    let swapped_sums = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha("a different list")), &[]);
+    let swapped_sums = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha("a different list"), None), &[]);
     assert_ne!(swapped_sums.code, 0);
     assert!(swapped_sums.err.contains("The hub's checksums did not match"), "{}", swapped_sums.err);
     assert_eq!(swapped_sums.ran, None);
@@ -475,7 +501,7 @@ fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
         h.program = "#!/bin/sh\necho \"not what the hub built\" > \"$HOME/ran\"\n".into();
         h.fixed_list.clone().unwrap()
     };
-    let swapped_program = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed)), &[]);
+    let swapped_program = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed), None), &[]);
     assert_ne!(swapped_program.code, 0);
     assert!(swapped_program.err.contains("inyon did not match its checksum"), "{}", swapped_program.err);
     assert_eq!(swapped_program.ran, None);
@@ -487,7 +513,7 @@ fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
 fn from_0_19_a_machine_joins_with_the_command_alone_though_the_hub_lists_the_engine() {
     let (hub, state) = pair_hub(true);
     let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums)), &[]);
+    let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums), None), &[]);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
     assert!(!r.bin.join("inyon-engine").exists());
@@ -500,7 +526,7 @@ fn with_inyon_legacy_engine_1_the_engine_comes_from_the_hub_too_checked_the_same
     let (hub, state) = pair_hub(true);
     let legacy = [("INYON_LEGACY_ENGINE", "1")];
     let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_456", &sha(INSTALL_SH), &sha(&sums)), &legacy);
+    let r = run_pair(&unix_pair_command(&hub, "tok_456", &sha(INSTALL_SH), &sha(&sums), None), &legacy);
     assert!(!r.err.contains("checksum"), "{}", r.err);
     assert_eq!(r.code, 0, "{}", r.err);
     assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
@@ -511,7 +537,7 @@ fn with_inyon_legacy_engine_1_the_engine_comes_from_the_hub_too_checked_the_same
     // an engine swapped on the way is refused before anything joins
     let fixed = sums.replace(&sha(ENGINE), &sha("other engine"));
     state.lock().unwrap().fixed_list = Some(fixed.clone());
-    let swapped = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed)), &legacy);
+    let swapped = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed), None), &legacy);
     assert_ne!(swapped.code, 0);
     assert!(swapped.err.contains("engine did not match its checksum"), "{}", swapped.err);
     assert_eq!(swapped.ran, None);
@@ -688,4 +714,66 @@ fn windows_script_under_powershell_launch_only_starts_itself_as_a_one_off_task()
         r.calls[0]
     );
     assert_eq!(r.calls[1], "start Tether update");
+}
+
+// made with the minisign binary and apps/cli/tests/keys, as in apps/cli/src/signing.rs
+const TEST_KEY: &str = "RWQqNVK9mQOKMvLzyK5hNRZhdkrEQAMzJCRgzTyujgXyvmvHB0y3/zRm";
+const SIGNED: &str = "abc  file-a\nabc  inyon-0.14.0.apk\n";
+const SIGNED_SIG: &str = "untrusted comment: signature from minisign secret key\n\
+    RUQqNVK9mQOKMkab6flmvsRkTJgrMwvlSr3HLaTaxl1/BKaIsjpexn6/YRrw9Nco1CyBNYXpD14RN4tyV+x91G0EBDlaQWFoVgg=\n\
+    trusted comment: timestamp:1791906365\tfile:SUMS\thashed\n\
+    hHmf6FdFURutVLVvePMp+3/HYEQlat81SrV37cY/HJXIVYmOh/WB1gOW4L2bQb9BQzY4ZopTYpjFX9UXykjRBw==\n\
+";
+
+/// A release with this list and signature (None: no .minisig); every name asked is noted.
+fn signed_release(asked: Rc<RefCell<Vec<String>>>, sums: &'static str, sig: Option<&'static str>) -> Get {
+    Rc::new(move |url: String| {
+        asked.borrow_mut().push(url.rsplit('/').next().unwrap_or("").to_owned());
+        Box::pin(async move {
+            Ok(match (url.rsplit('/').next().unwrap_or(""), sig) {
+                ("SHA256SUMS", _) => (200, sums.as_bytes().to_vec()),
+                ("SHA256SUMS.minisig", Some(s)) => (200, s.as_bytes().to_vec()),
+                _ => (404, b"no".to_vec()),
+            })
+        })
+    })
+}
+
+#[test]
+fn the_release_checksums_count_only_with_a_good_signature_from_the_release_key() {
+    let asked = Rc::new(RefCell::new(Vec::new()));
+    let ok = block(signed_sums("http://r", TEST_KEY, "0.14.0", signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG))));
+    assert_eq!(ok.unwrap(), SIGNED);
+    // a good list of another release, an old copy on a mirror, isn't this hub's
+    let e = block(signed_sums("http://r", TEST_KEY, "0.15.0", signed_release(asked.clone(), SIGNED, Some(SIGNED_SIG)))).unwrap_err();
+    assert_eq!(e.status, Some(502));
+    assert!(e.message.contains("aren't the ones for Inyon 0.15.0 (they don't list inyon-0.15.0.apk)"), "{}", e.message);
+    // a list changed by one byte, no signature, another key, and a changed trusted comment are each refused, before any file
+    let retimed: &'static str = Box::leak(SIGNED_SIG.replace("timestamp:1791906365", "timestamp:1791906366").into_boxed_str());
+    for (sums, sig, key) in
+        [("abd  file-a\nabc  inyon-0.14.0.apk\n", Some(SIGNED_SIG), TEST_KEY), (SIGNED, None, TEST_KEY), (SIGNED, Some(SIGNED_SIG), RELEASE_KEY), (SIGNED, Some(retimed), TEST_KEY)]
+    {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let e = block(signed_sums("http://r", key, "0.14.0", signed_release(asked.clone(), sums, sig))).unwrap_err();
+        assert_eq!(e.status, Some(502), "{}", e.message);
+        assert!(asked.borrow().iter().all(|n| n.starts_with("SHA256SUMS")), "{:?}", asked.borrow());
+    }
+}
+
+#[test]
+fn only_a_mock_release_may_name_another_signing_key() {
+    // SAFETY: no other test in this binary reads INYON_SIGNING_KEY
+    unsafe { std::env::set_var("INYON_SIGNING_KEY", format!("untrusted comment: test key\n{TEST_KEY}\n")) };
+    assert_eq!(signing_key("http://127.0.0.1:8000/download"), TEST_KEY);
+    for base in [
+        format!("https://github.com/{RELEASES_REPO}/releases/download/v{VERSION}"),
+        "https://inyon.tech/download".into(),
+        "https://inyon.abhashchakraborty.tech/download".into(),
+        "HTTPS://GitHub.com/abhash-chakraborty/inyon/releases/latest/download".into(),
+    ] {
+        assert_eq!(signing_key(&base), RELEASE_KEY, "{base}");
+    }
+    assert_eq!(signing_key("https://github.com/someone-else/inyon/releases/download/v1"), TEST_KEY);
+    unsafe { std::env::remove_var("INYON_SIGNING_KEY") };
+    assert_eq!(signing_key("http://127.0.0.1:8000/download"), RELEASE_KEY);
 }

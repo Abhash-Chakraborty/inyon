@@ -114,6 +114,10 @@ fn frames_carry_the_operation_then_its_id_and_replies_come_back_by_id() {
         assert_eq!((r.code, r.stdout.as_str()), (0, "hi\n"));
         receive(&c.id, &json!({ "type": "hello", "version": "0.20.0", "os": "linux x64" }));
         assert_eq!(info(&c.id).unwrap().version.as_deref(), Some("0.20.0"));
+        assert_eq!(info(&c.id).unwrap().warning, None);
+        // a machine added before 0.20 on plain http says so, for its page
+        receive(&c.id, &json!({ "type": "hello", "version": "0.20.0", "os": "linux x64", "warning": "Sending the token over plain http to 192.168.1.5:4777" }));
+        assert_eq!(info(&c.id).unwrap().warning.as_deref(), Some("Sending the token over plain http to 192.168.1.5:4777"));
     });
 }
 

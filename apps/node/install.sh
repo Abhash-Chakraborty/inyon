@@ -5,6 +5,9 @@
 # (the hub's "Add a machine" command does this; `sh -s -- <hub-url> <token>` still works)
 # The token comes from the environment so it doesn't show in the process list. With
 # INYON_SUMS_SHA256 set, the hub's list of checksums must match it, and the program its line.
+# INYON_HUB_CERT is the sha256 of a certificate the hub made itself (setup's LAN choice): the
+# downloads can't check it and don't need to, being checked against INYON_SUMS_SHA256, and
+# `inyon join` trusts only that certificate for the token.
 set -e
 HUB="${1%/}"; TOKEN="${2:-${INYON_TOKEN:-$TETHER_TOKEN}}"
 [ -n "$HUB" ] && [ -n "$TOKEN" ] || { echo "usage: INYON_TOKEN=<token> install.sh <hub-url>" >&2; exit 2; }
@@ -21,19 +24,24 @@ case "$(uname -m)" in
 esac
 name="inyon-$os-$arch"
 sum() { (sha256sum "$1" 2>/dev/null || shasum -a 256 "$1") | cut -c1-64; }
+k=
+if [ -n "$INYON_HUB_CERT" ]; then
+  [ -n "$INYON_SUMS_SHA256" ] || { echo "INYON_HUB_CERT needs INYON_SUMS_SHA256: get a new command from the hub." >&2; exit 2; }
+  k=-k
+fi
 
 DIR="$HOME/.inyon/bin"
 mkdir -p "$DIR"
 tmp="$DIR/inyon.download"
 trap 'rm -f "$tmp" "$tmp.sums"' EXIT
-curl -fsSL "$HUB/node/SHA256SUMS" -o "$tmp.sums"
+curl -fsSL $k "$HUB/node/SHA256SUMS" -o "$tmp.sums"
 if [ -n "$INYON_SUMS_SHA256" ] && [ "$(sum "$tmp.sums")" != "$INYON_SUMS_SHA256" ]; then
   echo "The hub's checksums did not match. Get a new command from the hub and run it again." >&2
   exit 1
 fi
 want="$(awk -v f="$name" '$2 == f || $2 == "*" f { print $1 }' "$tmp.sums")"
 echo "Downloading inyon from the hub…"
-curl -fL --progress-bar "$HUB/node/inyon?os=$os&arch=$arch" -o "$tmp"
+curl -fL $k --progress-bar "$HUB/node/inyon?os=$os&arch=$arch" -o "$tmp"
 if [ -z "$want" ] || [ "$(sum "$tmp")" != "$want" ]; then
   echo "inyon did not match its checksum. Get a new command from the hub and run it again." >&2
   exit 1
@@ -50,7 +58,7 @@ mv -f "$tmp" "$DIR/inyon"
 want_engine="$(awk -v f="inyon-engine-$os-$arch" '$2 == f || $2 == "*" f { print $1 }' "$tmp.sums")"
 if [ -n "$want_engine" ] && [ "${INYON_LEGACY_ENGINE:-${TETHER_LEGACY_ENGINE:-}}" = 1 ]; then
   echo "Downloading the Inyon engine from the hub…"
-  curl -fL --progress-bar "$HUB/node/inyon-engine?os=$os&arch=$arch" -o "$tmp"
+  curl -fL $k --progress-bar "$HUB/node/inyon-engine?os=$os&arch=$arch" -o "$tmp"
   if [ "$(sum "$tmp")" != "$want_engine" ]; then
     echo "The Inyon engine did not match its checksum. Get a new command from the hub and run it again." >&2
     exit 1

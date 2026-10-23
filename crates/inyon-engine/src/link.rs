@@ -54,19 +54,71 @@ pub fn pretty(value: &impl Serialize) -> String {
 /// Held around every read, change and write of a file in the node's folder. Phone sessions,
 /// relays and the publisher run on several threads at once, and the phone tries every address
 /// together, so without it two writers would lose each other's change: a guess not counted, a
-/// forgotten phone back, a new pairing gone.
+/// forgotten phone back, a new pairing gone. `inyon forget` and `inyon pair` run as processes of
+/// their own, so the threads' mutex isn't enough: the guard also holds an OS lock on `files.lock`
+/// in the folder (flock, or LockFileEx on Windows; the Bun engine takes the same one). The system
+/// lets go of it when the holder exits or dies, so nothing is ever judged stale by its age.
 static NODE_FILES: Mutex<()> = Mutex::new(());
 
-pub fn node_files() -> std::sync::MutexGuard<'static, ()> {
-    NODE_FILES.lock().unwrap_or_else(|e| e.into_inner())
+/// The file every process locks around a read-modify-write of the node's files. It stays in the
+/// folder: removing it while another process waits on it would let a third lock a new one.
+pub const FILES_LOCK: &str = "files.lock";
+/// A read-modify-write takes milliseconds; a lock held longer belongs to a process that's stuck.
+#[cfg(not(test))]
+const LOCK_WAIT: Duration = Duration::from_secs(15);
+#[cfg(test)]
+const LOCK_WAIT: Duration = Duration::from_secs(3);
+/// How long a phone's hello waits for the files. The phone gives each address 4 s, and the
+/// handshake needs some of that.
+pub const CHECK_WAIT: Duration = Duration::from_millis(1000);
+/// How long the running link waits for the files before it skips its state.json note: it runs on
+/// the threads that answer phones, as the Bun engine's one thread does.
+const LINK_WAIT: Duration = Duration::from_millis(200);
+
+pub struct NodeFiles {
+    _file: Option<std::fs::File>,
+    _threads: std::sync::MutexGuard<'static, ()>,
 }
 
-/// Each write gets a temporary file of its own, so two threads never rename each other's.
-static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The files, waiting up to 15 s for them; never without the lock. A change made without it could
+/// bring a forgotten phone back, so when another process keeps them that long the caller gets why
+/// and changes nothing: a command stops with it, the link skips that write.
+pub fn node_files() -> Result<NodeFiles, String> {
+    node_files_within(LOCK_WAIT).ok_or_else(|| {
+        let lock = node_dir().join(FILES_LOCK);
+        format!(
+            "The node's files are busy: another inyon process has held {} for over {} s. Try again in a moment; if it stays busy, stop the process whose pid is in that file.",
+            lock.display(),
+            LOCK_WAIT.as_secs()
+        )
+    })
+}
 
-/// Written whole or not at all, readable only by this user (it holds keys and pairings). A file
-/// that couldn't be saved is an error the caller acts on, as the Bun engine's throw was.
-pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String> {
+/// The files within `wait`, or None (said in the log) when another thread or process holds them
+/// that long.
+pub fn node_files_within(wait: Duration) -> Option<NodeFiles> {
+    let until = std::time::Instant::now() + wait;
+    let threads = loop {
+        match NODE_FILES.try_lock() {
+            Ok(g) => break g,
+            Err(std::sync::TryLockError::Poisoned(e)) => break e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(Duration::from_millis(2)),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                error("the node's files stayed busy in this process");
+                return None;
+            }
+        }
+    };
+    match take_files_lock(until) {
+        Ok(f) => Some(NodeFiles { _file: Some(f), _threads: threads }),
+        Err(e) => {
+            error(&e);
+            None
+        }
+    }
+}
+
+fn ensure_node_dir() -> PathBuf {
     let dir = node_dir();
     if !dir.exists() {
         let _ = std::fs::create_dir_all(&dir);
@@ -76,6 +128,62 @@ pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String>
             let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         }
     }
+    dir
+}
+
+/// The locked `files.lock`, held until it's dropped, or why not by `until`. Every way through
+/// ends by then: a lock held by another process, a symlink or folder in its place, a file the
+/// system won't open.
+fn take_files_lock(until: std::time::Instant) -> Result<std::fs::File, String> {
+    let path = ensure_node_dir().join(FILES_LOCK);
+    loop {
+        let last = match open_lock_file(&path) {
+            Ok(fh) => match fh.try_lock() {
+                Ok(()) => {
+                    // for whoever looks: the pid that holds it
+                    use std::io::{Seek, Write};
+                    let mut fh = fh;
+                    let _ = fh.set_len(0).and_then(|()| fh.rewind()).and_then(|_| writeln!(fh, "{}", std::process::id()));
+                    return Ok(fh);
+                }
+                Err(std::fs::TryLockError::WouldBlock) => "another process holds it".to_string(),
+                Err(std::fs::TryLockError::Error(e)) => return Err(format!("couldn't lock {}: {e}", path.display())),
+            },
+            Err(e) => e,
+        };
+        if std::time::Instant::now() >= until {
+            return Err(format!("couldn't lock {} in time ({last})", path.display()));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Opens `files.lock`, making it if it isn't there. Anything but a plain file in its place (a
+/// symlink, dangling or not, or a folder) is removed first: the folder is this user's alone.
+fn open_lock_file(path: &Path) -> Result<std::fs::File, String> {
+    if let Ok(m) = std::fs::symlink_metadata(path) {
+        if !m.is_file() {
+            let gone = if m.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+            gone.map_err(|e| format!("something that isn't a lock is in its place: {e}"))?;
+        }
+    }
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        o.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    o.open(path).map_err(|e| e.to_string())
+}
+
+/// Each write gets a temporary file of its own, so two threads never rename each other's.
+static TMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Written whole or not at all, readable only by this user (it holds keys and pairings). A file
+/// that couldn't be saved is an error the caller acts on, as the Bun engine's throw was.
+pub fn write_node_json(name: &str, value: &impl Serialize) -> Result<(), String> {
+    ensure_node_dir();
     let target = file(name);
     let n = TMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = PathBuf::from(format!("{}.{}.{n}.tmp", target.to_string_lossy(), std::process::id()));
@@ -127,29 +235,63 @@ pub fn load_config() -> LinkConfig {
     read_node_json("link.json").unwrap_or_default()
 }
 
-pub fn save_config(c: &LinkConfig) {
-    let _files = node_files();
-    save_or_say("link.json", c)
+/// Reads a file in the node's folder, changes it and writes it back, all under the lock, so a
+/// change another process made in the meantime (`inyon pair` adding a relay, the link) isn't
+/// written over with what was read before it. What's missing or unreadable starts as the default.
+pub fn change_node_json<T: DeserializeOwned + Serialize + Default>(name: &str, f: impl FnOnce(&mut T)) -> Result<T, String> {
+    let _files = node_files()?;
+    let mut value = read_node_json::<T>(name).unwrap_or_default();
+    f(&mut value);
+    write_node_json(name, &value)?;
+    Ok(value)
+}
+
+pub fn save_config(c: &LinkConfig) -> Result<(), String> {
+    let _files = node_files()?;
+    write_node_json("link.json", c)
 }
 
 /// This machine's identity, made on first use. Its id is what the phone pairs with.
 pub fn identity() -> Identity {
-    let _files = node_files();
-    let saved: Option<Value> = read_node_json("identity.json");
-    if let Some(seed) = saved.as_ref().and_then(|s| s.get("seed")).and_then(Value::as_str).filter(|s| !s.is_empty()) {
-        let mut bytes = [0u8; 32];
-        for (i, b) in bytes.iter_mut().enumerate() {
-            *b = seed.get(i * 2..i * 2 + 2).and_then(|h| u8::from_str_radix(h, 16).ok()).unwrap_or(0);
+    match load_identity() {
+        Ok(id) => id,
+        Err(e) => crate::output::fail(&e, 1),
+    }
+}
+
+/// The saved identity, or a new one when there's no file yet. A file that is there but can't be
+/// read, or holds anything but a 64-digit hex seed, is an error and stays as it is: a new identity
+/// would be a stranger to every paired phone, and a seed read with gaps would be guessable.
+pub fn load_identity() -> Result<Identity, String> {
+    let _files = node_files()?;
+    let path = file("identity.json");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => {
+            let seed = serde_json::from_str::<Value>(&text).ok().and_then(|v| v.get("seed").and_then(Value::as_str).map(String::from)).and_then(|s| parse_seed(&s));
+            seed.map(Identity::from_seed).ok_or_else(|| {
+                format!("{} isn't a valid identity (it needs a 64-digit hex seed). Restore it from a backup; moving it away makes a new identity, and every phone then has to pair again.", path.display())
+            })
         }
-        return Identity::from_seed(bytes);
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let id = Identity::generate().expect("the system has no randomness to give");
+            let seed: String = id.seed.iter().map(|b| format!("{b:02x}")).collect();
+            // an identity that isn't kept would be a new computer to every paired phone next time
+            write_node_json("identity.json", &json!({ "seed": seed, "id": id.id }))?;
+            Ok(id)
+        }
+        Err(e) => Err(format!("couldn't read {}: {e}", path.display())),
     }
-    let id = Identity::generate().expect("the system has no randomness to give");
-    let seed: String = id.seed.iter().map(|b| format!("{b:02x}")).collect();
-    // an identity that isn't kept would be a new computer to every paired phone next time
-    if let Err(e) = write_node_json("identity.json", &json!({ "seed": seed, "id": id.id })) {
-        crate::output::fail(&e, 1);
+}
+
+fn parse_seed(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
     }
-    id
+    let mut bytes = [0u8; 32];
+    for (i, b) in bytes.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(bytes)
 }
 
 /// A paired phone as phones.json keeps it.
@@ -231,7 +373,7 @@ pub struct Pairing {
 pub fn new_pairing() -> Result<Pairing, String> {
     let secret = URL_SAFE_NO_PAD.encode(crate::random_bytes(24));
     let short = inyon_link::new_short_code().expect("the system has no randomness to give");
-    let _files = node_files();
+    let _files = node_files()?;
     write_node_json("pairing.json", &json!({ "secret": secret, "short": inyon_link::short_secret(&short), "expires": crate::now_ms() + PAIR_MINUTES * 60_000 }))?;
     Ok(Pairing { secret, short })
 }
@@ -317,15 +459,36 @@ pub async fn link_running(port: Option<u16>) -> bool {
     }
 }
 
-pub fn forget_phone(key: &str) {
+/// How often lastSeen is written for one phone: it's for `inyon phones`, and every write is one
+/// more chance to race with `inyon forget`.
+const SEEN_EVERY: u64 = 60_000;
+
+/// Notes that a paired phone was here, at most once per `every` ms. Read again under the lock, so a
+/// phone forgotten meanwhile (by `inyon forget` in another process) is never written back.
+/// It waits for the lock, so the link calls it off its async threads; when the files stay busy it
+/// skips this note, which only `inyon phones` shows.
+pub fn mark_seen(key: &str, every: u64) {
+    let Ok(_files) = node_files() else { return };
+    let mut all = phones_raw();
+    let now = crate::now_ms();
+    let Some(Value::Object(p)) = all.get_mut(key) else { return };
+    if p.get("lastSeen").and_then(Value::as_u64).is_some_and(|t| now.saturating_sub(t) < every) {
+        return;
+    }
+    p.insert("lastSeen".into(), json!(now));
+    save_or_say("phones.json", &Value::Object(all));
+}
+
+pub fn forget_phone(key: &str) -> Result<(), String> {
     {
-        let _files = node_files();
+        let _files = node_files()?;
         let mut all = phones_raw();
         all.shift_remove(key);
-        save_or_say("phones.json", &Value::Object(all));
+        write_node_json("phones.json", &Value::Object(all))?;
     }
     end_sessions(key);
     crate::push::forget_pushes(key);
+    Ok(())
 }
 
 // ---------- sessions ----------
@@ -387,15 +550,18 @@ const SHORT_TRIES: u64 = 5;
 /// Who may come in: a phone paired before, or one bringing the secret from the code on screen.
 pub fn check(remote_static: &[u8; 32], hello: &Value) -> Result<Value, LinkError> {
     let key: String = remote_static.iter().map(|b| format!("{b:02x}")).collect();
-    let _files = node_files();
+    let host = crate::hostname();
+    // the phone gives each address a few seconds: say busy in time rather than miss them all
+    let Some(_files) = node_files_within(CHECK_WAIT) else {
+        return Err(LinkError::Refused(format!("{host} is busy saving its files. Try again in a moment.")));
+    };
     let mut all = phones_raw();
     let now = crate::now_ms();
-    if let Some(Value::Object(p)) = all.get_mut(&key) {
-        p.insert("lastSeen".into(), json!(now));
-        save_or_say("phones.json", &Value::Object(all));
+    // nothing is written yet: message 1 can be replayed by anyone who saw it, so lastSeen waits
+    // until the phone's first frame proves it holds its keys (mark_seen)
+    if all.contains_key(&key) {
         return Ok(welcome());
     }
-    let host = crate::hostname();
     let mut pairing = match read_node_json::<Value>("pairing.json") {
         Some(Value::Object(m)) => m,
         _ => Map::new(),
@@ -515,6 +681,7 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
         return out.close(4403, "unpaired");
     }
     let channel = Arc::new(Mutex::new(channel));
+    let mut proven = false;
     let open = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let send = sealing_sender(channel.clone(), out.clone(), open.clone());
     let ops = ops::Ops::new(send.clone());
@@ -544,6 +711,13 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
                             break;
                         }
                     };
+                    // a frame that opens proves the phone holds its keys, which a replayed message 1 doesn't
+                    if !proven {
+                        proven = true;
+                        // it may wait for the lock: not on the threads every session runs on
+                        let k = key.clone();
+                        tokio::task::spawn_blocking(move || mark_seen(&k, SEEN_EVERY));
+                    }
                     let Ok(m) = serde_json::from_slice::<Value>(&whole) else { continue };
                     drop_forgotten();
                     if !open.load(std::sync::atomic::Ordering::Relaxed) {
@@ -560,7 +734,12 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
                         // the phone removed this computer: it stops being trusted here too, as `inyon forget` would
                         Some("unpair") => {
                             log(&format!("a phone removed this computer; it is no longer paired ({}…)", &key[..12]));
-                            forget_phone(&key);
+                            let k = key.clone();
+                            tokio::task::spawn_blocking(move || {
+                                if let Err(e) = forget_phone(&k) {
+                                    error(&e);
+                                }
+                            });
                         }
                         _ => ops.message(m),
                     }
@@ -879,7 +1058,7 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                 Ok(b) => b,
                 Err(e) => {
                     error(&format!("tunnel: {e}"));
-                    tokio::time::sleep(Duration::from_millis(300_000.min(10_000u64 << attempt.min(10)))).await;
+                    tokio::time::sleep(crate::backoff(attempt, Duration::from_secs(10), Duration::from_secs(300))).await;
                     attempt += 1;
                     continue;
                 }
@@ -903,8 +1082,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                     }
                     if let Some(mut stderr) = child.stderr.take() {
                         let on_url = on_url.clone();
-                        let reset = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let r = reset.clone();
                         let reader = tokio::spawn(async move {
                             let mut carry = String::new();
                             let mut pending: Vec<u8> = Vec::new();
@@ -922,7 +1099,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                                 carry.push_str(&String::from_utf8_lossy(&pending[..cut]));
                                 pending.drain(..cut);
                                 if let Some(url) = tunnel_address(&carry) {
-                                    r.store(true, std::sync::atomic::Ordering::Relaxed);
                                     on_url(Some(url));
                                     carry.clear();
                                 } else if carry.len() > 65536 {
@@ -934,9 +1110,6 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                         });
                         let _ = child.wait().await;
                         let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
-                        if reset.load(std::sync::atomic::Ordering::Relaxed) {
-                            attempt = 0;
-                        }
                     } else {
                         let _ = child.wait().await;
                     }
@@ -947,11 +1120,13 @@ fn tunnel(port: u16, on_url: impl Fn(Option<String>) + Send + Sync + 'static) {
                 Err(e) => error(&format!("tunnel: {e}")),
             }
             on_url(None);
-            // quick tunnels are rate limited; back off if it keeps dying young
+            // quick tunnels are rate limited; back off if it keeps dying young, even after it gave an
+            // address, and start over only after a run that lasted
             let delay = if started.elapsed() > Duration::from_secs(60) {
-                Duration::from_secs(2)
+                attempt = 0;
+                Duration::from_secs(2) + crate::backoff(0, Duration::from_secs(2), Duration::from_secs(2))
             } else {
-                let d = Duration::from_millis(300_000.min(5000u64 << attempt.min(10)));
+                let d = crate::backoff(attempt, Duration::from_secs(5), Duration::from_secs(300));
                 attempt += 1;
                 d
             };
@@ -998,6 +1173,7 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
         let host = host_of(&url);
         let mut attempt: u32 = 0;
         loop {
+            let mut ready_at: Option<tokio::time::Instant> = None;
             let code = match crate::ws::connect(&inyon_link::relay_ws(&url, &inyon_link::machine_path(&id.id)), &[]).await {
                 Err((code, _)) => code,
                 Ok(socket) => {
@@ -1031,7 +1207,7 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                                         let _ = tx.send(Message::Text(json!({ "t": "auth", "id": id.id, "sig": sig }).to_string().into()));
                                     }
                                     Some("ready") => {
-                                        attempt = 0;
+                                        ready_at = Some(tokio::time::Instant::now());
                                         log(&format!("relay {host}: connected"));
                                         on_state(true);
                                     }
@@ -1067,8 +1243,9 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                 }
             };
             on_state(false);
-            let delay = Duration::from_millis(60_000.min(1000u64 << attempt.min(10)));
-            attempt += 1;
+            // a relay that lets the machine in and drops it at once keeps being backed off from
+            attempt = crate::next_attempt(attempt, ready_at.map(|t| t.elapsed()));
+            let delay = crate::backoff(attempt.saturating_sub(1), Duration::from_secs(1), Duration::from_secs(60));
             log(&format!("relay {host}: disconnected ({code}); retrying in {}s", (delay.as_millis() + 500) / 1000));
             tokio::time::sleep(delay).await;
         }
@@ -1080,10 +1257,14 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
 /// Publishes a record to every pkarr relay; the seq it used as soon as one of them took it (the
 /// rest carry on).
 pub async fn publish(identity: &Identity, record: &Record, last_seq: Option<u64>) -> Result<u64, String> {
+    publish_to(&inyon_link::PKARR_RELAYS, identity, record, last_seq).await
+}
+
+async fn publish_to(relays: &[&str], identity: &Identity, record: &Record, last_seq: Option<u64>) -> Result<u64, String> {
     let seq = inyon_link::pkarr::next_seq(last_seq.unwrap_or(0), crate::now_ms());
     let body = inyon_link::encode_published(identity, record, seq).map_err(|e| e.to_string())?;
     let (tx, mut rx) = mpsc::unbounded_channel::<Result<(), String>>();
-    for r in inyon_link::PKARR_RELAYS {
+    for r in relays.iter().map(|r| r.to_string()) {
         let (tx, body, url) = (tx.clone(), body.clone(), format!("{r}/{}", identity.id));
         tokio::spawn(async move {
             let res = crate::http::fetch("PUT", url, Vec::new(), Some(body), Duration::from_secs(40)).await;
@@ -1105,6 +1286,31 @@ pub async fn publish(identity: &Identity, record: &Record, last_seq: Option<u64>
     Err(format!("Couldn't publish the address: {}", why.join("; ")))
 }
 
+/// Publishes until a relay takes the record, backing off from `base` up to 60 times that (10 s to
+/// 10 minutes for the link) with jitter: the phone only learns a new tunnel address from pkarr, so
+/// a failed publish (relays slow, rate limiting, no network yet at boot) can't wait for the
+/// 30-minute republish. Stops when `wanted` says a newer record took over.
+async fn publish_until_taken(relays: &[&str], identity: &Identity, record: &Record, last_seq: Option<u64>, base: Duration, wanted: impl Fn() -> bool) -> Option<u64> {
+    let mut attempt = 0;
+    loop {
+        match publish_to(relays, identity, record, last_seq).await {
+            Ok(seq) => return Some(seq),
+            Err(e) => {
+                if !wanted() {
+                    return None;
+                }
+                let delay = crate::backoff(attempt, base, base * 60);
+                error(&format!("publish: {e}; trying again in {}s", (delay.as_millis() + 500) / 1000));
+                tokio::time::sleep(delay).await;
+                attempt += 1;
+                if !wanted() {
+                    return None;
+                }
+            }
+        }
+    }
+}
+
 /// For typing in: publishes the machine's id and addresses under the short code's identity.
 pub async fn publish_short_code(short: &ShortCode, machine: &str, name: &str, urls: &[String], relays: &[String]) -> Result<(), String> {
     let s = short.clone();
@@ -1119,11 +1325,14 @@ struct Live {
     tunnel_url: Option<String>,
     last_published: String,
     last_seq: Option<u64>,
+    /// counts publishes started; a retrying one stops once a newer one has begun
+    publishing: u64,
     /// private network address → its listener (with --lan, the one on 0.0.0.0 answers there already)
     vpn: Vec<(String, Option<tokio::task::JoinHandle<()>>)>,
 }
 
 fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
+    let mine;
     let (urls, key, last_seq) = {
         let l = live.lock().unwrap_or_else(|e| e.into_inner());
         let mut urls: Vec<String> = Vec::new();
@@ -1141,8 +1350,7 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
         (urls.clone(), json!({ "urls": urls, "relays": config.relays }).to_string(), l.last_seq)
     };
     let state = State { urls: urls.clone(), relays: config.relays.clone(), updated_at: crate::now_ms(), pid: std::process::id(), version: Some(VERSION.into()), last_seq };
-    {
-        let _files = node_files();
+    if let Some(_files) = node_files_within(LINK_WAIT) {
         save_or_say("state.json", &state);
     }
     {
@@ -1151,25 +1359,27 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
             return;
         }
         l.last_published = key;
+        l.publishing += 1;
+        mine = l.publishing;
     }
     let (id, relays, live) = (id.clone(), config.relays.clone(), live.clone());
     tokio::spawn(async move {
         let record = Record { urls: urls.clone(), relays: relays.clone(), machine: None, name: None };
-        match publish(&id, &record, last_seq).await {
-            Ok(seq) => {
+        let wanted = {
+            let live = live.clone();
+            move || live.lock().unwrap_or_else(|e| e.into_inner()).publishing == mine
+        };
+        // None: a newer record took over
+        if let Some(seq) = publish_until_taken(&inyon_link::PKARR_RELAYS, &id, &record, last_seq, Duration::from_secs(10), wanted).await {
+            {
                 live.lock().unwrap_or_else(|e| e.into_inner()).last_seq = Some(seq);
-                {
-                    let _files = node_files();
+                if let Some(_files) = node_files_within(LINK_WAIT) {
                     let mut s = current_state().unwrap_or(state);
                     s.last_seq = Some(seq);
                     save_or_say("state.json", &s);
                 }
                 let all: Vec<String> = urls.iter().chain(relays.iter()).cloned().collect();
                 log(&format!("published: {}", if all.is_empty() { "nothing".into() } else { all.join(" ") }));
-            }
-            Err(e) => {
-                live.lock().unwrap_or_else(|e| e.into_inner()).last_published.clear();
-                error(&format!("publish: {e}"));
             }
         }
     });
@@ -1178,9 +1388,9 @@ fn update(id: &Arc<Identity>, config: &LinkConfig, live: &Arc<Mutex<Live>>) {
 /// Starts the link: the listener, the tunnel, relays, private networks, notifications. Runs on
 /// the current tokio runtime for as long as it does. Fails when the port is taken.
 pub fn start_link(config: LinkConfig) -> Result<Identity, String> {
-    let id = Arc::new(identity());
+    let id = Arc::new(load_identity()?);
     listen(id.clone(), if config.lan { "0.0.0.0" } else { "127.0.0.1" }, config.port).map_err(|e| format!("Can't listen on port {}: {e}", config.port))?;
-    let live = Arc::new(Mutex::new(Live { tunnel_url: None, last_published: String::new(), last_seq: current_state().and_then(|s| s.last_seq), vpn: Vec::new() }));
+    let live = Arc::new(Mutex::new(Live { tunnel_url: None, last_published: String::new(), last_seq: current_state().and_then(|s| s.last_seq), publishing: 0, vpn: Vec::new() }));
     let config = Arc::new(config);
 
     if config.tunnel {
@@ -1375,7 +1585,7 @@ mod tests {
         assert_eq!(c, LinkConfig::default());
         c.port = 4790;
         c.extra.insert("later".into(), json!(1));
-        save_config(&c);
+        save_config(&c).unwrap();
         let text = std::fs::read_to_string(node_dir().join("link.json")).unwrap();
         let vpn = !WIN;
         assert_eq!(text, format!("{{\n  \"relays\": [],\n  \"tunnel\": true,\n  \"lan\": false,\n  \"vpn\": {vpn},\n  \"urls\": [],\n  \"port\": 4790,\n  \"later\": 1\n}}"));
@@ -1385,7 +1595,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            save_config(&load_config());
+            save_config(&load_config()).unwrap();
             assert_eq!(std::fs::metadata(node_dir().join("link.json")).unwrap().permissions().mode() & 0o777, 0o600);
         }
         // the identity stays the same from one start to the next
@@ -1435,14 +1645,322 @@ mod tests {
                     start.wait();
                     for _ in 0..20 {
                         let _ = check(&[9u8; 32], &json!({}));
+                        mark_seen(&"09".repeat(32), 0);
                     }
                 })
             };
             start.wait();
-            forget_phone(&key);
+            forget_phone(&key).unwrap();
             seen.join().unwrap();
             assert!(!list_phones().contains_key(&key), "the phone came back after it was forgotten");
         }
+    }
+
+    /// Runs one of the `child_*` tests below in a process of its own, with the home given, as
+    /// `inyon forget` and the running link are two processes.
+    fn child(name: &str, home: &Path) -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([&format!("link::tests::{name}"), "--exact", "--nocapture", "--test-threads=1"])
+            .env("INYON_TEST_CHILD", "1")
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    fn as_child() -> bool {
+        std::env::var_os("INYON_TEST_CHILD").is_some()
+    }
+
+    /// The running link, as an attacker holding a forgotten phone's key keeps it busy.
+    #[test]
+    fn child_keeps_marking_a_phone_seen() {
+        if !as_child() {
+            return;
+        }
+        let key = "09".repeat(32);
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            let _ = check(&[9u8; 32], &json!({}));
+            mark_seen(&key, 0);
+        }
+    }
+
+    /// The running link, taking wrong codes as fast as they come.
+    #[test]
+    fn child_keeps_guessing_codes() {
+        if !as_child() {
+            return;
+        }
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            let _ = check(&[5u8; 32], &json!({ "name": "Guesser", "pair": "ABCDEFGH:000000" }));
+        }
+    }
+
+    #[test]
+    fn a_phone_forgotten_by_another_process_while_the_link_writes_stays_forgotten() {
+        let h = testing::home("link-forget-procs");
+        let key = "09".repeat(32);
+        let add = || {
+            let _f = node_files().unwrap();
+            write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
+        };
+        add();
+        let mut link = child("child_keeps_marking_a_phone_seen", &h.dir);
+        std::thread::sleep(Duration::from_millis(300));
+        let mut back = 0;
+        for _ in 0..200 {
+            add();
+            std::thread::sleep(Duration::from_millis(1));
+            forget_phone(&key).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+            if list_phones().contains_key(&key) {
+                back += 1;
+            }
+        }
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = link.wait();
+        assert_eq!(back, 0, "the forgotten phone came back {back} times out of 200");
+    }
+
+    #[test]
+    fn a_new_pairing_made_by_another_process_survives_wrong_guesses() {
+        let h = testing::home("link-pair-procs");
+        new_pairing().unwrap();
+        let mut link = child("child_keeps_guessing_codes", &h.dir);
+        std::thread::sleep(Duration::from_millis(300));
+        let mut lost = 0;
+        for _ in 0..150 {
+            // two at once: the first is still taking guesses when the second is written
+            new_pairing().unwrap();
+            let p = new_pairing().unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+            if pairing_secret().as_deref() != Some(p.secret.as_str()) {
+                lost += 1;
+            }
+        }
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = link.wait();
+        assert_eq!(lost, 0, "the code on screen was replaced by an older one {lost} times out of 150");
+    }
+
+    /// Holds the files until the test drops a stop file, as a process stuck mid-write would.
+    #[test]
+    fn child_holds_the_files() {
+        if !as_child() {
+            return;
+        }
+        let _f = node_files().unwrap();
+        std::fs::write(node_dir().join("held"), "").unwrap();
+        let until = std::time::Instant::now() + Duration::from_secs(60);
+        while std::time::Instant::now() < until && !node_dir().join("stop").exists() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Adds one to count.json 200 times, each a read-modify-write under the lock.
+    #[test]
+    fn child_counts() {
+        if !as_child() {
+            return;
+        }
+        for _ in 0..200 {
+            let _f = node_files().unwrap();
+            let n = read_node_json::<u64>("count.json").unwrap_or(0);
+            write_node_json("count.json", &(n + 1)).unwrap();
+        }
+    }
+
+    fn wait_for(file: &Path) {
+        let until = std::time::Instant::now() + Duration::from_secs(20);
+        while !file.exists() {
+            assert!(std::time::Instant::now() < until, "{} never showed up", file.display());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn three_processes_counting_at_once_lose_no_count() {
+        let h = testing::home("link-lock-race");
+        let kids: Vec<_> = (0..3).map(|_| child("child_counts", &h.dir)).collect();
+        for mut k in kids {
+            assert!(k.wait().unwrap().success());
+        }
+        assert_eq!(read_node_json::<u64>("count.json"), Some(600));
+    }
+
+    #[test]
+    fn a_lock_held_by_a_process_is_waited_for_and_free_the_moment_it_dies_whatever_its_date() {
+        let h = testing::home("link-lock-held");
+        let lock = ensure_node_dir().join(FILES_LOCK);
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        // the phone's hello gives up in time, and says why
+        let t = std::time::Instant::now();
+        assert!(node_files_within(Duration::from_millis(300)).is_none());
+        assert!(t.elapsed() < Duration::from_secs(2), "waited {:?}", t.elapsed());
+        let e = check(&[4u8; 32], &json!({})).unwrap_err();
+        assert!(e.message().contains("busy saving its files"), "{}", e.message());
+        // the holder dies with a date from the future on the file: the lock is free at once
+        std::fs::File::options().write(true).open(&lock).unwrap().set_modified(std::time::SystemTime::now() + Duration::from_secs(3600)).unwrap();
+        holder.kill().unwrap();
+        let _ = holder.wait();
+        let t = std::time::Instant::now();
+        assert!(node_files_within(Duration::from_secs(5)).is_some());
+        assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
+    }
+
+    #[test]
+    fn with_the_files_held_too_long_a_writer_stops_with_why_and_never_writes_without_the_lock() {
+        let h = testing::home("link-lock-timeout");
+        let key = "0a".repeat(32);
+        write_node_json("phones.json", &json!({ &key: { "name": "Pixel", "pairedAt": 1, "lastSeen": 5 } })).unwrap();
+        let before = std::fs::read_to_string(file("phones.json")).unwrap();
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        let e = forget_phone(&key).unwrap_err();
+        assert!(e.contains("busy") && e.contains(FILES_LOCK), "{e}");
+        assert!(new_pairing().is_err());
+        assert!(change_node_json::<Value>("link.json", |c| c["tunnel"] = json!(false)).is_err());
+        assert!(save_config(&LinkConfig::default()).is_err());
+        // the link's note that a phone was here is skipped, not written past the lock
+        mark_seen(&key, 0);
+        assert_eq!(std::fs::read_to_string(file("phones.json")).unwrap(), before);
+        assert!(!file("link.json").exists() && !file("pairing.json").exists());
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = holder.wait();
+        forget_phone(&key).unwrap();
+        assert!(list_phones().0.is_empty());
+        let _ = holder.kill();
+    }
+
+    #[test]
+    fn a_change_waits_for_the_lock_and_keeps_what_its_holder_wrote() {
+        let h = testing::home("link-lock-change");
+        write_node_json("link.json", &json!({ "port": 4780 })).unwrap();
+        let mut holder = child("child_holds_the_files", &h.dir);
+        wait_for(&node_dir().join("held"));
+        let change = std::thread::spawn(|| change_node_json::<Value>("link.json", |c| c["tunnel"] = json!(false)).unwrap());
+        std::thread::sleep(Duration::from_millis(300));
+        // what the holder writes while it has the lock
+        write_node_json("link.json", &json!({ "port": 4780, "relays": ["https://relay.example.com"] })).unwrap();
+        std::fs::write(node_dir().join("stop"), "").unwrap();
+        let _ = holder.wait();
+        let after = change.join().unwrap();
+        assert_eq!(after, json!({ "port": 4780, "relays": ["https://relay.example.com"], "tunnel": false }));
+        assert_eq!(read_node_json::<Value>("link.json"), Some(after));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_in_place_of_the_lock_is_replaced_not_spun_on() {
+        let _h = testing::home("link-lock-symlink");
+        let lock = ensure_node_dir().join(FILES_LOCK);
+        let elsewhere = node_dir().join("nowhere").join("x");
+        std::os::unix::fs::symlink(&elsewhere, &lock).unwrap();
+        let t = std::time::Instant::now();
+        {
+            let f = node_files_within(Duration::from_secs(2));
+            assert!(f.is_some());
+        }
+        assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
+        assert!(std::fs::symlink_metadata(&lock).unwrap().is_file(), "a plain file now");
+        assert!(!elsewhere.exists());
+        // a folder in its place is no lock either
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        assert!(node_files_within(Duration::from_secs(2)).is_some());
+    }
+
+    #[test]
+    fn a_replayed_message_1_changes_nothing_on_disk_and_a_proven_phone_is_seen_once_a_minute() {
+        let _h = testing::home("link-replay");
+        let key = "0a".repeat(32);
+        write_node_json("phones.json", &json!({ key.clone(): { "name": "Pixel 9", "pairedAt": 1 } })).unwrap();
+        let before = std::fs::read(node_dir().join("phones.json")).unwrap();
+        for _ in 0..3 {
+            assert_eq!(check(&[10u8; 32], &json!({})).unwrap()["ok"], json!(true));
+        }
+        assert_eq!(std::fs::read(node_dir().join("phones.json")).unwrap(), before, "check alone writes nothing");
+        mark_seen(&key, SEEN_EVERY);
+        let seen = list_phones().get(&key).unwrap().last_seen.clone();
+        assert!(seen.is_some());
+        let after = std::fs::read(node_dir().join("phones.json")).unwrap();
+        mark_seen(&key, SEEN_EVERY);
+        assert_eq!(std::fs::read(node_dir().join("phones.json")).unwrap(), after, "not again within a minute");
+        // a forgotten phone is never written back
+        forget_phone(&key).unwrap();
+        mark_seen(&key, 0);
+        assert!(!list_phones().contains_key(&key));
+    }
+
+    #[test]
+    fn a_damaged_identity_is_an_error_and_stays_as_it_is() {
+        let _h = testing::home("link-identity");
+        let path = node_dir().join("identity.json");
+        for bad in ["{\"seed\":\"ab\"}".to_string(), format!("{{\"seed\":\"{}\"}}", "zz".repeat(32)), "not json".into(), format!("{{\"seed\":\"{}\"}}", "a".repeat(63))] {
+            std::fs::create_dir_all(node_dir()).unwrap();
+            std::fs::write(&path, &bad).unwrap();
+            assert!(load_identity().is_err(), "{bad}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), bad, "left alone");
+        }
+        std::fs::remove_file(&path).unwrap();
+        let made = load_identity().unwrap();
+        assert_eq!(load_identity().unwrap().id, made.id);
+    }
+
+    /// A pkarr relay that answers each PUT with the next status in `answers` (the last one from then on).
+    fn fake_pkarr(answers: Vec<u16>) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let puts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = puts.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                use std::io::{Read, Write};
+                let mut buf = vec![0u8; 65536];
+                let mut got = Vec::new();
+                // the head, then as much body as it says
+                while let Ok(k) = stream.read(&mut buf) {
+                    if k == 0 {
+                        break;
+                    }
+                    got.extend_from_slice(&buf[..k]);
+                    let text = String::from_utf8_lossy(&got).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
+                        if got.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let status = answers.get(i).or(answers.last()).copied().unwrap_or(200);
+                let _ = stream.write_all(format!("HTTP/1.1 {status} X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+            }
+        });
+        (url, puts)
+    }
+
+    #[test]
+    fn a_publish_the_relays_refuse_is_tried_again_soon_until_one_takes_it() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let id = Identity::generate().unwrap();
+        let record = Record { urls: vec!["wss://new-tunnel.trycloudflare.com/link".into()], relays: vec![], machine: None, name: None };
+        // rate limited twice (relay.pkarr.org answers 429 to bursts), then taken
+        let (url, puts) = fake_pkarr(vec![429, 429, 200]);
+        let seq = rt.block_on(publish_until_taken(&[url.as_str()], &id, &record, Some(5), Duration::from_millis(20), || true));
+        assert!(seq.is_some_and(|s| s > 5));
+        assert_eq!(puts.load(std::sync::atomic::Ordering::SeqCst), 3);
+        // a newer record took over: the old one stops trying
+        let (url, puts) = fake_pkarr(vec![429]);
+        let asked = std::sync::atomic::AtomicUsize::new(0);
+        let seq = rt.block_on(publish_until_taken(&[url.as_str()], &id, &record, None, Duration::from_millis(20), || asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 3));
+        assert_eq!(seq, None);
+        assert_eq!(puts.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[cfg(unix)]

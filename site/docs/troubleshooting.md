@@ -30,6 +30,8 @@ Setup and `inyon update` list it there from 0.17.2. An install from 0.17.1 appea
 - **The code expired.** Codes last 10 minutes and work once. Run `inyon pair` for a fresh one.
 - **Five wrong typed codes** cancel the typed code. Scan the QR code instead, or run `inyon pair` again.
 - **The link isn't running.** `inyon service status` should show `link` running. If not, `inyon service install link`.
+- **"The node's files are busy"** from `inyon forget`, `inyon pair` or setup: another `inyon` process has held `~/.inyon/node/files.lock` for over 15 seconds. From 0.20 nothing writes the pairings without that lock, so the command stops instead of risking a forgotten phone coming back. Try again; if it stays busy, end the process whose pid is in that file.
+- **"Busy saving its files".** The computer was in the middle of writing its pairings, from `inyon pair` or `inyon forget` in another window, and the phone doesn't wait more than a second for that. Try again. If it keeps saying so, a stuck `inyon` process is holding the lock on `~/.inyon/node/files.lock`: `inyon service install link` restarts the link, and ending the stuck process frees it. From 0.20 the lock goes away by itself the moment the process holding it ends, however it ended.
 - **The tunnel can't start.** Some networks block Cloudflare's tunnel. `inyon doctor` shows whether `cloudflared` is there; `inyon logs` shows its errors. On a VPN, the phone can connect on the VPN's address instead.
 - **The code had no address (0.19.0).** `inyon pair` could show a code before the tunnel was up, most often the first time, while it downloaded `cloudflared` (a download that could hang for minutes on an unreachable GitHub address). The phone then said it couldn't find the computer online. From 0.20 downloads give up on a dead address after a few seconds and try the next, setup fetches `cloudflared` ahead of time, and `inyon pair` waits for the tunnel. On 0.19.0, wait a minute and run `inyon pair` again.
 
@@ -55,7 +57,10 @@ The app explains what it found:
 ## The hub won't open
 
 - **From another device:** the hub listens only on its own machine until you choose a network. See [Reaching it from your phone](hub.md#reaching-it-from-your-phone).
-- **"Refusing to serve plain http"** in the log, with a network `BIND`: set `TLS_CERT` and `TLS_KEY`, or `INYON_ALLOW_HTTP=1` on a VPN.
+- **"Refusing to serve plain http"** in the log, with a network `BIND`: set `TLS_CERT` and `TLS_KEY`, or `INYON_ALLOW_HTTP=1` on a VPN. For the LAN, run `inyon setup` and choose *LAN*, which makes a certificate.
+- **"Refusing to send the token over plain http"** on a machine: from 0.20 plain http only goes to a Tailscale or NetBird address. A machine added before 0.20 still connects and warns with **"Sending the token over plain http"** instead. See [Plain http](machines.md#plain-http).
+- **"doesn't hand out Inyon's signed list of checksums"** from `inyon update` on a machine: update the hub first. See [Security](security.md#downloads).
+- **"couldn't hand out Inyon's signed list of checksums"** from `inyon update` on a machine: the hub couldn't fetch its release's list from GitHub, or the list it got isn't the one for its version. The hub's log says which. Try again later; the machine changes nothing meanwhile.
 - **"This hub doesn't answer to that address"** under a domain name: add it to `INYON_ALLOWED_HOSTS`. Behind a proxy on another hostname, add the origin to `INYON_ALLOWED_ORIGINS`.
 - **A port-forwarding rule** (say, port 80 to 4777) only applies to traffic arriving from other machines. Opening the name from the hub's own machine reaches whatever else listens on port 80 there.
 - **Forgot the password:** `inyon hub reset-password`. **Lost the setup code:** `inyon hub code`.

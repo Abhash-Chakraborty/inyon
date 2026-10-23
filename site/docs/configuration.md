@@ -14,12 +14,12 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `PORT` | `4777` | The port to listen on |
 | `BIND` | `127.0.0.1` | The address to listen on. Anything but localhost needs `TLS_CERT` and `TLS_KEY`, or `INYON_ALLOW_HTTP=1`; otherwise the hub refuses to start |
 | `INYON_ALLOW_HTTP` | | `1` serves plain http on a network address, for a VPN that encrypts on its own |
-| `TLS_CERT`, `TLS_KEY` | | PEM certificate and key files, to serve HTTPS directly |
+| `TLS_CERT`, `TLS_KEY` | | PEM certificate and key files, to serve HTTPS directly. From 0.20 setup's *LAN* choice makes them (`~/.inyon/tls/`) |
 | `INYON_ALLOWED_HOSTS` | | Extra host names the hub answers to, comma-separated. IPs, single-label names, localhost, `.ts.net`, NetBird names and home-network names (`.local`, `.lan`, `.internal`, `.home.arpa`) always work. `*` turns the check off |
 | `INYON_ALLOWED_ORIGINS` | | Extra origins allowed to call the hub, comma-separated, for a reverse proxy on another hostname |
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
-| `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines |
+| `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines. A mirror needs `SHA256SUMS.minisig` beside `SHA256SUMS`: from 0.20 the hub checks it with the release key first |
 | `INYON_HUB_IMPL` | `bun` | `rust` runs the hub built into `inyon` instead of the Bun engine's, and the Bun engine isn't downloaded (from 0.20, an opt-in test). `bun` goes back, and so does `INYON_LEGACY_ENGINE=1`. See [Trying the hub in Rust](hub.md#trying-the-hub-in-rust) |
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.
@@ -32,13 +32,15 @@ These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
+| `INYON_JOINED` | Written by `inyon join` into `~/.inyon/node/env` with the version that joined (from 0.20). A machine whose file lacks it was added before 0.20, and keeps connecting to a hub on plain http, with a warning. See [Plain http](machines.md#plain-http) |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.tech/download`) |
 | `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
 | `INYON_LEGACY_ENGINE` | `1` runs the link and the hub connection on the Bun engine `inyon-engine`, as 0.18 does, instead of inside `inyon` (from 0.19). `inyon service install` writes it into the service and remembers it for commands started without it. See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_NO_SIGNATURE_CHECK` | Set to `1` before running `get.sh` or `get.ps1` to let them install without checking the checksum list's signature when minisign isn't installed (from 0.20; `get.sh` also takes `--no-signature-check`). See [Without minisign](install.md#without-minisign) |
 | `INYON_NO_MODIFY_PATH` | Set to `1` before running `get.sh` or `get.ps1` to keep them from putting `inyon` on your `PATH` (from 0.17.1). See [Put inyon on your PATH](install.md#put-inyon-on-your-path) |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
-| `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on a public address. Don't |
+| `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on an address that isn't this machine's or a Tailscale or NetBird one, such as a LAN or ZeroTier address. From 0.20 it also lets `inyon update` take a hub's own checksums when the hub has no signed list, and `inyon join` writes it into `~/.inyon/node/env` when the address needed it, so the background connection keeps the choice. Avoid it |
+| `INYON_HUB_CERT` | The SHA-256 of a hub's own certificate, which its **Add a machine** command sets (from 0.20). `inyon join` saves that certificate as `~/.inyon/node/hub.crt`, and from then on the connections to that hub accept that exact certificate. It's never trusted as an authority, for the hub or anything else |
 | `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust as well as the usual ones, for a hub on a certificate from your organisation's own authority. The Bun engine always read it; from 0.19 `inyon` does too |
 | `NO_COLOR` | Turn colour off in the terminal |
 
@@ -57,8 +59,9 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | Path | What's there |
 |---|---|
 | `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which the logon task starts |
-| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, and `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell |
+| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell, and from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256 |
 | `~/.inyon/hub.env` | An installed hub's settings |
+| `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |
 | `~/.inyon/uploads/` | Files you attached, per day and session |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |

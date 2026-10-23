@@ -13,7 +13,26 @@ The command downloads `inyon` from the hub, checks it against the hub's checksum
 
 - The command carries a token for that one machine. Treat it like a password until it's used.
 - An unused command expires after 24 hours. **New pairing command** on the machine's page makes another.
-- The machine needs to reach the hub's address. A plain `http://` hub address is only accepted on a private network.
+- The machine needs to reach the hub's address. A plain `http://` hub address is only accepted on a VPN; see [Plain http](#plain-http).
+- From 0.20, when the hub serves HTTPS on a certificate it made itself (setup's [LAN](hub.md#the-lan) choice), the command carries that certificate's SHA-256 as `INYON_HUB_CERT`. `inyon join` keeps the certificate only if it has that SHA-256, and from then on the connection to that hub's address accepts exactly that certificate. It's a pin, not an authority: a certificate signed with the hub's key isn't accepted, for the hub or any other name, and a certificate the hub gets later from an authority still works. With the Bun engine (`INYON_LEGACY_ENGINE=1`) each connection to the hub goes through a port on `127.0.0.1` of its own, which takes that one connection, closes, and checks the certificate before anything is sent. Its downloads skip curl's own check of that certificate, since each is checked against a checksum the command already has.
+
+### Plain http
+
+A machine refuses to send its token over plain `http://` unless the hub is on this machine or on a Tailscale or NetBird address (`100.64.0.0/10`, or `fd7a:115c:a1e0::/48`). A name counts when every address it points to is one of those. It's looked up again before each connection, and the connection goes to an address that passed, never to whatever a second lookup says. Before 0.20 any private address was accepted, and names ending in `.local`, `.lan` or `.internal`. Anyone on a LAN can read plain http there, or answer for the hub's name, so from 0.20 `inyon join` and the **Add a machine** command, the Windows one included, stop with:
+
+```
+Refusing to send the token over plain http to 192.168.1.5: anyone on that network could read it, or answer in the hub's place. Use the hub's https address, or its Tailscale or NetBird address (100.x.y.z), or set INYON_ALLOW_INSECURE=1 to send it anyway.
+```
+
+A machine added that way before 0.20 keeps connecting after it updates, so nothing goes dark, as long as the address is one 0.19 sent the token to: a private address, or a name ending in `.local`, `.lan`, `.internal`, `.ts.net` or with no dot at all. A public address stays refused, however old the machine. It warns in its log, in `inyon status` and `inyon doctor`, and on its page in the hub:
+
+```
+Sending the token over plain http to 192.168.1.5:4777, where anyone on that network could read it or answer in the hub's place. This machine was added before Inyon 0.20, so it still connects. …
+```
+
+To move it to https, run `inyon setup` on the hub and choose *LAN* again, which makes a certificate, then run a new **Add a machine** command on the machine. Or add it through the hub's VPN address. `INYON_ALLOW_INSECURE=1` when joining keeps the old behaviour, at that risk; `inyon join` notes it in `~/.inyon/node/env`, so the connection keeps it.
+
+The background connection never exits over a setting it can't use, such as no hub saved or an address plain http mustn't go to: a service would only start it again every few seconds. It says why in its log, in `inyon status` and in `inyon doctor`, and tries again every few minutes. Run in a terminal with `inyon connect`, it stops with the reason.
 
 ## Servers over SSH
 

@@ -170,10 +170,21 @@ pub mod fake {
         }
     }
 
+    /// Text typed through a buffer (`type_command`, fed on stdin) shown as the `send-keys -l` it
+    /// stands for, so a fake reads typing one way however the hub delivers it.
+    pub fn as_keys(cmd: String, input: Option<String>) -> (String, Option<String>) {
+        let re = regex::Regex::new(r#"^(.*?)umask 077; f=\$\(mktemp\) .*? tmux paste-buffer -d -b '[^']*' -t ('[^']*'); r=\$\?; .*?\[ \$r = 0 \]; \}(.*)$"#).unwrap();
+        match (re.captures(&cmd), &input) {
+            (Some(c), Some(text)) => (format!("{}tmux send-keys -t {} -l -- {}{}", &c[1], &c[2], crate::hosts::host::shq(text), &c[3]), None),
+            _ => (cmd, input),
+        }
+    }
+
     impl HostBackend for Fake {
         fn exec(&self, config: &HostConfig, cmd: &str, opts: ExecOptions) -> LocalBoxFuture<'static, HubResult<ExecResult>> {
             let cmd = cmd.strip_prefix(UTF8_TMUX).unwrap_or(cmd).to_owned();
             let input = opts.input.map(|i| String::from_utf8_lossy(&i).into_owned());
+            let (cmd, input) = as_keys(cmd, input);
             self.calls.borrow_mut().push(Call { host: config.id.clone(), cmd: cmd.clone(), input: input.clone() });
             let answer = self.answer.borrow().clone();
             let r = answer.map_or_else(|| ok(""), |a| a(&config.id, &cmd, input.as_deref()));

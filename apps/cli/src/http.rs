@@ -18,8 +18,9 @@ impl Response {
 }
 
 /// Every request has the engine's limits: 10 s to connect (a dead address gives way to the next),
-/// 30 s without a byte, and `total` in all.
-fn agent(follow: bool, insecure: bool) -> ureq::Agent {
+/// 30 s without a byte, and `total` in all. A request to the hub joined takes its pinned
+/// certificate (inyon_engine::hub_tls) when join kept one.
+fn agent(url: &str, follow: bool, insecure: bool) -> ureq::Agent {
     let mut c = ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(if follow { 10 } else { 0 })
@@ -32,7 +33,12 @@ fn agent(follow: bool, insecure: bool) -> ureq::Agent {
         // Mozilla's roots, and the ones NODE_EXTRA_CA_CERTS adds
         ureq::tls::TlsConfig::builder().root_certs(inyon_engine::http::ureq_roots()).build()
     });
-    inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(600)))
+    let limits = Limits::new(Duration::from_secs(600));
+    if insecure {
+        inyon_engine::http::timed_agent(c, limits)
+    } else {
+        inyon_engine::http::timed_agent_for(url, c, limits)
+    }
 }
 
 /// More than any release file (the engine is about 120 MB) and less than would fill memory.
@@ -41,7 +47,7 @@ const MAX_BODY: u64 = 1024 * 1024 * 1024;
 const MAX_RESERVE: u64 = 64 * 1024 * 1024;
 
 fn fetch(url: &str, follow: bool, insecure: bool, progress: Option<&dyn Fn(u64, Option<u64>)>) -> Result<Response, String> {
-    let mut res = agent(follow, insecure).get(url).call().map_err(|e| e.to_string())?;
+    let mut res = agent(url, follow, insecure).get(url).call().map_err(|e| e.to_string())?;
     let status = res.status().as_u16();
     let location = res.headers().get("location").and_then(|v| v.to_str().ok()).map(String::from);
     let total = res.headers().get("content-length").and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<u64>().ok());
@@ -79,6 +85,12 @@ pub fn get_with_progress(url: &str, progress: &dyn Fn(u64, Option<u64>)) -> Resu
 /// GET without following the redirect, so a `…/releases/latest` page says where it points.
 pub fn get_no_redirect(url: &str) -> Result<Response, String> {
     fetch(url, false, false, None)
+}
+
+/// GET with no certificate check, for what something else vouches for (a hub's certificate, by the
+/// sha256 its command names).
+pub fn get_unverified(url: &str) -> Result<Response, String> {
+    fetch(url, true, true, None)
 }
 
 /// GET from the hub on this machine, whose certificate may be its own.

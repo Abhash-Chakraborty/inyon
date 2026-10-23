@@ -23,6 +23,8 @@ pub const INSTALL_URL: &str = "https://inyon.tech";
 pub const APP_ID: &str = "tech.abhashchakraborty.inyon";
 /// The repository every release is published on.
 pub const RELEASES_REPO: &str = SOURCE_REPO;
+/// The minisign key every release's SHA256SUMS is signed with (key id 0F27F489FF0BBD53).
+pub const RELEASE_KEY: &str = "RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6";
 /// The website's copy of the newest release.
 pub const DOWNLOAD_URL: &str = "https://inyon.tech/download";
 /// What that copy is: {"version":"0.14.0","tag":"v0.14.0","date":…,"files":[{name,size,sha256}…]}

@@ -100,7 +100,7 @@ pub fn set_entries(input: &Value) -> Result<usize, String> {
         });
     }
     let count = mine.len();
-    let _files = node_files();
+    let _files = node_files()?;
     let mut all: Vec<Entry> = read_entries().into_iter().filter(|e| e.phone != phone).collect();
     all.extend(mine);
     write_entries(&all)?;
@@ -109,7 +109,10 @@ pub fn set_entries(input: &Value) -> Result<usize, String> {
 
 /// A phone that's forgotten gets no more notifications from here.
 pub fn forget_pushes(phone: &str) {
-    let _files = node_files();
+    let _files = match node_files() {
+        Ok(f) => f,
+        Err(e) => return error(&e),
+    };
     let all = read_entries();
     let kept: Vec<Entry> = all.iter().filter(|e| e.phone != phone).cloned().collect();
     if kept.len() != all.len() {
@@ -216,15 +219,25 @@ pub async fn deliver(n: &Notice, only: Option<&str>, send: &PushSender) -> usize
             Err(e) => error(&format!("push: {e}")),
         }
     }
-    // unsubscribed or expired: the browser subscribes again and the app hands it over
+    // unsubscribed or expired: the browser subscribes again and the app hands it over. Only then is
+    // the lock taken, and off the async threads, since it may wait for another process
     if !gone.is_empty() {
-        let _files = node_files();
-        let kept: Vec<Entry> = read_entries().into_iter().filter(|e| !gone.contains(&e.subscription.endpoint)).collect();
-        if let Err(e) = write_entries(&kept) {
-            error(&e);
-        }
+        let _ = tokio::task::spawn_blocking(move || drop_gone(&gone)).await;
     }
     sent
+}
+
+/// Drops the subscriptions whose browsers are gone, under the lock; skipped (and said) when the
+/// files stay busy, as the next notice finds them gone again.
+fn drop_gone(gone: &HashSet<String>) {
+    let _files = match node_files() {
+        Ok(f) => f,
+        Err(e) => return error(&e),
+    };
+    let kept: Vec<Entry> = read_entries().into_iter().filter(|e| !gone.contains(&e.subscription.endpoint)).collect();
+    if let Err(e) = write_entries(&kept) {
+        error(&e);
+    }
 }
 
 /// What a hook event means for a notification.
@@ -671,6 +684,20 @@ mod tests {
         assert_eq!(deliver(&n(Kind::Waiting, "%1"), None, &send).await, 0);
         forget_pushes(&phone('b'));
         assert!(read_entries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_notice_with_no_browser_gone_never_waits_for_the_files() {
+        let _h = testing::home("push-no-lock");
+        phones(&[('a', "Pixel")]);
+        set_entries(&json!({ "phone": phone('a'), "host": "laptop", "registrations": [reg(1, true)] })).unwrap();
+        // another writer holds the files for as long as the notice takes
+        let _held = node_files().unwrap();
+        let (send, _sent) = recorder(None);
+        let t = std::time::Instant::now();
+        let n = Notice { kind: Kind::Waiting, pane: "%7".into(), title: "t".into(), body: "b".into() };
+        assert_eq!(deliver(&n, None, &send).await, 1);
+        assert!(t.elapsed() < Duration::from_secs(1), "waited {:?}", t.elapsed());
     }
 
     #[tokio::test]

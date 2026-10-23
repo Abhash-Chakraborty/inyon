@@ -50,3 +50,11 @@ test("acting on a machine that isn't connected answers 503 with a sentence the a
   const config: any = { id: 'not-connected', kind: 'node' }
   await expect(nodeBackend.exec(config, 'true', {})).rejects.toMatchObject({ status: 503, message: 'This machine is not connected. Is inyon running on it?' })
 })
+
+test("a machine's hello keeps its version, and its warning about plain http for the machine's page", () => {
+  nodeLinks.receive('hello-warning', { type: 'hello', version: '0.20.0', os: 'linux x64' })
+  expect(nodeLinks.info.get('hello-warning')).toMatchObject({ version: '0.20.0' })
+  expect(nodeLinks.info.get('hello-warning')?.warning).toBeUndefined()
+  nodeLinks.receive('hello-warning', { type: 'hello', version: '0.20.0', os: 'linux x64', warning: 'Sending the token over plain http to 192.168.1.5:4777' })
+  expect(nodeLinks.info.get('hello-warning')?.warning).toBe('Sending the token over plain http to 192.168.1.5:4777')
+})

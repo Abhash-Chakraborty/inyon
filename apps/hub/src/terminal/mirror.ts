@@ -1,5 +1,5 @@
 import { Host, shq, type PtyHandle } from '../hosts/host.ts'
-import { pasteCommand, pasteText } from '../tmux/tmux.ts'
+import { pasteCommand, pasteText, typeCommand } from '../tmux/tmux.ts'
 
 /**
  * A terminal for psmux (tmux on Windows), drawn from the pane's screen rather than from a terminal
@@ -88,11 +88,39 @@ export function toInput(d: string): Input[] {
   return out
 }
 
+/**
+ * A batch of input as few commands as it can go in: one shell for the whole batch, keys and text
+ * joined with &&, so it stops at the first that fails as one command per piece did. A shell has one
+ * stdin, so each piece of text after the first starts the next command. On Windows every program
+ * started is slow (sh, psmux, and busybox's mktemp, cat and rm), so a keystroke plus Enter is one
+ * shell, not two.
+ */
+export function batchCommands(pane: string, inputs: Input[]): { cmd: string; input?: string }[] {
+  const out: { cmd: string; input?: string }[] = []
+  let parts: string[] = []
+  let input: string | undefined
+  const close = () => {
+    if (!parts.length) return
+    out.push({ cmd: parts.length === 1 ? parts[0] : parts.map((p) => (p.startsWith('umask ') ? `{ ${p}; }` : p)).join(' && '), ...(input === undefined ? {} : { input }) })
+    parts = []
+    input = undefined
+  }
+  for (const x of inputs) {
+    const c = inputCommand(pane, x)
+    if (c.input !== undefined && input !== undefined) close()
+    parts.push(c.cmd)
+    if (c.input !== undefined) input = c.input
+  }
+  close()
+  return out
+}
+
 /** The tmux commands for one piece of input, and what to feed them. */
 export function inputCommand(pane: string, x: Input): { cmd: string; input?: string } {
   const t = `tmux send-keys -t ${shq(pane)}`
   if ('keys' in x) return { cmd: `${t} ${x.keys.map(shq).join(' ')}` }
-  if ('text' in x) return { cmd: `${t} -l -- ${shq(x.text)}` }
+  // through a buffer, never the command line, where other users could read it
+  if ('text' in x) return { cmd: typeCommand(`inyon-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: x.text }
   if ('hex' in x) return { cmd: `${t} -H ${x.hex.join(' ')}` }
   return { cmd: pasteCommand(`inyon-term-${Math.random().toString(36).slice(2, 10)}`, pane), input: pasteText(x.paste) }
 }
@@ -221,10 +249,7 @@ export function openMirror(
     const d = pending
     pending = ''
     try {
-      for (const x of toInput(d)) {
-        const { cmd, input } = inputCommand(paneId, x)
-        await host.exec(cmd, input === undefined ? {} : { input })
-      }
+      for (const { cmd, input } of batchCommands(paneId, toInput(d))) await host.exec(cmd, input === undefined ? {} : { input })
     } catch {}
     writing = false
     delay = FAST_MS

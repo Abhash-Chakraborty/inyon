@@ -159,15 +159,22 @@ if (-not (Test-Sum $busybox $busyboxSum)) {
   Move-Item -Force "$busybox.new" $busybox
 }
 
-# 3. The secrets file, which inyon reads when it connects.
-$envFile = Join-Path $Dir '.env'
-Set-Content -Path $envFile -Encoding ASCII -Value @(
-  "INYON_HUB=$Hub",
-  "INYON_TOKEN=$Token",
-  "INYON_SH=$busybox"
-)
-# only this user (and SYSTEM) may read it
-icacls $envFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" "SYSTEM:(F)" | Out-Null
+# 3. The secrets file, which inyon reads when it connects. `inyon join` writes it (readable only by
+#    you and SYSTEM), as install.sh has it do: it refuses plain http to an address anyone on the
+#    network could answer for, and notes the version that joined, so the connection holds this
+#    machine to that check rather than letting it in as one added before 0.20. The token goes in
+#    the environment, never on a command line.
+$env:INYON_TOKEN = $Token
+$env:INYON_SH = $busybox
+# what it prints on success ("run inyon connect") is this script's job; a refusal goes to stderr
+& $exe join $Hub --no-autostart | Out-Null
+$joined = $LASTEXITCODE
+Remove-Item Env:INYON_TOKEN -ErrorAction SilentlyContinue
+if ($joined -ne 0) {
+  # the connection stopped above goes back to what it was
+  Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  throw 'This machine was not added (the reason is above).'
+}
 
 # 4. psmux, the Windows tmux. Inyon lists and drives its sessions.
 $mux = Get-Command psmux, tmux -ErrorAction SilentlyContinue | Select-Object -First 1

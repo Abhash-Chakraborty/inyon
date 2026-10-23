@@ -29,9 +29,10 @@ import { spawn } from 'node:child_process'
 import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { renderUnicodeCompact } from 'uqr'
 import { formatShortId, pairLink, publishShortCode } from '@inyon/link'
-import { INSTALL_URL, WEB_URL } from '@inyon/protocol'
+import { attemptAfter, backoff, INSTALL_URL, WEB_URL } from '@inyon/protocol'
 import { ensureShell, serveOps, WIN } from './ops.ts'
-import { privateHost } from './hub.ts'
+import { checkName, plainBefore020, plainHost, plainRefusal } from './hub.ts'
+import { pinFor, tunnel } from './pin.ts'
 import { startTidying } from './tidy.ts'
 import { currentState, forgetPhone, identity, linkRunning, listPhones, loadConfig, newPairing, saveConfig, startLink, VERSION, type LinkConfig } from './link.ts'
 import { argv, emit, fail, JSON_OUT, pairResult, say } from './output.ts'
@@ -54,48 +55,144 @@ if (BACKGROUND) {
   console.error = write
 }
 
-/** The hub connection: one outbound WebSocket to the hub, running what it asks for as this user. */
-function connectMode(hubArg?: string, tokenArg?: string) {
+/**
+ * What the log, `inyon doctor` and `inyon status` say about a machine joined to a hub on plain http
+ * before 0.20 refused it: it still connects, and how to move to https.
+ */
+export const plainWarning = (host: string) =>
+  `Sending the token over plain http to ${host}, where anyone on that network could read it or answer in the hub's place. This machine was added before Inyon 0.20, so it still connects. To move to https, run \`inyon setup\` on the hub and choose LAN (it makes a certificate), then run the hub's new Add a machine command here; or add this machine through the hub's Tailscale or NetBird address.`
+
+/** Writes node.json: pid and version for `inyon update`, and what's wrong or worth knowing for `inyon status` and `inyon doctor`. */
+function record(problem?: string, warning?: string) {
+  try {
+    mkdirSync(nodeDir(), { recursive: true })
+    writeFileSync(runningFile('node'), JSON.stringify({ pid: process.pid, version: VERSION, ...(problem ? { problem } : {}), ...(warning ? { warning } : {}) }))
+  } catch {}
+}
+
+/** Why plain http to `url` would be refused now, looking its name up if it has one; '' when it may go. */
+async function strictRefusal(url: URL): Promise<string> {
+  if (secure(url)) return ''
+  const p = plainHost(url)
+  if (p === 'refused') return plainRefusal(url.hostname)
+  if (p === 'ok') return ''
+  const c = await checkName(url.hostname)
+  return c && 'why' in c ? c.why : ''
+}
+
+/**
+ * The hub connection: one outbound WebSocket to the hub, running what it asks for as this user. A
+ * setting it can't connect with (no hub saved, an address plain http mustn't go to) is said in the
+ * log and in node.json and tried again now and then: run as a service, exiting would only have it
+ * started again every few seconds, with nobody seeing why. Run in a terminal, it ends with the reason.
+ */
+function connectMode(hubArg?: string, tokenArg?: string, attempt = 0) {
+  const stop = (why: string) => {
+    if (process.stdin.isTTY) fail(why)
+    record(why)
+    const delay = backoff(attempt, 30_000, 300_000)
+    console.error(`${why} Trying again in ${Math.round(delay / 1000)}s.`)
+    setTimeout(() => connectMode(hubArg, tokenArg, attempt + 1), delay)
+  }
   // the installers keep the hub address and token in the node's folder (readable only by you), so
   // the token never sits in the process list where other users could read it
   const saved = savedEnv()
-  const hub = (hubArg ?? process.env.INYON_HUB ?? saved.INYON_HUB ?? '').replace(/\/+$/, '')
-  const token = tokenArg ?? process.env.INYON_TOKEN ?? saved.INYON_TOKEN ?? ''
+  const fromSaved = hubArg === undefined && !process.env.INYON_HUB
+  const hub = (hubArg ?? (process.env.INYON_HUB || undefined) ?? saved.INYON_HUB ?? '').replace(/\/+$/, '')
+  const token = tokenArg ?? (process.env.INYON_TOKEN || undefined) ?? saved.INYON_TOKEN ?? ''
   if (!process.env.INYON_SH && saved.INYON_SH) process.env.INYON_SH = saved.INYON_SH
 
-  if (!hub || !token) {
-    console.error(USAGE)
-    process.exit(2)
-  }
-  if (tokenArg) console.error('Note: a token given as an argument shows in the process list. Prefer INYON_TOKEN=<token> inyon join <hub-url>.')
+  if (!hub || !token) return stop(`This machine has no hub saved. Run the hub's Add a machine command here.\n${USAGE}`)
+  if (tokenArg && attempt === 0) console.error('Note: a token given as an argument shows in the process list. Prefer INYON_TOKEN=<token> inyon join <hub-url>.')
 
-  const url = hubUrl(hub)
-  const wsUrl = `${secure(url) ? 'wss' : 'ws'}://${url.host}/node`
-  // who's running, for `inyon update` and the hub's update script: they wait for this file to name
-  // the new version, and stop the copy it names when there's no service manager
+  let url: URL
   try {
-    mkdirSync(nodeDir(), { recursive: true })
-    writeFileSync(runningFile('node'), JSON.stringify({ pid: process.pid, version: VERSION }))
-  } catch {}
+    url = new URL(hub)
+  } catch {
+    return stop(`${hub} isn't a web address.`)
+  }
+  const insecureOk = !!process.env.INYON_ALLOW_INSECURE || (fromSaved && !!saved.INYON_ALLOW_INSECURE)
+  // joined before 0.20: plain http that would be refused now still goes, with a warning
+  // to an address that version sent the token to; a public one stays refused
+  const legacy = fromSaved && saved.INYON_JOINED === undefined && plainBefore020(url)
+  const plain = secure(url) || insecureOk ? 'ok' : plainHost(url)
+  if (plain === 'refused' && !legacy) return stop(plainRefusal(url.hostname))
+  const host = url.host
+  const wsUrl = `${secure(url) ? 'wss' : 'ws'}://${host}/node`
+  const httpUrl = `${secure(url) ? 'https' : 'http'}://${host}/node`
+  const port = url.port || (secure(url) ? '443' : '80')
+  let warning = ''
+  const warn = () => {
+    if (warning) return
+    warning = plainWarning(host)
+    console.error(`Warning: ${warning}`)
+    record(undefined, warning)
+  }
+  record()
+  if (plain === 'refused') warn()
+  else if (legacy && plain === 'look up') strictRefusal(url).then((why) => why && warn())
+
+  // a hub on a certificate it made itself, kept at join: only that certificate, each connection
+  // through a port of its own that takes that one connection (pin.ts)
+  const pin = pinFor(url, process.env.INYON_HUB || saved.INYON_HUB)
+
+  /** `base` (ws://host/node), sent to `addr` instead of whatever the name says now; the name stays as Host. */
+  const at = async (base: string, addr?: string) => {
+    if (pin) {
+      const t = await tunnel(url.hostname, Number(port), pin)
+      return base.replace(/^(wss|https):\/\/[^/]+\//, (_, p: string) => `${p === 'wss' ? 'ws' : 'http'}://127.0.0.1:${t.port}/`)
+    }
+    return addr ? base.replace(`//${host}/`, `//${addr.includes(':') ? `[${addr}]` : addr}:${port}/`) : base
+  }
 
   /** A hub answers 410 to a machine removed while it was off (a token it never knew gets 403). */
-  const removedThere = () =>
-    fetch(`${secure(url) ? 'https' : 'http'}://${url.host}/node`, { headers: { authorization: `Bearer ${token}` } }).then(
-      (r) => r.status === 410,
-      () => false,
-    )
+  const removedThere = async (addr?: string) => {
+    try {
+      return (await fetch(await at(httpUrl, addr), { headers: { authorization: `Bearer ${token}`, host } })).status === 410
+    } catch {
+      return false
+    }
+  }
 
-  function connect(attempt = 0) {
-    const ws = new WebSocket(wsUrl, { headers: { authorization: `Bearer ${token}` } } as any)
+  // a name on plain http may point elsewhere by now (an answer from someone on the network): it's
+  // looked up once, and the connection goes to an address that passed, nowhere else
+  const lookUp = plain === 'look up'
+
+  /** `rest`: addresses that passed the last check and haven't been tried yet. */
+  async function connect(attempt = 0, rest: string[] = []) {
+    let addr: string | undefined
+    let more: string[] = []
+    if (lookUp && rest.length) [addr, ...more] = rest
+    else if (lookUp) {
+      const c = await checkName(url.hostname)
+      if (c === null) {
+        const delay = backoff(attempt, 1000, 30_000)
+        console.log(`couldn't look up ${url.hostname}; retrying in ${Math.round(delay / 1000)}s`)
+        return setTimeout(() => connect(attempt + 1), delay)
+      }
+      if ('why' in c) {
+        if (!legacy) return stop(c.why)
+        warn()
+      } else [addr, ...more] = c.addrs
+    }
+    let target: string
+    try {
+      target = await at(wsUrl, addr)
+    } catch (err) {
+      return stop(`Couldn't open a port on 127.0.0.1 for the connection to ${host}: ${(err as Error).message}.`)
+    }
+    const ws = new WebSocket(target, { headers: { authorization: `Bearer ${token}`, host } } as any)
     const send = (m: unknown) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(m))
     const ops = serveOps(send)
     let opened = false
+    let openedAt: number | undefined
 
     ws.onopen = () => {
       opened = true
-      attempt = 0
-      console.log(`connected to ${url.host}`)
-      send({ type: 'hello', version: VERSION, os: `${os.platform()} ${os.arch()}`, hostname: os.hostname(), platform: os.platform(), mux: WIN ? 'psmux' : 'tmux' })
+      openedAt = Date.now()
+      console.log(`connected to ${host}`)
+      // the warning shows on the hub's machine page
+      send({ type: 'hello', version: VERSION, os: `${os.platform()} ${os.arch()}`, hostname: os.hostname(), platform: os.platform(), mux: WIN ? 'psmux' : 'tmux', ...(warning ? { warning } : {}) })
     }
 
     ws.onmessage = async (e) => {
@@ -110,12 +207,16 @@ function connectMode(hubArg?: string, tokenArg?: string) {
 
     ws.onclose = async (e) => {
       ops.close()
-      if (e.code === 4001 || (!opened && (await removedThere()))) return leave(`This machine was removed from ${url.host}.`)
+      // the name has more addresses that passed (::1 and 127.0.0.1): the next one, before waiting
+      if (!opened && e.code === 1006 && more.length) return connect(attempt, more)
+      if (e.code === 4001 || (!opened && (await removedThere(addr)))) return leave(`This machine was removed from ${host}.`)
       if (e.code === 4003) {
         console.error('The hub rejected the token. Pair this machine again from the hub.')
         process.exit(1)
       }
-      const delay = Math.min(30_000, 1000 * 2 ** attempt)
+      // a hub that takes the connection and drops it at once isn't tried every second
+      attempt = attemptAfter(attempt, openedAt)
+      const delay = backoff(attempt, 1000, 30_000)
       console.log(`disconnected (${e.code}); retrying in ${Math.round(delay / 1000)}s`)
       setTimeout(() => connect(attempt + 1), delay)
     }
@@ -157,10 +258,13 @@ function showTray(role: 'link' | 'node') {
   }
 }
 
-/** Checks a hub address; refuses to send a token over plain http to a public address. */
 /** Whether the hub is reached with TLS: https and wss are, http and ws aren't. */
 const secure = (url: URL) => url.protocol === 'https:' || url.protocol === 'wss:'
 
+/**
+ * Checks a hub address; refuses to send a token over plain http to anything but this machine or a
+ * VPN address. A name is looked up by `join` (strictRefusal) and again before each connection.
+ */
 function hubUrl(hub: string) {
   let url: URL
   try {
@@ -168,7 +272,7 @@ function hubUrl(hub: string) {
   } catch {
     fail(`${hub} isn't a web address.`)
   }
-  if (!secure(url) && !privateHost(url) && !process.env.INYON_ALLOW_INSECURE) fail(`Refusing to send the token over plain http to ${url.hostname}. Use https, or a private network address.`)
+  if (!secure(url) && plainHost(url) === 'refused' && !process.env.INYON_ALLOW_INSECURE) fail(plainRefusal(url.hostname))
   return url
 }
 
@@ -181,10 +285,20 @@ async function join(hubArg?: string) {
   const hub = (hubArg ?? '').replace(/\/+$/, '')
   const token = process.env.INYON_TOKEN ?? ''
   if (!hub || !token) fail('usage: INYON_TOKEN=<token> inyon-engine join <hub-url>')
-  hubUrl(hub)
+  const url = hubUrl(hub)
+  const refusal = await strictRefusal(url)
+  if (refusal && !process.env.INYON_ALLOW_INSECURE) fail(refusal)
   await ensureShell().catch((err) => say(`! ${(err as Error).message}`))
   mkdirSync(nodeDir(), { recursive: true, mode: 0o700 })
-  const lines = [`INYON_HUB=${hub}`, `INYON_TOKEN=${token}`, ...(WIN && process.env.INYON_SH ? [`INYON_SH=${process.env.INYON_SH}`] : [])]
+  // the version that joined, so `connect` knows the address passed this version's check; and the
+  // choice to send the token anyway when the address needed it
+  const lines = [
+    `INYON_HUB=${hub}`,
+    `INYON_TOKEN=${token}`,
+    `INYON_JOINED=${VERSION}`,
+    ...(refusal ? ['INYON_ALLOW_INSECURE=1'] : []),
+    ...(WIN && process.env.INYON_SH ? [`INYON_SH=${process.env.INYON_SH}`] : []),
+  ]
   const file = path.join(nodeDir(), WIN ? '.env' : 'env')
   writeFileSync(file, `${lines.join('\n')}\n`, { mode: 0o600 })
   // the other file name may hold a token from an earlier pairing
@@ -221,7 +335,11 @@ function linkOptions(args: string[]): LinkConfig {
     } else if (a === '--no-relay') c.relays = []
     else fail(`unknown option ${a}`)
   }
-  saveConfig(c)
+  try {
+    saveConfig(c)
+  } catch (err) {
+    fail((err as Error).message)
+  }
   return c
 }
 
@@ -239,7 +357,13 @@ async function pair(args: string[]) {
     startLink(config)
     startTidying()
   }
-  const { secret, short } = newPairing()
+  const { secret, short } = (() => {
+    try {
+      return newPairing()
+    } catch (err) {
+      return fail((err as Error).message)
+    }
+  })()
   // wait for an address the phone can use (the tunnel takes a few seconds to come up). A private
   // network's ws:// address comes first, but browsers only open wss://, so wait for the tunnel too
   const wanted = config.tunnel || config.lan || config.vpn || config.urls.length || config.relays.length
@@ -281,7 +405,11 @@ function forget(which?: string) {
   const matches = Object.entries(listPhones()).filter(([key, p]) => key.startsWith(which.toLowerCase()) || p.name === which)
   if (matches.length !== 1) fail(matches.length ? `"${which}" matches ${matches.length} phones; use more of the key` : `No paired phone matches "${which}"`)
   const [key, phone] = matches[0]!
-  forgetPhone(key)
+  try {
+    forgetPhone(key)
+  } catch (err) {
+    fail((err as Error).message)
+  }
   emit({ forgotten: { key, name: phone.name } }, `Forgot ${phone.name}. It can't connect until it pairs again.`)
 }
 
