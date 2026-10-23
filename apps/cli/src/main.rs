@@ -278,14 +278,15 @@ fn main() {
     let proc = RealProc;
     let sys = Sys::new(&proc);
     let tty = std::io::stdout().is_terminal() && std::io::stdin().is_terminal();
-    let theme = Theme::detect(tty);
+    // only the screens use colour, and working it out may ask the terminal, so it waits for them
+    let theme = || Theme::detect(tty);
     let json = cli.json;
     if cli.version {
         std::process::exit(commands::finish(commands::version(json), json));
     }
     let code = match cli.command {
         None | Some(Command::Status { plain: false }) if tty && !json => {
-            if let Err(e) = dashboard::run_screen(&sys, theme) {
+            if let Err(e) = dashboard::run_screen(&sys, theme()) {
                 eprintln!("{e}");
                 1
             } else {
@@ -316,7 +317,7 @@ fn main() {
                 },
                 hub: a.hub,
             };
-            commands::finish(commands::setup(&sys, theme, Some(&flags), tty), json)
+            commands::finish(commands::setup(&sys, theme(), Some(&flags), tty), json)
         }
         Some(Command::Pair { args }) => commands::finish(commands::pair(&args, json), json),
         Some(Command::Phones) => commands::finish(commands::phones(), json),

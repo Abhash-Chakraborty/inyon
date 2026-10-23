@@ -19,20 +19,33 @@ pub const MOTIF: [&str; 3] = ["◆        ●", "◆───     ●", "◆─�
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub color: bool,
+    /// a light terminal background: darker greys, so muted text stays readable
+    pub light: bool,
 }
 
 impl Theme {
-    /// Colour unless NO_COLOR is set (any value) or the output isn't a terminal.
+    /// Colour unless NO_COLOR is set (any value) or the output isn't a terminal. With colour on,
+    /// the terminal is asked once whether its background is light.
     pub fn detect(is_tty: bool) -> Theme {
-        Theme { color: is_tty && std::env::var_os("NO_COLOR").is_none() && std::env::var("TERM").map(|t| t != "dumb").unwrap_or(true) }
+        let color = is_tty && std::env::var_os("NO_COLOR").is_none() && std::env::var("TERM").map(|t| t != "dumb").unwrap_or(true);
+        Theme { color, light: color && light_background() }
     }
 
     pub const fn plain() -> Theme {
-        Theme { color: false }
+        Theme { color: false, light: false }
     }
 
     pub const fn colored() -> Theme {
-        Theme { color: true }
+        Theme { color: true, light: false }
+    }
+
+    pub const fn colored_light() -> Theme {
+        Theme { color: true, light: true }
+    }
+
+    /// One grey for a dark background, another for a light one.
+    fn grey(self, dark: u8, light: u8) -> Style {
+        self.c(Style::default().fg(Color::Indexed(if self.light { light } else { dark })))
     }
 
     fn c(self, s: Style) -> Style {
@@ -52,34 +65,67 @@ impl Theme {
         Style::default()
     }
 
-    /// silver #b4b2ab
+    /// silver #b4b2ab; on paper, graphite #585858 (7:1 on white)
     pub fn muted(self) -> Style {
-        self.c(Style::default().fg(Color::Indexed(249)))
+        self.grey(249, 240)
     }
 
-    /// subtle #959389
+    /// subtle #959389; on paper, #767676 (4.5:1 on white)
     pub fn faint(self) -> Style {
-        self.c(Style::default().fg(Color::Indexed(245)))
+        self.grey(245, 243)
     }
 
-    /// hairlines #45433f
+    /// hairlines #45433f; on paper, #bcbcbc
     pub fn line(self) -> Style {
-        self.c(Style::default().fg(Color::Indexed(240)))
+        self.grey(240, 250)
     }
 
     /// a state that needs you: the only warm tone, used on the dot alone
     pub fn attention(self) -> Style {
-        self.c(Style::default().fg(Color::Indexed(180)))
+        self.grey(180, 136)
     }
 
     pub fn error(self) -> Style {
-        self.c(Style::default().fg(Color::Indexed(174)))
+        self.grey(174, 131)
+    }
+
+    /// `faint` as an escape sequence, for lines printed without ratatui
+    fn faint_sgr(self) -> String {
+        format!("\x1b[38;5;{}m", if self.light { 243 } else { 245 })
     }
 
     /// the selected row: inverted, like a pill
     pub fn selected(self) -> Style {
         self.c(Style::default().add_modifier(Modifier::REVERSED))
     }
+}
+
+/// Whether the terminal's background is light, asked once (OSC 11) and kept. A terminal that
+/// doesn't answer counts as dark, which is what the greys were first made for.
+/// `INYON_THEME=light` or `dark` settles it without asking.
+fn light_background() -> bool {
+    static LIGHT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LIGHT.get_or_init(|| {
+        if let Some(t) = theme_override(std::env::var("INYON_THEME").ok().as_deref(), std::env::var("COLORFGBG").ok().as_deref()) {
+            return t;
+        }
+        let mut options = terminal_colorsaurus::QueryOptions::default();
+        options.timeout = std::time::Duration::from_millis(300);
+        matches!(terminal_colorsaurus::theme_mode(options), Ok(terminal_colorsaurus::ThemeMode::Light))
+    })
+}
+
+/// What the environment says about the background, if anything: `INYON_THEME`, then the
+/// `COLORFGBG` some terminals set ("15;0" is light text on black, "0;15" dark text on white).
+fn theme_override(inyon_theme: Option<&str>, colorfgbg: Option<&str>) -> Option<bool> {
+    match inyon_theme.map(|t| t.trim().to_ascii_lowercase()) {
+        Some(t) if t == "light" => return Some(true),
+        Some(t) if t == "dark" => return Some(false),
+        _ => {}
+    }
+    // the background is the last field; 7 and 15 are the light ones in the 16-colour set
+    let bg: u8 = colorfgbg?.rsplit(';').next()?.trim().parse().ok()?;
+    Some(bg == 7 || bg == 15)
 }
 
 /// The one-line banner: the mark and the version, shortened on narrow terminals.
@@ -262,7 +308,7 @@ pub fn with_motif<T: Send + 'static>(label: &str, theme: Theme, work: impl FnOnc
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 let frame = MOTIF[i % MOTIF.len()];
                 if theme.color {
-                    let _ = write!(out, "\r\x1b[38;5;245m{frame}\x1b[0m {label}");
+                    let _ = write!(out, "\r{}{frame}\x1b[0m {label}", theme.faint_sgr());
                 } else {
                     let _ = write!(out, "\r{frame} {label}");
                 }
@@ -340,6 +386,43 @@ mod tests {
     fn no_color_turns_every_style_off() {
         assert_eq!(Theme::plain().muted(), Style::default());
         assert_ne!(Theme::colored().muted(), Style::default());
+    }
+
+    #[test]
+    fn a_light_terminal_gets_greys_that_stay_readable_on_white() {
+        // contrast against white for a 256-colour grey index, worked out the WCAG way
+        fn on_white(index: u8) -> f64 {
+            let v = 8 + 10 * (index as u32 - 232);
+            let c = v as f64 / 255.0;
+            let l = if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
+            1.05 / (l + 0.05)
+        }
+        // the indices below are in the 24-step grey ramp, or the 6x6x6 cube's greys
+        let ramp = |s: Style| match s.fg {
+            Some(Color::Indexed(240)) => 232 + 8,
+            Some(Color::Indexed(243)) => 232 + 11,
+            Some(Color::Indexed(250)) => 232 + 18,
+            other => panic!("not a ramp grey: {other:?}"),
+        };
+        let light = Theme::colored_light();
+        assert!(on_white(ramp(light.muted())) >= 7.0);
+        assert!(on_white(ramp(light.faint())) >= 4.5);
+        // the dark greys stay as they were
+        assert_eq!(Theme::colored().muted().fg, Some(Color::Indexed(249)));
+        assert_eq!(Theme::colored().faint().fg, Some(Color::Indexed(245)));
+        assert_ne!(light.error(), Theme::colored().error());
+        assert_eq!(light.faint_sgr(), "\x1b[38;5;243m");
+    }
+
+    #[test]
+    fn the_environment_can_say_light_or_dark() {
+        assert_eq!(theme_override(Some("light"), None), Some(true));
+        assert_eq!(theme_override(Some("Dark"), Some("0;15")), Some(false));
+        assert_eq!(theme_override(None, Some("0;15")), Some(true));
+        assert_eq!(theme_override(None, Some("15;0")), Some(false));
+        assert_eq!(theme_override(None, Some("15;default;0")), Some(false));
+        assert_eq!(theme_override(Some("auto"), Some("junk")), None);
+        assert_eq!(theme_override(None, None), None);
     }
 
     #[test]
