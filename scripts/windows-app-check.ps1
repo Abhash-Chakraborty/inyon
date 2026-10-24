@@ -18,6 +18,18 @@ $env:HOME = $root
 $env:INYON_WEBVIEW_DEBUG_PORT = "$Port"
 $log = Join-Path $root '.inyon\node\window.log'
 
+# a copy of the app already running holds its single-instance lock, and the one started here would
+# only hand over to it: wait for any to end (an earlier step's), and name them if they don't
+$others = { @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'inyon*' }) }
+$wait = (Get-Date).AddSeconds(60)
+while ((& $others).Count -and (Get-Date) -lt $wait) { Start-Sleep -Seconds 2 }
+$left = & $others
+if ($left.Count) {
+  Write-Host "::error::Inyon was already running before the check:"
+  $left | ForEach-Object { Write-Host "  $($_.ProcessId) $($_.CommandLine)" }
+  exit 1
+}
+
 $app = Start-Process -FilePath $Exe -ArgumentList 'app' -PassThru
 Write-Host "app started (pid $($app.Id))"
 
