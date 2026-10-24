@@ -33,10 +33,11 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
 | `inyon pages add`, `ls`, `rm` | Show a site's folder in the app under Pages |
 | `inyon temp`, `files`, `show`, `rm`, `clean` | List, look at and delete the temp files agents leave here |
+| `inyon docs [topic]` | Read these docs in the terminal |
 | `inyon uninstall` | Remove Inyon |
 | `inyon version` | Show the version |
 
-Every command takes `--json` and `-h`/`--help`. `inyon -V` prints the version.
+Every command takes `--json` and `-h`/`--help`. `inyon -V` prints the version. From 0.22 `inyon --help` ends with where the docs are.
 
 ## Status
 
@@ -61,6 +62,8 @@ The dashboard and setup draw in greys that suit the terminal's background. From 
 From 0.20.3 it says what runs in the background and how to stop it. On Windows that's the Inyon app (**Quit Inyon** in the icon's menu, or `inyon stop`); elsewhere `inyon stop` for the link and the hub connection, and `inyon hub stop` for a hub.
 
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
+
+From 0.22 the plain form ends with where the docs are, and on a machine joined to a hub, a line saying its sessions and pages show in the hub's app. `--json` carries the same lines as `hints`, and the docs' address as `docs`.
 
 From 0.17.2 the link counts as running when something answers on its port the way the engine does, not only when the process it last recorded is alive, so a stale record never shows a running link as stopped.
 
@@ -284,6 +287,18 @@ This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22
 ```
 
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.
+
+## Docs
+
+```sh
+inyon docs                   # every page, with what it covers
+inyon docs machines          # one page
+inyon docs add machine       # words from its title work too
+```
+
+From 0.22. Every page of these docs is inside the program, as the Markdown this site is built from, so it matches the version you have and reads with no browser or network. A topic is a page's name, the start of one (`trouble`), or words from its title or description. `--json` gives the page's `title`, `description`, `url` and `text`, or with no topic the list as `pages`. A topic that matches nothing exits with code 1.
+
+It's meant for coding agents as much as for you: the [inyon skill](skills.md#inyon) tells an agent to read the right page before it guesses.
 
 ## Temp files
 

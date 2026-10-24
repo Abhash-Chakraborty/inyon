@@ -9,8 +9,9 @@ on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
     # the protocol crate's tests also read packages/protocol and fixtures/
-    # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine
-    paths: ['apps/cli/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine;
+    # `inyon docs` carries site/docs inside the binary
+    paths: ['apps/cli/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
