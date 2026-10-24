@@ -7,7 +7,7 @@ import { memoryStore, type Store } from '../platform/store.ts'
 import { HttpError } from '../hosts/http-error.ts'
 import { layOutFixtureSite, NOW, PAGES_FIXTURES, SECRET } from '../cli/pages-vectors.ts'
 import { CANT_WRITE_LIST, GIT_TIMEOUT_MS, NO_INDEX, PAGES_LIST_MAX, PRIVATE_FOLDER, TOO_WIDE, pagesKey, verifyToken, type ViewFs } from './pages-core.ts'
-import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_SAVED, OTHER_MACHINE, pageEpochs, pagesFeature, pagesFile, projectOf, removeJudged, withLock } from './pages.ts'
+import { BROKEN_FILE, diskFs, EPOCHS_KEY, LISTED_KEY, LOCKED, NOT_CONNECTED, NOT_SAVED, pageEpochs, pagesFeature, pagesFile, projectOf, removeJudged, withLock } from './pages.ts'
 
 // The Bun hub's half of Pages: the list file, epochs, the API handlers, and the /v/ answer
 // checked byte for byte against fixtures/pages/responses.json over a real socket.
@@ -616,7 +616,7 @@ describe('adding a page', () => {
     expect(await add({})).toBe('The folder must be an absolute path')
     expect(await add({ path: site('s'), slug: 'Not A Slug' })).toMatch(/^A slug is/)
     expect(await add({ path: site('s'), name: 5 })).toBe('The name must be text')
-    expect(await add({ path: site('s') }, 'laptop')).toBe(OTHER_MACHINE)
+    expect(await add({ path: site('s') }, 'laptop')).toBe(NOT_CONNECTED)
     fs.symlinkSync(h.home, path.join(root, `to-home-${n}`))
     fs.writeFileSync(path.join(h.home, 'index.html'), 'x')
     expect(await add({ path: path.join(root, `to-home-${n}`) })).toBe(TOO_WIDE)

@@ -349,6 +349,9 @@ export const api = {
   dropHeld: (host: string, pane: string, id: string) => request('DELETE', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`),
   sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
+  /** renames the tmux session itself (`session` is tmux's id, `$52`); answers the name tmux took (from 0.22) */
+  renameTmuxSession: (host: string, session: string, name: string) =>
+    request<{ name: string }>('PUT', `${h(host)}/sessions/${encodeURIComponent(session.replace(/^\$/, ''))}/name`, { name }),
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),
   restart: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/restart`),
   exit: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/exit`),

@@ -738,6 +738,18 @@ pub fn add(routes: &mut Routes) {
     );
     guarded(
         routes,
+        "/api/hosts/:id/sessions/:session/name",
+        vec![(
+            M::PUT,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let name = actions::rename_tmux_session(&id(&r), &r.param("session"), &str_or_empty(field(&b, "name")?)).await?;
+                Ok(json_of(&json!({ "name": name })))
+            }),
+        )],
+    );
+    guarded(
+        routes,
         "/api/hosts/:id/panes/:pane/reconnect",
         vec![(
             M::POST,

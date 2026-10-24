@@ -164,7 +164,7 @@ inyon hub companion-code     # a one-time code for a companion app, such as Lega
 inyon hub reset-password     # asks for the new password without showing it, then restarts the hub
 ```
 
-`hub start` waits until the hub answers, then prints its address and setup code. Hubs run on Linux and macOS. Plain `inyon hub` runs one in the foreground.
+`hub start` waits until the hub answers, then prints its address and setup code. Hubs run on Linux and macOS. Plain `inyon hub` runs one in the foreground; on Windows it says to use WSL (from 0.22; before, it fetched the engine and failed, `inyon hub --help` too).
 
 From 0.20 `hub companion-code` asks the running hub for a pairing code, the one **Settings › Paired devices › Pair a companion app** shows, and prints it with the hub's address (a hub that listens only on `127.0.0.1` says to use the address you open it at). It works once, for 5 minutes, and a new code ends the last one. See [Companion apps](companions.md).
 
@@ -276,11 +276,11 @@ The second line is where the page is in the app, not a link to share. A link tha
 
 `ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is.
 
-> **Note:** For now the app shows pages from the hub's own computer only. On any other computer `add` still saves the page, but answers with where it's listed instead of a place in the app:
+On a computer joined to a hub, the hub shows its pages too, from 0.22 (both the hub and that computer need 0.22). `add` there says so instead of giving a place in the app:
 
 ```
-"Inyon plan" is listed on laptop, under custom-tmux.
-This machine doesn't run a hub. For now the app shows pages from the hub's own machine only. The app can't open this page yet.
+"Inyon plan" is in Inyon: Pages > laptop > custom-tmux
+This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).
 ```
 
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.

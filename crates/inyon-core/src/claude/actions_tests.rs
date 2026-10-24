@@ -765,3 +765,22 @@ fn a_send_whose_caller_went_away_is_still_typed_and_settled() {
         watchers().stop("local:%9");
     });
 }
+
+#[test]
+fn a_tmux_session_is_renamed_by_its_number_with_what_tmux_wont_take_out_of_the_name() {
+    run(|| async {
+        let fake =
+            Fake::install(|_, cmd, _| if cmd.contains("'taken'") { ExecResult { code: 1, stdout: String::new(), stderr: "duplicate session: taken".into() } } else { ok("") });
+        pane("local", json!([]));
+        assert_eq!(rename_tmux_session("local", "52", "  my  experiment ").await.unwrap(), "my experiment");
+        assert_eq!(fake.cmds().last().unwrap(), "tmux rename-session -t '$52' -- 'my experiment'");
+        // tmux turns . and : into _ itself; # would be a format
+        assert_eq!(rename_tmux_session("local", "3", "api.v2:#(id)").await.unwrap(), "api_v2_-(id)");
+        let e = rename_tmux_session("local", "3", "taken").await.unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(409), "There's already a tmux session called taken on that machine"));
+        let n = fake.cmds().len();
+        assert_eq!(rename_tmux_session("local", "3", "   ").await.unwrap_err().message, "Type a name");
+        assert_eq!(rename_tmux_session("local", "$3; rm -rf ~", "x").await.unwrap_err().message, "Bad session");
+        assert_eq!(fake.cmds().len(), n);
+    });
+}

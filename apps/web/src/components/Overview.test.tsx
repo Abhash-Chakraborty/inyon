@@ -83,11 +83,11 @@ test('a session card and a machine offer the same actions on a right-click as in
   )
   const items = () => screen.getAllByRole('menuitem').map((b) => b.textContent)
   fireEvent.contextMenu(screen.getByText('Fix login'), { clientX: 10, clientY: 10 })
-  expect(items()).toEqual(['Open', 'Open terminal', 'Open in new tab', 'Rename…', 'Past conversations…', 'Copy session ID', 'End session…'])
+  expect(items()).toEqual(['Open', 'Open terminal', 'Open in new tab', 'Rename…', 'Rename tmux session…', 'Past conversations…', 'Copy session ID', 'End session…'])
   // the same list as the card's ⋯ button
   fireEvent.keyDown(window, { key: 'Escape' })
   await userEvent.click(screen.getByRole('button', { name: 'Actions for Fix login' }))
-  expect(items()).toEqual(['Open', 'Open terminal', 'Open in new tab', 'Rename…', 'Past conversations…', 'Copy session ID', 'End session…'])
+  expect(items()).toEqual(['Open', 'Open terminal', 'Open in new tab', 'Rename…', 'Rename tmux session…', 'Past conversations…', 'Copy session ID', 'End session…'])
   await userEvent.click(screen.getByRole('menuitem', { name: 'Rename…' }))
   expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeTruthy()
 

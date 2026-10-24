@@ -248,6 +248,22 @@ enum PagesAction {
     /// Take a page out of the app; its folder stays as it is
     #[command(visible_alias = "remove")]
     Rm { slug: String },
+    /// One file of a page, for the hub this machine is joined to (with --json)
+    #[command(hide = true)]
+    Get {
+        slug: String,
+        /// The path inside the site, one argument per folder or file name
+        segments: Vec<String>,
+        /// The path ended with a slash
+        #[arg(long)]
+        slash: bool,
+        /// The biggest file to send, in bytes
+        #[arg(long, default_value_t = pages::GET_MAX)]
+        max: u64,
+        /// The browser's If-None-Match: the file isn't sent when it still matches
+        #[arg(long)]
+        etag: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -304,6 +320,12 @@ enum ServiceAction {
 /// engine with INYON_LEGACY_ENGINE=1.
 const FORWARDED: [&str; 2] = ["link", "connect"];
 const HUB_OWN: [&str; 8] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password"];
+
+/// `inyon hub <arg>` this program answers itself; anything else runs the hub. Help too: asking
+/// for it once fetched the engine to run a hub (and failed on Windows, where none runs).
+fn hub_own(arg: &str) -> bool {
+    HUB_OWN.contains(&arg) || ["--json", "--help", "-h", "help"].contains(&arg)
+}
 
 /// A reader that stops early (`inyon status --plain | grep -q hub`) closes the pipe, and the next
 /// print fails. Rust ignores SIGPIPE, so that failure panicked (exit 101). A command that only
@@ -368,7 +390,7 @@ pub fn main() {
             }
             engine::forward(&argv[1..]);
         }
-        if first == "hub" && !argv.get(2).is_some_and(|a| HUB_OWN.contains(&a.as_str()) || a == "--json") {
+        if first == "hub" && !argv.get(2).is_some_and(|a| hub_own(a)) {
             commands::hub_other(&argv[2..]);
         }
     }
@@ -471,6 +493,7 @@ pub fn main() {
                 Some(PagesAction::Add { dir, name, slug }) => pages::add_command(&dir, name.as_deref(), slug.as_deref()),
                 Some(PagesAction::Rm { slug }) => pages::remove_command(&slug),
                 Some(PagesAction::Ls) | None => pages::list_command(),
+                Some(PagesAction::Get { slug, segments, slash, max, etag }) => pages::get_command(&slug, &segments, slash, max.min(pages::GET_MAX), etag.as_deref()),
             },
             json,
         ),

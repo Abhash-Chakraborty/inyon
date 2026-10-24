@@ -3,7 +3,7 @@
 //! tokens in fixtures/pages/tokens.json were minted by the Bun hub's code; the same session secret
 //! makes this hub mint and accept them too.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1064,7 +1064,7 @@ fn adding_refuses_bad_folders_slugs_names_and_other_machines() {
         assert!(msg(add_page(json!({ "path": s1, "slug": "Not A Slug" })).await).starts_with("A slug is"));
         assert!(msg(add_page(json!({ "path": s1, "slug": null })).await).starts_with("A slug is"));
         assert_eq!(msg(add_page(json!({ "path": s2, "name": 5 })).await), "The name must be text");
-        assert_eq!(call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": s3 })), &[]).await, Err((404, OTHER_MACHINE.into())));
+        assert_eq!(call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": s3 })), &[]).await, Err((404, NOT_CONNECTED.into())));
         assert_eq!(call(h_register, "POST", &[("host", "local")], Some(json!([1])), &[]).await, Err((400, "Invalid JSON".into())));
         let to_home = tmp.join("to-home");
         std::os::unix::fs::symlink(&home, &to_home).unwrap();
@@ -1360,5 +1360,239 @@ fn view_refuses_a_host_the_hub_does_not_answer_to_even_with_a_signed_in_cookie()
         assert_eq!(res.status().as_u16(), 421);
         assert_eq!(view_status(&url).await, 200);
         let _ = Method::GET;
+    });
+}
+
+// ---------- pages on another machine ----------
+
+/// What a fake machine answers to the arguments of `inyon pages …`.
+type Answer = Box<dyn Fn(&str) -> Value>;
+
+/// A machine whose `inyon pages …` answers come from `answer`, each command noted.
+struct Machine {
+    calls: RefCell<Vec<String>>,
+    answer: RefCell<Answer>,
+}
+
+impl inyon_core::hosts::host::HostBackend for Machine {
+    fn exec(
+        &self,
+        _: &inyon_protocol::HostConfig,
+        cmd: &str,
+        _: inyon_core::hosts::host::ExecOptions,
+    ) -> futures_util::future::LocalBoxFuture<'static, HubResult<inyon_core::hosts::host::ExecResult>> {
+        // after whatever the connection puts before a command
+        let args = cmd.split(inyon_core::features::temp::INYON_PAGES).nth(1).unwrap_or(cmd).trim().to_owned();
+        self.calls.borrow_mut().push(args.clone());
+        let out = (self.answer.borrow())(&args);
+        Box::pin(async move { Ok(inyon_core::hosts::host::ExecResult { code: 0, stdout: format!("{out}\n"), stderr: String::new() }) })
+    }
+    fn stream(&self, _: &inyon_protocol::HostConfig, _: &str, _: inyon_core::hosts::host::OnLine, _: bool) -> inyon_core::hosts::host::StreamHandle {
+        inyon_core::hosts::host::StreamHandle::new(|| {}, inyon_core::platform::rt::Deferred::new())
+    }
+    fn pty(&self, _: &inyon_protocol::HostConfig, _: &str, _: u16, _: u16, _: inyon_core::hosts::host::OnData) -> HubResult<inyon_core::hosts::host::PtyHandle> {
+        Err(HubError::plain("no terminals here"))
+    }
+}
+
+/// A Windows laptop joined to the hub, connected, its commands answered by `machine`.
+fn laptop(machine: Rc<Machine>) {
+    let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = machine;
+    inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
+    let state: inyon_protocol::HostState = serde_json::from_value(json!({
+        "config": { "id": "laptop", "name": "laptop", "kind": "node" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0
+    }))
+    .unwrap();
+    let rt = Rc::new(RefCell::new(inyon_core::hosts::registry::HostRuntime::new(inyon_core::hosts::host::Host::new(state.config.clone()), state.clone())));
+    rt.borrow_mut().hold_polls();
+    rt.borrow_mut().probe = Some(Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult {
+        hostname: "laptop".into(),
+        home: "C:/Users/abhash".into(),
+        os: "Windows".into(),
+        now: 0.0,
+        latency_ms: 0.0,
+        tmux: inyon_core::tmux::tmux::TmuxProbe::Ok,
+        integration: inyon_protocol::IntegrationState::Missing,
+        sessions: vec![],
+        agent_procs: Default::default(),
+        hook_panes: Default::default(),
+        status_panes: Default::default(),
+        account: None,
+        compact_panes: Default::default(),
+        installed: vec![],
+        signed_in: vec![],
+        agy_conversations: Default::default(),
+        agy_status: Default::default(),
+        agy_titles: Default::default(),
+        agy_integration: None,
+        machine_kind: None,
+        keys_at: Default::default(),
+    })));
+    inyon_core::hosts::registry::registry().insert_runtime("laptop", rt);
+}
+
+fn robot(listed: bool) -> Value {
+    let robot = json!({ "slug": "robot", "name": "Cardboard robot", "path": "D:\\Dev\\robot", "project": "D:\\Dev\\robot", "by": "claude", "added": 5, "progress": { "done": 2, "total": 3, "now": "Wiring" } });
+    let gone = json!({ "slug": "gone", "name": "Gone", "path": "D:\\Dev\\gone", "project": "D:\\Dev\\gone", "by": "cli", "added": 6, "problem": "the folder is gone" });
+    json!({ "v": 1, "pages": if listed { json!([robot, gone]) } else { json!([gone]) }, "host": "local", "machine": "laptop", "hub": false, "serves": true, "skipped": 0, "message": "" })
+}
+
+fn item(real: &str, file: bool, size: u64) -> Value {
+    json!({ "real": real, "file": file, "dir": !file, "size": size, "mtime": 1_700_000_000_000.5 })
+}
+
+async fn view(url: &str, headers: &[(&str, &str)]) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let mut h = vec![("host", HOST)];
+    h.extend_from_slice(headers);
+    let r = dispatch(test_req("GET", url, &h, "")).await;
+    let status = r.status().as_u16();
+    let headers = r.headers().iter().map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_owned())).collect();
+    (status, headers, r.into_body().collect().await.unwrap().to_bytes().to_vec())
+}
+
+// a laptop joined to the hub made pages with Blueprint, and the hub's Pages never showed them
+#[test]
+fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
+    let tmp = Tmp::new("remote");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        let now = clock(now_ms());
+        hub(&home, now.clone());
+        let machine = Rc::new(Machine { calls: RefCell::default(), answer: RefCell::new(Box::new(|_| Value::Null)) });
+        laptop(machine.clone());
+        let answer = |f: Answer| *machine.answer.borrow_mut() = f;
+        let listed = Rc::new(Cell::new(true));
+        let l = listed.clone();
+        let get = Rc::new(RefCell::new(json!({})));
+        let g = get.clone();
+        answer(Box::new(move |args| if args.starts_with("--json") { robot(l.get()) } else { g.borrow().clone() }));
+
+        // listed with its progress; the one with a problem isn't
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(
+            list["pages"],
+            json!([{ "host": "laptop", "slug": "robot", "name": "Cardboard robot", "project": "D:\\Dev\\robot", "by": "claude", "added": 5, "folder": "D:\\Dev\\robot", "progress": { "done": 2, "total": 3, "now": "Wiring" } }])
+        );
+        // read again only once it's 15 s old
+        call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(machine.calls.borrow().len(), 1);
+
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
+        let (status, headers, body) = view(&url, &[]).await;
+        assert_eq!((status, body.as_slice()), (200, &b"hello"[..]));
+        assert!(headers.contains(&("content-type".into(), "text/html;charset=utf-8".into())), "{headers:?}");
+        assert!(headers.contains(&("content-length".into(), "5".into())), "{headers:?}");
+        assert_eq!(machine.calls.borrow().last().unwrap(), &format!("get --json --max {} --slash -- 'robot'", pages_remote::REMOTE_FILE_MAX));
+
+        // a file, and the browser's copy still good: the machine is told, and the answer is a 304
+        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/js/app.js", true, 9), Value::Null] });
+        let etag = "\"9-18bcfe56800\"";
+        assert_eq!(view(&format!("{url}js/app.js"), &[("if-none-match", etag)]).await.0, 304);
+        assert_eq!(machine.calls.borrow().last().unwrap(), &format!("get --json --max {} --etag='{etag}' -- 'robot' 'js' 'app.js'", pages_remote::REMOTE_FILE_MAX));
+        // a file whose real path leads out of the site is a 404, whatever the machine sent
+        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/secret.txt", true, 6), Value::Null], "data": "c2VjcmV0" });
+        assert_eq!(view(&format!("{url}leak.txt"), &[]).await.0, 404);
+        // too big to fetch
+        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/film.mp4", true, 1 << 30), Value::Null], "big": true });
+        assert_eq!(view(&format!("{url}film.mp4"), &[]).await.0, 413);
+        // a folder asked for without its slash goes to it with one, and nothing is fetched
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/mockups", false, 0), item("D:/Dev/robot/mockups/index.html", true, 3)] });
+        let (status, headers, _) = view(&format!("{url}mockups"), &[]).await;
+        assert_eq!(status, 301);
+        assert!(headers.iter().any(|(k, v)| k == "location" && v.ends_with("/mockups/")), "{headers:?}");
+        // never a dot name: the hub doesn't even ask
+        let asked = machine.calls.borrow().len();
+        assert_eq!(view(&format!("{url}.env"), &[]).await.0, 404);
+        assert_eq!(machine.calls.borrow().len(), asked);
+
+        // taken off the laptop's list (by its CLI): the old link stops working
+        listed.set(false);
+        now.set(now.get() + pages_remote::REMOTE_TTL_MS);
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
+        listed.set(true);
+        now.set(now.get() + pages_remote::REMOTE_TTL_MS);
+        assert_eq!(view(&url, &[]).await.0, 403);
+        let again = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        assert_eq!(view(&again, &[]).await.0, 200);
+
+        // removing from the app runs the laptop's own `inyon pages rm`, and ends the links
+        let removed = Rc::new(Cell::new(false));
+        let (l, r) = (listed.clone(), removed.clone());
+        answer(Box::new(move |args| {
+            if args.starts_with("rm ") {
+                r.set(true);
+                json!({ "v": 1, "removed": [], "message": "" })
+            } else if r.get() {
+                robot(false)
+            } else {
+                robot(l.get())
+            }
+        }));
+        assert_eq!(call(h_remove, "DELETE", &[("host", "laptop"), ("slug", "robot")], None, &[]).await, Ok(json!({ "ok": true })));
+        assert_eq!(machine.calls.borrow().last().unwrap(), "rm --json -- 'robot'");
+        assert_eq!(view(&again, &[]).await.0, 403);
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
+
+        // adding a folder there runs its `inyon pages add`, which checks the folder itself
+        answer(Box::new(|args| {
+            if args.starts_with("add ") {
+                json!({ "v": 1, "page": { "slug": "x", "name": "X", "path": "D:\\Dev\\x", "project": "D:\\Dev\\x", "by": "cli", "added": 9 } })
+            } else {
+                json!({ "v": 1, "ok": false, "error": "That folder has no index.html" })
+            }
+        }));
+        let added = call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": "D:\\Dev\\x", "name": "X" })), &[]).await.unwrap();
+        assert_eq!((added["host"].as_str(), added["slug"].as_str()), (Some("laptop"), Some("x")));
+        assert_eq!(machine.calls.borrow().last().unwrap(), "add --json --name 'X' -- 'D:\\Dev\\x'");
+        answer(Box::new(|_| json!({ "v": 1, "ok": false, "error": "That folder has no index.html" })));
+        assert_eq!(call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": "D:\\Dev\\y" })), &[]).await, Err((400, "That folder has no index.html".into())));
+        assert_eq!(call(h_register, "POST", &[("host", "nowhere")], Some(json!({ "path": "/x" })), &[]).await.unwrap_err().0, 404);
+        // a folder not written in full would land wherever the machine's shell starts, and the
+        // quoting keeps `~` from meaning home: neither is sent
+        let asked = machine.calls.borrow().len();
+        for rel in ["plans/site", "~/site", "./site", "D:site", "\\Dev\\x"] {
+            let r = call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": rel })), &[]).await;
+            assert_eq!(r, Err((400, inyon_core::features::pages_core::NOT_ABSOLUTE.into())), "{rel}");
+        }
+        assert_eq!(machine.calls.borrow().len(), asked);
+    });
+}
+
+#[test]
+fn a_remote_file_at_the_limit_still_fits_one_socket_message() {
+    // the machine answers with the file as base64 inside its JSON, all in one message
+    let encoded = (pages_remote::REMOTE_FILE_MAX as usize).div_ceil(3) * 4;
+    assert!(encoded + 256 * 1024 < crate::ws::MAX_MESSAGE, "{encoded}");
+}
+
+#[test]
+fn a_machine_whose_inyon_is_too_old_or_that_is_offline_lists_no_pages() {
+    let tmp = Tmp::new("remote-old");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        // 0.21's list: no `serves`, and no `pages get` to answer with
+        let machine = Rc::new(Machine {
+            calls: RefCell::default(),
+            answer: RefCell::new(Box::new(|_| {
+                let mut v = robot(true);
+                v.as_object_mut().unwrap().remove("serves");
+                v
+            })),
+        });
+        laptop(machine.clone());
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
+        assert_eq!(call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap_err().0, 404);
+        // a laptop that's away isn't asked at all
+        *machine.answer.borrow_mut() = Box::new(|_| robot(true));
+        inyon_core::hosts::registry::registry().get("laptop").unwrap().borrow_mut().state.status = inyon_protocol::HostStatus::Error;
+        let asked = machine.calls.borrow().len();
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
+        assert_eq!(machine.calls.borrow().len(), asked);
     });
 }

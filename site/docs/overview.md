@@ -21,13 +21,14 @@ Machines keep the order you added them in, and sessions the order tmux started t
 
 ## Right-click menus
 
-Right-click a session card, long-press it on a phone, or use its **⋯** menu for **Open**, **Open terminal**, **Open in new tab**, **Rename…**, **Past conversations…**, **Copy session ID** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
+Right-click a session card, long-press it on a phone, or use its **⋯** menu for **Open**, **Open terminal**, **Open in new tab**, **Rename…**, **Rename tmux session…** (from 0.22), **Past conversations…**, **Copy session ID** and **End session…**. Ending a session first says exactly what will close: the pane, its window, or the whole tmux session.
 
 From 0.16 most things have a right-click menu, with the same actions wherever they're listed:
 
 | Right-click | For |
 |---|---|
 | A session, in a card, the sidebar or a machine's page | The actions above |
+| A tmux session's heading in the sidebar (from 0.22) | **Rename tmux session…**, **Copy tmux name** |
 | A machine, in the sidebar, the overview or Machines | **Open**, **New session**, **Rename…** (**Edit…** for an SSH server), **Update to inyon …** when one is ready, **Remove…** |
 | Your message | **Copy message**, and **Rewind to here…** where the agent can |
 | The agent's reply | **Copy reply**, and **Copy code** inside a code block |
