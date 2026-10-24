@@ -393,6 +393,7 @@ export class HubConn {
         return { ...m, hosts, source: this.source }
       }
       case 'notify':
+      case 'companion.reply':
         return { ...m, host: name(m.host) }
       case 'term.exit':
         this.terms.delete(m.id)

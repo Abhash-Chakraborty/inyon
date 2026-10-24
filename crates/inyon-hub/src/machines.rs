@@ -4,7 +4,10 @@
 //! Either may read the machines, their sessions and the pages. A message for an agent is held and
 //! typed in once the agent is free (inyon_core::claude::held); from a joined machine only when
 //! Settings allows it (`machinesSend`, off unless turned on), since that types into agents on other
-//! machines. Every other route answers 403.
+//! machines. On the hub's own machine it may also read a session's latest messages and answer
+//! the question an agent asks (`inyon read`, `inyon answer`), which the companion agent uses, and
+//! start or stop the companion (`inyon companion`).
+//! Every other route answers 403.
 
 use axum::http::Method;
 use inyon_core::claude::held;
@@ -26,6 +29,7 @@ pub enum Caller {
 }
 
 pub const SCOPE_REFUSED: &str = "The inyon command can read machines, sessions and pages here, and hold messages for agents. Do the rest in the app.";
+pub const LOCAL_ONLY: &str = "Only the inyon command on the hub's own machine can read conversations, answer questions and run the companion.";
 pub const SEND_OFF: &str = "This hub doesn't take messages from its machines. Turn on Settings > Machines can message agents in the app to allow it.";
 
 /// The machine whose link token the request carries, or the local token from the hub's machine.
@@ -52,6 +56,11 @@ fn held_route(path: &str) -> bool {
     inyon_core::re!(r"^/api/hosts/[^/]+/panes/[^/]+/held$").is_match(path)
 }
 
+/// A pane route by its last part: `/api/hosts/:id/panes/:pane/<last>`.
+fn pane_route(path: &str, last: &str) -> bool {
+    path.strip_suffix(last).and_then(|p| p.strip_suffix('/')).is_some_and(|p| inyon_core::re!(r"^/api/hosts/[^/]+/panes/[^/]+$").is_match(p))
+}
+
 /// The hub's answer to the inyon command, or a 403 for a route it may not use.
 pub async fn as_caller(mut req: Req, who: Caller) -> Resp {
     let get = req.method == Method::GET || req.method == Method::HEAD;
@@ -64,6 +73,38 @@ pub async fn as_caller(mut req: Req, who: Caller) -> Resp {
                 return answer_json(403, &json!({ "error": SEND_OFF, "reason": "send-off" }));
             }
             hold(&mut req).await
+        }
+        "/api/companion" => {
+            use inyon_core::features::companion;
+            if who != Caller::Local {
+                return answer_json(403, &json!({ "error": LOCAL_ONLY, "reason": "local-only" }));
+            }
+            match req.method {
+                Method::GET => Ok(json_of(&companion::status())),
+                Method::POST => match req.body().await {
+                    Ok(b) => companion::start(b.get("agent").and_then(Value::as_str).unwrap_or("claude")).await.map(|v| json_of(&v)),
+                    Err(e) => Err(e),
+                },
+                Method::DELETE => companion::stop().await.map(|()| json_of(&json!({ "ok": true }))),
+                _ => return answer_json(405, &json!({ "error": "Method not allowed" })),
+            }
+        }
+        p if (get && pane_route(p, "history")) || (req.method == Method::POST && pane_route(p, "answer")) => {
+            if who != Caller::Local {
+                return answer_json(403, &json!({ "error": LOCAL_ONLY, "reason": "local-only" }));
+            }
+            let (id, pane) = (req.param("id"), pane_param(&req.param("pane")));
+            if get {
+                inyon_core::features::companion::history(&id, &pane, crate::core_routes::history_limit(&req.q("limit"))).await.map(|v| json_of(&v))
+            } else {
+                match req.body().await {
+                    Ok(b) => {
+                        let choice = b.get("choice").and_then(|v| v.as_str().map(str::to_owned).or_else(|| v.as_u64().map(|n| n.to_string()))).unwrap_or_default();
+                        inyon_core::features::companion::answer_by_choice(&id, &pane, &choice).await.map(|v| json_of(&v))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
         }
         _ => return answer_json(403, &json!({ "error": SCOPE_REFUSED, "reason": "scope" })),
     };
@@ -82,7 +123,7 @@ pub fn overview() -> Resp {
     ok_json(&json!({ "hosts": hosts }))
 }
 
-pub const MACHINE_PANE: [&str; 9] = ["id", "index", "active", "title", "label", "dead", "agent", "command", "cwd"];
+pub const MACHINE_PANE: [&str; 10] = ["id", "index", "active", "title", "label", "dead", "agent", "companion", "command", "cwd"];
 
 async fn hold(req: &mut Req) -> inyon_core::hosts::http_error::HubResult<Resp> {
     let b = req.body().await?;

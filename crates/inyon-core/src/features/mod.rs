@@ -4,6 +4,8 @@
 //! phone's own link.
 
 pub mod agent_latest;
+// the companion agent: a session you talk to that reads and steers the others
+pub mod companion;
 pub mod conversations;
 // features/features.ts, named as the TS file is
 #[allow(clippy::module_inception)]

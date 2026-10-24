@@ -8,7 +8,7 @@ use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
-use inyon_core::features::{conversations, features as feat, models, providers, setup, signin, temp, workspace};
+use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -410,11 +410,35 @@ pub fn add(routes: &mut Routes) {
                     mode: loose(b.get("mode")),
                     prompt: loose(b.get("prompt")),
                     custom: loose(b.get("custom")),
+                    ..Default::default()
                 };
                 let pane = actions::launch(&id(&r), &opts).await?;
                 Ok(ok_json(&json!({ "pane": pane })))
             }),
         )],
+    );
+    // the companion agent (features/companion): whether it runs, start it with an agent, stop it
+    guarded(
+        routes,
+        "/api/companion",
+        vec![
+            (M::GET, h(|_r| async { Ok(ok_json(&companion::status())) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let b = fields(&r.body().await?)?;
+                    let agent = loose(b.get("agent")).unwrap_or_else(|| "claude".into());
+                    Ok(ok_json(&companion::start(&agent).await?))
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|_r| async {
+                    companion::stop().await?;
+                    Ok(ok())
+                }),
+            ),
+        ],
     );
     guarded(
         routes,
@@ -582,6 +606,12 @@ pub fn add(routes: &mut Routes) {
         routes,
         "/api/hosts/:id/panes/:pane/fork",
         vec![(M::POST, h(|r| async move { Ok(ok_json(&json!({ "pane": actions::fork_conversation(&id(&r), &pane(&r)).await? }))) }))],
+    );
+    // a session's latest messages, condensed (`inyon read`)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/history",
+        vec![(M::GET, h(|r| async move { Ok(json_of(&companion::history(&id(&r), &pane(&r), history_limit(&r.q("limit"))).await?)) }))],
     );
     guarded(routes, "/api/hosts/:id/panes/:pane/files", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_files(&id(&r), &pane(&r)).await?)) }))]);
     guarded(
@@ -882,6 +912,11 @@ async fn send(mut r: Req) -> HubResult<Resp> {
         _ => actions::send_message(&host, &pane_id, &text, false, None, setting, steer).await?,
     }
     Ok(ok())
+}
+
+/// `?limit=`: how many entries `inyon read` asked for, 20 when it didn't say.
+pub fn history_limit(q: &str) -> usize {
+    q.parse().unwrap_or(20)
 }
 
 #[cfg(test)]

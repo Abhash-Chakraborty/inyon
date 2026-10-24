@@ -23,6 +23,10 @@ Where each agent is installed (*On laptop, server*), the command that starts it,
 
 From 0.22, **Add an agent** below them saves a command of your own with the agent it works like, and it shows up in **New session**. Right-click it, or use its **⋯** menu, to edit or remove it. See [Your own agents](agents.md#your-own-agents).
 
+## Companion
+
+From 0.22, on the hub's web app: start the [companion agent](companion-agent.md) with **Claude Code** or **Codex**, then **Open** its chat or **Stop** it. If its agent quits, **Start again** and **Turn off** take the place of the buttons. A hub on Bun says it has no companion.
+
 ## Live numbers
 
 **Restart sessions that stop reporting.** If a session's live numbers stop updating, Inyon reconnects or restarts it by itself.

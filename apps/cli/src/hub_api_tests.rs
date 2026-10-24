@@ -72,3 +72,17 @@ fn a_refusal_says_what_to_do() {
     assert_eq!(refusal(404, &json!({ "error": "Pane not found" }), false), "Pane not found");
     assert_eq!(refusal(502, &Value::Null, false), "The hub answered 502.");
 }
+
+#[test]
+fn a_conversation_reads_as_who_said_what() {
+    assert_eq!(read_lines(&[]), ["Nothing said in that session yet."]);
+    let items = [json!({ "role": "you", "text": "port the parser" }), json!({ "role": "agent", "text": "Done.\nTests pass." })];
+    assert_eq!(read_lines(&items), ["you: port the parser", "agent: Done.\nTests pass."]);
+}
+
+#[test]
+fn the_companion_says_whether_it_runs() {
+    assert!(companion_line(&json!({ "agent": null })).starts_with("The companion is off."));
+    assert_eq!(companion_line(&json!({ "agent": "codex", "pane": "%4" })), "The companion runs Codex in the tmux session companion on the hub's machine.");
+    assert!(companion_line(&json!({ "agent": "claude", "pane": null })).contains("inyon companion start --agent claude"));
+}

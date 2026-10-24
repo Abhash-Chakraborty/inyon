@@ -146,6 +146,8 @@ export interface PaneInfo {
   height: number
   dead: boolean
   agent?: AgentPaneInfo
+  /** runs your companion agent (Settings › Companion); at most one pane across all machines */
+  companion?: boolean
 }
 
 export interface WindowInfo {
@@ -731,5 +733,6 @@ export type ServerMsg =
   | { t: 'term.exit'; id: string; reason?: string }
   | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: AgentKind }
   | { t: 'pong' }
+  | { t: 'companion.reply'; id: string; host: string; pane: string; text: string; error?: boolean; at: number }
 
 export const chatKey = (host: string, pane: string) => `${host}:${pane}`

@@ -69,7 +69,7 @@ export function PanePage() {
   const [sub, setSub] = useState<SubagentInfo | null>(null)
   const items = s.chat?.items ?? []
 
-  const title = ref?.pane.label || info?.title || (ref ? paneTitle(ref) : 'Session')
+  const title = (ref?.pane.companion && 'Companion') || ref?.pane.label || info?.title || (ref ? paneTitle(ref) : 'Session')
   useEffect(() => {
     document.title = `${title} · Inyon`
     return () => {

@@ -9,11 +9,12 @@ use crate::commands::Outcome;
 pub const DOCS_URL: &str = "https://inyon.tech/docs/";
 
 /// Every page in site/docs, by its name there. A test checks none is missing.
-pub const PAGES: [(&str, &str); 25] = [
+pub const PAGES: [(&str, &str); 26] = [
     ("agents", include_str!("../../../site/docs/agents.md")),
     ("android", include_str!("../../../site/docs/android.md")),
     ("browser-copy", include_str!("../../../site/docs/browser-copy.md")),
     ("cli", include_str!("../../../site/docs/cli.md")),
+    ("companion-agent", include_str!("../../../site/docs/companion-agent.md")),
     ("companions", include_str!("../../../site/docs/companions.md")),
     ("computers", include_str!("../../../site/docs/computers.md")),
     ("configuration", include_str!("../../../site/docs/configuration.md")),

@@ -12,6 +12,7 @@ import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { confirmAction } from '../components/Confirm.tsx'
 import { CompanionSheet } from '../components/CompanionSheet.tsx'
 import { CustomAgentRows } from '../components/CustomAgents.tsx'
+import { CompanionRows } from '../components/CompanionAgent.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { isHosted, publicFile } from '../lib/base.ts'
@@ -316,6 +317,7 @@ function Row({ label, hint, children }: { label: React.ReactNode; hint?: React.R
 const NAV = [
   ['appearance', 'Appearance'],
   ['agents', 'Agents'],
+  ...(isPhone() ? [] : ([['companion', 'Companion']] as const)),
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
   ['machines', isPhone() ? 'Computers' : 'Machines'],
@@ -456,6 +458,12 @@ export function Settings() {
             ))}
             {hub && <CustomAgentRows hub={hub} onSaved={setHub} />}
           </Section>
+
+          {!isPhone() && (
+            <Section id="companion" title="Companion" desc="An agent you talk to about your other sessions, here, on your phone or on Legato's island. It reads every session, and sends a message or answers a question when you ask it to.">
+              <CompanionRows />
+            </Section>
+          )}
 
           <section id="sessions" className="scroll-mt-20">
             <h2 className="text-[15px] font-semibold tracking-tight">Live numbers</h2>

@@ -2015,6 +2015,9 @@ pub struct LaunchOpts {
     pub prompt: Option<String>,
     /// a custom agent's id (Settings › Agents), started in place of `agent`
     pub custom: Option<String>,
+    /// more flags for the agent's command, from the hub itself (the companion's)
+    #[serde(skip)]
+    pub extra: Vec<String>,
 }
 
 /// zsh's first-run questions in a home with no ~/.zshrc; "q" leaves it for next time and changes nothing
@@ -2115,6 +2118,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         if agent == AgentKind::Antigravity && (mode == "acceptEdits" || mode == "plan") {
             parts.push(format!("--mode {}", if mode == "plan" { "plan" } else { "accept-edits" }));
         }
+        parts.extend(opts.extra.iter().cloned());
         // files you attach land in ~/.inyon/uploads; without this agy asks before reading each one
         if agent == AgentKind::Antigravity {
             host.run(r#"mkdir -p "$HOME/.inyon/uploads""#).await?;

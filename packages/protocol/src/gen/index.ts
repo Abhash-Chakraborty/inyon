@@ -289,7 +289,11 @@ index: number, active: boolean, command: string, cwd: string, title: string,
 /**
  * the name you gave this session in Inyon
  */
-label?: string, width: number, height: number, dead: boolean, agent?: AgentPaneInfo, };
+label?: string, width: number, height: number, dead: boolean, agent?: AgentPaneInfo, 
+/**
+ * runs your companion agent (Settings › Companion); at most one pane across all machines
+ */
+companion?: boolean, };
 
 export type WindowInfo = { 
 /**
@@ -903,4 +907,4 @@ export type DraftSource = "app" | "terminal";
 
 export type NotifyKind = "waiting" | "done" | "offline" | "online";
 
-export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "pong" };
+export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };

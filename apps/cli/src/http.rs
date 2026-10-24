@@ -123,7 +123,10 @@ pub fn hub_call(method: &str, url: &str, token: &str, body: Option<&serde_json::
     let auth = format!("Bearer {token}");
     let mut res = match (method, body) {
         ("POST", Some(b)) => agent.post(url).header("authorization", &auth).header("content-type", "application/json").send(b.to_string()),
-        _ => agent.get(url).header("authorization", &auth).call(),
+        ("POST", None) => agent.post(url).header("authorization", &auth).send_empty(),
+        ("DELETE", _) => agent.delete(url).header("authorization", &auth).call(),
+        ("GET", _) => agent.get(url).header("authorization", &auth).call(),
+        _ => return Err(format!("no {method} requests to the hub")),
     }
     .map_err(|e| e.to_string())?;
     let status = res.status().as_u16();
@@ -135,4 +138,44 @@ pub fn hub_call(method: &str, url: &str, token: &str, body: Option<&serde_json::
 pub fn host_of(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);
     rest.split('/').next().unwrap_or(rest).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// The request line the hub would get for each method: a DELETE once went out as a GET.
+    #[test]
+    fn each_method_goes_out_as_itself() {
+        for (method, body) in [("GET", None), ("POST", Some(serde_json::json!({ "a": 1 }))), ("POST", None), ("DELETE", None)] {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/api/companion", l.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                // the whole request before answering: closing on a client still sending fails on macOS
+                let mut length = 0;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap();
+                    }
+                }
+                std::io::Read::read_exact(&mut r, &mut vec![0; length]).unwrap();
+                s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}").unwrap();
+                line
+            });
+            let res = super::hub_call(method, &url, "t", body.as_ref(), true).unwrap();
+            assert_eq!(res.status, 200);
+            assert_eq!(server.join().unwrap().trim_end(), format!("{method} /api/companion HTTP/1.1"));
+        }
+        assert!(super::hub_call("PUT", "http://127.0.0.1:9/", "t", None, true).is_err());
+    }
 }

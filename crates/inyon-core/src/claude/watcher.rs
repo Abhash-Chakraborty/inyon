@@ -797,6 +797,11 @@ impl ChatWatcher {
         self.broadcast_draft(None);
     }
 
+    /// Its first page is loaded (from a transcript, or an agent's own server).
+    pub fn ready(&self) -> bool {
+        self.st.borrow().ready
+    }
+
     /// Following the agent's transcript, so `recorded` can be trusted.
     pub fn following(&self) -> bool {
         let st = self.st.borrow();

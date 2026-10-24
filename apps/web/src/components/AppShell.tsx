@@ -6,6 +6,7 @@ import { useStore } from '../lib/store.ts'
 import type { HostState } from '@inyon/protocol'
 import { agentPanes, allPanes, paneHref, paneTitle, terminalName } from '../lib/overview.ts'
 import { SessionTree } from './SessionTree.tsx'
+import { CompanionNavItem } from './CompanionAgent.tsx'
 import { AgentLogo } from '../lib/skin.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { isPhone } from '../lib/phone.ts'
@@ -151,6 +152,7 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
         <NavLink to="/" end className={({ isActive }) => item(isActive)}>
           <LayoutGrid className="size-4" /> Overview
         </NavLink>
+        <CompanionNavItem className={item} />
       </div>
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         <SessionTree hosts={hosts} />

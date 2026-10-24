@@ -22,6 +22,7 @@ import { FilterInput } from '../components/ui/FilterInput.tsx'
 import { AnimatedList } from '../components/ui/AnimatedList.tsx'
 import { PhoneSheet } from '../components/PhoneSheet.tsx'
 import { Smartphone } from 'lucide-react'
+import { CompanionBar } from '../components/CompanionAgent.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 
 /** Past this many agent sessions the overview gets a search box. */
@@ -42,7 +43,8 @@ export function Home() {
     // long enough to see the turn, however fast the hub answers
     Promise.allSettled([refreshAll(), new Promise((r) => setTimeout(r, 600))]).then(() => setReloading(false))
   }
-  const panes = agentPanes(hosts)
+  // the companion has its own line above the sessions
+  const panes = agentPanes(hosts).filter((r) => !r.pane.companion)
   const waiting = panes.filter((r) => r.pane.agent!.state === 'waiting')
   const [q, setQ] = useState('')
   const [folded, setFolded] = useState(loadFolded)
@@ -58,7 +60,7 @@ export function Home() {
   // every agent session, grouped by machine, each in a place that doesn't change; one that asks
   // something answers from its own card. A search looks through every machine.
   const groups = useMemo(
-    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
+    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && !r.pane.companion && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
     [hosts, q, filter],
   )
   const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
@@ -182,6 +184,8 @@ export function Home() {
                 )}
               </p>
               </div>
+
+              <CompanionBar />
 
               {!isPhone() && hosts.length > 0 && <PhoneCard />}
 
