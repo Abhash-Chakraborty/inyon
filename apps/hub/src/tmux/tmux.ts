@@ -162,6 +162,11 @@ for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$
 if command -v agy >/dev/null 2>&1; then
   if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { ${CURRENT_SH}; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
+# the agents other than Claude Code whose settings run Inyon's hook
+echo "@@HOOKED"
+grep -qs 'inyon/hook.sh copilot' "\${COPILOT_HOME:-$HOME/.copilot}/hooks/inyon.json" && echo copilot
+grep -qs 'inyon/hook.sh gemini' "$HOME/.gemini/settings.json" && echo gemini
+grep -qs 'inyon/hook.sh antigravity' "$HOME/.gemini/config/hooks.json" && echo antigravity
 echo "@@HOOK"
 ${HOOK_STATE_SH}
 t="$HOME/.inyon"
@@ -289,8 +294,9 @@ export async function probe(host: Host): Promise<ProbeResult> {
   for (const line of sections.get('PANES') ?? []) {
     if (!line.trim()) continue
     try {
-      const s = JSON.parse(line) as HookPaneState
-      if (s.pane) res.hookPanes.set(s.pane, s)
+      // a line tagged with another agent (`hook.sh copilot agentStop`): this hub reads Claude Code's only
+      const s = JSON.parse(line) as HookPaneState & { agent?: string }
+      if (s.pane && !s.agent) res.hookPanes.set(s.pane, s)
     } catch {}
   }
 

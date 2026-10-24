@@ -1067,6 +1067,7 @@ mod tests {
                 agy_status: Default::default(),
                 agy_titles: Default::default(),
                 agy_integration: None,
+                hooked: vec![],
                 machine_kind: None,
                 keys_at: Default::default(),
             })));
@@ -1130,6 +1131,7 @@ mod tests {
             agy_status: Default::default(),
             agy_titles: Default::default(),
             agy_integration: None,
+            hooked: vec![],
             machine_kind: None,
             keys_at: Default::default(),
         }))

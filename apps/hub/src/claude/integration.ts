@@ -3,21 +3,30 @@ import { HttpError } from '../hosts/registry.ts'
 import { ACCOUNT_SH, MARKER, PANE_SH } from './integration-sh.ts'
 
 /**
- * The hook only appends Claude Code's own hook payload, tagged with the tmux pane, to a local
- * log. It prints nothing and always exits 0, so it never changes what Claude does.
+ * The hook only appends the agent's own hook payload, tagged with the tmux pane, to a local log.
+ * It always exits 0 and changes nothing the agent does: Claude Code's hook prints nothing, and
+ * another agent's (`hook.sh copilot agentStop`) prints the empty answer those wait for.
  */
 export const HOOK_SCRIPT = `#!/bin/sh
-# Inyon: records Claude Code events so Inyon knows which tmux pane runs which session.
-# Safe to delete; remove the matching entries from ~/.claude/settings.json too.
+# Inyon: records coding agents' events so Inyon knows which tmux pane runs which session.
+# Safe to delete; turning Inyon's integration off removes it from each agent's settings.
 # ${MARKER}
 # the events hold your prompts: readable by you only
 umask 077
 d="$HOME/.inyon"
 mkdir -p "$d/panes" 2>/dev/null
+# an agent other than Claude Code names itself and the event, and wants a JSON answer
+agent=$(printf '%s' "\${1:-}" | tr -cd 'a-z0-9_-')
+event=$(printf '%s' "\${2:-}" | tr -cd 'A-Za-z0-9_-')
+[ -n "$agent" ] && echo '{}'
 p=$(tr -d '\\n\\r')
 [ -n "$p" ] || exit 0
 ${PANE_SH}
-line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "$pane" "$(date +%s)" "$p")
+if [ -n "$agent" ]; then
+  line=$(printf '{"pane":"%s","ts":%s,"agent":"%s","event":"%s","data":%s}' "$pane" "$(date +%s)" "$agent" "$event" "$p")
+else
+  line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "$pane" "$(date +%s)" "$p")
+fi
 printf '%s\\n' "$line" >> "$d/events.jsonl"
 [ -n "$pane" ] && printf '%s\\n' "$line" > "$d/panes/\${pane#%}.json"
 # after a compaction, so Inyon stops showing the context size from before it

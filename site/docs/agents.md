@@ -36,6 +36,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Conversations | Each agent's own session files or local server |
 | Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
+| When a turn starts and ends | The screen, and with the integration the agent's own hooks: Claude Code's, and from 0.22 Copilot's, Gemini CLI's and Antigravity CLI's, so a turn shows as working or finished at once, even while the screen looks idle |
 | Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex: its status events, and from 0.21 the account itself through `codex app-server`, with no session running. Antigravity: its status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
 | Typing and answering | tmux, exactly as if you typed it: keys with `send-keys`, and from 0.20 text through a tmux paste buffer, so it never shows on a command line |
@@ -56,7 +57,7 @@ The same release reads more of Codex's record: a question Codex asks mid-turn sh
 
 ## Gemini CLI (beta)
 
-The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. Inyon can't change Gemini's model yet, and doesn't list its past conversations: resume those in the terminal. `/compress` compacts.
+The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. From 0.22 the integration adds Inyon's hook to `~/.gemini/settings.json`, next to any of your own. Inyon can't change Gemini's model yet, and doesn't list its past conversations: resume those in the terminal. `/compress` compacts.
 
 ## OpenCode (beta)
 
@@ -76,11 +77,11 @@ A password-protected OpenCode server isn't supported. A plain `opencode` already
 
 ## GitHub Copilot (beta)
 
-Found through its process locks and event log. Its models come from the CLI's own catalog, so they match what your account can use. Assisted approval and effort changes stay in the terminal, and sign-in uses Copilot's device-code flow.
+Found through its process locks and event log. Its models come from the CLI's own catalog, so they match what your account can use. Assisted approval and effort changes stay in the terminal, and sign-in uses Copilot's device-code flow. From 0.22 the integration adds Inyon's hook to Copilot, in a file of its own (`~/.copilot/hooks/inyon.json`).
 
 ## Antigravity CLI
 
-Google's `agy`. Read from its transcripts, with plan quotas from its own status line. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
+Google's `agy`. Read from its transcripts, with plan quotas from its own status line. From 0.22 the integration also adds an entry named `inyon` to its hooks in `~/.gemini/config/hooks.json`. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
 
 ## Pages an agent makes
 
