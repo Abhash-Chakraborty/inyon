@@ -156,6 +156,22 @@ const sandboxHost = {
 } as any
 
 describe('installIntegration', () => {
+  test('a Claude Code downgraded below StopFailure loses Inyon\'s StopFailure hook and keeps yours', async () => {
+    const { installIntegration } = await import('./integration.ts')
+    const withClaude = (version: string) => ({
+      exec: (cmd: string, opts?: { input?: string }) => sandboxHost.exec(`claude() { echo '${version}'; }; ${cmd}`, opts),
+    }) as any
+    const file = join(home, '.claude/settings.json')
+    await installIntegration(withClaude('2.1.309 (Claude Code)'))
+    const s = JSON.parse(readFileSync(file, 'utf8'))
+    s.hooks.StopFailure.push({ hooks: [{ type: 'command', command: '~/bin/mine.sh' }] })
+    writeFileSync(file, JSON.stringify(s))
+    await installIntegration(withClaude('2.1.60 (Claude Code)'))
+    const hooks = JSON.parse(readFileSync(file, 'utf8')).hooks
+    expect(hooks.StopFailure).toEqual([{ hooks: [{ type: 'command', command: '~/bin/mine.sh' }] }])
+    expect(hooks.Stop).toBeTruthy()
+  })
+
   test('a status line synced from Windows does not replace the one that runs here', async () => {
     const { installIntegration } = await import('./integration.ts')
     const settings = (cmd: string) => {

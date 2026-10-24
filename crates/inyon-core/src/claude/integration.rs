@@ -288,6 +288,10 @@ pub async fn install_integration(host: &Host) -> HubResult<()> {
         entry.insert("hooks".into(), json!([{ "type": "command", "command": HOOK_CMD }]));
         groups.push(Value::Object(entry));
     }
+    // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
+    if stop_failure.is_none() {
+        drop_ours(hooks, STOP_FAILURE.0);
+    }
     write_settings(host, &settings).await?;
     install_agy_integration(host).await?;
     Ok(())
@@ -433,6 +437,27 @@ async fn remove_project_status_lines(host: &Host) -> HubResult<()> {
     Ok(())
 }
 
+/// Takes Inyon's hook out of one event's groups, leaving yours; a group left empty goes, and so
+/// does the event when nothing is left.
+fn drop_ours(hooks: &mut Map<String, Value>, name: &str) {
+    let Some(Value::Array(groups)) = hooks.get(name) else { return };
+    let kept: Vec<Value> = groups
+        .iter()
+        .map(|g| {
+            let mut m = spread(Some(g));
+            let hs: Vec<Value> = Some(g).at("hooks").arr().map(|hs| hs.iter().filter(|h| !is_ours(Some(h))).cloned().collect()).unwrap_or_default();
+            m.insert("hooks".into(), Value::Array(hs));
+            Value::Object(m)
+        })
+        .filter(|g| g["hooks"].as_array().is_some_and(|h| !h.is_empty()))
+        .collect();
+    if !kept.is_empty() {
+        hooks.insert(name.to_owned(), Value::Array(kept));
+    } else {
+        hooks.shift_remove(name);
+    }
+}
+
 pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
     remove_project_status_lines(host).await?;
     let mut settings = read_settings(host).await?;
@@ -448,22 +473,7 @@ pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
     if let Some(Value::Object(hooks)) = settings.get_mut("hooks") {
         let names: Vec<String> = hooks.keys().cloned().collect();
         for name in names {
-            let Some(Value::Array(groups)) = hooks.get(&name) else { continue };
-            let kept: Vec<Value> = groups
-                .iter()
-                .map(|g| {
-                    let mut m = spread(Some(g));
-                    let hs: Vec<Value> = Some(g).at("hooks").arr().map(|hs| hs.iter().filter(|h| !is_ours(Some(h))).cloned().collect()).unwrap_or_default();
-                    m.insert("hooks".into(), Value::Array(hs));
-                    Value::Object(m)
-                })
-                .filter(|g| g["hooks"].as_array().is_some_and(|h| !h.is_empty()))
-                .collect();
-            if !kept.is_empty() {
-                hooks.insert(name, Value::Array(kept));
-            } else {
-                hooks.shift_remove(&name);
-            }
+            drop_ours(hooks, &name);
         }
         if hooks.is_empty() {
             settings.shift_remove("hooks");

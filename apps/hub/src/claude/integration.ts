@@ -185,8 +185,19 @@ export async function installIntegration(host: Host) {
     if (groups.some((g) => (g.hooks ?? []).some(isOurs))) continue
     groups.push({ ...(ev.matcher ? { matcher: ev.matcher } : {}), hooks: [{ type: 'command', command: HOOK_CMD }] })
   }
+  // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
+  if (!knowsStopFailure(version)) dropOurs(settings.hooks, STOP_FAILURE.name)
   await writeSettings(host, settings)
   await installAgyIntegration(host)
+}
+
+/** Takes Inyon's hook out of one event's groups, leaving yours; a group left empty goes, and so does the event when nothing is left. */
+function dropOurs(hooks: Record<string, any[]>, name: string) {
+  const groups = hooks[name]
+  if (!Array.isArray(groups)) return
+  const kept = groups.map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurs(h)) })).filter((g) => g.hooks.length)
+  if (kept.length) hooks[name] = kept
+  else delete hooks[name]
 }
 
 const AGY_SETTINGS = '$HOME/.gemini/antigravity-cli/settings.json'
@@ -310,13 +321,7 @@ export async function uninstallIntegration(host: Host) {
     if (orig && !isOurStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
     else delete settings.statusLine
   }
-  for (const [name, groups] of Object.entries<any[]>(settings.hooks ?? {})) {
-    const kept = groups
-      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurs(h)) }))
-      .filter((g) => g.hooks.length)
-    if (kept.length) settings.hooks[name] = kept
-    else delete settings.hooks[name]
-  }
+  for (const name of Object.keys(settings.hooks ?? {})) dropOurs(settings.hooks, name)
   if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks
   await writeSettings(host, settings)
   // the hook's log holds your prompts: it goes with the hook

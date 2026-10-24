@@ -12,8 +12,8 @@ use std::rc::Rc;
 use futures_util::future::join_all;
 use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{
-    agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption, RateWindow,
-    ScreenState, SessionInfo, TmuxState, WindowInfo,
+    agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption,
+    RateWindow, ScreenState, SessionInfo, TmuxState, WindowInfo,
 };
 use serde_json::Value;
 
@@ -1313,7 +1313,14 @@ impl Registry {
     /// full rate limit resets: from the session's own numbers and the account's.
     fn apply_failure(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>, p: &mut PaneInfo) {
         let hook = live_hook(&pr.borrow(), &p.id);
-        let account = rt.borrow().usage.as_ref().map(|u| (u.u.five_hour.clone(), u.u.seven_day.clone()));
+        // the account's limits only as apply_usage takes them: this account's, and fresh
+        let signed_in = pr.borrow().account.clone();
+        let account = rt
+            .borrow()
+            .usage
+            .as_ref()
+            .filter(|u| u.account == signed_in && u.ok_at.is_some_and(|o| o != 0 && now_ms().saturating_sub(o) <= USAGE_STALE_MS))
+            .map(|u| (u.u.five_hour.clone(), u.u.seven_day.clone()));
         let Some(a) = p.agent.as_mut() else { return };
         a.failure = hook.filter(|_| a.state != AgentState::Working).and_then(|h| {
             let own = a.status.as_ref().map(|s| (s.five_hour.clone(), s.seven_day.clone()));

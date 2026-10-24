@@ -385,6 +385,20 @@ fn stop_failure_is_only_registered_for_a_claude_code_that_has_it() {
             assert!(hooks.get("Stop").is_some());
         });
     }
+    // a Claude Code downgraded since: Inyon's StopFailure comes out again, yours stays
+    let home = TempDir::new("inyon-int-");
+    run_rt(|| async {
+        Sandbox::install_with(&home.s(), "claude() { echo '2.1.309 (Claude Code)'; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        let mut settings = parse(&home.read(".claude/settings.json"));
+        settings["hooks"]["StopFailure"].as_array_mut().unwrap().push(json!({ "hooks": [{ "type": "command", "command": "~/bin/mine.sh" }] }));
+        home.write(".claude/settings.json", &settings.to_string());
+        Sandbox::install_with(&home.s(), "claude() { echo '2.1.60 (Claude Code)'; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        let hooks = &parse(&home.read(".claude/settings.json"))["hooks"];
+        assert_eq!(hooks["StopFailure"], json!([{ "hooks": [{ "type": "command", "command": "~/bin/mine.sh" }] }]));
+        assert!(hooks.get("Stop").is_some());
+    });
     // and a machine without claude on its path doesn't get it either
     let home = TempDir::new("inyon-int-");
     run_rt(|| async {

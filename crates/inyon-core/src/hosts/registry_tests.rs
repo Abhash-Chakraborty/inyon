@@ -661,11 +661,14 @@ fn a_turn_that_stops_on_a_rate_limit_shows_why_and_when_the_full_limit_resets() 
         let b = ModeBox::new();
         b.draw(&idle("? for shortcuts"));
         let now = now_ms() as f64 / 1000.0;
-        b.rt.borrow_mut().usage = Some(Usage {
-            u: AccountUsage { five_hour: Some(RateWindow { pct: 100.0.into(), resets_at: Some((now + 7200.0).into()) }), ..Default::default() },
-            account: None,
-            ok_at: None,
-        });
+        let usage = |account: Option<&str>| {
+            Some(Usage {
+                u: AccountUsage { five_hour: Some(RateWindow { pct: 100.0.into(), resets_at: Some((now + 7200.0).into()) }), ..Default::default() },
+                account: account.map(str::to_owned),
+                ok_at: Some(now_ms()),
+            })
+        };
+        b.rt.borrow_mut().usage = usage(None);
         let poll = |data: Value| {
             let mut p = mode_probe(now);
             p.hook_panes.insert("%9".into(), HookPaneState { pane: "%9".into(), ts: now - 1.0, data });
@@ -681,6 +684,11 @@ fn a_turn_that_stops_on_a_rate_limit_shows_why_and_when_the_full_limit_resets() 
         let f = poll(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).await.unwrap();
         assert_eq!(f.error, "rate_limit");
         assert_eq!(f.resets_at, Some((now + 7200.0) as u64));
+        // limits read for an account signed out of since don't give the reset
+        b.rt.borrow_mut().usage = usage(Some("someone-else"));
+        let f = poll(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).await.unwrap();
+        assert_eq!((f.error.as_str(), f.resets_at), ("rate_limit", None));
+        b.rt.borrow_mut().usage = usage(None);
         // the next prompt clears it
         assert_eq!(poll(json!({ "hook_event_name": "UserPromptSubmit" })).await, None);
         assert_eq!(poll(json!({ "hook_event_name": "Stop" })).await, None);
