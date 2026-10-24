@@ -1,5 +1,5 @@
-//! `inyon-engine hub` as apps/node/hub.ts answers it, run by the inyon command when
-//! INYON_HUB_IMPL=rust. Its settings (PORT, BIND, TLS_CERT and TLS_KEY, INYON_ALLOW_HTTP…) can go
+//! `inyon-engine hub` as apps/node/hub.ts answers it, run by the inyon command unless
+//! INYON_HUB_IMPL=bun. Its settings (PORT, BIND, TLS_CERT and TLS_KEY, INYON_ALLOW_HTTP…) can go
 //! in ~/.inyon/hub.env, one NAME=value a line, so the background service picks them up too.
 //!
 //!   hub                 run it here
@@ -164,12 +164,6 @@ fn show_companion_code() -> i32 {
 /// to restart to pick it up. It comes as an argument, in INYON_NEW_PASSWORD, or from a prompt.
 fn reset_password(given: Option<String>) -> i32 {
     let env = inyon_backends::env::HubEnv::current();
-    let dir = env.data_dir();
-    if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| inyon_backends::fs_store::FsStore::new(&dir)) {
-        fail(&format!("Can't open {}: {e}", dir.display()), 1);
-    }
-    let store = inyon_backends::fs_store::FsStore::new(&dir).expect("the hub's records");
-    inyon_core::platform::store::use_store(std::rc::Rc::new(store));
     let pw = given.or_else(|| std::env::var("INYON_NEW_PASSWORD").ok()).unwrap_or_else(|| {
         print!("New Inyon password: ");
         let _ = std::io::stdout().flush();
@@ -177,11 +171,7 @@ fn reset_password(given: Option<String>) -> i32 {
         let _ = std::io::stdin().lock().read_line(&mut line);
         line.trim_end_matches(['\r', '\n']).to_owned()
     });
-    if let Some(problem) = crate::password::password_problem(&pw) {
-        fail(problem, 1);
-    }
-    crate::password::init();
-    if let Err(e) = crate::password::set_password(&pw) {
+    if let Err(e) = reset_password_in(&env.data_dir(), &pw) {
         fail(&e, 1);
     }
     let message = "Password updated; everyone was signed out. Restart the hub to use it (`inyon hub restart`).";
@@ -189,9 +179,36 @@ fn reset_password(given: Option<String>) -> i32 {
     0
 }
 
+/// Sets the password in the hub's records under `dir`.
+fn reset_password_in(dir: &std::path::Path, pw: &str) -> Result<(), String> {
+    if let Some(problem) = crate::password::password_problem(pw) {
+        return Err(problem.to_owned());
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("Can't open {}: {e}", dir.display()))?;
+    let store = inyon_backends::fs_store::FsStore::new(dir).map_err(|e| format!("Can't open {}: {e}", dir.display()))?;
+    // the records belong to the core's thread, which this one becomes for the change
+    inyon_core::platform::rt::install(std::rc::Rc::new(inyon_backends::runtime::TokioRuntime));
+    inyon_core::platform::store::use_store(std::rc::Rc::new(store));
+    crate::password::init();
+    crate::password::set_password(pw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_password_is_set_from_the_command_line() {
+        // 0.20's reset-password stopped in a debug build: the records were used off the core's thread
+        let dir = std::env::temp_dir().join(format!("inyon-hub-reset-{}", std::process::id()));
+        assert!(reset_password_in(&dir, "x").is_err(), "too short");
+        reset_password_in(&dir, "a long enough password").unwrap();
+        // read back from the records on disk
+        let saved: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(dir.join("hub.json")).unwrap()).unwrap();
+        let salt = saved["salt"].as_str().unwrap();
+        assert_eq!(saved["passwordHash"].as_str(), Some(crate::password::hash_password("a long enough password", salt).as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_companion_code_is_shown_in_two_halves() {

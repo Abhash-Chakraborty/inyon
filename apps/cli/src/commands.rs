@@ -849,6 +849,37 @@ fn link_reach(platform: Platform, cfg: &state::LinkConfig, answers: &dyn Fn(u16)
     out
 }
 
+/// What doctor's "hub engine" line has to go on.
+struct HubEngine {
+    legacy: bool,
+    asked: Option<bool>,
+    rust: bool,
+    here: bool,
+}
+
+impl HubEngine {
+    /// Which hub runs, when there's one to say: the Rust hub, else the Bun hub and why. `bun` is
+    /// the Bun engine's line when it's here.
+    fn line(&self, bun: impl FnOnce() -> Option<String>) -> Option<(bool, String)> {
+        if self.legacy {
+            if self.asked == Some(true) {
+                return Some((false, "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
+            }
+            return self.here.then(|| (true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into()));
+        }
+        if self.rust {
+            return Some((true, "the Rust hub, built in".into()));
+        }
+        if !self.here {
+            return None;
+        }
+        Some(match bun() {
+            Some(line) => (true, format!("{line}, the Bun hub (INYON_HUB_IMPL=bun)")),
+            None => (false, "not here yet; `inyon hub start` downloads it".into()),
+        })
+    }
+}
+
 pub fn doctor(sys: &Sys) -> Outcome {
     let mut checks: Vec<(bool, String, String)> = Vec::new();
     // the Bun engine, for a hub or with the kill switch; everything else is built in
@@ -861,19 +892,12 @@ pub fn doctor(sys: &Sys) -> Outcome {
             Some(p) => checks.push((true, "engine".into(), format!("{}, the Bun engine (INYON_LEGACY_ENGINE is set)", bun_line(p)))),
             None => checks.push((false, "engine".into(), "INYON_LEGACY_ENGINE is set but the Bun engine isn't here; run `inyon service install`".into())),
         }
-        if engine::hub_impl_wanted() {
-            checks.push((false, "hub engine".into(), "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
-        }
     } else {
         checks.push((true, "engine".into(), format!("built in ({VERSION})")));
-        if engine::rust_hub() {
-            checks.push((true, "hub engine".into(), "the Rust hub, built in (INYON_HUB_IMPL=rust)".into()));
-        } else if service::has_service(sys, Role::Hub) || engine::hub_here() {
-            match &bun {
-                Some(p) => checks.push((true, "hub engine".into(), bun_line(p))),
-                None => checks.push((false, "hub engine".into(), "not here yet; `inyon hub start` downloads it".into())),
-            }
-        }
+    }
+    let hub = HubEngine { legacy: engine::legacy(), asked: engine::hub_impl_asked(), rust: engine::rust_hub(), here: service::has_service(sys, Role::Hub) || engine::hub_here() };
+    if let Some((ok, line)) = hub.line(|| bun.as_deref().map(bun_line)) {
+        checks.push((ok, "hub engine".into(), line));
     }
     checks.push((true, "inyon".into(), format!("{VERSION} at {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default())));
     match service::missing_mux(sys.platform) {
@@ -1627,6 +1651,23 @@ pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_says_which_hub_runs_and_why() {
+        let hub = |legacy, asked, rust, here| HubEngine { legacy, asked, rust, here };
+        let bun = || Some("~/.inyon/bin/inyon-engine (0.21.0)".to_string());
+        // the default from 0.21, whether or not a hub was set up yet
+        assert_eq!(hub(false, None, true, true).line(bun), Some((true, "the Rust hub, built in".into())));
+        // INYON_HUB_IMPL=bun, with the engine and without it
+        assert_eq!(hub(false, Some(false), false, true).line(bun), Some((true, "~/.inyon/bin/inyon-engine (0.21.0), the Bun hub (INYON_HUB_IMPL=bun)".into())));
+        assert!(!hub(false, Some(false), false, true).line(|| None).unwrap().0);
+        // on a machine with no hub there's nothing to say about the Bun one
+        assert_eq!(hub(false, Some(false), false, false).line(bun), None);
+        // the kill switch puts the hub on Bun: said when a hub is here, a warning when rust was asked for
+        assert_eq!(hub(true, None, false, true).line(bun), Some((true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into())));
+        assert_eq!(hub(true, None, false, false).line(bun), None);
+        assert!(!hub(true, Some(true), false, false).line(bun).unwrap().0);
+    }
 
     #[test]
     fn a_hub_certificate_covers_the_address_it_was_told_to_listen_on() {

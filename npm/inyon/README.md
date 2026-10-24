@@ -12,8 +12,9 @@ inyon setup
 ```
 
 `inyon setup` copies `inyon` into `~/.inyon/bin`, installs the background service and prints a
-QR code to pair the [Android app](https://inyon.tech/download/). Only a hub also downloads the
-engine, checked against the release's signed `SHA256SUMS`.
+QR code to pair the [Android app](https://inyon.tech/download/). From 0.21 a hub runs on `inyon`
+too; only a hub put back on Bun downloads the engine, checked against the release's signed
+`SHA256SUMS`.
 
 ## What this package installs
 

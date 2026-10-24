@@ -1,7 +1,7 @@
 //! The hub in Rust: apps/hub's HTTP server (index.ts and its routes) on inyon-core, the same
 //! records, routes, answers, cookies and checks, so the web app, the phone app and machines
-//! connect to it as they do to the Bun hub. `inyon` runs it in place of the Bun hub when
-//! INYON_HUB_IMPL=rust.
+//! connect to it as they do to the Bun hub. `inyon` runs it in place of the Bun hub (from
+//! 0.21 by default; INYON_HUB_IMPL=bun goes back).
 //!
 //! Everything the hub keeps lives on one thread with one current-thread tokio runtime, the
 //! listener included; see `server` for why.

@@ -352,32 +352,38 @@ fn the_kill_switch_set_at_service_install_holds_for_what_starts_without_it() {
 
 #[test]
 #[cfg_attr(not(target_os = "linux"), ignore)]
-fn the_rust_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line_can_simply_go() {
+fn the_bun_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line_can_simply_go() {
     let _g = lock();
     let home = setup(&["systemctl", "loginctl", "systemd-run"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
     let note = home.dir.join(".inyon/node/hub-impl");
-    // INYON_HUB_IMPL=rust inyon service install hub: the shell's variable is written down
-    std::env::set_var("INYON_HUB_IMPL", "rust");
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    // the Rust hub is the default: nothing to write down
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!note.exists() && inyon_cli::engine::rust_hub());
+    // INYON_HUB_IMPL=bun inyon service install hub: the shell's variable is written down
+    std::env::set_var("INYON_HUB_IMPL", "bun");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
     std::env::remove_var("INYON_HUB_IMPL");
-    assert!(note.exists());
+    assert!(note.exists() && !inyon_cli::engine::rust_hub());
     // putting the link's service back in place later doesn't undo it
     assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
-    assert!(note.exists() && inyon_cli::engine::rust_hub());
-    // bun in hub.env goes back, and forgets the note (the Bun engine is still here)
-    home.put(".inyon/bin/inyon-engine", "the Bun engine");
-    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
-    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    assert!(!note.exists() && !inyon_cli::engine::rust_hub());
-    // turned on in hub.env, as the docs say: the service reads the line, nothing is written down,
-    // so deleting the line switches back
+    assert!(note.exists() && !inyon_cli::engine::rust_hub());
+    // rust in hub.env goes back, and forgets the note
     home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    assert!(inyon_cli::engine::rust_hub() && !note.exists());
+    assert!(!note.exists() && inyon_cli::engine::rust_hub());
+    // bun in hub.env, as the docs say: the service reads the line, nothing is written down, so
+    // deleting the line switches back
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!inyon_cli::engine::rust_hub() && !note.exists());
     home.put(".inyon/hub.env", "PORT=4777\n");
-    assert!(!inyon_cli::engine::rust_hub());
+    assert!(inyon_cli::engine::rust_hub());
+    // a note 0.20 left for its opt-in test still means the Rust hub
+    home.put(".inyon/node/hub-impl", "INYON_HUB_IMPL=rust when the hub was set up\n");
+    assert!(inyon_cli::engine::rust_hub());
 }
 
 #[test]
@@ -407,12 +413,11 @@ fn going_back_with_service_install_fetches_the_bun_engine_before_the_service_run
     let home = setup(&["systemctl", "loginctl", "systemd-run"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
-    std::env::set_var("INYON_HUB_IMPL", "rust");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    std::env::remove_var("INYON_HUB_IMPL");
-    // the engine went while the Rust hub ran; back without the variable, offline
+    // the engine went while the Rust hub ran; back with the variable, offline
     home.clear_calls();
     std::env::set_var("INYON_DOWNLOAD", "http://127.0.0.1:9/nothing");
+    std::env::set_var("INYON_HUB_IMPL", "bun");
     let r = inyon_cli::commands::service_install(&sys, Some("hub"));
     std::env::remove_var("INYON_DOWNLOAD");
     assert!(r.is_err(), "{r:?}");
@@ -420,6 +425,7 @@ fn going_back_with_service_install_fetches_the_bun_engine_before_the_service_run
     // with the engine there it goes ahead
     home.put(".inyon/bin/inyon-engine", "the Bun engine");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    std::env::remove_var("INYON_HUB_IMPL");
     assert!(!inyon_cli::engine::rust_hub());
 }
 
