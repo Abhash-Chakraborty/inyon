@@ -61,8 +61,8 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 
 | Path | What's there |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which the logon task starts |
-| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell, and from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256 |
+| `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which runs the link and the hub connection; from 0.20.3 `inyon-app.exe` is another such copy, the Inyon app, which the Start menu and the logon task open, and `inyon.ico` is its icon |
+| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell, from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256, and on Windows from 0.20.3 the Inyon app's `app.json` (what it runs), `app.log` and `app-requests/` |
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |

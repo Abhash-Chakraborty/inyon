@@ -80,7 +80,8 @@ fn on_signals() {
 /// process has gone.
 fn show_tray(role: &str) {
     let Some(cli) = paths::inyon_command() else { return };
-    if !background() {
+    // started by the Inyon app (from 0.20.3), whose own icon shows what runs
+    if !background() || env_var("INYON_APP").is_some() {
         return;
     }
     let mut c = std::process::Command::new(cli);
@@ -338,6 +339,9 @@ fn update_shim(args: &[String]) -> ! {
         if crate::output::json() {
             c.arg("--json");
         }
+        // the hub asks a windowless engine for this: without a console of its own, the inyon
+        // command would open a window
+        ops::console_child_std(&mut c);
         let code = c.status().map(|s| s.code().unwrap_or(1)).unwrap_or(1);
         std::process::exit(code);
     }

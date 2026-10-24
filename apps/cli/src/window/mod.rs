@@ -20,6 +20,15 @@ mod win;
 
 use crate::service::Role;
 
+/// The window's class: the app finds an open window by it and brings it to the front.
+pub const CLASS: &str = "InyonWindow";
+
+/// Has the open window at `hwnd` show a pairing code.
+#[cfg(windows)]
+pub fn pair_now(hwnd: usize) {
+    win::pair_now(hwnd);
+}
+
 #[cfg(not(windows))]
 pub fn run(_role: Role, _pair: bool) -> i32 {
     eprintln!("The Inyon window is only on Windows.");

@@ -64,6 +64,9 @@ pub struct Plan {
     pub bind: Bind,
     pub autostart: bool,
     pub hub_url: String,
+    /// the token and certificate from the hub's Add a machine command, when it was pasted whole
+    pub hub_token: String,
+    pub hub_cert: String,
     pub networks: Vec<Network>,
     pub platform: Platform,
 }
@@ -80,6 +83,8 @@ impl Plan {
             bind: Bind::Localhost,
             autostart: true,
             hub_url: String::new(),
+            hub_token: String::new(),
+            hub_cert: String::new(),
             networks,
             platform,
         }
@@ -121,6 +126,20 @@ impl Plan {
                 u if u.starts_with("ws://") || u.starts_with("wss://") => self.own_url = u.to_string(),
                 other => return Err(format!("--network doesn't know {other}; use tunnel, lan, vpn or a wss:// address")),
             }
+        }
+        Ok(())
+    }
+
+    /// Takes the hub to join from what was pasted: its address, or its whole Add a machine
+    /// command, whose token and certificate are kept too.
+    pub fn set_join(&mut self, input: &str) -> Result<(), String> {
+        let c = crate::commands::parse_add_machine(input)?;
+        self.hub_url = c.hub;
+        if let Some(t) = c.token {
+            self.hub_token = t;
+        }
+        if let Some(cert) = c.cert {
+            self.hub_cert = cert;
         }
         Ok(())
     }
@@ -224,6 +243,8 @@ pub struct Wizard {
     /// the row and columns of "Enter next" and "← back" in the hint line
     next_hit: Option<(u16, Range<u16>)>,
     back_hit: Option<(u16, Range<u16>)>,
+    /// why Enter didn't go on (the Join screen's address or token)
+    pub problem: Option<String>,
 }
 
 /// The columns `word` covers on a line drawn from column `x`. Every character in the hint line
@@ -242,7 +263,7 @@ fn on(hit: &Option<(u16, Range<u16>)>, col: u16, row: u16) -> bool {
 
 impl Wizard {
     pub fn new(plan: Plan) -> Wizard {
-        Wizard { plan, step: Step::Role, cursor: 0, progress: Arc::new(Mutex::new(None)), hit: Vec::new(), next_hit: None, back_hit: None }
+        Wizard { plan, step: Step::Role, cursor: 0, progress: Arc::new(Mutex::new(None)), hit: Vec::new(), next_hit: None, back_hit: None, problem: None }
     }
 
     fn steps(&self) -> Vec<Step> {
@@ -328,8 +349,15 @@ impl Wizard {
                     v
                 }
                 RoleChoice::Join => vec![
-                    Item::Text { label: "Hub address".into(), value: p.hub_url.clone(), digits: false },
-                    Item::Info("The token goes in INYON_TOKEN, as the hub's command sets it.".into()),
+                    Item::Text { label: "Hub".into(), value: p.hub_url.clone(), digits: false },
+                    Item::Text {
+                        label: "Token".into(),
+                        value: if p.hub_token.is_empty() { String::new() } else { "•".repeat(p.hub_token.chars().count().min(24)) },
+                        digits: false,
+                    },
+                    Item::Info(self.problem.clone().unwrap_or_else(|| {
+                        "Paste the command from the hub's Machines page (Add a machine) into Hub, or type the hub's address and the token from that command.".into()
+                    })),
                 ],
             },
             Step::Background => vec![
@@ -413,6 +441,7 @@ impl Wizard {
                 }
             }
             (Step::Network, RoleChoice::Join, 0) => Some(&mut p.hub_url),
+            (Step::Network, RoleChoice::Join, 1) => Some(&mut p.hub_token),
             _ => None,
         }
     }
@@ -425,8 +454,21 @@ impl Wizard {
         if self.step == Step::Summary {
             return Action::Done;
         }
-        if self.step == Step::Network && self.plan.role == RoleChoice::Join && !self.plan.hub_url.starts_with("http") {
-            return Action::Stay;
+        if self.step == Step::Network && self.plan.role == RoleChoice::Join {
+            // what was pasted into Hub may be the whole command, with the token in it
+            let input = self.plan.hub_url.clone();
+            if let Err(e) = self.plan.set_join(&input) {
+                self.problem = Some(e);
+                self.cursor = 0;
+                return Action::Stay;
+            }
+            if self.plan.hub_token.trim().is_empty() && crate::paths::env_var("INYON_TOKEN").is_none() {
+                self.problem = Some("The token is missing: paste the hub's whole Add a machine command into Hub, or type its token here.".into());
+                self.cursor = 1;
+                return Action::Stay;
+            }
+            self.plan.hub_token = self.plan.hub_token.trim().to_string();
+            self.problem = None;
         }
         let steps = self.steps();
         let i = steps.iter().position(|s| *s == self.step).unwrap_or(0);
@@ -489,8 +531,9 @@ impl Wizard {
             }
             KeyCode::Char(c) => {
                 let digits = self.is_digits_field();
+                let limit = self.field_limit();
                 if let Some(f) = self.text_field() {
-                    if (!digits || c.is_ascii_digit()) && f.chars().count() < 120 {
+                    if (!digits || c.is_ascii_digit()) && f.chars().count() < limit {
                         f.push(c);
                     }
                 }
@@ -498,6 +541,34 @@ impl Wizard {
             }
             _ => Action::Stay,
         }
+    }
+
+    /// How long the field under the cursor may get: the Join screen's Hub takes the hub's whole
+    /// Add a machine command (some 600 characters), the others an address.
+    fn field_limit(&self) -> usize {
+        if self.step == Step::Network && self.plan.role == RoleChoice::Join {
+            4000
+        } else {
+            120
+        }
+    }
+
+    /// Pasted text (a terminal with bracketed paste): typed into the field under the cursor, its
+    /// line breaks as spaces.
+    pub fn paste(&mut self, text: &str) -> Action {
+        let digits = self.is_digits_field();
+        let limit = self.field_limit();
+        if let Some(f) = self.text_field() {
+            for c in text.chars().map(|c| if c == '\r' || c == '\n' { ' ' } else { c }) {
+                if f.chars().count() >= limit {
+                    break;
+                }
+                if !digits || c.is_ascii_digit() {
+                    f.push(c);
+                }
+            }
+        }
+        Action::Stay
     }
 
     /// A click: on a row selects it, on the "Enter next" or "← back" words moves on; anywhere
@@ -622,6 +693,8 @@ pub fn run_interactive(plan: Plan, theme: Theme, progress: Arc<Mutex<Option<Stri
     w.progress = progress;
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture);
+    // a pasted Add a machine command arrives whole, not as keys (where the terminal can)
+    let _ = crossterm::execute!(std::io::stdout(), event::EnableBracketedPaste);
     let result = (|| -> std::io::Result<Option<Plan>> {
         loop {
             terminal.draw(|f| w.render(f, theme))?;
@@ -631,6 +704,7 @@ pub fn run_interactive(plan: Plan, theme: Theme, progress: Arc<Mutex<Option<Stri
             let action = match event::read()? {
                 Event::Key(k) if k.kind != event::KeyEventKind::Release => w.key(k),
                 Event::Mouse(m) if m.kind == MouseEventKind::Down(MouseButton::Left) => w.click(m.column, m.row),
+                Event::Paste(text) => w.paste(&text),
                 _ => Action::Stay,
             };
             match action {
@@ -641,6 +715,7 @@ pub fn run_interactive(plan: Plan, theme: Theme, progress: Arc<Mutex<Option<Stri
         }
     })();
     let _ = crossterm::execute!(std::io::stdout(), event::DisableMouseCapture);
+    let _ = crossterm::execute!(std::io::stdout(), event::DisableBracketedPaste);
     ratatui::restore();
     result
 }
@@ -697,5 +772,70 @@ mod tests {
         }
         draw(&mut w);
         assert_eq!(w.click(next.start, row), Action::Done);
+    }
+
+    const UNIX_COMMAND: &str = "INYON_TOKEN=tok_7Hq2 INYON_SUMS_SHA256=ab12 INYON_HUB_CERT=cd34 sh -c 'f=$(mktemp) && curl -fsSLk \"$1/node/install.sh\" -o \"$f\" && sh \"$f\" \"$1\"; exit $s' inyon https://hub.lan:4777 9f9f";
+    const WINDOWS_COMMAND: &str = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"[Net.ServicePointManager]::SecurityProtocol=3072; & ([scriptblock]::Create((irm 'https://hub.example/node/install.ps1'))) -Hub 'https://hub.example' -Token 'tok_W1n'\"";
+
+    fn join_screen() -> Wizard {
+        let mut w = Wizard::new(Plan::new(Platform::Windows, Vec::new()));
+        w.choose(2);
+        w.advance();
+        assert_eq!((w.step, w.plan.role), (Step::Network, RoleChoice::Join));
+        w
+    }
+
+    #[test]
+    fn join_takes_the_hubs_add_a_machine_command_pasted_whole() {
+        for (cmd, hub, token, cert) in [(UNIX_COMMAND, "https://hub.lan:4777", "tok_7Hq2", "cd34"), (WINDOWS_COMMAND, "https://hub.example", "tok_W1n", "")] {
+            let mut w = join_screen();
+            w.paste(cmd);
+            assert_eq!(w.advance(), Action::Stay);
+            assert_eq!(w.step, Step::Background, "{:?}", w.problem);
+            assert_eq!((w.plan.hub_url.as_str(), w.plan.hub_token.as_str(), w.plan.hub_cert.as_str()), (hub, token, cert));
+            // the summary names the hub, never the token
+            assert!(w.plan.summary().iter().all(|(_, v)| !v.contains(token)));
+        }
+    }
+
+    #[test]
+    fn join_takes_an_address_and_a_token_typed_apart() {
+        let mut w = join_screen();
+        for c in "https://hub.example/".chars() {
+            w.key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c)));
+        }
+        if crate::paths::env_var("INYON_TOKEN").is_none() {
+            assert_eq!(w.advance(), Action::Stay);
+            assert!(w.problem.as_deref().is_some_and(|p| p.contains("token is missing")), "{:?}", w.problem);
+            assert_eq!(w.cursor, 1);
+            w.paste("tok_typed");
+        }
+        w.advance();
+        assert_eq!(w.step, Step::Background);
+        assert_eq!(w.plan.hub_url, "https://hub.example");
+    }
+
+    #[test]
+    fn join_turns_a_phone_link_away_with_where_the_command_is() {
+        let mut w = join_screen();
+        w.paste("inyon://hub?u=https%3A%2F%2Fhub.example&c=K7Q4MX2T%3A493812&n=studio");
+        assert_eq!(w.advance(), Action::Stay);
+        assert_eq!(w.step, Step::Network);
+        let p = w.problem.clone().unwrap();
+        assert!(p.contains("pairs a phone") && p.contains("Machines page (Add a machine)"), "{p}");
+        // and with no address at all, it says what to paste
+        let mut w = join_screen();
+        w.paste("hello");
+        w.advance();
+        assert!(w.problem.as_deref().is_some_and(|p| p.contains("Add a machine")));
+    }
+
+    #[test]
+    fn the_flags_take_the_whole_command_too() {
+        let f = crate::commands::SetupFlags { yes: true, role: None, network: None, port: None, autostart: None, hub: Some(WINDOWS_COMMAND.into()), no_code: false };
+        let p = crate::commands::plan_from_flags(Platform::Windows, Vec::new(), &f).unwrap();
+        assert_eq!((p.role, p.hub_url.as_str(), p.hub_token.as_str()), (RoleChoice::Join, "https://hub.example", "tok_W1n"));
+        let f = crate::commands::SetupFlags { hub: Some("inyon://hub?u=x".into()), ..f };
+        assert!(crate::commands::plan_from_flags(Platform::Windows, Vec::new(), &f).unwrap_err().contains("pairs a phone"));
     }
 }

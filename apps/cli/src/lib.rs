@@ -1,6 +1,8 @@
 //! `inyon`, the command people type: setup, the status screen, pairing, services and updates.
 //! The engine (`inyon-engine`, next to it) runs the link, the hub connection and the hub.
 
+pub mod app;
+pub mod cli;
 pub mod commands;
 pub mod engine;
 pub mod http;

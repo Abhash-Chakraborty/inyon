@@ -59,6 +59,9 @@ pub struct Status {
     /// how phones reach this computer, when it's only through the tunnel
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reach: Option<String>,
+    /// what runs in the background, what runs it, and how to stop it
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
 }
 
 impl Status {
@@ -138,6 +141,7 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         (role == "joined" && running).then(crate::commands::connection_note).flatten().map(|(_, s)| s)
     });
     let reach = (role == "node" || has(Role::Link)).then(|| tunnel_only(&state::link_config(), cfg!(windows))).flatten();
+    let background = background_line(sys.platform, crate::app::running(sys.proc).as_ref(), &jobs);
     Status {
         v: 1,
         cli: VERSION.to_string(),
@@ -155,7 +159,36 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
         log: last_log_lines(&node_dir(), 6),
         note,
         reach,
+        background,
     }
+}
+
+/// What `inyon status` says runs in the background: the Inyon app and what it runs on Windows,
+/// the services elsewhere, with how to stop it. None when nothing runs.
+pub fn background_line(platform: crate::sys::Platform, app: Option<&crate::app::AppState>, jobs: &[Job]) -> Option<String> {
+    if let Some(line) = app.and_then(crate::app::status_line) {
+        return Some(line);
+    }
+    let running: Vec<&str> = jobs
+        .iter()
+        .filter(|j| j.running)
+        .map(|j| match j.role.as_str() {
+            "link" => "the phone link",
+            "node" => "the hub connection",
+            _ => "the hub",
+        })
+        .collect();
+    if running.is_empty() {
+        return None;
+    }
+    let by = match platform {
+        crate::sys::Platform::Windows => "started outside the Inyon app (an older version, or a terminal)",
+        crate::sys::Platform::Linux => "as a user service",
+        crate::sys::Platform::Darwin => "as a login item",
+        crate::sys::Platform::Other => "in the background",
+    };
+    let hub = if running.contains(&"the hub") { " (`inyon hub stop` for the hub)" } else { "" };
+    Some(format!("Running in the background: {}, {by}. `inyon stop` stops it{hub}.", running.join(", ")))
 }
 
 /// The request for the hub's machines: the local token in a header, not in the address, where a
@@ -409,8 +442,19 @@ pub fn render(f: &mut Frame, s: &Status, theme: Theme) {
         .enumerate()
         .map(|(i, l)| Line::from(vec![Span::styled(if i == 0 { "! " } else { "  " }, theme.attention()), Span::raw(l)]))
         .collect();
-    let lines = room - note.len();
+    // then what runs in the background and how to stop it
+    let bg: Vec<Line> = s
+        .background
+        .as_deref()
+        .map(|b| super::wrap(b, (area.width as usize).saturating_sub(2)))
+        .unwrap_or_default()
+        .into_iter()
+        .take(2.min(room - note.len()))
+        .map(|l| Line::from(vec![Span::styled("  ", theme.muted()), Span::styled(l, theme.muted())]))
+        .collect();
+    let lines = room - note.len() - bg.len();
     below.extend(note);
+    below.extend(bg);
     let log: Vec<Line> = s.log.iter().rev().take(lines).rev().map(|l| Line::from(Span::styled(fit(l, area.width as usize), theme.faint()))).collect();
     below.extend(rows(log, lines, theme));
     below.truncate(log_h);
@@ -430,6 +474,9 @@ pub fn plain(s: &Status) -> String {
         if j.service || j.running {
             out.push(format!("{}: {}{}", j.role, if j.running { "running" } else { "set up, not running" }, j.version.as_deref().map(|v| format!(" ({v})")).unwrap_or_default()));
         }
+    }
+    if let Some(b) = &s.background {
+        out.push(b.clone());
     }
     for a in s.answering() {
         out.push(format!("answers on {a}"));
@@ -563,6 +610,7 @@ mod tests {
             log: vec![],
             note: None,
             reach: None,
+            background: None,
         }
     }
 

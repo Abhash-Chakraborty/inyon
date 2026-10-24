@@ -59,6 +59,7 @@ fn status() -> Status {
         log: vec!["link.log: inyon 0.13.0 link service for k7m2p9x4 on port 4780".into(), "link.log: tunnel up at quiet-otter.trycloudflare.com".into()],
         note: None,
         reach: None,
+        background: None,
     }
 }
 
@@ -196,6 +197,15 @@ fn keys_and_clicks_change_the_plan() {
         key(&mut w, KeyCode::Char(c));
     }
     assert_eq!(w.plan.hub_url, "https://hub.example");
+    // and it needs the token, typed under it or in the command pasted whole
+    if inyon_cli::paths::env_var("INYON_TOKEN").is_none() {
+        assert_eq!(key(&mut w, KeyCode::Enter), Action::Stay);
+        assert_eq!(w.step, Step::Network);
+        for c in "tok".chars() {
+            key(&mut w, KeyCode::Char(c));
+        }
+        assert_eq!(w.plan.hub_token, "tok");
+    }
     assert_eq!(key(&mut w, KeyCode::Enter), Action::Stay);
     assert_eq!(w.step, Step::Background);
     assert_eq!(key(&mut w, KeyCode::Left), Action::Stay);

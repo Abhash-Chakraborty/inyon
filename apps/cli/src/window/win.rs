@@ -54,7 +54,7 @@ use crate::service::{self, Role, Sys};
 use crate::sys::RealProc;
 use crate::ui::dashboard::{gather, Status};
 
-const CLASS: &str = "InyonWindow";
+use super::CLASS;
 /// the demo mode's window, which never meets the real one
 const DEMO_CLASS: &str = "InyonWindowDemo";
 /// the mark at 512 px, drawn down to size with a smooth filter
@@ -73,9 +73,7 @@ const TICK: usize = 1;
 const DEMO_TICK: usize = 2;
 /// no resizing border and no maximise: the window has one size per scale
 const STYLE: WINDOW_STYLE = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
-/// CREATE_NO_WINDOW, CREATE_NEW_CONSOLE
-const NO_WINDOW: u32 = 0x0800_0000;
-const NEW_CONSOLE: u32 = 0x0000_0010;
+use crate::sys::NO_WINDOW;
 
 /// The first button's control id; the ones below are the keyboard's (Enter is IDOK, Esc IDCANCEL).
 const FIRST_ID: usize = 100;
@@ -109,7 +107,9 @@ struct Tick {
 enum Found {
     Agents(Vec<String>),
     Update(Update),
-    Checks(Checks),
+    Checks(Checks, Vec<String>),
+    /// setup run from the window ended: None when it went well, else why not
+    Setup(Option<String>),
 }
 
 /// Silver and ink, light or graphite: inyon-design's tokens.
@@ -413,6 +413,9 @@ pub fn run(role: Role, pair: bool) -> i32 {
                     checks: Checks::Running,
                     hub_url: (role == Role::Hub).then(|| crate::commands::hub_local_url(&paths::read_env_file(&paths::data_dir().join("hub.env")))),
                     forgetting: None,
+                    setup: model::Setup::Idle,
+                    phone_page: 0,
+                    check_details: Vec::new(),
                 },
                 view: None,
                 offered: pair,
@@ -461,6 +464,11 @@ pub fn run(role: Role, pair: bool) -> i32 {
         trace("closed");
         0
     }
+}
+
+/// Has the open window show a pairing code (the app's tray menu, a second start with --pair).
+pub fn pair_now(hwnd: usize) {
+    unsafe { PostMessageW(hwnd as HWND, PAIR_NOW, 0, 0) };
 }
 
 /// Posts `value` to the window, or frees it when the window has gone.
@@ -516,14 +524,14 @@ fn run_checks(target: usize) {
     std::thread::spawn(move || {
         let proc = RealProc;
         let sys = Sys::new(&proc);
-        let checks = match crate::commands::doctor(&sys) {
-            Ok(v) => Checks::from_doctor(&v),
+        let (checks, details) = match crate::commands::doctor(&sys) {
+            Ok(v) => (Checks::from_doctor(&v), model::check_details(&v)),
             Err(e) => {
                 trace(&format!("checks failed: {e}"));
-                Checks::Done { total: 1, failing: vec!["doctor".into()] }
+                (Checks::Done { total: 1, failing: vec!["doctor".into()] }, vec![format!("Doctor: {e}")])
             }
         };
-        post(target, FOUND, Found::Checks(checks));
+        post(target, FOUND, Found::Checks(checks, details));
     });
 }
 
@@ -678,6 +686,12 @@ fn start_pairing(hwnd: HWND) {
     refresh(hwnd);
     let target = hwnd as usize;
     std::thread::spawn(move || {
+        // the icon shows the pairing while it's made, and the app doesn't end under it
+        let _pairing = crate::app::Pairing::start();
+        // in the app, the app runs the link: the code comes from that link, never a second one
+        if crate::app::in_app() {
+            ensure_link();
+        }
         // each answer is shown as it comes: the engine stays on when it started the link
         // itself, so it may never return
         let mut last_starting = None;
@@ -694,11 +708,110 @@ fn start_pairing(hwnd: HWND) {
     });
 }
 
-/// Opens a terminal running `inyon <args>`, left open so its output can be read.
-fn open_terminal(args: &[&str]) {
-    trace(&format!("opening a terminal for inyon {}", args.join(" ")));
-    let exe = me();
-    let _ = std::process::Command::new("cmd.exe").raw_arg(format!("/k \"\"{}\" {}\"", exe.display(), args.join(" "))).creation_flags(NEW_CONSOLE).spawn();
+/// Has the app run the link and waits (up to 20 s) until it answers, so `pair` asks that link
+/// for the code instead of starting one of its own.
+fn ensure_link() {
+    let proc = RealProc;
+    if let Err(e) = crate::app::ask(&proc, crate::app::Do::Start, Some(Role::Link), None, 5000) {
+        trace(&format!("! the app didn't start the link: {e}"));
+        return;
+    }
+    let port = crate::state::link_config().port.unwrap_or(4780);
+    for _ in 0..40 {
+        if service::link_answers(port) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    trace("the link isn't answering yet; asking for the code anyway");
+}
+
+/// inyon.exe, for what the window runs with no console: setup, an update.
+fn command() -> PathBuf {
+    let me = me();
+    if crate::app::started_as_app(&me.to_string_lossy()) {
+        crate::app::command_beside(&me)
+    } else {
+        me
+    }
+}
+
+/// Runs `inyon setup` with no window of its own (`network`: only how phones reach this computer
+/// changes), and tells the window how it went.
+fn run_setup(hwnd: HWND, network: Option<String>) {
+    let busy = with(|st| {
+        if st.extra.setup == model::Setup::Running {
+            return true;
+        }
+        st.extra.setup = model::Setup::Running;
+        false
+    })
+    .unwrap_or(true);
+    if busy {
+        return;
+    }
+    trace(&format!("running setup{}", network.as_deref().map(|n| format!(" --network {n}")).unwrap_or_default()));
+    refresh(hwnd);
+    let target = hwnd as usize;
+    std::thread::spawn(move || {
+        let mut c = std::process::Command::new(command());
+        c.args(["setup", "--yes", "--role", "node", "--no-code"]);
+        if let Some(n) = &network {
+            c.args(["--network", n]);
+        }
+        c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).creation_flags(NO_WINDOW);
+        let r = match c.output() {
+            Ok(o) => {
+                let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                for l in text.lines().filter(|l| !l.trim().is_empty()) {
+                    trace(&format!("setup: {l}"));
+                }
+                model::setup_result(o.status.success(), &text)
+            }
+            Err(e) => Some(format!("Couldn't run setup ({e}).")),
+        };
+        post(target, FOUND, Found::Setup(r));
+    });
+}
+
+/// The menu Change opens: how phones reach this computer, each ticked when it's on. Picking one
+/// turns it on or off, with setup run in the background.
+fn reach_menu(hwnd: HWND) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{AppendMenuW, CreatePopupMenu, DestroyMenu, TrackPopupMenu, MF_CHECKED, MF_GRAYED, MF_STRING, MF_UNCHECKED, TPM_RETURNCMD};
+    let Some((lan, vpn, tunnel)) = with(|st| st.extra.reach) else { return };
+    let chosen = unsafe {
+        let m = CreatePopupMenu();
+        let item = |id: usize, on: bool, text: &str| AppendMenuW(m, MF_STRING | if on { MF_CHECKED } else { MF_UNCHECKED }, id, wide(text).as_ptr());
+        item(1, tunnel, "Tunnel: any network, through Cloudflare");
+        item(2, lan, "LAN: the same Wi-Fi (asks for a firewall rule)");
+        item(3, vpn, "VPN: Tailscale, NetBird, ZeroTier, WireGuard");
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, wide("At least one stays on").as_ptr());
+        let mut at = POINT { x: 0, y: 0 };
+        GetCursorPos(&mut at);
+        SetForegroundWindow(hwnd);
+        let c = TrackPopupMenu(m, TPM_RETURNCMD, at.x, at.y, 0, hwnd, null());
+        DestroyMenu(m);
+        c
+    };
+    let (mut lan, mut vpn, mut tunnel) = (lan, vpn, tunnel);
+    match chosen {
+        1 => tunnel = !tunnel,
+        2 => lan = !lan,
+        3 => vpn = !vpn,
+        _ => return,
+    }
+    match model::network_flag(lan, vpn, tunnel) {
+        Some(n) => run_setup(hwnd, Some(n)),
+        None => trace("not turning the last way in off"),
+    }
+}
+
+/// What Details shows: each check that needs a look and what it said, in a box of its own.
+fn details(hwnd: HWND) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONINFORMATION, MB_OK};
+    let lines = with(|st| st.extra.check_details.clone()).unwrap_or_default();
+    let text = if lines.is_empty() { "Every check passes.".to_string() } else { lines.join("\n\n") };
+    unsafe { MessageBoxW(hwnd, wide(&text).as_ptr(), wide("Inyon: what needs a look").as_ptr(), MB_OK | MB_ICONINFORMATION) };
 }
 
 fn open(target: &str) {
@@ -746,13 +859,16 @@ fn act(hwnd: HWND, action: Action) {
     }
     match action {
         Action::MakeCode => start_pairing(hwnd),
-        Action::OpenSetup => open_terminal(&["setup"]),
+        Action::OpenSetup => run_setup(hwnd, None),
+        Action::Reach => reach_menu(hwnd),
         Action::OpenHub => open(hub.as_deref().unwrap_or("http://127.0.0.1:4777")),
         Action::CopyLink => copy(link.as_deref().unwrap_or_default()),
         Action::CopyAddress => copy(hub.as_deref().unwrap_or_default()),
         Action::ShowLog | Action::OpenLog => open_log(role),
-        Action::ShowAll => open_terminal(&["phones"]),
-        Action::Details => open_terminal(&["doctor"]),
+        Action::ShowAll => {
+            with(|st| st.extra.phone_page += 1);
+        }
+        Action::Details => details(hwnd),
         Action::Forget(i) => {
             if let Some(p) = phones.get(i as usize) {
                 trace(&format!("forgetting {} in 5 s unless undone", p.name));
@@ -762,6 +878,25 @@ fn act(hwnd: HWND, action: Action) {
         Action::Undo => {
             trace("forget undone");
             with(|st| st.extra.forgetting = None);
+        }
+        Action::Start | Action::Restart if crate::app::in_app() => {
+            trace(if action == Action::Start { "starting" } else { "restarting" });
+            let what = if action == Action::Start { crate::app::Do::Start } else { crate::app::Do::Restart };
+            std::thread::spawn(move || {
+                let _ = crate::app::ask(&RealProc, what, Some(role), None, 10_000);
+            });
+        }
+        Action::Stop if crate::app::in_app() => {
+            trace("stopping");
+            std::thread::spawn(move || {
+                let _ = crate::app::ask(&RealProc, crate::app::Do::Stop, Some(role), None, 10_000);
+            });
+        }
+        Action::Quit if crate::app::in_app() => {
+            trace("quitting the app");
+            unsafe { ShowWindow(hwnd, SW_HIDE) };
+            let _ = crate::app::ask(&RealProc, crate::app::Do::Quit, None, None, 10_000);
+            return;
         }
         Action::Start | Action::Restart => {
             trace(if action == Action::Start { "starting" } else { "restarting" });
@@ -783,7 +918,7 @@ fn act(hwnd: HWND, action: Action) {
             let v = with(|st| if let Update::Available(v) = &st.extra.update { v.clone() } else { String::new() }).unwrap_or_default();
             trace(&format!("updating to {v}"));
             with(|st| st.extra.update = Update::Updating(v));
-            let _ = std::process::Command::new(me()).args(["update", "--background"]).creation_flags(NO_WINDOW).spawn();
+            let _ = std::process::Command::new(command()).args(["update", "--background"]).creation_flags(NO_WINDOW).spawn();
         }
         Action::Check => {
             with(|st| st.extra.checks = Checks::Running);
@@ -916,7 +1051,18 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                         st.extra.update = u;
                     }
                 }
-                Found::Checks(c) => st.extra.checks = c,
+                Found::Checks(c, d) => {
+                    st.extra.checks = c;
+                    st.extra.check_details = d;
+                }
+                Found::Setup(r) => {
+                    trace(&format!("setup ended: {}", r.as_deref().unwrap_or("done")));
+                    st.extra.setup = match r {
+                        None => model::Setup::Idle,
+                        Some(e) => model::Setup::Failed(e),
+                    };
+                    st.extra.reach = model::reach(&crate::state::link_config(), true);
+                }
             });
             refresh(hwnd);
             0

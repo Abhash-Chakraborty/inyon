@@ -92,6 +92,7 @@ impl ProcessBackend {
         }
         c.args(&argv[1..]).envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).kill_on_drop(false);
         own_group(&mut c);
+        hide_window(&mut c);
         c
     }
 }
@@ -125,6 +126,15 @@ fn own_group(c: &mut Command) {
         });
     }
     #[cfg(not(unix))]
+    let _ = c;
+}
+
+/// No console window for it on Windows (ssh.exe is a console program, and the engine that starts
+/// it has no console of its own to lend it).
+fn hide_window(c: &mut Command) {
+    #[cfg(windows)]
+    c.creation_flags(0x0800_0000);
+    #[cfg(not(windows))]
     let _ = c;
 }
 
@@ -293,6 +303,7 @@ impl HostBackend for ProcessBackend {
             c.env_remove(k);
         }
         c.args(&args).envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        hide_window(&mut c);
         let spawned = c.spawn();
         Box::pin(async move {
             if let Ok(mut child) = spawned {

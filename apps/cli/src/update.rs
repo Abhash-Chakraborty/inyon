@@ -590,6 +590,13 @@ pub trait Host {
 
 /// What the windowless copy of the program is called in progress lines (Windows).
 const COPY: &str = "the windowless copy";
+/// The Inyon app, made from the new program like the windowless copy (Windows).
+const APP_COPY: &str = "the Inyon app";
+
+/// Whether a swap's file is made here from the new program rather than downloaded.
+fn derived(s: &Swap) -> bool {
+    s.name == COPY || s.name == APP_COPY
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
@@ -629,6 +636,9 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
     let engine = engine_beside(&install.file);
     // without the Bun engine, Windows still needs the windowless copy made from the new program
     let copy = (!need_engine && platform == Platform::Windows).then(|| Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: COPY.into() });
+    // and the Inyon app (inyon-app.exe) next to inyon, made from the new program the same way
+    let app = crate::app::app_beside(&install.file);
+    let app_swap = |name: String| Swap { file: app.clone(), tmp: with_suffix(&app, ".download"), name };
     match &install.kind {
         Kind::Binary => {
             let base = host.download_base();
@@ -658,17 +668,20 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                 swaps.push(Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() });
             }
             swaps.extend(copy);
+            if platform == Platform::Windows {
+                swaps.push(app_swap(APP_COPY.into()));
+            }
             // the program last: it's the one the restarts run
             swaps.push(program);
             let fetched: Result<(), Error> = (|| {
-                for s in swaps.iter().filter(|s| s.name != COPY) {
+                for s in swaps.iter().filter(|s| !derived(s)) {
                     files.remove(&s.tmp)?;
                     host.log(&format!("Downloading inyon {version} ({})…", s.name));
                     fetch_release(&base, &s.name, &sums, &s.tmp, &|l| host.log(l))?;
                     runnable(&s.tmp, platform);
                 }
                 let fresh = &swaps[swaps.len() - 1].tmp;
-                for s in swaps.iter().filter(|s| s.name == COPY) {
+                for s in swaps.iter().filter(|s| derived(s)) {
                     make_copy_swap(fresh, s)?;
                 }
                 Ok(())
@@ -748,6 +761,13 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                         // goes next to it, never a copy of a program that doesn't answer as the engine
                         swaps.extend(hubs_engine(&engine_sum()?)?);
                     }
+                }
+                // the hub hands out no app: it's made from the hub's inyon, once that has the engine built in
+                let app_stale = || crate::app::build_of(&app).is_none() || crate::app::build_of(&app) != crate::app::build_of(program);
+                if platform == Platform::Windows && crate::engine::has_engine_built_in(program) && (new_program || !files.exists(&app) || app_stale()) {
+                    let a = app_swap(APP_COPY.into());
+                    make_copy_swap(program, &a)?;
+                    swaps.push(a);
                 }
                 if new_program {
                     swaps.push(Swap { tmp: program_tmp.clone(), file: install.file.clone(), name: "the hub's inyon".into() });

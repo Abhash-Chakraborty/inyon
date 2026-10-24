@@ -358,6 +358,7 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
 /// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by whichever engine
 /// connects (crates/inyon-engine/src/hub_tls.rs, apps/node/pin.ts), never made an authority here.
 fn command(engine: &Path) -> Command {
+    // hidden by the caller: quiet for what's read back, console_child for a terminal
     let mut c = Command::new(engine);
     c.env("INYON_CLI", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
     c
@@ -388,6 +389,7 @@ fn engine_command(first: &str, download: bool) -> Result<(Command, PathBuf), Str
     }
     if !needs_bun(first) {
         let me = std::env::current_exe().map_err(|e| e.to_string())?;
+        // hidden by the caller, as above
         let mut c = Command::new(&me);
         c.arg("engine");
         return Ok((c, me));
@@ -467,6 +469,7 @@ fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
         return c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
     }
     c.env("INYON_CONSOLE", "1").stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    crate::sys::console_child(&mut c);
     let mut child = c.spawn()?;
     #[cfg(windows)]
     let _job = inyon_engine::winjob::ends_with_me(&child);
@@ -552,6 +555,8 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
     // asked from the Inyon window, which has no console, the engine mustn't open one of its own
     quiet(&mut c);
     let mut child = c.spawn().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))?;
+    // asked from the Inyon app's window: it ends with the app, like everything the app runs
+    crate::app::hold(&child);
     let stderr = child.stderr.take().map(|mut e| {
         std::thread::spawn(move || {
             let mut text = String::new();

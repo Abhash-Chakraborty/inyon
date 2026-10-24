@@ -1286,7 +1286,9 @@ fn from_0_19_windows_gets_the_windowless_copy_of_the_new_inyon_in_place_of_the_b
     assert_eq!(f.server.downloads(), vec!["inyon-windows-x64.exe.gz".to_string()]);
     assert_eq!(fs::read(f.installed()).unwrap(), program.as_bytes());
     assert_eq!(fs::read(f.engine()).unwrap(), inyon_cli::engine::make_copy(program.as_bytes()).unwrap());
-    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
+    // a release without the app of its own: the app is the same windowless copy, under its name
+    assert_eq!(fs::read(inyon_cli::app::app_beside(&f.installed())).unwrap(), inyon_cli::engine::make_copy(program.as_bytes()).unwrap());
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-app", "inyon-engine"]);
     // and if the new version won't start, the Bun engine comes back with the old inyon
     let f = Fixture::new();
     fs::write(f.engine(), "the Bun engine").unwrap();
@@ -1302,6 +1304,30 @@ fn from_0_19_windows_gets_the_windowless_copy_of_the_new_inyon_in_place_of_the_b
     assert!(f.run(&win).is_err());
     assert_eq!(f.read(&f.installed()), "old build");
     assert_eq!(f.read(&f.engine()), "the Bun engine");
+}
+
+// opening Inyon from the Start menu or at sign-in showed a console: the app is inyon marked to
+// run without one, made from the new program on every update
+#[test]
+fn windows_makes_the_inyon_app_from_the_new_program_next_to_inyon() {
+    let _g = lock();
+    let f = Fixture::new();
+    let program = fake_inyon_text();
+    let p = program.clone();
+    f.server.release(move |r| {
+        r.files = [("inyon-windows-x64.exe", p.as_str())].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    });
+    let mut win = FakeHost::new(&f.server, &[Role::Link]);
+    win.platform = Platform::Windows;
+    win.arch = Arch::X64;
+    win.engine = false;
+    let r = f.run(&win).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert_eq!(f.server.downloads(), vec!["inyon-windows-x64.exe.gz".to_string()]);
+    let windowless = inyon_cli::engine::make_copy(program.as_bytes()).unwrap();
+    assert_eq!(fs::read(inyon_cli::app::app_beside(&f.installed())).unwrap(), windowless);
+    assert_eq!(fs::read(f.engine()).unwrap(), windowless);
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-app", "inyon-engine"]);
 }
 
 /// A machine added to a hub that still hands out an inyon from before 0.19 (Windows x64 here),

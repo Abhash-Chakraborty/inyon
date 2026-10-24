@@ -105,34 +105,33 @@ fn fake_exe(subsystem: u16) -> Vec<u8> {
     exe
 }
 
+// the sign-in task ran inyon.exe in a console window that stayed open while the link ran: from
+// 0.20.3 it opens the Inyon app, a copy of inyon marked to run without a console
 #[test]
 #[cfg_attr(windows, ignore)]
-fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_console() {
+fn windows_the_sign_in_task_opens_the_inyon_app_with_no_console() {
     let _g = lock();
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
-    // the command and the Bun engine next to it, as an install by 0.18 leaves them
     let bin = home.dir.join(".inyon").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    // inyon 0.19 or later: it carries the mark of the engine built in
     let mut program = fake_exe(3);
     program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
     std::fs::write(bin.join("inyon"), &program).unwrap();
-    std::fs::write(bin.join("inyon-engine"), "the Bun engine").unwrap();
     let cli = bin.join("inyon").to_string_lossy().into_owned();
-    let engine = bin.join("inyon-engine").to_string_lossy().into_owned();
-    assert!(restart_service(&sys, Role::Link, &v(&[&cli])).ok);
-    // from 0.19 the task's engine is the windowless copy of the command, made in the Bun engine's place
-    assert_eq!(std::fs::read(bin.join("inyon-engine")).unwrap(), inyon_cli::engine::make_copy(&program).unwrap());
+    let app = bin.join("inyon-app").to_string_lossy().into_owned();
+    // nothing here plays the app, so it never reports the link running: that's said, not hidden
+    let r = restart_service(&sys, Role::Link, &v(&[&cli]));
+    assert!(!r.ok && r.how.contains("the Inyon app didn't start"), "{}", r.how);
+    assert_eq!(std::fs::read(&app).unwrap(), inyon_cli::engine::make_copy(&program).unwrap(), "the app is inyon without a console");
     let calls = home.calls();
-    let ps = calls.last().unwrap().last().unwrap().clone();
-    assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument 'link'")), "{ps}");
-    assert!(!ps.contains("powershell.exe"), "no PowerShell window in between: {ps}");
-    assert!(ps.find("Stop-ScheduledTask").unwrap() < ps.find("Register-ScheduledTask").unwrap(), "{ps}");
-    assert!(ps.contains("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'"), "{ps}");
-    // the Startup-folder fallback starts the engine too
-    assert!(ps.contains(&format!("$l.TargetPath = '{engine}'")), "{ps}");
+    let register = calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("Register-ScheduledTask")).expect("the task is registered");
+    assert!(register.contains(&format!("New-ScheduledTaskAction -Execute '{app}' -Argument 'app --background link'")), "{register}");
+    assert!(register.contains(&format!("$l.TargetPath = '{app}'")), "the Startup-folder fallback opens the app too: {register}");
+    assert!(!register.contains("Start-ScheduledTask"), "registering starts nothing; the app does: {register}");
+    let start = calls.last().unwrap().last().unwrap().clone();
+    assert!(start.find("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'").unwrap() < start.find("Start-ScheduledTask").unwrap(), "older copies stop first: {start}");
 }
 
 #[test]

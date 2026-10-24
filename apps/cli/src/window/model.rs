@@ -156,6 +156,48 @@ impl Checks {
     }
 }
 
+/// Setup run from the window, with no terminal: the first one, or a change of how phones reach
+/// this computer.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Setup {
+    Idle,
+    Running,
+    Failed(String),
+}
+
+/// `doctor`'s checks that need a look, each as "Name: what it said", for Details.
+pub fn check_details(v: &Value) -> Vec<String> {
+    let list = v.get("checks").and_then(Value::as_array).cloned().unwrap_or_default();
+    list.iter()
+        .filter(|c| c.get("ok").and_then(Value::as_bool) == Some(false))
+        .map(|c| {
+            let name = capitalise(c.get("check").and_then(Value::as_str).unwrap_or("A check"));
+            match c.get("detail").and_then(Value::as_str).filter(|d| !d.is_empty()) {
+                Some(d) => format!("{name}: {d}"),
+                None => name,
+            }
+        })
+        .collect()
+}
+
+/// How setup run from the window went, from its exit and what it printed: None when it went
+/// well, else the line that says why (its last "!" line, or its last line).
+pub fn setup_result(ok: bool, printed: &str) -> Option<String> {
+    let lines: Vec<&str> = printed.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if ok {
+        // a background service that couldn't be set up says so with "!" and still exits 0
+        return lines.iter().find(|l| l.starts_with("! Couldn't set up a background service")).map(|l| l.trim_start_matches("! ").to_string());
+    }
+    let why = lines.iter().rev().find(|l| l.starts_with('!')).or(lines.last()).map(|l| l.trim_start_matches("! ").to_string());
+    Some(why.unwrap_or_else(|| "Setup stopped without saying why. The log has more.".into()))
+}
+
+/// `--network` for setup from the reach menu's ticks; None when nothing would be left on.
+pub fn network_flag(lan: bool, vpn: bool, tunnel: bool) -> Option<String> {
+    let on: Vec<&str> = [(tunnel, "tunnel"), (lan, "lan"), (vpn, "vpn")].into_iter().filter(|(on, _)| *on).map(|(_, n)| n).collect();
+    (!on.is_empty()).then(|| on.join(","))
+}
+
 /// What the window's own threads found, next to the status.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Extra {
@@ -170,6 +212,12 @@ pub struct Extra {
     pub hub_url: Option<String>,
     /// a phone being forgotten: its key and when the Undo runs out
     pub forgetting: Option<(String, f64)>,
+    /// setup the window runs (no terminal opens for it)
+    pub setup: Setup,
+    /// which rows of phones show: More pages through them
+    pub phone_page: usize,
+    /// the checks that need a look, each with what the check said, for Details
+    pub check_details: Vec<String>,
 }
 
 /// LAN, VPN and tunnel as the link takes them from link.json, with the same defaults (on Windows
@@ -199,6 +247,8 @@ pub enum Action {
     OpenLog,
     Quit,
     Tab(u8),
+    /// pick how phones reach this computer (a menu of LAN, VPN and the tunnel)
+    Reach,
 }
 
 /// A button: its label, what it does, and whether it can be pressed now.
@@ -375,15 +425,35 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
             button("Copy address", Action::CopyAddress),
         )
     } else if !set_up && matches!(p.card, Card::Idle(_)) {
-        (
-            "Pair a phone".into(),
-            Glyph::Idle,
-            "Set Inyon up first.".into(),
-            true,
-            "Setup picks how phones reach this computer, then a code shows here.".into(),
-            button("Open setup", Action::OpenSetup),
-            None,
-        )
+        match &x.setup {
+            Setup::Running => (
+                "Pair a phone".into(),
+                Glyph::Wait,
+                "Setting Inyon up…".into(),
+                false,
+                "It gets what it needs and starts the link, with no window of its own. This takes a minute.".into(),
+                Some(Button { label: "Setting up…".into(), action: Action::OpenSetup, enabled: false }),
+                None,
+            ),
+            Setup::Failed(e) => (
+                "Pair a phone".into(),
+                Glyph::Error,
+                "Setup didn't finish.".into(),
+                true,
+                e.clone(),
+                button("Try again", Action::OpenSetup),
+                button("Show the log", Action::ShowLog),
+            ),
+            Setup::Idle => (
+                "Pair a phone".into(),
+                Glyph::Idle,
+                "Set Inyon up first.".into(),
+                true,
+                "Setup reaches phones through a tunnel (you can add the LAN or a VPN after), then a code shows here.".into(),
+                button("Set up", Action::OpenSetup),
+                None,
+            ),
+        }
     } else {
         let make = |label: &str| button(label, Action::MakeCode);
         let busy = Some(Button { label: "Making a code…".into(), action: Action::MakeCode, enabled: false });
@@ -466,7 +536,11 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
     // the link card
     let (reach_label, reach, link_detail) = match role {
         Role::Link => {
-            let detail = if !answering.is_empty() {
+            let detail = if x.setup == Setup::Running {
+                "Applying the new settings…".to_string()
+            } else if let Setup::Failed(e) = &x.setup {
+                format!("Couldn't change it: {e}")
+            } else if !answering.is_empty() {
                 format!("Answers on {}", answering.iter().map(|a| crate::http::host_of(a)).collect::<Vec<_>>().join(", "))
             } else if running {
                 "No address yet: the tunnel is starting".to_string()
@@ -475,7 +549,7 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
             } else {
                 "Not set up yet".to_string()
             };
-            buttons.push((Id::Change, button("Change", Action::OpenSetup).unwrap()));
+            buttons.push((Id::Change, Button { label: "Change".into(), action: Action::Reach, enabled: set_up && x.setup != Setup::Running }));
             // before setup nothing reaches it, whatever link.json's defaults would say
             ("Reach".to_string(), Some(if set_up { x.reach } else { (false, false, false) }), detail)
         }
@@ -498,7 +572,10 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
         phones.push((name, format!("forgotten in {}s", ((until - now) / 1000.0).ceil() as i64)));
         buttons.push((Id::Forget(0), button("Undo", Action::Undo).unwrap()));
     }
-    for ph in shown {
+    // More pages through them, a screenful at a time
+    let pages = s.phones.len().div_ceil(PHONE_ROWS).max(1);
+    let page = if x.forgetting.is_some() { 0 } else { x.phone_page % pages };
+    for ph in shown.into_iter().skip(page * PHONE_ROWS) {
         if phones.len() >= PHONE_ROWS {
             break;
         }
@@ -515,12 +592,12 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
         phones.push(("No phones yet. Make a code to pair one.".into(), String::new()));
     }
     if s.phones.len() > PHONE_ROWS {
-        buttons.push((Id::ShowAll, button("Show all", Action::ShowAll).unwrap()));
+        buttons.push((Id::ShowAll, button(if page + 1 < pages { "More" } else { "Back" }, Action::ShowAll).unwrap()));
     }
 
     // this computer
     let svc = if !set_up || (!service && !running) {
-        buttons.push((Id::SvcB, button("Set up", Action::OpenSetup).unwrap()));
+        buttons.push((Id::SvcB, Button { label: "Set up".into(), action: Action::OpenSetup, enabled: x.setup != Setup::Running }));
         // short enough for its box beside the button
         (if set_up { "Doesn't run at sign-in" } else { "Not set up" }.to_string(), false)
     } else if running {
@@ -745,6 +822,63 @@ mod tests {
         assert_eq!(v.phones[1].0, "Pixel 8");
         assert_eq!(v.button(Id::Forget(1)), None, "one phone at a time");
         assert_eq!(v.phones_title, "Phones · 2");
+    }
+
+    #[test]
+    fn details_setup_and_the_reach_menu_come_back_as_words() {
+        let doctor = serde_json::json!({ "checks": [{ "ok": true, "check": "agents" }, { "ok": false, "check": "firewall", "detail": "no rule lets the link in" }, { "ok": false, "check": "tmux" }] });
+        assert_eq!(check_details(&doctor), ["Firewall: no rule lets the link in", "Tmux"]);
+        assert_eq!(setup_result(true, "✓ psmux is installed\n✓ Runs as the Inyon app."), None);
+        assert_eq!(setup_result(false, "✓ psmux\n! Couldn't reach Cloudflare\nsomething else"), Some("Couldn't reach Cloudflare".into()));
+        assert_eq!(setup_result(false, "plain failure"), Some("plain failure".into()));
+        assert!(setup_result(false, "").is_some());
+        assert_eq!(
+            setup_result(true, "! Couldn't set up a background service (Task Scheduler refused). Keep this window open instead."),
+            Some("Couldn't set up a background service (Task Scheduler refused). Keep this window open instead.".into())
+        );
+        assert_eq!(network_flag(true, false, true).as_deref(), Some("tunnel,lan"));
+        assert_eq!(network_flag(false, false, false), None, "the last way in stays on");
+    }
+
+    #[test]
+    fn more_pages_through_the_phones_in_the_window() {
+        let mut s = status();
+        for (k, n) in [("p8", "Pixel 8"), ("tab", "Galaxy Tab"), ("ip", "iPhone")] {
+            s.phones.push(PairedPhone { key: k.into(), name: n.into(), paired: "x".into(), last_seen: None });
+        }
+        let mut x = extra();
+        let names = |x: &Extra| view(Role::Link, &s, &Pairing::default(), x, T0, "2026-10-22").phones.into_iter().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(names(&x), ["Nothing A142", "Pixel 8"]);
+        assert_eq!(view(Role::Link, &s, &Pairing::default(), &x, T0, "2026-10-22").button(Id::ShowAll).unwrap().label, "More");
+        x.phone_page = 1;
+        assert_eq!(names(&x), ["Galaxy Tab", "iPhone"]);
+        let v = view(Role::Link, &s, &Pairing::default(), &x, T0, "2026-10-22");
+        assert_eq!(v.button(Id::ShowAll).unwrap().label, "Back");
+        // Forget on the second page forgets that phone
+        assert_eq!(v.button(Id::Forget(0)).unwrap().action, Action::Forget(2));
+        x.phone_page = 2;
+        assert_eq!(names(&x), ["Nothing A142", "Pixel 8"], "round to the first again");
+    }
+
+    #[test]
+    fn setup_runs_in_the_window_and_says_how_it_went() {
+        let mut s = status();
+        s.role = "none".into();
+        s.jobs.clear();
+        let mut x = extra();
+        let v = view(Role::Link, &s, &Pairing::default(), &x, T0, "2026-10-22");
+        assert_eq!((v.button(Id::Primary).unwrap().label.as_str(), v.button(Id::Primary).unwrap().action), ("Set up", Action::OpenSetup));
+        x.setup = Setup::Running;
+        let v = view(Role::Link, &s, &Pairing::default(), &x, T0, "2026-10-22");
+        assert_eq!(v.side, "Setting Inyon up…");
+        assert!(!v.button(Id::Primary).unwrap().enabled, "one setup at a time");
+        assert!(!v.button(Id::SvcB).unwrap().enabled);
+        x.setup = Setup::Failed("winget isn't here".into());
+        let v = view(Role::Link, &s, &Pairing::default(), &x, T0, "2026-10-22");
+        assert_eq!((v.glyph, v.note.as_str(), v.button(Id::Primary).unwrap().label.as_str()), (Glyph::Error, "winget isn't here", "Try again"));
+        // set up: Change opens the reach menu, not a terminal
+        let v = view(Role::Link, &status(), &Pairing::default(), &extra(), T0, "2026-10-22");
+        assert_eq!(v.button(Id::Change).unwrap().action, Action::Reach);
     }
 
     #[test]

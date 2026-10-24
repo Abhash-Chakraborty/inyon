@@ -52,6 +52,17 @@ pub fn hide_window_std(c: &mut std::process::Command) -> &mut std::process::Comm
     c
 }
 
+/// For a child whose output goes to this terminal: it shares this program's console when there is
+/// one to see, and gets a hidden one when this runs without (the windowless copy, the app).
+pub fn console_child_std(c: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    // SAFETY: takes nothing and only reads this process's console
+    if unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null() {
+        hide_window_std(c);
+    }
+    c
+}
+
 /// Starts a command in a session (and process group) of its own, as Node's `detached` does, so
 /// ending it ends everything it started.
 fn own_session(c: &mut tokio::process::Command) {
