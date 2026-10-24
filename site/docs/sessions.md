@@ -88,6 +88,8 @@ What you type is saved as you go, and mirrored into the agent's own input box in
 
 A message shows **Sending**, then **Sent** once the agent has it. If it can't be delivered, it says so, with **Retry** and **Dismiss**; messages that failed because the connection dropped are retried by themselves when it comes back. A message that hasn't appeared in the conversation after ten minutes says so.
 
+Inyon presses Enter only once your message shows in the agent's input box. For Claude Code, Codex, Antigravity, Copilot and OpenCode it reads the box itself; for any other agent, such as Gemini CLI, it waits until the end of your message (or a paste preview) appears on the screen, and if it doesn't, nothing is submitted and the message says so. From 0.22 the hub keeps the last 20 failed sends with the bottom of the screen each failed on, without the message itself: right-click (or long-press) a message that wasn't sent and choose **What was on screen**. Before 0.22 Gemini CLI got Enter 0.3 seconds after the text was typed, whether or not it had arrived.
+
 ## Renaming
 
 Click or tap the title in the header to rename a session (up to 80 characters), or choose **Use automatic name** to go back. The name stays with the conversation, even if you resume it later. Renaming a plain terminal renames its tmux window.

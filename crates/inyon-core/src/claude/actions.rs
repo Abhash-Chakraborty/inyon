@@ -17,6 +17,7 @@ use super::drafts::clear_input;
 use super::driving::start_driving;
 use super::keep_default::{keep_claude_defaults, KeepOptions};
 use super::screen::{codex_browsing, parse_screen, CodexBrowsing};
+use super::send_check;
 use super::watcher::watchers;
 use crate::agents::antigravity_models::agy_models;
 use crate::agents::codex_models::codex_models;
@@ -161,9 +162,25 @@ async fn send_and_follow(host_id: &str, pane_id: &str, text: &str, from_composer
     .await;
     if let Err(e) = &r {
         w.settle_send(&id, Some(SendStatus::Failed), Some(e.message.clone()));
+        keep_failure(host_id, pane_id, &e.message, text).await;
     }
     w.idle_later();
     r
+}
+
+/// The pane's screen as plain lines.
+async fn screen_lines(host: &Host, pane_id: &str) -> HubResult<Vec<String>> {
+    Ok(capture_panes(host, &[pane_id.to_owned()]).await?.shift_remove(pane_id).unwrap_or_default())
+}
+
+/// Writes a failed send down with the screen it failed on (see send_check).
+async fn keep_failure(host_id: &str, pane_id: &str, error: &str, text: &str) {
+    let agent = registry().find_pane(host_id, pane_id).and_then(|f| f.pane.agent).map(|a| a.kind.as_str());
+    let screen = match registry().host(host_id) {
+        Ok(host) => screen_lines(&host, pane_id).await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    send_check::record_failure(host_id, pane_id, agent, error, text, &screen);
 }
 
 /// Keys accepted on screen don't prove the agent took the message: a dialog can swallow them, or
@@ -399,10 +416,24 @@ impl Typing<'_> {
         if is_codex && !nonempty(&screen.model) {
             return Err(http(409, "Codex input is not visible. Open the terminal to check before sending."));
         }
-        // Claude, Codex and agy show their input box, so the text can be checked into place before Enter
+        // Claude, Codex and agy show their input box, so the text can be checked into place before Enter.
+        // Any other agent still gets no Enter until the text shows on its screen
         if !CHECKED.contains(&self.kind) {
+            let before = screen_lines(host, pane_id).await?;
             type_into(host, pane_id, text, false).await?;
-            sleep(300).await;
+            let mut shown = false;
+            for i in 0..20 {
+                sleep(if i < 3 { 80 } else { 150 }).await;
+                if send_check::arrived(&before, &screen_lines(host, pane_id).await?, text) {
+                    shown = true;
+                    break;
+                }
+            }
+            if !shown {
+                let name = name_of(self.kind);
+                return Err(http(409, format!("The message didn't show in {name}'s input box, so Enter wasn't pressed. Your message is available to copy or retry.")));
+            }
+            sleep(150).await;
             send_keys(host, pane_id, &["Enter"]).await?;
             if let Some(w) = watchers().peek(host_id, pane_id) {
                 w.draft_sent(None, 0);

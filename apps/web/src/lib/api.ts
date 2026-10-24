@@ -307,6 +307,8 @@ type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 export const TEMP_WAIT = 70_000
 export const TEMP_DELETE_WAIT = 110_000
 
+export type SendFailure = { at: number; host: string; pane: string; agent?: string | null; error: string; chars: number; screen: string[] }
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -390,6 +392,8 @@ export const api = {
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
   startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
   settings: () => request<HubSettings>('GET', '/api/settings'),
+  /** sends that failed, newest first, each with the bottom of the screen it failed on (from 0.22) */
+  sendFailures: () => request<SendFailure[]>('GET', '/api/send-failures'),
   push: (b: { subscription: PushSubscriptionJSON; vapid: { privateJwk: JsonWebKey; subject: string }; done: boolean }) => request('POST', '/api/push', b),
   unpush: (endpoint: string) => request('DELETE', '/api/push', { endpoint }),
   pushTest: (endpoint: string) => request<{ sent: number }>('POST', '/api/push/test', { endpoint }, 30_000),

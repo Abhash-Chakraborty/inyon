@@ -65,7 +65,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=bun` set in the shell (from 0.21; in 0.20 it noted `rust`), from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256, and on Windows from 0.20.3 the Inyon app's `app.json` (what it runs), `app.log` and `app-requests/` |
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
-| `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |
+| `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots, and from 0.22 `send-failures.json`, the last 20 sends that failed with the screen each failed on |
 | `~/.inyon/uploads/` | Files you attached, per day and session |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |

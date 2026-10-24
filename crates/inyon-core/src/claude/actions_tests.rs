@@ -185,6 +185,58 @@ fn an_old_draft_that_differs_only_in_whitespace_is_replaced_not_sent() {
     });
 }
 
+/// Gemini's box as a send sees it: no parser reads it, so the screen is all there is. `shows`
+/// says whether typed text appears there.
+fn fake_gemini(shows: bool) -> Rc<RefCell<(String, Vec<String>)>> {
+    let b = Rc::new(RefCell::new((String::new(), Vec::new())));
+    let state = b.clone();
+    let re = keys_re();
+    Fake::install(move |_, cmd, input| {
+        let mut b = state.borrow_mut();
+        if cmd.contains("@@CAP") {
+            let shown = if shows { b.0.clone() } else { String::new() };
+            return ok(&format!("@@CAP %4\n✦ Done.\n╭────────────╮\n│ > {shown} │\n╰────────────╯\n"));
+        }
+        if cmd.contains("paste-buffer") {
+            b.0.push_str(input.unwrap_or(""));
+        }
+        for part in cmd.split(" && ") {
+            if let Some(k) = re.captures(part) {
+                match k.get(1) {
+                    Some(t) => b.0.push_str(&unq(t.as_str())),
+                    None if &k[2] == "Enter" => {
+                        let sent = std::mem::take(&mut b.0);
+                        b.1.push(sent);
+                    }
+                    None => {}
+                }
+            }
+        }
+        ok("")
+    });
+    pane("local", json!([{ "id": "%4", "width": 100, "agent": { "kind": "gemini", "pid": 7, "state": "idle" } }]));
+    b
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_enter_once_the_text_shows() {
+    run(|| async {
+        let b = fake_gemini(true);
+        send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap();
+        assert_eq!(b.borrow().1, ["Summarise the failing tests"]);
+    });
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_no_blind_enter() {
+    run(|| async {
+        let b = fake_gemini(false);
+        let e = send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap_err();
+        assert!(e.message.contains("Enter wasn't pressed"), "{}", e.message);
+        assert!(b.borrow().1.is_empty());
+    });
+}
+
 #[test]
 fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     run(|| async {

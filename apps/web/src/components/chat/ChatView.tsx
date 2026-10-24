@@ -16,6 +16,7 @@ import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
+import { FailedScreen } from './FailedScreen.tsx'
 import { backgroundText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
 
@@ -36,6 +37,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const installed = useStore((s) => s.hosts.find((h) => h.config.id === host)?.agents) ?? NO_AGENTS
   const scroller = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
+  const [screenOpen, setScreenOpen] = useState(false)
   // follow new output only while the reader is at the bottom; any move up turns it off
   const stick = useRef(true)
   // the first rows on screen and where they were, so content changing above them doesn't move what's
@@ -350,7 +352,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     ))}
                     {pending.map((p) => (
                       <div key={p.id} className={arriving.get(`p${p.id}`) ? 'animate-slide-up' : undefined}>
-                        <PendingBubble p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} />
+                        <PendingBubble p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} onScreen={() => setScreenOpen(true)} />
                       </div>
                     ))}
                     {queue.map((q, i) => (
@@ -419,6 +421,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
             )}
           </div>
         </div>
+        <FailedScreen host={host} pane={pane} open={screenOpen} onClose={() => setScreenOpen(false)} />
       </ReplyFont.Provider>
     </ChatJobs.Provider>
     </ChatRewind.Provider>

@@ -258,6 +258,8 @@ pub fn overview() -> Resp {
 pub fn add(routes: &mut Routes) {
     use Method as M;
     guarded(routes, "/api/overview", vec![(M::GET, h(|_r| async move { Ok(overview()) }))]);
+    // sends that failed, newest first, with the bottom of the screen each failed on (from 0.22)
+    guarded(routes, "/api/send-failures", vec![(M::GET, h(|_r| async move { Ok(json_of(&inyon_core::claude::send_check::failures())) }))]);
     guarded(
         routes,
         "/api/refresh",

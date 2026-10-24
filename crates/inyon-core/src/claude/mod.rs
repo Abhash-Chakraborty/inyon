@@ -11,6 +11,7 @@ pub mod integration_sh;
 pub mod keep_default;
 pub mod last_reply;
 pub mod screen;
+pub mod send_check;
 pub mod send_receipts;
 pub mod transcript;
 pub mod transcript_tail;
