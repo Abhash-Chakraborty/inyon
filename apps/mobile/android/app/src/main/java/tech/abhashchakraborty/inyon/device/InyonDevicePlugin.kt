@@ -243,6 +243,13 @@ class InyonDevicePlugin : Plugin() {
         call.resolve(ok())
     }
 
+    /** An answer tapped on a notification, for the web app to send; false when nothing is listening. */
+    private fun deliverAnswer(host: String, pane: String, option: Int, label: String, tag: String): Boolean {
+        if (!hasListeners("notificationAnswer")) return false
+        notifyListeners("notificationAnswer", JSObject().put("host", host).put("pane", pane).put("option", option).put("label", label).put("tag", tag))
+        return true
+    }
+
     private fun onKeepAliveEnded(reason: String) {
         bridge.executeOnMainThread { rendererImportant(false) }
         notifyListeners("keepAliveStopped", JSObject().put("reason", reason))
@@ -351,6 +358,15 @@ class InyonDevicePlugin : Plugin() {
     /** An agent or machine event, with the app's logo and buttons; the same tag replaces the last one. */
     @PluginMethod
     fun postNotification(call: PluginCall) {
+        val choices = mutableListOf<Choice>()
+        val options = call.getArray("options")
+        if (options != null) {
+            for (i in 0 until options.length()) {
+                val o = options.optJSONObject(i) ?: continue
+                val label = o.optString("label")
+                if (o.has("n") && label.isNotEmpty()) choices.add(Choice(o.optInt("n"), label))
+            }
+        }
         val posted = Notifications.post(
             context,
             call.getString("title") ?: "Inyon",
@@ -358,6 +374,9 @@ class InyonDevicePlugin : Plugin() {
             call.getString("href"),
             call.getString("tag"),
             call.getString("kind"),
+            call.getString("host"),
+            call.getString("pane"),
+            choices,
         )
         call.resolve(ok().put("posted", posted))
     }
@@ -423,6 +442,9 @@ class InyonDevicePlugin : Plugin() {
         fun keepAliveEnded(reason: String) {
             live?.onKeepAliveEnded(reason)
         }
+
+        fun answerFromNotification(host: String, pane: String, option: Int, label: String, tag: String): Boolean =
+            live?.deliverAnswer(host, pane, option, label, tag) ?: false
 
         private fun ok(): JSObject = JSObject().put("ok", true)
 
