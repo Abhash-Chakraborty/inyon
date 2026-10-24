@@ -8,6 +8,7 @@ use std::rc::Rc;
 use indexmap::IndexSet;
 use inyon_core::claude::last_reply::last_reply;
 use inyon_core::claude::watcher::{watchers, Sub, Subscriber};
+use inyon_core::features::companion;
 use inyon_core::hosts::host::PtyHandle;
 use inyon_core::hosts::registry::{registry, NotifyKind as Kind, RegistryEvent};
 use inyon_core::platform::rt::{set_timeout, spawn};
@@ -114,6 +115,23 @@ pub fn listen() {
                 match last_reply(&host, &pane).await {
                     Ok(Some(reply)) if !reply.is_empty() => n(reply),
                     _ => n(body),
+                }
+            });
+        }
+        // the companion agent's reply goes to every app and companion app (companion_frame picks)
+        RegistryEvent::CompanionDone { host, pane, failure } => {
+            let (host, pane, failure) = (host.clone(), pane.clone(), failure.clone());
+            spawn(async move {
+                let msg = companion::reply(&host, &pane, failure).await;
+                for c in all() {
+                    c.send(&msg);
+                }
+                // a phone with the app closed hears it as a notification
+                let ServerMsg::CompanionReply { text, .. } = &msg else { return };
+                let body = inyon_core::claude::last_reply::plain_line(text, 180);
+                let notice = ServerMsg::Notify { host, pane, kind: NotifyKind::Done, title: "Companion".into(), body, agent: companion::agent() };
+                for sink in SINKS.with(|s| s.borrow().clone()) {
+                    sink(&notice);
                 }
             });
         }

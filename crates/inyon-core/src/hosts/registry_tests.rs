@@ -320,6 +320,47 @@ fn a_turn_that_ends_with_agents_still_running_is_reported_finished_once_they_are
 }
 
 #[test]
+fn the_companions_turn_ends_as_its_own_event_even_when_typed_at_in_tmux() {
+    run(|| async {
+        const ID: &str = "companion-test";
+        let with_mark = |agent: &str| {
+            let mut s = one_pane(ID, agent, None);
+            s.sessions[0].windows[0].panes[0].companion = Some(true);
+            s
+        };
+        let rt = runtime(ID, with_mark("working"));
+        let (got, off) = notifications(ID);
+        type Done = Vec<(String, Option<String>)>;
+        let done: Rc<RefCell<Done>> = Rc::default();
+        let d = done.clone();
+        let off2 = registry().on(move |e| {
+            if let RegistryEvent::CompanionDone { host, pane, failure } = e {
+                if host == ID {
+                    d.borrow_mut().push((pane.clone(), failure.clone()));
+                }
+            }
+        });
+        let mut p = mode_probe(5000.0);
+        p.keys_at.insert("%1".into(), 4990.0);
+        rt.borrow_mut().probe = Some(Rc::new(RefCell::new(p)));
+        let me = registry();
+        let step = |agent: &str| {
+            let prev = rt.borrow().state.clone();
+            rt.borrow_mut().state = with_mark(agent);
+            me.diff_notify(&rt, &prev);
+        };
+        step("idle");
+        assert_eq!(*done.borrow(), [("%1".to_owned(), None)]);
+        // no "finished" notice for it; a question it asks still is one
+        assert!(got.borrow().is_empty());
+        step("waiting");
+        assert_eq!(*got.borrow(), ["waiting"]);
+        off();
+        off2();
+    });
+}
+
+#[test]
 fn no_finished_notice_while_someone_types_at_that_pane_in_tmux() {
     run(|| async {
         const ID: &str = "typing-test";

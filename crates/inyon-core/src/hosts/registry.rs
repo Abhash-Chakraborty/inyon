@@ -120,6 +120,12 @@ pub enum RegistryEvent {
         host: String,
         pane: String,
     },
+    /// the companion agent finished a turn (in place of its Done notice); `failure` says why it stopped
+    CompanionDone {
+        host: String,
+        pane: String,
+        failure: Option<String>,
+    },
 }
 
 /// agent pid → transcript found without hooks (by folder, resume id or Codex rollout)
@@ -1069,6 +1075,7 @@ impl Registry {
         if let Some(e) = first_error {
             return Err(e);
         }
+        crate::features::companion::mark(&host.id(), &mut pr.borrow_mut().sessions, crate::features::companion::agent().is_some());
         let agent_ids: Vec<String> = {
             let p = pr.borrow();
             panes(&p.sessions).filter(|x| p.agent_procs.contains_key(&x.id)).map(|x| x.id.clone()).collect()
@@ -1685,12 +1692,18 @@ impl Registry {
                     let kind = p.agent.as_ref().map(|a| a.kind);
                     let done = {
                         let (host, pane, title, rt) = (host_id.clone(), p.id.clone(), title.clone(), rt.clone());
-                        let failure = p.agent.as_ref().and_then(|a| a.failure.as_ref());
-                        let body = match failure {
-                            Some(f) => format!("{agent_name} stopped: {}", failure_text(f, now_ms() as f64 / 1000.0)),
+                        let failure = p.agent.as_ref().and_then(|a| a.failure.as_ref()).map(|f| failure_text(f, now_ms() as f64 / 1000.0));
+                        let body = match &failure {
+                            Some(f) => format!("{agent_name} stopped: {f}"),
                             None => format!("{agent_name} finished"),
                         };
+                        let companion = p.companion == Some(true);
+                        let stopped = failure.is_some().then(|| body.clone());
                         move || {
+                            // its reply goes to wherever you talk to it, typed in the terminal or not
+                            if companion {
+                                return registry().emit(RegistryEvent::CompanionDone { host, pane, failure: stopped });
+                            }
                             // they're at that terminal and saw it finish
                             if typed_lately(&rt, &pane) {
                                 return;

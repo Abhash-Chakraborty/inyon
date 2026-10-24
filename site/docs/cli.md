@@ -208,6 +208,32 @@ laptop/experiment  codex   idle     C:\demo\robot
 
 These commands can only read and hold messages. Everything else the hub answers with 403. `--json` gives the hub's answer as it came: `hosts` for `hub machines` and `sessions`, `pages` for `pages --hub`, and `held` with the message's `id` for `send`.
 
+### Reading and answering, on the hub's computer
+
+```sh
+inyon read abhash-arm/main                 # the last 20 messages of that conversation
+inyon read abhash-arm/main -n 40
+inyon answer laptop/experiment 1           # picks choice 1 of the question on screen
+inyon answer laptop/experiment "don't ask again"
+```
+
+From 0.22, on the hub's computer only; from a joined computer the hub refuses them with *Only the inyon command on the hub's own machine can read conversations, answer questions and run the companion.* The [companion agent](companion-agent.md) uses them.
+
+`read` prints one line per message: `you:` for what was typed, `agent:` for the agent's words, `tool:` for each command or file it used, and `error:` for a tool that failed. Thinking and tool output are left out. `-n` takes 1 to 200.
+
+`answer` takes the choice's number, or words from it: the whole label in any case, else the one label that starts with them, else the one that contains them. When more than one matches, or none, it lists the choices. It answers only the question on screen now, and says *No question is waiting in that session* when there is none.
+
+### The companion agent
+
+```sh
+inyon companion                            # whether it runs
+inyon companion start                      # with Claude Code
+inyon companion start --agent codex
+inyon companion stop
+```
+
+From 0.22, on the hub's computer. It starts or stops the [companion agent](companion-agent.md), as **Settings › Companion** does.
+
 ## Notifications to browsers
 
 ```sh

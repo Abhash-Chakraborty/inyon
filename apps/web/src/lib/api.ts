@@ -322,6 +322,13 @@ export const TEMP_DELETE_WAIT = 110_000
 
 export type SendFailure = { at: number; host: string; pane: string; agent?: string | null; error: string; chars: number; screen: string[] }
 
+/** The companion agent (`GET /api/companion`): its agent while it's on, its pane while it runs. Rust hub only. */
+export interface CompanionStatus {
+  agent: 'claude' | 'codex' | null
+  host: string
+  pane: string | null
+}
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -419,6 +426,10 @@ export const api = {
   unpush: (endpoint: string) => request('DELETE', '/api/push', { endpoint }),
   pushTest: (endpoint: string) => request<{ sent: number }>('POST', '/api/push/test', { endpoint }, 30_000),
   saveSettings: (s: Partial<HubSettings>) => request<HubSettings>('PUT', '/api/settings', s),
+  companion: () => request<CompanionStatus>('GET', '/api/companion'),
+  /** starting types the agent into a new tmux session, which takes a few seconds */
+  startCompanion: (agent: 'claude' | 'codex') => request<CompanionStatus>('POST', '/api/companion', { agent }, 60_000),
+  stopCompanion: () => request('DELETE', '/api/companion'),
   uploadUsage: (id: string) => request<UploadUsage>('GET', `${h(id)}/uploads`),
   cleanUploads: (id: string, olderThanDays: number) => request<UploadUsage>('POST', `${h(id)}/uploads/clean`, { olderThanDays }),
   configs: (id: string) => request<ConfigFile[]>('GET', `${h(id)}/configs`),

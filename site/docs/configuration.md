@@ -67,6 +67,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots, and from 0.22 `send-failures.json`, the last 20 sends that failed with the screen each failed on, and `held-prompts.json`, the messages held until an agent is free |
 | `~/.inyon/uploads/` | Files you attached, per day and session |
+| `~/.inyon/companion/` | From 0.22, the [companion agent](companion-agent.md)'s folder on the hub's computer: `AGENTS.md` and `CLAUDE.md`, its instructions, and `.claude/settings.json`, the commands it may run without asking |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |
 | `~/.inyon/pages.json` | From 0.20, the pages on this machine: each one's slug, name, folder, project, who added it and when. `inyon pages add`, Blueprint and the app write it, and the hub reads it again whenever it changes. It stays in your home folder even with `INYON_DATA_DIR` set. It can be a symlink into your dotfiles: Inyon reads through the link and writes the file it leads to, so the link stays. A file over 4 MB counts as a list Inyon can't read |

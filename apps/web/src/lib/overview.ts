@@ -29,6 +29,7 @@ export const paneHref = (host: string, pane: string, view?: 'terminal' | 'chat')
 
 /** Title the agent gives its terminal ("✳ Fix login bug"), else the window name. */
 export function paneTitle(r: PaneRef) {
+  if (r.pane.companion) return 'Companion'
   if (r.pane.label) return r.pane.label
   const t = r.pane.title.replace(/^[^\w\s]\s+/u, '').trim()
   if (r.pane.agent && t && !/^(Claude Code|codex|opencode|gemini|agy|Antigravity)$/i.test(t) && t !== r.host.hostname) return t

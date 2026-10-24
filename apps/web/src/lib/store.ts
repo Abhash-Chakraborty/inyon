@@ -8,6 +8,7 @@ import { appHref, publicFile, routeOf } from './base.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 import { reuse } from './reuse.ts'
+import { allPanes } from './overview.ts'
 import { clearSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
 
@@ -280,7 +281,29 @@ function onMessage(m: Tagged) {
     case 'notify':
       notify(m)
       break
+    case 'companion.reply':
+      companionReply(m)
+      break
   }
+}
+
+/** Replies already shown, so one that comes twice (two tabs of the hub, a reconnect) shows once. */
+const companionSeen = new Set<string>()
+
+/**
+ * The companion agent finished a turn: its reply as a toast unless its chat is open, and as a
+ * notification while the phone app is in the background.
+ */
+export function companionReply(m: Extract<ServerMsg, { t: 'companion.reply' }>) {
+  if (companionSeen.has(m.id)) return
+  companionSeen.add(m.id)
+  if (companionSeen.size > 50) companionSeen.delete(companionSeen.values().next().value!)
+  const href = `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
+  const body = m.text.length > 240 ? `${m.text.slice(0, 240).trimEnd()}…` : m.text
+  const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
+  const agent = allPanes(useStore.getState().hosts).find((r) => r.host.config.id === m.host && r.pane.id === m.pane)?.pane.agent?.kind
+  if (!here) toast({ title: 'Companion', body, tone: m.error ? 'error' : 'info', href, agent })
+  if (document.visibilityState === 'hidden' && isNative()) void nativeNotify('Companion', body, href, notifyTag(m.host, m.pane), 'done')
 }
 
 /**

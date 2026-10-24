@@ -161,6 +161,13 @@ fn a_companion_gets_no_history_live_text_drafts_or_terminal_data_and_its_prompts
     assert!(companion_frame(&ServerMsg::ChatLive { key: "box:%1".into(), items: vec![] }, &all).is_none());
     assert!(companion_frame(&ServerMsg::ChatProgress { key: "box:%1".into(), done: 1, total: 2 }, &all).is_none());
     assert_eq!(companion_frame(&ServerMsg::Pong, &[]), Some(json!({ "t": "pong" })));
+    // the companion agent's reply goes to a companion that may watch chats, without subscribing
+    let reply = ServerMsg::CompanionReply { id: "a-1".into(), host: "local".into(), pane: "%9".into(), text: "Two agents need you.".into(), error: None, at: 5 };
+    assert_eq!(
+        companion_frame(&reply, &[CompanionScope::Chat]),
+        Some(json!({ "t": "companion.reply", "id": "a-1", "host": "local", "pane": "%9", "text": "Two agents need you.", "at": 5 }))
+    );
+    assert!(companion_frame(&reply, &[CompanionScope::Overview, CompanionScope::Answer, CompanionScope::Send]).is_none());
     let notice = ServerMsg::Notify { host: "box".into(), pane: "%1".into(), kind: NotifyKind::Waiting, title: "t".into(), body: "b".into(), agent: None };
     assert!(companion_frame(&notice, &all).is_some());
     assert!(companion_frame(&notice, &[CompanionScope::Chat]).is_none());

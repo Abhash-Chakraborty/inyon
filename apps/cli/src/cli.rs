@@ -23,6 +23,18 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum CompanionAction {
+    /// Start it in a tmux session called companion on the hub's machine
+    Start {
+        /// claude or codex
+        #[arg(long, default_value = "claude")]
+        agent: String,
+    },
+    /// End its session and turn it off
+    Stop,
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// What this machine is to the app, where it answers, who's paired
     Status {
@@ -113,6 +125,27 @@ enum Command {
         /// The message (- reads it from stdin)
         #[arg(required = true, allow_hyphen_values = true)]
         text: Vec<String>,
+    },
+    /// The latest messages of a session's conversation (on the hub's machine)
+    Read {
+        /// machine/session, or machine/session:window.pane when the session runs more than one agent
+        target: String,
+        /// How many messages
+        #[arg(short = 'n', long = "lines", default_value_t = 20)]
+        lines: usize,
+    },
+    /// Answer the question an agent is asking, by the choice's number or its words (on the hub's machine)
+    Answer {
+        /// machine/session, or machine/session:window.pane when the session runs more than one agent
+        target: String,
+        /// The choice: its number, or words from its label
+        #[arg(required = true)]
+        choice: Vec<String>,
+    },
+    /// The companion agent you talk to from the app: whether it runs, start it, stop it
+    Companion {
+        #[command(subcommand)]
+        action: Option<CompanionAction>,
     },
     /// Temporary files your coding agents leave behind: list them, look inside, delete them
     Temp {
@@ -517,6 +550,16 @@ pub fn main() {
         Some(Command::Pages { hub: true, action: None | Some(PagesAction::Ls) }) => commands::finish(crate::hub_api::pages_command(), json),
         Some(Command::Pages { hub: true, .. }) => commands::finish(Err("--hub only lists pages: inyon pages --hub".into()), json),
         Some(Command::Sessions) => commands::finish(crate::hub_api::sessions_command(), json),
+        Some(Command::Read { target, lines }) => commands::finish(crate::hub_api::read_command(&target, lines), json),
+        Some(Command::Answer { target, choice }) => commands::finish(crate::hub_api::answer_command(&target, &choice.join(" ")), json),
+        Some(Command::Companion { action }) => commands::finish(
+            match action {
+                None => crate::hub_api::companion_command(),
+                Some(CompanionAction::Start { agent }) => crate::hub_api::companion_start(&agent),
+                Some(CompanionAction::Stop) => crate::hub_api::companion_stop(),
+            },
+            json,
+        ),
         Some(Command::Send { target, text }) => commands::finish(crate::hub_api::send_text(&text).and_then(|t| crate::hub_api::send_command(&target, &t)), json),
         Some(Command::Pages { hub: false, action }) => commands::finish(
             match action {

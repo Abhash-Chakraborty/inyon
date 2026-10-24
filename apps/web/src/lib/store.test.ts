@@ -162,6 +162,25 @@ describe('pending messages', () => {
   })
 })
 
+describe('the companion agent', () => {
+  test('its reply shows once as a toast that opens its chat, cut short when long', () => {
+    useStore.setState({ toasts: [] })
+    const reply = { t: 'companion.reply' as const, id: 'r-1', host: 'local', pane: '%9', text: 'Codex on the laptop needs you.', at: 1 }
+    emit(reply)
+    emit(reply)
+    expect(useStore.getState().toasts.map((t) => [t.title, t.body, t.href, t.tone])).toEqual([['Companion', 'Codex on the laptop needs you.', '/m/local/p/9', 'info']])
+    // with its agent's mark, once the overview shows the pane
+    useStore.setState({ hosts: [host('local', { panes: [agentPane('%9', 'codex', { companion: true })] })] })
+    emit({ ...reply, id: 'r-1b' })
+    expect(useStore.getState().toasts.at(-1)!.agent).toBe('codex')
+    emit({ ...reply, id: 'r-2', text: 'word '.repeat(80), error: true })
+    const last = useStore.getState().toasts.at(-1)!
+    expect(last.tone).toBe('error')
+    expect(last.body!.length).toBeLessThanOrEqual(241)
+    expect(last.body!.endsWith('…')).toBe(true)
+  })
+})
+
 describe('toasts and settings', () => {
   test('at most three toasts at a time, newest last; one per conversation', () => {
     const { toast } = useStore.getState()

@@ -237,6 +237,8 @@ pub struct PaneInfo {
     pub height: Num,
     pub dead: bool,
     pub agent: Option<AgentPaneInfo>,
+    /// runs your companion agent (Settings › Companion); at most one pane across all machines
+    pub companion: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1162,6 +1164,11 @@ pub enum ServerMsg {
     Notify { host: String, pane: String, kind: NotifyKind, title: String, body: String, agent: Option<AgentKind> },
     #[serde(rename = "pong")]
     Pong,
+    /// The companion agent finished a turn. `id` is unique per reply, so a reconnect never shows
+    /// one twice; `text` is plain (markdown taken out), up to 2000 characters; `error` marks a turn
+    /// that ended on an error, which `text` then names. `at` is unix ms.
+    #[serde(rename = "companion.reply")]
+    CompanionReply { id: String, host: String, pane: String, text: String, error: Option<bool>, at: u64 },
 }
 
 /// The key a chat's messages carry: `host:pane`.

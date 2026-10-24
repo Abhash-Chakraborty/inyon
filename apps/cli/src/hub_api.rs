@@ -1,7 +1,9 @@
 //! `inyon hub machines`, `inyon sessions`, `inyon pages --hub` and `inyon send`: the hub's machines,
 //! sessions and pages from the command line, and a message an agent gets once it's free. On the
 //! hub's machine they use the local token the hub wrote as it started; on a joined machine, the token
-//! that machine keeps for its link to the hub (hub 0.22 and on take either).
+//! that machine keeps for its link to the hub (hub 0.22 and on take either). `inyon read`,
+//! `inyon answer` and `inyon companion` work on the hub's machine only (hub 0.22 and on); the
+//! companion agent runs them.
 
 use serde_json::{json, Value};
 
@@ -256,6 +258,65 @@ pub fn send_command(target: &str, text: &str) -> Outcome {
     Ok(
         json!({ "target": t.label, "host": t.host, "pane": t.pane, "agent": t.agent, "held": held, "message": format!("Held for {} ({}). It goes in once the agent is free, and shows in the app until then.", t.label, t.agent) }),
     )
+}
+
+/// `inyon read`'s lines: who said what, one entry after another.
+pub fn read_lines(items: &[Value]) -> Vec<String> {
+    if items.is_empty() {
+        return vec!["Nothing said in that session yet.".into()];
+    }
+    items.iter().map(|i| format!("{}: {}", s(i, "role"), s(i, "text"))).collect()
+}
+
+pub fn read_command(target: &str, lines: usize) -> Outcome {
+    let a = access()?;
+    let t = resolve(&a.hosts()?, target)?;
+    let v = a.call("GET", &format!("{}/history?limit={}", pane_path(&t.host, &t.pane), lines.clamp(1, 200)), None)?;
+    let items = v.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
+    Ok(json!({ "target": t.label, "agent": t.agent, "items": items, "message": read_lines(&items).join("\n") }))
+}
+
+pub fn answer_command(target: &str, choice: &str) -> Outcome {
+    if choice.trim().is_empty() {
+        return Err("Name the choice: inyon answer <machine>/<session> <number or words>.".into());
+    }
+    let a = access()?;
+    let t = resolve(&a.hosts()?, target)?;
+    let v = a.call("POST", &format!("{}/answer", pane_path(&t.host, &t.pane)), Some(&json!({ "choice": choice })))?;
+    let label = s(&v, "label").to_string();
+    Ok(json!({ "target": t.label, "option": v.get("option"), "label": label, "message": format!("Answered {}: {label}", t.label) }))
+}
+
+/// What `inyon companion` says about it.
+pub fn companion_line(v: &Value) -> String {
+    let agent = match s(v, "agent") {
+        "codex" => "Codex",
+        "claude" => "Claude Code",
+        _ => return "The companion is off. Start it with: inyon companion start (or --agent codex)".into(),
+    };
+    if v["pane"].is_string() {
+        format!("The companion runs {agent} in the tmux session companion on the hub's machine.")
+    } else {
+        format!("The companion is on ({agent}), but its agent isn't running. Start it again with: inyon companion start --agent {}", s(v, "agent"))
+    }
+}
+
+pub fn companion_command() -> Outcome {
+    let a = access()?;
+    let v = a.call("GET", "/api/companion", None)?;
+    Ok(json!({ "agent": v.get("agent"), "pane": v.get("pane"), "message": companion_line(&v) }))
+}
+
+pub fn companion_start(agent: &str) -> Outcome {
+    let a = access()?;
+    let v = a.call("POST", "/api/companion", Some(&json!({ "agent": agent })))?;
+    Ok(json!({ "agent": v.get("agent"), "pane": v.get("pane"), "message": companion_line(&v) }))
+}
+
+pub fn companion_stop() -> Outcome {
+    let a = access()?;
+    a.call("DELETE", "/api/companion", None)?;
+    Ok(json!({ "agent": null, "message": "The companion is off." }))
 }
 
 /// The text to send: the words given, or stdin for `-`.

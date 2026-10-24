@@ -123,3 +123,30 @@ fn a_message_from_a_machine_waits_for_the_setting_and_the_local_command_needs_no
         assert_eq!((status, v["error"].as_str()), (404, Some("Pane not found")), "{v}");
     });
 }
+
+#[test]
+fn reading_answering_and_the_companion_are_for_the_local_command_only() {
+    crate::test_util::block(async {
+        hub();
+        for (method, path, body) in [
+            ("GET", "/api/hosts/laptop/panes/3/history", ""),
+            ("POST", "/api/hosts/laptop/panes/3/answer", r#"{"choice":"1"}"#),
+            ("GET", "/api/companion", ""),
+            ("POST", "/api/companion", r#"{"agent":"claude"}"#),
+            ("DELETE", "/api/companion", ""),
+        ] {
+            let (status, v) = ask(method, path, LAPTOP, body, Some("100.64.0.9:5000")).await;
+            assert_eq!((status, v["reason"].as_str()), (403, Some("local-only")), "{method} {path}: {v}");
+        }
+        // past the gate, the route itself answers: no such pane, the companion is off
+        let (status, v) = ask("GET", "/api/hosts/laptop/panes/3/history", LOCAL, "", None).await;
+        assert_eq!((status, v["error"].as_str()), (404, Some("Pane not found")), "{v}");
+        let (status, v) = ask("GET", "/api/companion", LOCAL, "", None).await;
+        assert_eq!((status, &v["agent"]), (200, &Value::Null), "{v}");
+        let (status, v) = ask("POST", "/api/companion", LOCAL, r#"{"agent":"gemini"}"#, None).await;
+        assert_eq!((status, v["error"].as_str()), (400, Some("The companion runs Claude Code or Codex")), "{v}");
+        // stopping it while it's off changes nothing
+        let (status, _) = ask("DELETE", "/api/companion", LOCAL, "", None).await;
+        assert_eq!(status, 200);
+    });
+}

@@ -97,7 +97,8 @@ export function SessionHeader({
     window.addEventListener('inyon:open-menu', onOpen)
     return () => window.removeEventListener('inyon:open-menu', onOpen)
   }, [switchable])
-  const title = ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
+  // the companion goes by that name, whatever its conversation is called
+  const title = (ref?.pane.companion && 'Companion') || ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
   // a background subagent is also listed as a task (the kind the transcript can't name), so only
   // shells, monitors and workflows count from the task list
   const busy = (info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
