@@ -36,7 +36,7 @@ use wry::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize};
 use wry::http::{header::CONTENT_TYPE, Request, Response};
 use wry::{NewWindowResponse, Rect, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows, WebViewExtWindows};
 
-use super::{trace, APP_ORIGIN, CLASS};
+use super::{own_page, trace, APP_ORIGIN, CLASS};
 
 const SHOW: u32 = WM_APP + 10;
 const HIDE: u32 = WM_APP + 11;
@@ -274,7 +274,7 @@ fn make_shell(hwnd: HWND, dark: bool) -> wry::Result<WebView> {
         .with_custom_protocol("inyon".into(), |_, req| app_file(&req))
         .with_ipc_handler(move |req: Request<String>| {
             // only the app's own pages talk to the app
-            if !req.uri().to_string().starts_with(APP_ORIGIN) {
+            if !own_page(&req.uri().to_string()) {
                 return;
             }
             lock(&INBOX).push_back(req.into_body());
@@ -285,7 +285,7 @@ fn make_shell(hwnd: HWND, dark: bool) -> wry::Result<WebView> {
         .with_bounds(whole(hwnd))
         .with_devtools(devtools())
         .with_navigation_handler(|url| {
-            if url.starts_with(APP_ORIGIN) || url.starts_with("about:") {
+            if own_page(&url) || url.starts_with("about:") {
                 return true;
             }
             open_external(&url);

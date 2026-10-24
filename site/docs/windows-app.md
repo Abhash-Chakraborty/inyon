@@ -12,7 +12,7 @@ The window is drawn by Microsoft Edge WebView2, which is part of Windows 11 and 
 
 Click the Inyon icon to show the window, and click it again to hide it. **Inyon** in the Start menu shows it too. Closing the window hides it while the phone link or the hub connection runs; the first time, a note says Inyon is still running. With nothing running, closing it ends the app.
 
-Settings › General › **When you close the window** chooses **Keep running** (the default) or **Quit**, which stops everything Inyon runs. At sign-in Inyon starts in the notification area without the window, unless **Show this window at sign-in** is on.
+Settings › General › **Closing the window** chooses **Keep running** (the default) or **Quit**, which stops everything Inyon runs. At sign-in Inyon starts in the notification area without the window, unless **Show this window at sign-in** is on.
 
 Before 0.21 the window had a fixed size, and after the first close the icon couldn't open it again until you quit Inyon.
 

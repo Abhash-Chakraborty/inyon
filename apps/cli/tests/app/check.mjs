@@ -92,6 +92,17 @@ for (const theme of ['light', 'dark']) {
       if ((await page.getByRole('switch', { name: 'LAN' }).getAttribute('aria-checked')) !== 'true') problems.push('the last way in was turned off');
       await open(page, 'page=temp');
       await page.waitForSelector('.item');
+      // a shift-click after the row it would start from was deleted picks just the row clicked
+      const rows = page.getByRole('checkbox', { name: /^Select (?!all$)/ });
+      const before = await rows.count();
+      await rows.first().click();
+      await page.getByRole('button', { name: /^Delete / }).click();
+      await page.locator('.dialog').getByRole('button', { name: 'Delete' }).click();
+      await page.waitForFunction((n) => document.querySelectorAll('.item').length < n, before);
+      await page.waitForTimeout(400);
+      await rows.first().click({ modifiers: ['Shift'] });
+      if ((await rows.first().getAttribute('aria-checked')) !== 'true') problems.push(`${theme} ${w}: a shift-click after a delete selected nothing`);
+      await rows.first().click();
       await page.getByRole('checkbox', { name: 'Select all' }).click();
       await shot('flow-temp-selected');
       await page.getByRole('button', { name: /^Delete / }).click();

@@ -824,9 +824,10 @@ function temp() {
   const all = items.length && sel.length === items.length ? true : sel.length ? 'mixed' : false;
   const total = d.roots.reduce((n, r) => n + (r.size || 0), 0);
   const toggle = (p, e) => {
-    if (e && e.shiftKey && ui.lastTemp != null) {
-      const a = items.findIndex((i) => i.path === ui.lastTemp);
-      const b = items.findIndex((i) => i.path === p);
+    // a range from the last row clicked, while it's still listed (it may have been deleted)
+    const a = e && e.shiftKey ? items.findIndex((i) => i.path === ui.lastTemp) : -1;
+    const b = items.findIndex((i) => i.path === p);
+    if (a >= 0 && b >= 0) {
       for (let i = Math.min(a, b); i <= Math.max(a, b); i++) ui.tempSel.add(items[i].path);
     } else if (ui.tempSel.has(p)) ui.tempSel.delete(p);
     else ui.tempSel.add(p);

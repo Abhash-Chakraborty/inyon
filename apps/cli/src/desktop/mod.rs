@@ -29,6 +29,12 @@ pub const CLASS: &str = "InyonWindow";
 pub const APP_ORIGIN: &str = "http://inyon.localhost";
 pub const PAGE_ORIGIN: &str = "http://inyonpage.localhost";
 
+/// Whether `url` is one of the window's own pages: the origin itself, or a path on it. Not
+/// inyon.localhost.example.com, nor another port.
+pub fn own_page(url: &str) -> bool {
+    url.strip_prefix(APP_ORIGIN).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
 /// A line in window.log, with the time; on stderr too, for a run from a terminal.
 pub fn trace(what: &str) {
     use std::io::Write;
@@ -417,8 +423,46 @@ struct Slow {
 /// a day of the slow loop's 5-second rounds
 const DAY_ROUNDS: u64 = 24 * 3600 / 5;
 
+/// What the pages' state needs from the system: which jobs run (a tasklist each on Windows) and
+/// whether the link answers.
+#[derive(Clone)]
+struct Probes {
+    app: Option<crate::app::AppState>,
+    link_running: bool,
+    node_running: bool,
+}
+
+/// A value kept for `ttl` ms, so the pages' 1.5-second refresh doesn't ask the system each time.
+struct Cached<T> {
+    value: Option<(f64, T)>,
+    ttl: f64,
+}
+
+impl<T: Clone> Cached<T> {
+    const fn new(ttl: f64) -> Self {
+        Cached { value: None, ttl }
+    }
+
+    fn get(&mut self, now: f64, make: impl FnOnce() -> T) -> T {
+        if let Some((at, v)) = &self.value {
+            if now - at < self.ttl && now >= *at {
+                return v.clone();
+            }
+        }
+        let v = make();
+        self.value = Some((now, v.clone()));
+        v
+    }
+
+    fn clear(&mut self) {
+        self.value = None;
+    }
+}
+
 pub struct Desk {
     slow: Mutex<Slow>,
+    /// kept 5 s, and dropped by anything the window does so its result shows at once
+    probes: Mutex<Cached<Probes>>,
     pairing: Mutex<Pairing>,
     update: Mutex<Update>,
     /// the reach being applied (LAN, VPN, tunnel), and why the last change failed
@@ -433,6 +477,7 @@ impl Desk {
     pub fn new() -> Arc<Desk> {
         Arc::new(Desk {
             slow: Mutex::new(Slow::default()),
+            probes: Mutex::new(Cached::new(5000.0)),
             pairing: Mutex::new(Pairing::default()),
             update: Mutex::new(Update::Looking),
             applying: Mutex::new(None),
@@ -508,14 +553,17 @@ impl Desk {
         let proc = RealProc;
         let now = crate::state::now_ms();
         let today = crate::state::format_date(now);
-        let app = crate::app::running(&proc);
-        let alive = |role: Role| {
-            app.as_ref().and_then(|a| a.job(role)).and_then(|j| j.pid).is_some_and(|p| crate::sys::Proc::alive(&proc, p))
-                || crate::update::read_running(role).and_then(|r| r.pid).is_some_and(|p| crate::sys::Proc::alive(&proc, p))
-        };
         let cfg = crate::state::link_config();
         let port = cfg.port.unwrap_or(4780);
-        let link_running = alive(Role::Link) || crate::service::link_answers(port);
+        let Probes { app, link_running, node_running } = lock(&self.probes).get(now, || {
+            let app = crate::app::running(&proc);
+            let alive = |role: Role| {
+                app.as_ref().and_then(|a| a.job(role)).and_then(|j| j.pid).is_some_and(|p| crate::sys::Proc::alive(&proc, p))
+                    || crate::update::read_running(role).and_then(|r| r.pid).is_some_and(|p| crate::sys::Proc::alive(&proc, p))
+            };
+            let (link_running, node_running) = (alive(Role::Link) || crate::service::link_answers(port), alive(Role::Node));
+            Probes { app, link_running, node_running }
+        });
         let addresses: Vec<String> = if link_running { crate::state::link_state().map(|s| s.urls.into_iter().chain(s.relays).collect()).unwrap_or_default() } else { Vec::new() };
         let phones: Vec<crate::ui::dashboard::PairedPhone> = crate::state::phones()
             .into_iter()
@@ -537,7 +585,6 @@ impl Desk {
         let tunnel_url =
             addresses.iter().find(|a| a.starts_with("wss://") && a.contains("trycloudflare.com")).map(|a| a.trim_start_matches("wss://").trim_end_matches("/link").to_string());
         let joined = paths::saved_hub();
-        let node_running = alive(Role::Node);
         let problem = joined.as_ref().filter(|_| node_running).and_then(|_| crate::commands::connection_note()).filter(|(bad, _)| *bad).map(|(_, p)| p);
         let settings = lock(&self.settings).clone();
         let update = match &*lock(&self.update) {
@@ -566,7 +613,7 @@ impl Desk {
                 "lanIp": slow.lan_ip,
                 "vpns": slow.vpns,
             },
-            "phones": phones.iter().map(|p| json!({ "key": p.key, "name": p.name, "paired": pairing::seen_short(&format!("{} 00:00", p.paired), &today), "lastSeen": p.last_seen.as_deref().map(|t| pairing::seen_short(t, &today)) })).collect::<Vec<_>>(),
+            "phones": phones.iter().map(|p| json!({ "key": p.key, "name": p.name, "paired": pairing::paired_short(&p.paired, &today), "lastSeen": p.last_seen.as_deref().map(|t| pairing::seen_short(t, &today)) })).collect::<Vec<_>>(),
             "pairing": pairing,
             "joined": joined.as_ref().map(|u| json!({ "url": u, "running": node_running, "problem": problem, "autostart": slow.node_task })),
             "hubs": hubs_view(&settings, joined.as_deref()),
@@ -585,6 +632,9 @@ impl Desk {
         let sys = crate::service::Sys::new(&proc);
         let text = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         let flag = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
+        if cmd != "state" {
+            lock(&self.probes).clear();
+        }
         match cmd {
             "state" => Ok(self.snapshot()),
             "remember" => {
@@ -934,6 +984,36 @@ fn ensure_link() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_windows_own_pages_count_as_its_own() {
+        for url in ["http://inyon.localhost", "http://inyon.localhost/", "http://inyon.localhost/index.html?page=hub"] {
+            assert!(own_page(url), "{url}");
+        }
+        for url in ["http://inyon.localhost.example.com/", "http://inyon.localhost:8080/", "http://inyon.localhostx/", "https://inyon.localhost/", "http://inyonpage.localhost/a/"]
+        {
+            assert!(!own_page(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn the_system_is_asked_again_only_after_a_while_or_after_an_action() {
+        let mut c = Cached::new(5000.0);
+        let mut asked = 0;
+        let mut ask = |now: f64, c: &mut Cached<u32>| {
+            c.get(now, || {
+                asked += 1;
+                asked
+            })
+        };
+        assert_eq!(ask(1000.0, &mut c), 1);
+        assert_eq!(ask(2500.0, &mut c), 1);
+        assert_eq!(ask(6100.0, &mut c), 2);
+        c.clear();
+        assert_eq!(ask(6200.0, &mut c), 3);
+        // a clock that went back doesn't keep an old answer
+        assert_eq!(ask(100.0, &mut c), 4);
+    }
 
     #[test]
     fn settings_take_only_what_the_window_has() {

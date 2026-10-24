@@ -240,6 +240,15 @@ pub fn check_list(v: &Value) -> Vec<Value> {
 }
 
 /// "22:27" today, "14 Oct" before: state.json's times are "2026-10-14 22:27".
+/// The day a phone was paired: "today", or as [`seen_short`] gives a day.
+pub fn paired_short(date: &str, today: &str) -> String {
+    if date == today {
+        "today".into()
+    } else {
+        seen_short(&format!("{date} 00:00"), today)
+    }
+}
+
 pub fn seen_short(full: &str, today: &str) -> String {
     match full.split_once(' ') {
         Some((date, time)) if date == today => time.to_string(),
@@ -378,5 +387,8 @@ mod tests {
         assert_eq!(seen_short("2026-10-22 22:27", "2026-10-22"), "22:27");
         assert_eq!(seen_short("2026-10-14 09:01", "2026-10-22"), "14 Oct");
         assert_eq!(seen_short("22:27", "2026-10-22"), "22:27");
+        // a phone paired today was paired today, not at midnight
+        assert_eq!(paired_short("2026-10-22", "2026-10-22"), "today");
+        assert_eq!(paired_short("2026-10-14", "2026-10-22"), "14 Oct");
     }
 }
