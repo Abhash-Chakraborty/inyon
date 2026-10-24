@@ -58,10 +58,10 @@ inyon pages add <folder> --name "Readable name"
 ```
 
 It answers with where the page sits in the app (Pages, then machine, then project). Hand that over,
-not a URL: a link that opens a page is made by the app and lasts 12 hours. A hub before 0.22 shows
-pages from its own computer only; on a joined machine `add` then says the page can't open, and the
-user needs a newer hub, or the folder on the hub's computer. Don't serve the folder on a public
-address. The `blueprint` skill builds and publishes plan sites this way.
+not a URL: a link that opens a page is made by the app and lasts 12 hours. On a joined machine `add`
+also says the hub it's joined to shows its pages: that needs the hub and this machine on 0.22 or
+later. With an older hub, tell the user to update it, or put the folder on the hub's computer. Don't
+serve the folder on a public address. The `blueprint` skill builds and publishes plan sites this way.
 
 **Add a computer to a hub.** The hub makes the command: **Machines → Add a machine** in its app gives a
 one-line command with a token for that one machine. Ask the user to run it on the new computer. Never
