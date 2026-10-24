@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { ArrowRight, CircleX, Download, ExternalLink, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { ArrowRight, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
 import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
@@ -51,6 +51,7 @@ export function machineMenu(h: HostState, nav: NavigateFunction): MenuItem[] {
     { key: 'open', label: 'Open', icon: <Server className="size-4" />, onSelect: () => nav(href) },
     paired && h.status === 'online' && { key: 'new', label: 'New session', icon: <Plus className="size-4" />, onSelect: () => openActionSheet({ kind: 'new', hostId: h.config.id }) },
     newTab(href),
+    paired && { key: 'temp', label: 'Temp files', icon: <FolderOpen className="size-4" />, onSelect: () => nav(`/temp/${encodeURIComponent(h.config.id)}`) },
     { key: 'rename', label: h.config.kind === 'ssh' ? 'Edit…' : 'Rename…', icon: <Pencil className="size-4" />, separated: true, onSelect: () => openActionSheet({ kind: 'edit', host: h }) },
     h.nodeUpdate?.supported && h.nodeUpdate.state !== 'updating' && h.nodeUpdate.state !== 'updated' && h.status === 'online' && { key: 'update', label: `Update to inyon ${h.nodeUpdate.latest}`, icon: <Download className="size-4" />, onSelect: () => void updateMachine(h) },
     h.config.kind !== 'local' && { key: 'remove', label: 'Remove…', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removeMachine(h) },

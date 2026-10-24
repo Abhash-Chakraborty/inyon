@@ -35,6 +35,8 @@ Where each agent is installed (*On laptop, server*), the command that starts it,
 
 Uploads are stored on each machine in `~/.inyon/uploads`. The machine's page shows how much space they take, with buttons to clean older ones or delete them all.
 
+From 0.21, **Agent temp files** below the machines opens [Temp files](temp-files.md): the pasted images, screenshots and scratch folders agents leave on each machine.
+
 From 0.17 the hub tidies every machine by itself about every six hours, and again when a machine comes back online: it deletes uploads past their age, then the oldest ones while the folder is over **Keep at most**. A file whose upload broke off keeps a `.part` ending and is deleted after an hour, so a half-sent file never looks finished. Computers paired only with a phone tidy their own uploads the same way, with the rules the hub last used there (7 days and 1 GB if there never was one).
 
 ## Notifications

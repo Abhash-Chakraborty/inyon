@@ -8,6 +8,7 @@ import {
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
 } from './features/features.ts'
 import { ensureSessions, runSetup, setKeepSession, setupReport } from './features/setup.ts'
+import { tempDelete, tempFiles, tempList, tempPreview } from './features/temp.ts'
 import { answerSignIn, readSignIn, startSignIn, stopSignIn } from './features/signin.ts'
 import { connectProvider, disconnectProvider, listProviders } from './features/providers.ts'
 import { installIntegration, uninstallIntegration } from './claude/integration.ts'
@@ -377,6 +378,22 @@ export const coreRoutes: Routes = {
     POST: api(async (req) => {
       const b = await body<{ olderThanDays?: number }>(req)
       return json(await cleanUploads(req.params.id, Number(b.olderThanDays ?? 0)))
+    }),
+  },
+  // agent temp files, through the machine's own `inyon temp` (features/temp.ts)
+  '/api/hosts/:id/temp': {
+    GET: api(async (req) => json(await tempList(req.params.id))),
+  },
+  '/api/hosts/:id/temp/files': {
+    GET: api(async (req) => json(await tempFiles(req.params.id, q(req, 'path')))),
+  },
+  '/api/hosts/:id/temp/preview': {
+    GET: api(async (req) => json(await tempPreview(req.params.id, q(req, 'path'), Number(q(req, 'max')) || undefined))),
+  },
+  '/api/hosts/:id/temp/delete': {
+    POST: api(async (req) => {
+      const b = await body<{ paths?: unknown }>(req)
+      return json(await tempDelete(req.params.id, b.paths))
     }),
   },
   '/api/hosts/:id/setup': {

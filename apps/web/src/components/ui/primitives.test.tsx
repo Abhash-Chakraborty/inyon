@@ -110,6 +110,33 @@ describe('Sheet', () => {
     expect(document.activeElement?.textContent).toBe('Open')
   })
 
+  test('Escape closes only the sheet on top', async () => {
+    function Stacked() {
+      const [outer, setOuter] = useState(true)
+      const [inner, setInner] = useState(true)
+      return (
+        <>
+          <Sheet open={outer} onClose={() => setOuter(false)} title="Files">
+            <p>list</p>
+          </Sheet>
+          <Sheet open={inner} onClose={() => setInner(false)} title="Preview">
+            <p>file</p>
+          </Sheet>
+        </>
+      )
+    }
+    const user = userEvent.setup()
+    render(<Stacked />)
+    await act(() => Bun.sleep(10))
+    await user.keyboard('{Escape}')
+    await act(() => Bun.sleep(250))
+    expect(screen.queryByRole('dialog', { name: 'Preview' })).toBeNull()
+    expect(screen.getByRole('dialog', { name: 'Files' })).toBeTruthy()
+    await user.keyboard('{Escape}')
+    await act(() => Bun.sleep(250))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   test("a field's own autoFocus wins, and focus still goes back to the opener", async () => {
     function Auto() {
       const [open, setOpen] = useState(false)

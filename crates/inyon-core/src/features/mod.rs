@@ -15,4 +15,6 @@ pub mod paths;
 pub mod providers;
 pub mod setup;
 pub mod signin;
+// agent temp files, through the machine's own `inyon temp`
+pub mod temp;
 pub mod workspace;

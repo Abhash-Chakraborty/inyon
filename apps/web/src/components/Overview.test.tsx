@@ -92,5 +92,5 @@ test('a session card and a machine offer the same actions on a right-click as in
   expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeTruthy()
 
   fireEvent.contextMenu(screen.getAllByText('box')[0]!, { clientX: 10, clientY: 10 })
-  expect(items()).toEqual(['Open', 'New session', 'Open in new tab', 'Edit…', 'Remove…'])
+  expect(items()).toEqual(['Open', 'New session', 'Open in new tab', 'Temp files', 'Edit…', 'Remove…'])
 })

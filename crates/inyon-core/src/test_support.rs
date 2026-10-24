@@ -123,6 +123,7 @@ pub mod fake {
         pub host: String,
         pub cmd: String,
         pub input: Option<String>,
+        pub timeout_ms: Option<u64>,
     }
 
     pub type Answer = Rc<dyn Fn(&str, &str, Option<&str>) -> ExecResult>;
@@ -185,7 +186,7 @@ pub mod fake {
             let cmd = cmd.strip_prefix(UTF8_TMUX).unwrap_or(cmd).to_owned();
             let input = opts.input.map(|i| String::from_utf8_lossy(&i).into_owned());
             let (cmd, input) = as_keys(cmd, input);
-            self.calls.borrow_mut().push(Call { host: config.id.clone(), cmd: cmd.clone(), input: input.clone() });
+            self.calls.borrow_mut().push(Call { host: config.id.clone(), cmd: cmd.clone(), input: input.clone(), timeout_ms: opts.timeout_ms });
             let answer = self.answer.borrow().clone();
             let r = answer.map_or_else(|| ok(""), |a| a(&config.id, &cmd, input.as_deref()));
             // never ready on the first poll: a real command (and the TS's awaited promise) answers

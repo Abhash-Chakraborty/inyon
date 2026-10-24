@@ -18,6 +18,7 @@ pub mod signing;
 pub mod skills;
 pub mod state;
 pub mod sys;
+pub mod temp;
 pub mod tray;
 pub mod ui;
 pub mod unhook;

@@ -7,7 +7,7 @@ use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
-use inyon_core::features::{conversations, features as feat, models, providers, setup, signin, workspace};
+use inyon_core::features::{conversations, features as feat, models, providers, setup, signin, temp, workspace};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -230,6 +230,25 @@ async fn node_update(r: Req) -> HubResult<Resp> {
     Ok(ok())
 }
 
+async fn temp_list(r: Req) -> HubResult<Resp> {
+    Ok(json_of(&temp::temp_list(&id(&r)).await?))
+}
+
+async fn temp_files(r: Req) -> HubResult<Resp> {
+    Ok(json_of(&temp::temp_files(&id(&r), &r.q("path")).await?))
+}
+
+async fn temp_preview(r: Req) -> HubResult<Resp> {
+    // `Number(q) || undefined`: no limit asked for, or not a number, is the default
+    let max = Some(inyon_core::js::to_number(&r.q("max"))).filter(|m| *m != 0.0 && !m.is_nan());
+    Ok(json_of(&temp::temp_preview(&id(&r), &r.q("path"), max).await?))
+}
+
+async fn temp_delete(mut r: Req) -> HubResult<Resp> {
+    let b = r.body().await?;
+    Ok(json_of(&temp::temp_delete(&id(&r), field(&b, "paths")?).await?))
+}
+
 /// The routes, each behind sign-in.
 /// What the overview shows, as the WebSocket's overview message carries it (a companion app reads this too).
 pub fn overview() -> Resp {
@@ -404,6 +423,11 @@ pub fn add(routes: &mut Routes) {
             }),
         )],
     );
+    // agent temp files, through the machine's own `inyon temp` (features/temp)
+    guarded(routes, "/api/hosts/:id/temp", vec![(M::GET, h(temp_list))]);
+    guarded(routes, "/api/hosts/:id/temp/files", vec![(M::GET, h(temp_files))]);
+    guarded(routes, "/api/hosts/:id/temp/preview", vec![(M::GET, h(temp_preview))]);
+    guarded(routes, "/api/hosts/:id/temp/delete", vec![(M::POST, h(temp_delete))]);
     guarded(
         routes,
         "/api/hosts/:id/setup",
@@ -988,5 +1012,120 @@ mod tests {
         assert_eq!(ok.0, 200, "{}", ok.1);
         assert_eq!(ok.1["files"][0]["size"], json!(1000));
         assert_eq!(refused, (413, json!({ "error": "Uploads are limited to 100 MB" })));
+    }
+
+    // features/temp.test.ts: the routes hand the machine's `inyon temp` answer on
+
+    /// A machine whose commands are answered by `answer`, each noted with what it got on stdin.
+    struct Scripted {
+        calls: RefCell<Vec<(String, Option<String>)>>,
+        answer: RefCell<inyon_core::hosts::host::ExecResult>,
+    }
+
+    impl inyon_core::hosts::host::HostBackend for Scripted {
+        fn exec(
+            &self,
+            _: &HostConfig,
+            cmd: &str,
+            opts: inyon_core::hosts::host::ExecOptions,
+        ) -> futures_util::future::LocalBoxFuture<'static, HubResult<inyon_core::hosts::host::ExecResult>> {
+            let cmd = cmd.strip_prefix(inyon_core::hosts::host::UTF8_TMUX).unwrap_or(cmd).to_owned();
+            self.calls.borrow_mut().push((cmd, opts.input.map(|i| String::from_utf8_lossy(&i).into_owned())));
+            let r = self.answer.borrow().clone();
+            Box::pin(async move { Ok(r) })
+        }
+        fn stream(&self, _: &HostConfig, _: &str, _: inyon_core::hosts::host::OnLine, _: bool) -> inyon_core::hosts::host::StreamHandle {
+            inyon_core::hosts::host::StreamHandle::new(|| {}, inyon_core::platform::rt::Deferred::new())
+        }
+        fn pty(&self, _: &HostConfig, _: &str, _: u16, _: u16, _: inyon_core::hosts::host::OnData) -> HubResult<inyon_core::hosts::host::PtyHandle> {
+            Err(HubError::plain("no terminals here"))
+        }
+    }
+
+    fn probe(home: &str) -> Rc<RefCell<inyon_core::tmux::tmux::ProbeResult>> {
+        Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult {
+            hostname: "box".into(),
+            home: home.into(),
+            os: "Linux".into(),
+            now: 0.0,
+            latency_ms: 0.0,
+            tmux: inyon_core::tmux::tmux::TmuxProbe::Ok,
+            integration: inyon_protocol::IntegrationState::Missing,
+            sessions: vec![],
+            agent_procs: Default::default(),
+            hook_panes: Default::default(),
+            status_panes: Default::default(),
+            account: None,
+            compact_panes: Default::default(),
+            installed: vec![],
+            signed_in: vec![],
+            agy_conversations: Default::default(),
+            agy_status: Default::default(),
+            agy_titles: Default::default(),
+            agy_integration: None,
+            machine_kind: None,
+        }))
+    }
+
+    #[test]
+    fn the_hub_gives_up_on_a_machines_temp_files_before_the_idle_limit_drops_the_app() {
+        let idle = u64::try_from(crate::idle::IDLE.as_millis()).unwrap();
+        assert!(temp::WAIT < temp::DELETE_WAIT && temp::DELETE_WAIT < idle);
+    }
+
+    #[test]
+    fn the_temp_routes_hand_the_machines_answer_on_with_the_right_status() {
+        crate::test_util::block(async {
+            let fake = Rc::new(Scripted { calls: RefCell::default(), answer: RefCell::default() });
+            let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = fake.clone();
+            inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
+            put(host_state("studio", "node", json!({}))).borrow_mut().probe = Some(probe("/home/me"));
+            put(host_state("away", "node", json!({})));
+            let say =
+                |code: i32, stdout: &str, stderr: &str| *fake.answer.borrow_mut() = inyon_core::hosts::host::ExecResult { code, stdout: stdout.into(), stderr: stderr.into() };
+            let req = |method: &str, url: &str, body: &str| {
+                let mut r = crate::server::test_req(method, url, &[("content-type", "application/json")], body);
+                r.params = vec![("id".into(), url.split('/').nth(3).unwrap().into())];
+                r
+            };
+
+            say(0, r#"{"v":1,"ok":true,"host":"studio","roots":[],"items":[]}"#, "");
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/studio/temp", "")).await).await, (200, json!({ "v": 1, "ok": true, "host": "studio", "roots": [], "items": [] })));
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} ls --json", temp::INYON));
+            say(2, "", "error: unrecognized subcommand 'temp'\n");
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/studio/temp", "")).await).await, (409, json!({ "error": "Update Inyon on studio to see its temp files" })));
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/nope/temp", "")).await).await, (404, json!({ "error": "Unknown machine" })));
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/away/temp", "")).await).await, (503, json!({ "error": "Machine is not connected yet" })));
+
+            say(1, r#"{"v":1,"ok":false,"error":"That isn't inside one of the temp folders Inyon lists"}"#, "");
+            let refused = answered(temp_preview(req("GET", "/api/hosts/studio/temp/preview?path=%2Fetc%2Fpasswd&max=1500000", "")).await).await;
+            assert_eq!(refused, (400, json!({ "error": "That isn't inside one of the temp folders Inyon lists" })));
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} show --json --max 1500000 -- '/etc/passwd'", temp::INYON));
+            say(0, r#"{"v":1,"ok":true,"path":"/tmp/x","files":[],"truncated":false}"#, "");
+            assert_eq!(answered(temp_files(req("GET", "/api/hosts/studio/temp/files?path=%2Ftmp%2Fx", "")).await).await.0, 200);
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} files --json -- '/tmp/x'", temp::INYON));
+            answered(temp_preview(req("GET", "/api/hosts/studio/temp/preview?path=%2Ftmp%2Fx&max=nope", "")).await).await;
+            assert!(fake.calls.borrow().last().unwrap().0.contains("--max 8388608 "));
+
+            say(0, r#"{"v":1,"ok":true,"removed":["/tmp/x"],"freed":5,"failed":[]}"#, "");
+            let done = answered(temp_delete(req("POST", "/api/hosts/studio/temp/delete", r#"{"paths":["/tmp/x"]}"#)).await).await;
+            assert_eq!(done, (200, json!({ "v": 1, "ok": true, "removed": ["/tmp/x"], "freed": 5, "failed": [] })));
+            assert_eq!(fake.calls.borrow().last().unwrap().1.as_deref(), Some(r#"["/tmp/x"]"#));
+            let bad = answered(temp_delete(req("POST", "/api/hosts/studio/temp/delete", r#"{"paths":"/tmp/x"}"#)).await).await;
+            assert_eq!(bad, (400, json!({ "error": "Send the paths to delete" })));
+
+            // each path finds its handler, for the method the app uses
+            let mut routes = Routes::default();
+            add(&mut routes);
+            for (path, method) in [("/api/hosts/a/temp", "GET"), ("/api/hosts/a/temp/files", "GET"), ("/api/hosts/a/temp/preview", "GET"), ("/api/hosts/a/temp/delete", "POST")] {
+                match routes.find(path) {
+                    Some((crate::server::Route::Methods(list), params)) => {
+                        assert!(list.iter().any(|(m, _)| m.as_str() == method), "{path}");
+                        assert_eq!(params, [("id".to_owned(), "a".to_owned())]);
+                    }
+                    _ => panic!("no route for {path}"),
+                }
+            }
+        });
     }
 }

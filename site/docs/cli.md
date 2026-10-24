@@ -32,6 +32,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon update` | Update to the newest release |
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
 | `inyon pages add`, `ls`, `rm` | Show a site's folder in the app under Pages |
+| `inyon temp`, `files`, `show`, `rm`, `clean` | List, look at and delete the temp files agents leave here |
 | `inyon uninstall` | Remove Inyon |
 | `inyon version` | Show the version |
 
@@ -283,6 +284,35 @@ This machine doesn't run a hub. For now the app shows pages from the hub's own m
 ```
 
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.
+
+## Temp files
+
+```sh
+inyon temp                               # what's there, per agent, and the biggest items; the same as inyon temp ls
+inyon temp files /tmp/claude-1000/-home-me-dev-site/7409eef9-d507-4808-a592-0bfabe896e3a
+inyon temp show /tmp/claude-1000/-home-me-dev-site/7409eef9-d507-4808-a592-0bfabe896e3a/scratchpad/notes.md
+inyon temp rm ~/.claude/paste-cache/0a49e8c135b0fa0a.txt /tmp/claude-1000/shots
+inyon temp clean --older-than 7d
+```
+
+From 0.21. `inyon temp` lists the folders coding agents keep temporary files in, with one item per Claude Code session, upload day or loose file. [Agent temp files](temp-files.md#whats-listed) has the folders; transcripts and history are never among them.
+
+```
+Agent temp files on laptop: 3.3 GB in 153 items
+  Claude Code temp files         3.3 GB    56 items  /tmp/claude-1000
+  Claude Code pasted text        1.3 MB    79 items  ~/.claude/paste-cache
+```
+
+The biggest items follow, with their size, age and path.
+
+| Command | What it does |
+|---|---|
+| `inyon temp files <item>` | Every file inside one item, newest first (at most 5,000). `<item>` is its path, or its `id` from `inyon temp ls --json` |
+| `inyon temp show <path>` | Prints a text file (the first 256 KB), or says what kind of file it is. With `--json` an image comes as base64, up to `--max` bytes (8 MB) |
+| `inyon temp rm <path>…` | Deletes items or files for good and says how much it freed. Exit code 1 if anything stayed |
+| `inyon temp clean --older-than <age>` | Deletes every item older than `7d`, `24h`, `30m` or `2w`. It lists them and asks first; `--yes` skips the question, and without a terminal nothing is deleted unless you pass it |
+
+`rm` and `clean` delete only what's inside those folders, never a folder itself, and refuse a path with `..` in it or one that leads out through a symlink. A symlink is deleted as a link. Items changed in the last 30 minutes are left alone by `clean`, since an agent may still be using them, and so are folders it couldn't read all the way through.
 
 ## JSON output
 
