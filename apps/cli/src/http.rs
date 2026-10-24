@@ -106,6 +106,31 @@ pub fn get_local(url: &str, headers: &[(String, String)]) -> Result<Response, St
     Ok(Response { status, location: None, body })
 }
 
+/// A request to a hub's API with a token: the hub on this machine (`local`, whose certificate may be
+/// its own) or the hub this machine joined (its pinned certificate, when join kept one).
+pub fn hub_call(method: &str, url: &str, token: &str, body: Option<&serde_json::Value>, local: bool) -> Result<Response, String> {
+    let agent = if local {
+        let c = ureq::Agent::config_builder().http_status_as_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
+        inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(15)))
+    } else {
+        let c = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .user_agent(format!("inyon/{}", env!("CARGO_PKG_VERSION")))
+            .tls_config(ureq::tls::TlsConfig::builder().root_certs(inyon_engine::http::ureq_roots()).build());
+        inyon_engine::http::timed_agent_for(url, c, Limits::new(Duration::from_secs(15)))
+    };
+    let auth = format!("Bearer {token}");
+    let mut res = match (method, body) {
+        ("POST", Some(b)) => agent.post(url).header("authorization", &auth).header("content-type", "application/json").send(b.to_string()),
+        _ => agent.get(url).header("authorization", &auth).call(),
+    }
+    .map_err(|e| e.to_string())?;
+    let status = res.status().as_u16();
+    let body = res.body_mut().with_config().limit(16 * 1024 * 1024).read_to_vec().map_err(|e| e.to_string())?;
+    Ok(Response { status, location: None, body })
+}
+
 /// The host part of a URL, for messages.
 pub fn host_of(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);

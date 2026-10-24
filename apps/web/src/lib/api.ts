@@ -249,6 +249,8 @@ export interface ServerForm {
 export interface HubSettings {
   uploads: { retentionDays: number; maxMB: number; maxTotalMB: number; longPasteLines: number }
   autoResume?: boolean
+  /** joined machines may hold messages for agents with `inyon send` */
+  machinesSend?: boolean
 }
 
 /** The hub's own update (hub mode only; see apps/hub/src/features/hub-update.ts). */

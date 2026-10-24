@@ -337,6 +337,10 @@ pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::Comp
             if let Some(c) = crate::companions::companion_for(&req) {
                 return crate::companions::as_companion(req, c, companion).await;
             }
+            // the inyon command, with a joined machine's token or the hub's local one
+            if let Some(who) = crate::machines::caller(&req) {
+                return crate::machines::as_caller(req, who).await;
+            }
             let origin = req.header("origin");
             let phone = phone_request(&req);
             if o.owner && has_bearer(&req) {

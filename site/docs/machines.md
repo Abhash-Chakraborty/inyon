@@ -77,6 +77,10 @@ Turning it on gives Inyon exact session matching and live numbers (context, cost
 
 When a new version of Inyon changes these scripts, it updates them on the machine by itself, as long as it has seen the integration on there before. Otherwise the button says *Update* instead of *Turn on*. From 0.17.1, an older copy of Inyon (a phone that hasn't updated yet) leaves scripts from a newer one alone.
 
+## From a machine's terminal
+
+From 0.22, on a joined machine, `inyon hub machines`, `inyon sessions` and `inyon pages --hub` show what the hub sees, and `inyon send` gives an agent on another machine a message once it's free, if the hub allows that. See [Sessions and messages](cli.md#sessions-and-messages).
+
 ## When a machine goes offline
 
 The hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back; trying says *This machine is not connected. Is inyon running on it?* When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.

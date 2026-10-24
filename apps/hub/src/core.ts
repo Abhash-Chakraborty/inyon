@@ -342,6 +342,7 @@ export const coreRoutes: Routes = {
         ...cur,
         keepSession: cur.keepSession,
         autoResume: typeof b.autoResume === 'boolean' ? b.autoResume : cur.autoResume,
+        machinesSend: typeof b.machinesSend === 'boolean' ? b.machinesSend : cur.machinesSend,
         uploads: {
           retentionDays: Math.max(0, Math.min(365, Number(u.retentionDays ?? cur.uploads.retentionDays) | 0)),
           maxMB: Math.max(1, Math.min(2048, Number(u.maxMB ?? cur.uploads.maxMB) | 0)),

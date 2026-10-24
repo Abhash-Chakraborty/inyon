@@ -26,6 +26,8 @@ export interface HubSettings {
   keepSession?: Record<string, boolean>
   /** resume idle Claude sessions that stopped reporting live numbers (off unless turned on) */
   autoResume?: boolean
+  /** joined machines may hold messages for agents with `inyon send` (the Rust hub; off unless turned on) */
+  machinesSend?: boolean
 }
 
 const DEFAULT_SETTINGS: HubSettings = { uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 } }
