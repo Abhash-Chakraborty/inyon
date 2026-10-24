@@ -57,6 +57,7 @@ macro_rules! with_types {
             MappedBy,
             QuickOption,
             AgentPaneInfo,
+            TurnFailure,
             PaneInfo,
             WindowInfo,
             SessionInfo,

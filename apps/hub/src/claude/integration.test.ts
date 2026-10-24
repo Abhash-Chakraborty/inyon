@@ -409,3 +409,14 @@ test('scripts from a newer Inyon count as installed, so an older app leaves them
     rmSync(h, { recursive: true, force: true })
   }
 })
+
+test('StopFailure is only registered for a Claude Code that has it', async () => {
+  const { knowsStopFailure } = await import('./integration.ts')
+  expect(knowsStopFailure('2.1.309 (Claude Code)\n')).toBe(true)
+  expect(knowsStopFailure('2.1.78 (Claude Code)')).toBe(true)
+  expect(knowsStopFailure('3.0.0')).toBe(true)
+  // before 2.1.101 an unknown event made Claude Code ignore the whole file
+  expect(knowsStopFailure('2.1.77 (Claude Code)')).toBe(false)
+  expect(knowsStopFailure('1.0.120 (Claude Code)')).toBe(false)
+  expect(knowsStopFailure('')).toBe(false)
+})

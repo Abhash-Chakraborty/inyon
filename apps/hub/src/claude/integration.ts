@@ -93,6 +93,21 @@ const EVENTS: { name: string; matcher?: string }[] = [
   { name: 'Stop' },
 ]
 
+/**
+ * A turn that ended on an error (a rate limit, signed out, overloaded). Only for Claude Code 2.1.78
+ * and later, which have it: before 2.1.101 a hook event Claude Code doesn't know makes it ignore
+ * the whole settings file.
+ */
+const STOP_FAILURE: { name: string; matcher?: string } = { name: 'StopFailure' }
+
+/** Whether `claude --version` (e.g. "2.1.309 (Claude Code)") names a version with StopFailure. */
+export function knowsStopFailure(version: string): boolean {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (!m) return false
+  const [a, b, c] = [m[1], m[2], m[3]].map(Number)
+  return a !== 2 ? a > 2 : b !== 1 ? b > 1 : c >= 78
+}
+
 const isOurs = (h: any) => ours(h?.command, 'hook.sh')
 
 async function readSettings(host: Host): Promise<any> {
@@ -161,8 +176,9 @@ export async function installIntegration(host: Host) {
       await writeFile(host, '.inyon/statusline.orig', before ? `${before}\n` : '')
     }
   }
+  const version = (await host.exec('claude --version 2>/dev/null')).stdout
   settings.hooks ??= {}
-  for (const ev of EVENTS) {
+  for (const ev of knowsStopFailure(version) ? [...EVENTS, STOP_FAILURE] : EVENTS) {
     const groups: any[] = (settings.hooks[ev.name] ??= [])
     // an entry naming the old folder points at the new one
     for (const g of groups) for (const h of g.hooks ?? []) if (isOurs(h)) h.command = HOOK_CMD

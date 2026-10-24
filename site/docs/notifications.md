@@ -9,6 +9,7 @@ description: Hear about it when an agent needs you or finishes, and when a machi
 |---|---|---|
 | **Needs you** | An agent is waiting on a prompt, or Codex asked a question while it works (from 0.17.6). For a command, the alert says what it's for and shows its first line; for an edit, which file | No |
 | **Finished** | An agent finished working, with the start of its reply. If its turn ended with subagents or shells still running, the alert waits until those have finished too, and a few seconds more, since the agent often goes on once a subagent reports back. From 0.21 there's no Finished alert while you're typing in that pane in tmux (a key in the last minute): you saw it finish | Yes: *When an agent finishes* |
+| **Stopped** | From 0.22, with the integration on: Claude Code ended its turn on an error instead of finishing, such as "Claude Code stopped: rate limit, resets in 2 h 10 min" or "stopped: signed out". It comes in place of Finished, on the same switch. A rate limit says when the full limit resets, from the session's and the account's [plan limits](overview.md#whats-on-it); the session and its overview card say the same with the time on your clock until you send the next prompt. Needs Claude Code 2.1.78 or later | Yes: *When an agent finishes* |
 | **Offline** | A machine has been unreachable for a minute | No |
 | **Back online** | A machine that was reported offline reconnected, and how long it was away | No |
 

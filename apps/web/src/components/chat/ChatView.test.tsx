@@ -151,6 +151,17 @@ describe('ChatView', () => {
     expect(screen.getByText('Red')).toBeTruthy()
   })
 
+  test('a turn that stopped on an error says why under the last message, until the next prompt', async () => {
+    const stopped = (failure?: { error: string }) => host('box', { panes: [agentPane('%1', 'claude', { agent: { kind: 'claude', pid: 1, state: 'idle', failure } })] })
+    useStore.setState({ connected: true, hosts: [stopped({ error: 'authentication_failed' })] })
+    render(view())
+    load([item.user('hi'), item.text('Hello')])
+    await flush()
+    expect(screen.getByRole('status').textContent).toBe('Stopped: signed out')
+    act(() => useStore.setState({ hosts: [stopped()] }))
+    expect(screen.queryByText('Stopped: signed out')).toBeNull()
+  })
+
   test('renders a long conversation without throwing', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     render(view())

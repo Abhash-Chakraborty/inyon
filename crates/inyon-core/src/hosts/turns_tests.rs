@@ -73,3 +73,11 @@ fn esc_from_inyon_ends_it_at_once() {
     t.end("p", T0 + 100);
     assert_eq!(t.state("p", Idle, "x", Some(&hook("PermissionRequest", S0 - 1.0, json!({}))), T0 + 200), Idle);
 }
+
+#[test]
+fn a_turn_that_stops_on_an_error_ends_like_a_stop() {
+    let mut t = Turns::new();
+    t.start("p", T0);
+    assert_eq!(t.state("p", Idle, "Running 1s", None, T0 + 1000), Working);
+    assert_eq!(t.state("p", Idle, "Running 2s", Some(&hook("StopFailure", S0 + 2.0, json!({ "error": "rate_limit" }))), T0 + 2500), Idle);
+}

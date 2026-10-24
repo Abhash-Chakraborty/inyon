@@ -365,3 +365,31 @@ fn settings_that_are_not_an_object_are_refused_as_invalid() {
         assert_eq!(e.status, Some(409));
     });
 }
+
+#[test]
+fn stop_failure_is_only_registered_for_a_claude_code_that_has_it() {
+    assert!(knows_stop_failure("2.1.309 (Claude Code)\n"));
+    assert!(knows_stop_failure("2.1.78 (Claude Code)"));
+    assert!(knows_stop_failure("3.0.0"));
+    assert!(!knows_stop_failure("2.1.77 (Claude Code)"));
+    assert!(!knows_stop_failure("1.0.120 (Claude Code)"));
+    assert!(!knows_stop_failure(""));
+    // before 2.1.101 an unknown event made Claude Code ignore the whole file
+    for (version, want) in [("2.1.309 (Claude Code)", true), ("2.1.60 (Claude Code)", false)] {
+        let home = TempDir::new("inyon-int-");
+        run_rt(|| async {
+            Sandbox::install_with(&home.s(), &format!("claude() {{ echo '{version}'; }}; "));
+            install_integration(&host("local", "local")).await.unwrap();
+            let hooks = &parse(&home.read(".claude/settings.json"))["hooks"];
+            assert_eq!(hooks.get("StopFailure").is_some(), want, "{version}");
+            assert!(hooks.get("Stop").is_some());
+        });
+    }
+    // and a machine without claude on its path doesn't get it either
+    let home = TempDir::new("inyon-int-");
+    run_rt(|| async {
+        Sandbox::install_with(&home.s(), "claude() { return 127; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        assert!(parse(&home.read(".claude/settings.json"))["hooks"].get("StopFailure").is_none());
+    });
+}

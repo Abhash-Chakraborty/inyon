@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus } from '@inyon/protocol'
+import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus, type TurnFailure } from '@inyon/protocol'
 
 /**
  * The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). The frames sit in a
@@ -33,6 +33,26 @@ export const backgroundText = (bg: string) => {
   const parts = bg.split(', ').map((p) => p.replace(/\bbackground /, ''))
   const list = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]
   return `${list} running in the background`
+}
+
+const FAILURE_WORDS: Record<string, string> = {
+  rate_limit: 'rate limit',
+  billing_error: 'billing problem',
+  authentication_failed: 'signed out',
+  overloaded: 'servers overloaded',
+  server_error: 'server error',
+  invalid_request: 'request refused',
+  max_output_tokens: 'reply too long',
+}
+
+/** "Stopped: rate limit · resets 14:05", or the day too when the reset is more than 20 hours away. */
+export function failureText(f: TurnFailure, now = Date.now()) {
+  const words = `Stopped: ${FAILURE_WORDS[f.error] ?? 'an error'}`
+  const at = f.resetsAt ? f.resetsAt * 1000 : 0
+  if (at <= now) return words
+  const time = new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const day = at - now > 20 * 3600_000 ? `${new Date(at).toLocaleDateString([], { weekday: 'short' })} ` : ''
+  return `${words} · resets ${day}${time}`
 }
 
 const stateMeta: Record<ShownState, { label: string; dot: string; pill: string }> = {

@@ -136,7 +136,7 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 ## The hub in Rust
 
-From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. `inyon` no longer downloads the Bun engine (`inyon-engine`) for a hub, and `inyon update` tidies away the copy an older hub left. It runs on Linux and macOS.
+From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. `inyon` no longer downloads the Bun engine (`inyon-engine`) for a hub. Updating from 0.20 still fetches it once, because the 0.20 updater decides that; the next update tidies the copy away. It runs on Linux and macOS.
 
 A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. `inyon doctor` says which hub runs:
 

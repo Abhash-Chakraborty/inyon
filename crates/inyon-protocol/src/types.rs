@@ -200,6 +200,21 @@ pub struct AgentPaneInfo {
     /// the integration is on but this session stopped sending live numbers
     pub status_stopped: Option<bool>,
     pub started_at: Option<u64>,
+    /// the last turn ended on an error instead of finishing; gone with the next prompt
+    pub failure: Option<TurnFailure>,
+}
+
+/// Why a turn stopped (Claude Code's StopFailure hook).
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct TurnFailure {
+    /// "rate_limit", "billing_error", "authentication_failed", "overloaded", "server_error",
+    /// "invalid_request", "max_output_tokens" or "unknown"
+    pub error: String,
+    /// rate limits: when the full limit resets, unix seconds
+    pub resets_at: Option<u64>,
 }
 
 #[skip_serializing_none]

@@ -652,3 +652,69 @@ fn a_machine_lists_each_accounts_limits_while_they_are_fresh() {
     // a Codex plan with no 5-hour or weekly window (the free plan's is 30 days) isn't listed
     assert_eq!(limits_list(None, None, Some(&codex(now, None)), now), None);
 }
+
+// stopped notices
+
+#[test]
+fn a_turn_that_stops_on_a_rate_limit_shows_why_and_when_the_full_limit_resets() {
+    run(|| async {
+        let b = ModeBox::new();
+        b.draw(&idle("? for shortcuts"));
+        let now = now_ms() as f64 / 1000.0;
+        b.rt.borrow_mut().usage = Some(Usage {
+            u: AccountUsage { five_hour: Some(RateWindow { pct: 100.0.into(), resets_at: Some((now + 7200.0).into()) }), ..Default::default() },
+            account: None,
+            ok_at: None,
+        });
+        let poll = |data: Value| {
+            let mut p = mode_probe(now);
+            p.hook_panes.insert("%9".into(), HookPaneState { pane: "%9".into(), ts: now - 1.0, data });
+            let pr = Rc::new(RefCell::new(p));
+            b.rt.borrow_mut().probe = Some(pr.clone());
+            let rt = b.rt.clone();
+            async move {
+                registry().annotate_agents(&rt, &pr).await.unwrap();
+                rt.borrow_mut().state.sessions = pr.borrow().sessions.clone();
+                registry().find_pane(MODE_ID, "%9").and_then(|f| f.pane.agent).and_then(|a| a.failure)
+            }
+        };
+        let f = poll(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).await.unwrap();
+        assert_eq!(f.error, "rate_limit");
+        assert_eq!(f.resets_at, Some((now + 7200.0) as u64));
+        // the next prompt clears it
+        assert_eq!(poll(json!({ "hook_event_name": "UserPromptSubmit" })).await, None);
+        assert_eq!(poll(json!({ "hook_event_name": "Stop" })).await, None);
+    });
+}
+
+#[test]
+fn the_alert_for_a_turn_that_stopped_on_an_error_says_so_instead_of_finished() {
+    run(|| async {
+        const ID: &str = "stopped-test";
+        let rt = runtime(ID, one_pane(ID, "working", None));
+        let bodies: Rc<RefCell<Vec<String>>> = Rc::default();
+        let g = bodies.clone();
+        let off = registry().on(move |e| {
+            if let RegistryEvent::Notify { host, body, .. } = e {
+                if host == ID {
+                    g.borrow_mut().push(body.clone());
+                }
+            }
+        });
+        let me = registry();
+        let step = |agent: &str, failure: Option<Value>| {
+            let prev = rt.borrow().state.clone();
+            let mut s = one_pane(ID, agent, None);
+            if let Some(f) = failure {
+                s.sessions[0].windows[0].panes[0].agent.as_mut().unwrap().failure = Some(serde_json::from_value(f).unwrap());
+            }
+            rt.borrow_mut().state = s;
+            me.diff_notify(&rt, &prev);
+        };
+        step("idle", Some(json!({ "error": "authentication_failed" })));
+        step("working", None);
+        step("idle", None);
+        assert_eq!(*bodies.borrow(), ["Claude Code stopped: signed out", "Claude Code finished"]);
+        off();
+    });
+}

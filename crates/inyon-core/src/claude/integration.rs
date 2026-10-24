@@ -15,7 +15,7 @@ use crate::re;
 pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: records Claude Code events so Inyon knows which tmux pane runs which session.
 # Safe to delete; remove the matching entries from ~/.claude/settings.json too.
-# inyon-integration 6
+# inyon-integration 7
 # the events hold your prompts: readable by you only
 umask 077
 d="$HOME/.inyon"
@@ -43,7 +43,7 @@ exit 0
 /// and rate limits. The wrapper saves it per tmux pane, then runs the user's own status line.
 pub const STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Claude Code's status line data per tmux pane, then runs your own status line.
-# inyon-integration 6
+# inyon-integration 7
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
@@ -71,7 +71,7 @@ exit 0
 pub const AGY_STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Antigravity CLI's status line data per tmux pane, then runs your own status line.
 # Safe to delete; remove "statusLine" from ~/.gemini/antigravity-cli/settings.json too.
-# inyon-integration 6
+# inyon-integration 7
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
@@ -109,6 +109,18 @@ fn is_ours(h: Option<&Value>) -> bool {
 
 const EVENTS: [(&str, Option<&str>); 6] =
     [("SessionStart", None), ("SessionEnd", None), ("UserPromptSubmit", None), ("Notification", None), ("PermissionRequest", Some("*")), ("Stop", None)];
+
+/// A turn that ended on an error (a rate limit, signed out, overloaded). Only for Claude Code 2.1.78
+/// and later, which have it: before 2.1.101 a hook event Claude Code doesn't know makes it ignore
+/// the whole settings file.
+const STOP_FAILURE: (&str, Option<&str>) = ("StopFailure", None);
+
+/// Whether `claude --version` (e.g. "2.1.309 (Claude Code)") names a version with StopFailure.
+pub fn knows_stop_failure(version: &str) -> bool {
+    let Some(v) = re!(r"^\s*(\d+)\.(\d+)\.(\d+)").captures(version) else { return false };
+    let n = |i: usize| v[i].parse::<u64>().unwrap_or(0);
+    (n(1), n(2), n(3)) >= (2, 1, 78)
+}
 
 /// `JSON.stringify(settings, null, 2) + '\n'`
 fn pretty(v: &Value) -> String {
@@ -241,13 +253,15 @@ pub async fn install_integration(host: &Host) -> HubResult<()> {
             write_file(host, ".inyon/statusline.orig", &if before.is_empty() { String::new() } else { format!("{before}\n") }, "600").await?;
         }
     }
+    let version = host.run("claude --version 2>/dev/null").await?.stdout;
+    let stop_failure = knows_stop_failure(&version).then_some(STOP_FAILURE);
     if settings.get("hooks").is_none_or(Value::is_null) {
         settings.insert("hooks".into(), Value::Object(Map::new()));
     }
     let Some(Value::Object(hooks)) = settings.get_mut("hooks") else {
         return Err(HubError::plain("~/.claude/settings.json has \"hooks\" that aren't an object"));
     };
-    for (name, matcher) in EVENTS {
+    for (name, matcher) in EVENTS.into_iter().chain(stop_failure) {
         if hooks.get(name).is_none_or(Value::is_null) {
             hooks.insert(name.into(), Value::Array(vec![]));
         }
