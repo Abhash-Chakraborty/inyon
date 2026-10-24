@@ -155,8 +155,9 @@ pub fn run_builtin(args: &[String]) -> i32 {
     if cfg!(windows) && crate::paths::env_var("INYON_APP").is_some() && args.first().is_some_and(|a| a == "link" || a == "connect") {
         std::thread::spawn(|| {
             // not while the update that started this engine is still restarting jobs: its next
-            // restart would find the app gone. Then once, 10 seconds after
-            for _ in 0..60 {
+            // restart would find the app gone. Then once, 10 seconds after. A "running" status an
+            // updater left behind stops counting after 30 minutes, so this waits a little longer
+            for _ in 0..31 * 6 {
                 std::thread::sleep(std::time::Duration::from_secs(10));
                 if !crate::update::under_way() {
                     crate::app::relaunch_if_older(&crate::sys::RealProc);
