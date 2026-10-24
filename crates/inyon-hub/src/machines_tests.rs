@@ -45,8 +45,8 @@ fn hub() {
         registry().add(c, false).unwrap();
     };
     node("laptop", LAPTOP, Some(1), Some(1));
-    // a join command nobody ran, a day old: expired
-    node("spare", "spare-token", None, Some(now_ms() - 24 * 3_600_000));
+    // a join command nobody ran, two days old: expired
+    node("spare", "spare-token", None, Some(now_ms() - 48 * 3_600_000));
 }
 
 async fn ask(method: &str, path: &str, token: &str, body: &str, peer: Option<&str>) -> (u16, Value) {
