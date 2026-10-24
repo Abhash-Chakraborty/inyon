@@ -596,7 +596,9 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
     }
 
     // this computer
-    let svc = if !set_up || (!service && !running) {
+    // Set up is the phone link's setup: the hub connection and the hub are set up from their
+    // own commands (a hub's Add a machine, `inyon hub`), so their windows only start and stop
+    let svc = if role == Role::Link && (!set_up || (!service && !running)) {
         buttons.push((Id::SvcB, Button { label: "Set up".into(), action: Action::OpenSetup, enabled: x.setup != Setup::Running }));
         // short enough for its box beside the button
         (if set_up { "Doesn't run at sign-in" } else { "Not set up" }.to_string(), false)
@@ -604,9 +606,11 @@ pub fn view(role: Role, s: &Status, p: &Pairing, x: &Extra, now: f64, today: &st
         buttons.push((Id::SvcA, button("Stop", Action::Stop).unwrap()));
         buttons.push((Id::SvcB, button("Restart", Action::Restart).unwrap()));
         (if service { "Runs at sign-in · running" } else { "Started by hand · running" }.to_string(), false)
-    } else {
+    } else if set_up {
         buttons.push((Id::SvcA, button("Start", Action::Start).unwrap()));
-        ("Runs at sign-in · stopped".to_string(), true)
+        (if service { "Runs at sign-in · stopped" } else { "Doesn't run at sign-in" }.to_string(), true)
+    } else {
+        ("Not set up".to_string(), false)
     };
     let upd = match &x.update {
         Update::Looking => "Looking for updates…".to_string(),
@@ -787,6 +791,25 @@ mod tests {
         let mut s = status();
         s.addresses.clear();
         assert_eq!(view(Role::Link, &s, &Pairing::default(), &extra(), T0, "2026-10-22").pill.0, "Starting");
+    }
+
+    #[test]
+    fn a_hub_connection_window_never_offers_the_phone_links_setup() {
+        let mut s = status();
+        s.role = "joined".into();
+        s.jobs = vec![Job { role: "node".into(), service: false, running: false, version: None }];
+        let v = view(Role::Node, &s, &Pairing::default(), &extra(), T0, "2026-10-22");
+        assert!(v.buttons.iter().all(|(_, b)| b.action != Action::OpenSetup), "{:?}", v.buttons);
+        assert_eq!(v.button(Id::SvcA).unwrap().action, Action::Start);
+        assert_eq!(v.comp[0].0, "Doesn't run at sign-in");
+        // nothing set up at all: said, with nothing to press
+        s.role = "none".into();
+        let v = view(Role::Node, &s, &Pairing::default(), &extra(), T0, "2026-10-22");
+        assert!(v.button(Id::SvcA).is_none() && v.button(Id::SvcB).is_none());
+        assert_eq!(v.comp[0].0, "Not set up");
+        // the link's window still sets itself up
+        let v = view(Role::Link, &s, &Pairing::default(), &extra(), T0, "2026-10-22");
+        assert_eq!(v.button(Id::SvcB).unwrap().action, Action::OpenSetup);
     }
 
     #[test]

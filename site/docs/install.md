@@ -184,7 +184,7 @@ From 0.20.1 the window is the control panel for this computer:
 | Pair a phone | The QR code and the ID and code to type in the app. It says so while the tunnel starts, and until the tunnel is up the code works on the same network or VPN. A used code names the phone that paired, an expired one says so, and in its last minute the note counts down ("gone in 42s") | Make a code, Copy link, and Show the log when the tunnel is slow or the code failed |
 | Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change: a menu to turn each on or off, applied by setup in the background (from 0.20.3; before, it opened `inyon setup` in a terminal) |
 | Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. More pages through the rest when there are more |
-| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which lists what the checks found |
+| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which lists what the checks found. Before the phone link is set up, its window shows Set up instead; the hub connection's window only starts and stops (from 0.20.3) |
 | Footer | The newest log line | Open the log, Quit Inyon |
 
 On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.

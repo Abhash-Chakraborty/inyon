@@ -551,12 +551,15 @@ pub fn stop_tunnel(sys: &Sys, role: Role) {
 }
 
 /// Quit, from the tray icon or the Inyon window (Windows): ends the task, the engine (`pid`) and
-/// then its tunnel, so nothing keeps answering for a link that has stopped.
+/// then its tunnel, so nothing keeps answering for a link that has stopped. When the Inyon app
+/// runs, it stops the job itself and the task is left alone: one task's process is the app, and
+/// ending it would end everything else the app runs too.
 pub fn quit(sys: &Sys, role: Role, pid: Option<u32>) {
     if crate::app::running(sys.proc).is_some() {
         let _ = crate::app::ask(sys.proc, crate::app::Do::Stop, Some(role), None, 10_000);
+    } else {
+        end_task(sys, role);
     }
-    end_task(sys, role);
     if let Some(pid) = pid.filter(|p| *p != sys.pid && sys.proc.alive(*p)) {
         sys.proc.signal(pid, Signal::Kill);
     }
@@ -867,13 +870,16 @@ pub fn uninstall_service(sys: &Sys, role: Role) -> Installed {
             let Some(task) = s.task else {
                 return failed("nothing to remove");
             };
-            // the app stops running it (and ends, if that was all it ran)
-            if crate::app::running(sys.proc).is_some() {
+            // the app stops running it (and ends, if that was all it ran). Its task isn't stopped
+            // then: that task's process may be the app, running the other job as well
+            let app = crate::app::running(sys.proc).is_some();
+            if app {
                 let _ = crate::app::ask(sys.proc, crate::app::Do::Stop, Some(role), None, 10_000);
             }
+            let end = if app { String::new() } else { format!("Stop-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue; ", psq(task)) };
             ps(&format!(
                 // unregistered before and after the stop: run from the task itself, the stop may end this
-                "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue; Stop-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
+                "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue; {end}Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
                 t = psq(task),
                 shortcut = startup_shortcut(&format!("{task}.lnk")),
                 stop = stop_copies(sys, Some(role))

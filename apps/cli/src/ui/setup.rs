@@ -67,6 +67,8 @@ pub struct Plan {
     /// the token and certificate from the hub's Add a machine command, when it was pasted whole
     pub hub_token: String,
     pub hub_cert: String,
+    /// the hub whose command gave the token above, and that token
+    from_command: Option<(String, String)>,
     pub networks: Vec<Network>,
     pub platform: Platform,
 }
@@ -85,6 +87,7 @@ impl Plan {
             hub_url: String::new(),
             hub_token: String::new(),
             hub_cert: String::new(),
+            from_command: None,
             networks,
             platform,
         }
@@ -134,13 +137,24 @@ impl Plan {
     /// command, whose token and certificate are kept too.
     pub fn set_join(&mut self, input: &str) -> Result<(), String> {
         let c = crate::commands::parse_add_machine(input)?;
+        match c.token {
+            Some(t) => {
+                self.hub_token = t.clone();
+                self.hub_cert = c.cert.unwrap_or_default();
+                self.from_command = Some((c.hub.clone(), t));
+            }
+            // only an address: what another hub's command carried isn't sent to this one, a token
+            // typed in apart is
+            None => {
+                if let Some((_, token)) = self.from_command.take_if(|(hub, _)| *hub != c.hub) {
+                    if self.hub_token == token {
+                        self.hub_token.clear();
+                    }
+                    self.hub_cert.clear();
+                }
+            }
+        }
         self.hub_url = c.hub;
-        if let Some(t) = c.token {
-            self.hub_token = t;
-        }
-        if let Some(cert) = c.cert {
-            self.hub_cert = cert;
-        }
         Ok(())
     }
 
@@ -247,6 +261,23 @@ pub struct Wizard {
     pub problem: Option<String>,
 }
 
+/// What was typed into Hub as it's shown: a token in a command typed or pasted there key by key
+/// (a terminal without bracketed paste) is dots until Enter reads it.
+fn masked(text: &str) -> String {
+    let mut out = text.to_string();
+    for (key, ends) in [("INYON_TOKEN=", &[' ', '\t', '\'', '"'][..]), ("-Token '", &['\''][..])] {
+        let mut from = 0;
+        while let Some(i) = out[from..].find(key) {
+            let at = from + i + key.len();
+            let end = out[at..].find(ends).map_or(out.len(), |e| at + e);
+            let dots = "•".repeat(out[at..end].chars().count());
+            out.replace_range(at..end, &dots);
+            from = at + dots.len();
+        }
+    }
+    out
+}
+
 /// The columns `word` covers on a line drawn from column `x`. Every character in the hint line
 /// is one cell wide (the arrows and dots included), so a column is a character count, the same
 /// way `fit` measures the line.
@@ -349,7 +380,7 @@ impl Wizard {
                     v
                 }
                 RoleChoice::Join => vec![
-                    Item::Text { label: "Hub".into(), value: p.hub_url.clone(), digits: false },
+                    Item::Text { label: "Hub".into(), value: masked(&p.hub_url), digits: false },
                     Item::Text {
                         label: "Token".into(),
                         value: if p.hub_token.is_empty() { String::new() } else { "•".repeat(p.hub_token.chars().count().min(24)) },
@@ -566,6 +597,13 @@ impl Wizard {
                 if !digits || c.is_ascii_digit() {
                     f.push(c);
                 }
+            }
+        }
+        // a whole command pasted into Hub is read at once, so its token is never on screen
+        if self.step == Step::Network && self.plan.role == RoleChoice::Join && self.cursor == 0 {
+            let input = self.plan.hub_url.clone();
+            if crate::commands::parse_add_machine(&input).is_ok_and(|c| c.token.is_some()) {
+                let _ = self.plan.set_join(&input);
             }
         }
         Action::Stay
@@ -796,6 +834,44 @@ mod tests {
             // the summary names the hub, never the token
             assert!(w.plan.summary().iter().all(|(_, v)| !v.contains(token)));
         }
+    }
+
+    #[test]
+    fn join_never_shows_the_token_in_a_command_on_screen() {
+        let mut w = join_screen();
+        // typed key by key, as a terminal without bracketed paste delivers it
+        for c in UNIX_COMMAND.chars() {
+            w.key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Char(c)));
+        }
+        let shown = |w: &Wizard| w.items().iter().map(|i| format!("{i:?}")).collect::<String>();
+        assert!(!shown(&w).contains("tok_7Hq2"), "{}", shown(&w));
+        assert_eq!(masked(WINDOWS_COMMAND).matches("tok_W1n").count(), 0);
+        // pasted, it's read at once: Hub shows the address
+        let mut w = join_screen();
+        w.paste(UNIX_COMMAND);
+        assert_eq!(w.plan.hub_url, "https://hub.lan:4777");
+        assert!(!shown(&w).contains("tok_7Hq2"));
+    }
+
+    #[test]
+    fn a_commands_token_never_goes_to_another_hub_typed_in_after_it() {
+        let mut w = join_screen();
+        w.paste(UNIX_COMMAND);
+        // back to Hub, the address changed to another hub's
+        w.plan.hub_url = "https://other.example".into();
+        w.plan.set_join("https://other.example").unwrap();
+        assert_eq!((w.plan.hub_token.as_str(), w.plan.hub_cert.as_str()), ("", ""));
+        // the same hub's address keeps them
+        let mut w = join_screen();
+        w.paste(UNIX_COMMAND);
+        w.plan.set_join("https://hub.lan:4777/").unwrap();
+        assert_eq!((w.plan.hub_token.as_str(), w.plan.hub_cert.as_str()), ("tok_7Hq2", "cd34"));
+        // a token typed in apart stays with whatever hub is typed
+        let mut p = Plan::new(Platform::Linux, Vec::new());
+        p.hub_token = "tok_mine".into();
+        p.set_join("https://a.example").unwrap();
+        p.set_join("https://b.example").unwrap();
+        assert_eq!(p.hub_token, "tok_mine");
     }
 
     #[test]

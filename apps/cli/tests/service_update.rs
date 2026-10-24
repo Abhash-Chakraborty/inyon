@@ -491,3 +491,30 @@ fn quit_on_windows_ends_the_task_then_the_engine_then_its_tunnel_as_restart_does
     inyon_cli::service::quit(&sys, Role::Node, None);
     assert_eq!(home.calls(), vec![v(&["schtasks.exe", "/End", "/TN", "Inyon node"])]);
 }
+
+// both sign-in tasks open the app and one app runs both jobs, so one task's process is the app:
+// ending that task to stop the hub connection killed the phone link with it
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_with_the_app_running_a_stop_or_uninstall_leaves_its_task_running() {
+    let _g = lock();
+    let home = setup(&["schtasks.exe", "powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, std::path::Path::new(BIN));
+    proc.set(5150, &["inyon-app.exe", "app", "--background", "link"]);
+    let seen = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    home.put(
+        ".inyon/node/app.json",
+        &format!(r#"{{"pid":5150,"version":"0.20.3","started":{seen},"seen":{seen},"running":["link","hub connection"],"jobs":[{{"role":"link"}},{{"role":"node"}}]}}"#),
+    );
+    inyon_cli::service::quit(&sys, Role::Node, None);
+    assert!(!home.calls().iter().any(|c| c.contains(&"/End".to_string())), "{:?}", home.calls());
+    home.clear_calls();
+    std::env::set_var("FAKE_PS_NO", "Get-ScheduledTask -TaskName 'Inyon node'");
+    inyon_cli::service::uninstall_service(&sys, Role::Node);
+    std::env::remove_var("FAKE_PS_NO");
+    let calls = home.calls();
+    let script = calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("Unregister-ScheduledTask")).expect("the task is unregistered");
+    assert!(!script.contains("Stop-ScheduledTask"), "{script}");
+    assert!(proc.signals.borrow().is_empty(), "the app itself is left running");
+}

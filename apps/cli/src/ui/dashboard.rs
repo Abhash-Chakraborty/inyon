@@ -181,14 +181,15 @@ pub fn background_line(platform: crate::sys::Platform, app: Option<&crate::app::
     if running.is_empty() {
         return None;
     }
-    let by = match platform {
-        crate::sys::Platform::Windows => "started outside the Inyon app (an older version, or a terminal)",
-        crate::sys::Platform::Linux => "as a user service",
-        crate::sys::Platform::Darwin => "as a login item",
-        crate::sys::Platform::Other => "in the background",
+    // elsewhere it may be a user service, a login item or a copy started with nohup: not said
+    let by = if platform == crate::sys::Platform::Windows { ", started outside the Inyon app (an older version, or a terminal)" } else { "" };
+    // `inyon stop` leaves a hub running: phones and other machines depend on it
+    let stop = match (running.contains(&"the hub"), running.len()) {
+        (false, _) => "`inyon stop` stops it",
+        (true, 1) => "`inyon hub stop` stops it",
+        (true, _) => "`inyon stop` stops the rest, `inyon hub stop` the hub",
     };
-    let hub = if running.contains(&"the hub") { " (`inyon hub stop` for the hub)" } else { "" };
-    Some(format!("Running in the background: {}, {by}. `inyon stop` stops it{hub}.", running.join(", ")))
+    Some(format!("Running in the background: {}{by}. {stop}.", running.join(", ")))
 }
 
 /// The request for the hub's machines: the local token in a header, not in the address, where a
@@ -727,6 +728,16 @@ mod tests {
             (0..buf.area.height).filter_map(|y| (0..buf.area.width.saturating_sub(4)).find(|&x| (0..4).map(|i| buf[(x + i, y)].symbol()).collect::<String>() == "seen")).collect();
         assert_eq!(seen.len(), 2, "{}", buffer_text(&buf));
         assert_eq!(seen[0], seen[1], "{}", buffer_text(&buf));
+    }
+
+    #[test]
+    fn the_background_line_names_the_command_that_stops_what_runs() {
+        let job = |role: &str| Job { role: role.into(), service: true, running: true, version: None };
+        let line = |jobs: &[Job]| background_line(crate::sys::Platform::Linux, None, jobs).unwrap();
+        assert_eq!(line(&[job("link")]), "Running in the background: the phone link. `inyon stop` stops it.");
+        assert_eq!(line(&[job("hub")]), "Running in the background: the hub. `inyon hub stop` stops it.");
+        assert_eq!(line(&[job("hub"), job("node")]), "Running in the background: the hub, the hub connection. `inyon stop` stops the rest, `inyon hub stop` the hub.");
+        assert_eq!(background_line(crate::sys::Platform::Linux, None, &[Job { running: false, ..job("link") }]), None);
     }
 
     #[test]

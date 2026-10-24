@@ -57,7 +57,7 @@ On Windows before 0.20.1 a key could act twice, because Windows also reports a k
 
 The dashboard and setup draw in greys that suit the terminal's background. From 0.20.2 they ask the terminal whether it's light or dark and use darker greys on a light one, so muted text stays readable on white. A terminal that doesn't answer gets the greys for a dark one; set `INYON_THEME=light` to say otherwise.
 
-On Windows from 0.20.3 it says what runs in the background and that the Inyon app runs it, with how to stop it (**Quit Inyon** in the icon's menu, or `inyon stop`).
+From 0.20.3 it says what runs in the background and how to stop it. On Windows that's the Inyon app (**Quit Inyon** in the icon's menu, or `inyon stop`); elsewhere `inyon stop` for the link and the hub connection, and `inyon hub stop` for a hub.
 
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
 
@@ -83,7 +83,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
-   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, paste the hub's whole *Add a machine* command (from 0.20.3), or type the hub's address and then the token. A phone's pairing link (`inyon://hub?…`, what the hub's QR code holds) is turned away with where the machine command is. Before 0.20.3 *Add it to a hub* took only the address, so it failed with a usage line unless `INYON_TOKEN` was set.
+   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, paste the hub's whole *Add a machine* command (from 0.20.3), or type the hub's address and then the token. The token shows as dots, also inside a command typed into the box, and one hub's token is never sent to a different hub you type in afterwards. A phone's pairing link (`inyon://hub?…`, what the hub's QR code holds) is turned away with where the machine command is. Before 0.20.3 *Add it to a hub* took only the address, so it failed with a usage line unless `INYON_TOKEN` was set.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.

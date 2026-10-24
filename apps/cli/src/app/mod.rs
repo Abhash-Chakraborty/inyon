@@ -73,9 +73,20 @@ pub fn build_of(file: &Path) -> Option<String> {
 
 fn build_in(bytes: &[u8]) -> Option<String> {
     const MARK: &[u8] = b"inyon-build:";
-    let at = bytes.windows(MARK.len()).position(|w| w == MARK)? + MARK.len();
-    let end = bytes[at..].iter().take(64).position(|b| *b == b';')?;
-    String::from_utf8(bytes[at..at + end].to_vec()).ok()
+    let mut from = 0;
+    while let Some(i) = bytes[from..].windows(MARK.len()).position(|w| w == MARK) {
+        let at = from + i + MARK.len();
+        // the needle above is in the file too, followed by whatever the linker put next: only a
+        // version ended by ';' is the mark
+        if let Some(end) = bytes[at..].iter().take(64).position(|b| *b == b';') {
+            let v = &bytes[at..at + end];
+            if v.first().is_some_and(u8::is_ascii_digit) && v.iter().all(|b| b.is_ascii_alphanumeric() || b".-+".contains(b)) {
+                return String::from_utf8(v.to_vec()).ok();
+            }
+        }
+        from = at;
+    }
+    None
 }
 
 /// Runs the app (`inyon app`, or inyon-app.exe opened as it is). With no jobs named and a window
@@ -654,10 +665,14 @@ mod tests {
 
     #[test]
     fn a_program_file_says_its_version() {
-        assert_eq!(build_in(b"..MZ..inyon-build:0.20.3;..."), Some("0.20.3".into()));
+        // made at run time, so these samples aren't marks in this test program's own file
+        let marked = |s: &str| s.replace("MARK", &["inyon", "build:"].join("-")).into_bytes();
+        assert_eq!(build_in(&marked("..MZ..MARK0.20.3;...")), Some("0.20.3".into()));
         assert_eq!(build_in(b"no mark here"), None);
-        assert_eq!(build_in(b"inyon-build:0.20.3"), None, "cut off");
+        assert_eq!(build_in(&marked("MARK0.20.3")), None, "cut off");
+        assert_eq!(build_in(&marked("MARK\x01\x02 bytes;..MARK0.21.0-rc.1;")), Some("0.21.0-rc.1".into()), "the bare needle is passed over");
         // this program carries its own
+        let _ = build_mark();
         let me = std::env::current_exe().unwrap();
         assert_eq!(build_of(&me).as_deref(), Some(env!("CARGO_PKG_VERSION")));
     }
