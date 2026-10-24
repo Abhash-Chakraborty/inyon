@@ -91,6 +91,8 @@ export interface AgentStatus {
 
 export interface AgentPaneInfo {
   kind: AgentKind
+  /** a custom agent's name (Settings › Agents); `kind` is the agent it works like */
+  custom?: string
   pid: number
   sessionId?: string
   transcriptPath?: string

@@ -178,6 +178,8 @@ pub struct QuickOption {
 #[ts(optional_fields)]
 pub struct AgentPaneInfo {
     pub kind: AgentKind,
+    /// a custom agent's name (Settings › Agents); `kind` is the agent it works like
+    pub custom: Option<String>,
     pub pid: u32,
     pub session_id: Option<String>,
     pub transcript_path: Option<String>,

@@ -251,6 +251,17 @@ export interface HubSettings {
   autoResume?: boolean
   /** joined machines may hold messages for agents with `inyon send` */
   machinesSend?: boolean
+  /** your own agents; missing until the first is saved, and the Bun hub never keeps them */
+  customAgents?: CustomAgent[]
+}
+
+/** Any command, run and read as the built-in agent it works like (Settings › Agents). */
+export interface CustomAgent {
+  /** from the name, set by the hub */
+  id: string
+  name: string
+  command: string
+  like: AgentKind
 }
 
 /** The hub's own update (hub mode only; see apps/hub/src/features/hub-update.ts). */
@@ -335,7 +346,7 @@ export const api = {
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
   /** brings the machine's inyon up to date (it restarts and reconnects by itself) */
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
-  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; model?: string; mode?: string; prompt?: string }) =>
+  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
   /** `steer`: while Codex works, hand it the message now (Enter) instead of queueing it for after the turn (Tab) */
   send: (host: string, pane: string, text: string, requestId?: string, steer?: boolean) => request('POST', `${panePath(host, pane)}/send`, { text, requestId, ...(steer && { steer }) }, 310_000),

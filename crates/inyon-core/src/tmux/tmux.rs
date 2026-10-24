@@ -141,6 +141,8 @@ pub struct AgentProc {
     pub args: String,
     /// the pane's own process; equal to pid when the agent was started as the pane command
     pub pane_pid: f64,
+    /// the name of the custom agent this process is (Settings › Agents)
+    pub custom: Option<String>,
 }
 
 /// The last status line payload Claude wrote for a pane, with the account it was written under
@@ -318,13 +320,23 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         procs.insert(p.pid as i64, p);
     }
     let cwds = proc_cwds(section("CWD"));
-    let find_agent = |root: i64| -> Option<(&Proc, AgentKind)> {
+    let find_agent = |root: i64| -> Option<(&Proc, AgentKind, Option<String>)> {
         let mut queue = VecDeque::from([(root, 0)]);
         while let Some((pid, depth)) = queue.pop_front() {
             let p = procs.get(&pid);
             if let Some(p) = p {
+                // yours first: `claude --dangerously-skip-permissions` saved as "claude-yolo" is that
+                if let Some(c) = crate::agents::custom::detect(&p.comm, &p.args) {
+                    // a saved wrapper script stands for the agent it starts, whose process holds the
+                    // session (pid, folder, resume flag); the wrapper itself is the fallback
+                    let started = children.get(&pid).into_iter().flatten().filter_map(|c| procs.get(c)).find_map(|cp| detect_agent(&cp.comm, &cp.args).map(|k| (cp, k)));
+                    return Some(match started {
+                        Some((cp, kind)) => (cp, kind, Some(c.name)),
+                        None => (p, c.like, Some(c.name)),
+                    });
+                }
                 if let Some(kind) = detect_agent(&p.comm, &p.args) {
-                    return Some((p, kind));
+                    return Some((p, kind, None));
                 }
             }
             if depth < 4 {
@@ -435,11 +447,13 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
             dead: pdead == "1",
             agent: None,
         });
-        if let Some((cp, kind)) = find_agent(num(ppid) as i64) {
+        if let Some((cp, kind, custom)) = find_agent(num(ppid) as i64) {
             let resume = re!(r"(?:--resume|-r|resume)[ =]([0-9a-f]{8}-[0-9a-f-]{27})").captures(&cp.args).map(|c| c[1].to_owned());
             let cwd = cwds.get(&(cp.pid as i64)).cloned().unwrap_or_else(|| pcwd.to_owned());
-            res.agent_procs
-                .insert(pid.to_owned(), AgentProc { kind, pid: cp.pid, started_at: res.now - cp.etimes, cwd: Some(cwd), resume, args: cp.args.clone(), pane_pid: num(ppid) });
+            res.agent_procs.insert(
+                pid.to_owned(),
+                AgentProc { kind, pid: cp.pid, started_at: res.now - cp.etimes, cwd: Some(cwd), resume, args: cp.args.clone(), pane_pid: num(ppid), custom },
+            );
         }
     }
     // the "attached" count shouldn't include Inyon's own control-mode clients
@@ -783,6 +797,8 @@ pub async fn probe(host: &Host) -> Result<ProbeResult, String> {
     let t0 = now_ms();
     let r = host.exec(PROBE, ExecOptions::timeout(15000)).await.map_err(|e| e.message)?;
     let latency = now_ms().saturating_sub(t0) as f64;
+    // loads the custom agents for parse_probe, which reads only what's loaded
+    crate::agents::custom::list();
     parse_probe(&r.stdout, &r.stderr, r.code, latency)
 }
 
@@ -1041,6 +1057,24 @@ mod tests {
         assert_eq!(r.hook_panes["%1"].data["session_id"], "s");
         assert_eq!(r.compact_panes["%1"], 1990.0);
         assert_eq!((r.status_panes["%1"].account.as_deref(), r.status_panes["%1"].account_now.as_deref()), (Some("A"), None));
+        // a custom agent (Settings › Agents) is the agent it works like, under its own name
+        use crate::agents::custom::{set, CustomAgent};
+        set(vec![CustomAgent { id: "oc".into(), name: "OpenClaude".into(), command: "openclaude".into(), like: AgentKind::Claude }]);
+        let oc = parse_probe(&out.replace("/usr/bin/claude claude", "openclaude openclaude"), "", 0, 12.0).unwrap();
+        assert_eq!((oc.agent_procs["%1"].kind, oc.agent_procs["%1"].custom.as_deref()), (AgentKind::Claude, Some("OpenClaude")));
+        assert_eq!(r.agent_procs["%1"].custom, None);
+        // review: a saved wrapper that starts the agent without exec is followed to the agent
+        set(vec![CustomAgent { id: "w".into(), name: "Wrapped".into(), command: "run-claude".into(), like: AgentKind::Claude }]);
+        let wrapped = parse_probe(
+            &out.replace("  101   100   40 /usr/bin/claude claude", "  102   100   45 run-claude /bin/sh /home/u/bin/run-claude\n  101   102   40 /usr/bin/claude claude"),
+            "",
+            0,
+            12.0,
+        )
+        .unwrap();
+        let w = &wrapped.agent_procs["%1"];
+        assert_eq!((w.pid, w.kind, w.custom.as_deref(), w.resume.as_deref()), (101.0, AgentKind::Claude, Some("Wrapped"), Some("7409eef9-d507-4808-a592-0bfabe896e3a")));
+        set(vec![]);
         assert_eq!(parse_probe("oops\nfirst\nsecond", "", 1, 0.0), Err("first second".into()));
     }
 

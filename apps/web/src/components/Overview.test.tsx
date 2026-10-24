@@ -116,3 +116,15 @@ test('plan limits show with no session running, and a newer session reading wins
   expect(screen.getByText('55%')).toBeTruthy()
   expect(screen.queryByText('41%')).toBeNull()
 })
+
+test("a custom agent's card names it, with the logo of the agent it works like", async () => {
+  const yolo = host('box', { panes: [agentPane('%1', 'claude', { title: 'Fix login', agent: { kind: 'claude', custom: 'Claude YOLO', pid: 1, state: 'idle' } })] })
+  await render(
+    <MemoryRouter>
+      <SessionCard r={allPanes([yolo])[0]!} />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText('Claude YOLO')).toBeTruthy()
+  expect(screen.queryByText('Claude Code', { selector: 'span.truncate' })).toBeNull()
+  expect(screen.getByRole('img', { name: 'Claude Code' })).toBeTruthy()
+})

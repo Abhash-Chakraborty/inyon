@@ -34,7 +34,7 @@ export function paneTitle(r: PaneRef) {
   if (r.pane.agent && t && !/^(Claude Code|codex|opencode|gemini|agy|Antigravity)$/i.test(t) && t !== r.host.hostname) return t
   // a window tmux named after its shell (psmux on Windows names them "powershell") says nothing
   const auto = !r.window.name || r.window.name === r.pane.command || /^(powershell|pwsh|cmd|bash|zsh|sh|fish|node)$/i.test(r.window.name)
-  if (r.pane.agent && auto) return AGENTS[r.pane.agent.kind]?.name ?? r.pane.command
+  if (r.pane.agent && auto) return r.pane.agent.custom ?? AGENTS[r.pane.agent.kind]?.name ?? r.pane.command
   return r.window.name || r.pane.command
 }
 

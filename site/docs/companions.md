@@ -143,6 +143,7 @@ A companion never sees how the hub reaches a machine, folders, transcript paths,
 | Field | Holds |
 |---|---|
 | `kind` | `claude`, `codex`, `opencode`, `copilot`, `gemini` or `antigravity` |
+| `custom` | from 0.22, the name of [your own agent](agents.md#your-own-agents) when the pane runs one; `kind` is then the agent it works like |
 | `state` | `idle`, `working`, `waiting` or `unknown` |
 | `waitingFor` | a short line about the question, while `state` is `waiting` |
 | `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question. From 0.22 it's left out when `waitingFor` doesn't hold the whole question: a command or diff of more than one line, a Codex edit, an OpenCode permission, or a line cut at 200 characters. Answer those from `chat.screen`, which has the whole prompt |

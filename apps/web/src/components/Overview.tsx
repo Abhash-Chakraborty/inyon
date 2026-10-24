@@ -113,7 +113,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
-        <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{AGENTS[a.kind].name}</span>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{a.custom ?? AGENTS[a.kind].name}</span>
         <StatePill state={shownState(a, r.host)} title={a.background} />
         <span className="pointer-events-auto relative -my-1 -mr-1.5">
           <Menu

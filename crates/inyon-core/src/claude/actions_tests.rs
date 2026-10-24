@@ -46,7 +46,7 @@ fn pane(host: &str, panes: serde_json::Value) -> crate::hosts::registry::Rt {
 /// What the last probe found in a pane (`registry.agentProc`).
 fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, args: &str) {
     let mut procs = IndexMap::new();
-    procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: Some(cwd.into()), resume: None, args: args.into(), pane_pid: 0.0 });
+    procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: Some(cwd.into()), resume: None, args: args.into(), pane_pid: 0.0, custom: None });
     let probe = ProbeResult {
         hostname: "box".into(),
         home: "/home/u".into(),
@@ -329,6 +329,26 @@ fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
         let opts = LaunchOpts { agent: Some("nonsense".into()), ..Default::default() };
         assert_eq!(launch("local", &opts).await.unwrap_err().message, "Unknown agent");
         assert!(fake.cmds().is_empty());
+    });
+}
+
+#[test]
+fn a_custom_agent_starts_with_its_own_command_and_the_flags_of_the_agent_it_works_like() {
+    run(|| async {
+        use crate::agents::custom::{set, CustomAgent};
+        let fake = Fake::install(|_, cmd, _| if cmd.contains("command -v") { ok("claude\n") } else { ok("%5\n") });
+        pane("local", json!([]));
+        set(vec![CustomAgent { id: "yolo".into(), name: "Claude YOLO".into(), command: "claude --dangerously-skip-permissions".into(), like: AgentKind::Claude }]);
+        let opts = LaunchOpts { custom: Some("yolo".into()), agent: Some("codex".into()), model: Some("opus".into()), ..Default::default() };
+        assert_eq!(launch("local", &opts).await.unwrap(), "%5");
+        let cmds = fake.cmds();
+        assert!(cmds.iter().any(|c| c.contains("n='Claude YOLO'")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains("claude --dangerously-skip-permissions --model opus")), "{cmds:?}");
+        let gone = LaunchOpts { custom: Some("gone".into()), ..Default::default() };
+        let before = fake.cmds().len();
+        assert_eq!(launch("local", &gone).await.unwrap_err().message, "Unknown custom agent");
+        assert_eq!(fake.cmds().len(), before);
+        set(vec![]);
     });
 }
 

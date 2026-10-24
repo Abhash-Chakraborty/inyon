@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { AGENTS, type AgentKind, type HostConfig } from '@inyon/protocol'
-import { api } from '../lib/api.ts'
+import { api, type CustomAgent } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref } from '../lib/overview.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -202,6 +202,9 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
   const nav = useNavigate()
   const [host, setHost] = useState('')
   const [kind, setKind] = useState<Pick>('claude')
+  // one of your agents (Settings › Agents): `kind` is then the agent it works like
+  const [custom, setCustom] = useState('')
+  const [customs, setCustoms] = useState<CustomAgent[]>([])
   const [cwd, setCwd] = useState('~')
   const [session, setSession] = useState('')
   const [name, setName] = useState('')
@@ -226,6 +229,8 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
     setModel('')
     const inst = hosts.find((x) => x.config.id === first)?.agents ?? []
     setKind(inst.includes('claude') ? 'claude' : inst[0] ?? 'shell')
+    setCustom('')
+    api.settings().then((s) => setCustoms(s.customAgents ?? []), () => setCustoms([]))
   }, [open])
 
   // opened before the machines arrived (app starting, phone reconnecting): pick one once they do
@@ -238,6 +243,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
   }, [open, host, firstHost])
 
   const def = kind !== 'shell' ? AGENTS[kind] : undefined
+  const mine = customs.find((c) => c.id === custom)
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -245,6 +251,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
     try {
       const { pane } = await api.launch(host, {
         agent: kind,
+        custom: mine?.id,
         cwd,
         session: session || undefined,
         name: name || undefined,
@@ -274,7 +281,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           <span className="hidden truncate text-[12px] text-fg-3 sm:block">Opens in a new tmux {session ? 'window' : 'session'}</span>
           <Button className="ml-auto" variant="ghost" onClick={onClose}>Cancel</Button>
           <Button variant="primary" type="submit" form="new-form" loading={busy} disabled={!host}>
-            Start {def?.name ?? 'terminal'}
+            Start {mine?.name ?? def?.name ?? 'terminal'}
           </Button>
         </div>
       }
@@ -287,13 +294,28 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
               <button
                 key={k}
                 type="button"
-                onClick={() => setKind(k)}
-                className={clsx('flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors', kind === k ? 'border-fg bg-hover' : 'border-line hover:bg-hover')}
+                onClick={() => (setKind(k), setCustom(''))}
+                className={clsx('flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors', k === 'shell' && 'order-2', kind === k && !mine ? 'border-fg bg-hover' : 'border-line hover:bg-hover')}
               >
                 {k === 'shell' ? <AgentLogo size={26} /> : <AgentLogo kind={k} size={26} />}
                 <span className="min-w-0">
                   <span className="block truncate text-[13.5px] font-semibold">{k === 'shell' ? 'Terminal' : AGENTS[k].name}</span>
                   <span className="block truncate text-[12px] text-fg-3">{k === 'shell' ? 'Plain shell' : AGENTS[k].vendor}</span>
+                </span>
+              </button>
+            ))}
+            {customs.map((c) => (
+              <button
+                key={`custom-${c.id}`}
+                type="button"
+                title={c.command}
+                onClick={() => (setKind(c.like), setCustom(c.id))}
+                className={clsx('order-1 flex items-center gap-3 rounded-2xl border px-3 py-3 text-left transition-colors', custom === c.id ? 'border-fg bg-hover' : 'border-line hover:bg-hover')}
+              >
+                <AgentLogo kind={c.like} size={26} />
+                <span className="min-w-0">
+                  <span className="block truncate text-[13.5px] font-semibold">{c.name}</span>
+                  <span className="block truncate text-[12px] text-fg-3">Like {AGENTS[c.like].name}</span>
                 </span>
               </button>
             ))}
@@ -347,7 +369,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           </Field>
           {!session && (
             <Field label="Session name">
-              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={kind === 'shell' ? 'shell' : kind} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} placeholder={mine?.name ?? (kind === 'shell' ? 'shell' : kind)} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
             </Field>
           )}
         </div>

@@ -21,6 +21,8 @@ Under reduced motion (a system setting), nothing slides or moves; sheets and men
 
 Where each agent is installed (*On laptop, server*), the command that starts it, and whether its sessions open as a chat or in the terminal.
 
+From 0.22, **Add an agent** below them saves a command of your own with the agent it works like, and it shows up in **New session**. Right-click it, or use its **⋯** menu, to edit or remove it. See [Your own agents](agents.md#your-own-agents).
+
 ## Live numbers
 
 **Restart sessions that stop reporting.** If a session's live numbers stop updating, Inyon reconnects or restarts it by itself.
