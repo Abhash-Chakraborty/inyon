@@ -344,16 +344,22 @@ function ItemSheet({ host, item, onClose, onChanged }: { host: HostState; item: 
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<TempFile | null>(null)
   const path = item?.path
+  // each opening (and closing) has its own number, so a slow answer for an item opened before
+  // can't fill in the list of the one open now
+  const opening = useRef(0)
   const load = useCallback(async (p: string) => {
+    const mine = opening.current
     try {
       const r = await api.tempFiles(id, p)
+      if (mine !== opening.current) return
       setFiles({ files: r.files ?? [], truncated: !!r.truncated })
       setError('')
     } catch (e) {
-      setError((e as Error).message)
+      if (mine === opening.current) setError((e as Error).message)
     }
   }, [id])
   useEffect(() => {
+    opening.current++
     if (!item) return
     setShown(item)
     setFiles(null)

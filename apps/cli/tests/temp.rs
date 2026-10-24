@@ -25,8 +25,9 @@ impl Box {
         let dir = std::env::temp_dir().join(format!("inyon-temp-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        // the real path, so what the listing says compares equal (macOS's /tmp is a link)
-        let dir = fs::canonicalize(&dir).unwrap();
+        // the real path, so what the listing says compares equal (macOS's /tmp is a link, Windows
+        // may name it RUNNER~1), without the \\?\ Windows puts on it: no agent writes paths that way
+        let dir = PathBuf::from(inyon_cli::pages::strip_verbatim(&s(&fs::canonicalize(&dir).unwrap())));
         let b = Box { home: dir.join("home"), tmp: dir.join("tmp"), dir };
         fs::create_dir_all(&b.home).unwrap();
         fs::create_dir_all(&b.tmp).unwrap();
@@ -73,6 +74,21 @@ fn s(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
 
+/// Sets when `p` last changed. Windows wants the right to write attributes for that, which a
+/// plain open for reading doesn't ask for, and a folder only opens with backup semantics.
+fn touch(p: &Path, t: SystemTime) {
+    let mut o = fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_WRITE_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS
+        o.access_mode(0x100).custom_flags(0x0200_0000);
+    }
+    #[cfg(not(windows))]
+    o.read(true);
+    o.open(p).unwrap_or_else(|e| panic!("{}: {e}", p.display())).set_modified(t).unwrap();
+}
+
 /// Sets the time of `p` and everything in it `days` back, deepest first so folders keep theirs.
 fn age(p: &Path, days: u64) {
     let t = SystemTime::now() - Duration::from_secs(days * 86_400);
@@ -82,7 +98,7 @@ fn age(p: &Path, days: u64) {
         }
     }
     if !p.is_symlink() {
-        fs::File::open(p).unwrap().set_modified(t).unwrap();
+        touch(p, t);
     }
 }
 
@@ -100,7 +116,7 @@ fn filled(tag: &str) -> Box {
     for i in 0..6 {
         b.file(&session.join("images").join(format!("{i}.png")), &[i as u8; 10]);
         // apart in time, so newest first means something
-        fs::File::open(session.join("images").join(format!("{i}.png"))).unwrap().set_modified(SystemTime::now() - Duration::from_secs(600 - i * 60)).unwrap();
+        touch(&session.join("images").join(format!("{i}.png")), SystemTime::now() - Duration::from_secs(600 - i * 60));
     }
     b.file(&session.join("scratchpad").join("notes.md"), b"# notes\n");
     // a project whose folder is gone since
@@ -368,6 +384,27 @@ fn the_command_lists_shows_and_deletes() {
     let r: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!((o.status.code(), r["removed"].as_array().unwrap().len(), r["freed"].as_u64()), (Some(0), 2, Some(6)));
     assert!(!b.claude().join("loose.txt").exists());
+}
+
+#[test]
+fn a_folder_too_deep_to_read_through_counts_as_recent_and_clean_keeps_it() {
+    let b = filled("deep");
+    let deep = b.claude().join("deep");
+    let mut bottom = deep.clone();
+    for _ in 0..temp::DEPTH_MAX + 2 {
+        bottom = bottom.join("d");
+    }
+    let fresh = b.file(&bottom.join("fresh.txt"), b"still being written");
+    age(&deep, 10);
+    // everything the walk can reach is old; the one file past its depth was written just now
+    touch(&fresh, SystemTime::now());
+    let l = temp::list_from(&b.roots(), inyon_cli::state::now_ms());
+    let item = |name: &str| l.items.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("{name}"));
+    assert!(item("deep").recent, "a walk that stopped short called the folder old");
+    assert!(!item("shots").recent);
+    let (code, r) = b.json(&["temp", "clean", "--older-than", "7d", "--yes"]);
+    assert_eq!((code, r["removed"].as_array().unwrap().clone()), (0, vec![Value::from(s(&b.claude().join("shots")))]));
+    assert!(fresh.exists());
 }
 
 #[test]

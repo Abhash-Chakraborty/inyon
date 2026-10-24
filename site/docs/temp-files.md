@@ -14,7 +14,7 @@ Only folders that hold throwaway files. Each one is shown with its total size, a
 
 | Folder | What's in it |
 |---|---|
-| Claude Code temp files | `/tmp/claude-<uid>` on Linux and macOS (`$TMPDIR`, or `CLAUDE_CODE_TMPDIR` when set), `%TEMP%\claude-0` on Windows. One item per session, named after its project, such as `custom-tmux · 7409eef9`, with its pasted images, scratchpad and task output |
+| Claude Code temp files | `$TMPDIR/claude-<uid>` on Linux and macOS (`/tmp/claude-<uid>` when `TMPDIR` isn't set), `%TEMP%\claude-0` on Windows, or `claude-<uid>` inside `CLAUDE_CODE_TMPDIR` when that is set. One item per session, named after its project, such as `custom-tmux · 7409eef9`, with its pasted images, scratchpad and task output |
 | Claude Code pasted text | `~/.claude/paste-cache` |
 | Claude Code shell snapshots | `~/.claude/shell-snapshots` |
 | Inyon uploads | `~/.inyon/uploads`, one item per day (see [Settings](settings.md#uploads-and-clipboard) for how long they're kept) |
@@ -23,7 +23,7 @@ Only folders that hold throwaway files. Each one is shown with its total size, a
 
 Transcripts and history are never listed, so deleting here can't lose a conversation: `~/.claude/projects`, `~/.codex/sessions`, file history and Gemini CLI's saved chats stay out of reach.
 
-Each item shows its size, how long ago it changed and up to four of its newest images. An item marked **recent** changed in the last 30 minutes, so an agent may still be using it.
+Each item shows its size, how long ago it changed and up to four of its newest images. An item marked **recent** changed in the last 30 minutes, so an agent may still be using it. A folder Inyon couldn't read all the way through (one it isn't allowed into, or nested more than 64 folders deep) is marked recent too, since what it couldn't see may have changed.
 
 ## Look inside
 

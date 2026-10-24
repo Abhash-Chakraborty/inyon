@@ -76,6 +76,15 @@ fn paths_go_quoted_after_two_dashes_and_previews_stay_under_the_limit() {
                 format!("{INYON} show --json --max 8388608 -- '/tmp/claude-1000/a.png'"),
             ]
         );
+        // as the Bun hub: below 1 byte is 1 byte; 0, a fraction of a byte or not a number is the
+        // whole limit
+        for (max, sent) in [(-5.0, 1), (f64::NEG_INFINITY, 1), (0.5, PREVIEW_MAX), (0.0, PREVIEW_MAX), (f64::NAN, PREVIEW_MAX), (f64::INFINITY, PREVIEW_MAX)] {
+            temp_preview("box", "/tmp/claude-1000/a.png", Some(max)).await.unwrap();
+            let cmd = fake.cmds().pop().unwrap();
+            assert!(cmd.contains(&format!("--max {sent} ")), "{max} sent {cmd}");
+        }
+        // each well under the 120 s the server lets a quiet connection sit
+        assert!(fake.calls.borrow().iter().all(|c| c.timeout_ms == Some(WAIT)));
         assert_eq!(temp_files("box", "").await.unwrap_err().message, "Which item?");
     });
 }
@@ -89,6 +98,7 @@ fn deleting_sends_the_paths_on_stdin_and_returns_what_stayed() {
         assert_eq!(r, json!({ "v": 1, "ok": true, "removed": [], "freed": 0, "failed": [["/etc", "outside"]] }));
         let call = fake.calls.borrow()[0].clone();
         assert_eq!((call.cmd, call.input.as_deref()), (format!("{INYON} rm --stdin --json"), Some(r#"["/etc"]"#)));
+        assert_eq!(call.timeout_ms, Some(DELETE_WAIT));
         for bad in [None, Some(json!([])), Some(json!(["ok", 3])), Some(json!([""])), Some(json!("x"))] {
             assert_eq!(temp_delete("box", bad.as_ref()).await.unwrap_err().message, "Send the paths to delete");
         }

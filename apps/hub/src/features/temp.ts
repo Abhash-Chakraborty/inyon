@@ -22,6 +22,13 @@ if [ -z "$x" ] && [ -x "$HOME/.inyon/bin/inyon" ]; then x="$HOME/.inyon/bin/inyo
 /** The biggest image the app gets whole (as the CLI's own limit). */
 export const PREVIEW_MAX = 8 * 1024 * 1024
 
+/**
+ * How long the hub waits on the machine. Both stay under the server's 120 s idle limit, so a slow
+ * walk ends in a message the app can show rather than a dropped connection.
+ */
+export const WAIT = 60_000
+export const DELETE_WAIT = 100_000
+
 export const tooOld = (name: string) => `Update Inyon on ${name} to see its temp files`
 export const missing = (name: string) => `Install Inyon on ${name} to see its temp files`
 
@@ -36,7 +43,7 @@ function machine(hostId: string) {
 }
 
 /** Runs `inyon temp <args> --json` on the machine and reads its answer. */
-async function run(hostId: string, args: string, input?: string, timeoutMs = 60_000): Promise<Record<string, unknown>> {
+async function run(hostId: string, args: string, input?: string, timeoutMs = WAIT): Promise<Record<string, unknown>> {
   const { host, name } = machine(hostId)
   const r = await host.exec(`${INYON} ${args}`, { input, timeoutMs })
   return readAnswer(name, r)
@@ -86,7 +93,7 @@ export async function tempPreview(hostId: string, path: string, max = PREVIEW_MA
  */
 export async function tempDelete(hostId: string, paths: unknown) {
   if (!Array.isArray(paths) || !paths.length || !paths.every((p) => typeof p === 'string' && p)) throw new HttpError(400, 'Send the paths to delete')
-  const data = await run(hostId, 'rm --stdin --json', JSON.stringify(paths), 120_000)
+  const data = await run(hostId, 'rm --stdin --json', JSON.stringify(paths), DELETE_WAIT)
   // nothing deleted is still an answer: the app shows each path and why it stayed
   if (Array.isArray(data.failed)) return { ...data, ok: true }
   return refused(data)

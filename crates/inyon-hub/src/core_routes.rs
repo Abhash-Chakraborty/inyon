@@ -1068,6 +1068,12 @@ mod tests {
     }
 
     #[test]
+    fn the_hub_gives_up_on_a_machines_temp_files_before_the_idle_limit_drops_the_app() {
+        let idle = u64::try_from(crate::idle::IDLE.as_millis()).unwrap();
+        assert!(temp::WAIT < temp::DELETE_WAIT && temp::DELETE_WAIT < idle);
+    }
+
+    #[test]
     fn the_temp_routes_hand_the_machines_answer_on_with_the_right_status() {
         crate::test_util::block(async {
             let fake = Rc::new(Scripted { calls: RefCell::default(), answer: RefCell::default() });

@@ -21,6 +21,11 @@ if [ -z "$x" ] && [ -x "$HOME/.inyon/bin/inyon" ]; then x="$HOME/.inyon/bin/inyo
 /// The biggest image the app gets whole (as the CLI's own limit).
 pub const PREVIEW_MAX: u64 = 8 * 1024 * 1024;
 
+/// How long the hub waits on the machine, in ms. Both stay under the server's 120 s idle limit,
+/// so a slow walk ends in a message the app can show rather than a dropped connection.
+pub const WAIT: u64 = 60_000;
+pub const DELETE_WAIT: u64 = 100_000;
+
 pub fn too_old(name: &str) -> String {
     format!("Update Inyon on {name} to see its temp files")
 }
@@ -80,7 +85,7 @@ fn refused(data: Map<String, Value>) -> HubResult<Value> {
 
 /// Everything in the machine's temp folders, one item per session folder, upload day or loose file.
 pub async fn temp_list(host_id: &str) -> HubResult<Value> {
-    refused(run(host_id, "ls --json", None, 60_000).await?)
+    refused(run(host_id, "ls --json", None, WAIT).await?)
 }
 
 /// Every file inside one item, newest first.
@@ -88,7 +93,7 @@ pub async fn temp_files(host_id: &str, path: &str) -> HubResult<Value> {
     if path.is_empty() {
         return Err(http(400, "Which item?"));
     }
-    refused(run(host_id, &format!("files --json -- {}", shq(path)), None, 60_000).await?)
+    refused(run(host_id, &format!("files --json -- {}", shq(path)), None, WAIT).await?)
 }
 
 /// One file to look at: text, or an image as base64 up to `max` bytes.
@@ -96,11 +101,13 @@ pub async fn temp_preview(host_id: &str, path: &str, max: Option<f64>) -> HubRes
     if path.is_empty() {
         return Err(http(400, "Which file?"));
     }
-    let limit = match max {
-        Some(m) if m.is_finite() && m >= 1.0 => (m.floor() as u64).min(PREVIEW_MAX),
+    // as the Bun hub: nothing, 0 or not a number means the whole limit; anything else is kept
+    // between 1 byte and the limit
+    let limit = match max.map(f64::floor) {
+        Some(f) if f != 0.0 && !f.is_nan() => f.clamp(1.0, PREVIEW_MAX as f64) as u64,
         _ => PREVIEW_MAX,
     };
-    refused(run(host_id, &format!("show --json --max {limit} -- {}", shq(path)), None, 60_000).await?)
+    refused(run(host_id, &format!("show --json --max {limit} -- {}", shq(path)), None, WAIT).await?)
 }
 
 /// Deletes items for good. The paths go on stdin, so a long list fits where a command line
@@ -111,7 +118,7 @@ pub async fn temp_delete(host_id: &str, paths: Option<&Value>) -> HubResult<Valu
         _ => None,
     };
     let list = list.ok_or_else(|| http(400, "Send the paths to delete"))?;
-    let mut data = run(host_id, "rm --stdin --json", Some(json!(list).to_string()), 120_000).await?;
+    let mut data = run(host_id, "rm --stdin --json", Some(json!(list).to_string()), DELETE_WAIT).await?;
     // nothing deleted is still an answer: the app shows each path and why it stayed
     if matches!(data.get("failed"), Some(Value::Array(_))) {
         data.insert("ok".into(), json!(true));

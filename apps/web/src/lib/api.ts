@@ -300,6 +300,13 @@ export interface GitState {
 
 type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 
+/**
+ * How long the app waits for a machine's temp files. The hub gives up on the machine after 60 s
+ * (100 s for a delete) and says why, so these wait a little longer to get that answer.
+ */
+export const TEMP_WAIT = 70_000
+export const TEMP_DELETE_WAIT = 110_000
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -393,11 +400,11 @@ export const api = {
   readConfig: (id: string, path: string) => request<{ path: string; content: string }>('GET', `${h(id)}/config${qs({ path })}`),
   writeConfig: (id: string, path: string, content: string) => request('PUT', `${h(id)}/config`, { path, content }),
   // ---- temp files agents leave on a machine, through its `inyon temp` (walking gigabytes takes a while) ----
-  tempList: (id: string) => request<TempListing>('GET', `${h(id)}/temp`, undefined, 60_000),
-  tempFiles: (id: string, path: string) => request<{ path: string; files: TempFile[]; truncated: boolean }>('GET', `${h(id)}/temp/files${qs({ path })}`, undefined, 60_000),
+  tempList: (id: string) => request<TempListing>('GET', `${h(id)}/temp`, undefined, TEMP_WAIT),
+  tempFiles: (id: string, path: string) => request<{ path: string; files: TempFile[]; truncated: boolean }>('GET', `${h(id)}/temp/files${qs({ path })}`, undefined, TEMP_WAIT),
   /** `max`: the largest image sent whole; a bigger one comes back without its bytes */
-  tempPreview: (id: string, path: string, max?: number) => request<TempPreview>('GET', `${h(id)}/temp/preview${qs(max ? { path, max: String(max) } : { path })}`, undefined, 40_000),
-  tempDelete: (id: string, paths: string[]) => request<TempRemoved>('POST', `${h(id)}/temp/delete`, { paths }, 60_000),
+  tempPreview: (id: string, path: string, max?: number) => request<TempPreview>('GET', `${h(id)}/temp/preview${qs(max ? { path, max: String(max) } : { path })}`, undefined, TEMP_WAIT),
+  tempDelete: (id: string, paths: string[]) => request<TempRemoved>('POST', `${h(id)}/temp/delete`, { paths }, TEMP_DELETE_WAIT),
   subagents: (id: string, transcript: string) =>
     request<{ agentId: string; toolUseId?: string; type?: string; description?: string; path: string }[]>('GET', `${h(id)}/subagents${qs({ transcript })}`),
   transcript: (id: string, path: string) => request<ChatItem[]>('GET', `${h(id)}/transcript${qs({ path })}`),

@@ -182,6 +182,25 @@ describe('an item and its files', () => {
   })
 })
 
+test('a slow answer for an item opened before never fills in the one open now', async () => {
+  let answerA: (v: unknown) => void = () => {}
+  const file = (p: string) => ({ path: `${p}/x.txt`, rel: `${p.slice(-8)}.txt`, size: 1, modified: NOW, kind: 'text' as const })
+  api.tempFiles.mockImplementation(((_h: string, p: string) => (p === A.path ? new Promise((r) => (answerA = r)) : Promise.resolve({ path: p, truncated: false, files: [file(p)] }))) as any)
+  await at('/temp/box')
+  fireEvent.click(screen.getByText(A.name))
+  await flush()
+  // closed before A answers, then B opened
+  fireEvent.keyDown(window, { key: 'Escape' })
+  await flush()
+  fireEvent.click(screen.getByText(B.name))
+  await flush()
+  expect(screen.getByText('22222222.txt')).toBeTruthy()
+  await act(async () => answerA({ path: A.path, truncated: false, files: [file(A.path)] }))
+  await flush()
+  expect(screen.queryByText('11111111.txt')).toBeNull()
+  expect(screen.getByText('22222222.txt')).toBeTruthy()
+})
+
 describe('where it is reached', () => {
   test('the machine page has a Temp files tab that lists them', async () => {
     await at('/machines/box')

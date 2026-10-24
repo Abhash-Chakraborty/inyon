@@ -1,5 +1,8 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test'
 import { realApi as api, realApiModule } from '../test/fakes.ts'
+
+// bun keeps a spy in place for every test file after this one
+afterAll(() => mock.restore())
 
 // The real request code (the rest of the suite gets a fake api), against a fake fetch.
 const { ApiError, isTransient, paneSlug, paneFromSlug } = realApiModule
@@ -95,6 +98,25 @@ describe('temp files', () => {
     expect(await api.tempDelete('box', ['/tmp/a', '/tmp/b'])).toEqual({ removed: ['/tmp/a'], freed: 10, failed: [] })
     expect([sent().method, sent().url]).toEqual(['POST', 'http://localhost:5173/api/hosts/box/temp/delete'])
     expect(await json()).toEqual({ paths: ['/tmp/a', '/tmp/b'] })
+  })
+
+  test("the app waits longer than the hub waits on the machine, and less than the server's idle limit", async () => {
+    const { TEMP_WAIT, TEMP_DELETE_WAIT } = realApiModule
+    // the hub gives up on the machine after 60 s (100 s for a delete); the server drops a quiet
+    // connection after 120 s
+    expect(TEMP_WAIT).toBeGreaterThan(60_000)
+    expect(TEMP_DELETE_WAIT).toBeGreaterThan(100_000)
+    expect(TEMP_DELETE_WAIT).toBeLessThan(120_000)
+    const timeout = spyOn(AbortSignal, 'timeout')
+    try {
+      await api.tempList('box')
+      await api.tempFiles('box', '/tmp/a')
+      await api.tempPreview('box', '/tmp/a')
+      await api.tempDelete('box', ['/tmp/a'])
+      expect(timeout.mock.calls.map((c) => c[0])).toEqual([TEMP_WAIT, TEMP_WAIT, TEMP_WAIT, TEMP_DELETE_WAIT])
+    } finally {
+      timeout.mockRestore()
+    }
   })
 
   test("a machine whose inyon is too old fails with the hub's words", async () => {

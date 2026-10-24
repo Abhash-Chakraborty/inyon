@@ -21,6 +21,7 @@ use crate::commands::Outcome;
 use crate::paths;
 
 /// Changed this recently, an agent may still be using it: the app asks twice, `clean` skips it.
+/// An item that couldn't be read all the way through counts as recent too.
 pub const RECENT_MS: f64 = 30.0 * 60_000.0;
 /// The most files `files` lists for one item.
 pub const FILES_MAX: usize = 5000;
@@ -32,7 +33,7 @@ pub const IMAGE_MAX: u64 = 8 * 1024 * 1024;
 const THUMBS: usize = 4;
 /// Deeper than this, a folder isn't walked any further (a link loop can't happen, links aren't
 /// followed, but a runaway tree can).
-const DEPTH_MAX: usize = 64;
+pub const DEPTH_MAX: usize = 64;
 
 pub const NO_PATH: &str = "Give a path from inyon temp ls";
 pub const NOT_ABSOLUTE: &str = "Give the full path, as inyon temp ls shows it";
@@ -263,7 +264,8 @@ fn item(r: &Root, path: &Path, name: String, now_ms: f64) -> Item {
         size: m.size,
         files: m.files,
         modified: m.modified,
-        recent: now_ms - m.modified < RECENT_MS,
+        // what couldn't be read may have changed a moment ago: never call that old
+        recent: !m.complete || now_ms - m.modified < RECENT_MS,
         images: m.images.into_iter().map(|(_, p)| p).collect(),
     }
 }
@@ -288,6 +290,8 @@ struct Measure {
     modified: f64,
     /// (mtime, path), newest first
     images: Vec<(f64, String)>,
+    /// everything in it was read: no folder too deep or unreadable, nothing gone mid-walk
+    complete: bool,
 }
 
 /// What a file adds to an item: a link counts as nothing (its own length is the target's name).
@@ -304,6 +308,7 @@ fn measure(path: &Path) -> Measure {
     let mut m = Measure::default();
     let Ok(meta) = fs::symlink_metadata(path) else { return m };
     m.modified = mtime_ms(&meta);
+    m.complete = true;
     if !meta.is_dir() {
         m.size = disk_len(&meta);
         m.files = 1;
@@ -313,7 +318,7 @@ fn measure(path: &Path) -> Measure {
         return m;
     }
     m.dir = true;
-    walk(path, &mut |p, meta| {
+    m.complete = walk(path, &mut |p, meta| {
         let t = mtime_ms(meta);
         m.modified = m.modified.max(t);
         if !meta.is_dir() {
@@ -329,20 +334,34 @@ fn measure(path: &Path) -> Measure {
     m
 }
 
-/// Calls `f` for everything under `dir` (not `dir` itself), never following a link.
-fn walk(dir: &Path, f: &mut dyn FnMut(&Path, &fs::Metadata)) {
+/// Calls `f` for everything under `dir` (not `dir` itself), never following a link. False when
+/// something was left out: a folder it couldn't read, an entry it couldn't look at, or a folder
+/// deeper than DEPTH_MAX.
+fn walk(dir: &Path, f: &mut dyn FnMut(&Path, &fs::Metadata)) -> bool {
+    let mut complete = true;
     let mut stack = vec![(dir.to_path_buf(), 0usize)];
     while let Some((d, depth)) = stack.pop() {
-        let Ok(rd) = fs::read_dir(&d) else { continue };
-        for e in rd.flatten() {
-            let p = e.path();
-            let Ok(meta) = fs::symlink_metadata(&p) else { continue };
+        let Ok(rd) = fs::read_dir(&d) else {
+            complete = false;
+            continue;
+        };
+        for e in rd {
+            let found = e.ok().map(|e| e.path()).and_then(|p| fs::symlink_metadata(&p).ok().map(|m| (p, m)));
+            let Some((p, meta)) = found else {
+                complete = false;
+                continue;
+            };
             f(&p, &meta);
-            if meta.is_dir() && depth < DEPTH_MAX {
-                stack.push((p, depth + 1));
+            if meta.is_dir() {
+                if depth < DEPTH_MAX {
+                    stack.push((p, depth + 1));
+                } else {
+                    complete = false;
+                }
             }
         }
     }
+    complete
 }
 
 const IMAGE_EXT: [&str; 9] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "svg"];

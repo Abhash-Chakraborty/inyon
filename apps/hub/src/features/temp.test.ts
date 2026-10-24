@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Host, type ExecOptions } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
-import { INYON, missing, readAnswer, tempDelete, tempFiles, tempList, tempPreview, tooOld } from './temp.ts'
+import { DELETE_WAIT, INYON, WAIT, missing, readAnswer, tempDelete, tempFiles, tempList, tempPreview, tooOld } from './temp.ts'
 
 // bun keeps a spy in place for every test file after this one
 afterAll(() => mock.restore())
@@ -13,11 +13,11 @@ const host = new Host({ id: 'box', name: 'Studio', kind: 'node' } as any)
 let connected = true
 spyOn(registry, 'get').mockImplementation(((id: string) => (id === 'box' ? { host, probe: connected ? { home: '/home/me' } : undefined, state: { status: 'online' } } : undefined)) as any)
 
-type Call = { cmd: string; input?: string }
+type Call = { cmd: string; input?: string; timeoutMs?: number }
 let calls: Call[] = []
 let answer: (cmd: string) => { code: number; stdout: string; stderr: string } = () => ({ code: 0, stdout: '{}', stderr: '' })
 spyOn(host, 'exec').mockImplementation(async (cmd: string, opts: ExecOptions = {}) => {
-  calls.push({ cmd, input: typeof opts.input === 'string' ? opts.input : undefined })
+  calls.push({ cmd, input: typeof opts.input === 'string' ? opts.input : undefined, timeoutMs: opts.timeoutMs })
   return answer(cmd)
 })
 beforeEach(() => {
@@ -43,15 +43,33 @@ test('paths go to the machine quoted, after --', async () => {
   // never more than the CLI's own limit, whatever is asked
   await tempPreview('box', '/tmp/claude-1000/a.png', 1e12)
   expect(calls[2].cmd).toContain('--max 8388608 ')
+  // below 1 byte is 1 byte; nothing, 0 or a fraction of a byte is the whole limit (as the Rust hub)
+  for (const [max, sent] of [[-5, 1], [-Infinity, 1], [0.5, 8388608], [0, 8388608], [Number.NaN, 8388608], [undefined, 8388608]] as const) {
+    await tempPreview('box', '/tmp/claude-1000/a.png', max)
+    expect(calls.at(-1)!.cmd).toContain(`--max ${sent} `)
+  }
   await expect(tempFiles('box', '')).rejects.toThrow('Which item?')
 })
 
 test('deleting sends the paths on stdin and returns what stayed', async () => {
   answer = () => ({ code: 1, stdout: JSON.stringify({ v: 1, ok: false, removed: [], freed: 0, failed: [['/etc', 'That isn’t inside one of the temp folders Inyon lists']] }), stderr: '' })
   const r = await tempDelete('box', ['/etc'])
-  expect(calls[0]).toEqual({ cmd: `${INYON} rm --stdin --json`, input: '["/etc"]' })
+  expect(calls[0]).toEqual({ cmd: `${INYON} rm --stdin --json`, input: '["/etc"]', timeoutMs: DELETE_WAIT })
   expect(r).toMatchObject({ ok: true, removed: [], failed: [['/etc', 'That isn’t inside one of the temp folders Inyon lists']] })
   for (const bad of [undefined, [], ['ok', 3], [''], 'x']) await expect(tempDelete('box', bad)).rejects.toThrow('Send the paths to delete')
+})
+
+test("the hub gives up on the machine before the server drops the app's quiet connection", async () => {
+  // a request that outlasts Bun's idleTimeout is cut off with no answer at all
+  const idle = [...readFileSync(join(import.meta.dir, '../index.ts'), 'utf8').matchAll(/idleTimeout: (\d+)/g)].map((m) => Number(m[1]) * 1000)
+  expect(idle.length).toBeGreaterThan(0)
+  for (const limit of idle) expect(DELETE_WAIT).toBeLessThan(limit)
+  expect(WAIT).toBeLessThan(DELETE_WAIT)
+  answer = () => ({ code: 0, stdout: '{"v":1,"ok":true}', stderr: '' })
+  await tempList('box')
+  await tempFiles('box', '/tmp/a')
+  await tempPreview('box', '/tmp/a')
+  expect(calls.map((c) => c.timeoutMs)).toEqual([WAIT, WAIT, WAIT])
 })
 
 test('an inyon too old for temp, or none at all, gets a message that says what to do', () => {

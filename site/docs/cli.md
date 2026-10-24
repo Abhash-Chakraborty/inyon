@@ -312,7 +312,7 @@ The biggest items follow, with their size, age and path.
 | `inyon temp rm <path>…` | Deletes items or files for good and says how much it freed. Exit code 1 if anything stayed |
 | `inyon temp clean --older-than <age>` | Deletes every item older than `7d`, `24h`, `30m` or `2w`. It lists them and asks first; `--yes` skips the question, and without a terminal nothing is deleted unless you pass it |
 
-`rm` and `clean` delete only what's inside those folders, never a folder itself, and refuse a path with `..` in it or one that leads out through a symlink. A symlink is deleted as a link. Items changed in the last 30 minutes are left alone by `clean`, since an agent may still be using them.
+`rm` and `clean` delete only what's inside those folders, never a folder itself, and refuse a path with `..` in it or one that leads out through a symlink. A symlink is deleted as a link. Items changed in the last 30 minutes are left alone by `clean`, since an agent may still be using them, and so are folders it couldn't read all the way through.
 
 ## JSON output
 
