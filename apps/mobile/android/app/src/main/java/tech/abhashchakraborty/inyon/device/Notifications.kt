@@ -20,6 +20,9 @@ import tech.abhashchakraborty.inyon.R
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
 
+/** An answer a question's notification offers: the agent's option number and its label. */
+internal data class Choice(val n: Int, val label: String)
+
 /**
  * Notification channels and everything the app posts. Every notification carries the Inyon mark
  * (the status-bar glyph, and the full logo inside) and buttons for what you'd do next; each session
@@ -142,6 +145,34 @@ internal object Notifications {
     private fun NotificationCompat.Builder.button(label: String, intent: PendingIntent) =
         addAction(NotificationCompat.Action.Builder(0, label, intent).build())
 
+    /** Whether choosing `label` turns something down, which needs no unlock. */
+    fun declines(label: String): Boolean = DECLINE.containsMatchIn(label.trim())
+
+    private val DECLINE = Regex("^(no|deny|reject|decline|cancel|skip|stop|don'?t|do not)\\b", RegexOption.IGNORE_CASE)
+
+    /** The buttons a question gets: one per answer, for one to three answers; none otherwise. */
+    fun answerButtons(choices: List<Choice>): List<Pair<Choice, Boolean>> =
+        if (choices.size in 1..3) choices.map { it to !declines(it.label) } else emptyList()
+
+    /** The in-app path of a session, as the web app writes it. */
+    fun sessionHref(host: String, pane: String): String = "/m/${android.net.Uri.encode(host)}/p/${pane.removePrefix("%")}"
+
+    /**
+     * A button that answers the question in place. One that approves something runs it on the
+     * computer, so on the lock screen it waits for a fingerprint or the PIN first.
+     */
+    private fun answerAction(ctx: Context, c: Choice, unlock: Boolean, host: String, pane: String, tag: String, requestCode: Int): NotificationCompat.Action {
+        val intent = Intent(ctx, NotificationActions::class.java)
+            .setAction(NotificationActions.ANSWER)
+            .putExtra(NotificationActions.EXTRA_TAG, tag)
+            .putExtra(NotificationActions.EXTRA_HOST, host)
+            .putExtra(NotificationActions.EXTRA_PANE, pane)
+            .putExtra(NotificationActions.EXTRA_OPTION, c.n)
+            .putExtra(NotificationActions.EXTRA_LABEL, c.label)
+        val pi = PendingIntent.getBroadcast(ctx, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return NotificationCompat.Action.Builder(0, c.label, pi).setAuthenticationRequired(unlock).build()
+    }
+
     fun keepAlive(ctx: Context, title: String, text: String): Notification {
         ensureChannels(ctx)
         return NotificationCompat.Builder(ctx, CHANNEL_CONNECTION)
@@ -176,7 +207,7 @@ internal object Notifications {
      * this one. `kind` is waiting, done, offline or online and picks the channel and the buttons.
      * False when notifications are off.
      */
-    fun post(ctx: Context, title: String, body: String, href: String?, tag: String?, kind: String?): Boolean {
+    fun post(ctx: Context, title: String, body: String, href: String?, tag: String?, kind: String?, host: String? = null, pane: String? = null, choices: List<Choice> = emptyList()): Boolean {
         if (!canPost(ctx)) return false
         ensureChannels(ctx)
         val waiting = kind == "waiting" || kind == "permission"
@@ -202,9 +233,15 @@ internal object Notifications {
         if (machine) {
             b.button("Open computers", openApp(ctx, MACHINES_HREF, requestCode + 1, tag))
         } else {
-            b.button("Open", openApp(ctx, href, requestCode + 1, tag))
-            // tagged ones only: an untagged notification has an id the button couldn't know
-            if (waiting && tag != null) b.button("Mark read", broadcast(ctx, NotificationActions.MARK_READ, requestCode + 2, tag))
+            val answers = if (waiting && tag != null && host != null && pane != null) answerButtons(choices) else emptyList()
+            if (answers.isNotEmpty()) {
+                // Android shows three buttons at most: the answers take them, and a tap still opens the session
+                answers.forEachIndexed { i, (c, unlock) -> b.addAction(answerAction(ctx, c, unlock, host!!, pane!!, tag!!, requestCode + 1 + i)) }
+            } else {
+                b.button("Open", openApp(ctx, href, requestCode + 1, tag))
+                // tagged ones only: an untagged notification has an id the button couldn't know
+                if (waiting && tag != null) b.button("Mark read", broadcast(ctx, NotificationActions.MARK_READ, requestCode + 2, tag))
+            }
         }
         return try {
             NotificationManagerCompat.from(ctx).notify(tag, id, b.build())
@@ -213,6 +250,27 @@ internal object Notifications {
         } catch (_: SecurityException) {
             // permission revoked between the check and the call
             false
+        }
+    }
+
+    /** A session's notification while its answer is on the way: no buttons, no sound. */
+    fun answering(ctx: Context, tag: String, title: String, text: String, href: String) {
+        if (!canPost(ctx)) return
+        val b = NotificationCompat.Builder(ctx, CHANNEL_ATTENTION)
+            .setSmallIcon(R.drawable.ic_stat_inyon)
+            .setColor(ACCENT)
+            .setLargeIcon(logo(ctx))
+            .setContentTitle(title)
+            .setContentText(text)
+            .setContentIntent(openApp(ctx, href, tag.hashCode() * 4, tag))
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setGroup(GROUP)
+        try {
+            NotificationManagerCompat.from(ctx).notify(tag, EVENT_ID, b.build())
+        } catch (_: SecurityException) {
+            // permission revoked between the check and the call
         }
     }
 
@@ -263,6 +321,20 @@ class NotificationActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             MARK_READ -> intent.getStringExtra(EXTRA_TAG)?.let { Notifications.clear(context, it) }
+            ANSWER -> {
+                val tag = intent.getStringExtra(EXTRA_TAG) ?: return
+                val host = intent.getStringExtra(EXTRA_HOST) ?: return
+                val pane = intent.getStringExtra(EXTRA_PANE) ?: return
+                val label = intent.getStringExtra(EXTRA_LABEL) ?: return
+                val option = intent.getIntExtra(EXTRA_OPTION, -1)
+                val href = Notifications.sessionHref(host, pane)
+                // the web app sends it, and takes the notification away once the agent has it
+                if (InyonDevicePlugin.answerFromNotification(host, pane, option, label, tag)) {
+                    Notifications.answering(context, tag, "Answering “$label”…", "Inyon is sending your answer.", href)
+                } else {
+                    Notifications.answering(context, tag, "Open Inyon to answer", "Inyon wasn't running, so “$label” wasn't sent.", href)
+                }
+            }
             STOP_KEEP_ALIVE -> {
                 context.stopService(Intent(context, KeepAliveService::class.java))
                 InyonDevicePlugin.keepAliveEnded("stopped")
@@ -272,6 +344,11 @@ class NotificationActions : BroadcastReceiver() {
 
     companion object {
         const val MARK_READ = "tech.abhashchakraborty.inyon.action.MARK_READ"
+        const val ANSWER = "tech.abhashchakraborty.inyon.action.ANSWER"
+        const val EXTRA_HOST = "host"
+        const val EXTRA_PANE = "pane"
+        const val EXTRA_OPTION = "option"
+        const val EXTRA_LABEL = "label"
         const val STOP_KEEP_ALIVE = "tech.abhashchakraborty.inyon.action.STOP_KEEP_ALIVE"
         const val EXTRA_TAG = "tag"
     }

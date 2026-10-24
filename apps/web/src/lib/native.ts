@@ -86,6 +86,8 @@ export function installNative() {
     .then((r: { isolated?: boolean } | undefined) => setIsolated(r?.isolated === true))
     .catch(() => setIsolated(false))
   device?.addListener('pushOpened', ({ href }: { href?: string }) => href && go(href))
+  // an answer tapped on a notification, sent from here
+  device?.addListener('notificationAnswer', (a: NotificationAnswer) => void import('./notifyAnswer.ts').then(({ answerFromNotification }) => answerFromNotification(a)))
   device
     ?.takeLaunchHref?.()
     .then((r: { href?: string | null } | undefined) => r?.href && go(r.href))
@@ -109,16 +111,32 @@ export function nativeTheme(theme: 'light' | 'dark') {
   plugin('StatusBar')?.setStyle({ style: theme === 'dark' ? 'DARK' : 'LIGHT' }).catch(() => {})
 }
 
+/** An answer tapped on a notification's button. */
+export interface NotificationAnswer {
+  host: string
+  pane: string
+  option: number
+  label: string
+  tag: string
+}
+
+/** A question's answers, offered as the notification's buttons (one to three). */
+export interface NotifyAnswers {
+  host: string
+  pane: string
+  options: { n: number; label: string }[]
+}
+
 /**
  * A notification from the Android app, with Inyon's logo and buttons that fit `kind` (waiting,
  * done, offline, online). `tag` names the session or machine: its next notification replaces this
  * one, and opening it clears it. False where the app can't post notifications itself.
  */
-export async function nativeNotify(title: string, body: string, href: string, tag?: string, kind?: string) {
+export async function nativeNotify(title: string, body: string, href: string, tag?: string, kind?: string, answers?: NotifyAnswers) {
   const device = plugin('InyonDevice')
   if (typeof device?.postNotification !== 'function') return false
   try {
-    const r = await device.postNotification({ title, body, href, tag, kind })
+    const r = await device.postNotification({ title, body, href, tag, kind, ...answers })
     return r?.posted !== false
   } catch {
     return false

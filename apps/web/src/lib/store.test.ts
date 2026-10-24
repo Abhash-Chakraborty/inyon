@@ -1,6 +1,6 @@
 import { describe, expect, jest, setSystemTime, test, afterEach } from 'bun:test'
 import type { ChatItem } from '@inyon/protocol'
-import { hydrateChat, notifyTag, patchChat, PENDING_MS, rememberSources, useStore, type PendingMessage } from './store.ts'
+import { ANSWERS_WAIT_MS, hydrateChat, notifyTag, patchChat, PENDING_MS, rememberSources, useStore, type PendingMessage } from './store.ts'
 import { clearNativeNotification } from './native.ts'
 import { closeChat, emit } from '../test/fakes.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
@@ -246,13 +246,48 @@ describe('notify', () => {
     try {
       note('waiting')
       emit({ t: 'notify', host: 'box', pane: '', kind: 'offline', title: 'box is offline', body: 'b' })
-      await Promise.resolve()
+      // a question's notification waits a moment for its answers
+      await new Promise((r) => setTimeout(r, ANSWERS_WAIT_MS + 50))
       expect(posted).toEqual([
-        { title: 'Claude needs you', body: 'b', href: '/m/box/p/3', tag: 'box:%3', kind: 'waiting' },
         { title: 'box is offline', body: 'b', href: '/machines/box', tag: 'machine:box', kind: 'offline' },
+        { title: 'Claude needs you', body: 'b', href: '/m/box/p/3', tag: 'box:%3', kind: 'waiting' },
       ])
       clearNativeNotification(notifyTag('box', '%3'))
       expect(cleared).toEqual(['box:%3'])
+    } finally {
+      delete (window as any).Capacitor
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+  })
+
+  test("a question's notification offers its answers as buttons: one to three, and none once it's answered", async () => {
+    const posted: any[] = []
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: { InyonDevice: { postNotification: async (o: any) => void posted.push(o), clearNotification: async () => {} } },
+    }
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    const asks = (labels: string[]) =>
+      host('box', { panes: [agentPane('%3', 'claude', { agent: { kind: 'claude', pid: 1, state: 'waiting', waitingFor: 'Run git push?', options: labels.map((label, i) => ({ n: i + 1, label })) } })] })
+    const settle = () => new Promise((r) => setTimeout(r, ANSWERS_WAIT_MS + 50))
+    try {
+      // the overview lands after the notice, as the hub sends them
+      note('waiting')
+      emit({ t: 'overview', hosts: [asks(['Yes', "Yes, and don't ask again", 'No'])] })
+      await settle()
+      expect(posted.at(-1)).toMatchObject({ tag: 'box:%3', kind: 'waiting', host: 'box', pane: '%3', options: [{ n: 1, label: 'Yes' }, { n: 2, label: "Yes, and don't ask again" }, { n: 3, label: 'No' }] })
+      // four answers don't fit: just Open
+      note('waiting')
+      emit({ t: 'overview', hosts: [asks(['A', 'B', 'C', 'D'])] })
+      await settle()
+      expect(posted.at(-1).options).toBeUndefined()
+      // answered on the computer before the notification went up: none at all
+      const before = posted.length
+      note('waiting')
+      emit({ t: 'overview', hosts: [host('box', { panes: [agentPane('%3', 'claude', { agent: { kind: 'claude', pid: 1, state: 'working' } })] })] })
+      await settle()
+      expect(posted.length).toBe(before)
     } finally {
       delete (window as any).Capacitor
       Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
