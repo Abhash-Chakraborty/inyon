@@ -13,7 +13,7 @@ use futures_util::future::join_all;
 use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{
     agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption,
-    RateWindow, ScreenState, SessionInfo, TmuxState, WindowInfo,
+    RateWindow, ScreenPrompt, ScreenState, SessionInfo, TmuxState, WindowInfo,
 };
 use serde_json::Value;
 
@@ -40,7 +40,7 @@ use crate::agents::status::claude_status;
 use crate::claude::agent_hooks::{install_agent_hooks, HOOKED_AGENTS};
 use crate::claude::chat_cache::prune_chats;
 use crate::claude::driving::is_driving;
-use crate::claude::screen::{parse_screen, prompt_summary};
+use crate::claude::screen::{parse_screen, prompt_summary, prompt_whole};
 use crate::claude::transcript_tail::until_stdin_closes;
 use crate::clock::now_ms;
 use crate::config::{load_hosts, load_settings, save_hosts};
@@ -1959,11 +1959,17 @@ fn apply_screen(p: &mut PaneInfo, mut sc: ScreenState, host: &Host, lines: &[Str
         }
         return;
     };
-    if !prompt.multi && prompt.tabs.as_ref().is_none_or(Vec::is_empty) && prompt.input.is_none() {
-        info.options =
-            Some(prompt.options.iter().filter(|o| Some(o.n) != prompt.free_text_option).take(4).map(|o| QuickOption { n: o.n as u32, label: o.label.clone() }).collect());
-    }
+    info.options = quick_options(prompt);
     info.waiting_for = Some(prompt_summary(prompt));
+}
+
+/// The answers the overview offers beside its one line (single-choice prompts only, up to four):
+/// none when that line doesn't hold the whole question (`prompt_whole`).
+pub fn quick_options(prompt: &ScreenPrompt) -> Option<Vec<QuickOption>> {
+    if prompt.multi || prompt.tabs.as_ref().is_some_and(|t| !t.is_empty()) || prompt.input.is_some() || !prompt_whole(prompt) {
+        return None;
+    }
+    Some(prompt.options.iter().filter(|o| Some(o.n) != prompt.free_text_option).take(4).map(|o| QuickOption { n: o.n as u32, label: o.label.clone() }).collect())
 }
 
 /// A host's settings as the browser sees them: the pairing token's hash stays on the hub.
@@ -2049,9 +2055,10 @@ async fn apply_open_code_live(host: &Host, mut pane: PaneInfo, sc: Option<&Scree
         // its subagents' work counts as background, like a shell the footer lists
         info.background = live.background.clone();
         if let Some(perm) = &live.permission {
+            // only the permission's kind ("bash"), not what it would allow: no quick answers, as
+            // for any question the one line doesn't hold (prompt_whole)
             info.waiting_for = Some(Some(perm).at("permission").filter(|v| !v.is_null()).map_or_else(|| "Permission requested".to_owned(), json::value_string));
-            info.options =
-                Some(vec![QuickOption { n: 1, label: "Allow once".into() }, QuickOption { n: 2, label: "Always allow".into() }, QuickOption { n: 3, label: "Reject".into() }]);
+            info.options = None;
         }
     }
     let needs_id = pane.agent.as_ref().and_then(|a| a.status.as_ref()).is_some_and(|s| s.model_id.is_none());

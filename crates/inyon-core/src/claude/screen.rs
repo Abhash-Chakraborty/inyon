@@ -731,6 +731,37 @@ pub fn prompt_summary(prompt: &ScreenPrompt) -> String {
     question.or(title).unwrap_or("Needs your input").to_owned()
 }
 
+/// Whether `prompt_summary`'s one line holds everything an answer agrees to. Quick answers (the
+/// overview's options, which companion apps and the phone's notifications offer beside that line)
+/// are given only then; otherwise the question is answered in the session, where it shows whole. Not whole: a
+/// line cut at 200 characters, a framed command or diff of more than one line (a heredoc, a
+/// multi-line script), a Codex command that runs on below its `$` line, and Codex's edits, whose
+/// changes the line doesn't show.
+pub fn prompt_whole(prompt: &ScreenPrompt) -> bool {
+    if prompt_summary(prompt).len16() >= 200 {
+        return false;
+    }
+    let raw: Vec<&str> = prompt.body.iter().map(|l| l.jtrim()).collect();
+    let body: Vec<&str> = raw.iter().copied().filter(|l| !l.is_empty() && *l != "╌" && !l.starts_with("Tip:")).collect();
+    if let Some(q) = body.iter().find(|l| l.ends_with('?')) {
+        if re!(r"run the following command\?$", "i").is_match(q) {
+            if let Some(i) = body.iter().position(|l| re!(r"^\$ \S").is_match(l)) {
+                return body.get(i + 1).is_none_or(|l| re!(r"^[A-Z][a-z]+:").is_match(l) || l.ends_with('?'));
+            }
+        }
+        if re!(r"make the following edits\?$", "i").is_match(q) {
+            return false;
+        }
+    }
+    match raw.iter().position(|l| *l == "╌") {
+        Some(s) if !body.is_empty() => {
+            let end = raw[s + 1..].iter().position(|l| *l == "╌").map_or(raw.len(), |e| s + 1 + e);
+            raw[s + 1..end].iter().filter(|l| !l.is_empty()).count() == 1
+        }
+        _ => true,
+    }
+}
+
 /// a "│ " gutter Claude draws down the left of a framed command (psmux, newer Claude Code)
 macro_rules! GUTTER {
     () => {

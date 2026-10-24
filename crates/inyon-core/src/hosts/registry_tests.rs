@@ -727,3 +727,13 @@ fn the_alert_for_a_turn_that_stopped_on_an_error_says_so_instead_of_finished() {
         off();
     });
 }
+
+/// Quick answers only for a question the overview's one line holds whole: never a heredoc you
+/// can't see, which a notification's Yes would approve.
+#[test]
+fn quick_answers_come_only_with_a_whole_question() {
+    let claude = |name: &str| crate::claude::screen::parse_screen(&crate::test_support::screen_fixture("claude", name), Some(100), AgentKind::Claude).prompt.unwrap();
+    let opts = |p| quick_options(&p).map(|o| o.into_iter().map(|q| (q.n, q.label)).collect::<Vec<_>>());
+    assert_eq!(opts(claude("powershell-prompt")), Some(vec![(1, "Yes".to_owned()), (2, "Yes, and don't ask again for: npm test *".to_owned()), (3, "No".to_owned())]));
+    assert_eq!(opts(claude("bash-gutter")), None);
+}

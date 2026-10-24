@@ -413,6 +413,30 @@ export function promptSummary(prompt: ScreenPrompt): string {
   return prompt.input?.label ?? question ?? title ?? 'Needs your input'
 }
 
+/**
+ * Whether `promptSummary`'s one line holds everything an answer agrees to. Quick answers (the
+ * overview's options, which companion apps and the phone's notifications offer beside that line)
+ * are given only then; otherwise the question is answered in the session, where it shows whole. Not whole: a
+ * line cut at 200 characters, a framed command or diff of more than one line (a heredoc, a
+ * multi-line script), a Codex command that runs on below its `$` line, and Codex's edits, whose
+ * changes the line doesn't show.
+ */
+export function promptWhole(prompt: ScreenPrompt): boolean {
+  if (promptSummary(prompt).length >= 200) return false
+  const raw = prompt.body.map((l) => l.trim())
+  const body = raw.filter((l) => !!l && l !== '╌' && !/^Tip:/.test(l))
+  const q = body.find((l) => /\?$/.test(l))
+  if (q && /run the following command\?$/i.test(q)) {
+    const i = body.findIndex((l) => /^\$ \S/.test(l))
+    if (i >= 0) return i + 1 >= body.length || /^[A-Z][a-z]+:/.test(body[i + 1]) || /\?$/.test(body[i + 1])
+  }
+  if (q && /make the following edits\?$/i.test(q)) return false
+  const s = raw.indexOf('╌')
+  if (s < 0 || !body.length) return true
+  const e = raw.indexOf('╌', s + 1)
+  return raw.slice(s + 1, e < 0 ? raw.length : e).filter(Boolean).length === 1
+}
+
 /** a "│ " gutter Claude draws down the left of a framed command (psmux, newer Claude Code) */
 const GUTTER = /^(\s*)[│╎┃](?: |$)/
 
