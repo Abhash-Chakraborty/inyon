@@ -668,9 +668,6 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                 swaps.push(Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() });
             }
             swaps.extend(copy);
-            if platform == Platform::Windows {
-                swaps.push(app_swap(APP_COPY.into()));
-            }
             // the program last: it's the one the restarts run
             swaps.push(program);
             let fetched: Result<(), Error> = (|| {
@@ -686,6 +683,17 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                 }
                 Ok(())
             })();
+            // the Inyon app, made from the new program once it's here: only an inyon with the engine
+            // built in (0.19 and on) can be the app
+            let fresh = swaps[swaps.len() - 1].tmp.clone();
+            let fetched = fetched.and_then(|()| {
+                if platform == Platform::Windows && crate::engine::has_engine_built_in(&fresh) {
+                    let a = app_swap(APP_COPY.into());
+                    make_copy_swap(&fresh, &a)?;
+                    swaps.insert(swaps.len() - 1, a);
+                }
+                Ok(())
+            });
             if let Err(e) = fetched {
                 for s in &swaps {
                     let _ = files.remove(&s.tmp);

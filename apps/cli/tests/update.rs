@@ -1330,6 +1330,24 @@ fn windows_makes_the_inyon_app_from_the_new_program_next_to_inyon() {
     assert_eq!(f.bin_names(), vec!["inyon", "inyon-app", "inyon-engine"]);
 }
 
+// an inyon from before 0.19 (a kill switch's Bun engine still runs it) can't be the app: the
+// update puts the two files in place and makes no app, as before 0.20.3
+#[test]
+fn windows_makes_no_app_from_an_inyon_without_the_engine_built_in() {
+    let _g = lock();
+    let f = Fixture::new();
+    f.server.release(|r| {
+        r.files = [("inyon-windows-x64.exe", "cli"), ("inyon-engine-windows-x64.exe", "engine")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+    });
+    let mut win = FakeHost::new(&f.server, &[Role::Link]);
+    win.platform = Platform::Windows;
+    win.arch = Arch::X64;
+    win.engine = true;
+    let r = f.run(&win).unwrap();
+    assert!(r.changed, "{}", r.message);
+    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
+}
+
 /// A machine added to a hub that still hands out an inyon from before 0.19 (Windows x64 here),
 /// with no hub and no kill switch of its own.
 fn older_hub(platform: Platform, program: &str) -> (Fixture, update::Install, FakeHost) {
