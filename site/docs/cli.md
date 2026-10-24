@@ -286,6 +286,13 @@ On a computer joined to a hub, the hub shows its pages too, from 0.22 (both the 
 This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).
 ```
 
+A computer with no hub that isn't joined to one either, such as one paired only with the phone, has nothing to show its pages. From 0.22 `add` says so there, and `--json` carries `"joined": false`:
+
+```
+"Inyon plan" is listed on laptop, under custom-tmux.
+This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there.
+```
+
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.
 
 ## Docs

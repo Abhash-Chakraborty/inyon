@@ -13,7 +13,7 @@ a private address, and open it on a phone. It has four parts that link to each o
 | `index.html` | The plan: a short lede, the live progress board, a contents box, numbered sections, a screen gallery, releases you can open, risks and decisions |
 | `mockups/index.html` | The viewer: every screen framed at 390×844 or 1440×900, light or dark, with design notes |
 | `mockups/screens/*.html` | One clickable screen per page, built on the kit (menus, right-click and long-press, sheets, toasts, tooltips) |
-| `matrix.html` | One row per feature: what's wanted, what exists today, its status and the release that brings it, with search and filters |
+| `matrix.html` | One row per item (a feature, a part, a task): what's wanted, what exists today, its status and its release, with search and filters. Statuses, labels and columns come from `matrix-data.js`, so it also fits a parts list or a task list |
 
 `progress.json` drives the board on the plan page. The page polls it every 20 seconds, so updating it with
 `scripts/progress.py` while you work is how the reader follows along. `.inyon-page.json` in the site's
@@ -30,26 +30,32 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    isn't deleted with the worktree.
    Keep `private/` out of git (the script tells you when git would commit the folder). It copies
    `assets/site/`, a working sample for a made-up grocery app called Pantry, so you can see each piece in
-   action, and writes `.inyon-page.json`. Then make it yours:
+   action, and writes `.inyon-page.json`. Add `--no-mockups` when there's no UI to show (a parts list, a
+   migration): it leaves out `mockups/`, `kit/shell.js`, `kit/menus.js` and every link to them. Such a
+   site has no screens, so skip what's marked *(screens only)* below. Make the site yours:
    - In `kit/data.js`, set `BRAND` (name, optional SVG logo) and replace the sample nav, groups and people.
    - In `kit/blueprint.css`, swap the `:root` and dark tokens for the product's palette and fonts, if it
      has its own. Components read only tokens.
-   - Rebuild `kit/shell.js` to match the product's real layout. Screens only call `K.shell.mount`.
-   - Put shared menus in `kit/menus.js`. Each object gets one menu, used by right-click, long-press and its
-     ⋯ button.
+   - *(screens only)* Rebuild `kit/shell.js` to match the product's real layout. Screens only call
+     `K.shell.mount`.
+   - *(screens only)* Put shared menus in `kit/menus.js`. Each object gets one menu, used by right-click,
+     long-press and its ⋯ button.
 3. **Write the plan** in `index.html`. Read `references/plan.md` for the section order, the release format
    and the writing rules. Number the h2s to match the contents box.
-4. **Build the screens.** List them in `mockups/screens.js`, copy `mockups/screens/_template.html` for
+4. **Build the screens** *(screens only)*. List them in `mockups/screens.js`, copy `mockups/screens/_template.html` for
    each, and follow `references/kit.md`. Every visible control has to do something. For more than about
    six screens, split them across parallel workers using `references/builders.md`.
-5. **Fill the matrix** in `matrix-data.js` from the research notes, one row per feature, then set
-   `MATRIX_RELEASES`, `MATRIX_AREAS` and `MATRIX_LABELS`.
+5. **Fill the matrix** in `matrix-data.js` from the research notes, one row per item, then set
+   `MATRIX_STATUSES`, `MATRIX_RELEASES`, `MATRIX_AREAS` and `MATRIX_LABELS`. A row can carry a `url`
+   (a store page, an issue). For a plan that isn't software, rename things in `MATRIX_LABELS` (a release
+   can be a store or a phase) and set a label to `''` to drop its column, such as `today`.
+   `references/plan.md` lists the keys.
 6. **Figures.** Use a still WebP, or an animated SVG with the still inside it, in `figures/`. Take labels
    from the real system. Use Mermaid only if nothing better is available.
-7. **Check it.** `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to `shots/` and
-   flags console errors and dead controls on every screen at both sizes. Open the plan, the viewer and the
-   matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture.
-   Fix what you see, then check once more.
+7. **Check it.** *(screens only)* `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to
+   `shots/` and flags console errors and dead controls on every screen at both sizes. Open the plan, the
+   viewer *(screens only)* and the matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture
+   (`FULL=1` takes the whole page; lazy images load first). Fix what you see, then check once more.
 8. **Publish it** where the reader can open it. Take the first of these that works:
    - **Inyon's command.** If `command -v inyon` finds it, run `inyon pages add <dir> --name "Product plan"`.
      It prints where the page sits in the app (`Pages > <machine> > <project>`) and its app link
@@ -61,10 +67,13 @@ root names the site for Inyon. It's a dot file, so no server shows it.
      `node <skill>/scripts/serve.mjs <dir> --host <private-ip> --port 8790`. Prefer a VPN or LAN address
      over a public one, since plans are usually private. Hand over the URL.
 
-   **No hub on this machine.** For now the app shows pages from the hub's own computer only. When either
-   command says "This machine doesn't run a hub" (publish.mjs exits 5), the page is listed but the app
-   can't open it yet, and neither prints an app link. Serve the folder with serve.mjs as above (the
-   script prints that line too) and hand over the URL.
+   **No hub on this machine.** When either command says "This machine doesn't run a hub":
+   - *"The hub it's joined to shows its pages"* (publish.mjs exits 5): a hub on 0.22 or later shows the
+     page under this machine's name. Hand over the `Pages > <machine> > <project>` line; there's no app
+     link. With an older hub the app can't open it, so also serve the folder with serve.mjs as above (the
+     script prints that line) and hand over the URL.
+   - *"...and isn't joined to one"* (publish.mjs exits 6): nothing can show the page in the app. Serve the
+     folder with serve.mjs and hand over the URL.
 
    Publishing a folder again keeps its slug, so do it whenever you like. Never set up a systemd unit,
    launchd job or any other service to keep a site up: Inyon serves pages for as long as its hub runs.
@@ -109,6 +118,7 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 - `references/builders.md`: a brief to hand parallel screen builders
 
 The scripts need Node 18+ (or Bun) and Playwright with Chromium: `bun add -d playwright` (or npm) in the
-scripts folder or the project, then `bunx playwright install chromium`. Set `CHROME_PATH` to use a browser
-you already have, or `BLUEPRINT_PLAYWRIGHT` to the folder whose `node_modules` holds Playwright. If sharp
+scripts folder or the project, then `bunx playwright install chromium`. Without that download they use
+Edge or Chrome where it usually lives on Windows, macOS and Linux. Set `CHROME_PATH` to use another
+browser, or `BLUEPRINT_PLAYWRIGHT` to the folder whose `node_modules` holds Playwright. If sharp
 is installed, stills are WebP; without it they're PNG.

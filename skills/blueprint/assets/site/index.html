@@ -5,7 +5,7 @@
 <link rel="icon" href="kit/icon.svg">
 <link rel="stylesheet" href="kit/blueprint.css">
 <script src="kit/lucide.min.js"></script><script src="kit/data.js"></script>
-<script src="kit/kit.js"></script><script src="mockups/screens.js"></script>
+<script src="kit/kit.js"></script><!-- mockups --><script src="mockups/screens.js"></script><!-- /mockups -->
 <style>
   body { background: var(--bg); }
   .doc { max-width: 960px; margin: 0 auto; padding: 28px 16px 120px; }
@@ -46,7 +46,7 @@
   .short { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
   .short li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin: 0; }
   .short li svg { width: 18px; height: 18px; color: var(--fg); margin-top: 3px; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 18px 0; }
   .stat { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
   .stat b { display: block; font: 600 24px var(--sans); letter-spacing: -.02em; color: var(--fg); }
   .stat span { font-size: 13px; color: var(--fg-3); }
@@ -115,24 +115,25 @@
   .prog-log li time { font: 12px var(--mono); color: var(--fg-3); }
   @media (max-width: 700px) { .prog-rel > summary { grid-template-columns: 44px 1fr 56px 18px; } .prog-rel .c { display: none; } .prog-tasks { padding-left: 18px; } .prog-tasks li { grid-template-columns: 1fr; gap: 2px; } }
   @media (max-width: 700px) {
-    .doc h1 { font-size: 34px; } .doc-top .links a { display: none; } .toc { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr 1fr; }
+    .doc h1 { font-size: 34px; } .doc-top .links a { display: none; } .toc { grid-template-columns: 1fr; } .stats { grid-template-columns: 1fr 1fr; } .stat:last-child:nth-child(odd) { grid-column: 1 / -1; }
     .rel > summary { grid-template-columns: 52px 1fr auto; } .rel .bd { padding-left: 18px; }
     .doc td:first-child { white-space: normal; }
   }
 </style>
 </head><body>
 <!-- Blueprint plan page. Replace every sample sentence (the "Pantry" app) with your project's own,
-     keep the section order unless the plan needs a different one, and number the h2s to match the TOC. -->
+     keep the section order unless the plan needs a different one, and number the h2s to match the TOC.
+     The mockups markers wrap what links to the screens; new-site.mjs --no-mockups removes those parts. -->
 <article class="doc">
   <div class="doc-top"><span id="logo"></span><b id="brand"></b><span class="sp"></span>
-    <div class="links"><a class="btn sm" href="mockups/index.html"><i data-lucide="layout-template"></i>Screens</a><a class="btn sm" href="matrix.html"><i data-lucide="table-2"></i>Feature matrix</a>
+    <div class="links"><!-- mockups --><a class="btn sm" href="mockups/index.html"><i data-lucide="layout-template"></i>Screens</a><!-- /mockups --><a class="btn sm" href="matrix.html"><i data-lucide="table-2"></i>Feature matrix</a>
     <button class="icon-btn" id="theme" aria-label="Switch theme" data-tip="Switch theme"><i data-lucide="sun-moon"></i></button></div>
   </div>
 
   <p class="eyebrow">Plan · 1 March 2027 · from 2.3</p>
   <h1>Shared lists that work offline</h1>
   <p class="lede">Pantry lists sync only while you have signal, so the shop is where they break. This plan makes every list work offline on the phone, merges edits when you're back, and adds recipes that fill a list for you.</p>
-  <div class="links"><a class="btn primary" href="mockups/index.html"><i data-lucide="layout-template"></i>Open the screens</a><a class="btn" href="matrix.html"><i data-lucide="table-2"></i>Feature by feature</a></div>
+  <div class="links"><!-- mockups --><a class="btn primary" href="mockups/index.html"><i data-lucide="layout-template"></i>Open the screens</a><!-- /mockups --><a class="btn" href="matrix.html"><i data-lucide="table-2"></i>Feature by feature</a></div>
 
   <section class="prog" id="progress" aria-live="polite">
     <div class="prog-h"><h2>Where it stands</h2><span class="st doing" id="pgState">Working</span><span class="upd" id="pgUpd"></span></div>
@@ -146,7 +147,7 @@
     <a href="#short"><span>01</span>Short version</a>
     <a href="#change"><span>02</span>What changes</a>
     <a href="#how"><span>03</span>How it works</a>
-    <a href="#screens"><span>04</span>Screens</a>
+    <!-- mockups --><a href="#screens"><span>04</span>Screens</a><!-- /mockups -->
     <a href="#releases"><span>05</span>Releases</a>
     <a href="#risks"><span>06</span>Risks</a>
     <a href="#decisions"><span>07</span>Decisions</a>
@@ -160,7 +161,7 @@
   </ul>
   <div class="stats">
     <div class="stat"><b id="nFeatures">0</b><span>features mapped</span></div>
-    <div class="stat"><b id="nScreens">0</b><span>interactive screens</span></div>
+    <!-- mockups --><div class="stat"><b id="nScreens">0</b><span>interactive screens</span></div><!-- /mockups -->
     <div class="stat"><b>3</b><span>releases, 2.4 to 2.6</span></div>
     <div class="stat"><b>0 s</b><span>wait at the shop</span></div>
   </div>
@@ -180,9 +181,11 @@
   <p class="cap">One line that tells the figure's story on its own.</p> -->
   <div class="call"><p><b>Trade-off:</b> the phone keeps a copy of every shared list, about 2 MB for a busy household.</p></div>
 
+  <!-- mockups -->
   <h2 id="screens"><span class="n">04</span>Screens</h2>
   <p>Every screen is real HTML you can click, right-click and long-press. Open them in the <a href="mockups/index.html">viewer</a> to switch between phone and desktop, light and dark, and to read the notes for each.</p>
   <div id="gallery"></div>
+  <!-- /mockups -->
 
   <h2 id="releases"><span class="n">05</span>Releases</h2>
   <p>Each release ships on its own and can be rolled back. Open one for its scope and what "done" means.</p>
@@ -205,7 +208,7 @@
     <div class="card"><h4><span class="tag warn">Question</span>Recipe import</h4><p>Paste a link, or only recipes typed into Pantry?</p></div>
   </div>
 
-  <div class="foot"><span id="footBrand"></span><span><a href="mockups/index.html">Screens</a> · <a href="matrix.html">Feature matrix</a></span></div>
+  <div class="foot"><span id="footBrand"></span><span><!-- mockups --><a href="mockups/index.html">Screens</a> · <!-- /mockups --><a href="matrix.html">Feature matrix</a></span></div>
 </article>
 
 <script>
@@ -218,11 +221,15 @@
   K.$('#theme').onclick = () => { const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; K.setTheme(t); stills(t); };
   document.addEventListener('bp:theme', (e) => stills(e.detail));
 
+  /* mockups */
   // Screen gallery from the viewer's list; stills come from scripts/stills.mjs into shots/.
+  if (window.SCREENS) {
   K.$('#nScreens').textContent = SCREENS.reduce((a, g) => a + g.items.length, 0);
   K.$('#gallery').innerHTML = SCREENS.map((g) => `<div class="gal-h">${K.esc(g.group)}</div><div class="gal">${g.items.map((s) => `
     <a href="mockups/index.html#${s.id}"><div class="im"><img data-still="${s.id}" src="shots/${s.id}-${document.documentElement.dataset.theme === 'dark' ? 'dd' : 'd'}.webp" alt="${K.esc(s.title)}" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ph',textContent:'No still yet'}))"></div>
     <div class="tx"><b>${K.esc(s.title)}<span>${K.esc(s.release || '')}</span></b><p>${K.esc(s.what)}</p></div></a>`).join('')}</div>`).join('');
+  }
+  /* /mockups */
 
   // Releases: the plan's promise. progress.json tracks the work against the same ids (r).
   const R = [

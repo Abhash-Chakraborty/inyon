@@ -1,7 +1,7 @@
 // Shared helpers for the Blueprint scripts: find Playwright and a Chromium, optional sharp, a static server.
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -20,11 +20,34 @@ export function chromium() {
   if (!pw) { console.error('Playwright not found. Run `bun add -d playwright` (or npm) in this folder or your project, or set BLUEPRINT_PLAYWRIGHT.'); process.exit(2); }
   return pw.chromium;
 }
-// CHROME_PATH picks a browser binary; otherwise Playwright's own download is used (`bunx playwright install chromium`).
+// Browsers already on the machine, tried when Playwright has none of its own downloaded.
+const SYSTEM_BROWSERS = {
+  win32: ['C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Microsoft/Edge/Application/msedge.exe', 'C:/Program Files/Google/Chrome/Application/chrome.exe'],
+  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge', '/Applications/Chromium.app/Contents/MacOS/Chromium'],
+  linux: ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome', '/usr/bin/microsoft-edge'],
+};
+// CHROME_PATH picks a browser binary; otherwise Playwright's own download (`bunx playwright install
+// chromium`), then Edge or Chrome where they usually live.
 export async function launch() {
   const opts = { args: ['--disable-gpu'] };
-  if (process.env.CHROME_PATH) opts.executablePath = process.env.CHROME_PATH;
-  return chromium().launch(opts);
+  if (process.env.CHROME_PATH) return chromium().launch({ ...opts, executablePath: process.env.CHROME_PATH });
+  try {
+    return await chromium().launch(opts);
+  } catch (e) {
+    if (!/Executable doesn't exist/i.test(String(e?.message))) throw e;
+    const found = (SYSTEM_BROWSERS[process.platform] || []).find((p) => existsSync(p));
+    if (found) return chromium().launch({ ...opts, executablePath: found });
+    console.error('No browser for Playwright. Run `bunx playwright install chromium`, or set CHROME_PATH to Chrome or Edge.');
+    process.exit(2);
+  }
+}
+
+// Loads every lazy image now and waits for them, so a full-page shot has no blank pictures.
+export async function loadImages(page) {
+  await page.evaluate(async () => {
+    for (const img of document.querySelectorAll('img[loading="lazy"]')) img.loading = 'eager';
+    await Promise.all([...document.images].map((img) => (img.complete ? null : new Promise((r) => { img.addEventListener('load', r, { once: true }); img.addEventListener('error', r, { once: true }); setTimeout(r, 5000); }))));
+  });
 }
 export const sharp = () => req('sharp');
 

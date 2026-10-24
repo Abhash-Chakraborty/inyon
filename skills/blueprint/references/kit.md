@@ -1,6 +1,8 @@
 # The kit
 
-Plain HTML, CSS and JS with no build. Every screen loads these in order:
+Plain HTML, CSS and JS with no build. The kit serves the mockup screens; a site made with
+`new-site.mjs --no-mockups` keeps only `blueprint.css`, `lucide.min.js`, `data.js` and `kit.js`, which the
+plan page and the matrix use. Every screen loads these in order:
 `kit/blueprint.css`, `kit/lucide.min.js`, `kit/data.js`, `kit/kit.js`, `kit/menus.js`, `kit/shell.js`.
 Copy `mockups/screens/_template.html` to `mockups/screens/<id>.html` and add the id to `mockups/screens.js`.
 

@@ -11,7 +11,7 @@
 // `added` and `created` are ms since 1970. pages.json is written to a temp file and renamed into place,
 // while holding pages.json.lock (created with O_EXCL, taken over once it is 10 s old). It may be a
 // symlink (a dotfile setup): it is read through the link, and written where the link leads.
-import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, openSync, readlinkSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, fsyncSync, linkSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -74,8 +74,8 @@ export function sitePathProblem(p, home) {
 export const inyonDir = () => join(homedir(), '.inyon');
 
 // Whether this machine runs an Inyon hub, judged as `inyon pages add` judges it: the hub's settings
-// (hub.env in INYON_DATA_DIR or ~/.inyon), a node that runs one (hub.json), or a hub service. For now
-// the app shows pages from the hub's own machine only.
+// (hub.env in INYON_DATA_DIR or ~/.inyon), a node that runs one (hub.json), or a hub service. Without
+// one, the page shows through the hub this machine joined, and there's no app link to print here.
 export function hubHere(home = homedir(), env = process.env) {
   const data = env.INYON_DATA_DIR || join(home, '.inyon');
   return [
@@ -86,6 +86,21 @@ export function hubHere(home = homedir(), env = process.env) {
     join(home, '.config', 'systemd', 'user', 'tether-hub.service'),
     join(home, 'Library', 'LaunchAgents', 'tech.abhashchakraborty.inyon.hub.plist'),
   ].some((f) => existsSync(f));
+}
+
+// Whether this machine is joined to a hub, judged as `inyon pages add` judges it: INYON_HUB in the
+// environment or in the node's env file (~/.inyon/node/env, or ~/.tether-node from before the rename).
+// A hub from 0.22 shows a joined machine's pages; with neither, no app can open them.
+export function joinedHere(home = homedir(), env = process.env) {
+  if ((env.INYON_HUB || env.TETHER_HUB || '').trim()) return true;
+  for (const dir of [join(home, '.inyon', 'node'), join(home, '.tether-node')]) {
+    for (const name of ['.env', 'env']) {
+      let text = '';
+      try { text = readFileSync(join(dir, name), 'utf8'); } catch { continue; }
+      if (/^\s*(?:export\s+)?(?:INYON|TETHER)_HUB\s*=\s*['"]?[^\s'"]/m.test(text)) return true;
+    }
+  }
+  return false;
 }
 
 // The line git prints for `git -C <dir> rev-parse <option...>`, or null. A line starting with '-' is

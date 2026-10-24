@@ -1,7 +1,8 @@
-/* Feature matrix: one row per feature you plan, from your research notes, checked against the code.
-   Row: [area, feature, want, status, today, release, phone, desktop, screen, note]
-   want: what the feature is (from the reference product, the brief or the user). status: have | partial | new | skipped.
-   today: what the product does now. release: a version from MATRIX_RELEASES. screen: a mockup id or ''. */
+/* Feature matrix: one row per item in the plan (a feature, a part, a task), from your research notes.
+   Row: [area, feature, want, status, today, release, phone, desktop, screen, note, url]
+   want: what the item is (from the reference product, the brief or the user). status: a v from MATRIX_STATUSES.
+   today: what exists now. release: a v from MATRIX_RELEASES (a version, a store, a phase) or ''.
+   screen: a mockup id or ''. url: an outside link for the row (a product page, an issue) or ''. */
 (function () {
   const H = 'have', P = 'partial', N = 'new', S = 'skipped';
   const R = [
@@ -14,13 +15,24 @@
   ['Settings', 'Offline storage limit', 'Choose how much the phone keeps.', N, '', '2.4', 'Settings row with a size picker.', 'Same.', 'settings', ''],
   ['Settings', 'Import recipes from a link', 'Paste a link and get the recipe.', S, '', '', '', '', '', 'Left out: most recipe sites block scraping. Open question in Decisions.'],
   ];
-  window.MATRIX = R.map(([area, feature, want, status, today, release, phone, desktop, screen, note]) => ({ area, feature, want, status, today, release, phone, desktop, screen, note }));
+  window.MATRIX = R.map(([area, feature, want, status, today, release, phone, desktop, screen, note, url]) => ({ area, feature, want, status, today, release, phone, desktop, screen, note, url }));
+  // Status order, labels and marks. mark: full | half | ring | dash, by list order when left out.
+  // tone: ok | warn | bad colours the mark; leave it out for states that don't need attention.
+  window.MATRIX_STATUSES = [
+    { v: H, l: 'Have', tone: 'ok' },
+    { v: P, l: 'Partial', tone: 'warn' },
+    { v: N, l: 'New' },
+    { v: S, l: 'Skipped' },
+  ];
   window.MATRIX_RELEASES = [
     { v: '2.4', name: 'Lists on the phone' },
     { v: '2.5', name: 'Merging edits' },
     { v: '2.6', name: 'Recipes fill a list' },
   ];
   window.MATRIX_AREAS = ['Lists', 'Recipes', 'Settings'];
+  // Page words. Others you can set: title, one, many, search, area, feature, status, statusName, release,
+  // today, todayNone, todaySkipped, phone, desktop, note, link and the menu words (see references/plan.md).
+  // A column or field whose label is '' is left out.
   window.MATRIX_LABELS = {
     want: 'Wanted',
     sub: 'Every feature in the plan, what Pantry does today, and the release that brings it.',
