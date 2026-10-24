@@ -615,7 +615,7 @@ fn write_atomic(file: &Path, text: &str, mode: u32) -> std::io::Result<()> {
 /// The file as `{v: 1, pages: [...]}` (other keys kept), an empty list when it isn't there. The list
 /// may be a symlink (a dotfile setup); one that isn't a plain file of at most LIST_MAX bytes is a
 /// broken list.
-fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
+pub fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
     let text = match read_capped(file, LIST_MAX, true).map(String::from_utf8) {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return Err(format!("Can't read {}: {e}", file.display())),

@@ -39,6 +39,13 @@ libc = "0.2"
 inyon-hub = { path = "../../crates/inyon-hub" }
 
 [target.'cfg(windows)'.dependencies]
+# the Inyon app's window: WebView2 (part of Windows 11, and of Windows 10 through Edge) shows the
+# app's own pages and a hub's web app, and the certificate check for a hub joined by its SHA-256
+wry = { version = "0.57", default-features = false }
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_Common"] }
+windows-core = "0.62"
+raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Graphics_Dwm",
@@ -47,8 +54,10 @@ windows-sys = { version = "0.61", features = [
   "Win32_Security",
   "Win32_System_Com",
   "Win32_System_Console",
+  "Win32_System_DataExchange",
   "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
   "Win32_System_Registry",
   "Win32_System_Threading",
   "Win32_UI_Controls",

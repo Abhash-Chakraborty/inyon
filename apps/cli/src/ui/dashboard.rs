@@ -378,7 +378,7 @@ fn right_lines(s: &Status, theme: Theme, width: usize) -> Vec<Line<'static>> {
         .phones
         .iter()
         .map(|p| {
-            let seen = p.last_seen.as_deref().map(|t| format!("seen {}", crate::window::model::seen_short(t, &today))).unwrap_or_else(|| "never seen".to_string());
+            let seen = p.last_seen.as_deref().map(|t| format!("seen {}", crate::desktop::pairing::seen_short(t, &today))).unwrap_or_else(|| "never seen".to_string());
             Line::from(vec![Span::raw(format!("  {}", pad(&p.name, name_w))), Span::styled(fit(&format!("  {seen}"), width.saturating_sub(name_w + 2)), theme.faint())])
         })
         .collect();

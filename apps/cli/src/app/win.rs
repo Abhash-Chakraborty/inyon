@@ -1,6 +1,7 @@
 //! The app's Win32 side: one process per signed-in user (the mutex Local\InyonApp), a hidden
 //! window that receives the tray icon's clicks and the wake-ups from [`super::ask`], the job that
-//! holds every process it starts, and the Inyon window on a thread of its own.
+//! holds every process it starts, and the Inyon window ([`crate::desktop::win`]) on a thread of
+//! its own, made once and shown or hidden from then on.
 
 use std::collections::BTreeMap;
 use std::os::windows::io::AsRawHandle;
@@ -8,7 +9,7 @@ use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
@@ -17,10 +18,9 @@ use windows_sys::Win32::System::Threading::{CreateMutexW, OpenProcess, Terminate
 use windows_sys::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows_sys::Win32::UI::Shell::{Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW,
-    GetSystemMetrics, IsIconic, PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetMenuDefaultItem, SetTimer, ShowWindow,
-    TrackPopupMenu, TranslateMessage, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, SM_CXSMICON, SM_CYSMICON, SW_RESTORE, SW_SHOW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
+    AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetCursorPos, GetMessageW, GetSystemMetrics, PostMessageW, PostQuitMessage,
+    RegisterClassW, RegisterWindowMessageW, SetForegroundWindow, SetMenuDefaultItem, SetTimer, TrackPopupMenu, TranslateMessage, MSG, SM_CXSMICON, SM_CYSMICON, TPM_BOTTOMALIGN,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
 };
 
 use super::{labels, on_close, should_end, take_requests, trace, tray_line, AppState, Close, Do, Request, Supervisor, ADOPT_GRACE_MS};
@@ -36,9 +36,22 @@ const WAKE: u32 = WM_APP + 2;
 /// the Inyon window closed
 const WINDOW_CLOSED: u32 = WM_APP + 3;
 const TICK: usize = 1;
+// the tray menu's items
 const OPEN: usize = 1;
 const PAIR: usize = 2;
 const QUIT: usize = 3;
+const PHONES: usize = 4;
+const HUB: usize = 5;
+const TEMP: usize = 6;
+const SETTINGS: usize = 7;
+const LAN: usize = 8;
+const VPN: usize = 9;
+const TUNNEL: usize = 10;
+const SIGN_IN: usize = 11;
+const UPDATE: usize = 12;
+const LOGS: usize = 13;
+const START_LINK: usize = 14;
+const STOP_LINK: usize = 15;
 /// what the app writes to app.json at the least this often, so `inyon status` knows it's alive
 const WRITE_MS: f64 = 5_000.0;
 /// how long the app waits for what it was asked to start before an empty app counts as done
@@ -46,7 +59,6 @@ const SETTLE_MS: f64 = 10_000.0;
 
 /// The app's job: everything it starts ends with it. Quit drops it.
 static JOB: Mutex<Option<inyon_engine::winjob::Job>> = Mutex::new(None);
-static WINDOW_OPEN: AtomicBool = AtomicBool::new(false);
 
 /// How the app was started.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -84,8 +96,6 @@ struct App {
     written: f64,
     settle_until: f64,
     last: Option<AppState>,
-    /// the role the window shows
-    window_role: Role,
 }
 
 thread_local! {
@@ -163,7 +173,6 @@ pub fn run(start: Start) -> i32 {
             sup.want(role);
             adopted.insert(role, Adopted { pid, since: now });
         }
-        let window_role = pick_role(&sup);
         let app = App {
             hwnd,
             mutex,
@@ -177,7 +186,6 @@ pub fn run(start: Start) -> i32 {
             written: 0.0,
             settle_until: now + SETTLE_MS,
             last: None,
-            window_role,
         };
         APP.with(|a| *a.borrow_mut() = Some(app));
         // the engine is a windowless copy of inyon.exe: made again when inyon.exe changed
@@ -198,9 +206,12 @@ pub fn run(start: Start) -> i32 {
                 }
             }
         });
+        crate::desktop::win::set_host(hwnd as usize, WINDOW_CLOSED);
         tick();
         SetTimer(hwnd, TICK, 500, None);
-        if !start.background || start.pair {
+        // at sign-in the window opens only when Settings asks for it
+        let at_sign_in = start.background && crate::desktop::load_settings().open_at_sign_in;
+        if !start.background || start.pair || at_sign_in {
             open_window(start.pair);
         }
         let mut msg: MSG = std::mem::zeroed();
@@ -247,44 +258,12 @@ fn hand_over(start: &Start) -> i32 {
     0
 }
 
-/// The job the window shows: the phone link unless the computer only connects to a hub.
-fn pick_role(sup: &Supervisor) -> Role {
-    if sup.wants(Role::Node) && !sup.wants(Role::Link) {
-        return Role::Node;
-    }
-    if !sup.wants(Role::Link) && crate::commands::joined() && !paths::node_dir().join("phones.json").exists() {
-        return Role::Node;
-    }
-    Role::Link
+fn open_window(pair: bool) {
+    crate::desktop::win::show(None, pair);
 }
 
-fn open_window(pair: bool) {
-    unsafe {
-        let open = FindWindowW(wide(crate::window::CLASS).as_ptr(), null());
-        if !open.is_null() {
-            ShowWindow(open, if IsIconic(open) != 0 { SW_RESTORE } else { SW_SHOW });
-            SetForegroundWindow(open);
-            if pair {
-                crate::window::pair_now(open as usize);
-            }
-            return;
-        }
-    }
-    if WINDOW_OPEN.swap(true, Ordering::SeqCst) {
-        // being opened right now
-        return;
-    }
-    let role = with(|a| {
-        a.window_role = pick_role(&a.sup);
-        a.window_role
-    })
-    .unwrap_or(Role::Link);
-    let host = with(|a| a.hwnd as usize).unwrap_or(0);
-    std::thread::spawn(move || {
-        crate::window::run(role, pair);
-        WINDOW_OPEN.store(false, Ordering::SeqCst);
-        unsafe { PostMessageW(host as HWND, WINDOW_CLOSED, 0, 0) };
-    });
+fn open_page(page: &str) {
+    crate::desktop::win::show(Some(page), false);
 }
 
 /// Starts `role`'s engine in the app's job.
@@ -397,7 +376,7 @@ fn tick() {
     write(now, false);
     let end = with(|a| {
         let anything = !a.sup.is_empty() || !a.adopted.is_empty() || super::pairing();
-        should_end(WINDOW_OPEN.load(Ordering::SeqCst), anything, now < a.settle_until)
+        should_end(crate::desktop::win::visible(), anything, now < a.settle_until)
     })
     .unwrap_or(false);
     if end {
@@ -600,7 +579,7 @@ fn stop_all() {
 /// window open if it was.
 fn relaunch() {
     let roles = with(|a| a.sup.wanted()).unwrap_or_default();
-    let window = WINDOW_OPEN.load(Ordering::SeqCst);
+    let window = crate::desktop::win::visible();
     trace(&format!("relaunching for the new version with {roles:?}"));
     stop_all();
     // the new app takes the mutex and app.json
@@ -640,33 +619,109 @@ fn end() {
     super::clear_state(std::process::id());
 }
 
+/// The icon's menu: what runs, the window's pages, how phones reach this computer, and the
+/// settings worth a right-click.
 fn menu(hwnd: HWND) {
-    let Some(running) = with(|a| running_labels(a)) else { return };
-    unsafe {
-        let m = CreatePopupMenu();
-        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, wide(&tray_line(&running)).as_ptr());
-        AppendMenuW(m, MF_SEPARATOR, 0, null());
-        AppendMenuW(m, MF_STRING, OPEN, wide("Open Inyon").as_ptr());
-        AppendMenuW(m, MF_STRING, PAIR, wide("Pair a phone…").as_ptr());
-        AppendMenuW(m, MF_SEPARATOR, 0, null());
-        AppendMenuW(m, MF_STRING, QUIT, wide("Quit Inyon").as_ptr());
-        SetMenuDefaultItem(m, OPEN as u32, 0);
+    use crate::desktop::win::Menu;
+    let Some((running, link)) = with(|a| (running_labels(a), a.sup.wants(Role::Link) || a.adopted.contains_key(&Role::Link))) else { return };
+    let desk = crate::desktop::desk();
+    let ((lan, vpn, tunnel), applying) = desk.reach_now();
+    let joined = paths::saved_hub().is_some();
+    let shown = crate::desktop::win::visible();
+    crate::desktop::win::menu_theme(crate::desktop::looks_dark(&crate::desktop::lock(&desk.settings).theme));
+    let m = Menu::new();
+    m.item(0, &tray_line(&running), false, false);
+    m.sep();
+    m.item(OPEN, if shown { "Hide Inyon" } else { "Open Inyon" }, false, true);
+    m.item(PAIR, "Pair a phone…", false, true);
+    m.sep();
+    let reach = Menu::new();
+    reach.item(LAN, "LAN (this network)", lan, !applying);
+    reach.item(VPN, "VPN (Tailscale, NetBird…)", vpn, !applying);
+    reach.item(TUNNEL, "Tunnel (anywhere)", tunnel, !applying);
+    m.sub(if applying { "Phones reach this computer (changing…)" } else { "Phones reach this computer" }, reach);
+    if link {
+        m.item(STOP_LINK, "Stop the phone link", false, true);
+    } else {
+        m.item(START_LINK, "Start the phone link", false, true);
+    }
+    m.sep();
+    m.item(PHONES, "Phones", false, true);
+    m.item(HUB, if joined { "Hub" } else { "Connect to a hub…" }, false, true);
+    m.item(TEMP, "Temp files", false, true);
+    m.item(SETTINGS, "Settings", false, true);
+    m.sep();
+    m.item(SIGN_IN, "Start at sign-in", desk.sign_in(), true);
+    m.item(UPDATE, "Check for updates", false, true);
+    m.item(LOGS, "Open the logs", false, true);
+    m.sep();
+    m.item(QUIT, "Quit Inyon", false, true);
+    let chosen = unsafe {
+        SetMenuDefaultItem(m.0, OPEN as u32, 0);
         let mut at = POINT { x: 0, y: 0 };
         GetCursorPos(&mut at);
         // without this the menu stays open when you click somewhere else
         SetForegroundWindow(hwnd);
-        let chosen = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, 0, hwnd, null());
+        let c = TrackPopupMenu(m.0, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, at.x, at.y, 0, hwnd, null());
         PostMessageW(hwnd, WM_NULL, 0, 0);
-        DestroyMenu(m);
-        match chosen as usize {
-            OPEN => open_window(false),
-            PAIR => {
-                with(|a| a.sup.want(Role::Link));
-                open_window(true);
+        c as usize
+    };
+    drop(m);
+    // the slow ones run on a thread, so the icon keeps answering
+    let later = |what: &'static str, f: Box<dyn FnOnce() -> Result<serde_json::Value, String> + Send>| {
+        std::thread::spawn(move || {
+            if let Err(e) = f() {
+                trace(&format!("! {what}: {e}"));
+                tell("Inyon", &e, true);
             }
-            QUIT => quit(),
-            _ => {}
+        });
+    };
+    match chosen {
+        OPEN if shown => crate::desktop::win::hide(),
+        OPEN => open_window(false),
+        PAIR => {
+            with(|a| a.sup.want(Role::Link));
+            open_window(true);
         }
+        PHONES => open_page("phones"),
+        HUB => open_page("hub"),
+        TEMP => open_page("temp"),
+        SETTINGS => open_page("settings"),
+        LAN | VPN | TUNNEL => {
+            let which = match chosen {
+                LAN => "lan",
+                VPN => "vpn",
+                _ => "tunnel",
+            };
+            later("changing how phones reach this computer", Box::new(move || desk.flip_reach(which)));
+        }
+        START_LINK | STOP_LINK => {
+            let start = chosen == START_LINK;
+            with(|a| {
+                if start {
+                    a.sup.want(Role::Link);
+                    a.sup.now(Role::Link);
+                    a.settle_until = crate::state::now_ms() + SETTLE_MS;
+                }
+            });
+            if !start {
+                handle(Request::new(Do::Stop, Some(Role::Link), None));
+            }
+        }
+        SIGN_IN => {
+            let on = !desk.sign_in();
+            later("start at sign-in", Box::new(move || desk.handle("autostart", &serde_json::json!({ "on": on }))));
+        }
+        UPDATE => {
+            later("the update check", Box::new(move || desk.handle("update", &serde_json::json!({ "install": false }))));
+            open_page("settings");
+        }
+        LOGS => {
+            let dir = service::log_file(Role::Link).parent().map(PathBuf::from).unwrap_or_else(paths::node_dir);
+            let _ = Command::new("explorer.exe").arg(dir).creation_flags(NO_WINDOW).spawn();
+        }
+        QUIT => quit(),
+        _ => {}
     }
 }
 
@@ -682,7 +737,7 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         }
         TRAY => {
             match (lparam as u32) & 0xffff {
-                WM_LBUTTONUP => open_window(false),
+                WM_LBUTTONUP => crate::desktop::win::toggle(),
                 WM_RBUTTONUP | WM_CONTEXTMENU => menu(hwnd),
                 _ => {}
             }
