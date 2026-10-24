@@ -6,7 +6,7 @@ use crate::commands::{self, SetupFlags};
 use crate::service::{Role, Sys};
 use crate::sys::RealProc;
 use crate::ui::{dashboard, Theme};
-use crate::{engine, pages, paths, update};
+use crate::{engine, pages, paths, temp, update};
 
 /// Drive your coding agents from the Inyon app: pair this machine, keep it reachable, keep it up to date.
 #[derive(Parser)]
@@ -100,6 +100,11 @@ enum Command {
     Pages {
         #[command(subcommand)]
         action: Option<PagesAction>,
+    },
+    /// Temporary files your coding agents leave behind: list them, look inside, delete them
+    Temp {
+        #[command(subcommand)]
+        action: Option<TempAction>,
     },
     /// Agent skills that come with each release: list, add or remove them
     Skill {
@@ -243,6 +248,43 @@ enum PagesAction {
     /// Take a page out of the app; its folder stays as it is
     #[command(visible_alias = "remove")]
     Rm { slug: String },
+}
+
+#[derive(Subcommand)]
+enum TempAction {
+    /// What's there per agent, and the biggest items (the same as plain `inyon temp`)
+    #[command(visible_alias = "list")]
+    Ls,
+    /// Every file inside one item, newest first
+    Files {
+        /// The item's path (or its id from `inyon temp ls --json`)
+        item: String,
+    },
+    /// Print a text file, or say what kind of file it is
+    Show {
+        path: String,
+        /// The biggest image to send whole with --json, in bytes
+        #[arg(long, default_value_t = temp::IMAGE_MAX)]
+        max: u64,
+    },
+    /// Delete items or files for good
+    #[command(visible_alias = "remove")]
+    Rm {
+        #[arg(required_unless_present = "stdin")]
+        paths: Vec<String>,
+        /// Read the paths as a JSON list on stdin (how the hub sends many at once)
+        #[arg(long, hide = true)]
+        stdin: bool,
+    },
+    /// Delete every item older than an age; items changed in the last 30 minutes stay
+    Clean {
+        /// 7d, 24h, 30m or 2w
+        #[arg(long, value_name = "AGE")]
+        older_than: String,
+        /// Don't ask
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -432,6 +474,20 @@ pub fn main() {
             },
             json,
         ),
+        Some(Command::Temp { action }) => match action {
+            Some(TempAction::Ls) | None => commands::finish(temp::list_command(), json),
+            Some(TempAction::Files { item }) => commands::finish(temp::files_command(&item), json),
+            Some(TempAction::Show { path, max }) => commands::finish(temp::show_command(&path, max), json),
+            Some(TempAction::Rm { paths, stdin }) => match temp::paths_from(paths, stdin) {
+                Ok(paths) => {
+                    let (out, partial) = temp::rm_command(&paths);
+                    // something stayed: the answer says what and why, and the exit code says so too
+                    commands::finish(out, json).max(i32::from(partial))
+                }
+                Err(e) => commands::finish(Err(e), json),
+            },
+            Some(TempAction::Clean { older_than, yes }) => commands::finish(temp::clean_command(&older_than, yes, tty && !json), json),
+        },
         Some(Command::Skill { action }) => commands::finish(
             match action {
                 SkillAction::List => commands::skill_list(),
