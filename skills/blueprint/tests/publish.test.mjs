@@ -302,15 +302,13 @@ describe('publish.mjs', () => {
     expect(made.stdout).not.toContain('%20');
   });
 
-  test('on a machine without a hub it lists the page, says the app cannot show it yet, and exits 5', () => {
+  test('on a machine without a hub it lists the page, says the hub it joined shows it, and exits 5', () => {
     rmSync(join(home, '.inyon/hub.env'));
     const dir = site('nohub');
     const r = pub([dir, '--name', 'Laptop plan']);
     expect(r.status).toBe(5);
-    expect(r.stdout).toContain(`"Laptop plan" is listed on `);
-    expect(r.stdout).toContain("This machine doesn't run a hub.");
-    expect(r.stdout).toContain("The app can't open this page yet.");
-    expect(r.stdout).not.toContain('is in Inyon');
+    expect(r.stdout).toContain(`"Laptop plan" is in Inyon: Pages > `);
+    expect(r.stdout).toContain("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).");
     expect(r.stdout).toContain(`serve.mjs ${dir} --host <private-ip>`);
     expect(r.stdout).not.toContain('/pages/local/');
     expect(list().pages[0]).toMatchObject({ slug: 'nohub', name: 'Laptop plan' });

@@ -6,7 +6,8 @@
 //
 // Exit codes: 0 listed, 1 refused (the message says why), 2 usage, 3 Inyon isn't set up here (serve
 // the site with serve.mjs instead), 4 ~/.inyon can't be written from here (run the printed command),
-// 5 listed, but this machine doesn't run a hub, so the app can't show it yet (serve it with serve.mjs too).
+// 5 listed on a machine without a hub: the hub it's joined to shows it from 0.22 (with an older hub, serve
+// it with serve.mjs too).
 import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve } from 'node:path';
@@ -39,11 +40,12 @@ const serve = () => `node ${here('serve.mjs')} ${q(dir)} --host <private-ip>`;
 try {
   const { page, changed } = publish(dir, { name, slug, by });
   const again = changed ? '' : ' (already listed)';
-  // the same lines `inyon pages add` prints; without a hub here there's no app path to hand over
+  // the same lines `inyon pages add` prints; without a hub here the page opens through the hub this
+  // machine is joined to, so there's no app path to hand over
   if (!hubHere()) {
-    console.log(`"${page.name}" is listed on ${hostname()}, under ${basename(page.project)}${again}.`);
-    console.log("This machine doesn't run a hub. For now the app shows pages from the hub's own machine only. The app can't open this page yet.");
-    console.log(`Serve the site to open it now: ${serve()}`);
+    console.log(`"${page.name}" is in Inyon: Pages > ${hostname()} > ${basename(page.project)}${again}`);
+    console.log("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).");
+    console.log(`With an older hub, serve the site to open it: ${serve()}`);
     process.exit(5);
   }
   console.log(`"${page.name}" is in Inyon: Pages > ${hostname()} > ${basename(page.project)}${again}`);

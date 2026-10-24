@@ -74,8 +74,8 @@ export function sitePathProblem(p, home) {
 export const inyonDir = () => join(homedir(), '.inyon');
 
 // Whether this machine runs an Inyon hub, judged as `inyon pages add` judges it: the hub's settings
-// (hub.env in INYON_DATA_DIR or ~/.inyon), a node that runs one (hub.json), or a hub service. For now
-// the app shows pages from the hub's own machine only.
+// (hub.env in INYON_DATA_DIR or ~/.inyon), a node that runs one (hub.json), or a hub service. Without
+// one, the page shows through the hub this machine joined, and there's no app link to print here.
 export function hubHere(home = homedir(), env = process.env) {
   const data = env.INYON_DATA_DIR || join(home, '.inyon');
   return [

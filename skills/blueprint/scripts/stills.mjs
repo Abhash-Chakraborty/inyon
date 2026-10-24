@@ -5,7 +5,7 @@
 // check on each screen at both sizes.
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { launch, serve, sharp as getSharp } from './lib.mjs';
+import { launch, serve, sharp as getSharp, loadImages } from './lib.mjs';
 const args = process.argv.slice(2);
 const audit = args.includes('--audit');
 const [dir = '.', ...only] = args.filter((a) => a !== '--audit');
@@ -27,6 +27,7 @@ for (const id of ids) {
     const r = await p.goto(url, { waitUntil: 'networkidle' }).catch(() => null);
     if (!r || !r.ok()) { console.log(id, suf, 'missing'); bad++; await p.close(); continue; }
     await p.waitForTimeout(500);
+    await loadImages(p);
     const png = await p.screenshot();
     if (sharp) await sharp(png).webp({ quality: 82 }).toFile(join(root, 'shots', `${id}-${suf}.webp`));
     else writeFileSync(join(root, 'shots', `${id}-${suf}.png`), png);
