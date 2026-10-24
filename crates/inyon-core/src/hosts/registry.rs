@@ -54,6 +54,9 @@ const POLL_MS: u64 = 4000;
 /// while nobody is looking (the phone app in the background), poll much less: it costs battery and data
 const QUIET_POLL_MS: u64 = 20000;
 const MAX_BACKOFF_MS: u64 = 20000;
+/// Someone who pressed a key in a tmux client on the pane this recently is watching it: its
+/// finish isn't announced.
+const TYPING_S: f64 = 60.0;
 
 thread_local! {
     static POLL: Cell<u64> = const { Cell::new(POLL_MS) };
@@ -376,6 +379,16 @@ pub fn registry() -> Rc<Registry> {
 
 fn turn_key(host: &str, pane: &str) -> String {
     crate::js::stringify(&serde_json::json!([host, pane]))
+}
+
+/// Whether a person typed in a tmux client showing the pane within the last minute, by the
+/// machine's own clock.
+fn typed_lately(rt: &Rt, pane: &str) -> bool {
+    let r = rt.borrow();
+    r.probe.as_ref().is_some_and(|p| {
+        let p = p.borrow();
+        p.keys_at.get(pane).is_some_and(|at| p.now - at <= TYPING_S)
+    })
 }
 
 impl Registry {
@@ -1538,9 +1551,15 @@ impl Registry {
                     }
                     let kind = p.agent.as_ref().map(|a| a.kind);
                     let done = {
-                        let (host, pane, title) = (host_id.clone(), p.id.clone(), title.clone());
+                        let (host, pane, title, rt) = (host_id.clone(), p.id.clone(), title.clone(), rt.clone());
                         let body = format!("{agent_name} finished");
-                        move || registry().emit(RegistryEvent::Notify { host, pane, kind: NotifyKind::Done, title, body, agent: kind })
+                        move || {
+                            // they're at that terminal and saw it finish
+                            if typed_lately(&rt, &pane) {
+                                return;
+                            }
+                            registry().emit(RegistryEvent::Notify { host, pane, kind: NotifyKind::Done, title, body, agent: kind })
+                        }
                     };
                     if was == now {
                         if now == AgentState::Idle && had_background && !background {

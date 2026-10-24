@@ -166,6 +166,8 @@ pub struct ProbeResult {
     pub agy_titles: IndexMap<String, String>,
     /// whether Inyon's status line is in Antigravity CLI's settings (None when agy isn't installed)
     pub agy_integration: Option<bool>,
+    /// pane id → unix seconds of the last key a person pressed in a tmux client showing it
+    pub keys_at: IndexMap<String, f64>,
     pub machine_kind: Option<MachineKind>,
 }
 
@@ -231,6 +233,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         agy_titles: IndexMap::new(),
         agy_integration: None,
         machine_kind: None,
+        keys_at: IndexMap::new(),
     };
     for line in stdout.split('\n') {
         if let Some(v) = line.strip_prefix("@@HOST ") {
@@ -403,6 +406,11 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         let (sid, control) = (parts.next().unwrap_or(""), parts.next());
         if !sid.is_empty() && control == Some("0") {
             *people.entry(sid).or_default() += 1;
+            // the client's last key and the pane it shows (psmux answers without them)
+            if let (Some(at), Some(pane)) = (parts.next().map(num).filter(|t| *t > 0.0), parts.next().filter(|p| p.starts_with('%'))) {
+                let t = res.keys_at.entry(pane.to_owned()).or_insert(at);
+                *t = t.max(at);
+            }
         }
     }
     if sections.contains_key("CLIENTS") {
@@ -638,7 +646,7 @@ else
   echo "@@NOTMUX"
 fi
 echo "@@CLIENTS"
-tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
+tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}' 2>/dev/null
 echo "@@PS"
 # etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
 ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{
@@ -938,8 +946,9 @@ mod tests {
             pane("1", "work", "%1", "100"),
             pane("2", "inyon-view-x", "%2", "200"),
             "@@CLIENTS".into(),
-            "$1 0".into(),
-            "$1 1".into(),
+            "$1 0 1990 %1".into(),
+            // Inyon's own control-mode client: neither attached nor typing
+            "$1 1 1999 %1".into(),
             "@@PS".into(),
             "  100     1   50 zsh -zsh".into(),
             "  101   100   40 /usr/bin/claude claude --resume 7409eef9-d507-4808-a592-0bfabe896e3a".into(),
@@ -966,6 +975,12 @@ mod tests {
         assert_eq!(r.integration, IntegrationState::Installed);
         assert_eq!(r.sessions.len(), 1);
         assert_eq!(r.sessions[0].attached, inyon_protocol::Num(1.0));
+        assert_eq!(r.keys_at.iter().collect::<Vec<_>>(), [(&"%1".to_owned(), &1990.0)]);
+        // two people on the pane: the later key counts; psmux prints no time or pane
+        let two = parse_probe(&out.replace("$1 0 1990 %1", "$1 0 1990 %1\n$1 0 1995 %1\n$1 0 1980 %1"), "", 0, 12.0).unwrap();
+        assert_eq!((two.keys_at["%1"], two.sessions[0].attached), (1995.0, inyon_protocol::Num(3.0)));
+        let psmux = parse_probe(&out.replace("$1 0 1990 %1", "$1 0"), "", 0, 12.0).unwrap();
+        assert_eq!((psmux.keys_at.len(), psmux.sessions[0].attached), (0, inyon_protocol::Num(1.0)));
         // review: a width tmux didn't print as a number is NaN, null on the wire, as Number() gives
         assert_eq!(out.matches("120").count(), 2);
         let odd = parse_probe(&out.replacen("120", "wide", 1), "", 0, 12.0).unwrap();

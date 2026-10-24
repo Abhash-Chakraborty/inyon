@@ -40,6 +40,7 @@ fn put(id: &str, connected: bool) {
             agy_titles: IndexMap::new(),
             agy_integration: None,
             machine_kind: None,
+            keys_at: Default::default(),
         })));
     }
 }
