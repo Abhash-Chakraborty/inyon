@@ -23,7 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WM_APP, WM_CONTEXTMENU, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW,
 };
 
-use super::{labels, on_close, should_end, take_requests, trace, tray_line, AppState, Close, Do, Job as JobRecord, Request, Supervisor, ADOPT_GRACE_MS};
+use super::{labels, on_close, should_end, take_requests, trace, tray_line, AppState, Close, Do, Request, Supervisor, ADOPT_GRACE_MS};
 use crate::paths;
 use crate::service::{self, Role};
 use crate::sys::{Proc, RealProc, NO_WINDOW};
@@ -186,6 +186,18 @@ pub fn run(start: Start) -> i32 {
                 trace(&format!("! no engine copy: {e}"));
             }
         }
+        // an updater older than 0.20.4 writes its own version into Settings → Apps when it's
+        // done, after this app has started, and restarting two jobs can take it past a minute:
+        // put this version's entry back after 1, 3 and 10 minutes
+        std::thread::spawn(|| {
+            for wait in [60, 120, 420] {
+                std::thread::sleep(std::time::Duration::from_secs(wait));
+                let proc = RealProc;
+                if crate::service::repair_app_entry(&crate::service::Sys::new(&proc)) {
+                    trace("Settings → Apps named an older version: listed this one again");
+                }
+            }
+        });
         tick();
         SetTimer(hwnd, TICK, 500, None);
         if !start.background || start.pair {
@@ -403,13 +415,9 @@ fn write(now: f64, force: bool) {
             started: a.started,
             seen: now,
             running: running_labels(a),
-            jobs: a
-                .sup
-                .wanted()
-                .into_iter()
-                .chain(a.adopted.keys().copied())
-                .map(|r| JobRecord { role: r.name().to_string(), pid: a.kids.get(&r).map(|k| k.child.id()).or_else(|| a.adopted.get(&r).map(|ad| ad.pid)) })
-                .collect(),
+            jobs: super::job_list(a.sup.wanted().into_iter().chain(a.adopted.keys().copied()), |r| {
+                a.kids.get(&r).map(|k| k.child.id()).or_else(|| a.adopted.get(&r).map(|ad| ad.pid))
+            }),
         };
         let changed = a.last.as_ref().is_none_or(|l| l.running != s.running || l.jobs != s.jobs);
         if force || changed || now - a.written >= WRITE_MS {

@@ -191,7 +191,7 @@ On a computer that runs the hub, the pairing card shows the hub's address and ho
 
 The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. Before 0.20.1 the window grew and shrank with every refresh.
 
-Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), with its version and the kite icon, and `inyon update` keeps the version current. From 0.20.3 **Uninstall** there asks to confirm, then removes Inyon without opening a terminal and says when it's done; before, it ran `inyon uninstall --purge` in a console window that stayed open until you pressed Enter.
+Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), with its version and the kite icon, and `inyon update` keeps the version current. An update from 0.20.2 or 0.20.3 leaves the old version's entry there; from 0.20.4 the Inyon app puts the right one back within a few minutes of starting. From 0.20.3 **Uninstall** there asks to confirm, then removes Inyon without opening a terminal and says when it's done; before, it ran `inyon uninstall --purge` in a console window that stayed open until you pressed Enter.
 
 ## Updating
 

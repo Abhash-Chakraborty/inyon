@@ -1314,11 +1314,42 @@ pub fn app_entry_script(app: &str, icon: &str, version: &str, size_kb: u64) -> S
         exe = psq(app),
         icon = psq(icon),
         dir = psq(&dir),
-        u = psq(&format!("\"{app}\" uninstall --purge")),
+        u = psq(&uninstall_command(app)),
         q = psq(&format!("\"{app}\" uninstall --purge --yes")),
         size = size_kb,
         lnk = start_menu_shortcut(),
     )
+}
+
+/// What Uninstall in Settings → Apps runs: the app, so no console opens.
+fn uninstall_command(app: &str) -> String {
+    format!("\"{app}\" uninstall --purge")
+}
+
+/// PowerShell that exits 0 when Settings → Apps lists `version` with `app` as its Uninstall, as
+/// `app_entry_script` writes it.
+pub fn app_entry_current_script(app: &str, version: &str) -> String {
+    format!(
+        "$e = Get-ItemProperty -Path {} -ErrorAction SilentlyContinue\nif ($e -and $e.DisplayVersion -eq {} -and $e.UninstallString -eq {}) {{ exit 0 }} else {{ exit 1 }}",
+        psq(APP_KEY),
+        psq(version),
+        psq(&uninstall_command(app))
+    )
+}
+
+/// Lists Inyon again when Settings → Apps names another version than the installed one, or
+/// Uninstall doesn't open the app (Windows): what an updater older than 0.20.4 leaves, since it
+/// writes its own version once it's done. True when it listed it again.
+pub fn repair_app_entry(sys: &Sys) -> bool {
+    if sys.platform != Platform::Windows || !installed_binary().is_file() {
+        return false;
+    }
+    let version = crate::app::build_of(&installed_binary()).unwrap_or_else(|| crate::ui::VERSION.to_string());
+    let app = crate::app::app_beside(&installed_binary());
+    if ps(&app_entry_current_script(&path_str(&app), &version)).ok {
+        return false;
+    }
+    register_app(sys).is_some_and(|l| l.starts_with('✓'))
 }
 
 /// Lists Inyon under Settings → Apps and in the Start menu (Windows), once inyon.exe is in place.
@@ -1339,7 +1370,9 @@ pub fn register_app(sys: &Sys) -> Option<String> {
     let icon = icon_file();
     let _ = fs::write(&icon, crate::app::ICON);
     let bytes: u64 = fs::read_dir(bin_dir()).into_iter().flatten().flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum();
-    if ps(&app_entry_script(&path_str(&app), &path_str(&icon), crate::ui::VERSION, bytes / 1024)).ok {
+    // the installed program's version: after an update, this program is the one it replaced
+    let version = crate::app::build_of(&exe).unwrap_or_else(|| crate::ui::VERSION.to_string());
+    if ps(&app_entry_script(&path_str(&app), &path_str(&icon), &version, bytes / 1024)).ok {
         Some("✓ In the Start menu and Settings → Apps as Inyon".into())
     } else {
         Some("! Couldn't list Inyon in the Start menu and Settings → Apps (uninstall with `inyon uninstall`)".into())
