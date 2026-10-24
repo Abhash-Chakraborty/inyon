@@ -12,7 +12,7 @@ const STILL_MS = 8_000
 
 /** Hook events that start or continue a turn; Stop (and a new session) end it. */
 const BUSY = new Set(['UserPromptSubmit', 'PermissionRequest'])
-const DONE = new Set(['Stop', 'SessionStart', 'SessionEnd'])
+const DONE = new Set(['Stop', 'StopFailure', 'SessionStart', 'SessionEnd'])
 
 const hookSays = (h: HookPaneState['data']): 'busy' | 'done' | undefined => {
   const name = h.hook_event_name ?? ''

@@ -13,11 +13,12 @@ use futures_util::future::join_all;
 use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{
     agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption,
-    ScreenState, SessionInfo, TmuxState, WindowInfo,
+    RateWindow, ScreenState, SessionInfo, TmuxState, WindowInfo,
 };
 use serde_json::Value;
 
 use super::coalesce::coalesce;
+use super::failure::{failure_text, turn_failure};
 use super::host::{shq, Host, StreamHandle};
 use super::http_error::{HubError, HubResult};
 use super::names::{bare_title, name_taken, owns_title, pending_name, session_name};
@@ -1116,6 +1117,7 @@ impl Registry {
             status: None,
             status_stopped: None,
             started_at: Some(crate::js::js_round(proc.started_at * 1000.0) as u64),
+            failure: None,
         };
         let hook_path = hook.as_ref().and_then(|h| Some(&h.data).at("transcript_path").filter(|v| Some(*v).truthy()).map(json::value_string));
         if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
@@ -1279,6 +1281,9 @@ impl Registry {
             apply_screen(&mut p, sc.clone(), host, lines, hook.as_ref(), was.as_ref(), mode);
             p = apply_open_code_live(host, p, Some(&sc)).await;
         }
+        if proc.kind == AgentKind::Claude {
+            self.apply_failure(rt, pr, &mut p);
+        }
         let info = p.agent.clone().expect("the agent");
         // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
         if let Some(want) = pending_name(&host_id, info.session_id.as_deref()) {
@@ -1302,6 +1307,26 @@ impl Registry {
             }
         }
         Ok(p)
+    }
+
+    /// A turn that ended on an error (the pane's last hook is a StopFailure) says why, and when a
+    /// full rate limit resets: from the session's own numbers and the account's.
+    fn apply_failure(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>, p: &mut PaneInfo) {
+        let hook = live_hook(&pr.borrow(), &p.id);
+        // the account's limits only as apply_usage takes them: this account's, and fresh
+        let signed_in = pr.borrow().account.clone();
+        let account = rt
+            .borrow()
+            .usage
+            .as_ref()
+            .filter(|u| u.account == signed_in && u.ok_at.is_some_and(|o| o != 0 && now_ms().saturating_sub(o) <= USAGE_STALE_MS))
+            .map(|u| (u.u.five_hour.clone(), u.u.seven_day.clone()));
+        let Some(a) = p.agent.as_mut() else { return };
+        a.failure = hook.filter(|_| a.state != AgentState::Working).and_then(|h| {
+            let own = a.status.as_ref().map(|s| (s.five_hour.clone(), s.seven_day.clone()));
+            let windows: Vec<RateWindow> = [own, account].into_iter().flatten().flat_map(|(f, s)| [f, s]).flatten().collect();
+            turn_failure(&h, &windows.iter().collect::<Vec<_>>(), now_ms() as f64 / 1000.0)
+        });
     }
 
     /// The agent the machine's current state shows in a pane (`findPane(..)?.pane.agent`).
@@ -1641,7 +1666,11 @@ impl Registry {
                     let kind = p.agent.as_ref().map(|a| a.kind);
                     let done = {
                         let (host, pane, title, rt) = (host_id.clone(), p.id.clone(), title.clone(), rt.clone());
-                        let body = format!("{agent_name} finished");
+                        let failure = p.agent.as_ref().and_then(|a| a.failure.as_ref());
+                        let body = match failure {
+                            Some(f) => format!("{agent_name} stopped: {}", failure_text(f, now_ms() as f64 / 1000.0)),
+                            None => format!("{agent_name} finished"),
+                        };
                         move || {
                             // they're at that terminal and saw it finish
                             if typed_lately(&rt, &pane) {

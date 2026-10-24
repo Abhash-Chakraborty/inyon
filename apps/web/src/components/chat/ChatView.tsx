@@ -18,7 +18,7 @@ import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
 import { FailedScreen } from './FailedScreen.tsx'
 import { HeldBubble } from './HeldBubble.tsx'
-import { backgroundText } from '../ui/status.tsx'
+import { backgroundText, failureText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
 
 const NO_AGENTS: AgentKind[] = []
@@ -37,6 +37,11 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const machineDown = !!machine && machine.status !== 'online'
   const connected = hubUp && !machineDown
   const installed = useStore((s) => s.hosts.find((h) => h.config.id === host)?.agents) ?? NO_AGENTS
+  // why the last turn stopped, when it ended on an error (a rate limit, signed out)
+  const failure = useStore((s) => {
+    const f = s.hosts.find((h) => h.config.id === host)?.sessions.flatMap((x) => x.windows).flatMap((w) => w.panes).find((p) => p.id === pane)?.agent?.failure
+    return f && failureText(f)
+  })
   const scroller = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const [screenOpen, setScreenOpen] = useState(false)
@@ -381,6 +386,14 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                           <span className="size-1.5 rounded-full bg-fg-3 pulse-soft" />
                         </div>
                         {backgroundText(screen.background)}
+                      </div>
+                    )}
+                    {!working && !prompt && !screen?.background && failure && (
+                      <div role="status" className="animate-fade-in flex items-center gap-3 py-1 text-[13px] text-fg-2">
+                        <div className="flex size-6 shrink-0 items-center justify-center">
+                          <span className="size-1.5 rounded-full bg-danger" />
+                        </div>
+                        {failure}
                       </div>
                     )}
                   </div>

@@ -93,6 +93,21 @@ const EVENTS: { name: string; matcher?: string }[] = [
   { name: 'Stop' },
 ]
 
+/**
+ * A turn that ended on an error (a rate limit, signed out, overloaded). Only for Claude Code 2.1.78
+ * and later, which have it: before 2.1.101 a hook event Claude Code doesn't know makes it ignore
+ * the whole settings file.
+ */
+const STOP_FAILURE: { name: string; matcher?: string } = { name: 'StopFailure' }
+
+/** Whether `claude --version` (e.g. "2.1.309 (Claude Code)") names a version with StopFailure. */
+export function knowsStopFailure(version: string): boolean {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(version)
+  if (!m) return false
+  const [a, b, c] = [m[1], m[2], m[3]].map(Number)
+  return a !== 2 ? a > 2 : b !== 1 ? b > 1 : c >= 78
+}
+
 const isOurs = (h: any) => ours(h?.command, 'hook.sh')
 
 async function readSettings(host: Host): Promise<any> {
@@ -161,16 +176,28 @@ export async function installIntegration(host: Host) {
       await writeFile(host, '.inyon/statusline.orig', before ? `${before}\n` : '')
     }
   }
+  const version = (await host.exec('claude --version 2>/dev/null')).stdout
   settings.hooks ??= {}
-  for (const ev of EVENTS) {
+  for (const ev of knowsStopFailure(version) ? [...EVENTS, STOP_FAILURE] : EVENTS) {
     const groups: any[] = (settings.hooks[ev.name] ??= [])
     // an entry naming the old folder points at the new one
     for (const g of groups) for (const h of g.hooks ?? []) if (isOurs(h)) h.command = HOOK_CMD
     if (groups.some((g) => (g.hooks ?? []).some(isOurs))) continue
     groups.push({ ...(ev.matcher ? { matcher: ev.matcher } : {}), hooks: [{ type: 'command', command: HOOK_CMD }] })
   }
+  // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
+  if (!knowsStopFailure(version)) dropOurs(settings.hooks, STOP_FAILURE.name)
   await writeSettings(host, settings)
   await installAgyIntegration(host)
+}
+
+/** Takes Inyon's hook out of one event's groups, leaving yours; a group left empty goes, and so does the event when nothing is left. */
+function dropOurs(hooks: Record<string, any[]>, name: string) {
+  const groups = hooks[name]
+  if (!Array.isArray(groups)) return
+  const kept = groups.map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurs(h)) })).filter((g) => g.hooks.length)
+  if (kept.length) hooks[name] = kept
+  else delete hooks[name]
 }
 
 const AGY_SETTINGS = '$HOME/.gemini/antigravity-cli/settings.json'
@@ -294,13 +321,7 @@ export async function uninstallIntegration(host: Host) {
     if (orig && !isOurStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
     else delete settings.statusLine
   }
-  for (const [name, groups] of Object.entries<any[]>(settings.hooks ?? {})) {
-    const kept = groups
-      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h: any) => !isOurs(h)) }))
-      .filter((g) => g.hooks.length)
-    if (kept.length) settings.hooks[name] = kept
-    else delete settings.hooks[name]
-  }
+  for (const name of Object.keys(settings.hooks ?? {})) dropOurs(settings.hooks, name)
   if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks
   await writeSettings(host, settings)
   // the hook's log holds your prompts: it goes with the hook

@@ -32,7 +32,7 @@ fn hook_says(h: &serde_json::Value) -> Option<Said> {
     let name = h.at("hook_event_name").str().unwrap_or("");
     match name {
         "UserPromptSubmit" | "PermissionRequest" => Some(Said::Busy),
-        "Stop" | "SessionStart" | "SessionEnd" => Some(Said::Done),
+        "Stop" | "StopFailure" | "SessionStart" | "SessionEnd" => Some(Said::Done),
         // "Claude is waiting for your input" comes after a minute idle; the rest ask for something mid-turn
         "Notification" => Some(if h.at("notification_type").str() == Some("idle_prompt") || re!(r"waiting for your input", "i").is_match(h.at("message").str().unwrap_or("")) {
             Said::Done

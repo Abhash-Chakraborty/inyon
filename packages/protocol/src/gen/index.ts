@@ -253,7 +253,25 @@ ultracode?: boolean, status?: AgentStatus,
 /**
  * the integration is on but this session stopped sending live numbers
  */
-statusStopped?: boolean, startedAt?: number, };
+statusStopped?: boolean, startedAt?: number, 
+/**
+ * the last turn ended on an error instead of finishing; gone with the next prompt
+ */
+failure?: TurnFailure, };
+
+/**
+ * Why a turn stopped (Claude Code's StopFailure hook).
+ */
+export type TurnFailure = { 
+/**
+ * "rate_limit", "billing_error", "authentication_failed", "overloaded", "server_error",
+ * "invalid_request", "max_output_tokens" or "unknown"
+ */
+error: string, 
+/**
+ * rate limits: when the full limit resets, unix seconds
+ */
+resetsAt?: number, };
 
 export type PaneInfo = { 
 /**

@@ -9,7 +9,7 @@ import { api } from '../lib/api.ts'
 import { haptic } from '../lib/haptics.ts'
 import { type ActivityEvent, toast, useStore } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
-import { HostDot, StatePill, backgroundText, hostLine, shownState, sshAddress } from './ui/status.tsx'
+import { HostDot, StatePill, backgroundText, failureText, hostLine, shownState, sshAddress } from './ui/status.tsx'
 import { Menu, Meter, openMenu } from './ui/primitives.tsx'
 import { useLongPress } from '../lib/longPress.ts'
 import { contextMenu } from './ui/ContextMenu.tsx'
@@ -145,7 +145,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
         </div>
       </div>
       <div className="pointer-events-none truncate text-[13.5px] text-fg-2">
-        {a.state === 'working' ? a.activity ?? 'Working…' : a.state === 'waiting' ? a.waitingFor : a.background ? backgroundText(a.background) : `Active ${timeAgo(r.window.activity * 1000)}`}
+        {a.state === 'working' ? a.activity ?? 'Working…' : a.state === 'waiting' ? a.waitingFor : a.background ? backgroundText(a.background) : a.failure ? failureText(a.failure) : `Active ${timeAgo(r.window.activity * 1000)}`}
       </div>
       <div className="pointer-events-none mt-auto flex h-[calc(2rem+0.875rem+1px)] items-center gap-2 border-t border-line pt-3.5 font-mono text-[12px] text-fg-3">
         {a.state === 'waiting' && r.host.status === 'online' ? (

@@ -1,6 +1,7 @@
 //! Port of apps/hub/src/hosts: the machines, how commands reach them, and what's known of each.
 
 pub mod coalesce;
+pub mod failure;
 pub mod host;
 pub mod http_error;
 pub mod names;
