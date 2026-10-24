@@ -2,12 +2,12 @@ import { coalesce } from './coalesce.ts'
 import { opencodeLive } from '../agents/opencode-controls.ts'
 import { opencodeCatalogCached } from '../agents/opencode-api.ts'
 import { modelFromFooter, opencodeCliModels, peekOpenCodeModels, withoutProvider } from '../agents/opencode-models.ts'
-import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenState, type SessionInfo } from '@inyon/protocol'
+import { AGENTS, type AgentPaneInfo, type AgentStatus, type HostConfig, type HostState, type PaneInfo, type ScreenPrompt, type ScreenState, type SessionInfo } from '@inyon/protocol'
 import { loadHosts, loadSettings, saveHosts } from '../config.ts'
 import { keyPart, kv } from '../platform/store.ts'
 import { Host, shq } from './host.ts'
 import { capturePanes, guessTranscript, probe, type HookPaneState, type ProbeResult } from '../tmux/tmux.ts'
-import { parseScreen, promptSummary } from '../claude/screen.ts'
+import { parseScreen, promptSummary, promptWhole } from '../claude/screen.ts'
 import { isDriving } from '../claude/driving.ts'
 import { claudeStatus } from '../agents/status.ts'
 import { fetchClaudeUsage, type AccountUsage } from '../agents/claude-usage.ts'
@@ -903,10 +903,17 @@ function applyScreen(p: PaneInfo, sc: ReturnType<typeof parseScreen>, host: Host
     if (sc.questions) info.waitingFor = sc.questions === 1 ? 'A question is waiting for your answer' : `${sc.questions} questions are waiting for your answer`
     return
   }
-  if (!sc.prompt.multi && !sc.prompt.tabs?.length && !sc.prompt.input) {
-    info.options = sc.prompt.options.filter((o) => o.n !== sc.prompt!.freeTextOption).slice(0, 4).map((o) => ({ n: o.n, label: o.label }))
-  }
+  info.options = quickOptions(sc.prompt)
   info.waitingFor = promptSummary(sc.prompt)
+}
+
+/**
+ * The answers the overview offers beside its one line (single-choice prompts only, up to four):
+ * none when that line doesn't hold the whole question (`promptWhole`).
+ */
+export function quickOptions(prompt: ScreenPrompt) {
+  if (prompt.multi || prompt.tabs?.length || prompt.input || !promptWhole(prompt)) return undefined
+  return prompt.options.filter((o) => o.n !== prompt.freeTextOption).slice(0, 4).map((o) => ({ n: o.n, label: o.label }))
 }
 
 /** A host's settings as the browser sees them: the pairing token's hash stays on the hub. */
@@ -962,8 +969,10 @@ async function applyOpenCodeLive(host: Host, pane: PaneInfo, sc?: ScreenState) {
     // its subagents' work counts as background, like a shell the footer lists
     info.background = live.background ?? undefined
     if (live.permission) {
+      // only the permission's kind ("bash"), not what it would allow: no quick answers, as for any
+      // question the one line doesn't hold (promptWhole)
       info.waitingFor = live.permission.permission ?? 'Permission requested'
-      info.options = [{ n: 1, label: 'Allow once' }, { n: 2, label: 'Always allow' }, { n: 3, label: 'Reject' }]
+      info.options = undefined
     }
     if (sc?.model && info.status && !info.status.modelId) {
       const known = modelFromFooter((await opencodeCatalogCached(host, info.transcriptPath!, pane.cwd)).models, sc.model)

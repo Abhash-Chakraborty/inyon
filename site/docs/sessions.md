@@ -44,6 +44,8 @@ When the agent asks something, the composer is replaced by the question:
 
 Each answer is tied to the question it was shown for. If the agent has already moved on, an old card can't answer the wrong question.
 
+From 0.22 a question that one line can't hold, such as a command of several lines, a diff or an OpenCode permission, is answered only here, where it shows whole. Companion apps get no quick answers for it, and while its machine reconnects the session doesn't show it from memory.
+
 Codex can ask a question without stopping its turn: the terminal shows *1 question* with a hint to press `shift+←`. From 0.17.6, Inyon presses it for you as soon as nothing is being typed in the terminal, so the question shows here with its choices, and the session reads *A question is waiting for your answer* on the overview until you pick one. Codex's approvals say what they're for in the alert and on the overview: *Run `printf 'hi' > hello.txt`*, or *Edit notes.txt?*
 
 If the app has just woken up and is still reconnecting, the chat says *Reconnecting to* the machine, and a question you saw on the overview stays on screen with its buttons greyed out until the machine answers.

@@ -145,7 +145,7 @@ A companion never sees how the hub reaches a machine, folders, transcript paths,
 | `kind` | `claude`, `codex`, `opencode`, `copilot`, `gemini` or `antigravity` |
 | `state` | `idle`, `working`, `waiting` or `unknown` |
 | `waitingFor` | a short line about the question, while `state` is `waiting` |
-| `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question |
+| `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question. From 0.22 it's left out when `waitingFor` doesn't hold the whole question: a command or diff of more than one line, a Codex edit, an OpenCode permission, or a line cut at 200 characters. Answer those from `chat.screen`, which has the whole prompt |
 | `activity` | the working line, such as `Undulating… (2s · thinking with high effort)` |
 | `mode` | the agent's mode, such as `manual` or `plan` |
 
