@@ -87,6 +87,19 @@ describe('psmux (Windows)', () => {
   })
 })
 
+test("another agent's hook line is left to the Rust hub, and Claude Code's is read as before", async () => {
+  const out = [
+    '@@PANES',
+    JSON.stringify({ pane: '%4', ts: 1700000000, data: { session_id: 's-claude', hook_event_name: 'Stop' } }),
+    JSON.stringify({ pane: '%5', ts: 1700000000, agent: 'copilot', event: 'agentStop', data: { sessionId: 's-copilot' } }),
+    '@@END',
+  ].join('\n')
+  const fake = { config: { id: 'm', name: 'm', kind: 'local' }, exec: async () => ({ stdout: out, stderr: '', code: 0 }) } as unknown as Host
+  const r = await probe(fake)
+  expect(r.hookPanes.get('%4')?.data.session_id).toBe('s-claude')
+  expect(r.hookPanes.has('%5')).toBe(false)
+})
+
 describe('claudeStatus', () => {
   const base = (over: Partial<{ ts: number; account: string; accountNow: string; session: string }> = {}) => ({
     integration: 'installed' as const,

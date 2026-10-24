@@ -90,12 +90,45 @@ struct Proc {
 }
 
 /// A line of ~/.inyon/panes/*.json: the hook's last word on a pane.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct HookPaneState {
     pub pane: String,
     pub ts: f64,
     /// session_id, transcript_path, cwd, hook_event_name and whatever else the hook sent
     pub data: Value,
+    /// the agent that sent it, when it isn't Claude Code (`hook.sh copilot agentStop`)
+    pub agent: Option<AgentKind>,
+    /// that agent's own name for the event
+    pub event: Option<String>,
+}
+
+impl HookPaneState {
+    /// Whether it came from this kind of agent: a line without a name is Claude Code's.
+    pub fn from_agent(&self, kind: AgentKind) -> bool {
+        self.agent.unwrap_or(AgentKind::Claude) == kind
+    }
+
+    /// The event in Claude Code's words, whichever agent sent it: a prompt (UserPromptSubmit), the
+    /// end of a turn (Stop), a question mid-turn (Notification), a session starting or ending.
+    pub fn event_name(&self) -> &str {
+        let data = Some(&self.data);
+        let Some(agent) = self.agent else { return data.at("hook_event_name").str().unwrap_or("") };
+        let event = self.event.as_deref().unwrap_or("");
+        match (agent, event) {
+            // Copilot starts its session on the first prompt, just after userPromptSubmitted (1.0.95),
+            // so its sessionStart says nothing about the turn
+            (AgentKind::Copilot, "sessionStart") => "",
+            (_, "SessionStart") => "SessionStart",
+            (_, "SessionEnd" | "sessionEnd") => "SessionEnd",
+            (AgentKind::Copilot, "userPromptSubmitted") | (AgentKind::Gemini, "BeforeAgent") | (AgentKind::Antigravity, "PreInvocation") => "UserPromptSubmit",
+            (AgentKind::Copilot, "agentStop") | (AgentKind::Gemini, "AfterAgent") | (AgentKind::Antigravity, "Stop") => "Stop",
+            // Copilot says it's idle as a notification; an error it can't recover from ends the turn
+            (AgentKind::Copilot, "notification") if data.at("notification_type").str() == Some("agent_idle") => "Stop",
+            (AgentKind::Copilot, "errorOccurred") if data.at("recoverable").and_then(Value::as_bool) == Some(false) => "Stop",
+            (AgentKind::Copilot, "notification" | "permissionRequest") | (AgentKind::Gemini, "Notification") => "Notification",
+            _ => "",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -166,6 +199,8 @@ pub struct ProbeResult {
     pub agy_titles: IndexMap<String, String>,
     /// whether Inyon's status line is in Antigravity CLI's settings (None when agy isn't installed)
     pub agy_integration: Option<bool>,
+    /// the agents other than Claude Code whose settings run Inyon's hook
+    pub hooked: Vec<AgentKind>,
     /// pane id → unix seconds of the last key a person pressed in a tmux client showing it
     pub keys_at: IndexMap<String, f64>,
     pub machine_kind: Option<MachineKind>,
@@ -232,6 +267,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
         keys_at: IndexMap::new(),
     };
@@ -338,6 +374,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         Some("outdated") => IntegrationState::Outdated,
         _ => IntegrationState::Missing,
     };
+    res.hooked = AGENT_KINDS.iter().copied().filter(|k| section("HOOKED").iter().any(|l| l.jtrim() == k.as_str())).collect();
     for line in section("PANES") {
         if line.is_blank() {
             continue;
@@ -346,7 +383,13 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         let pane = Some(&v).at("pane");
         if pane.truthy() {
             let pane = pane.to_js_string();
-            let state = HookPaneState { pane: pane.clone(), ts: Some(&v).at("ts").num().unwrap_or(f64::NAN), data: Some(&v).at("data").cloned().unwrap_or(Value::Null) };
+            let state = HookPaneState {
+                pane: pane.clone(),
+                ts: Some(&v).at("ts").num().unwrap_or(f64::NAN),
+                data: Some(&v).at("data").cloned().unwrap_or(Value::Null),
+                agent: Some(&v).at("agent").str().and_then(|a| serde_json::from_value(Value::String(a.to_owned())).ok()),
+                event: Some(&v).at("event").str().map(str::to_owned),
+            };
             res.hook_panes.insert(pane, state);
         }
     }
@@ -592,7 +635,7 @@ pub fn guess_transcript(stdout: &str, dir: &str, proc: &TranscriptProc) -> Optio
 /// Prints whether Claude's integration is installed, missing, removed from settings or outdated.
 pub const HOOK_STATE_SH: &str = r#"t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 7 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
@@ -688,12 +731,17 @@ for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-sta
 done
 for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
-  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 7 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
+# the agents other than Claude Code whose settings run Inyon's hook
+echo "@@HOOKED"
+grep -qs 'inyon/hook.sh copilot' "${COPILOT_HOME:-$HOME/.copilot}/hooks/inyon.json" && echo copilot
+grep -qs 'inyon/hook.sh gemini' "$HOME/.gemini/settings.json" && echo gemini
+grep -qs 'inyon/hook.sh antigravity' "$HOME/.gemini/config/hooks.json" && echo antigravity
 echo "@@HOOK"
 t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 7 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated

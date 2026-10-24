@@ -26,11 +26,11 @@ enum Said {
     Done,
 }
 
-/// Hook events that start or continue a turn; Stop (and a new session) end it.
-fn hook_says(h: &serde_json::Value) -> Option<Said> {
-    let h = Some(h);
-    let name = h.at("hook_event_name").str().unwrap_or("");
-    match name {
+/// Hook events that start or continue a turn; Stop (and a new session) end it. Another agent's
+/// events count in Claude Code's words (see `HookPaneState::event_name`).
+fn hook_says(hook: &HookPaneState) -> Option<Said> {
+    let h = Some(&hook.data);
+    match hook.event_name() {
         "UserPromptSubmit" | "PermissionRequest" => Some(Said::Busy),
         "Stop" | "StopFailure" | "SessionStart" | "SessionEnd" => Some(Said::Done),
         // "Claude is waiting for your input" comes after a minute idle; the rest ask for something mid-turn
@@ -85,7 +85,7 @@ impl Turns {
 
     /// What to show for a pane whose screen reads `shown`, given its last hook event and screen text.
     pub fn state(&mut self, key: &str, shown: Shown, screen: &str, hook: Option<&HookPaneState>, now: u64) -> Shown {
-        let said = hook.and_then(|h| hook_says(&h.data));
+        let said = hook.and_then(hook_says);
         let at = hook.map_or(0.0, |h| h.ts) * 1000.0;
         let ended = self.ended.get(key).copied().unwrap_or(0) as f64;
         if said == Some(Said::Busy) && !self.turns.contains_key(key) && at > ended && (now as f64) - at < MAX_MS as f64 {

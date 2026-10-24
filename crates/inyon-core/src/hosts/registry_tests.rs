@@ -400,6 +400,7 @@ fn mode_probe(now: f64) -> ProbeResult {
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
     }
@@ -671,7 +672,7 @@ fn a_turn_that_stops_on_a_rate_limit_shows_why_and_when_the_full_limit_resets() 
         b.rt.borrow_mut().usage = usage(None);
         let poll = |data: Value| {
             let mut p = mode_probe(now);
-            p.hook_panes.insert("%9".into(), HookPaneState { pane: "%9".into(), ts: now - 1.0, data });
+            p.hook_panes.insert("%9".into(), HookPaneState { pane: "%9".into(), ts: now - 1.0, data, ..Default::default() });
             let pr = Rc::new(RefCell::new(p));
             b.rt.borrow_mut().probe = Some(pr.clone());
             let rt = b.rt.clone();

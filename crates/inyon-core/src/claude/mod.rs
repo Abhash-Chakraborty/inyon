@@ -2,6 +2,7 @@
 //! integration scripts, and the actions and watchers that drive an agent.
 
 pub mod actions;
+pub mod agent_hooks;
 pub mod chat_cache;
 pub mod delivery;
 pub mod drafts;

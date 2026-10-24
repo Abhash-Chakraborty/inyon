@@ -5,7 +5,7 @@ use super::*;
 const NOW: f64 = 1_791_000_000.0;
 
 fn hook(data: serde_json::Value) -> HookPaneState {
-    HookPaneState { pane: "%1".into(), ts: NOW, data }
+    HookPaneState { pane: "%1".into(), ts: NOW, data, ..Default::default() }
 }
 
 fn window(pct: f64, resets_at: Option<f64>) -> RateWindow {

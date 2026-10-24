@@ -73,7 +73,7 @@ When an install or update fails, the row opens with the likely cause (npm can't 
 
 ### The Claude Code integration
 
-Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
+Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. From 0.22 the same hook goes into GitHub Copilot CLI, Gemini CLI and Antigravity CLI when they're installed, so their turns show as working or finished the moment they start or end. An agent installed later gets it within ten minutes. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
 
 When a new version of Inyon changes these scripts, it updates them on the machine by itself, as long as it has seen the integration on there before. Otherwise the button says *Update* instead of *Turn on*. From 0.17.1, an older copy of Inyon (a phone that hasn't updated yet) leaves scripts from a newer one alone.
 

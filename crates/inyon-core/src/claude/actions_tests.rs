@@ -67,6 +67,7 @@ fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, a
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
     };

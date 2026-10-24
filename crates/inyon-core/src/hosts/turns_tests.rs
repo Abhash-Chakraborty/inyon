@@ -1,5 +1,6 @@
 //! hosts/turns.test.ts
 
+use inyon_protocol::AgentKind;
 use serde_json::json;
 
 use super::Shown::{Idle, Waiting, Working};
@@ -12,7 +13,7 @@ fn hook(name: &str, ts: f64, extra: serde_json::Value) -> HookPaneState {
             data[k] = v.clone();
         }
     }
-    HookPaneState { pane: "%1".into(), ts, data }
+    HookPaneState { pane: "%1".into(), ts, data, ..Default::default() }
 }
 const T0: u64 = 1_791_000_000_000;
 const S0: f64 = (T0 / 1000) as f64;
@@ -72,6 +73,19 @@ fn esc_from_inyon_ends_it_at_once() {
     t.start("p", T0);
     t.end("p", T0 + 100);
     assert_eq!(t.state("p", Idle, "x", Some(&hook("PermissionRequest", S0 - 1.0, json!({}))), T0 + 200), Idle);
+}
+
+fn copilot(event: &str, ts: f64) -> HookPaneState {
+    HookPaneState { pane: "%1".into(), ts, data: json!({ "sessionId": "560a9dd2" }), agent: Some(AgentKind::Copilot), event: Some(event.into()) }
+}
+
+#[test]
+fn copilots_first_prompt_keeps_working_through_the_session_start_that_follows_it() {
+    // what Copilot CLI 1.0.95 sends for a new session's first prompt, 85 ms apart, then agentStop
+    let mut t = Turns::new();
+    assert_eq!(t.state("p", Idle, "", Some(&copilot("userPromptSubmitted", S0)), T0 + 50), Working);
+    assert_eq!(t.state("p", Idle, "", Some(&copilot("sessionStart", S0)), T0 + 600), Working);
+    assert_eq!(t.state("p", Idle, "OK", Some(&copilot("agentStop", S0 + 3.0)), T0 + 3500), Idle);
 }
 
 #[test]
