@@ -51,7 +51,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 
 ## Stopping and ending
 
-- **Stop** (or `Esc` in an empty message box) interrupts the agent, like pressing `Esc` in the terminal.
+- **Stop** (or `Esc` in an empty message box) interrupts the agent, like pressing `Esc` in the terminal. From 0.22 a stop pressed on two devices at once, or twice within a second, sends `Esc` once: a second `Esc` after the agent stopped would open Claude Code's rewind menu.
 - **Exit to shell** quits the agent and leaves the pane at a shell prompt, after asking.
 - **End session…** closes the pane, its window or the whole tmux session. The confirmation says exactly which, and the session disappears at once.
 - **Copy session ID** copies the agent's conversation ID, for resuming it elsewhere.

@@ -92,6 +92,8 @@ const CHECKED: [AgentKind; 5] = [AgentKind::Claude, AgentKind::Codex, AgentKind:
 thread_local! {
     static LANES: RefCell<HashMap<String, Deferred<()>>> = RefCell::new(HashMap::new());
     static RENAME_TRIED: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+    /// when each pane's last stop ended (u64::MAX while one runs)
+    static STOPPING: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
 }
 
 /// Lets the next action in the lane go when this one ends, however it ends.
@@ -1507,6 +1509,34 @@ pub async fn reconnect_agent(host_id: &str, pane_id: &str) -> HubResult<()> {
 /// Stops the current turn. Esc only while the spinner is up (a stray double Esc on an idle Claude
 /// opens the rewind menu), then waits for the spinner to go and tries once more if it hasn't.
 pub async fn interrupt(host_id: &str, pane_id: &str) -> HubResult<()> {
+    // one stop at a time per pane, and none within a second of the last: a second Esc that lands
+    // after the agent stopped opens Claude Code's rewind menu or clears the box
+    let k = format!("{host_id}\u{1}{pane_id}");
+    let now = now_ms();
+    let busy = STOPPING.with(|s| {
+        let mut s = s.borrow_mut();
+        match s.get(&k) {
+            Some(at) if now.saturating_sub(*at) < INTERRUPT_GAP_MS => true,
+            _ => {
+                // still running counts as just now
+                s.insert(k.clone(), u64::MAX);
+                false
+            }
+        }
+    });
+    if busy {
+        return Ok(());
+    }
+    let r = interrupt_now(host_id, pane_id).await;
+    let end = now_ms();
+    STOPPING.with(|s| s.borrow_mut().insert(k, end));
+    r
+}
+
+/// How long after a stop another is ignored.
+pub const INTERRUPT_GAP_MS: u64 = 1000;
+
+async fn interrupt_now(host_id: &str, pane_id: &str) -> HubResult<()> {
     let (host, found) = agent_pane(host_id, pane_id)?;
     let agent = found.pane.agent.as_ref();
     let is_open_code = agent.is_some_and(|a| a.kind == AgentKind::Opencode);

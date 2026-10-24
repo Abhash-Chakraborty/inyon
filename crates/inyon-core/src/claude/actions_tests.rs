@@ -295,6 +295,32 @@ fn a_held_message_that_fails_stays_first_with_the_reason_and_holding_stops() {
 }
 
 #[test]
+fn two_stops_at_once_send_one_escape() {
+    run(|| async {
+        let escapes = Rc::new(RefCell::new(0));
+        let seen = escapes.clone();
+        let working = include_str!("../../../../fixtures/screens/claude/working.txt").to_owned();
+        Fake::install(move |_, cmd, _| {
+            if cmd.contains("@@CAP") {
+                let screen = if *seen.borrow() == 0 { working.clone() } else { working.replace("✽ Undulating… (2s · thinking with high effort)", "● Stopped.") };
+                return ok(&format!("@@CAP %9\n{screen}"));
+            }
+            if cmd.contains("send-keys") && cmd.contains("Escape") {
+                *seen.borrow_mut() += 1;
+            }
+            ok("")
+        });
+        pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        // the phone and the laptop press Stop together, then once more straight after
+        let (a, b) = futures_util::future::join(interrupt("local", "%9"), interrupt("local", "%9")).await;
+        a.unwrap();
+        b.unwrap();
+        interrupt("local", "%9").await.unwrap();
+        assert_eq!(*escapes.borrow(), 1);
+    });
+}
+
+#[test]
 fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     run(|| async {
         let fake = Fake::install(|_, _, _| ok("%5\n"));
