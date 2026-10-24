@@ -120,7 +120,7 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
     } else {
         "none"
     };
-    // from 0.19 the engine is built into this program; only a hub (or the kill switch) needs the Bun one
+    // from 0.19 the engine is built into this program, and from 0.21 the hub; only a hub on Bun (or the kill switch) needs the Bun one
     let bun = crate::engine::needs_bun(role);
     let engine = jobs.iter().find_map(|j| if j.running { j.version.clone() } else { None }).or_else(|| {
         if bun {

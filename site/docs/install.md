@@ -3,7 +3,7 @@ title: Install
 description: How to install Inyon with the one-line installers or npm, where it lives on a computer, and how to update or remove it.
 ---
 
-Every computer that runs agents for you gets one program, `inyon` (written in Rust; about 4 MB on Windows, 10 to 13 MB on Linux and macOS, where from 0.20 it also holds the Rust hub). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. Only a [hub](hub.md) also gets `inyon-engine`, the larger program built with Bun that the hub runs on. Before 0.19 every computer had both. You only ever type `inyon`.
+Every computer that runs agents for you gets one program, `inyon` (written in Rust; about 4 MB on Windows, 10 to 13 MB on Linux and macOS, where from 0.20 it also holds the Rust hub). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. From 0.21 a [hub](hub.md) runs on `inyon` as well. `inyon-engine`, the larger program built with Bun, is downloaded only for a hub you put back on it, or with `INYON_LEGACY_ENGINE=1`. Before 0.19 every computer had both, and in 0.19 and 0.20 every hub did. You only ever type `inyon`.
 
 ## The one-line installers
 
@@ -33,9 +33,9 @@ The site's earlier address, inyon.abhashchakraborty.tech, still works and redire
 2. Download the release's `SHA256SUMS` and make sure it's the signed one. From 0.20 the copy of each installer this site serves carries the sha256 of the list the site checked against Inyon's release key when it published the release, so it needs no other tool. A copy from anywhere else, or one pointed at another release, checks the list's signature with [minisign](https://jedisct1.github.io/minisign/), and that the list is the one for the version it asked for. Without minisign it stops, unless you [tell it to go on](#without-minisign). Before 0.20 the installers checked the signature only when minisign was installed.
 3. Download the `inyon` command for this system, compressed when `gzip` is available, and check it against `SHA256SUMS`, both compressed and unpacked. A mismatch stops the install before anything runs.
 4. Put it in `~/.inyon/bin/inyon` (`%USERPROFILE%\.inyon\bin\inyon.exe` on Windows). On macOS it gets an ad-hoc signature so the system will run it.
-5. On Alpine, for a hub, add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to. Before 0.19 every Alpine install did this.
+5. On Alpine, for a hub with `INYON_HUB_IMPL=bun` (or with `INYON_LEGACY_ENGINE=1`), add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to. Before 0.19 every Alpine install did this, and in 0.19 and 0.20 every hub.
 6. Put `inyon` on your `PATH` (from 0.17.1), so a new terminal finds it by name. See [Put inyon on your PATH](#put-inyon-on-your-path).
-7. Run `inyon setup`, which installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub`, which also downloads and checks `inyon-engine`, and prints the hub's address and setup code instead.
+7. Run `inyon setup`, which installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub`, which prints the hub's address and setup code instead (in 0.19 and 0.20 it also downloaded `inyon-engine`).
 
 Piped from `curl`, setup can't ask questions, so it takes the defaults: a computer that pairs with your phone through a free tunnel and your VPN, started at login. Run `inyon setup` again afterwards to choose differently with the [setup screens](cli.md#setup).
 
@@ -87,7 +87,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 
 ## Supported systems
 
-| System | `inyon` | `inyon-engine` (hubs only) | Can be a hub |
+| System | `inyon` | `inyon-engine` (hubs on Bun only) | Can be a hub |
 |---|---|---|---|
 | Linux x64, arm64 | Yes | Yes | Yes |
 | Alpine and other musl Linux, x64, arm64 | The same static build | Built for musl; needs `apk add libstdc++ libgcc` | Untested |
@@ -132,7 +132,7 @@ npm puts `inyon` on your `PATH` itself, so the installers' line isn't needed the
 
 | Path | What it holds |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub (or the copy described [below](#on-windows) on Windows) |
+| `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub on Bun (or the copy described [below](#on-windows) on Windows) |
 | `~/.inyon/node/` | This computer's identity key, paired phones, link settings, hub connection, logs (only you can read it) |
 | `~/.inyon/` | A hub's own records: password hash, machines, settings, `hub.env`, and from 0.20 `tls/`, the certificate setup makes for a hub on the LAN |
 
@@ -199,7 +199,7 @@ Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), 
 inyon update
 ```
 
-It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon`, and on a hub the new `inyon-engine`, checks them against that list, and only then swaps them in. From 0.19 a computer that isn't a hub doesn't download the engine, and an update removes the one an older version left (on Windows it's replaced by the copy of `inyon.exe`). A computer whose hub still hands out an `inyon` from before 0.19 keeps the engine, or gets the hub's, because that `inyon` still runs on it. Every running role restarts on the new version. On Windows the Inyon app itself starts again on its new version first, then runs the roles again; an update by 0.20.3 or 0.20.4 restarted only the roles and left the old app running until the next sign-in, and from 0.20.5 the new link or hub connection asks that old app to start its new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
+It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon`, and on a hub on Bun the new `inyon-engine`, checks them against that list, and only then swaps them in. From 0.19 a computer that isn't a hub doesn't download the engine, from 0.21 neither does a hub on the Rust hub, and an update removes the one an older version left (on Windows it's replaced by the copy of `inyon.exe`). A computer whose hub still hands out an `inyon` from before 0.19 keeps the engine, or gets the hub's, because that `inyon` still runs on it. Every running role restarts on the new version. On Windows the Inyon app itself starts again on its new version first, then runs the roles again; an update by 0.20.3 or 0.20.4 restarted only the roles and left the old app running until the next sign-in, and from 0.20.5 the new link or hub connection asks that old app to start its new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
 
 Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. From 0.20 it checks those files against the release's signed `SHA256SUMS`, which the hub passes on, and changes nothing when the hub has none (a hub from before 0.20): update the hub first. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
 
@@ -229,7 +229,7 @@ To stop being part of a hub but keep Inyon installed, use `inyon disconnect`. To
 
 Inyon was called Tether before 0.7.0, and its computer program was `tether-node`. Run the installer again, because those versions updated from a release address that no longer exists. Nothing else needs redoing: its files move from `~/.tether-node` to `~/.inyon/node` (leaving a link behind) the first time the new program runs, and `inyon` moves the old service to its new name the next time it updates or sets the machine up. Settings named `TETHER_*` are still read as `INYON_*`.
 
-Before 0.13, `inyon` was the Bun program itself. It became the small Rust command, and the Bun program became `inyon-engine`, which from 0.19 only a hub uses. Two things changed for people who type it:
+Before 0.13, `inyon` was the Bun program itself. It became the small Rust command, and the Bun program became `inyon-engine`, which from 0.19 only a hub uses, and from 0.21 only a hub you put back on Bun. Two things changed for people who type it:
 
 - Plain `inyon` now shows a [status dashboard](cli.md#status). Setup is `inyon setup`.
 - `inyon install` and `inyon uninstall <role>` became `inyon service install` and `inyon service uninstall`. The old forms still work.

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installs inyon in fresh Linux containers from a mock of this release, sets up a hub, and
-# upgrades a real 0.12.0 install to it. From 0.19 only the hub gets the Bun engine. Needs docker and minisign (apt-get install minisign / brew install minisign);
+# upgrades a real 0.12.0 install to it. From 0.21 only a hub on Bun gets the Bun engine. Needs docker and minisign (apt-get install minisign / brew install minisign);
 # nothing else is installed on this machine.
 #
 #   scripts/container-tests.sh                 builds the command (cargo, static musl) and the
@@ -63,9 +63,10 @@ else
   # the TLS library has C in it; without a musl cross compiler the host one does, for the same processor
   cc_var="CC_$(printf '%s' "$target" | tr '-' '_')"
   if command -v musl-gcc >/dev/null 2>&1; then cc=musl-gcc; else cc=cc; fi
+  # the hub in the command carries the web app, so it's built first
+  [ -f "$root/apps/web/dist/index.html" ] || (cd "$root" && bun run build >/dev/null)
   (cd "$root/apps/cli" && env "$cc_var=$cc" cargo build --release --target "$target" --quiet)
   cp "$root/target/$target/release/inyon" "$dist/$cli"
-  [ -f "$root/apps/web/dist/index.html" ] || (cd "$root" && bun run build >/dev/null)
   bun "$root/apps/node/build.ts" "$work/engine" "linux-$arch" "linux-$arch-musl" >/dev/null
   cp "$work/engine/$engine" "$work/engine/$engine_musl" "$dist/"
 fi
@@ -148,17 +149,25 @@ for sys in ubuntu debian alpine fedora; do
   fi
 done
 
-# ---------- a hub, the one role that still runs on the Bun engine ----------
+# ---------- a hub: on the inyon command from 0.21, and back on the Bun engine ----------
 hub='set -e
 curl -fsSL http://release:8000/get.sh | sh -s -- --hub
 echo "--- after setup"
 ls -l ~/.inyon/bin
-test -x ~/.inyon/bin/inyon-engine || { echo "the hub has no engine"; exit 1; }
-~/.inyon/bin/inyon-engine version
+test ! -e ~/.inyon/bin/inyon-engine || { echo "the Bun engine was downloaded for the Rust hub"; exit 1; }
 ~/.inyon/bin/inyon status --plain
 ~/.inyon/bin/inyon status --plain | grep -q "^hub: running" || { echo "the hub is not running"; cat ~/.inyon/node/hub.log 2>/dev/null; exit 1; }
-curl -fsS http://127.0.0.1:4777/ >/dev/null || { echo "the hub does not answer"; exit 1; }
-echo "--- an update keeps the engine a hub needs"
+curl -fsS http://127.0.0.1:4777/ | grep -qi "<html" || { echo "the hub does not serve the app"; exit 1; }
+~/.inyon/bin/inyon doctor | grep -q "the Rust hub, built in" || { echo "doctor does not say the Rust hub runs"; ~/.inyon/bin/inyon doctor; exit 1; }
+echo "--- back to the Bun hub, as the docs say"
+echo INYON_HUB_IMPL=bun >> ~/.inyon/hub.env
+~/.inyon/bin/inyon hub restart
+test -x ~/.inyon/bin/inyon-engine || { echo "the Bun hub has no engine"; exit 1; }
+~/.inyon/bin/inyon-engine version
+for i in 1 2 3 4 5 6 7 8 9 10; do curl -fsS http://127.0.0.1:4777/ >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS http://127.0.0.1:4777/ >/dev/null || { echo "the Bun hub does not answer"; cat ~/.inyon/node/hub.log 2>/dev/null; exit 1; }
+~/.inyon/bin/inyon doctor | grep -q "the Bun hub" || { echo "doctor does not say the Bun hub runs"; exit 1; }
+echo "--- an update keeps the engine a Bun hub needs"
 ~/.inyon/bin/inyon update | tee /tmp/update.out
 grep -q "is up to date" /tmp/update.out
 test -x ~/.inyon/bin/inyon-engine'

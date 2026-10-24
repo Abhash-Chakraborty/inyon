@@ -4,8 +4,8 @@
 # It downloads the inyon command for this system into ~/.inyon/bin from the website's copy of the
 # newest release, checks it against the release's signed checksums, and runs its setup, which
 # starts it in the background at login and shows a code to scan with the app. With --hub it sets
-# up an Inyon hub instead (the server the app signs in to), and setup also fetches the engine the
-# hub runs on:
+# up an Inyon hub instead (the server the app signs in to), which from 0.21 runs on the inyon
+# command too:
 #   curl -fsSL …/get.sh | sh -s -- --hub
 set -e
 # The sha256 of the checksum list this copy was published with. The website fills it in when it
@@ -51,7 +51,7 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   *) echo "There's no inyon build for $(uname -m) yet." >&2; exit 1 ;;
 esac
-# Alpine and other musl systems run the hub's engine built against musl; the command is static and
+# Alpine and other musl systems run the Bun engine built against musl; the command is static and
 # the same everywhere
 libc=""
 if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then libc=-musl; fi
@@ -175,15 +175,16 @@ if [ -z "${INYON_NO_MODIFY_PATH:-}" ] && [ -z "$on_path" ]; then
 fi
 
 # the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default.
-# From 0.19 only a hub (or INYON_LEGACY_ENGINE=1) runs that engine; the inyon command needs neither
-if [ -n "$libc" ] && { [ "$ROLE" = hub ] || [ "${INYON_LEGACY_ENGINE:-}" = 1 ]; } && [ ! -e /usr/lib/libstdc++.so.6 ]; then
+# From 0.21 only a hub on Bun (INYON_HUB_IMPL=bun) or INYON_LEGACY_ENGINE=1 runs that engine; the
+# inyon command needs neither
+if [ -n "$libc" ] && { { [ "$ROLE" = hub ] && [ "${INYON_HUB_IMPL:-}" = bun ]; } || [ "${INYON_LEGACY_ENGINE:-}" = 1 ]; } && [ ! -e /usr/lib/libstdc++.so.6 ]; then
   if [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add -q libstdc++ libgcc >/dev/null 2>&1; then :
   else echo "The engine needs libstdc++ and libgcc on Alpine: apk add libstdc++ libgcc" >&2
   fi
 fi
 
 # from 0.13 a release is two files: this one is the inyon command, and the engine ($engine),
-# which from 0.19 only a hub needs. Before 0.13, this one file was the whole program
+# which from 0.21 only a hub on Bun needs. Before 0.13, this one file was the whole program
 if [ -n "$(sum_for "$engine")" ]; then
   if [ "$ROLE" = hub ]; then exec "$dir/inyon" setup --role hub; fi
   exec "$dir/inyon" setup
