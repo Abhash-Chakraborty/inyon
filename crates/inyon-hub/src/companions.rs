@@ -497,7 +497,7 @@ pub const COMPANION_HOST: [&str; 3] = ["config", "status", "sessions"];
 pub const COMPANION_SESSION: [&str; 3] = ["id", "name", "windows"];
 pub const COMPANION_WINDOW: [&str; 5] = ["id", "index", "name", "active", "panes"];
 pub const COMPANION_PANE: [&str; 7] = ["id", "index", "active", "title", "label", "dead", "agent"];
-pub const COMPANION_AGENT: [&str; 6] = ["kind", "state", "mode", "waitingFor", "options", "activity"];
+pub const COMPANION_AGENT: [&str; 7] = ["kind", "custom", "state", "mode", "waitingFor", "options", "activity"];
 
 pub fn companion_hosts(hosts: &mut Value) {
     shape_hosts(hosts, &COMPANION_PANE)

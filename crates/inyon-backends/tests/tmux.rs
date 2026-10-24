@@ -237,7 +237,7 @@ async fn put_in_registry(host: &Host, pane: &str, agent: Option<&str>, seen: boo
     if seen && agent.is_some() {
         let pid: f64 = me[5].parse().unwrap();
         let mut procs = IndexMap::new();
-        procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: None, resume: None, args: String::new(), pane_pid: pid });
+        procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: None, resume: None, args: String::new(), pane_pid: pid, custom: None });
         rt.probe = Some(Rc::new(RefCell::new(probe(procs))));
     }
     registry().insert_runtime("end", Rc::new(RefCell::new(rt)));

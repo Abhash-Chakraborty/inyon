@@ -12,6 +12,7 @@ pub mod copilot_controls;
 pub mod copilot_models;
 pub mod copilot_rpc_sh;
 pub mod copilot_screen;
+pub mod custom;
 pub mod gemini;
 pub mod opencode;
 pub mod opencode_api;

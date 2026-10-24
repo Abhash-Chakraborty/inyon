@@ -11,6 +11,7 @@ import { Button, Menu, Pulse, Segmented, Sheet, Toggle, Waiting, inputClass, typ
 import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { confirmAction } from '../components/Confirm.tsx'
 import { CompanionSheet } from '../components/CompanionSheet.tsx'
+import { CustomAgentRows } from '../components/CustomAgents.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { isHosted, publicFile } from '../lib/base.ts'
@@ -433,7 +434,7 @@ export function Settings() {
             </Row>
           </Section>
 
-          <Section id="agents" title="Agents" desc="Found on your machines. Inyon picks the right one for each pane automatically.">
+          <Section id="agents" title="Agents" desc="Found on your machines. Inyon picks the right one for each pane automatically. Add your own command to run it as one of these.">
             {agentsByKind.map(({ a, on }) => (
               <Row
                 key={a.kind}
@@ -453,6 +454,7 @@ export function Settings() {
                 </div>
               </Row>
             ))}
+            {hub && <CustomAgentRows hub={hub} onSaved={setHub} />}
           </Section>
 
           <section id="sessions" className="scroll-mt-20">

@@ -1405,8 +1405,7 @@ pub fn launch_bin_command(bin: &str) -> String {
 
 /// The agent's command as the pane's shell will find it: the plain name when it is on that shell's
 /// PATH, otherwise the full path the hub found (e.g. installed under another nvm Node version).
-async fn launch_bin(host: &Host, agent: AgentKind) -> HubResult<String> {
-    let launch = &agent.def().launch;
+async fn launch_bin(host: &Host, launch: &str) -> HubResult<String> {
     let bin = launch.split(' ').next().unwrap_or(launch);
     let r = host.exec(&launch_bin_command(bin), ExecOptions::timeout(10_000)).await?;
     let found = r.stdout.jtrim().rsplit('\n').next().filter(|f| !f.is_empty()).unwrap_or(bin);
@@ -1482,7 +1481,7 @@ pub async fn type_start(host_id: &str, pane_id: &str, agent: AgentKind, resume: 
             _ => format!("{} --resume {r}", def.launch),
         },
     };
-    let line = with_bin(&cmd, &launch_bin(&host, agent).await?);
+    let line = with_bin(&cmd, &launch_bin(&host, &def.launch).await?);
     type_into(&host, pane_id, &line, true).await?;
     registry().refresh(host_id, 1500);
     Ok(())
@@ -1756,7 +1755,7 @@ pub async fn restart_agent(host_id: &str, pane_id: &str) -> HubResult<()> {
             host.run(&format!("tmux respawn-pane {}-t {p} {cwd} {}", if win { "-k " } else { "" }, shq(&cmd))).await?;
         } else {
             sleep(400).await;
-            let line = with_bin(&cmd, &launch_bin(&host, a.kind).await?);
+            let line = with_bin(&cmd, &launch_bin(&host, &a.kind.def().launch).await?);
             type_into(&host, pane_id, &line, true).await?;
         }
         Ok(())
@@ -2014,6 +2013,8 @@ pub struct LaunchOpts {
     pub model: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
+    /// a custom agent's id (Settings › Agents), started in place of `agent`
+    pub custom: Option<String>,
 }
 
 /// zsh's first-run questions in a home with no ~/.zshrc; "q" leaves it for next time and changes nothing
@@ -2058,11 +2059,19 @@ pub async fn shell_ready(host: &Host, pane_id: &str, ms: u64) -> HubResult<()> {
 /// New tmux window (in an existing or new session) at `cwd`, optionally starting an agent.
 pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
     let host = registry().host(host_id)?;
-    let agent_name = opts.agent.as_deref().filter(|a| !a.is_empty() && *a != "shell");
     // before anything is created: an unknown agent would fail after the window exists
-    let agent = match agent_name {
-        Some(a) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
+    let custom = match opts.custom.as_deref().filter(|c| !c.is_empty()) {
+        Some(id) => Some(crate::agents::custom::by_id(id).ok_or_else(|| http(400, "Unknown custom agent"))?),
         None => None,
+    };
+    let agent_name = match &custom {
+        Some(c) => Some(c.name.as_str()),
+        None => opts.agent.as_deref().filter(|a| !a.is_empty() && *a != "shell"),
+    };
+    let agent = match (&custom, agent_name) {
+        (Some(c), _) => Some(c.like),
+        (None, Some(a)) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
+        (None, None) => None,
     };
     let cwd = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
     let home = cwd == "~" || cwd.starts_with("~/");
@@ -2089,7 +2098,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         return Err(http(400, if err.is_empty() { "Could not create window" } else { err }));
     }
     if let Some(agent) = agent {
-        let mut parts = vec![agent.def().launch.clone()];
+        let mut parts = vec![custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone())];
         // OpenCode names models "provider/model"
         if let Some(model) = opts.model.as_deref().filter(|m| if agent == AgentKind::Opencode { re!(r"^[\w.:-]+/[\w.:/-]+$").is_match(m) } else { re!(r"^[\w.:-]+$").is_match(m) })
         {
@@ -2121,7 +2130,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
                 _ => text,
             });
         }
-        parts[0] = with_bin(&parts[0], &launch_bin(&host, agent).await?);
+        parts[0] = with_bin(&parts[0], &launch_bin(&host, &parts[0]).await?);
         shell_ready(&host, &pane_id, 8000).await?;
         type_into(&host, &pane_id, &parts.join(" "), true).await?;
     }
@@ -2171,7 +2180,7 @@ pub async fn fork_conversation(host_id: &str, pane_id: &str) -> HubResult<String
         return Err(http(500, if err.is_empty() { "Could not open a window" } else { err }));
     }
     shell_ready(&host, &new_pane, 8000).await?;
-    let line = with_bin(&cmd, &launch_bin(&host, a.kind).await?);
+    let line = with_bin(&cmd, &launch_bin(&host, &a.kind.def().launch).await?);
     type_into(&host, &new_pane, &line, true).await?;
     registry().refresh(host_id, 1500);
     Ok(new_pane)

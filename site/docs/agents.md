@@ -83,6 +83,22 @@ Found through its process locks and event log. Its models come from the CLI's ow
 
 Google's `agy`. Read from its transcripts, with plan quotas from its own status line. From 0.22 the integration also adds an entry named `inyon` to its hooks in `~/.gemini/config/hooks.json`. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
 
+## Your own agents
+
+From 0.22, **Settings › Agents › Add an agent** saves any command under a name of your own, with the agent it works like. Use it for an agent started with flags you always want (`claude --dangerously-skip-permissions`), for a build of an agent under another name (`openclaude`), or for a wrapper of your own.
+
+| Field | What it does |
+|---|---|
+| Name | Shown in **New session** and on the session's card. Up to 40 characters, unique |
+| Command | What a new session types. Model, mode and the first message are added after it, the same flags the agent it works like takes |
+| Works like | Claude Code, Codex, Gemini CLI, OpenCode, Copilot or Antigravity CLI. The session gets that agent's logo, chat view, prompts as buttons and controls |
+
+Inyon spots one already running in any pane, too: a process whose program is the command's first word (by name, by path, or as the script `node`, `bun`, `deno`, `python` or `uv` runs) and whose command line holds every other word of it. Yours are tried before the built-in agents, so plain `claude` stays Claude Code while `claude --dangerously-skip-permissions --model opus` is the agent saved with that flag. A shell script that starts the agent without `exec` shows as the agent it starts, under that agent's name.
+
+The list is the hub's, for every machine, with at most 24 agents. Custom agents need the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) says so when you try to save one.
+
+Hooks come with it when it reads the same settings files as the agent it works like. One with hooks of its own can tell Inyon when a turn starts and ends the same way the integration does: from inside tmux, pipe the event's JSON to `~/.inyon/hook.sh <agent> <event>`, where `<agent>` is the agent it works like (`copilot`, `gemini` or `antigravity`) and `<event>` that agent's event name. For one that works like Claude Code, run `~/.inyon/hook.sh` with no arguments and Claude Code's hook JSON.
+
 ## Pages an agent makes
 
 From 0.20 any of them can put a site it built, such as a plan or mockups, in the app with `inyon pages add <folder>`. The [Blueprint](skills.md#blueprint) skill does it on its own. The page records who added it: `claude`, `codex`, `gemini` or `opencode` when one of those ran the command, `cli` for anything else. See [Pages](pages.md).
@@ -91,6 +107,6 @@ From 0.20 any of them can put a site it built, such as a plan or mockups, in the
 
 A machine's **Setup** tab installs any of them, with the official installer or npm (Codex, Gemini CLI and Copilot need Node.js, which it can install too), and runs each one's sign-in as steps in the app. From 0.17.4 it also shows which of the six has a newer version and updates it with one button, from the browser or the phone. See [Adding machines](machines.md#the-setup-tab).
 
-## Adding an agent
+## Adding support for an agent
 
 Most of what Inyon knows about an agent lives in one file, `packages/protocol/src/agents.ts`. A chat view also needs a reader for the agent's session files. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how.

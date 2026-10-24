@@ -221,7 +221,11 @@ export type MappedBy = "hook" | "cwd" | "resume" | "process";
  */
 export type QuickOption = { n: number, label: string, };
 
-export type AgentPaneInfo = { kind: AgentKind, pid: number, sessionId?: string, transcriptPath?: string, 
+export type AgentPaneInfo = { kind: AgentKind, 
+/**
+ * a custom agent's name (Settings › Agents); `kind` is the agent it works like
+ */
+custom?: string, pid: number, sessionId?: string, transcriptPath?: string, 
 /**
  * where the pane → session mapping came from
  */

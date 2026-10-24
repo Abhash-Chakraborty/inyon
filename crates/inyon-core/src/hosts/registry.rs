@@ -1108,6 +1108,7 @@ impl Registry {
         live.borrow_mut().insert(pid);
         let mut info = AgentPaneInfo {
             kind: proc.kind,
+            custom: proc.custom.clone(),
             pid: proc.pid as u32,
             session_id: None,
             transcript_path: None,

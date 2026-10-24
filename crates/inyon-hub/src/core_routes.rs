@@ -3,6 +3,7 @@
 //! sign-in (see `server::guarded`).
 
 use axum::http::Method;
+use inyon_core::agents::custom as custom_agents;
 use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
 use inyon_core::claude::send_receipts::send_once;
@@ -172,6 +173,14 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
     if let Some(Value::Bool(a)) = b.get("machinesSend") {
         next.insert("machinesSend".into(), json!(a));
     }
+    // checked whole: a bad entry is refused rather than dropped (inyon_core::agents::custom)
+    let custom = match b.get("customAgents") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(custom_agents::parse_list(v).map_err(|e| http(400, &e))?),
+    };
+    if let Some(list) = &custom {
+        next.insert("customAgents".into(), serde_json::to_value(list).map_err(|e| HubError::plain(e.to_string()))?);
+    }
     next.insert(
         "uploads".into(),
         json!({
@@ -182,6 +191,9 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
         }),
     );
     save_settings(&HubSettings(next.clone())).map_err(HubError::plain)?;
+    if let Some(list) = custom {
+        custom_agents::set(list);
+    }
     Ok(Value::Object(next))
 }
 
@@ -397,6 +409,7 @@ pub fn add(routes: &mut Routes) {
                     model: loose(b.get("model")),
                     mode: loose(b.get("mode")),
                     prompt: loose(b.get("prompt")),
+                    custom: loose(b.get("custom")),
                 };
                 let pane = actions::launch(&id(&r), &opts).await?;
                 Ok(ok_json(&json!({ "pane": pane })))
@@ -961,6 +974,24 @@ mod tests {
             inyon_core::js::stringify(&next),
             r#"{"keepSession":{"a":true},"uploads":{"retentionDays":365,"maxMB":1,"maxTotalMB":1024,"longPasteLines":5},"other":"x","autoResume":true}"#
         );
+    }
+
+    #[test]
+    fn custom_agents_are_saved_checked_and_used_at_once() {
+        crate::test_util::core();
+        let yolo = json!([{ "name": "Claude YOLO", "command": "claude --dangerously-skip-permissions", "like": "claude" }]);
+        let next = settings_put(&json!({ "customAgents": yolo }), load_settings()).unwrap();
+        assert_eq!(next["customAgents"][0]["id"], "claude-yolo");
+        assert_eq!(custom_agents::by_id("claude-yolo").map(|a| a.like), Some(inyon_protocol::AgentKind::Claude));
+        // a bad list is refused whole and the saved one stays
+        let err = settings_put(&json!({ "customAgents": [{ "name": "x", "command": "x", "like": "vim" }] }), load_settings()).unwrap_err();
+        assert_eq!((err.status, err.message.as_str()), (Some(400), "x: pick the agent it works like"));
+        assert_eq!(load_settings().0["customAgents"][0]["name"], "Claude YOLO");
+        // other saves leave the list alone; an empty list clears it
+        settings_put(&json!({ "autoResume": true }), load_settings()).unwrap();
+        assert_eq!(custom_agents::list().len(), 1);
+        settings_put(&json!({ "customAgents": [] }), load_settings()).unwrap();
+        assert_eq!(custom_agents::list(), vec![]);
     }
 
     // node-update.test.ts and uploads.test.ts: routes run on a machine put in the registry

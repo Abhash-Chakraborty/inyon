@@ -378,7 +378,7 @@ fn mode_probe(now: f64) -> ProbeResult {
     let mut agent_procs = IndexMap::new();
     agent_procs.insert(
         "%9".to_owned(),
-        AgentProc { kind: AgentKind::Claude, pid: 7.0, started_at: now - 100.0, cwd: Some("/w".into()), resume: None, args: "claude".into(), pane_pid: 7.0 },
+        AgentProc { kind: AgentKind::Claude, pid: 7.0, started_at: now - 100.0, cwd: Some("/w".into()), resume: None, args: "claude".into(), pane_pid: 7.0, custom: None },
     );
     ProbeResult {
         hostname: "box".into(),
