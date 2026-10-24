@@ -3,6 +3,8 @@
 ## index.html, top to bottom
 
 1. **Top bar**: logo, name, links to Screens and Feature matrix, theme button. Keep it as is.
+   Parts that link to the screens sit between `<!-- mockups -->` markers; `new-site.mjs --no-mockups`
+   removes them and renumbers the sections.
 2. **Eyebrow**: `Plan · <date> · from <current version>`.
 3. **h1**: the outcome in under eight words. No product name, no colon.
 4. **Lede**: two sentences. The first says what's wrong today, the second says what the plan does about it.
@@ -28,14 +30,52 @@ on the page. Cut every sentence that doesn't change what the reader knows. Leave
 
 ## matrix-data.js
 
-Each row is `[area, feature, want, status, today, release, phone, desktop, screen, note]`.
-- `want`: the feature, as the brief, the reference product or the user describes it.
-- `status`: `have` | `partial` | `new` | `skipped`. A skipped row gives the reason in `note`.
-- `today`: what the product does now, checked in the code. Empty for `new`.
-- `release`: a `v` from `MATRIX_RELEASES`, or `''`.
+Each row is `[area, feature, want, status, today, release, phone, desktop, screen, note, url]`. A row is
+any item the plan tracks: a feature, a part, a task.
+- `want`: the item, as the brief, the reference product or the user describes it.
+- `status`: a `v` from `MATRIX_STATUSES`. A skipped row gives the reason in `note`.
+- `today`: what exists now, checked in the code. Empty for a new item.
+- `release`: a `v` from `MATRIX_RELEASES` (a version, a store, a phase), or `''`.
 - `screen`: a mockup id. The row then links to it in the viewer.
-`MATRIX_AREAS` sets the area order. `MATRIX_LABELS` has `want` (the column title, for example "In <reference app>"),
-`sub`, `subShort` and `foot` (the source and the date it was checked).
+- `url`: an outside link (a store page, an issue). It shows as ↗ in the row and the details, and as
+  "Open link" in the row's menu.
+
+`MATRIX_STATUSES` is a list of `{ v, l, mark?, tone? }` in display order. Without it the page uses
+have, partial, new and skipped. `mark` is `full`, `half`, `ring` or `dash`; left out, marks follow the
+list order. `tone` is `ok`, `warn` or `bad` and colours the mark. Leave it out unless the state needs
+attention. The summary has one tile per status plus the total, and the tiles fill their rows.
+
+`MATRIX_RELEASES` is `[{ v, name }]` and `MATRIX_AREAS` sets the area order.
+
+`MATRIX_LABELS` holds the page's words. `want` (the column title, for example "In <reference app>"),
+`sub`, `subShort` and `foot` (the source and the date it was checked) are the usual ones. The rest default
+to the software wording:
+
+| Key | Default |
+|---|---|
+| `title`, `one`, `many`, `search` | Feature matrix, feature, features, Search features |
+| `area`, `feature`, `status`, `statusName`, `release` | Area, Feature, `<BRAND>`, Status, Release |
+| `today`, `todayNone`, `todaySkipped` | `<BRAND>` today, Nothing yet, Not planned |
+| `phone`, `desktop`, `note`, `link` | On the phone, Desktop and browser, Note, Link |
+| `menuShow`, `menuHide`, `menuMockup`, `menuLink` | Show details, Hide details, Open mockup, Open link |
+| `menuArea`, `menuRelease`, `allAreas`, `menuCopy` | Only {area}, Only release {release}, All areas, Copy as text |
+| `copied`, `copyFailed`, `sortNone` | Copied, Could not copy, Inventory |
+
+A label set to `''` leaves out its column or field: `area`, `want`, `status`, `today`, `release`,
+`phone`, `desktop` and `note`. "Copy as text" uses the same labels.
+
+A parts list, for example:
+
+```js
+window.MATRIX_STATUSES = [{ v: 'have', l: 'In the drawer' }, { v: 'ordered', l: 'Ordered' }, { v: 'buy', l: 'To buy', tone: 'warn' }];
+window.MATRIX_RELEASES = [{ v: 'Reichelt', name: 'Passives and power' }, { v: 'Mouser', name: 'Pot and caps' }];
+window.MATRIX_LABELS = { title: 'Parts list', one: 'part', many: 'parts', search: 'Search parts', feature: 'Part',
+  want: 'Spec', status: 'Status', release: 'Store', menuRelease: 'Only {release}', today: '', phone: 'Quantity', desktop: 'Price each' };
+// row: ['Regulator', 'LM317T', 'Adjustable regulator, TO-220.', 'have', '', 'Reichelt', '2', '0.48 €', '', '', 'https://…']
+```
+
+The matrix loads `mockups/screens.js` only when some row has a `screen`. A site made with `--no-mockups`
+sets `window.MATRIX_MOCKUPS = false`, which turns mockup links off.
 
 ## progress.json
 

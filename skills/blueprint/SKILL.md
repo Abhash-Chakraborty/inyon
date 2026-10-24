@@ -13,7 +13,7 @@ a private address, and open it on a phone. It has four parts that link to each o
 | `index.html` | The plan: a short lede, the live progress board, a contents box, numbered sections, a screen gallery, releases you can open, risks and decisions |
 | `mockups/index.html` | The viewer: every screen framed at 390×844 or 1440×900, light or dark, with design notes |
 | `mockups/screens/*.html` | One clickable screen per page, built on the kit (menus, right-click and long-press, sheets, toasts, tooltips) |
-| `matrix.html` | One row per feature: what's wanted, what exists today, its status and the release that brings it, with search and filters |
+| `matrix.html` | One row per item (a feature, a part, a task): what's wanted, what exists today, its status and its release, with search and filters. Statuses, labels and columns come from `matrix-data.js`, so it also fits a parts list or a task list |
 
 `progress.json` drives the board on the plan page. The page polls it every 20 seconds, so updating it with
 `scripts/progress.py` while you work is how the reader follows along. `.inyon-page.json` in the site's
@@ -30,7 +30,9 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    isn't deleted with the worktree.
    Keep `private/` out of git (the script tells you when git would commit the folder). It copies
    `assets/site/`, a working sample for a made-up grocery app called Pantry, so you can see each piece in
-   action, and writes `.inyon-page.json`. Then make it yours:
+   action, and writes `.inyon-page.json`. Add `--no-mockups` when there's no UI to show (a parts list, a
+   migration): it leaves out `mockups/`, `kit/shell.js`, `kit/menus.js` and every link to them. Then skip
+   step 4 and the stills in step 7. Make the site yours:
    - In `kit/data.js`, set `BRAND` (name, optional SVG logo) and replace the sample nav, groups and people.
    - In `kit/blueprint.css`, swap the `:root` and dark tokens for the product's palette and fonts, if it
      has its own. Components read only tokens.
@@ -42,14 +44,17 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 4. **Build the screens.** List them in `mockups/screens.js`, copy `mockups/screens/_template.html` for
    each, and follow `references/kit.md`. Every visible control has to do something. For more than about
    six screens, split them across parallel workers using `references/builders.md`.
-5. **Fill the matrix** in `matrix-data.js` from the research notes, one row per feature, then set
-   `MATRIX_RELEASES`, `MATRIX_AREAS` and `MATRIX_LABELS`.
+5. **Fill the matrix** in `matrix-data.js` from the research notes, one row per item, then set
+   `MATRIX_STATUSES`, `MATRIX_RELEASES`, `MATRIX_AREAS` and `MATRIX_LABELS`. A row can carry a `url`
+   (a store page, an issue). For a plan that isn't software, rename things in `MATRIX_LABELS` (a release
+   can be a store or a phase) and set a label to `''` to drop its column, such as `today`.
+   `references/plan.md` lists the keys.
 6. **Figures.** Use a still WebP, or an animated SVG with the still inside it, in `figures/`. Take labels
    from the real system. Use Mermaid only if nothing better is available.
 7. **Check it.** `node <skill>/scripts/stills.mjs <dir> --audit` writes gallery stills to `shots/` and
    flags console errors and dead controls on every screen at both sizes. Open the plan, the viewer and the
-   matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture.
-   Fix what you see, then check once more.
+   matrix with `scripts/shoot.mjs` at 390×844 and 1440×900 in light and dark, and look at every picture
+   (`FULL=1` takes the whole page; lazy images load first). Fix what you see, then check once more.
 8. **Publish it** where the reader can open it. Take the first of these that works:
    - **Inyon's command.** If `command -v inyon` finds it, run `inyon pages add <dir> --name "Product plan"`.
      It prints where the page sits in the app (`Pages > <machine> > <project>`) and its app link
@@ -109,6 +114,7 @@ root names the site for Inyon. It's a dot file, so no server shows it.
 - `references/builders.md`: a brief to hand parallel screen builders
 
 The scripts need Node 18+ (or Bun) and Playwright with Chromium: `bun add -d playwright` (or npm) in the
-scripts folder or the project, then `bunx playwright install chromium`. Set `CHROME_PATH` to use a browser
-you already have, or `BLUEPRINT_PLAYWRIGHT` to the folder whose `node_modules` holds Playwright. If sharp
+scripts folder or the project, then `bunx playwright install chromium`. Without that download they use
+Edge or Chrome where it usually lives on Windows, macOS and Linux. Set `CHROME_PATH` to use another
+browser, or `BLUEPRINT_PLAYWRIGHT` to the folder whose `node_modules` holds Playwright. If sharp
 is installed, stills are WebP; without it they're PNG.

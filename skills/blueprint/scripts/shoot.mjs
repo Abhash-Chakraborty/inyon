@@ -1,8 +1,9 @@
 // node shoot.mjs <url> <out.png> <w> <h> <light|dark> [step ...]
 // Steps run in order before the screenshot:
 //   click:<css>   rclick:<css>   hover:<css>   press:<key>   wait:<ms>   eval:<js>
+// FULL=1 takes the whole page instead of the viewport. Lazy images are loaded first either way.
 // Prints console errors and, with AUDIT=1, buttons that did nothing when clicked.
-import { launch } from './lib.mjs';
+import { launch, loadImages } from './lib.mjs';
 const [url, out, w, h, theme = 'light', ...steps] = process.argv.slice(2);
 if (!url || !out || !w || !h) { console.error('usage: node shoot.mjs <url> <out.png> <w> <h> <light|dark> [click:<css> ...]'); process.exit(2); }
 const withTheme = url + (url.includes('?') ? '&' : '?') + 'theme=' + theme;
@@ -24,7 +25,8 @@ for (const s of steps) {
   else if (k === 'eval') await p.evaluate(v);
   if (k !== 'wait') await p.waitForTimeout(450);
 }
-await p.screenshot({ path: out });
+await loadImages(p);
+await p.screenshot({ path: out, fullPage: !!process.env.FULL });
 if (process.env.AUDIT) {
   // Reload before each click so a redraw can't hide the next button. A button that changes nothing
   // (no DOM change, no toast, no menu, no navigation) is dead.
