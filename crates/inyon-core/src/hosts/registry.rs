@@ -12,8 +12,8 @@ use std::rc::Rc;
 use futures_util::future::join_all;
 use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{
-    agents, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption, ScreenState,
-    SessionInfo, TmuxState, WindowInfo,
+    agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption,
+    ScreenState, SessionInfo, TmuxState, WindowInfo,
 };
 use serde_json::Value;
 
@@ -27,6 +27,7 @@ use super::turns::{Shown, Turns};
 use crate::agents::antigravity::{agy_status, agy_transcript};
 use crate::agents::claude_usage::{fetch_claude_usage, AccountUsage};
 use crate::agents::codex::{codex_title, find_codex_rollout, read_codex_status, CodexProc};
+use crate::agents::codex_limits;
 use crate::agents::copilot::{find_copilot_session, CopilotProc};
 use crate::agents::gemini::{find_gemini_session, GeminiProc};
 use crate::agents::opencode::{opencode_endpoint, via_open_code_api};
@@ -144,6 +145,14 @@ struct Usage {
     ok_at: Option<u64>,
 }
 
+/// Codex's plan limits, asked of its app-server. `at` is the last attempt; the last numbers it
+/// gave are kept through errors.
+#[derive(Debug, Clone, Default)]
+struct CodexLimits {
+    limits: Option<AccountLimits>,
+    at: u64,
+}
+
 /// What the registry keeps per machine.
 pub struct HostRuntime {
     /// each agent's state when the machine went offline, kept to compare with once it's back
@@ -181,6 +190,8 @@ pub struct HostRuntime {
     reconnected: IndexMap<String, u64>,
     usage: Option<Usage>,
     usage_loading: bool,
+    codex: Option<CodexLimits>,
+    codex_loading: bool,
 }
 
 pub type Rt = Rc<RefCell<HostRuntime>>;
@@ -220,6 +231,8 @@ impl HostRuntime {
             reconnected: IndexMap::new(),
             usage: None,
             usage_loading: false,
+            codex: None,
+            codex_loading: false,
         }
     }
 }
@@ -231,6 +244,33 @@ const STALL_S: f64 = 90.0;
 const USAGE_EVERY_MS: u64 = 3 * 60_000;
 const USAGE_RETRY_MS: u64 = 5 * 60_000;
 const USAGE_STALE_MS: u64 = 20 * 60_000;
+/// Codex's limits: asked every five minutes while someone's looking (each ask starts its app-server)
+const CODEX_EVERY_MS: u64 = 5 * 60_000;
+
+/// The plan limits a machine shows: Claude's account (as /usage reads it) and Codex's, each while
+/// it's fresh and has a window to show.
+fn limits_list(claude: Option<&Usage>, account: Option<&str>, codex: Option<&CodexLimits>, now: u64) -> Option<Vec<AccountLimits>> {
+    let fresh = |at: u64| now.saturating_sub(at) <= USAGE_STALE_MS;
+    let mut out = vec![];
+    if let Some(u) = claude.filter(|u| u.account.as_deref() == account) {
+        if let Some(at) = u.ok_at.filter(|at| *at != 0 && fresh(*at)) {
+            out.push(AccountLimits {
+                kind: AgentKind::Claude,
+                five_hour: u.u.five_hour.clone(),
+                seven_day: u.u.seven_day.clone(),
+                plan: u.u.plan.clone(),
+                credits: None,
+                resets: None,
+                updated_at: at,
+            });
+        }
+    }
+    if let Some(l) = codex.and_then(|c| c.limits.clone()).filter(|l| fresh(l.updated_at)) {
+        out.push(l);
+    }
+    out.retain(|l| l.five_hour.is_some() || l.seven_day.is_some());
+    (!out.is_empty()).then_some(out)
+}
 /// don't fight a tool that keeps rewriting settings.json
 const HEAL_EVERY_MS: u64 = 10 * 60_000;
 
@@ -563,6 +603,7 @@ impl Registry {
                 updated_at: 0,
                 last_seen: None,
                 offline_since: None,
+                limits: None,
             },
         };
         let id = config.id.clone();
@@ -845,6 +886,10 @@ impl Registry {
                 updated_at: now,
                 last_seen: Some(now),
                 offline_since: None,
+                limits: {
+                    let r = rt.borrow();
+                    limits_list(r.usage.as_ref(), p.account.as_deref(), r.codex.as_ref(), now)
+                },
             }
         };
         {
@@ -1025,6 +1070,7 @@ impl Registry {
         };
         self.check_reporting(rt, pr, &agent_ids).await?;
         self.apply_usage(rt, pr, &agent_ids);
+        self.ask_codex_limits(rt, pr);
         let live = live.borrow();
         let mut r = rt.borrow_mut();
         r.cwd_map.retain(|pid, _| live.contains(pid));
@@ -1333,6 +1379,49 @@ impl Registry {
             }
             a.status = Some(st);
         }
+    }
+
+    /// Asks Codex for its limits on a machine where it's installed and signed in, every few minutes
+    /// while someone's looking.
+    fn ask_codex_limits(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>) {
+        let ready = {
+            let p = pr.borrow();
+            p.installed.contains(&AgentKind::Codex) && p.signed_in.contains(&AgentKind::Codex)
+        };
+        if !ready {
+            rt.borrow_mut().codex = None;
+            return;
+        }
+        let watched = POLL.with(|p| p.get()) != QUIET_POLL_MS;
+        let (due, host) = {
+            let r = rt.borrow();
+            (!r.codex_loading && r.codex.as_ref().is_none_or(|c| now_ms().saturating_sub(c.at) > CODEX_EVERY_MS), r.host.clone())
+        };
+        if !due || !watched {
+            return;
+        }
+        rt.borrow_mut().codex_loading = true;
+        let rt2 = rt.clone();
+        spawn(async move {
+            let got = match codex_limits::fetch(&host).await {
+                Ok(r) => r,
+                Err(e) => Err(e.message),
+            };
+            let id = host.id();
+            {
+                let mut me = rt2.borrow_mut();
+                let kept = me.codex.as_ref().and_then(|c| c.limits.clone());
+                me.codex = Some(match got {
+                    Ok(limits) => CodexLimits { limits, at: now_ms() },
+                    Err(e) => {
+                        console::error(&format!("codex limits {id}: {e}"));
+                        CodexLimits { limits: kept, at: now_ms() }
+                    }
+                });
+                me.codex_loading = false;
+            }
+            registry().refresh(&id, 0);
+        });
     }
 
     /// A Claude session writes its status line after every message. If its transcript has moved on

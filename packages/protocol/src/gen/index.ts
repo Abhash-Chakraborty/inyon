@@ -298,6 +298,20 @@ export type MachineKind = "server" | "laptop" | "desktop";
 
 export type TmuxState = "unknown" | "ok" | "no-server" | "missing";
 
+/**
+ * An agent's plan limits on a machine, read from the account it's signed in to, with or without a
+ * session running.
+ */
+export type AccountLimits = { kind: AgentKind, fiveHour?: RateWindow, sevenDay?: RateWindow, plan?: string, credits?: Credits, 
+/**
+ * limit resets the account has banked (Codex): counted, never used
+ */
+resets?: number, 
+/**
+ * unix ms of the reading
+ */
+updatedAt: number, };
+
 export type HostState = { config: HostConfig, status: HostStatus, error?: string, 
 /**
  * hostname reported by the machine
@@ -343,7 +357,11 @@ lastSeen?: number,
 /**
  * when the machine stopped answering; its sessions are the last ones seen, saved on disk
  */
-offlineSince?: number, };
+offlineSince?: number, 
+/**
+ * plan limits of the accounts signed in there
+ */
+limits?: Array<AccountLimits>, };
 
 export type AssistantBlock = { "type": "text", text: string, } | { "type": "thinking", text: string, } | { "type": "tool_use", id: string, name: string, input: any, };
 

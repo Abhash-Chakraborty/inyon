@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState, type FocusEvent, type PointerEvent }
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
-import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
+import { AGENTS, isBusy, type HostState, type RateWindow } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
 import { api } from '../lib/api.ts'
@@ -167,19 +167,22 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
   )
 }, samePane)
 
-/** Plan limits per machine, from the freshest agent status reported there. */
+type Windows = { fiveHour?: RateWindow; sevenDay?: RateWindow; updatedAt: number }
+
+/**
+ * Plan limits per machine and agent, from the freshest reading there: a session's status, or the
+ * account itself, asked with no session running.
+ */
 export function LimitsCard({ hosts }: { hosts: HostState[] }) {
   const rows = hosts.flatMap((h) => {
-    const best = new Map<string, NonNullable<NonNullable<HostState['sessions'][number]['windows'][number]['panes'][number]['agent']>['status']>>()
-    for (const s of h.sessions)
-      for (const w of s.windows)
-        for (const p of w.panes) {
-          const st = p.agent?.status
-          if (!st || !(st.fiveHour || st.sevenDay)) continue
-          const k = p.agent!.kind
-          if (!best.has(k) || best.get(k)!.updatedAt < st.updatedAt) best.set(k, st)
-        }
-    return [...best.entries()].map(([kind, st]) => ({ host: h, kind: kind as keyof typeof AGENTS, st }))
+    const best = new Map<string, Windows>()
+    const offer = (k: string, st: Windows | undefined) => {
+      if (!st || !(st.fiveHour || st.sevenDay)) return
+      if (!best.has(k) || best.get(k)!.updatedAt < st.updatedAt) best.set(k, st)
+    }
+    for (const s of h.sessions) for (const w of s.windows) for (const p of w.panes) if (p.agent) offer(p.agent.kind, p.agent.status)
+    for (const l of h.limits ?? []) offer(l.kind, l)
+    return [...best.entries()].map(([kind, st]) => ({ host: h, kind: kind as keyof typeof AGENTS, st, resets: h.limits?.find((l) => l.kind === kind)?.resets }))
   })
   if (!rows.length) return null
   return (
@@ -188,11 +191,16 @@ export function LimitsCard({ hosts }: { hosts: HostState[] }) {
         <Gauge className="size-4 text-fg-3" /> Plan limits
       </h2>
       <div className="space-y-4">
-        {rows.map(({ host, kind, st }) => (
+        {rows.map(({ host, kind, st, resets }) => (
           <div key={host.config.id + kind}>
             <div className="mb-2.5 flex items-center gap-2 text-[13px]">
               <AgentLogo kind={kind} size={16} />
               <span className="font-medium">{host.config.name}</span>
+              {resets ? (
+                <span className="ml-auto font-mono text-[12px] text-fg-3" title="Limit resets this account has banked. Inyon never uses them.">
+                  {resets} {resets === 1 ? 'reset' : 'resets'} banked
+                </span>
+              ) : null}
             </div>
             {([
               ['5-hour', liveWindow(st.fiveHour)],

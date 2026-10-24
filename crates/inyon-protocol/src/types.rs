@@ -289,6 +289,24 @@ pub enum TmuxState {
     Missing,
 }
 
+/// An agent's plan limits on a machine, read from the account it's signed in to, with or without a
+/// session running.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct AccountLimits {
+    pub kind: AgentKind,
+    pub five_hour: Option<RateWindow>,
+    pub seven_day: Option<RateWindow>,
+    pub plan: Option<String>,
+    pub credits: Option<Credits>,
+    /// limit resets the account has banked (Codex): counted, never used
+    pub resets: Option<u32>,
+    /// unix ms of the reading
+    pub updated_at: u64,
+}
+
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -325,6 +343,8 @@ pub struct HostState {
     pub last_seen: Option<u64>,
     /// when the machine stopped answering; its sessions are the last ones seen, saved on disk
     pub offline_since: Option<u64>,
+    /// plan limits of the accounts signed in there
+    pub limits: Option<Vec<AccountLimits>>,
 }
 
 // ---------- Chat (normalized Claude Code transcript) ----------

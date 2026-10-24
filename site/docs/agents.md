@@ -36,7 +36,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | Conversations | Each agent's own session files or local server |
 | Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
-| Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex and Antigravity: their own status events |
+| Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex: its status events, and from 0.21 the account itself through `codex app-server`, with no session running. Antigravity: its status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
 | Typing and answering | tmux, exactly as if you typed it: keys with `send-keys`, and from 0.20 text through a tmux paste buffer, so it never shows on a command line |
 

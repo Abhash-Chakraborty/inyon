@@ -627,3 +627,28 @@ fn a_machines_latest_sessions_are_saved_before_closing_even_inside_the_15_s_limi
         kv::del("snapshots/snap-test");
     });
 }
+
+#[test]
+fn a_machine_lists_each_accounts_limits_while_they_are_fresh() {
+    use inyon_protocol::{Num, RateWindow};
+    let w = |pct: f64| Some(RateWindow { pct: Num(pct), resets_at: None });
+    let now = 100 * 60_000;
+    let claude = Usage {
+        u: AccountUsage { five_hour: w(30.0), seven_day: w(60.0), at: now - 1000, error: None, plan: Some("Max 20x".into()) },
+        account: Some("acct-a".into()),
+        ok_at: Some(now - 1000),
+    };
+    let codex = |at: u64, five: Option<RateWindow>| CodexLimits {
+        limits: Some(AccountLimits { kind: AgentKind::Codex, five_hour: five, seven_day: None, plan: Some("plus".into()), credits: None, resets: Some(1), updated_at: at }),
+        at,
+    };
+    let got = limits_list(Some(&claude), Some("acct-a"), Some(&codex(now - 2000, w(41.0))), now).unwrap();
+    assert_eq!(
+        got.iter().map(|l| (l.kind, l.five_hour.clone(), l.plan.as_deref(), l.updated_at)).collect::<Vec<_>>(),
+        [(AgentKind::Claude, w(30.0), Some("Max 20x"), now - 1000), (AgentKind::Codex, w(41.0), Some("plus"), now - 2000),]
+    );
+    // Claude signed in to another account since, Codex's reading 25 minutes old: nothing to show
+    assert_eq!(limits_list(Some(&claude), Some("acct-b"), Some(&codex(now - 25 * 60_000, w(41.0))), now), None);
+    // a Codex plan with no 5-hour or weekly window (the free plan's is 30 days) isn't listed
+    assert_eq!(limits_list(None, None, Some(&codex(now, None)), now), None);
+}

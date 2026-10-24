@@ -37,6 +37,7 @@ export type Checks = [
   Check<Same<G.IntegrationState, H.IntegrationState>>,
   Check<Same<G.NodeUpdate, H.NodeUpdate>>,
   Check<Same<G.MachineKind, H.MachineKind>>,
+  Check<Same<G.AccountLimits, H.AccountLimits>>,
   Check<Same<G.HostState, H.HostState>>,
   Check<Same<G.AssistantBlock, H.AssistantBlock>>,
   Check<Same<G.ToolResultMeta, H.ToolResultMeta>>,
