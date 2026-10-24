@@ -66,10 +66,11 @@ root names the site for Inyon. It's a dot file, so no server shows it.
      `node <skill>/scripts/serve.mjs <dir> --host <private-ip> --port 8790`. Prefer a VPN or LAN address
      over a public one, since plans are usually private. Hand over the URL.
 
-   **No hub on this machine.** For now the app shows pages from the hub's own computer only. When either
-   command says "This machine doesn't run a hub" (publish.mjs exits 5), the page is listed but the app
-   can't open it yet, and neither prints an app link. Serve the folder with serve.mjs as above (the
-   script prints that line too) and hand over the URL.
+   **No hub on this machine.** When either command says "This machine doesn't run a hub" (publish.mjs
+   exits 5), the machine is joined to a hub, and a hub on 0.22 or later shows the page under that
+   machine's name. Hand over the `Pages > <machine> > <project>` line; there's no app link. With an
+   older hub the app can't open it: serve the folder with serve.mjs as above (the script prints that
+   line too) and hand over the URL.
 
    Publishing a folder again keeps its slug, so do it whenever you like. Never set up a systemd unit,
    launchd job or any other service to keep a site up: Inyon serves pages for as long as its hub runs.
