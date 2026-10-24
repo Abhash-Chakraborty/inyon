@@ -414,7 +414,7 @@ fn clean_lists_first_and_skips_recent_items() {
     let (code, r) = b.json(&["temp", "clean", "--older-than", "3d"]);
     assert_eq!(code, 0);
     let would: Vec<String> = r["would"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
-    assert_eq!(would, [s(&b.claude().join("shots")), s(&b.home.join(".inyon/uploads/2026-10-20"))]);
+    assert_eq!(would, [s(&b.claude().join("shots")), s(&b.home.join(".inyon").join("uploads").join("2026-10-20"))]);
     assert!(b.claude().join("shots").exists());
     let (code, r) = b.json(&["temp", "clean", "--older-than", "7d", "--yes"]);
     assert_eq!((code, r["removed"].as_array().unwrap().len(), r["freed"].as_u64()), (0, 1, Some(100)));
