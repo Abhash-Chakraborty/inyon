@@ -287,11 +287,24 @@ fn running_at(file: &Path, proc: &dyn Proc) -> Option<AppState> {
     read_state_at(file).filter(|s| alive(s, crate::state::now_ms(), proc))
 }
 
-/// The running app, started again first when it's an older version than this program (an update
-/// replaced its file), and whether it was. None when no app runs, or the new one didn't come up.
+/// The version of the app's file on disk (inyon-app.exe next to the installed inyon), which an
+/// update replaces while the old one keeps running. None before 0.20.3, whose files carry no mark.
+pub fn app_on_disk() -> Option<String> {
+    build_of(&app_beside(&crate::paths::installed_binary()))
+}
+
+/// Whether the app running `running` should start its new version: its file on disk is another
+/// version, or, with no mark to read, this program is.
+pub fn needs_relaunch(running: &str, on_disk: Option<&str>, mine: &str) -> bool {
+    running != on_disk.unwrap_or(mine)
+}
+
+/// The running app, started again first when it's an older version than its file on disk (an
+/// update replaced it), and whether it was. None when no app runs, or the new one didn't come up.
+/// The file, not this program: an update's restarts run in the updater, the version it replaces.
 pub fn current_relaunched(proc: &dyn Proc) -> Option<(AppState, bool)> {
     let s = running(proc)?;
-    if s.version == crate::ui::VERSION {
+    if !needs_relaunch(&s.version, app_on_disk().as_deref(), crate::ui::VERSION) {
         return Some((s, false));
     }
     let old = s.pid;
@@ -303,6 +316,23 @@ pub fn current_relaunched(proc: &dyn Proc) -> Option<(AppState, bool)> {
         proc.sleep_ms(250);
     }
     None
+}
+
+/// Run in an engine the app started (Windows): when the app is older than this program and its
+/// file on disk is this version, asks it to start its new version. An updater before 0.20.5 asked
+/// the old app only to restart the job, so the old app kept running until the next sign-in. The
+/// new app starts this job again with an engine of its own version, which then asks nothing.
+pub fn relaunch_if_older(proc: &dyn Proc) {
+    let Some(s) = running(proc) else { return };
+    let on_disk = app_on_disk();
+    if on_disk.as_deref() != Some(crate::ui::VERSION) || !needs_relaunch(&s.version, on_disk.as_deref(), crate::ui::VERSION) {
+        return;
+    }
+    trace(&format!("the app runs {} and its file is {}: asking it to start the new one", s.version, crate::ui::VERSION));
+    if send(&Request::new(Do::Relaunch, None, None)).is_ok() {
+        #[cfg(windows)]
+        win::wake();
+    }
 }
 
 /// The running app, as [`current_relaunched`] leaves it.
@@ -681,6 +711,16 @@ mod tests {
         let _ = build_mark();
         let me = std::env::current_exe().unwrap();
         assert_eq!(build_of(&me).as_deref(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn an_update_relaunches_the_app_when_its_file_is_newer_than_what_runs() {
+        // the updater is the old version: what counts is the file it put in place
+        assert!(needs_relaunch("0.20.3", Some("0.20.5"), "0.20.3"));
+        assert!(!needs_relaunch("0.20.5", Some("0.20.5"), "0.20.3"));
+        // a file with no mark: this program decides, as before
+        assert!(needs_relaunch("0.20.3", None, "0.20.5"));
+        assert!(!needs_relaunch("0.20.5", None, "0.20.5"));
     }
 
     #[test]

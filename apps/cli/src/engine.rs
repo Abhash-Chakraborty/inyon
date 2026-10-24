@@ -150,6 +150,21 @@ pub fn needs_bun(first: &str) -> bool {
 /// Answers an engine command with the engine built into this program, as `inyon-engine` would.
 /// `hub` goes on to the Bun engine, or runs the Rust hub with INYON_HUB_IMPL=rust.
 pub fn run_builtin(args: &[String]) -> i32 {
+    // a link or hub connection the Inyon app started: a new version of the app replaces an old one
+    // an older updater left running (see app::relaunch_if_older)
+    if cfg!(windows) && crate::paths::env_var("INYON_APP").is_some() && args.first().is_some_and(|a| a == "link" || a == "connect") {
+        std::thread::spawn(|| {
+            // not while the update that started this engine is still restarting jobs: its next
+            // restart would find the app gone. Then once, 10 seconds after
+            for _ in 0..60 {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                if !crate::update::under_way() {
+                    crate::app::relaunch_if_older(&crate::sys::RealProc);
+                    return;
+                }
+            }
+        });
+    }
     inyon_engine::cli::run(args, |rest| {
         if cfg!(windows) {
             eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
