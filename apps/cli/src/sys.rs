@@ -218,14 +218,43 @@ pub struct Output {
     pub out: String,
 }
 
+/// CREATE_NO_WINDOW: the child gets a console of its own that is never shown, and whatever it
+/// starts shares that hidden console instead of opening one.
+pub const NO_WINDOW: u32 = 0x0800_0000;
+
 /// Keeps a child from opening a console window on Windows.
 pub fn quiet(c: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
+        c.creation_flags(NO_WINDOW);
     }
     c
+}
+
+/// For a child whose output belongs in the terminal (a package manager's progress, the journal):
+/// it shares this program's console when there is one to see. Started from the Inyon app or a
+/// task, which have none, a console program would open a window of its own, so it gets a hidden
+/// one instead (Windows; elsewhere nothing changes).
+pub fn console_child(c: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    if !has_console() {
+        quiet(c);
+    }
+    c
+}
+
+/// Whether this program has a console someone can see (a terminal, Windows Terminal or an SSH
+/// session). The Inyon app, the engine's windowless copy and anything started hidden have none.
+#[cfg(windows)]
+pub fn has_console() -> bool {
+    // SAFETY: takes nothing and only reads this process's console
+    !unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null()
+}
+
+#[cfg(not(windows))]
+pub fn has_console() -> bool {
+    true
 }
 
 /// Runs a program and collects what it printed. A missing program (no systemctl in a
@@ -337,7 +366,6 @@ pub fn spawn_detached(args: &[String], log: &Path) -> std::io::Result<()> {
     let err = out.try_clone()?;
     let mut c = Command::new(prog);
     c.args(rest).stdin(Stdio::null()).stdout(out).stderr(err);
-    quiet(&mut c);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -346,9 +374,13 @@ pub fn spawn_detached(args: &[String], log: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP, so it outlives this console
-        c.creation_flags(0x0000_0008 | 0x0000_0200);
+        // a hidden console of its own (it outlives this one) in a process group of its own. Not
+        // DETACHED_PROCESS: with no console at all, every console program it started would open
+        // a window
+        c.creation_flags(NO_WINDOW | 0x0000_0200);
     }
+    #[cfg(not(windows))]
+    quiet(&mut c);
     c.spawn().map(|_| ())
 }
 

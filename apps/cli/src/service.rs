@@ -10,8 +10,9 @@
 //!
 //! The units run `~/.inyon/bin/inyon link|connect|hub`: this program, which runs the link and the
 //! hub connection itself and hands the hub to the Bun engine. Units written by earlier versions
-//! name the same file, so they keep working. Windows' logon tasks run `inyon-engine.exe`, a
-//! windowless copy of this program (see engine::make_copy).
+//! name the same file, so they keep working. On Windows the logon tasks open the Inyon app
+//! (`inyon-app.exe app --background link`), which runs `inyon-engine.exe`, a windowless copy of
+//! this program (see engine::make_copy), as its child.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -119,9 +120,13 @@ impl<'a> Sys<'a> {
     }
 }
 
-/// The command that runs this program: the binary itself.
+/// The command that runs this program: the binary itself (inyon.exe for the Inyon app, which is
+/// never what a service or an update runs).
 pub fn self_command() -> Vec<String> {
-    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| NAME.to_string());
+    let exe = std::env::current_exe()
+        .map(|p| if crate::app::started_as_app(&p.to_string_lossy()) { crate::app::command_beside(&p) } else { p })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| NAME.to_string());
     vec![exe]
 }
 
@@ -342,31 +347,25 @@ pub fn install_service(sys: &Sys, role: Role, restart: bool) -> Installed {
             let Some(task) = s.task else {
                 return failed("the hub runs on Linux and macOS (on Windows, use WSL)");
             };
-            // the task starts the engine itself: it has no console, so nothing shows at sign-in,
-            // and it puts the Inyon icon in the notification area while it runs
-            let engine = match engine_for(&cmd) {
-                Ok(e) => e,
+            // the task opens the Inyon app (inyon-app.exe, no console), which runs the job, shows
+            // the Inyon icon while it does, and ends it on Quit
+            let app = match ensure_app(Path::new(&cmd[0])) {
+                Ok(a) => a,
                 Err(e) => return failed(e),
             };
-            let list = s.args.iter().map(|a| psq(a)).collect::<Vec<_>>().join(", ");
-            let shortcut = startup_shortcut(&format!("{task}.lnk"));
-            let stop =
-                if restart { format!("Stop-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue\n{}\n", psq(task), stop_copies(sys, Some(role))) } else { String::new() };
-            let script = format!(
-                "$ErrorActionPreference='Stop'\n{stop}try {{\n  $a = New-ScheduledTaskAction -Execute {exe} -Argument {arg} -WorkingDirectory $env:USERPROFILE\n  $t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"\n  $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n  $p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n  Register-ScheduledTask -TaskName {name} -Action $a -Trigger $t -Settings $s -Principal $p -Description {what} -Force | Out-Null\n  Remove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n  Start-ScheduledTask -TaskName {name}\n  'task'\n}} catch {{\n  # tasks blocked by policy: a shortcut in the Startup folder, and started now\n  $l = (New-Object -ComObject WScript.Shell).CreateShortcut({shortcut})\n  $l.TargetPath = {exe}\n  $l.Arguments = {arg}\n  $l.WorkingDirectory = $env:USERPROFILE\n  $l.Save()\n  Start-Process -FilePath {exe} -ArgumentList {list} -WorkingDirectory $env:USERPROFILE\n  'startup'\n}}",
-                exe = psq(&path_str(&engine)),
-                arg = psq(&s.args.join(" ")),
-                name = psq(task),
-                what = psq(s.what),
-            );
-            let r = ps(&script);
+            let r = ps(&task_script(task, &path_str(&app), role, s.what));
             if !r.ok {
                 return failed(r.out.lines().next().filter(|l| !l.is_empty()).unwrap_or("Task Scheduler refused").to_string());
             }
-            if r.out.trim().ends_with("startup") {
-                ok("a program that starts when you sign in (Task Scheduler is blocked here, so from the Startup folder), with the Inyon icon in the notification area")
+            let how = if r.out.trim().ends_with("startup") {
+                "the Inyon app, which runs it from when you sign in (Task Scheduler is blocked here, so from the Startup folder), with the Inyon icon in the notification area"
+                    .to_string()
             } else {
-                ok(format!("a task that starts when you sign in (\"{task}\" in Task Scheduler), with the Inyon icon in the notification area"))
+                format!("the Inyon app, which runs it from when you sign in (\"{task}\" in Task Scheduler), with the Inyon icon in the notification area")
+            };
+            match start_in_app(sys, role, restart, &app) {
+                Ok(()) => ok(how),
+                Err(e) => failed(e),
             }
         }
         Platform::Other => failed(format!("{} isn't supported for a background service", sys.platform.name())),
@@ -395,6 +394,108 @@ fn engine_for(cmd: &[String]) -> Result<PathBuf, String> {
     }
     crate::update::swap_in(&crate::update::RealFiles, &want, &fresh, crate::state::now_ms() as u64).map_err(|e| e.to_string())?;
     Ok(want)
+}
+
+/// The engine program for the Inyon app's jobs: the windowless copy of `inyon` (or the Bun
+/// engine with the kill switch).
+pub fn engine_program(inyon: &Path) -> Result<PathBuf, String> {
+    engine_for(&[path_str(inyon)])
+}
+
+/// What the engine runs for `role`: `link`, `connect` or `hub`.
+pub fn engine_args(role: Role) -> &'static [&'static str] {
+    spec(role).args
+}
+
+/// PowerShell that registers `role`'s logon task to open the Inyon app for it, or puts a shortcut
+/// in the Startup folder when Task Scheduler is blocked. It starts nothing: the app does that.
+/// Prints 'task' or 'startup'.
+pub fn task_script(task: &str, app: &str, role: Role, what: &str) -> String {
+    let arg = format!("app --background {}", role.name());
+    let shortcut = startup_shortcut(&format!("{task}.lnk"));
+    format!(
+        "$ErrorActionPreference='Stop'\ntry {{\n  $a = New-ScheduledTaskAction -Execute {exe} -Argument {arg} -WorkingDirectory $env:USERPROFILE\n  $t = New-ScheduledTaskTrigger -AtLogOn -User \"$env:USERDOMAIN\\$env:USERNAME\"\n  $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n  $p = New-ScheduledTaskPrincipal -UserId \"$env:USERDOMAIN\\$env:USERNAME\" -LogonType Interactive -RunLevel Limited\n  Register-ScheduledTask -TaskName {name} -Action $a -Trigger $t -Settings $s -Principal $p -Description {what} -Force | Out-Null\n  Remove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n  'task'\n}} catch {{\n  # tasks blocked by policy: a shortcut in the Startup folder\n  $l = (New-Object -ComObject WScript.Shell).CreateShortcut({shortcut})\n  $l.TargetPath = {exe}\n  $l.Arguments = {arg}\n  $l.WorkingDirectory = $env:USERPROFILE\n  $l.Save()\n  'startup'\n}}",
+        exe = psq(app),
+        arg = psq(&arg),
+        name = psq(task),
+        what = psq(what),
+    )
+}
+
+/// Has the Inyon app run `role` now: the running app is asked; otherwise copies an older version
+/// started are stopped and the app is opened for it, in the signed-in user's session (also from
+/// SSH), through the task when there is one. Waits until the app runs it.
+fn start_in_app(sys: &Sys, role: Role, restart: bool, app: &Path) -> Result<(), String> {
+    if crate::app::current(sys.proc).is_some() {
+        let what = if restart { crate::app::Do::Restart } else { crate::app::Do::Start };
+        return crate::app::ask(sys.proc, what, Some(role), None, 10_000).and_then(|r| if r.ok { Ok(()) } else { Err(r.message) });
+    }
+    let task = spec(role).task.unwrap_or_default();
+    let r = ps(&format!(
+        "{stop}\nif (Get-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue) {{ Stop-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue; Start-ScheduledTask -TaskName {t} }} else {{ Start-Process -FilePath {exe} -ArgumentList 'app', '--background', {role} -WorkingDirectory $env:USERPROFILE }}",
+        stop = stop_copies(sys, Some(role)),
+        t = psq(task),
+        exe = psq(&path_str(app)),
+        role = psq(role.name()),
+    ));
+    if !r.ok {
+        return Err(r.out.lines().next().filter(|l| !l.is_empty()).unwrap_or("Task Scheduler refused").to_string());
+    }
+    for _ in 0..40 {
+        if crate::app::running(sys.proc).is_some_and(|a| a.runs(role)) {
+            return Ok(());
+        }
+        sys.proc.sleep_ms(250);
+    }
+    Err("the Inyon app didn't start (~/.inyon/node/app.log says why)".into())
+}
+
+/// ~/.inyon/bin/inyon-app.exe for `program` (inyon.exe): a copy of `program` marked to run without
+/// a console, made now unless the one there is already this version's.
+pub fn ensure_app(program: &Path) -> Result<PathBuf, String> {
+    let app = crate::app::app_beside(program);
+    let _ = crate::app::build_mark();
+    let mine = crate::app::build_of(program);
+    if app.is_file() && mine.is_some() && crate::app::build_of(&app) == mine {
+        return Ok(app);
+    }
+    let fresh = crate::engine::make_copy(&fs::read(program).map_err(|e| e.to_string())?)?;
+    let tmp = PathBuf::from(format!("{}.download", path_str(&app)));
+    fs::write(&tmp, &fresh).map_err(|e| e.to_string())?;
+    // a running app can't be overwritten, but it can be renamed out of the way
+    crate::update::swap_in(&crate::update::RealFiles, &app, &tmp, crate::state::now_ms() as u64).map_err(|e| e.to_string())?;
+    Ok(app)
+}
+
+/// Whether `role` is set to run at sign-in on Windows: its task, or its Startup shortcut.
+pub fn task_exists(sys: &Sys, role: Role) -> bool {
+    let Some(task) = spec(role).task.filter(|_| sys.platform == Platform::Windows) else { return false };
+    let shortcut = std::env::var_os("APPDATA").map(PathBuf::from).map(|d| d.join(r"Microsoft\Windows\Start Menu\Programs\Startup").join(format!("{task}.lnk")));
+    run(&["schtasks.exe", "/Query", "/TN", task]).ok || shortcut.is_some_and(|s| s.exists())
+}
+
+/// The jobs the Inyon app runs when it's opened with none named: those set to run at sign-in.
+pub fn app_roles(sys: &Sys) -> Vec<Role> {
+    [Role::Link, Role::Node].into_iter().filter(|r| task_exists(sys, *r)).collect()
+}
+
+/// Moves a machine to the Inyon app (from 0.20.3): the app's file, its Start menu shortcut and
+/// Settings → Apps entry, and each logon task opening the app instead of the engine. Nothing is
+/// started or stopped. Returns the app.
+pub fn adopt_app(sys: &Sys) -> Result<PathBuf, String> {
+    let program = installed_binary();
+    let app = ensure_app(&program)?;
+    register_app(sys);
+    for role in [Role::Link, Role::Node] {
+        if task_exists(sys, role) {
+            let s = spec(role);
+            let r = ps(&task_script(s.task.unwrap_or_default(), &path_str(&app), role, s.what));
+            if !r.ok {
+                crate::app::trace(&format!("! the {role}'s task still starts the engine: {}", r.out.lines().next().unwrap_or("")));
+            }
+        }
+    }
+    Ok(app)
 }
 
 /// Whether the hub is set up as a service here (Linux and macOS), from its files alone.
@@ -450,13 +551,61 @@ pub fn stop_tunnel(sys: &Sys, role: Role) {
 }
 
 /// Quit, from the tray icon or the Inyon window (Windows): ends the task, the engine (`pid`) and
-/// then its tunnel, so nothing keeps answering for a link that has stopped.
+/// then its tunnel, so nothing keeps answering for a link that has stopped. When the Inyon app
+/// runs, it stops the job itself and the task is left alone: one task's process is the app, and
+/// ending it would end everything else the app runs too.
 pub fn quit(sys: &Sys, role: Role, pid: Option<u32>) {
-    end_task(sys, role);
+    if crate::app::running(sys.proc).is_some() {
+        let _ = crate::app::ask(sys.proc, crate::app::Do::Stop, Some(role), None, 10_000);
+    } else {
+        end_task(sys, role);
+    }
     if let Some(pid) = pid.filter(|p| *p != sys.pid && sys.proc.alive(*p)) {
         sys.proc.signal(pid, Signal::Kill);
     }
     stop_tunnel(sys, role);
+}
+
+/// Stops `role` now without changing whether it starts at sign-in: its user service (systemctl
+/// stop, launchctl unload without -w), a copy started in the background, or on Windows its
+/// task and the engine an older version runs outside the app (`pid`). True when it stopped one.
+pub fn stop_now(sys: &Sys, role: Role, pid: Option<u32>) -> bool {
+    let s = spec(role);
+    let mut did = false;
+    match sys.platform {
+        Platform::Linux => {
+            for unit in [Some(s.unit), old_unit_for(role)].into_iter().flatten() {
+                if unit_file(unit).exists() && run(&["systemctl", "--user", "is-active", "--quiet", &format!("{unit}.service")]).ok {
+                    did |= run(&["systemctl", "--user", "stop", &format!("{unit}.service")]).ok;
+                }
+            }
+            if pid_file(role).exists() {
+                did |= stop_background(sys, role).is_ok();
+            }
+        }
+        Platform::Darwin => {
+            let file = plist_file(s.label);
+            if file.exists() {
+                did |= run(&["launchctl", "unload", &path_str(&file)]).ok;
+            }
+        }
+        Platform::Windows => {
+            if pid.is_some() {
+                end_task(sys, role);
+            }
+        }
+        Platform::Other => {}
+    }
+    if let Some(pid) = pid.filter(|p| *p != sys.pid && sys.proc.alive(*p)) {
+        sys.proc.signal(pid, Signal::Term);
+        sys.proc.sleep_ms(500);
+        if sys.proc.alive(pid) {
+            sys.proc.signal(pid, Signal::Kill);
+        }
+        did = true;
+    }
+    stop_tunnel(sys, role);
+    did
 }
 
 /// PowerShell that stops every program running from ~/.inyon/bin but this one (the engines, the
@@ -721,9 +870,16 @@ pub fn uninstall_service(sys: &Sys, role: Role) -> Installed {
             let Some(task) = s.task else {
                 return failed("nothing to remove");
             };
+            // the app stops running it (and ends, if that was all it ran). Its task isn't stopped
+            // then: that task's process may be the app, running the other job as well
+            let app = crate::app::running(sys.proc).is_some();
+            if app {
+                let _ = crate::app::ask(sys.proc, crate::app::Do::Stop, Some(role), None, 10_000);
+            }
+            let end = if app { String::new() } else { format!("Stop-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue; ", psq(task)) };
             ps(&format!(
                 // unregistered before and after the stop: run from the task itself, the stop may end this
-                "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue; Stop-ScheduledTask -TaskName {t} -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
+                "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue; {end}Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}\n{stop}",
                 t = psq(task),
                 shortcut = startup_shortcut(&format!("{task}.lnk")),
                 stop = stop_copies(sys, Some(role))
@@ -770,8 +926,21 @@ pub fn restart_service(sys: &Sys, role: Role, cmd: &[String]) -> Installed {
         }
         Platform::Windows => {
             if let Some(task) = s.task {
+                // the Inyon app runs it: the app starts it again (a new version of the app itself first)
+                if crate::app::running(sys.proc).is_some() {
+                    return match crate::app::current_relaunched(sys.proc) {
+                        // the new version of the app starts everything it ran again
+                        Some((a, true)) if a.runs(role) => ok("the new Inyon app started it again"),
+                        Some(_) => match crate::app::ask(sys.proc, crate::app::Do::Restart, Some(role), None, 10_000) {
+                            Ok(r) if r.ok => ok("the Inyon app started it again"),
+                            Ok(r) => failed(r.message),
+                            Err(e) => failed(e),
+                        },
+                        None => failed("the Inyon app didn't come back after the update (~/.inyon/node/app.log says why)"),
+                    };
+                }
                 // inyon's own task is registered again, so one set up by an earlier version
-                // starts the engine directly from now on (no console window at sign-in)
+                // opens the Inyon app from now on (no console window at sign-in)
                 let own = format!(
                     "if ((Get-ScheduledTask -TaskName {} -ErrorAction SilentlyContinue) -or (Test-Path {})) {{ exit 0 }} else {{ exit 1 }}",
                     psq(task),
@@ -1008,7 +1177,11 @@ fn run_package_command(cmd: &[&str], sudo: bool) -> Result<(), String> {
         cmd = &cmd[1..];
     }
     let (prog, args) = cmd.split_first().ok_or("nothing to run")?;
-    let status = std::process::Command::new(prog).args(args).status().map_err(|e| e.to_string())?;
+    // in a terminal its progress shows there; from the Inyon window (no console) no window opens for it
+    let mut c = std::process::Command::new(prog);
+    c.args(args);
+    sys::console_child(&mut c);
+    let status = c.status().map_err(|e| e.to_string())?;
     if status.success() {
         Ok(())
     } else {
@@ -1119,24 +1292,38 @@ pub fn link_answers(port: u16) -> bool {
 /// The registry key that lists Inyon under Settings → Apps on Windows.
 pub const APP_KEY: &str = r"HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inyon";
 
-/// PowerShell that writes that entry: name, version, icon, where it is, how big, and what
-/// Uninstall runs. `exe` is the installed inyon.exe.
-pub fn app_entry_script(exe: &str, version: &str, size_kb: u64) -> String {
-    let dir = Path::new(exe).parent().map(path_str).unwrap_or_default();
+/// The Start menu shortcut that opens the Inyon app.
+pub fn start_menu_shortcut() -> String {
+    "(Join-Path ([Environment]::GetFolderPath('Programs')) 'Inyon.lnk')".to_string()
+}
+
+/// The kite, next to the programs: the Start menu shortcut and Settings → Apps show it.
+pub fn icon_file() -> PathBuf {
+    bin_dir().join("inyon.ico")
+}
+
+/// PowerShell that writes the Settings → Apps entry (name, version, icon, where it is, how big,
+/// and what Uninstall runs: the app, so no console opens) and the Start menu shortcut "Inyon".
+/// `app` is the installed inyon-app.exe.
+pub fn app_entry_script(app: &str, icon: &str, version: &str, size_kb: u64) -> String {
+    let dir = Path::new(app).parent().map(path_str).unwrap_or_default();
     format!(
-        "$k = {k}\nNew-Item -Path $k -Force | Out-Null\n$p = [ordered]@{{ DisplayName = 'Inyon'; DisplayVersion = {v}; Publisher = 'Abhash Chakraborty'; DisplayIcon = {exe}; InstallLocation = {dir}; UninstallString = {u}; QuietUninstallString = {q}; URLInfoAbout = 'https://inyon.tech'; HelpLink = 'https://inyon.tech/docs/troubleshooting/'; InstallDate = (Get-Date -Format yyyyMMdd) }}\nforeach ($n in $p.Keys) {{ Set-ItemProperty -Path $k -Name $n -Value $p[$n] }}\nforeach ($n in 'NoModify', 'NoRepair') {{ Set-ItemProperty -Path $k -Name $n -Value 1 -Type DWord }}\nSet-ItemProperty -Path $k -Name EstimatedSize -Value {size} -Type DWord",
+        "$k = {k}\nNew-Item -Path $k -Force | Out-Null\n$p = [ordered]@{{ DisplayName = 'Inyon'; DisplayVersion = {v}; Publisher = 'Abhash Chakraborty'; DisplayIcon = {icon}; InstallLocation = {dir}; UninstallString = {u}; QuietUninstallString = {q}; URLInfoAbout = 'https://inyon.tech'; HelpLink = 'https://inyon.tech/docs/troubleshooting/'; InstallDate = (Get-Date -Format yyyyMMdd) }}\nforeach ($n in $p.Keys) {{ Set-ItemProperty -Path $k -Name $n -Value $p[$n] }}\nforeach ($n in 'NoModify', 'NoRepair') {{ Set-ItemProperty -Path $k -Name $n -Value 1 -Type DWord }}\nSet-ItemProperty -Path $k -Name EstimatedSize -Value {size} -Type DWord\n$l = (New-Object -ComObject WScript.Shell).CreateShortcut({lnk})\n$l.TargetPath = {exe}\n$l.WorkingDirectory = $env:USERPROFILE\n$l.IconLocation = {icon}\n$l.Description = 'Pair your phone and see what Inyon runs'\n$l.Save()",
         k = psq(APP_KEY),
         v = psq(version),
-        exe = psq(exe),
+        exe = psq(app),
+        icon = psq(icon),
         dir = psq(&dir),
-        u = psq(&format!("\"{exe}\" uninstall --purge --pause")),
-        q = psq(&format!("\"{exe}\" uninstall --purge --yes")),
+        u = psq(&format!("\"{app}\" uninstall --purge")),
+        q = psq(&format!("\"{app}\" uninstall --purge --yes")),
         size = size_kb,
+        lnk = start_menu_shortcut(),
     )
 }
 
-/// Lists Inyon under Settings → Apps (Windows), once inyon.exe is in place. Done again after
-/// an update, for the version. The line for setup's summary, or None when there's nothing to do.
+/// Lists Inyon under Settings → Apps and in the Start menu (Windows), once inyon.exe is in place.
+/// Done again after an update, for the version. The line for setup's summary, or None when
+/// there's nothing to do.
 pub fn register_app(sys: &Sys) -> Option<String> {
     if sys.platform != Platform::Windows {
         return None;
@@ -1145,18 +1332,28 @@ pub fn register_app(sys: &Sys) -> Option<String> {
     if !exe.is_file() {
         return None;
     }
+    let app = match ensure_app(&exe) {
+        Ok(a) => a,
+        Err(e) => return Some(format!("! Couldn't put the Inyon app in place ({e})")),
+    };
+    let icon = icon_file();
+    let _ = fs::write(&icon, crate::app::ICON);
     let bytes: u64 = fs::read_dir(bin_dir()).into_iter().flatten().flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum();
-    if ps(&app_entry_script(&path_str(&exe), crate::ui::VERSION, bytes / 1024)).ok {
-        Some("✓ Listed in Settings → Apps as Inyon".into())
+    if ps(&app_entry_script(&path_str(&app), &path_str(&icon), crate::ui::VERSION, bytes / 1024)).ok {
+        Some("✓ In the Start menu and Settings → Apps as Inyon".into())
     } else {
-        Some("! Couldn't list Inyon in Settings → Apps (uninstall with `inyon uninstall`)".into())
+        Some("! Couldn't list Inyon in the Start menu and Settings → Apps (uninstall with `inyon uninstall`)".into())
     }
 }
 
-/// Takes the Settings → Apps entry away (Windows).
+/// Takes the Settings → Apps entry and the Start menu shortcut away (Windows).
 pub fn unregister_app(sys: &Sys) {
     if sys.platform == Platform::Windows {
-        ps(&format!("Remove-Item -Path {} -Recurse -Force -ErrorAction SilentlyContinue", psq(APP_KEY)));
+        ps(&format!(
+            "Remove-Item -Path {} -Recurse -Force -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {}",
+            psq(APP_KEY),
+            start_menu_shortcut()
+        ));
     }
 }
 
@@ -1310,16 +1507,37 @@ mod tests {
     }
 
     #[test]
-    fn the_settings_apps_entry_names_the_program_and_how_to_remove_it() {
-        let s = app_entry_script(r"C:\Users\a\.inyon\bin\inyon.exe", "0.17.2", 90000);
+    fn the_settings_apps_entry_and_the_start_menu_open_the_app_with_no_console() {
+        let s = app_entry_script(r"C:\Users\a\.inyon\bin\inyon-app.exe", r"C:\Users\a\.inyon\bin\inyon.ico", "0.20.3", 90000);
         assert!(s.contains("DisplayName = 'Inyon'"));
-        assert!(s.contains("DisplayVersion = '0.17.2'"));
-        assert!(s.contains(r#"UninstallString = '"C:\Users\a\.inyon\bin\inyon.exe" uninstall --purge --pause'"#));
-        assert!(s.contains(r#"QuietUninstallString = '"C:\Users\a\.inyon\bin\inyon.exe" uninstall --purge --yes'"#));
+        assert!(s.contains("DisplayVersion = '0.20.3'"));
+        assert!(s.contains("Publisher = 'Abhash Chakraborty'"));
+        assert!(s.contains(r"DisplayIcon = 'C:\Users\a\.inyon\bin\inyon.ico'"));
+        // Uninstall runs the app, which asks in a message box: no console window, no --pause
+        assert!(s.contains(r#"UninstallString = '"C:\Users\a\.inyon\bin\inyon-app.exe" uninstall --purge'"#));
+        assert!(s.contains(r#"QuietUninstallString = '"C:\Users\a\.inyon\bin\inyon-app.exe" uninstall --purge --yes'"#));
+        assert!(!s.contains("--pause") && !s.contains(r"\inyon.exe"), "{s}");
         assert!(s.contains("EstimatedSize -Value 90000"));
+        assert!(s.contains("GetFolderPath('Programs')) 'Inyon.lnk'"));
+        assert!(s.contains(r"$l.TargetPath = 'C:\Users\a\.inyon\bin\inyon-app.exe'"));
+        assert!(s.contains(r"$l.IconLocation = 'C:\Users\a\.inyon\bin\inyon.ico'"));
         if cfg!(windows) {
             assert!(s.contains(r"InstallLocation = 'C:\Users\a\.inyon\bin'"));
         }
+    }
+
+    #[test]
+    fn the_logon_task_opens_the_app_in_the_background_and_starts_nothing_itself() {
+        let s = task_script("Inyon link", r"C:\Users\a\.inyon\bin\inyon-app.exe", Role::Link, "Inyon phone link");
+        assert!(s.contains(r"New-ScheduledTaskAction -Execute 'C:\Users\a\.inyon\bin\inyon-app.exe' -Argument 'app --background link'"), "{s}");
+        assert!(s.contains("-LogonType Interactive -RunLevel Limited"));
+        assert!(s.contains("-RestartCount 3"));
+        // the fallback shortcut opens the app too
+        assert!(s.contains(r"$l.TargetPath = 'C:\Users\a\.inyon\bin\inyon-app.exe'") && s.contains("$l.Arguments = 'app --background link'"));
+        assert!(!s.contains("Start-ScheduledTask") && !s.contains("Start-Process"), "the app starts the job, not the script: {s}");
+        assert!(!s.contains("inyon-engine"), "{s}");
+        let n = task_script("Inyon node", r"C:\a\inyon-app.exe", Role::Node, "x");
+        assert!(n.contains("-Argument 'app --background node'"));
     }
 
     #[test]

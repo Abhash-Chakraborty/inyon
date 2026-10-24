@@ -4,7 +4,7 @@
 
 use serde_json::Value;
 
-use super::model::{Card, Checks, Ended, Extra, Pairing, Update, CODE_MS, UNDO_MS};
+use super::model::{Card, Checks, Ended, Extra, Pairing, Setup, Update, CODE_MS, UNDO_MS};
 use crate::service::Role;
 use crate::ui::dashboard::{Job, PairedPhone, Status};
 
@@ -27,6 +27,7 @@ pub fn status() -> Status {
         log: vec!["link.log: 2026-10-22 22:31 tunnel up".into()],
         note: None,
         reach: None,
+        background: None,
     }
 }
 
@@ -39,6 +40,9 @@ pub fn extra() -> Extra {
         checks: Checks::Done { total: 9, failing: vec![] },
         hub_url: None,
         forgetting: None,
+        setup: Setup::Idle,
+        phone_page: 0,
+        check_details: Vec::new(),
     }
 }
 

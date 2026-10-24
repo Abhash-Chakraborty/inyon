@@ -26,6 +26,7 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon hub reset-password` | Choose a new hub password |
 | `inyon push` | List the browsers this computer sends notifications to |
 | `inyon service install`, `uninstall`, `status` | Manage the background service |
+| `inyon stop` | Stop everything Inyon runs in the background here |
 | `inyon logs` | Show the service's output |
 | `inyon doctor` | Check that everything is in place |
 | `inyon update` | Update to the newest release |
@@ -56,6 +57,8 @@ On Windows before 0.20.1 a key could act twice, because Windows also reports a k
 
 The dashboard and setup draw in greys that suit the terminal's background. From 0.20.2 they ask the terminal whether it's light or dark and use darker greys on a light one, so muted text stays readable on white. A terminal that doesn't answer gets the greys for a dark one; set `INYON_THEME=light` to say otherwise.
 
+From 0.20.3 it says what runs in the background and how to stop it. On Windows that's the Inyon app (**Quit Inyon** in the icon's menu, or `inyon stop`); elsewhere `inyon stop` for the link and the hub connection, and `inyon hub stop` for a hub.
+
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
 
 From 0.17.2 the link counts as running when something answers on its port the way the engine does, not only when the process it last recorded is alive, so a stale record never shows a running link as stopped.
@@ -80,7 +83,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
-   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, type the hub's address.
+   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, paste the hub's whole *Add a machine* command (from 0.20.3), or type the hub's address and then the token. The token shows as dots, also inside a command typed into the box, and one hub's token is never sent to a different hub you type in afterwards. A phone's pairing link (`inyon://hub?…`, what the hub's QR code holds) is turned away with where the machine command is. Before 0.20.3 *Add it to a hub* took only the address, so it failed with a usage line unless `INYON_TOKEN` was set.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
@@ -116,7 +119,7 @@ With `--yes`, or without a terminal (as when piped from `curl`), setup takes fla
 | `--network <list>` | For a node: any of `tunnel`, `lan`, `vpn` and one `wss://` address, comma-separated. For a hub: `localhost`, `lan`, `vpn` or an address |
 | `--port <n>` | The port to listen on |
 | `--autostart`, `--no-autostart` | Install the background service, or not. A hub without it runs in the foreground |
-| `--hub <url>` | The hub to join. The machine's token goes in `INYON_TOKEN` |
+| `--hub <url>` | The hub to join. The machine's token goes in `INYON_TOKEN`. From 0.20.3 it also takes the hub's whole *Add a machine* command, token included |
 
 ```sh
 inyon setup --yes --role node --network tunnel,vpn
@@ -171,6 +174,8 @@ inyon disconnect
 
 `join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. From 0.20.3 it first trades the pasted token for a new one the hub hands out once, so the command in your shell history no longer works; running the same command again on the machine keeps the token it got. An older hub doesn't trade, and the pasted token stays. When the hub says the token was used already or replaced, `join` stops with "The hub refused this token", and you need a new command from **Add a machine**. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
 
+Given a phone's pairing link instead of a hub's address, `join` says from 0.20.3 that the link pairs a phone, and that the command to add this computer is under the hub's **Machines → Add a machine**.
+
 ## Notifications to browsers
 
 ```sh
@@ -187,7 +192,13 @@ inyon service install [link|node|hub]
 inyon service uninstall [link|node|hub]
 ```
 
-Without a role, `install` picks `node` if a hub is saved and `link` otherwise. From 0.20, installing the link also downloads `cloudflared` when the tunnel is on and it isn't there yet. [Install](install.md#the-background-service) has the details for each system.
+Without a role, `install` picks `node` if a hub is saved and `link` otherwise. On Windows from 0.20.3 the Inyon app runs it, and `install` asks the running app to start it.
+
+```sh
+inyon stop
+```
+
+From 0.20.3 `stop` stops everything Inyon runs in the background on this computer: on Windows the Inyon app and all it runs, elsewhere the link and hub connection services. They start again at the next sign-in, or with `inyon setup` or `inyon service install`. A hub keeps running; `inyon hub stop` stops it. From 0.20, installing the link also downloads `cloudflared` when the tunnel is on and it isn't there yet. [Install](install.md#the-background-service) has the details for each system.
 
 ## Logs
 

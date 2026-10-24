@@ -17,6 +17,10 @@ From 0.19 the link and the hub connection run inside `inyon` rather than in the 
 
 Before 0.17.2, `inyon pair` on Windows could miss the link already running in the background and start a second one. The second one published its own address, and when it ended with the terminal, the phone was left pointing at it. Update both sides; from 0.17.2 `pair` sees a running link by its port too. Until then, `inyon service install link` restarts the background link, which publishes the right address again.
 
+## A console window opens, or the icon is missing (Windows)
+
+Up to 0.20.2 the Inyon window's **Change**, **Show all** and **Details** each opened a terminal, **Uninstall** in Settings → Apps opened a console that waited for Enter, and the tray icon belonged to the engine, so it could be missing while the link ran. From 0.20.3 Inyon is an app: nothing opens a terminal, and its icon shows exactly while something runs. `inyon update` moves a computer to it; run `inyon status` afterwards to see what the app runs.
+
 ## The tray menu opens an empty window (Windows)
 
 In 0.17.1, **Open Inyon** and **Pair a phone…** in the tray menu opened a window that closed at once. Run `inyon` or `inyon pair` in a terminal instead, or update to 0.17.2.

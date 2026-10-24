@@ -146,32 +146,33 @@ Setup runs Inyon as a service of your own user, so it starts on its own and come
 |---|---|---|---|
 | Linux | systemd user unit `inyon-link`, `inyon-node` or `inyon-hub` | Boot (lingering is turned on) | Restarts after 5 s |
 | macOS | LaunchAgent `tech.abhashchakraborty.inyon.<role>` | Login | Restarts |
-| Windows | Scheduled task "Inyon link" or "Inyon node" | Login | Retried every minute |
+| Windows | The Inyon app, opened at sign-in by the scheduled task "Inyon link" or "Inyon node" | Login | The app starts it again |
 | Linux without user systemd | A background process, plus an `@reboot` cron line | Boot, when cron exists | No |
 
 The role is `link` for a computer paired with your phone, `node` for one that joined a hub, and `hub` for a hub. `inyon service status` shows what's installed and running, and `inyon logs` shows its output.
 
 ### On Windows
 
-From 0.17.1 the task starts `inyon-engine.exe` itself. It has no console, so no window opens when you sign in, and its output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub). An install from an earlier version moves to this the next time it updates.
+From 0.20.3 Inyon on Windows is an app. Setup adds **Inyon** to the Start menu and to **Settings → Apps → Installed apps**, and both open `inyon-app.exe`, a copy of `inyon.exe` marked as a program without a console. Nothing Inyon does opens a terminal window: not at sign-in, not the window's buttons, and not the programs it starts (the engine, `cloudflared`, psmux, PowerShell).
 
-Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell sets `HOME` to another folder. Before 0.19 the `inyon` command followed `HOME` there, while the engine kept the keys and pairings under `%USERPROFILE%`.
+The app runs what Inyon keeps going in the background: the link to your phone (and its tunnel) or the connection to a hub. They're its own child processes, in a Windows job, so they end when the app ends, even if it crashes. The scheduled task only opens the app when you sign in; it starts nothing itself. Their output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub), and the app's own to `app.log` beside them.
 
-From 0.19 `inyon-engine.exe` is a copy of `inyon.exe` marked as a program without a console, so the task, the firewall rule "Inyon link" and older commands keep the name they know. Setup and `inyon update` write it. A computer updated from 0.18 runs the old engine once more after the update; when its tray icon starts, it waits for the update to finish, then moves the task to the copy by itself (in a task of its own, "Inyon engine hand-over") and restarts it.
-
-While it runs, the Inyon icon sits in the notification area of the taskbar. Click it for a menu:
+The Inyon icon is in the notification area exactly while something runs. When nothing does, there's no icon. Opening Inyon a second time brings the open window forward instead of starting another copy.
 
 | Item | Does |
 |---|---|
+| The first line | What runs: *Running: link, tunnel*, or *Running: hub connection* |
 | Open Inyon | [The Inyon window](#the-inyon-window) |
-| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone). It says "Starting the tunnel…" until the tunnel's address is in the code |
-| Show the log | Opens the log file |
-| Restart | Starts it again |
-| Quit Inyon | Stops it and its tunnel until you next sign in. `inyon service install` starts it sooner |
+| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type. It says "Starting the tunnel…" until the tunnel's address is in the code |
+| Quit Inyon | Stops everything the app runs, and the icon goes. It starts again when you next sign in, or when you open Inyon |
 
-From 0.20 **Quit Inyon** also stops `cloudflared`, as **Restart** does; in 0.19 it kept running after the link had stopped. The window shows a pairing code as soon as it's ready and draws it again when the tunnel's address arrives, lists where the computer answers only while the link runs, and says when phones reach it only through the tunnel. Before 0.20 its **Pair a phone** button could wait for good when the button had to start the link itself.
+Closing the window keeps the app running when something runs: the first time, a note says so and points at **Quit Inyon**. With nothing running, closing the window ends the app.
 
-From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens; when no phone is paired yet, it shows a pairing code without being asked. Nothing Inyon runs in the background opens a window either: from 0.17.3 every program the engine starts on Windows (psmux, PowerShell, the shell) runs hidden. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+The `inyon` command works with the app instead of starting copies of its own. `inyon status` says what runs in the background and that the Inyon app runs it, `inyon stop` stops all of it, and `inyon service install` or `inyon update` ask the running app to start or restart a job. A computer set up by 0.20.2 or earlier moves to the app by itself the next time its old engine starts or it updates: the tasks are registered again to open the app, and the app takes over the running engine.
+
+Before 0.20.3 the task started `inyon-engine.exe` itself, the window's **Change**, **Show all** and **Details** opened a terminal, and the tray icon belonged to the engine, so it could be missing while the link ran. If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+
+Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell sets `HOME` to another folder. `inyon-engine.exe` stays as the windowless copy that runs the link and the hub connection, so the firewall rule "Inyon link" and older commands keep the name they know.
 
 ### The Inyon window
 
@@ -181,16 +182,16 @@ From 0.20.1 the window is the control panel for this computer:
 |---|---|---|
 | Header | The version, the computer's name, and Running, Starting, Stopped or Not set up | |
 | Pair a phone | The QR code and the ID and code to type in the app. It says so while the tunnel starts, and until the tunnel is up the code works on the same network or VPN. A used code names the phone that paired, an expired one says so, and in its last minute the note counts down ("gone in 42s") | Make a code, Copy link, and Show the log when the tunnel is slow or the code failed |
-| Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change opens `inyon setup` in a terminal |
-| Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. Show all opens `inyon phones` in a terminal when there are more |
-| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which opens `inyon doctor` |
+| Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change: a menu to turn each on or off, applied by setup in the background (from 0.20.3; before, it opened `inyon setup` in a terminal) |
+| Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. More pages through the rest when there are more |
+| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which lists what the checks found. Before the phone link is set up, its window shows Set up instead; the hub connection's window only starts and stops (from 0.20.3) |
 | Footer | The newest log line | Open the log, Quit Inyon |
 
 On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.
 
 The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. Before 0.20.1 the window grew and shrank with every refresh.
 
-From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
+Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), with its version and the kite icon, and `inyon update` keeps the version current. From 0.20.3 **Uninstall** there asks to confirm, then removes Inyon without opening a terminal and says when it's done; before, it ran `inyon uninstall --purge` in a console window that stayed open until you pressed Enter.
 
 ## Updating
 
@@ -216,9 +217,9 @@ inyon uninstall --yes      # don't ask anything
 
 From 0.17.1 both also take `inyon` back off your `PATH`: the lines marked `# added by Inyon`, Inyon's fish file, or the entry on the Windows user `Path`.
 
-From 0.17.2, when setup installed tmux (psmux on Windows) for you, uninstall asks whether to remove it too; the answer is no unless you say yes, and `--yes` keeps it. tmux that was there before Inyon is never touched. On Windows it also removes the entry under Settings → Apps.
+From 0.17.2, when setup installed tmux (psmux on Windows) for you, uninstall asks whether to remove it too; the answer is no unless you say yes, and `--yes` keeps it. tmux that was there before Inyon is never touched. On Windows it also removes the entry under Settings → Apps and, from 0.20.3, the Start menu shortcut.
 
-On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the engine, the tunnel and the tray icon), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one, and from 0.17.2 a file in use under `~/.inyon` (an agent's hook writing the event log, say) stops only itself from going, not the rest. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
+On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the Inyon app, the engine and the tunnel), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one, and from 0.17.2 a file in use under `~/.inyon` (an agent's hook writing the event log, say) stops only itself from going, not the rest. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
 
 From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
 

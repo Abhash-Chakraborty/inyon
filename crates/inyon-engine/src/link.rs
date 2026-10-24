@@ -999,15 +999,10 @@ fn download_cloudflared(bin: &Path) -> Result<PathBuf, String> {
             std::fs::write(tmp.join("download.tgz"), &res.body).map_err(|e| e.to_string())?;
             let out = tmp.join("out");
             std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
-            let ok = std::process::Command::new("tar")
-                .arg("-xzf")
-                .arg(tmp.join("download.tgz"))
-                .arg("-C")
-                .arg(&out)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .status()
-                .is_ok_and(|s| s.success());
+            let mut tar = std::process::Command::new("tar");
+            tar.arg("-xzf").arg(tmp.join("download.tgz")).arg("-C").arg(&out).stdout(Stdio::null()).stderr(Stdio::piped());
+            ops::hide_window_std(&mut tar);
+            let ok = tar.status().is_ok_and(|s| s.success());
             if !ok {
                 return Err("couldn't unpack cloudflared".to_string());
             }
