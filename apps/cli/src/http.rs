@@ -153,8 +153,22 @@ mod tests {
             let url = format!("http://{}/api/companion", l.local_addr().unwrap());
             let server = std::thread::spawn(move || {
                 let (mut s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
                 let mut line = String::new();
-                BufReader::new(s.try_clone().unwrap()).read_line(&mut line).unwrap();
+                r.read_line(&mut line).unwrap();
+                // the whole request before answering: closing on a client still sending fails on macOS
+                let mut length = 0;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap();
+                    }
+                }
+                std::io::Read::read_exact(&mut r, &mut vec![0; length]).unwrap();
                 s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}").unwrap();
                 line
             });
