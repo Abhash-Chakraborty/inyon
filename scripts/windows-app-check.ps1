@@ -99,13 +99,17 @@ if ($first.nav -lt 7) { Fail "the side bar has $($first.nav) pages, 7 expected" 
 # every page in the side bar, clicked like a person would
 $pages = Page 'side bar' @"
 $helpers
+// a click redraws the side bar, so each button is looked up again
 const seen = [];
-for (const b of document.querySelectorAll('#nav button')) {
-  b.click();
+const count = document.querySelectorAll('#nav button').length;
+for (let i = 0; i < count; i++) {
+  const label = document.querySelectorAll('#nav button')[i].querySelector('span').textContent;
+  document.querySelectorAll('#nav button')[i].click();
   await sleep(400);
-  await drawn(b.textContent);
-  if (b.getAttribute('aria-current') !== 'page') throw new Error(b.textContent + ' is not marked as the page shown');
-  seen.push(b.querySelector('span').textContent);
+  await drawn(label);
+  const shown = document.querySelector('#nav button[aria-current="page"] span');
+  if (shown?.textContent !== label) throw new Error(`clicked ${label}, the side bar shows ${shown?.textContent ?? 'nothing'}`);
+  seen.push(label);
 }
 return seen.join(', ');
 "@
