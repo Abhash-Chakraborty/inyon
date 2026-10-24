@@ -65,6 +65,7 @@ macro_rules! with_types {
             NodeUpdate,
             MachineKind,
             TmuxState,
+            AccountLimits,
             HostState,
             AssistantBlock,
             PatchHunk,

@@ -205,6 +205,21 @@ export interface HostState {
   lastSeen?: number
   /** when the machine stopped answering; its sessions are the last ones seen, saved on disk */
   offlineSince?: number
+  /** plan limits of the accounts signed in there */
+  limits?: AccountLimits[]
+}
+
+/** An agent's plan limits on a machine, read from the account it's signed in to, with or without a session running. */
+export interface AccountLimits {
+  kind: AgentKind
+  fiveHour?: RateWindow
+  sevenDay?: RateWindow
+  plan?: string
+  credits?: { balance?: string; unlimited?: boolean }
+  /** limit resets the account has banked (Codex): counted, never used */
+  resets?: number
+  /** unix ms of the reading */
+  updatedAt: number
 }
 
 // ---------- Chat (normalized Claude Code transcript) ----------
