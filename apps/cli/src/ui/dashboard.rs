@@ -505,7 +505,29 @@ pub fn plain(s: &Status) -> String {
     for l in &s.log {
         out.push(l.clone());
     }
+    out.extend(hints(s));
     out.join("\n")
+}
+
+/// What to read next, for a person or an agent working on this computer: where its pages show
+/// when it's joined to a hub, and where the docs are.
+pub fn hints(s: &Status) -> Vec<String> {
+    let mut out = Vec::new();
+    if s.role == "joined" {
+        out.push("Sessions and pages on this machine show in the hub's app. Share a folder of pages with `inyon pages add <folder>` (hub 0.22 or later).".to_string());
+    }
+    out.push(format!("Docs: {} or `inyon docs <topic>`", crate::docs::DOCS_URL));
+    out
+}
+
+/// `inyon status --json`: the status with the docs address and the hints.
+pub fn json(s: &Status) -> serde_json::Value {
+    let mut v = serde_json::to_value(s).unwrap_or_default();
+    if let Some(o) = v.as_object_mut() {
+        o.insert("docs".into(), crate::docs::DOCS_URL.into());
+        o.insert("hints".into(), hints(s).into());
+    }
+    v
 }
 
 /// A rendered buffer as lines, trailing spaces trimmed, for the snapshot tests.
@@ -619,6 +641,19 @@ mod tests {
         let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
         t.draw(|f| render(f, s, Theme::plain())).unwrap();
         buffer_text(t.backend().buffer())
+    }
+
+    #[test]
+    fn status_says_where_the_docs_are_and_where_a_joined_machines_pages_show() {
+        let s = status();
+        assert!(plain(&s).ends_with("Docs: https://inyon.tech/docs/ or `inyon docs <topic>`"), "{}", plain(&s));
+        assert!(!plain(&s).contains("pages add"));
+        let joined = Status { role: "joined".into(), hub: Some("http://100.64.0.1:4747".into()), ..status() };
+        assert!(plain(&joined).contains("`inyon pages add <folder>`"), "{}", plain(&joined));
+        let v = json(&joined);
+        assert_eq!(v["docs"], "https://inyon.tech/docs/");
+        assert_eq!(v["hints"].as_array().unwrap().len(), 2);
+        assert_eq!(v["role"], "joined");
     }
 
     #[test]

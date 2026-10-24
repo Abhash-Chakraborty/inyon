@@ -10,7 +10,7 @@ use crate::{engine, pages, paths, temp, update};
 
 /// Drive your coding agents from the Inyon app: pair this machine, keep it reachable, keep it up to date.
 #[derive(Parser)]
-#[command(name = "inyon", version, disable_version_flag = true, about, long_about = None)]
+#[command(name = "inyon", version, disable_version_flag = true, about, long_about = None, after_help = "Docs: https://inyon.tech/docs/ (or here: inyon docs <topic>)")]
 struct Cli {
     /// Answer as JSON
     #[arg(long, global = true)]
@@ -110,6 +110,11 @@ enum Command {
     Skill {
         #[command(subcommand)]
         action: SkillAction,
+    },
+    /// Read the docs here, without a browser: list them, or print one page
+    Docs {
+        /// A page's name or a few words from its title (hub, pages, add machines)
+        topic: Vec<String>,
     },
     /// Print the version
     Version,
@@ -396,7 +401,8 @@ pub fn main() {
     }
     let cli = Cli::parse_from(&argv);
     closed_pipe_is_not_a_crash(
-        cli.version || matches!(cli.command, None | Some(Command::Status { .. } | Command::Phones | Command::Logs { .. } | Command::Doctor | Command::Version)),
+        cli.version
+            || matches!(cli.command, None | Some(Command::Status { .. } | Command::Phones | Command::Logs { .. } | Command::Doctor | Command::Version | Command::Docs { .. })),
     );
     let proc = RealProc;
     let sys = Sys::new(&proc);
@@ -419,7 +425,7 @@ pub fn main() {
         None | Some(Command::Status { .. }) => {
             let s = dashboard::gather(&sys, true);
             if json {
-                println!("{}", serde_json::to_string(&s).unwrap_or_default());
+                println!("{}", dashboard::json(&s));
             } else {
                 println!("{}", dashboard::plain(&s));
             }
@@ -520,6 +526,7 @@ pub fn main() {
             json,
         ),
         Some(Command::Version) => commands::finish(commands::version(json), json),
+        Some(Command::Docs { topic }) => commands::finish(crate::docs::docs_command(Some(&topic.join(" "))), json),
         Some(Command::Migrate { background }) => commands::finish(commands::migrate(&sys, background), json),
         Some(Command::Tray { role, pid }) => match Role::parse(&role) {
             Some(r) => {

@@ -104,7 +104,7 @@ jobs:
           ls | grep -v -e '^SHA256SUMS' | xargs sha256sum > SHA256SUMS
           cat SHA256SUMS
           # the layout the installers and updaters count on
-          want="get.sh get.ps1 inyon-linux-x64 inyon-linux-x64.gz inyon-engine-linux-x64 inyon-engine-linux-x64.gz inyon-engine-linux-x64-musl inyon-engine-linux-x64-musl.gz inyon-windows-arm64.exe inyon-web.tar.gz inyon-skill-blueprint.tar.gz"
+          want="get.sh get.ps1 inyon-linux-x64 inyon-linux-x64.gz inyon-engine-linux-x64 inyon-engine-linux-x64.gz inyon-engine-linux-x64-musl inyon-engine-linux-x64-musl.gz inyon-windows-arm64.exe inyon-web.tar.gz inyon-skill-blueprint.tar.gz inyon-skill-inyon.tar.gz"
           for f in $want; do
             grep -q " $f\$" SHA256SUMS || { echo "::error::$f is missing from the release"; exit 1; }
           done

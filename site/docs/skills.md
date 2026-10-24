@@ -1,7 +1,7 @@
 ---
 title: Agent skills
 nav: Agent skills
-description: Skills that come with each release, like Blueprint for plan pages, and how to install them with inyon skill add or by hand.
+description: Skills that come with each release, like Blueprint for plan pages and inyon for agents on your computers, and how to install them with inyon skill add or by hand.
 ---
 
 A skill is a folder of instructions and files that a coding agent loads when a task calls for it. From 0.17.7, each Inyon release ships its skills next to the programs, signed the same way. Install them with one command, or download one and unpack it yourself.
@@ -35,6 +35,20 @@ tar -xzf inyon-skill-blueprint.tar.gz -C ~/.claude/skills
 ```
 
 On Windows, `tar` comes with Windows 10 and 11: `tar -xzf inyon-skill-blueprint.tar.gz -C $HOME\.claude\skills`.
+
+## inyon
+
+From 0.22. The `inyon` skill teaches a coding agent how your setup fits together, so it stops guessing from files and processes. It tells the agent to:
+
+- find out what the computer is with `inyon status --json`: a hub, a machine joined to one, paired with the phone, or not set up;
+- read the page that covers the task with [`inyon docs <topic>`](cli.md#docs) before acting;
+- show you a site with `inyon pages add` and hand over where it sits in the app, not a URL;
+- leave tokens to you: a machine is added with the command from the hub's **Machines → Add a machine**, run by you;
+- ask before anything that cuts you off, such as `inyon stop`, `disconnect` or `hub stop`, and never print what's in `~/.inyon`.
+
+```sh
+inyon skill add inyon
+```
 
 ## Blueprint
 
