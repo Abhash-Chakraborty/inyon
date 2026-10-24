@@ -818,19 +818,26 @@ fn app_link(slug: &str) -> String {
     format!("/pages/{LOCAL_HOST}/{slug}")
 }
 
-/// Where a machine without a hub of its own has its pages shown.
-fn not_hub_note() -> &'static str {
-    "This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."
+/// Where a machine without a hub of its own has its pages shown: the hub it's joined to, or (paired
+/// with the phone only, say) nowhere yet.
+fn not_hub_note(joined: bool) -> &'static str {
+    if joined {
+        "This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."
+    } else {
+        "This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there."
+    }
 }
 
 /// What `add` says. Without a hub here the page opens through the hub this machine is joined to,
 /// which gives it an address of its own, so there's no app path to hand over.
-fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool) -> Vec<String> {
+fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool, joined: bool) -> Vec<String> {
     let again = if changed { "" } else { " (already listed)" };
     if hub {
         vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), format!("Open it in the app at {}", app_link(slug))]
+    } else if joined {
+        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), not_hub_note(true).into()]
     } else {
-        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), not_hub_note().into()]
+        vec![format!("\"{name}\" is listed on {machine}, under {project}{again}."), not_hub_note(false).into()]
     }
 }
 
@@ -842,7 +849,8 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
     let slug = field(&a.page, "slug").to_string();
     let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
     let hub = crate::engine::hub_here();
-    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub);
+    let joined = !hub && crate::commands::joined();
+    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub, joined);
     Ok(json!({
         "page": a.page,
         "host": LOCAL_HOST,
@@ -851,6 +859,7 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
         "changed": a.changed,
         "marker": a.marker,
         "hub": hub,
+        "joined": joined,
         "message": lines.join("\n"),
     }))
 }
@@ -916,7 +925,7 @@ pub fn list_command() -> Outcome {
         ));
     }
     if !hub && !pages.is_empty() {
-        lines.push(not_hub_note().into());
+        lines.push(not_hub_note(crate::commands::joined()).into());
     }
     // `serves`: this inyon answers `pages get`, so a hub can show these pages (from 0.22)
     Ok(json!({ "pages": pages, "host": LOCAL_HOST, "machine": machine, "hub": hub, "serves": true, "skipped": skipped, "message": lines.join("\n") }))

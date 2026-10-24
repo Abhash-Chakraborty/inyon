@@ -242,6 +242,8 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
   const REL_ORDER = Object.fromEntries(RELS.map((r, i) => [r.v, i]));
   const SHOW_REL = show('release') && RELS.length > 0;
   const SHOW_AREA = show('area');
+  // status: '' drops the column with its filters, sort, tiles and copied line, as for the others
+  const SHOW_ST = show('status');
   // Mockup links only when the site has mockups: some row names a screen, and matrix-data.js doesn't say
   // MATRIX_MOCKUPS = false (new-site.mjs --no-mockups sets that). screens.js then loads before the first render.
   const MOCKS = window.MATRIX_MOCKUPS !== false && M.some((r) => r.screen);
@@ -313,15 +315,15 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
     const total = M.length;
     const st = $('#mx-st');
     st.innerHTML = `<div class="mx-tile tot"><span class="k">Total</span><span class="n">${total}</span><span class="nm">${esc(L.many)}</span></div>` +
-      ST.map((s) => { const c = count((r) => r.status === s.v); return `<div class="mx-tile"><span class="k">${stMark(s.v, true)}${esc(s.l)}</span><span class="n">${c}</span><span class="nm">${total ? Math.round((c / total) * 100) : 0}%</span></div>`; }).join('');
-    const sc = fitTiles(st, ST.length + 1, 6, 4, true);
+      (SHOW_ST ? ST.map((s) => { const c = count((r) => r.status === s.v); return `<div class="mx-tile"><span class="k">${stMark(s.v, true)}${esc(s.l)}</span><span class="n">${c}</span><span class="nm">${total ? Math.round((c / total) * 100) : 0}%</span></div>`; }).join('') : '');
+    const sc = fitTiles(st, SHOW_ST ? ST.length + 1 : 1, 6, 4, true);
     const rel = $('#mx-rel');
     rel.hidden = !SHOW_REL; $('.mx-sum').classList.toggle('one', !SHOW_REL);
     if (!SHOW_REL) return;
     rel.innerHTML = RELS.map((x) => {
       const rows = M.filter((r) => r.release === x.v), n = rows.length || 1;
       const seg = ST.filter((s) => s.mark !== 'dash').map((s) => { const c = rows.filter((r) => r.status === s.v).length; return c ? `<i style="width:${(c / n) * 100}%;background:${barColor(s)}"></i>` : ''; }).join('');
-      return `<div class="mx-tile" title="${esc(x.name || x.v)}"><span class="k">${esc(x.v)}</span><span class="n">${rows.length}</span><span class="nm">${esc(x.name || '')}</span><span class="bar" aria-hidden="true">${seg}</span></div>`;
+      return `<div class="mx-tile" title="${esc(x.name || x.v)}"><span class="k">${esc(x.v)}</span><span class="n">${rows.length}</span><span class="nm">${esc(x.name || '')}</span>${SHOW_ST ? `<span class="bar" aria-hidden="true">${seg}</span>` : ''}</div>`;
     }).join('');
     const rc = fitTiles(rel, RELS.length, 8, 4);
     // Side by side on wide screens: share the row so every tile is the same width.
@@ -335,7 +337,8 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
   }
   function renderBar(shown) {
     const gs = $('#mx-g-st'), gr = $('#mx-g-rel');
-    if (!gs.firstChild) { gs.innerHTML = chipsHtml('st', ST, state.st, true); if (SHOW_REL) gr.innerHTML = chipsHtml('rel', RELS.map((r) => ({ v: r.v, l: r.v, t: r.name })), state.rel, true); }
+    if (SHOW_ST && !gs.firstChild) gs.innerHTML = chipsHtml('st', ST, state.st, true);
+    if (SHOW_REL && !gr.firstChild) gr.innerHTML = chipsHtml('rel', RELS.map((r) => ({ v: r.v, l: r.v, t: r.name })), state.rel, true);
     gs.querySelectorAll('[data-st]').forEach((b) => b.setAttribute('aria-pressed', state.st.has(b.dataset.st)));
     gr.querySelectorAll('[data-rel]').forEach((b) => b.setAttribute('aria-pressed', state.rel.has(b.dataset.rel)));
     $('#mx-area-n').textContent = state.area.size ? state.area.size : 'All';
@@ -447,11 +450,11 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
 
   /* ---------- filter sheet (phone) ---------- */
   let sheet = null;
-  const SORTS = [['', L.sortNone], SHOW_AREA && ['area', L.area], SHOW_REL && ['release', L.release], ['status', L.statusName]].filter(Boolean);
+  const SORTS = [['', L.sortNone], SHOW_AREA && ['area', L.area], SHOW_REL && ['release', L.release], SHOW_ST && ['status', L.statusName]].filter(Boolean);
   const sortSeg = () => `<div class="seg" id="mx-sortseg">${SORTS.map(([v, l]) => `<button data-value="${v}" aria-pressed="${(state.sort || '') === v}">${esc(l)}</button>`).join('')}</div>`;
   function fillSheet() {
     const b = $('.mx-sh', sheet.el); if (!b) return;
-    b.querySelector('[data-g=st]').innerHTML = chipsHtml('st', ST, state.st);
+    if (SHOW_ST) b.querySelector('[data-g=st]').innerHTML = chipsHtml('st', ST, state.st);
     if (SHOW_REL) b.querySelector('[data-g=rel]').innerHTML = chipsHtml('rel', RELS.map((r) => ({ v: r.v, l: r.name ? `${r.v} ${r.name}` : r.v })), state.rel);
     if (SHOW_AREA) b.querySelector('[data-g=area]').innerHTML = chipsHtml('area', AREAS.map((a) => ({ v: a, l: a })), state.area);
     const n = M.filter((r) => matches(r)).length;
@@ -460,7 +463,7 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
   function openSheet() {
     const body = K.el(`<div class="mx-sh">
       <div class="grp"><span class="label">Sort</span>${sortSeg()}</div>
-      <div class="grp"><span class="label">${esc(L.statusName)}</span><div class="chips" data-g="st"></div></div>
+      ${SHOW_ST ? `<div class="grp"><span class="label">${esc(L.statusName)}</span><div class="chips" data-g="st"></div></div>` : ''}
       ${SHOW_REL ? `<div class="grp"><span class="label">${esc(L.release)}</span><div class="chips" data-g="rel"></div></div>` : ''}
       ${SHOW_AREA ? `<div class="grp"><span class="label">${esc(L.area)}</span><div class="chips" data-g="area"></div></div>` : ''}</div>`);
     body.addEventListener('click', onFilterClick);
@@ -505,8 +508,11 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
   $('#mx-g-st').setAttribute('aria-label', L.statusName);
   $('#mx-g-rel').setAttribute('aria-label', L.release || 'Release');
   $('#mx-area-l').textContent = L.area;
-  $('#mx-g-rel').hidden = $('#mx-sep-rel').hidden = !SHOW_REL;
-  $('#mx-area-btn').hidden = $('#mx-sep-area').hidden = !SHOW_AREA;
+  $('#mx-g-st').hidden = !SHOW_ST;
+  $('#mx-g-rel').hidden = !SHOW_REL;
+  $('#mx-sep-rel').hidden = !SHOW_REL || !SHOW_ST;
+  $('#mx-area-btn').hidden = !SHOW_AREA;
+  $('#mx-sep-area').hidden = !SHOW_AREA || !(SHOW_ST || SHOW_REL);
 
   $('#mx-bar').addEventListener('click', onFilterClick);
   $('#mx-area-btn').addEventListener('click', openPop);
@@ -541,7 +547,7 @@ mark { background: color-mix(in srgb, var(--fg) 16%, transparent); color: inheri
     return [
       `${r.feature}${SHOW_AREA ? ` (${r.area})` : ''}`,
       show('want') && r.want && `${L.want}: ${r.want}`,
-      `${L.status || L.statusName}: ${s.l}${SHOW_REL && r.release ? ', ' + r.release : ''}`,
+      SHOW_ST ? `${L.status}: ${s.l}${SHOW_REL && r.release ? ', ' + r.release : ''}` : SHOW_REL && r.release && `${L.release}: ${r.release}`,
       show('today') && r.today && `${L.today}: ${r.today}`,
       show('note') && r.note && `${L.note}: ${r.note}`,
       urlOf(r) && `${L.link || 'Link'}: ${urlOf(r)}`,

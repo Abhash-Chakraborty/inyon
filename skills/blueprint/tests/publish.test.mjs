@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readd
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BAD_SLUG, GIT_TIMEOUT_MS, LIST_MAX, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
+import { BAD_SLUG, GIT_TIMEOUT_MS, LIST_MAX, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, joinedHere, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
 
 const scripts = fileURLToPath(new URL('../scripts/', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'bp-publish-'));
@@ -278,9 +278,9 @@ describe('publish.mjs', () => {
     const p = (args) => spawnSync('node', [join(copy, 'scripts/publish.mjs'), ...args], { env: env({ CLAUDECODE: '1' }), encoding: 'utf8' });
     const dir = site('spaced');
     rmSync(join(home, '.inyon/hub.env'));
-    const r5 = p([dir]);
-    expect(r5.status).toBe(5);
-    expect(r5.stdout).toContain(`node ${at('serve.mjs')} ${dir} --host <private-ip>`);
+    const r6 = p([dir]);
+    expect(r6.status).toBe(6);
+    expect(r6.stdout).toContain(`node ${at('serve.mjs')} ${dir} --host <private-ip>`);
     if (process.getuid?.() !== 0) {
       chmodSync(join(home, '.inyon'), 0o500);
       try {
@@ -293,7 +293,7 @@ describe('publish.mjs', () => {
     const r3 = p([dir]);
     expect(r3.status).toBe(3);
     expect(r3.stderr).toContain(`node ${at('serve.mjs')} ${dir} --host <private-ip>`);
-    expect(r3.stdout + r3.stderr + r5.stdout + r5.stderr).not.toContain('%20');
+    expect(r3.stdout + r3.stderr + r6.stdout + r6.stderr).not.toContain('%20');
     // new-site.mjs copies the template from there too, and prints the same paths
     const made = spawnSync('node', [join(copy, 'scripts/new-site.mjs'), join(home, 'fresh'), '--name', 'Fresh'], { env: env(), encoding: 'utf8' });
     expect(made.status).toBe(0);
@@ -302,16 +302,41 @@ describe('publish.mjs', () => {
     expect(made.stdout).not.toContain('%20');
   });
 
-  test('on a machine without a hub it lists the page, says the hub it joined shows it, and exits 5', () => {
+  test('with no hub and none joined it lists the page, says nothing can show it, and exits 6', () => {
     rmSync(join(home, '.inyon/hub.env'));
+    const dir = site('alone');
+    const r = pub([dir, '--name', 'Paired only']);
+    expect(r.status).toBe(6);
+    expect(r.stdout).toContain(`"Paired only" is listed on `);
+    expect(r.stdout).toContain("isn't joined to one, so the app can't open this page");
+    expect(r.stdout).not.toContain('joined to shows');
+    expect(r.stdout).toContain(`serve.mjs ${dir} --host <private-ip>`);
+  });
+
+  test('on a machine joined to a hub it lists the page, says that hub shows it, and exits 5', () => {
+    rmSync(join(home, '.inyon/hub.env'));
+    mkdirSync(join(home, '.inyon/node'), { recursive: true });
+    writeFileSync(join(home, '.inyon/node/env'), 'INYON_HUB=https://hub.example.ts.net\nINYON_TOKEN=t\n');
     const dir = site('nohub');
     const r = pub([dir, '--name', 'Laptop plan']);
+    rmSync(join(home, '.inyon/node/env'));
     expect(r.status).toBe(5);
     expect(r.stdout).toContain(`"Laptop plan" is in Inyon: Pages > `);
     expect(r.stdout).toContain("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).");
     expect(r.stdout).toContain(`serve.mjs ${dir} --host <private-ip>`);
     expect(r.stdout).not.toContain('/pages/local/');
     expect(list().pages[0]).toMatchObject({ slug: 'nohub', name: 'Laptop plan' });
+  });
+
+  test('a machine counts as joined by INYON_HUB in its environment or its node env file, old name too', () => {
+    const h = join(tmp, `joined${++n}`);
+    expect(joinedHere(h, {})).toBe(false);
+    expect(joinedHere(h, { INYON_HUB: 'https://hub.example' })).toBe(true);
+    mkdirSync(join(h, '.tether-node'), { recursive: true });
+    writeFileSync(join(h, '.tether-node/env'), 'TETHER_HUB=\n');
+    expect(joinedHere(h, {})).toBe(false);
+    writeFileSync(join(h, '.tether-node/env'), 'TETHER_HUB="http://100.64.0.1:4747"\n');
+    expect(joinedHere(h, {})).toBe(true);
   });
 
   test('a hub is found by its settings, its node record or its service, as the inyon command finds it', () => {

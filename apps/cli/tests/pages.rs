@@ -45,7 +45,7 @@ impl Home {
 
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_inyon"));
-        c.args(args).env("HOME", &self.dir).env("USERPROFILE", &self.dir).current_dir(&self.dir);
+        c.args(args).env("HOME", &self.dir).env("USERPROFILE", &self.dir).env_remove("INYON_HUB").env_remove("TETHER_HUB").current_dir(&self.dir);
         for v in AGENT_VARS {
             c.env_remove(v);
         }
@@ -115,12 +115,23 @@ fn adding_a_folder_lists_it_and_marks_it() {
     let site = h.site("work/handy-redesign", "Handy &amp; redesign");
     let (code, stdout, stderr) = h.run(&["pages", "add", "work/handy-redesign/"]);
     assert_eq!(code, 0, "{stderr}");
-    // no hub on this machine: where it's listed, and no app path that would open nothing
-    assert!(stdout.contains("\"Handy & redesign\" is in Inyon: Pages > "), "{stdout}");
-    assert!(stdout.contains(" > handy-redesign\n"), "{stdout}");
-    assert!(stdout.contains("This machine doesn't run a hub. The hub it's joined to shows its pages"), "{stdout}");
+    // no hub on this machine and none it's joined to: where it's listed, that nothing shows it yet,
+    // and no app path that would open nothing
+    assert!(stdout.contains("\"Handy & redesign\" is listed on "), "{stdout}");
+    assert!(stdout.contains(", under handy-redesign.\n"), "{stdout}");
+    assert!(stdout.contains("isn't joined to one, so the app can't open this page"), "{stdout}");
+    assert!(!stdout.contains("joined to shows"), "{stdout}");
     assert!(!stdout.contains("/pages/local/"), "{stdout}");
     assert!(!stdout.contains("/v/"), "{stdout}");
+    // joined to a hub: that hub shows it, under this machine
+    fs::create_dir_all(h.dir.join(".inyon/node")).unwrap();
+    fs::write(h.dir.join(".inyon/node/env"), "INYON_HUB=https://hub.example.ts.net\nINYON_TOKEN=t\n").unwrap();
+    let (_, joined) = h.json(&["pages", "add", "work/handy-redesign/"]);
+    let said = joined["message"].as_str().unwrap();
+    assert!(said.starts_with("\"Handy & redesign\" is in Inyon: Pages > ") && said.contains(" > handy-redesign (already listed)\n"), "{said}");
+    assert!(said.ends_with("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."), "{said}");
+    assert_eq!((joined["hub"].as_bool(), joined["joined"].as_bool()), (Some(false), Some(true)));
+    fs::remove_file(h.dir.join(".inyon/node/env")).unwrap();
 
     let list = h.list();
     assert_eq!(list["v"], 1);
@@ -160,7 +171,7 @@ fn adding_again_changes_nothing_unless_asked() {
 
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("\"Plan\" is in Inyon: Pages > ") && stdout.contains("(already listed)"), "{stdout}");
+    assert!(stdout.contains("\"Plan\" is listed on ") && stdout.contains("(already listed)."), "{stdout}");
     assert_eq!(fs::read(h.file()).unwrap(), before);
     assert_eq!(fs::read(site.join(".inyon-page.json")).unwrap(), marker_before);
 
@@ -283,7 +294,7 @@ fn the_project_is_the_git_top_level() {
     let site = h.site("my-repo/private/plans/plan", "Plan");
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains(" > my-repo"), "{stdout}");
+    assert!(stdout.contains(", under my-repo."), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
     assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }
@@ -303,7 +314,7 @@ fn the_project_of_a_folder_in_a_linked_worktree_is_the_main_checkout() {
     let site = h.site("my-repo/.claude/worktrees/feature/private/plans/plan", "Plan");
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains(" > my-repo\n"), "{stdout}");
+    assert!(stdout.contains(", under my-repo.\n"), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
     assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }

@@ -6,13 +6,13 @@
 //
 // Exit codes: 0 listed, 1 refused (the message says why), 2 usage, 3 Inyon isn't set up here (serve
 // the site with serve.mjs instead), 4 ~/.inyon can't be written from here (run the printed command),
-// 5 listed on a machine without a hub: the hub it's joined to shows it from 0.22 (with an older hub, serve
-// it with serve.mjs too).
+// 5 listed on a machine joined to a hub: that hub shows it from 0.22 (with an older hub, serve it with
+// serve.mjs too), 6 listed, but this machine has no hub and isn't joined to one (serve it with serve.mjs).
 import { existsSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LOCAL_HOST, agentName, hubHere, inyonDir, publish } from './pages.mjs';
+import { LOCAL_HOST, agentName, hubHere, inyonDir, joinedHere, publish } from './pages.mjs';
 
 const a = process.argv.slice(2);
 const opt = (k) => { const i = a.indexOf(k); if (i < 0) return undefined; const v = a[i + 1]; a.splice(i, 2); return v === undefined || v.startsWith('--') ? null : v; };
@@ -42,11 +42,17 @@ try {
   const again = changed ? '' : ' (already listed)';
   // the same lines `inyon pages add` prints; without a hub here the page opens through the hub this
   // machine is joined to, so there's no app path to hand over
-  if (!hubHere()) {
+  if (!hubHere() && joinedHere()) {
     console.log(`"${page.name}" is in Inyon: Pages > ${hostname()} > ${basename(page.project)}${again}`);
     console.log("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).");
     console.log(`With an older hub, serve the site to open it: ${serve()}`);
     process.exit(5);
+  }
+  if (!hubHere()) {
+    console.log(`"${page.name}" is listed on ${hostname()}, under ${basename(page.project)}${again}.`);
+    console.log("This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there.");
+    console.log(`Serve the site to open it now: ${serve()}`);
+    process.exit(6);
   }
   console.log(`"${page.name}" is in Inyon: Pages > ${hostname()} > ${basename(page.project)}${again}`);
   console.log(`Open it in the app at /pages/${LOCAL_HOST}/${page.slug}`);
