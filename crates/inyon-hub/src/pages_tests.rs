@@ -1552,7 +1552,22 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
         answer(Box::new(|_| json!({ "v": 1, "ok": false, "error": "That folder has no index.html" })));
         assert_eq!(call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": "D:\\Dev\\y" })), &[]).await, Err((400, "That folder has no index.html".into())));
         assert_eq!(call(h_register, "POST", &[("host", "nowhere")], Some(json!({ "path": "/x" })), &[]).await.unwrap_err().0, 404);
+        // a folder not written in full would land wherever the machine's shell starts, and the
+        // quoting keeps `~` from meaning home: neither is sent
+        let asked = machine.calls.borrow().len();
+        for rel in ["plans/site", "~/site", "./site", "D:site", "\\Dev\\x"] {
+            let r = call(h_register, "POST", &[("host", "laptop")], Some(json!({ "path": rel })), &[]).await;
+            assert_eq!(r, Err((400, inyon_core::features::pages_core::NOT_ABSOLUTE.into())), "{rel}");
+        }
+        assert_eq!(machine.calls.borrow().len(), asked);
     });
+}
+
+#[test]
+fn a_remote_file_at_the_limit_still_fits_one_socket_message() {
+    // the machine answers with the file as base64 inside its JSON, all in one message
+    let encoded = (pages_remote::REMOTE_FILE_MAX as usize).div_ceil(3) * 4;
+    assert!(encoded + 256 * 1024 < crate::ws::MAX_MESSAGE, "{encoded}");
 }
 
 #[test]

@@ -24,8 +24,9 @@ use crate::pages::{as_record, Record};
 
 /// How long a machine's list is kept before it's read again.
 pub const REMOTE_TTL_MS: u64 = 15_000;
-/// The biggest file the hub fetches from another machine; a bigger one is a 413.
-pub const REMOTE_FILE_MAX: u64 = 16 * 1024 * 1024;
+/// The biggest file the hub fetches from another machine; a bigger one is a 413. It comes back as
+/// base64 inside one JSON message, so it has to stay well under the sockets' 16 MiB.
+pub const REMOTE_FILE_MAX: u64 = 8 * 1024 * 1024;
 /// How long the hub waits on the machine, in ms.
 const LIST_WAIT: u64 = 20_000;
 const GET_WAIT: u64 = 60_000;

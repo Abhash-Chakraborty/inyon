@@ -927,7 +927,7 @@ pub fn list_command() -> Outcome {
 /// The biggest progress.json read, as the hubs read it.
 const PROGRESS_MAX: u64 = 1024 * 1024;
 /// The biggest file `pages get` sends; the hub asks for less with --max.
-pub const GET_MAX: u64 = 16 * 1024 * 1024;
+pub const GET_MAX: u64 = 8 * 1024 * 1024;
 
 /// A site's progress.json counted as the hubs count it (pages_core's progress_summary): tasks done
 /// of all tasks across its releases, and its `now` and `updated` lines. None without a readable one.

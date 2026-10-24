@@ -28,7 +28,7 @@ In the app, **Add a folder** does the same: pick the machine, type the folder's 
 
 From 0.22 the hub also shows the pages on the computers joined to it, such as a Windows laptop, and on servers it reaches over SSH that have `inyon` installed. Run `inyon pages add` on that computer, or use **Add a folder** and pick it, and the page shows under that computer's name. Both the hub and the computer need 0.22 or later; an older computer's pages don't show until you update it.
 
-The computer's own `inyon` reads the files and sends them to the hub, which checks every request by the same rules as for its own pages: no names starting with a dot, nothing a symlink leads to outside the folder. The hub asks each computer for its list at most every 15 seconds, and a page whose computer is offline doesn't open until it's back. A single file can be up to 16 MB. The hub's fallback in Bun (`INYON_HUB_IMPL=bun`) shows its own computer's pages only.
+The computer's own `inyon` reads the files and sends them to the hub, which checks every request by the same rules as for its own pages: no names starting with a dot, nothing a symlink leads to outside the folder. The hub asks each computer for its list at most every 15 seconds, and a page whose computer is offline doesn't open until it's back. A single file can be up to 8 MB. The hub's fallback in Bun (`INYON_HUB_IMPL=bun`) shows its own computer's pages only.
 
 ## On a phone
 

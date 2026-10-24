@@ -95,14 +95,24 @@ pub fn unique_slug(base: &str, taken: impl Fn(&str) -> bool) -> String {
     unreachable!("some slug is free")
 }
 
+fn windows_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/')
+}
+
+/// Whether a folder is written in full: from `/`, or from a drive letter (`C:\…`, `C:/…`). A
+/// relative folder or `~/…` would land wherever the shell that reads it starts.
+pub fn is_absolute(p: &str) -> bool {
+    (p.starts_with('/') || windows_path(p)) && !p.contains('\0')
+}
+
 /// What is wrong with a folder someone wants as a page, before the disk is asked (the caller still
 /// checks that `<path>/index.html` is a file, and says NO_INDEX when it isn't). None when it may be
 /// one. `home` is the hub user's home folder. Paths are compared as written, with trailing slashes
 /// dropped; a Windows path (`C:\…`) counts as absolute.
 pub fn site_path_problem(p: &str, home: &str) -> Option<&'static str> {
-    let b = p.as_bytes();
-    let win = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b[2] == b'\\' || b[2] == b'/');
-    if !(p.starts_with('/') || win) || p.contains('\0') {
+    let win = windows_path(p);
+    if !is_absolute(p) {
         return Some(NOT_ABSOLUTE);
     }
     let parts = |s: &str| -> Vec<String> { s.split(|c| c == '/' || (win && c == '\\')).filter(|x| !x.is_empty()).map(str::to_owned).collect() };

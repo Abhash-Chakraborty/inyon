@@ -885,7 +885,7 @@ async fn register_remote(p: &Pages, host: &str, b: &Map<String, Value>) -> HubRe
         return Err(http(404, NOT_CONNECTED));
     }
     let folder = b.get("path").and_then(Value::as_str).map(|s| s.jtrim().to_owned()).unwrap_or_default();
-    if folder.is_empty() {
+    if !inyon_core::features::pages_core::is_absolute(&folder) {
         return Err(http(400, inyon_core::features::pages_core::NOT_ABSOLUTE));
     }
     let slug = match b.get("slug") {

@@ -70,6 +70,9 @@ test('a tmux session is renamed by its number, with what tmux won\'t take out of
   await expect(renameTmuxSession('literal', id, 'guard')).rejects.toMatchObject({ status: 409 })
   await expect(renameTmuxSession('literal', id, '  ')).rejects.toMatchObject({ status: 400 })
   await expect(renameTmuxSession('literal', '$1;id', 'x')).rejects.toMatchObject({ status: 400 })
+  // a name that starts with a dash is a name, not one of tmux's options
+  expect(await renameTmuxSession('literal', id, '-work')).toBe('-work')
+  expect(await tmux(`display -p -t '$${id}' '#{session_name}'`)).toBe('-work')
 })
 
 test('a restarted shell gets its folder doubled for tmux, but not on psmux', () => {

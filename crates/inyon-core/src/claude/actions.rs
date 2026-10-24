@@ -2307,7 +2307,7 @@ pub async fn rename_tmux_session(host_id: &str, session: &str, raw: &str) -> Hub
         return Err(http(400, "Type a name"));
     }
     let host = registry().host(host_id)?;
-    let r = host.run(&format!("tmux rename-session -t {} {}", shq(&format!("${session}")), shq(&name))).await?;
+    let r = host.run(&format!("tmux rename-session -t {} -- {}", shq(&format!("${session}")), shq(&name))).await?;
     if r.code != 0 {
         let err = r.stderr.jtrim();
         if re!(r"duplicate session", "i").is_match(err) {
