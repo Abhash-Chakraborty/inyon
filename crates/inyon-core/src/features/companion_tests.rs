@@ -120,8 +120,56 @@ fn the_instructions_start_with_the_line_that_lets_inyon_rewrite_them() {
     // reading runs without asking; sending and answering ask first
     let allow = claude_settings()["permissions"]["allow"].clone();
     assert!(allow.as_array().unwrap().iter().all(|a| !a.as_str().unwrap().contains("send") && !a.as_str().unwrap().contains("answer")));
-    assert!(launch_flags(AgentKind::Codex).iter().any(|f| f.contains("network_access=true")));
-    assert!(launch_flags(AgentKind::Claude).is_empty());
+    assert!(launch_flags(AgentKind::Codex, true).iter().any(|f| f.contains("network_access=true")));
+    assert!(launch_flags(AgentKind::Claude, false).is_empty());
+    // without its rule, Codex asks before anything that isn't known to be safe
+    assert!(!launch_flags(AgentKind::Codex, true).iter().any(|f| f.contains("ask-for-approval")));
+    assert!(launch_flags(AgentKind::Codex, false).contains(&"--ask-for-approval untrusted".to_string()));
+}
+
+/// Codex once ran `inyon send` without asking: its sandbox lets the command reach the hub. The
+/// script writes a rule that asks, and trusts the folder so Codex reads it, without breaking a
+/// config.toml that has its own say about the folder.
+#[cfg(unix)]
+#[test]
+fn codex_gets_a_rule_that_asks_before_a_send_and_a_trusted_folder() {
+    let home = std::env::temp_dir().join(format!("inyon-companion-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let cfg = home.join(".codex/config.toml");
+    let run = || {
+        let mut c = std::process::Command::new("sh")
+            .args(["-c", &codex_setup_script()])
+            .env("HOME", &home)
+            .env_remove("CODEX_HOME")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(c.stdin.as_mut().unwrap(), CODEX_RULES.as_bytes()).unwrap();
+        drop(c.stdin.take());
+        String::from_utf8(c.wait_with_output().unwrap().stdout).unwrap().trim().to_string()
+    };
+    let dir = format!("{}/.inyon/companion", home.display());
+    let table = format!("[projects.\"{dir}\"]");
+
+    // no config.toml yet: the folder is trusted, and the rule is in place
+    assert_eq!(run(), "trusted");
+    assert_eq!(std::fs::read_to_string(format!("{dir}/.codex/rules/companion.rules")).unwrap(), CODEX_RULES);
+    assert!(CODEX_RULES.contains(r#"["inyon", ["send", "answer"]], decision = "prompt""#));
+    let first = std::fs::read_to_string(&cfg).unwrap();
+    assert!(first.contains(&format!("{table}\ntrust_level = \"trusted\"")));
+    // a second start adds nothing
+    assert_eq!(run(), "trusted");
+    assert_eq!(std::fs::read_to_string(&cfg).unwrap(), first);
+
+    // you marked the folder untrusted yourself: that stays, and the companion asks for everything
+    std::fs::write(&cfg, format!("model = \"x\"\n\n{table}\ntrust_level = \"untrusted\"\n\n[other]\ntrust_level = \"trusted\"\n")).unwrap();
+    assert_eq!(run(), "");
+    assert!(std::fs::read_to_string(&cfg).unwrap().contains("\"untrusted\""));
+    // trusted among other settings of yours
+    std::fs::write(&cfg, format!("model = \"x\"\n{table}\nfoo = 1\ntrust_level = \"trusted\"\n")).unwrap();
+    assert_eq!(run(), "trusted");
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]

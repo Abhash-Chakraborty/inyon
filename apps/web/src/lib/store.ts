@@ -300,7 +300,8 @@ export function companionReply(m: Extract<ServerMsg, { t: 'companion.reply' }>) 
   if (companionSeen.size > 50) companionSeen.delete(companionSeen.values().next().value!)
   const href = `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
   const body = m.text.length > 240 ? `${m.text.slice(0, 240).trimEnd()}…` : m.text
-  const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
+  // its chat, not its terminal (?view=terminal), shows the reply already
+  const here = routeOf(location.pathname) === href && new URLSearchParams(location.search).get('view') !== 'terminal' && document.visibilityState === 'visible'
   const agent = allPanes(useStore.getState().hosts).find((r) => r.host.config.id === m.host && r.pane.id === m.pane)?.pane.agent?.kind
   if (!here) toast({ title: 'Companion', body, tone: m.error ? 'error' : 'info', href, agent })
   if (document.visibilityState === 'hidden' && isNative()) void nativeNotify('Companion', body, href, notifyTag(m.host, m.pane), 'done')
@@ -373,7 +374,8 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   }
   if (m.kind === 'done' && !settings.notifyDone) return
   // don't toast about the conversation you're looking at
-  const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
+  // its chat, not its terminal (?view=terminal), shows the reply already
+  const here = routeOf(location.pathname) === href && new URLSearchParams(location.search).get('view') !== 'terminal' && document.visibilityState === 'visible'
   if (!here) toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
   const tag = notifyTag(m.host, machine ? undefined : m.pane)
   // two short pulses when an agent needs you or finishes, once per prompt; a buzz for a lost machine

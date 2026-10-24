@@ -12,13 +12,19 @@ import { StateDot, StatePill, shownState } from './ui/status.tsx'
 
 export type CompanionAgentKind = 'claude' | 'codex'
 
-/** The companion agent's pane, while it runs: the hub marks it, on one machine at most. */
-export const companionPane = (hosts: HostState[]): PaneRef | undefined => allPanes(hosts).find((r) => r.pane.companion && r.pane.agent)
+/**
+ * The companion agents' panes, while they run: each hub marks its own, so an app that shows several
+ * hubs can have one from each.
+ */
+export const companionPanes = (hosts: HostState[]): PaneRef[] => allPanes(hosts).filter((r) => r.pane.companion && r.pane.agent)
 
-export function useCompanionPane() {
+export function useCompanionPanes() {
   const hosts = useStore((s) => s.hosts)
-  return useMemo(() => companionPane(hosts), [hosts])
+  return useMemo(() => companionPanes(hosts), [hosts])
 }
+
+/** "Companion", with its machine when there's more than one. */
+const companionName = (r: PaneRef, all: PaneRef[]) => (all.length > 1 ? `Companion on ${r.host.config.name}` : 'Companion')
 
 export const OLD_HUB = 'This hub runs on Bun, which has no companion. Run the default Rust hub to use it.'
 
@@ -28,21 +34,25 @@ export const OLD_HUB = 'This hub runs on Bun, which has no companion. Run the de
  */
 export function CompanionRows() {
   const nav = useNavigate()
-  const running = useCompanionPane()
-  const [status, setStatus] = useState<CompanionStatus | 'old' | null>(null)
+  const panes = useCompanionPanes()
+  const [status, setStatus] = useState<CompanionStatus | 'old' | Error | null>(null)
   const [agent, setAgent] = useState<CompanionAgentKind>('claude')
   const [busy, setBusy] = useState<'start' | 'stop' | null>(null)
+  const [tries, setTries] = useState(0)
+  // this hub's own, among the ones from other hubs an app may show
+  const own = status && typeof status === 'object' && !(status instanceof Error) ? status.host : 'local'
+  const running = panes.find((r) => r.host.config.id === own)
   const runningId = running?.pane.id
   useEffect(() => {
     let live = true
     api.companion().then(
       (s) => live && setStatus(s),
-      (e) => live && setStatus(e instanceof ApiError && e.status === 404 ? 'old' : null),
+      (e) => live && setStatus(e instanceof ApiError && e.status === 404 ? 'old' : (e as Error)),
     )
     return () => {
       live = false
     }
-  }, [runningId])
+  }, [runningId, tries])
 
   const start = async (kind: CompanionAgentKind) => {
     setBusy('start')
@@ -71,6 +81,26 @@ export function CompanionRows() {
 
   if (status === null) return <Waiting shape="rows" count={1} label="Loading the companion" className="px-4 py-3.5" />
   if (status === 'old') return <p className="px-4 py-3.5 text-[13px] text-fg-3">{OLD_HUB}</p>
+  if (status instanceof Error) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
+        <div className="min-w-0 flex-[1_1_220px]">
+          <div className="text-[14px]">Couldn&rsquo;t reach the companion</div>
+          <div className="mt-0.5 text-[12.5px] leading-snug text-fg-3">{status.message}</div>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setStatus(null)
+            setTries((n) => n + 1)
+          }}
+        >
+          Try again
+        </Button>
+      </div>
+    )
+  }
   const kind = (running?.pane.agent?.kind ?? status.agent) as CompanionAgentKind | null
   if (running && kind) {
     return (
@@ -138,22 +168,31 @@ export function CompanionRows() {
   )
 }
 
-/** The sidebar's way to the companion, under Home, while it runs. */
+/** The sidebar's way to each companion, under Home, while it runs. */
 export function CompanionNavItem({ className }: { className: (active: boolean) => string }) {
-  const r = useCompanionPane()
-  if (!r) return null
-  return (
-    <NavLink to={paneHref(r.host.config.id, r.pane.id)} className={({ isActive }) => className(isActive)}>
-      <MessageCircle className="size-4" /> Companion
+  const panes = useCompanionPanes()
+  return panes.map((r) => (
+    <NavLink key={`${r.host.config.id}/${r.pane.id}`} to={paneHref(r.host.config.id, r.pane.id)} className={({ isActive }) => className(isActive)}>
+      <MessageCircle className="size-4 shrink-0" /> <span className="truncate">{companionName(r, panes)}</span>
       <StateDot state={shownState(r.pane.agent!, r.host)} className="ml-auto" />
     </NavLink>
+  ))
+}
+
+/** Home's line about each companion, while it runs: what it's doing and a way into its chat. */
+export function CompanionBar() {
+  const panes = useCompanionPanes()
+  if (!panes.length) return null
+  return (
+    <div className="flex flex-col gap-3">
+      {panes.map((r) => (
+        <CompanionLine key={`${r.host.config.id}/${r.pane.id}`} r={r} name={companionName(r, panes)} />
+      ))}
+    </div>
   )
 }
 
-/** Home's one line about the companion, while it runs: what it's doing and a way into its chat. */
-export function CompanionBar() {
-  const r = useCompanionPane()
-  if (!r) return null
+function CompanionLine({ r, name }: { r: PaneRef; name: string }) {
   const a = r.pane.agent!
   const state = shownState(a, r.host)
   const line = state === 'waiting' ? a.waitingFor ?? 'It needs your answer.' : isBusy(a) ? 'Working on it…' : 'Ask about your sessions, or tell it what to send.'
@@ -165,7 +204,7 @@ export function CompanionBar() {
       <AgentLogo kind={a.kind} size={22} active={isBusy(a)} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2 text-[14px] font-medium">
-          Companion <StateDot state={state} />
+          {name} <StateDot state={state} />
         </span>
         <span className={clsx('block truncate text-[13px]', state === 'waiting' ? 'text-fg' : 'text-fg-3')}>{line}</span>
       </span>

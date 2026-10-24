@@ -149,11 +149,34 @@ pub fn claude_settings() -> Value {
     })
 }
 
+/// Codex's rule for the folder: a send or an answer asks first, as it does for Claude Code. Its
+/// sandbox can't hold them back, since the `inyon` command needs the network.
+pub const CODEX_RULES: &str = r#"prefix_rule(pattern = ["inyon", ["send", "answer"]], decision = "prompt", justification = "The companion sends to your sessions only once you allow it")
+"#;
+
+/// Writes Codex's rule into the folder, and trusts the folder in Codex's config.toml, since Codex
+/// reads a folder's rules only once it's trusted. A config.toml that names the folder already is
+/// left alone. Prints `trusted` when the folder is.
+pub fn codex_setup_script() -> String {
+    r#"umask 077; d="$HOME/.inyon/companion"; mkdir -p "$d/.codex/rules"; cat > "$d/.codex/rules/companion.rules"
+c="${CODEX_HOME:-$HOME/.codex}/config.toml"
+if ! grep -qF "$d" "$c" 2>/dev/null; then mkdir -p "$(dirname "$c")" && printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$d" >> "$c"; fi
+awk -v h="[projects.\"$d\"]" '$0 == h { t = 1; next } /^\[/ { t = 0 } t && /^trust_level *= *"trusted"/ { f = 1 } END { if (f) print "trusted" }' "$c" 2>/dev/null"#
+        .into()
+}
+
 /// The flags it starts with. Codex's sandbox keeps the network closed, and the `inyon` command
-/// needs it to reach the hub on this machine.
-pub fn launch_flags(kind: AgentKind) -> Vec<String> {
+/// needs it to reach the hub on this machine. Without its rule (`trusted` false) Codex asks before
+/// every command that isn't known to be safe.
+pub fn launch_flags(kind: AgentKind, trusted: bool) -> Vec<String> {
     match kind {
-        AgentKind::Codex => vec!["--sandbox workspace-write".into(), "-c sandbox_workspace_write.network_access=true".into()],
+        AgentKind::Codex => {
+            let mut f: Vec<String> = vec!["--sandbox workspace-write".into(), "-c sandbox_workspace_write.network_access=true".into()];
+            if !trusted {
+                f.push("--ask-for-approval untrusted".into());
+            }
+            f
+        }
         _ => vec![],
     }
 }
@@ -183,8 +206,9 @@ pub async fn start(agent_name: &str) -> HubResult<Value> {
     }
     let settings = format!("{dir}/.claude/settings.json");
     host.exec(&format!("[ -f {settings} ] || cat > {settings}"), ExecOptions::input(format!("{}\n", crate::js::json::stringify_pretty(&claude_settings())))).await?;
+    let trusted = kind == AgentKind::Codex && host.exec(&codex_setup_script(), ExecOptions::input(CODEX_RULES)).await?.stdout.trim() == "trusted";
     set_agent(Some(kind))?;
-    let opts = LaunchOpts { name: Some(SESSION.into()), cwd: Some(FOLDER.into()), agent: Some(name_of(kind).into()), extra: launch_flags(kind), ..Default::default() };
+    let opts = LaunchOpts { name: Some(SESSION.into()), cwd: Some(FOLDER.into()), agent: Some(name_of(kind).into()), extra: launch_flags(kind, trusted), ..Default::default() };
     let pane = match actions::launch(HOST, &opts).await {
         Ok(p) => p,
         Err(e) => {

@@ -179,6 +179,21 @@ describe('the companion agent', () => {
     expect(last.body!.length).toBeLessThanOrEqual(241)
     expect(last.body!.endsWith('…')).toBe(true)
   })
+
+  test('its open chat holds the toast back, its terminal does not', () => {
+    const reply = { t: 'companion.reply' as const, host: 'local', pane: '%9', text: 'Done.', at: 1 }
+    try {
+      history.replaceState(null, '', '/m/local/p/9')
+      useStore.setState({ toasts: [] })
+      emit({ ...reply, id: 'v-1' })
+      expect(useStore.getState().toasts).toEqual([])
+      history.replaceState(null, '', '/m/local/p/9?view=terminal')
+      emit({ ...reply, id: 'v-2' })
+      expect(useStore.getState().toasts.map((t) => t.body)).toEqual(['Done.'])
+    } finally {
+      history.replaceState(null, '', '/')
+    }
+  })
 })
 
 describe('toasts and settings', () => {

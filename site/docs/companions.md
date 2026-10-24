@@ -181,7 +181,7 @@ From 0.22, with the **chat** permission, each turn the companion agent finishes 
 { "t": "companion.reply", "id": "1a16fa3b4de-2", "host": "local", "pane": "%1", "text": "Two sessions need you. Codex on laptop wants to run the tests.", "at": 1792038540000 }
 ```
 
-`text` is the reply as plain text, markdown taken out and line breaks kept, cut at a word near 2,000 characters. `id` is different for every reply, so a reply that comes twice can be shown once. `"error": true` marks a turn that stopped on an error, and `text` then says why. The companion's own questions, such as asking to run `inyon send`, come the usual way: `waiting` in the overview and a `notify`. The hub sends no `done` notice for the companion.
+`text` is the reply as plain text, markdown taken out and line breaks kept, cut at a word near 2,000 characters. `id` is different for every reply, so a reply that comes twice can be shown once. `"error": true` marks a turn that stopped on an error, and `text` then says why. The companion's own questions, such as asking to run `inyon send`, come the usual way: `waiting` in the overview and a `notify`. On the WebSocket the hub sends no `done` notice for the companion, since `companion.reply` takes its place. Web Push still gets one, titled "Companion", with the start of the reply as its text.
 
 ### A question and its key
 
