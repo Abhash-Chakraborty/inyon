@@ -50,6 +50,7 @@ The tabs:
 - **Setup:** what it has and what it's missing (below).
 - **Config:** each agent's config files, editable, with JSON checked before saving and the last five versions kept as backups.
 - **Uploads:** how much space uploaded files take, with buttons to clean older ones or delete them all.
+- **Temp files:** the files its coding agents left behind, to preview and delete (from 0.21, see [Agent temp files](temp-files.md)).
 - **Integration:** Inyon's optional Claude Code integration, and which agents are signed in.
 
 ### The Setup tab

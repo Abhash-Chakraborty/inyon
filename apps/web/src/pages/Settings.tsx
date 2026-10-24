@@ -496,6 +496,13 @@ export function Settings() {
                 <UploadsCard key={h.config.id} host={h} compact />
               ))}
             </div>
+            <Link to="/temp" className="mt-3 flex items-center gap-3 rounded-3xl border border-line bg-elev px-4 py-3.5 shadow-card hover:bg-hover/50">
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px]">Agent temp files</span>
+                <span className="mt-0.5 block text-[12.5px] leading-snug text-fg-3">Pasted images, screenshots and scratch files agents leave behind.</span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-fg-3" />
+            </Link>
           </section>
 
           <Section id="notifications" title="Notifications">

@@ -108,6 +108,64 @@ export interface UploadUsage {
   days?: number
 }
 
+/** One folder Inyon looks in for temp files (`inyon temp`): Claude Code's temp folder, its paste cache, … */
+export interface TempRoot {
+  id: string
+  agent: string
+  label: string
+  path: string
+  size: number
+  items: number
+  exists: boolean
+}
+
+/** One thing in a temp folder that can go as a whole: a Claude session's folder, an upload day, a file. */
+export interface TempItem {
+  id: string
+  root: string
+  path: string
+  name: string
+  kind: 'dir' | 'file'
+  size: number
+  files: number
+  /** ms, the newest change inside */
+  modified: number
+  /** changed in the last 30 minutes: an agent may still be using it */
+  recent: boolean
+  /** up to four images inside, newest first */
+  images: string[]
+}
+
+export interface TempListing {
+  v: number
+  host: string
+  roots: TempRoot[]
+  items: TempItem[]
+}
+
+export interface TempFile {
+  path: string
+  rel: string
+  size: number
+  modified: number
+  kind: 'image' | 'text' | 'other'
+}
+
+export interface TempPreview {
+  path: string
+  mime: string
+  size: number
+  text?: string
+  base64?: string
+  truncated: boolean
+}
+
+export interface TempRemoved {
+  removed: string[]
+  freed: number
+  failed: [path: string, why: string][]
+}
+
 export interface ConfigFile {
   agent: AgentKind
   label: string
@@ -334,6 +392,12 @@ export const api = {
   configs: (id: string) => request<ConfigFile[]>('GET', `${h(id)}/configs`),
   readConfig: (id: string, path: string) => request<{ path: string; content: string }>('GET', `${h(id)}/config${qs({ path })}`),
   writeConfig: (id: string, path: string, content: string) => request('PUT', `${h(id)}/config`, { path, content }),
+  // ---- temp files agents leave on a machine, through its `inyon temp` (walking gigabytes takes a while) ----
+  tempList: (id: string) => request<TempListing>('GET', `${h(id)}/temp`, undefined, 60_000),
+  tempFiles: (id: string, path: string) => request<{ path: string; files: TempFile[]; truncated: boolean }>('GET', `${h(id)}/temp/files${qs({ path })}`, undefined, 60_000),
+  /** `max`: the largest image sent whole; a bigger one comes back without its bytes */
+  tempPreview: (id: string, path: string, max?: number) => request<TempPreview>('GET', `${h(id)}/temp/preview${qs(max ? { path, max: String(max) } : { path })}`, undefined, 40_000),
+  tempDelete: (id: string, paths: string[]) => request<TempRemoved>('POST', `${h(id)}/temp/delete`, { paths }, 60_000),
   subagents: (id: string, transcript: string) =>
     request<{ agentId: string; toolUseId?: string; type?: string; description?: string; path: string }[]>('GET', `${h(id)}/subagents${qs({ transcript })}`),
   transcript: (id: string, path: string) => request<ChatItem[]>('GET', `${h(id)}/transcript${qs({ path })}`),

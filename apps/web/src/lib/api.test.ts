@@ -75,6 +75,35 @@ describe('requests', () => {
   })
 })
 
+describe('temp files', () => {
+  test('list, files and preview are GETs with the path in the query', async () => {
+    await api.tempList('my box')
+    expect([sent().method, sent().url]).toEqual(['GET', 'http://localhost:5173/api/hosts/my%20box/temp'])
+    fetchMock.mockClear()
+    await api.tempFiles('box', '/tmp/claude-1000/-home-me/a b')
+    expect(sent().url).toBe('http://localhost:5173/api/hosts/box/temp/files?path=%2Ftmp%2Fclaude-1000%2F-home-me%2Fa+b')
+    fetchMock.mockClear()
+    await api.tempPreview('box', '/tmp/x.png', 1500000)
+    expect(sent().url).toBe('http://localhost:5173/api/hosts/box/temp/preview?path=%2Ftmp%2Fx.png&max=1500000')
+    fetchMock.mockClear()
+    await api.tempPreview('box', '/tmp/x.png')
+    expect(sent().url).toBe('http://localhost:5173/api/hosts/box/temp/preview?path=%2Ftmp%2Fx.png')
+  })
+
+  test('delete POSTs the paths', async () => {
+    reply = ok({ removed: ['/tmp/a'], freed: 10, failed: [] })
+    expect(await api.tempDelete('box', ['/tmp/a', '/tmp/b'])).toEqual({ removed: ['/tmp/a'], freed: 10, failed: [] })
+    expect([sent().method, sent().url]).toEqual(['POST', 'http://localhost:5173/api/hosts/box/temp/delete'])
+    expect(await json()).toEqual({ paths: ['/tmp/a', '/tmp/b'] })
+  })
+
+  test("a machine whose inyon is too old fails with the hub's words", async () => {
+    reply = () => new Response(JSON.stringify({ error: 'Update Inyon on box to see its temp files' }), { status: 409 })
+    const e = await failure(api.tempList('box'))
+    expect([e.status, e.message]).toEqual([409, 'Update Inyon on box to see its temp files'])
+  })
+})
+
 describe('errors', () => {
   test("the hub's message and status come through", async () => {
     reply = () => new Response(JSON.stringify({ error: 'No such pane' }), { status: 404 })

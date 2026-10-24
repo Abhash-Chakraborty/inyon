@@ -295,7 +295,7 @@ inyon temp rm ~/.claude/paste-cache/0a49e8c135b0fa0a.txt /tmp/claude-1000/shots
 inyon temp clean --older-than 7d
 ```
 
-From 0.21. `inyon temp` lists the folders coding agents keep temporary files in, with one item per Claude Code session, upload day or loose file. The folders are Claude Code's temp folder, `~/.claude/paste-cache` and `shell-snapshots`, `~/.inyon/uploads`, `~/.gemini/tmp` and `~/.codex/shell_snapshots`. Transcripts and history are never among them.
+From 0.21. `inyon temp` lists the folders coding agents keep temporary files in, with one item per Claude Code session, upload day or loose file. [Agent temp files](temp-files.md#whats-listed) has the folders; transcripts and history are never among them.
 
 ```
 Agent temp files on laptop: 3.3 GB in 153 items

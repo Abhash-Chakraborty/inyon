@@ -207,7 +207,8 @@ export function Sheet({
   }, [open])
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    // a sheet opened over another one closes alone
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && (!panel.current || !openSheets.length || openSheets.at(-1) === panel.current) && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
