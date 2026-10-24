@@ -98,8 +98,21 @@ enum Command {
     },
     /// The sites your agents make, shown in the app under Pages: add, list or remove them
     Pages {
+        /// List the pages on all the hub's machines instead of this one's
+        #[arg(long)]
+        hub: bool,
         #[command(subcommand)]
         action: Option<PagesAction>,
+    },
+    /// The tmux sessions on the hub's machines, and the agent in each
+    Sessions,
+    /// Give an agent on any of the hub's machines a message; it goes in once the agent is free
+    Send {
+        /// machine/session, or machine/session:window.pane when the session runs more than one agent
+        target: String,
+        /// The message (- reads it from stdin)
+        #[arg(required = true, allow_hyphen_values = true)]
+        text: Vec<String>,
     },
     /// Temporary files your coding agents leave behind: list them, look inside, delete them
     Temp {
@@ -199,6 +212,9 @@ enum HubAction {
     Code,
     /// Make a one-time code for a companion app (Legato) to pair with this hub
     CompanionCode,
+    /// The hub's machines and what runs on them (here or on a joined machine)
+    #[command(visible_alias = "ls")]
+    Machines,
     /// Choose a new password for a forgotten one
     ResetPassword {
         password: Option<String>,
@@ -324,7 +340,7 @@ enum ServiceAction {
 /// What goes straight to the engine, before the arguments are read here: built in, or the Bun
 /// engine with INYON_LEGACY_ENGINE=1.
 const FORWARDED: [&str; 2] = ["link", "connect"];
-const HUB_OWN: [&str; 8] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password"];
+const HUB_OWN: [&str; 10] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password", "machines", "ls"];
 
 /// `inyon hub <arg>` this program answers itself; anything else runs the hub. Help too: asking
 /// for it once fetched the engine to run a hub (and failed on Windows, where none runs).
@@ -402,7 +418,10 @@ pub fn main() {
     let cli = Cli::parse_from(&argv);
     closed_pipe_is_not_a_crash(
         cli.version
-            || matches!(cli.command, None | Some(Command::Status { .. } | Command::Phones | Command::Logs { .. } | Command::Doctor | Command::Version | Command::Docs { .. })),
+            || matches!(
+                cli.command,
+                None | Some(Command::Status { .. } | Command::Phones | Command::Logs { .. } | Command::Doctor | Command::Version | Command::Docs { .. } | Command::Sessions)
+            ),
     );
     let proc = RealProc;
     let sys = Sys::new(&proc);
@@ -464,6 +483,7 @@ pub fn main() {
                 HubAction::Restart => commands::hub_restart(&sys),
                 HubAction::Code => commands::hub_code(),
                 HubAction::CompanionCode => commands::hub_companion_code(),
+                HubAction::Machines => crate::hub_api::machines_command(),
                 HubAction::ResetPassword { password } => commands::hub_reset_password(&sys, password.as_deref()),
             },
             json,
@@ -494,7 +514,11 @@ pub fn main() {
             }
             code
         }
-        Some(Command::Pages { action }) => commands::finish(
+        Some(Command::Pages { hub: true, action: None | Some(PagesAction::Ls) }) => commands::finish(crate::hub_api::pages_command(), json),
+        Some(Command::Pages { hub: true, .. }) => commands::finish(Err("--hub only lists pages: inyon pages --hub".into()), json),
+        Some(Command::Sessions) => commands::finish(crate::hub_api::sessions_command(), json),
+        Some(Command::Send { target, text }) => commands::finish(crate::hub_api::send_text(&text).and_then(|t| crate::hub_api::send_command(&target, &t)), json),
+        Some(Command::Pages { hub: false, action }) => commands::finish(
             match action {
                 Some(PagesAction::Add { dir, name, slug }) => pages::add_command(&dir, name.as_deref(), slug.as_deref()),
                 Some(PagesAction::Rm { slug }) => pages::remove_command(&slug),
@@ -572,4 +596,21 @@ pub fn main() {
         }
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    /// A `hub` subcommand left out of HUB_OWN would go to the engine, which runs a hub instead.
+    #[test]
+    fn every_hub_subcommand_is_answered_here() {
+        let cmd = super::Cli::command();
+        let hub = cmd.find_subcommand("hub").unwrap();
+        for sub in hub.get_subcommands() {
+            for name in std::iter::once(sub.get_name()).chain(sub.get_all_aliases()) {
+                assert!(super::hub_own(name), "inyon hub {name}");
+            }
+        }
+    }
 }

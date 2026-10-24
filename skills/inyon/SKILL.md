@@ -18,8 +18,8 @@ inyon status --json
 
 | `role` | What this computer is | What you can do here |
 |---|---|---|
-| `hub` | Runs the hub: the web app people sign in to, which reaches every other machine | Add pages, show the setup code, list the machines that joined it (`nodes`) |
-| `joined` | Joined to the hub named in `hub`. It connects out, so the hub shows its sessions | Add pages (the hub shows them from 0.22). The hub's other machines and sessions aren't visible from here |
+| `hub` | Runs the hub: the web app people sign in to, which reaches every other machine | Add pages, show the setup code, see every machine and session, message any agent |
+| `joined` | Joined to the hub named in `hub`. It connects out, so the hub shows its sessions | Add pages, see the hub's machines, sessions and pages, message an agent on another machine (all from 0.22) |
 | `node` | Paired straight with the Android app over its own link, no hub | Pair another phone with `inyon pair` |
 | `none` | Not set up yet | Tell the user to run `inyon setup`, which asks questions in their terminal |
 
@@ -62,6 +62,21 @@ not a URL: a link that opens a page is made by the app and lasts 12 hours. On a 
 also says the hub it's joined to shows its pages: that needs the hub and this machine on 0.22 or
 later. With an older hub, tell the user to update it, or put the folder on the hub's computer. Don't
 serve the folder on a public address. The `blueprint` skill builds and publishes plan sites this way.
+
+**See what runs on the hub's machines, or message another agent** (hub or joined, from 0.22):
+
+```sh
+inyon sessions                                   # machine/session, agent, state, folder
+inyon hub machines
+inyon pages --hub
+inyon send laptop/experiment "The report is in ~/inyon-reports/2026-10-24.md"
+```
+
+`send` doesn't type at once: the hub holds the message until that agent has been idle for a moment,
+and the user sees it in the app until then. From a joined machine it works only when the user turned
+on **Settings › Machines › Machines can message agents**; if the answer says it's off, tell them that
+and don't look for another way in (no SSH and `tmux send-keys` into their sessions). Say who you are
+and where you are in the message, since it arrives as if typed.
 
 **Add a computer to a hub.** The hub makes the command: **Machines → Add a machine** in its app gives a
 one-line command with a token for that one machine. Ask the user to run it on the new computer. Never

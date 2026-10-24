@@ -47,6 +47,8 @@ From 0.17 the hub tidies every machine by itself about every six hours, and agai
 
 A shortcut to the list. The app calls them *Computers*; a hub calls them *Machines*.
 
+From 0.22 a hub adds **Machines can message agents** below the list. With it on, an agent on a joined machine can use [`inyon send`](cli.md#sessions-and-messages) to give agents on your other machines a message, which goes in once each is free. It's off until you turn it on. Listing machines, sessions and pages from a joined machine needs no switch.
+
 ## On a hub
 
 - **Other devices.** The hub's address with a copy button, and how to open it in a phone's browser.

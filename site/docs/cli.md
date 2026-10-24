@@ -24,6 +24,9 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon hub code` | Show the hub's setup code |
 | `inyon hub companion-code` | Make a code for a companion app, such as Legato |
 | `inyon hub reset-password` | Choose a new hub password |
+| `inyon hub machines` | List the hub's machines |
+| `inyon sessions` | List the tmux sessions on the hub's machines, and their agents |
+| `inyon send <machine>/<session> "text"` | Give an agent on any of the hub's machines a message |
 | `inyon push` | List the browsers this computer sends notifications to |
 | `inyon service install`, `uninstall`, `status` | Manage the background service |
 | `inyon stop` | Stop everything Inyon runs in the background here |
@@ -179,6 +182,31 @@ inyon disconnect
 `join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. From 0.20.3 it first trades the pasted token for a new one the hub hands out once, so the command in your shell history no longer works; running the same command again on the machine keeps the token it got. An older hub doesn't trade, and the pasted token stays. When the hub says the token was used already or replaced, `join` stops with "The hub refused this token", and you need a new command from **Add a machine**. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
 
 Given a phone's pairing link instead of a hub's address, `join` says from 0.20.3 that the link pairs a phone, and that the command to add this computer is under the hub's **Machines → Add a machine**.
+
+## Sessions and messages
+
+```sh
+inyon hub machines                         # the hub's machines and what runs on them
+inyon sessions                             # every tmux session and the agent in it
+inyon pages --hub                          # the pages on all the hub's machines
+inyon send laptop/experiment "The report is in ~/inyon-reports"
+inyon send abhash-arm/main:1.0 - < notes.md
+```
+
+From 0.22, on the hub's computer or one joined to it, with no sign-in. On the hub's computer they use the token the hub writes for the `inyon` command as it starts; on a joined computer, the token that computer keeps for its link to the hub. Both need hub 0.22 or later, running the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) refuses them.
+
+```
+abhash-arm/main    claude  working  /home/abhash/development/custom-tmux
+abhash-arm/notes   none
+laptop/experiment  codex   idle     C:\demo\robot
+```
+
+`send` names a session as `machine/session`, or as `machine/session:window.pane` when it runs more than one agent, and `-` reads the message from stdin. The hub holds the message and types it in once the agent has been idle for a moment, the same as a message you hold in the app, so it shows in the app until then and you can edit or drop it there. A machine name is matched in any case; a session name as tmux has it.
+
+- **From the hub's computer**, `send` always works.
+- **From a joined computer**, it works only when **Settings › Machines › Machines can message agents** is on. It's off until you turn it on, because a joined computer could then type into agents on all your machines. Reading machines, sessions and pages needs no switch.
+
+These commands can only read and hold messages. Everything else the hub answers with 403. `--json` gives the hub's answer as it came: `hosts` for `hub machines` and `sessions`, `pages` for `pages --hub`, and `held` with the message's `id` for `send`.
 
 ## Notifications to browsers
 

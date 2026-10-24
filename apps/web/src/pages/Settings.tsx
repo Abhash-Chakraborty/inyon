@@ -536,6 +536,11 @@ export function Settings() {
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>
             ))}
+            {hub && (
+              <Row label={isPhone() ? 'Computers can message agents' : 'Machines can message agents'} hint="An agent on a joined machine can use inyon send to type into agents on your other machines, each once it's free. Reading sessions and pages needs no switch.">
+                <Toggle on={!!hub.machinesSend} onChange={(v) => saveHub({}, { machinesSend: v })} label="Machines can message agents" />
+              </Row>
+            )}
           </Section>
 
           {isPhone() ? (

@@ -168,6 +168,10 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
     if let Some(Value::Bool(a)) = b.get("autoResume") {
         next.insert("autoResume".into(), json!(a));
     }
+    // joined machines may hold messages for agents with `inyon send` (crate::machines)
+    if let Some(Value::Bool(a)) = b.get("machinesSend") {
+        next.insert("machinesSend".into(), json!(a));
+    }
     next.insert(
         "uploads".into(),
         json!({
@@ -947,7 +951,7 @@ mod tests {
         let cur = HubSettings(obj(
             json!({ "keepSession": { "a": true }, "uploads": { "retentionDays": 7, "maxMB": 100, "maxTotalMB": 1024, "longPasteLines": 40, "extra": 1 }, "other": "x" }),
         ));
-        let next = settings_put(&json!({ "autoResume": true, "uploads": { "retentionDays": 999, "maxMB": "0", "longPasteLines": 2.9 } }), cur);
+        let next = settings_put(&json!({ "autoResume": true, "machinesSend": "yes", "uploads": { "retentionDays": 999, "maxMB": "0", "longPasteLines": 2.9 } }), cur);
         // saving needs a store; the clamped value is what matters here
         let next = match next {
             Ok(v) => v,

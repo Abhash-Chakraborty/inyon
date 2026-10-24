@@ -68,6 +68,18 @@ describe('Settings keeps what you type while live data flows', () => {
     expect(api.saveSettings.mock.calls[0][0]).toEqual({ uploads: { retentionDays: 30, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false })
   })
 
+  test('machines can message agents only once the switch is on', async () => {
+    const user = userEvent.setup()
+    api.saveSettings.mockImplementation(async (s) => s as any)
+    await render(page())
+    const toggle = screen.getByRole('switch', { name: 'Machines can message agents' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await user.click(toggle)
+    await flush()
+    expect(api.saveSettings.mock.calls[0][0]).toMatchObject({ machinesSend: true, autoResume: false })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+  })
+
   test('appearance settings apply at once', async () => {
     const user = userEvent.setup()
     await render(page())
