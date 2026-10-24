@@ -769,13 +769,8 @@ fn a_send_whose_caller_went_away_is_still_typed_and_settled() {
 #[test]
 fn a_tmux_session_is_renamed_by_its_number_with_what_tmux_wont_take_out_of_the_name() {
     run(|| async {
-        let fake = Fake::install(|_, cmd, _| {
-            if cmd.contains("'taken'") {
-                ExecResult { code: 1, stdout: String::new(), stderr: "duplicate session: taken".into() }
-            } else {
-                ok("")
-            }
-        });
+        let fake =
+            Fake::install(|_, cmd, _| if cmd.contains("'taken'") { ExecResult { code: 1, stdout: String::new(), stderr: "duplicate session: taken".into() } } else { ok("") });
         pane("local", json!([]));
         assert_eq!(rename_tmux_session("local", "52", "  my  experiment ").await.unwrap(), "my experiment");
         assert_eq!(fake.cmds().last().unwrap(), "tmux rename-session -t '$52' 'my experiment'");

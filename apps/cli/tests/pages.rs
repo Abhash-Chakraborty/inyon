@@ -531,7 +531,11 @@ fn data(v: &Value) -> Vec<u8> {
 fn a_hub_gets_a_pages_list_with_its_progress_and_each_file_from_the_machine() {
     let h = Home::new("get");
     let site = h.site("plans/robot", "Robot");
-    fs::write(site.join("progress.json"), r#"{"now":"Wiring","updated":"2026-10-24T10:00:00Z","releases":[{"tasks":[{"status":"done"},{"status":"doing"}]},{"tasks":[{"status":"done"}]}]}"#).unwrap();
+    fs::write(
+        site.join("progress.json"),
+        r#"{"now":"Wiring","updated":"2026-10-24T10:00:00Z","releases":[{"tasks":[{"status":"done"},{"status":"doing"}]},{"tasks":[{"status":"done"}]}]}"#,
+    )
+    .unwrap();
     fs::create_dir_all(site.join("mockups")).unwrap();
     fs::write(site.join("mockups/index.html"), "<p>mockups</p>").unwrap();
     fs::write(site.join("app.js"), "let x = 1").unwrap();
@@ -566,7 +570,9 @@ fn a_hub_gets_a_pages_list_with_its_progress_and_each_file_from_the_machine() {
     assert_eq!((big["big"].as_bool(), big.get("data")), (Some(true), None));
 
     // never a dot name, a path out of the site, a page that isn't listed, or another stream
-    for args in [&["robot", ".env"][..], &["robot", ".."], &["robot", "..", "..", ".inyon", "pages.json"], &["other", "index.html"], &["robot", "index.html:x"], &["robot", "a/../../x"]] {
+    for args in
+        [&["robot", ".env"][..], &["robot", ".."], &["robot", "..", "..", ".inyon", "pages.json"], &["other", "index.html"], &["robot", "index.html:x"], &["robot", "a/../../x"]]
+    {
         let v = get(&h, args);
         assert!(v.get("data").is_none(), "{args:?} → {v}");
     }

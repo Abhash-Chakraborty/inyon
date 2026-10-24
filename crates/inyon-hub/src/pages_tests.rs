@@ -1478,7 +1478,8 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
         assert_eq!(machine.calls.borrow().len(), 1);
 
         let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
-        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
         let (status, headers, body) = view(&url, &[]).await;
         assert_eq!((status, body.as_slice()), (200, &b"hello"[..]));
         assert!(headers.contains(&("content-type".into(), "text/html;charset=utf-8".into())), "{headers:?}");
@@ -1497,7 +1498,8 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
         *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/film.mp4", true, 1 << 30), Value::Null], "big": true });
         assert_eq!(view(&format!("{url}film.mp4"), &[]).await.0, 413);
         // a folder asked for without its slash goes to it with one, and nothing is fetched
-        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/mockups", false, 0), item("D:/Dev/robot/mockups/index.html", true, 3)] });
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/mockups", false, 0), item("D:/Dev/robot/mockups/index.html", true, 3)] });
         let (status, headers, _) = view(&format!("{url}mockups"), &[]).await;
         assert_eq!(status, 301);
         assert!(headers.iter().any(|(k, v)| k == "location" && v.ends_with("/mockups/")), "{headers:?}");
@@ -1510,7 +1512,8 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
         listed.set(false);
         now.set(now.get() + pages_remote::REMOTE_TTL_MS);
         assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
-        *get.borrow_mut() = json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
+        *get.borrow_mut() =
+            json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" });
         listed.set(true);
         now.set(now.get() + pages_remote::REMOTE_TTL_MS);
         assert_eq!(view(&url, &[]).await.0, 403);
@@ -1559,7 +1562,14 @@ fn a_machine_whose_inyon_is_too_old_or_that_is_offline_lists_no_pages() {
     crate::test_util::block(async {
         hub(&home, clock(now_ms()));
         // 0.21's list: no `serves`, and no `pages get` to answer with
-        let machine = Rc::new(Machine { calls: RefCell::default(), answer: RefCell::new(Box::new(|_| { let mut v = robot(true); v.as_object_mut().unwrap().remove("serves"); v })) });
+        let machine = Rc::new(Machine {
+            calls: RefCell::default(),
+            answer: RefCell::new(Box::new(|_| {
+                let mut v = robot(true);
+                v.as_object_mut().unwrap().remove("serves");
+                v
+            })),
+        });
         laptop(machine.clone());
         assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
         assert_eq!(call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap_err().0, 404);

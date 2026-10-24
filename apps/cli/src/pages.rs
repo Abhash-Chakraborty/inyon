@@ -966,7 +966,11 @@ fn mtime_ms(m: &fs::Metadata) -> f64 {
 /// pages_core's `etag_of`: `"<size in hex>-<whole ms in hex>"`.
 fn etag_of(size: u64, mtime: f64) -> String {
     let ms = mtime.floor() as i128;
-    if ms < 0 { format!("\"{size:x}--{:x}\"", -ms) } else { format!("\"{size:x}-{ms:x}\"") }
+    if ms < 0 {
+        format!("\"{size:x}--{:x}\"", -ms)
+    } else {
+        format!("\"{size:x}-{ms:x}\"")
+    }
 }
 
 /// pages_core's `etag_matches`: `*`, or any listed tag equal to it (a `W/` prefix ignored).
@@ -978,7 +982,13 @@ fn etag_matches(if_none_match: &str, etag: &str) -> bool {
 /// `real` is `root` or inside it, with no dot-named folder or file on the way (both slashed).
 fn inside(root: &str, real: &str) -> bool {
     let root = root.trim_end_matches('/');
-    let rest = if real == root { "" } else if let Some(r) = real.strip_prefix(root).and_then(|r| r.strip_prefix('/')) { r } else { return false };
+    let rest = if real == root {
+        ""
+    } else if let Some(r) = real.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
+        r
+    } else {
+        return false;
+    };
     rest.split('/').filter(|c| !c.is_empty()).all(|c| !c.starts_with('.'))
 }
 

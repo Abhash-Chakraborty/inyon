@@ -183,7 +183,12 @@ impl Listing {
         for item in items.iter().take(2) {
             let Some(real) = item.get("real").and_then(Value::as_str).map(slashed) else { break };
             let flag = |k: &str| item.get(k) == Some(&Value::Bool(true));
-            let stat = FileStat { file: flag("file"), dir: flag("dir"), size: item.get("size").and_then(Value::as_u64).unwrap_or(0), mtime_ms: item.get("mtime").and_then(Value::as_f64).unwrap_or(0.0) };
+            let stat = FileStat {
+                file: flag("file"),
+                dir: flag("dir"),
+                size: item.get("size").and_then(Value::as_u64).unwrap_or(0),
+                mtime_ms: item.get("mtime").and_then(Value::as_f64).unwrap_or(0.0),
+            };
             l.real.insert(asked, real.clone());
             l.stats.insert(real.clone(), stat);
             asked = real.join("index.html");
