@@ -327,7 +327,13 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
             if let Some(p) = p {
                 // yours first: `claude --dangerously-skip-permissions` saved as "claude-yolo" is that
                 if let Some(c) = crate::agents::custom::detect(&p.comm, &p.args) {
-                    return Some((p, c.like, Some(c.name)));
+                    // a saved wrapper script stands for the agent it starts, whose process holds the
+                    // session (pid, folder, resume flag); the wrapper itself is the fallback
+                    let started = children.get(&pid).into_iter().flatten().filter_map(|c| procs.get(c)).find_map(|cp| detect_agent(&cp.comm, &cp.args).map(|k| (cp, k)));
+                    return Some(match started {
+                        Some((cp, kind)) => (cp, kind, Some(c.name)),
+                        None => (p, c.like, Some(c.name)),
+                    });
                 }
                 if let Some(kind) = detect_agent(&p.comm, &p.args) {
                     return Some((p, kind, None));
@@ -1057,6 +1063,17 @@ mod tests {
         let oc = parse_probe(&out.replace("/usr/bin/claude claude", "openclaude openclaude"), "", 0, 12.0).unwrap();
         assert_eq!((oc.agent_procs["%1"].kind, oc.agent_procs["%1"].custom.as_deref()), (AgentKind::Claude, Some("OpenClaude")));
         assert_eq!(r.agent_procs["%1"].custom, None);
+        // review: a saved wrapper that starts the agent without exec is followed to the agent
+        set(vec![CustomAgent { id: "w".into(), name: "Wrapped".into(), command: "run-claude".into(), like: AgentKind::Claude }]);
+        let wrapped = parse_probe(
+            &out.replace("  101   100   40 /usr/bin/claude claude", "  102   100   45 run-claude /bin/sh /home/u/bin/run-claude\n  101   102   40 /usr/bin/claude claude"),
+            "",
+            0,
+            12.0,
+        )
+        .unwrap();
+        let w = &wrapped.agent_procs["%1"];
+        assert_eq!((w.pid, w.kind, w.custom.as_deref(), w.resume.as_deref()), (101.0, AgentKind::Claude, Some("Wrapped"), Some("7409eef9-d507-4808-a592-0bfabe896e3a")));
         set(vec![]);
         assert_eq!(parse_probe("oops\nfirst\nsecond", "", 1, 0.0), Err("first second".into()));
     }

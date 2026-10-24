@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
 import { AGENTS, type AgentKind } from '@inyon/protocol'
 import { api, type CustomAgent, type HubSettings } from '../lib/api.ts'
@@ -22,7 +22,9 @@ export function CustomAgentRows({ hub, onSaved }: { hub: HubSettings; onSaved: (
   const [editing, setEditing] = useState<CustomAgent | 'new' | null>(null)
   // an Undo after another save must not put back the settings from before it
   const latest = useRef(hub)
-  latest.current = hub
+  useEffect(() => {
+    latest.current = hub
+  }, [hub])
   const save = async (next: Draft[]) => {
     const saved = await api.saveSettings({ ...latest.current, customAgents: next as CustomAgent[] })
     // the Bun hub (INYON_HUB_IMPL=bun) doesn't keep them

@@ -93,7 +93,7 @@ From 0.22, **Settings › Agents › Add an agent** saves any command under a na
 | Command | What a new session types. Model, mode and the first message are added after it, the same flags the agent it works like takes |
 | Works like | Claude Code, Codex, Gemini CLI, OpenCode, Copilot or Antigravity CLI. The session gets that agent's logo, chat view, prompts as buttons and controls |
 
-Inyon spots one already running in any pane, too: a process whose program is the command's first word (by name, by path, or as the script `node`, `bun`, `deno`, `python` or `uv` runs) and whose command line holds every other word of it. Yours are tried before the built-in agents, so plain `claude` stays Claude Code while `claude --dangerously-skip-permissions --model opus` is the agent saved with that flag. A shell script that starts the agent without `exec` shows as the agent it starts, under that agent's name.
+Inyon spots one already running in any pane, too: a process whose program is the command's first word (by name, by path, or as the script `node`, `bun`, `deno`, `python` or `uv` runs) and whose command line holds every other word of it. Yours are tried before the built-in agents, so plain `claude` stays Claude Code while `claude --dangerously-skip-permissions --model opus` is the agent saved with that flag. When the command you saved is a script that starts the agent without `exec`, Inyon follows it to the agent and keeps your name.
 
 The list is the hub's, for every machine, with at most 24 agents. Custom agents need the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) says so when you try to save one.
 
