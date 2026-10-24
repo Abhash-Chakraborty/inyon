@@ -1314,19 +1314,26 @@ pub fn app_entry_script(app: &str, icon: &str, version: &str, size_kb: u64) -> S
         exe = psq(app),
         icon = psq(icon),
         dir = psq(&dir),
-        u = psq(&format!("\"{app}\" uninstall --purge")),
+        u = psq(&uninstall_command(app)),
         q = psq(&format!("\"{app}\" uninstall --purge --yes")),
         size = size_kb,
         lnk = start_menu_shortcut(),
     )
 }
 
-/// PowerShell that exits 0 when Settings → Apps lists `version` with the app as its Uninstall.
-pub fn app_entry_current_script(version: &str) -> String {
+/// What Uninstall in Settings → Apps runs: the app, so no console opens.
+fn uninstall_command(app: &str) -> String {
+    format!("\"{app}\" uninstall --purge")
+}
+
+/// PowerShell that exits 0 when Settings → Apps lists `version` with `app` as its Uninstall, as
+/// `app_entry_script` writes it.
+pub fn app_entry_current_script(app: &str, version: &str) -> String {
     format!(
-        "$e = Get-ItemProperty -Path {} -ErrorAction SilentlyContinue\nif ($e -and $e.DisplayVersion -eq {} -and $e.UninstallString -like '*inyon-app.exe*') {{ exit 0 }} else {{ exit 1 }}",
+        "$e = Get-ItemProperty -Path {} -ErrorAction SilentlyContinue\nif ($e -and $e.DisplayVersion -eq {} -and $e.UninstallString -eq {}) {{ exit 0 }} else {{ exit 1 }}",
         psq(APP_KEY),
-        psq(version)
+        psq(version),
+        psq(&uninstall_command(app))
     )
 }
 
@@ -1338,7 +1345,8 @@ pub fn repair_app_entry(sys: &Sys) -> bool {
         return false;
     }
     let version = crate::app::build_of(&installed_binary()).unwrap_or_else(|| crate::ui::VERSION.to_string());
-    if ps(&app_entry_current_script(&version)).ok {
+    let app = crate::app::app_beside(&installed_binary());
+    if ps(&app_entry_current_script(&path_str(&app), &version)).ok {
         return false;
     }
     register_app(sys).is_some_and(|l| l.starts_with('✓'))

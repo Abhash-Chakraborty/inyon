@@ -539,7 +539,9 @@ fn windows_settings_apps_names_the_installed_version_and_is_put_right_when_an_ol
     // the entry is this version's: nothing is written
     assert!(!inyon_cli::service::repair_app_entry(&sys));
     let calls = home.calls();
-    assert!(calls[0].last().unwrap().contains("$e.DisplayVersion -eq '0.20.9'"), "{:?}", calls[0]);
+    let check = calls[0].last().unwrap();
+    let app = bin.join("inyon-app").to_string_lossy().into_owned();
+    assert!(check.contains("$e.DisplayVersion -eq '0.20.9'") && check.contains(&format!("$e.UninstallString -eq '\"{app}\" uninstall --purge'")), "{check}");
     assert!(entry(&calls).is_none());
     // an older updater's entry: listed again, with the installed program's version
     home.clear_calls();

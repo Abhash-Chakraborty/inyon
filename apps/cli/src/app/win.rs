@@ -187,12 +187,15 @@ pub fn run(start: Start) -> i32 {
             }
         }
         // an updater older than 0.20.4 writes its own version into Settings → Apps when it's
-        // done, after this app has started: put this version's entry back once it has finished
+        // done, after this app has started, and restarting two jobs can take it past a minute:
+        // put this version's entry back after 1, 3 and 10 minutes
         std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_secs(60));
-            let proc = RealProc;
-            if crate::service::repair_app_entry(&crate::service::Sys::new(&proc)) {
-                trace("Settings → Apps named an older version: listed this one again");
+            for wait in [60, 120, 420] {
+                std::thread::sleep(std::time::Duration::from_secs(wait));
+                let proc = RealProc;
+                if crate::service::repair_app_entry(&crate::service::Sys::new(&proc)) {
+                    trace("Settings → Apps named an older version: listed this one again");
+                }
             }
         });
         tick();
