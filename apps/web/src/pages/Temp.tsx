@@ -344,11 +344,11 @@ function ItemSheet({ host, item, onClose, onChanged }: { host: HostState; item: 
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<TempFile | null>(null)
   const path = item?.path
-  // each opening (and closing) has its own number, so a slow answer for an item opened before
-  // can't fill in the list of the one open now
+  // each opening, closing and list request has its own number, so a slow answer can't fill in
+  // the list after a newer one: an item opened before, or a refresh overtaken by the next delete
   const opening = useRef(0)
   const load = useCallback(async (p: string) => {
-    const mine = opening.current
+    const mine = ++opening.current
     try {
       const r = await api.tempFiles(id, p)
       if (mine !== opening.current) return

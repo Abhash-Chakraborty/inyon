@@ -5,6 +5,7 @@ import { TempPage, deleteQuestion, resetThumbs } from './Temp.tsx'
 import { MachinePage } from './Machines.tsx'
 import { machineMenu } from '../components/menus.tsx'
 import { ConfirmHost } from '../components/Confirm.tsx'
+import { ContextMenuHost } from '../components/ui/ContextMenu.tsx'
 import { useStore } from '../lib/store.ts'
 import { ApiError, type TempItem, type TempListing } from '../lib/api.ts'
 import { api } from '../test/fakes.ts'
@@ -50,6 +51,7 @@ const at = (path: string) =>
         <Route path="machines/:host" element={<MachinePage />} />
       </Routes>
       <ConfirmHost />
+      <ContextMenuHost />
     </MemoryRouter>,
   )
 
@@ -199,6 +201,39 @@ test('a slow answer for an item opened before never fills in the one open now', 
   await flush()
   expect(screen.queryByText('11111111.txt')).toBeNull()
   expect(screen.getByText('22222222.txt')).toBeTruthy()
+})
+
+test("a refresh overtaken by the next delete's never puts the deleted file back", async () => {
+  const f1 = { path: `${A.path}/one.txt`, rel: 'one.txt', size: 1, modified: NOW - DAY, kind: 'text' as const }
+  const f2 = { path: `${A.path}/two.txt`, rel: 'two.txt', size: 1, modified: NOW - DAY, kind: 'text' as const }
+  let slow: (v: unknown) => void = () => {}
+  let calls = 0
+  api.tempFiles.mockImplementation((async () => {
+    calls++
+    if (calls === 1) return { path: A.path, truncated: false, files: [f1, f2] }
+    // the refresh after the first delete answers last, with the second file still there
+    if (calls === 2) return new Promise((r) => (slow = r))
+    return { path: A.path, truncated: false, files: [] }
+  }) as any)
+  api.tempDelete.mockImplementation((async (_h: string, paths: string[]) => ({ removed: paths, freed: 1, failed: [] })) as any)
+  await at('/temp/box')
+  fireEvent.click(screen.getByText(A.name))
+  await flush()
+  const remove = async (name: string) => {
+    fireEvent.contextMenu(screen.getByText(name), { clientX: 10, clientY: 10 })
+    await flush()
+    fireEvent.click(screen.getByRole('menuitem', { name: /Delete/ }))
+    await flush()
+    await act(async () => fireEvent.click(within(screen.getAllByRole('dialog').at(-1)!).getByRole('button', { name: 'Delete' })))
+    await flush()
+  }
+  await remove('one.txt')
+  await remove('two.txt')
+  expect(screen.getByText('This folder is empty.')).toBeTruthy()
+  await act(async () => slow({ path: A.path, truncated: false, files: [f2] }))
+  await flush()
+  expect(screen.queryByText('two.txt')).toBeNull()
+  expect(screen.getByText('This folder is empty.')).toBeTruthy()
 })
 
 describe('where it is reached', () => {
