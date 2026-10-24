@@ -218,6 +218,12 @@ pub struct AppState {
     pub jobs: Vec<Job>,
 }
 
+/// The jobs app.json lists: each role once, whether the app runs it or adopted the engine an
+/// older version started (an adopted job is wanted too), with the process doing it.
+pub fn job_list(roles: impl IntoIterator<Item = Role>, pid_of: impl Fn(Role) -> Option<u32>) -> Vec<Job> {
+    roles.into_iter().collect::<BTreeSet<Role>>().into_iter().map(|r| Job { role: r.name().to_string(), pid: pid_of(r) }).collect()
+}
+
 impl AppState {
     /// The process doing `role` for the app, if it runs one.
     pub fn job(&self, role: Role) -> Option<&Job> {
@@ -675,6 +681,13 @@ mod tests {
         let _ = build_mark();
         let me = std::env::current_exe().unwrap();
         assert_eq!(build_of(&me).as_deref(), Some(env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
+    fn an_adopted_job_is_listed_once() {
+        // the link adopted from 0.20.2 is also wanted, so it's run again if that engine stops
+        let jobs = job_list([Role::Link, Role::Link, Role::Node], |r| (r == Role::Link).then_some(15028));
+        assert_eq!(jobs, vec![Job { role: "link".into(), pid: Some(15028) }, Job { role: "node".into(), pid: None }]);
     }
 
     #[test]

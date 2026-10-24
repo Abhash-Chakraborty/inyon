@@ -518,3 +518,34 @@ fn windows_with_the_app_running_a_stop_or_uninstall_leaves_its_task_running() {
     assert!(!script.contains("Stop-ScheduledTask"), "{script}");
     assert!(proc.signals.borrow().is_empty(), "the app itself is left running");
 }
+
+// an update by 0.20.2 ended by writing its own version into Settings → Apps, after the new
+// version had listed itself: the app puts the installed version back, and from 0.20.4 the entry
+// names the installed program's version, not the updater's
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_settings_apps_names_the_installed_version_and_is_put_right_when_an_older_updater_wrote_its_own() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
+    let bin = home.dir.join(".inyon").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mut program = fake_exe(3);
+    program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
+    program.extend_from_slice(b"..inyon-build:0.20.9;..");
+    std::fs::write(bin.join("inyon"), &program).unwrap();
+    let entry = |calls: &[Vec<String>]| calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("DisplayVersion ="));
+    // the entry is this version's: nothing is written
+    assert!(!inyon_cli::service::repair_app_entry(&sys));
+    let calls = home.calls();
+    assert!(calls[0].last().unwrap().contains("$e.DisplayVersion -eq '0.20.9'"), "{:?}", calls[0]);
+    assert!(entry(&calls).is_none());
+    // an older updater's entry: listed again, with the installed program's version
+    home.clear_calls();
+    std::env::set_var("FAKE_PS_NO", "$e.DisplayVersion -eq");
+    assert!(inyon_cli::service::repair_app_entry(&sys));
+    std::env::remove_var("FAKE_PS_NO");
+    let script = entry(&home.calls()).expect("the entry is written");
+    assert!(script.contains("DisplayVersion = '0.20.9'") && script.contains("inyon-app\" uninstall --purge"), "{script}");
+}
