@@ -319,6 +319,42 @@ fn a_turn_that_ends_with_agents_still_running_is_reported_finished_once_they_are
     });
 }
 
+#[test]
+fn no_finished_notice_while_someone_types_at_that_pane_in_tmux() {
+    run(|| async {
+        const ID: &str = "typing-test";
+        let rt = runtime(ID, one_pane(ID, "working", None));
+        let (got, off) = notifications(ID);
+        let me = registry();
+        let typed = |ago: f64, pane: &str| {
+            let mut p = mode_probe(5000.0);
+            p.keys_at.insert(pane.to_owned(), 5000.0 - ago);
+            rt.borrow_mut().probe = Some(Rc::new(RefCell::new(p)));
+        };
+        let step = |agent: &str| {
+            let prev = rt.borrow().state.clone();
+            rt.borrow_mut().state = one_pane(ID, agent, None);
+            me.diff_notify(&rt, &prev);
+        };
+        // a key 20 s ago in a client on this pane: they watched it finish
+        typed(20.0, "%1");
+        step("idle");
+        assert!(got.borrow().is_empty());
+        // a question still comes through
+        step("waiting");
+        assert_eq!(*got.borrow(), ["waiting"]);
+        // the last key two minutes ago, or keys on another pane: announced as before
+        step("working");
+        typed(120.0, "%1");
+        step("idle");
+        step("working");
+        typed(5.0, "%2");
+        step("idle");
+        assert_eq!(*got.borrow(), ["waiting", "done", "done"]);
+        off();
+    });
+}
+
 // mode-while-asked.test.ts
 
 const MODE_ID: &str = "mode-test";
@@ -365,6 +401,7 @@ fn mode_probe(now: f64) -> ProbeResult {
         agy_titles: IndexMap::new(),
         agy_integration: None,
         machine_kind: None,
+        keys_at: Default::default(),
     }
 }
 

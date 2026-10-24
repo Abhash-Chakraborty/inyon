@@ -42,6 +42,7 @@ fn connected(id: &str, home: &str, panes: serde_json::Value) -> crate::hosts::re
         agy_titles: IndexMap::new(),
         agy_integration: None,
         machine_kind: None,
+        keys_at: Default::default(),
     };
     rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
     rt

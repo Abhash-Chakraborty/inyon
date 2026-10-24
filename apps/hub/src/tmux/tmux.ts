@@ -119,7 +119,7 @@ else
   echo "@@NOTMUX"
 fi
 echo "@@CLIENTS"
-tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
+tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}' 2>/dev/null
 echo "@@PS"
 # etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
 ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{

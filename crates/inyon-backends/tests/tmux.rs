@@ -265,6 +265,7 @@ fn probe(agent_procs: IndexMap<String, AgentProc>) -> ProbeResult {
         agy_titles: IndexMap::new(),
         agy_integration: None,
         machine_kind: None,
+        keys_at: Default::default(),
     }
 }
 

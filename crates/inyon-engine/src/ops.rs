@@ -1050,6 +1050,8 @@ mod tests {
     #[test]
     fn list_clients_is_answered_per_session_from_psmux_default_output() {
         assert_eq!(Psmux::new().run("tmux list-clients -F '#{session_id} #{client_control_mode}'", &[]).0, "$14 1\n");
+        // the probe's longer format (with the last key and the pane) gets the same two fields
+        assert_eq!(Psmux::new().run("tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}'", &[]).0, "$14 1\n");
     }
 
     #[cfg(unix)]

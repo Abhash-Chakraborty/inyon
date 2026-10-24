@@ -68,6 +68,7 @@ fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, a
         agy_titles: IndexMap::new(),
         agy_integration: None,
         machine_kind: None,
+        keys_at: Default::default(),
     };
     rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
 }
