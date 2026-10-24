@@ -498,6 +498,38 @@ pub fn adopt_app(sys: &Sys) -> Result<PathBuf, String> {
     Ok(app)
 }
 
+/// Turns `role`'s start at sign-in on or off on Windows (its logon task, or its Startup shortcut
+/// where Task Scheduler is blocked). Nothing is started or stopped.
+pub fn set_sign_in(sys: &Sys, role: Role, on: bool) -> Result<(), String> {
+    if sys.platform != Platform::Windows {
+        return Err("Starting at sign-in is set with `inyon setup` on this system.".into());
+    }
+    let s = spec(role);
+    let task = s.task.ok_or_else(|| format!("The {role} has no sign-in task."))?;
+    let r = if on {
+        let app = ensure_app(&installed_binary())?;
+        ps(&task_script(task, &path_str(&app), role, s.what))
+    } else {
+        ps(&sign_in_off_script(task))
+    };
+    if !r.ok {
+        return Err(r.out.lines().find(|l| !l.trim().is_empty()).unwrap_or("Task Scheduler refused the change.").trim().to_string());
+    }
+    if task_exists(sys, role) != on {
+        return Err(if on { format!("The {role} still doesn't start at sign-in.") } else { format!("The {role} still starts at sign-in.") });
+    }
+    Ok(())
+}
+
+/// PowerShell that removes `task` and its Startup shortcut.
+pub fn sign_in_off_script(task: &str) -> String {
+    format!(
+        "Unregister-ScheduledTask -TaskName {t} -Confirm:$false -ErrorAction SilentlyContinue\nRemove-Item -Force -ErrorAction SilentlyContinue {shortcut}",
+        t = psq(task),
+        shortcut = startup_shortcut(&format!("{task}.lnk")),
+    )
+}
+
 /// Whether the hub is set up as a service here (Linux and macOS), from its files alone.
 pub fn hub_set_up() -> bool {
     let s = spec(Role::Hub);
@@ -1557,6 +1589,22 @@ mod tests {
         if cfg!(windows) {
             assert!(s.contains(r"InstallLocation = 'C:\Users\a\.inyon\bin'"));
         }
+    }
+
+    #[test]
+    fn sign_in_off_removes_the_task_and_the_shortcut() {
+        let s = sign_in_off_script("Inyon link");
+        assert!(s.contains("Unregister-ScheduledTask -TaskName 'Inyon link' -Confirm:$false"));
+        assert!(s.contains("'Inyon link.lnk'"));
+        assert!(s.contains("GetFolderPath('Startup')"));
+    }
+
+    #[test]
+    fn sign_in_is_windows_only() {
+        let proc = crate::sys::RealProc;
+        let mut sys = Sys::new(&proc);
+        sys.platform = Platform::Linux;
+        assert!(set_sign_in(&sys, Role::Link, true).unwrap_err().contains("inyon setup"));
     }
 
     #[test]

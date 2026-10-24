@@ -4,6 +4,7 @@
 pub mod app;
 pub mod cli;
 pub mod commands;
+pub mod desktop;
 pub mod engine;
 pub mod http;
 pub mod hub_cert;
@@ -23,4 +24,3 @@ pub mod tray;
 pub mod ui;
 pub mod unhook;
 pub mod update;
-pub mod window;

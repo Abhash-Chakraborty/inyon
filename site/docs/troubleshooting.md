@@ -25,6 +25,14 @@ Before 0.17.2, `inyon pair` on Windows could miss the link already running in th
 
 Up to 0.20.2 the Inyon window's **Change**, **Show all** and **Details** each opened a terminal, **Uninstall** in Settings → Apps opened a console that waited for Enter, and the tray icon belonged to the engine, so it could be missing while the link ran. From 0.20.3 Inyon is an app: nothing opens a terminal, and its icon shows exactly while something runs. `inyon update` moves a computer to it; run `inyon status` afterwards to see what the app runs.
 
+## The Inyon window doesn't open, or is blank (Windows)
+
+From 0.21 the window is drawn by Microsoft Edge WebView2. When it's missing or won't start, Inyon says so and opens Microsoft's download page; install the Evergreen runtime and open Inyon again. The phone link and the hub connection keep running meanwhile. `%USERPROFILE%\.inyon\node\window.log` says what went wrong. In 0.20.1 to 0.20.5, after the window was closed once, clicking the icon didn't open it again until you chose **Quit Inyon**; update to 0.21.
+
+## The window keeps saying "Starting the tunnel" (Windows)
+
+In 0.20.1 to 0.20.5 the window asked for a new pairing code every time it opened, and while Tunnel was on the code card said "Starting the tunnel…" until the tunnel's address came, which looked as if a change to the switches hadn't applied. From 0.21 the window makes a code only when you choose **Pair a phone**, and the switches on This computer show what the link uses. `link.log` shows when the tunnel starts and stops.
+
 ## The tray menu opens an empty window (Windows)
 
 In 0.17.1, **Open Inyon** and **Pair a phone…** in the tray menu opened a window that closed at once. Run `inyon` or `inyon pair` in a terminal instead, or update to 0.17.2.

@@ -69,6 +69,14 @@ pub fn fingerprint(cert: &Path) -> Option<String> {
     Some(Sha256::digest(&der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":"))
 }
 
+/// The same fingerprint for a certificate given as PEM text (what WebView2 hands over).
+pub fn fingerprint_pem(pem: &str) -> Option<String> {
+    use rustls_pki_types::pem::PemObject;
+    use sha2::{Digest, Sha256};
+    let der = rustls_pki_types::CertificateDer::from_pem_slice(pem.as_bytes()).ok()?;
+    Some(Sha256::digest(&der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":"))
+}
+
 fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
     use std::io::Write;
     let _ = std::fs::remove_file(file);
@@ -139,6 +147,9 @@ mod tests {
         }
         let fp = fingerprint(&made.cert).unwrap();
         assert_eq!(fp.len(), 95);
+        // the window's view checks the PEM WebView2 hands over against the same fingerprint
+        assert_eq!(fingerprint_pem(&std::fs::read_to_string(&made.cert).unwrap()).as_deref(), Some(fp.as_str()));
+        assert_eq!(fingerprint_pem("not a certificate"), None);
         // a machine given its sha256 trusts it, and only it (inyon join, then every connection)
         let pem = std::fs::read(&made.cert).unwrap();
         let hex = fp.replace(':', "").to_lowercase();

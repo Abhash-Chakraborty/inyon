@@ -157,16 +157,7 @@ From 0.20.3 Inyon on Windows is an app. Setup adds **Inyon** to the Start menu a
 
 The app runs what Inyon keeps going in the background: the link to your phone (and its tunnel) or the connection to a hub. They're its own child processes, in a Windows job, so they end when the app ends, even if it crashes. The scheduled task only opens the app when you sign in; it starts nothing itself. Their output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub), and the app's own to `app.log` beside them.
 
-The Inyon icon is in the notification area exactly while something runs. When nothing does, there's no icon. Opening Inyon a second time brings the open window forward instead of starting another copy.
-
-| Item | Does |
-|---|---|
-| The first line | What runs: *Running: link, tunnel*, or *Running: hub connection* |
-| Open Inyon | [The Inyon window](#the-inyon-window) |
-| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type. It says "Starting the tunnel…" until the tunnel's address is in the code |
-| Quit Inyon | Stops everything the app runs, and the icon goes. It starts again when you next sign in, or when you open Inyon |
-
-Closing the window keeps the app running when something runs: the first time, a note says so and points at **Quit Inyon**. With nothing running, closing the window ends the app.
+The Inyon icon is in the notification area exactly while something runs. Click it to show or hide the Inyon window, and right-click it for its menu; [The Inyon app on Windows](windows-app.md) describes both.
 
 The `inyon` command works with the app instead of starting copies of its own. `inyon status` says what runs in the background and that the Inyon app runs it, `inyon stop` stops all of it, and `inyon service install` or `inyon update` ask the running app to start or restart a job. A computer set up by 0.20.2 or earlier moves to the app by itself the next time its old engine starts or it updates: the tasks are registered again to open the app, and the app takes over the running engine.
 
@@ -176,20 +167,7 @@ Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell set
 
 ### The Inyon window
 
-From 0.20.1 the window is the control panel for this computer:
-
-| Part | Shows | Buttons |
-|---|---|---|
-| Header | The version, the computer's name, and Running, Starting, Stopped or Not set up | |
-| Pair a phone | The QR code and the ID and code to type in the app. It says so while the tunnel starts, and until the tunnel is up the code works on the same network or VPN. A used code names the phone that paired, an expired one says so, and in its last minute the note counts down ("gone in 42s") | Make a code, Copy link, and Show the log when the tunnel is slow or the code failed |
-| Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change: a menu to turn each on or off, applied by setup in the background (from 0.20.3; before, it opened `inyon setup` in a terminal) |
-| Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. More pages through the rest when there are more |
-| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which lists what the checks found. Before the phone link is set up, its window shows Set up instead; the hub connection's window only starts and stops (from 0.20.3) |
-| Footer | The newest log line | Open the log, Quit Inyon |
-
-On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.
-
-The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. Before 0.20.1 the window grew and shrank with every refresh.
+From 0.21 the window has a page for each part of Inyon on this computer: the phone link and how phones reach it, Phones, a hub's web app, Pages, Temp files, Activity and Settings. See [The Inyon app on Windows](windows-app.md). From 0.20.1 to 0.20.5 it was a smaller window of a fixed size with the pairing code, the reach, the phones and this computer's service.
 
 Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), with its version and the kite icon, and `inyon update` keeps the version current. An update from 0.20.2 or 0.20.3 leaves the old version's entry there; from 0.20.4 the Inyon app puts the right one back within a few minutes of starting. From 0.20.3 **Uninstall** there asks to confirm, then removes Inyon without opening a terminal and says when it's done; before, it ran `inyon uninstall --purge` in a console window that stayed open until you pressed Enter.
 

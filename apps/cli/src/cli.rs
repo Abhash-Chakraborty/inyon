@@ -518,7 +518,7 @@ pub fn main() {
         },
         Some(Command::Window { role, pair }) => match Role::parse(&role) {
             Some(r) => {
-                crate::window::trace("opening");
+                crate::desktop::trace("opening");
                 crate::app::open_window(r, pair)
             }
             None => {
