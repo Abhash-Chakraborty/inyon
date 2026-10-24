@@ -439,6 +439,12 @@ export type SendState = { id: string, text: string, at: number, state: SendStatu
 setting?: boolean, };
 
 /**
+ * A message Inyon holds for a pane and types in once its agent is free (from 0.22): it can still
+ * be edited, moved or dropped. `error` says why the last try didn't go, and holding stops there.
+ */
+export type HeldPrompt = { id: string, text: string, at: number, error?: string, };
+
+/**
  * A conversation the agent saved in a pane's folder, which it can be started again with.
  */
 export type PastConversation = { 
@@ -500,6 +506,10 @@ share?: string,
  * messages typed while the agent was busy, not yet picked up
  */
 queue: Array<string>, 
+/**
+ * messages Inyon holds until the agent is free, in the order they go (from 0.22)
+ */
+held?: Array<HeldPrompt>, 
 /**
  * the turn under way, for the working timer (Codex: from its records and its live events)
  */

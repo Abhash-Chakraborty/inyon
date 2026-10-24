@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type HostStatus, type LiveItem } from '@inyon/protocol'
+import { AGENTS, chatKey, type AgentKind, type HeldPrompt, type HostStatus, type LiveItem } from '@inyon/protocol'
 import { lastAsk } from '../../lib/lastAsk.ts'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
@@ -16,6 +16,8 @@ import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
+import { FailedScreen } from './FailedScreen.tsx'
+import { HeldBubble } from './HeldBubble.tsx'
 import { backgroundText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
 
@@ -23,6 +25,7 @@ const NO_AGENTS: AgentKind[] = []
 /** away longer than this, coming back jumps to the latest message */
 const AWAY_MS = 5 * 60_000
 const NO_QUEUE: string[] = []
+const NO_HELD: HeldPrompt[] = []
 const NO_PENDING: PendingMessage[] = []
 const NO_LIVE: LiveItem[] = []
 
@@ -36,6 +39,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const installed = useStore((s) => s.hosts.find((h) => h.config.id === host)?.agents) ?? NO_AGENTS
   const scroller = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
+  const [screenOpen, setScreenOpen] = useState(false)
   // follow new output only while the reader is at the bottom; any move up turns it off
   const stick = useRef(true)
   // the first rows on screen and where they were, so content changing above them doesn't move what's
@@ -62,6 +66,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const shownPrompt = prompt ?? (connected ? undefined : lastAsk(host, pane))
   const reconnecting = useReconnecting(machine?.status)
   const queue = chat?.info?.queue ?? NO_QUEUE
+  const held = chat?.info?.held ?? NO_HELD
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
   // what the agent is writing right now, and the running command's output for the working line
   const live = chat?.live ?? NO_LIVE
@@ -350,12 +355,17 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     ))}
                     {pending.map((p) => (
                       <div key={p.id} className={arriving.get(`p${p.id}`) ? 'animate-slide-up' : undefined}>
-                        <PendingBubble p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} />
+                        <PendingBubble p={p} onRetry={() => retry(p.id, p.text)} onDismiss={() => patchChat(key, (c) => ({ pending: c.pending.filter((x) => x.id !== p.id) }))} onScreen={() => setScreenOpen(true)} />
                       </div>
                     ))}
                     {queue.map((q, i) => (
                       <div key={`${i}:${q}`} className={arriving.get(`q${q}`) ? 'animate-slide-up' : undefined}>
                         <QueuedBubble text={q} agent={agent} />
+                      </div>
+                    ))}
+                    {held.map((p, i) => (
+                      <div key={p.id} className="animate-slide-up">
+                        <HeldBubble host={host} pane={pane} p={p} index={i} count={held.length} agentName={agent ? AGENTS[agent].name : 'the agent'} />
                       </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}
@@ -419,6 +429,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
             )}
           </div>
         </div>
+        <FailedScreen host={host} pane={pane} open={screenOpen} onClose={() => setScreenOpen(false)} />
       </ReplyFont.Provider>
     </ChatJobs.Provider>
     </ChatRewind.Provider>

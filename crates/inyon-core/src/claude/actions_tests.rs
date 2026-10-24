@@ -185,6 +185,141 @@ fn an_old_draft_that_differs_only_in_whitespace_is_replaced_not_sent() {
     });
 }
 
+/// Gemini's box as a send sees it: no parser reads it, so the screen is all there is. `shows`
+/// says whether typed text appears there.
+fn fake_gemini(shows: bool) -> Rc<RefCell<(String, Vec<String>)>> {
+    let b = Rc::new(RefCell::new((String::new(), Vec::new())));
+    let state = b.clone();
+    let re = keys_re();
+    Fake::install(move |_, cmd, input| {
+        let mut b = state.borrow_mut();
+        if cmd.contains("@@CAP") {
+            let shown = if shows { b.0.clone() } else { String::new() };
+            return ok(&format!("@@CAP %4\n✦ Done.\n╭────────────╮\n│ > {shown} │\n╰────────────╯\n"));
+        }
+        if cmd.contains("paste-buffer") {
+            b.0.push_str(input.unwrap_or(""));
+        }
+        for part in cmd.split(" && ") {
+            if let Some(k) = re.captures(part) {
+                match k.get(1) {
+                    Some(t) => b.0.push_str(&unq(t.as_str())),
+                    None if &k[2] == "Enter" => {
+                        let sent = std::mem::take(&mut b.0);
+                        b.1.push(sent);
+                    }
+                    None => {}
+                }
+            }
+        }
+        ok("")
+    });
+    pane("local", json!([{ "id": "%4", "width": 100, "agent": { "kind": "gemini", "pid": 7, "state": "idle" } }]));
+    b
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_enter_once_the_text_shows() {
+    run(|| async {
+        let b = fake_gemini(true);
+        send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap();
+        assert_eq!(b.borrow().1, ["Summarise the failing tests"]);
+    });
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_no_blind_enter() {
+    run(|| async {
+        let b = fake_gemini(false);
+        let e = send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap_err();
+        assert!(e.message.contains("Enter wasn't pressed"), "{}", e.message);
+        assert!(b.borrow().1.is_empty());
+    });
+}
+
+#[test]
+fn held_messages_wait_for_the_agent_to_be_free_then_go_in_order() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(true);
+        let first = crate::claude::held::hold("local", "%4", "Write the migration").unwrap();
+        let second = crate::claude::held::hold("local", "%4", "Then run the tests").unwrap();
+        assert!(crate::claude::held::hold("local", "%4", "  ").is_err());
+        assert_eq!(crate::claude::held::hold("local", "%9", "x").unwrap_err().status, Some(404));
+        // reordered and edited while held
+        crate::claude::held::move_to("local", "%4", &second.id, 0).unwrap();
+        crate::claude::held::edit("local", "%4", &first.id, "Write the migration for users").unwrap();
+        let ids: Vec<String> = crate::claude::held::list("local", "%4").into_iter().map(|p| p.text).collect();
+        assert_eq!(ids, ["Then run the tests", "Write the migration for users"]);
+        // kept in the record
+        let saved = crate::platform::store::kv::get_value(crate::claude::held::KEY).unwrap().to_string();
+        assert!(saved.contains("Then run the tests"), "{saved}");
+        // idle, but not for long enough yet: nothing goes
+        let t0 = 1_000_000;
+        crate::claude::held::tick(t0).await;
+        sleep(50).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::tick(t0 + crate::claude::held::SETTLE_MS).await;
+        for _ in 0..200 {
+            if !b.borrow().1.is_empty() && crate::claude::held::list("local", "%4").len() == 1 {
+                break;
+            }
+            sleep(100).await;
+        }
+        assert_eq!(b.borrow().1, ["Then run the tests"]);
+        assert_eq!(crate::claude::held::list("local", "%4").len(), 1);
+        // dropped
+        crate::claude::held::remove("local", "%4", &first.id).unwrap();
+        assert!(crate::claude::held::list("local", "%4").is_empty());
+    });
+}
+
+#[test]
+fn a_held_message_that_fails_stays_first_with_the_reason_and_holding_stops() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(false);
+        let p = crate::claude::held::hold("local", "%4", "Summarise the failing tests").unwrap();
+        assert!(crate::claude::held::send_now("local", "%4", &p.id).await.is_err());
+        let left = crate::claude::held::list("local", "%4");
+        assert_eq!(left.len(), 1);
+        assert!(left[0].error.as_deref().unwrap().contains("Enter wasn't pressed"));
+        // the tick leaves it alone until it's edited, sent now or dropped
+        crate::claude::held::tick(1_000_000).await;
+        crate::claude::held::tick(1_000_000 + crate::claude::held::SETTLE_MS).await;
+        sleep(200).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::edit("local", "%4", &p.id, "Summarise the failing tests, briefly").unwrap();
+        assert_eq!(crate::claude::held::list("local", "%4")[0].error, None);
+    });
+}
+
+#[test]
+fn two_stops_at_once_send_one_escape() {
+    run(|| async {
+        let escapes = Rc::new(RefCell::new(0));
+        let seen = escapes.clone();
+        let working = include_str!("../../../../fixtures/screens/claude/working.txt").to_owned();
+        Fake::install(move |_, cmd, _| {
+            if cmd.contains("@@CAP") {
+                let screen = if *seen.borrow() == 0 { working.clone() } else { working.replace("✽ Undulating… (2s · thinking with high effort)", "● Stopped.") };
+                return ok(&format!("@@CAP %9\n{screen}"));
+            }
+            if cmd.contains("send-keys") && cmd.contains("Escape") {
+                *seen.borrow_mut() += 1;
+            }
+            ok("")
+        });
+        pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        // the phone and the laptop press Stop together, then once more straight after
+        let (a, b) = futures_util::future::join(interrupt("local", "%9"), interrupt("local", "%9")).await;
+        a.unwrap();
+        b.unwrap();
+        interrupt("local", "%9").await.unwrap();
+        assert_eq!(*escapes.borrow(), 1);
+    });
+}
+
 #[test]
 fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     run(|| async {

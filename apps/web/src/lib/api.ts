@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, HeldPrompt, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -307,6 +307,8 @@ type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 export const TEMP_WAIT = 70_000
 export const TEMP_DELETE_WAIT = 110_000
 
+export type SendFailure = { at: number; host: string; pane: string; agent?: string | null; error: string; chars: number; screen: string[] }
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -341,6 +343,11 @@ export const api = {
   answer: (host: string, pane: string, option: number, text?: string, question?: string) =>
     request('POST', `${panePath(host, pane)}/answer`, { option, text, question }),
   interrupt: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/interrupt`),
+  // messages the hub holds until the agent is free (from 0.22)
+  hold: (host: string, pane: string, text: string) => request<HeldPrompt>('POST', `${panePath(host, pane)}/held`, { text }),
+  editHeld: (host: string, pane: string, id: string, b: { text?: string; to?: number }) => request('PATCH', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`, b),
+  dropHeld: (host: string, pane: string, id: string) => request('DELETE', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`),
+  sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),
   restart: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/restart`),
@@ -390,6 +397,8 @@ export const api = {
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
   startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
   settings: () => request<HubSettings>('GET', '/api/settings'),
+  /** sends that failed, newest first, each with the bottom of the screen it failed on (from 0.22) */
+  sendFailures: () => request<SendFailure[]>('GET', '/api/send-failures'),
   push: (b: { subscription: PushSubscriptionJSON; vapid: { privateJwk: JsonWebKey; subject: string }; done: boolean }) => request('POST', '/api/push', b),
   unpush: (endpoint: string) => request('DELETE', '/api/push', { endpoint }),
   pushTest: (endpoint: string) => request<{ sent: number }>('POST', '/api/push/test', { endpoint }, 30_000),

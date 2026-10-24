@@ -88,6 +88,14 @@ What you type is saved as you go, and mirrored into the agent's own input box in
 
 A message shows **Sending**, then **Sent** once the agent has it. If it can't be delivered, it says so, with **Retry** and **Dismiss**; messages that failed because the connection dropped are retried by themselves when it comes back. A message that hasn't appeared in the conversation after ten minutes says so.
 
+Inyon presses Enter only once your message shows in the agent's input box. For Claude Code, Codex, Antigravity, Copilot and OpenCode it reads the box itself; for any other agent, such as Gemini CLI, it waits until the end of your message (or a paste preview) appears on the screen, and if it doesn't, nothing is submitted and the message says so. From 0.22 the hub keeps the last 20 failed sends with the bottom of the screen each failed on, without the message itself: right-click (or long-press) a message that wasn't sent and choose **What was on screen**. Before 0.22 Gemini CLI got Enter 0.3 seconds after the text was typed, whether or not it had arrived.
+
+### Holding a message until the agent is free
+
+From 0.22 the hub can hold a message for you and type it in once the agent has been idle for a moment, with no question open and nothing running in the background. Right-click (or long-press) the send button and choose **Hold until … is free**, or press Alt+Enter (⌥Enter on a Mac). Held messages show under the conversation with a dashed outline, in the order they go. Each has **Send now** and **Drop** beside it, and its menu also has **Edit**, **Move up** and **Move down**; dropping one can be undone. Unlike a message the agent queues itself, a held message can still be changed from any device, and it survives a restart of the hub.
+
+If a held message can't be sent, it stays first in line with the reason, and nothing more goes until you edit it, send it now or drop it. Up to 50 messages can be held per session. The phone app holds messages only through a hub of 0.22 or later.
+
 ## Renaming
 
 Click or tap the title in the header to rename a session (up to 80 characters), or choose **Use automatic name** to go back. The name stays with the conversation, even if you resume it later. Renaming a plain terminal renames its tmux window.
