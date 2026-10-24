@@ -100,6 +100,8 @@ If a held message can't be sent, it stays first in line with the reason, and not
 
 Click or tap the title in the header to rename a session (up to 80 characters), or choose **Use automatic name** to go back. The name stays with the conversation, even if you resume it later. Renaming a plain terminal renames its tmux window.
 
+From 0.22 you can rename the tmux session itself, on any machine (Linux, macOS or Windows): right-click its heading in the sidebar, or choose **Rename tmux session…** from a session's menu. tmux shows the new name too, in `tmux ls` and its status bar. tmux doesn't allow a dot or a colon in a session's name, so those become underscores, and a `#` becomes a dash. Two sessions on one machine can't share a name.
+
 ## Past conversations
 
 From 0.15, Inyon lists an agent's past conversations itself, since its own resume picker only works in the terminal. Open the list with **Past conversations…** in the header's **⋯** menu, with **History** in the controls sheet on a phone, or by sending the agent's resume command from the message box:

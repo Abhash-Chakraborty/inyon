@@ -11,12 +11,24 @@ use crate::hosts::registry::registry;
 use crate::re;
 
 /// The machine's inyon: the one the connection runs from (INYON_EXE, set for paired machines),
-/// else the one on PATH or in ~/.inyon/bin. Exit 127 when there's none.
-pub const INYON: &str = r#"x="${INYON_EXE:-}"; s="${INYON_SCRIPT:-}"
+/// else the one on PATH or in ~/.inyon/bin. Exit 127 when there's none. Then one of its commands.
+macro_rules! machine_inyon {
+    ($command:literal) => {
+        concat!(
+            r#"x="${INYON_EXE:-}"; s="${INYON_SCRIPT:-}"
 if [ -z "$x" ]; then x="$(command -v inyon 2>/dev/null)"; s=; fi
 if [ -z "$x" ] && [ -x "$HOME/.inyon/bin/inyon" ]; then x="$HOME/.inyon/bin/inyon"; fi
 [ -n "$x" ] || { echo 'inyon: not found' >&2; exit 127; }
-"$x" ${s:+"$s"} temp"#;
+"$x" ${s:+"$s"} "#,
+            $command
+        )
+    };
+}
+
+/// `inyon temp` on the machine.
+pub const INYON: &str = machine_inyon!("temp");
+/// `inyon pages` on the machine (the hub's pages_remote).
+pub const INYON_PAGES: &str = machine_inyon!("pages");
 
 /// The biggest image the app gets whole (as the CLI's own limit).
 pub const PREVIEW_MAX: u64 = 8 * 1024 * 1024;

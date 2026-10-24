@@ -1547,6 +1547,10 @@ pub fn hub_settings(bind: &Bind, env: &mut std::collections::BTreeMap<String, St
 
 /// Everything the engine still has to say, for `inyon hub …` forms this program doesn't handle.
 pub fn hub_other(args: &[String]) -> ! {
+    if cfg!(windows) {
+        eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
+        std::process::exit(1);
+    }
     let mut all = vec!["hub".to_string()];
     all.extend(args.iter().cloned());
     engine::forward(&all)

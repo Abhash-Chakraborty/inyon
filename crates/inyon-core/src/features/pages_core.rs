@@ -690,6 +690,12 @@ pub fn gone_after_open(req: &ViewRequest<'_>) -> ViewDecision {
     failure(req.origin, 404, token.as_deref(), None)
 }
 
+/// The 413 for a 200 whose file is on another machine and bigger than the hub fetches from it.
+pub fn too_big(req: &ViewRequest<'_>) -> ViewDecision {
+    let token = split_view_target(req.target).map(|t| t.token);
+    failure(req.origin, 413, token.as_deref(), None)
+}
+
 /// The real path is the site's root or inside it, with no dot-named folder or file on the way.
 pub fn within(root: &Path, real: &Path) -> bool {
     match real.strip_prefix(root) {

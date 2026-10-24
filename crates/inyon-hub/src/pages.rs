@@ -19,8 +19,9 @@ use std::rc::Rc;
 use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
-    decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, unique_slug, view_origin, within, FileStat, VerifyContext,
-    ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, GIT_ENV, GIT_TIMEOUT_MS, LOCAL_HOST, NO_INDEX, PAGES_LIST_MAX, TOKEN_TTL_MS,
+    decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, split_view_target, too_big, unique_slug, verify_token,
+    view_origin, view_segments, within, FileStat, VerifyContext, ViewContext, ViewDecision, ViewFs, ViewRequest, BAD_SLUG, CANT_WRITE_LIST, GIT_ENV, GIT_TIMEOUT_MS,
+    LOCAL_HOST, NO_INDEX, PAGES_LIST_MAX, TOKEN_TTL_MS,
 };
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::js::text::JsStr;
@@ -29,6 +30,7 @@ use inyon_protocol::PageProgress;
 use serde_json::{json, Map, Number, Value};
 
 use crate::http::{ok, ok_json, Req, Resp};
+use crate::pages_remote::{self, slashed, Listing, RemoteLists, RemotePage};
 use crate::server::{guarded, h, Routes};
 
 /// The store key (a file in the hub's data folder) that keeps each site's epoch, `{"<host>/<slug>": n}`.
@@ -47,7 +49,8 @@ const MARKER_MAX: u64 = 64 * 1024;
 const LOCK_MAX: u64 = 256;
 
 pub const UNKNOWN_PAGE: &str = "Unknown page";
-pub const OTHER_MACHINE: &str = "Pages can only be added on the hub's own machine for now";
+/// A machine the hub doesn't have, or can't reach now.
+pub const NOT_CONNECTED: &str = "That machine isn't connected";
 pub const BROKEN_FILE: &str = "~/.inyon/pages.json isn't a page list Inyon can read. Fix it or delete it, then try again.";
 pub const LOCKED: &str = "Another program is changing ~/.inyon/pages.json. Try again in a moment.";
 pub const NOT_SAVED: &str = "The hub couldn't write to its data folder, so the old links stay closed only until it restarts. Check the hub's disk, then revoke again.";
@@ -69,7 +72,7 @@ pub struct Record {
     pub added: Number,
 }
 
-fn as_record(v: &Value) -> Option<Record> {
+pub(crate) fn as_record(v: &Value) -> Option<Record> {
     let o = v.as_object()?;
     let s = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
     let slug = s("slug").filter(|x| is_slug(x))?;
@@ -460,17 +463,21 @@ fn safe_int(v: &Value) -> Option<u64> {
     (n.fract() == 0.0 && (0.0..=9_007_199_254_740_991.0).contains(&n)).then_some(n as u64)
 }
 
-/// What the list held when the hub last read it, `{"<host>/<slug>": added}`, kept in the hub's data
-/// folder. The CLI and Blueprint take pages off the list without the hub, even while it is stopped;
-/// when a slug has gone, or now names a page added at another time, `gone` hears of it so its old
-/// links end before a page added again under the same slug could open them.
+/// What the lists held when the hub last read them, `{"<host>/<slug>": added}`, kept in the hub's
+/// data folder: its own pages.json and each other machine's. The CLI and Blueprint take pages off a
+/// list without the hub, even while it is stopped; when a slug has gone, or now names a page added
+/// at another time, `gone` hears of it (host, slug) so its old links end before a page added again
+/// under the same slug could open them.
 pub struct Listed {
     last: RefCell<Map<String, Value>>,
-    gone: Box<dyn Fn(&str)>,
+    gone: OnGone,
 }
 
+/// What `Listed` calls with the host and slug of a page that went.
+pub type OnGone = Box<dyn Fn(&str, &str)>;
+
 impl Listed {
-    pub fn load(gone: Box<dyn Fn(&str)>) -> Listed {
+    pub fn load(gone: OnGone) -> Listed {
         let mut last = Map::new();
         if let Some(Value::Object(raw)) = kv::get_value(LISTED_KEY) {
             for (k, v) in raw {
@@ -482,31 +489,33 @@ impl Listed {
         Listed { last: RefCell::new(last), gone }
     }
 
-    pub fn saw(&self, records: &[Record]) {
-        let mut next = Map::new();
+    /// One machine's list, just read (`host` is LOCAL_HOST for the hub's own).
+    pub fn saw(&self, host: &str, records: &[Record]) {
+        let prefix = format!("{host}/");
+        let mut next: Map<String, Value> = self.last.borrow().iter().filter(|(k, _)| !k.starts_with(&prefix)).map(|(k, v)| (k.clone(), v.clone())).collect();
         for r in records {
-            next.insert(format!("{LOCAL_HOST}/{}", r.slug), Value::Number(r.added.clone()));
+            next.insert(format!("{prefix}{}", r.slug), Value::Number(r.added.clone()));
         }
         let gone: Vec<String> = {
             let last = self.last.borrow();
             let mut changed = next.len() != last.len();
             let mut gone = vec![];
             for (k, added) in last.iter() {
+                let Some(slug) = k.strip_prefix(&prefix) else { continue };
                 if next.get(k).is_some_and(|n| same_number(n, added)) {
                     continue;
                 }
                 changed = true;
-                if let Some(slug) = k.strip_prefix(&format!("{LOCAL_HOST}/")) {
-                    gone.push(slug.to_owned());
-                }
+                gone.push(slug.to_owned());
             }
+            changed |= next.iter().any(|(k, _)| k.starts_with(&prefix) && !last.contains_key(k));
             if !changed {
                 return;
             }
             gone
         };
         for slug in gone {
-            (self.gone)(&slug);
+            (self.gone)(host, &slug);
         }
         if let Err(e) = kv::set_value(LISTED_KEY, &Value::Object(next.clone())) {
             inyon_core::platform::console::error(&format!("couldn't save the pages listed: {e}"));
@@ -656,6 +665,10 @@ pub struct Pages {
     pub now: Rc<dyn Fn() -> u64>,
     /// the disk decide_view looks at (a test swaps folders under it)
     pub fs: Rc<dyn ViewFs>,
+    /// what the lists held at the last read, every machine's
+    pub listed: Rc<Listed>,
+    /// the other machines' pages (pages_remote)
+    pub remote: RemoteLists,
 }
 
 impl Pages {
@@ -664,11 +677,12 @@ impl Pages {
         let bump = epochs.clone();
         // a page taken off the list by anyone (the CLI, Blueprint, a hand edit) ends its links
         // a failed save is logged by bump; the running hub refuses the links all the same
-        let listed = Listed::load(Box::new(move |slug| {
-            let _ = bump.bump(LOCAL_HOST, slug);
-        }));
-        let registry = Registry::watched(pages_file(&home), &home, Box::new(move |records| listed.saw(records)));
-        Pages { registry, home, epochs, progress: ProgressCache::default(), now, fs: Rc::new(DiskFs) }
+        let listed = Rc::new(Listed::load(Box::new(move |host, slug| {
+            let _ = bump.bump(host, slug);
+        })));
+        let seen = listed.clone();
+        let registry = Registry::watched(pages_file(&home), &home, Box::new(move |records| seen.saw(LOCAL_HOST, records)));
+        Pages { registry, home, epochs, progress: ProgressCache::default(), now, fs: Rc::new(DiskFs), listed, remote: RemoteLists::default() }
     }
 
     fn entry(&self, r: &Record) -> Value {
@@ -679,8 +693,28 @@ impl Pages {
         v
     }
 
-    fn page(&self, host: &str, slug: &str) -> HubResult<Record> {
-        let r = if host == LOCAL_HOST && is_slug(slug) { self.registry.find(slug) } else { None };
+    /// A page on another machine, as the API lists it.
+    fn remote_entry(host: &str, p: &RemotePage) -> Value {
+        let r = &p.record;
+        let mut v = json!({ "host": host, "slug": r.slug, "name": r.name, "project": r.project, "by": r.by, "added": Value::Number(r.added.clone()), "folder": r.path });
+        if let Some(progress) = &p.progress {
+            v["progress"] = progress.clone();
+        }
+        v
+    }
+
+    fn saw(&self) -> impl Fn(&str, &[Record]) + '_ {
+        |host, records| self.listed.saw(host, records)
+    }
+
+    async fn page(&self, host: &str, slug: &str) -> HubResult<Record> {
+        let r = if !is_slug(slug) {
+            None
+        } else if host == LOCAL_HOST {
+            self.registry.find(slug)
+        } else {
+            self.remote.find(host, slug, (self.now)(), &self.saw()).await.map(|p| p.record)
+        };
         r.ok_or_else(|| http(404, UNKNOWN_PAGE))
     }
 }
@@ -723,31 +757,37 @@ async fn read_body(req: &mut Req) -> HubResult<Map<String, Value>> {
 
 pub async fn list(_req: Req) -> HubResult<Resp> {
     let p = pages();
-    let all: Vec<Value> = p.registry.records().iter().map(|r| p.entry(r)).collect();
+    let mut all: Vec<Value> = p.registry.records().iter().map(|r| p.entry(r)).collect();
+    for (host, list) in p.remote.all((p.now)(), &p.saw()).await {
+        all.extend(list.iter().map(|r| Pages::remote_entry(&host, r)));
+    }
     Ok(ok_json(&json!({ "pages": all })))
 }
 
 pub async fn open(req: Req) -> HubResult<Resp> {
     let p = pages();
-    let r = p.page(&req.param("host"), &req.param("slug"))?;
+    let host = req.param("host");
+    let r = p.page(&host, &req.param("slug")).await?;
     let phone = crate::phones::phone_for(&req).map(|ph| ph.id);
-    let (token, expires) = mint_token(&pages_key(&crate::password::session_secret()), LOCAL_HOST, &r.slug, p.epochs.of(LOCAL_HOST, &r.slug), phone.as_deref(), (p.now)());
+    let (token, expires) = mint_token(&pages_key(&crate::password::session_secret()), &host, &r.slug, p.epochs.of(&host, &r.slug), phone.as_deref(), (p.now)());
     Ok(ok_json(&json!({ "url": format!("/v/{token}/"), "expires": expires, "ttl": TOKEN_TTL_MS })))
 }
 
 pub async fn revoke(req: Req) -> HubResult<Resp> {
     let p = pages();
-    let r = p.page(&req.param("host"), &req.param("slug"))?;
-    p.epochs.bump(LOCAL_HOST, &r.slug)?;
+    let host = req.param("host");
+    let r = p.page(&host, &req.param("slug")).await?;
+    p.epochs.bump(&host, &r.slug)?;
     Ok(ok())
 }
 
 pub async fn register(mut req: Req) -> HubResult<Resp> {
     let b = read_body(&mut req).await?;
-    if req.param("host") != LOCAL_HOST {
-        return Err(http(404, OTHER_MACHINE));
-    }
+    let host = req.param("host");
     let p = pages();
+    if host != LOCAL_HOST {
+        return register_remote(&p, &host, &b).await;
+    }
     let given = b.get("path").and_then(Value::as_str).map(|s| s.jtrim().to_owned()).unwrap_or_default();
     let folder = if given.len16() > 1 { given.trim_end_matches(['/', '\\']).to_owned() } else { given };
     if let Some(problem) = p.registry.folder_problem(&folder) {
@@ -806,10 +846,18 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
 
 pub async fn remove(req: Req) -> HubResult<Resp> {
     let (host, slug) = (req.param("host"), req.param("slug"));
-    if host != LOCAL_HOST || !is_slug(&slug) {
+    if !is_slug(&slug) {
         return Err(http(404, UNKNOWN_PAGE));
     }
     let p = pages();
+    if host != LOCAL_HOST {
+        p.page(&host, &slug).await?;
+        pages_remote::remove(&host, &slug).await?;
+        p.remote.forget(&host);
+        // its links end now, and stay dead if the slug comes back
+        p.epochs.bump(&host, &slug)?;
+        return Ok(ok());
+    }
     let gone = p
         .registry
         .update(|pages| {
@@ -828,6 +876,31 @@ pub async fn remove(req: Req) -> HubResult<Resp> {
         p.progress.drop_folder(&r.path);
     }
     Ok(ok())
+}
+
+/// Adds a folder on another machine, through its own inyon (which checks the folder by the same
+/// rules), and answers with the entry as the list will have it.
+async fn register_remote(p: &Pages, host: &str, b: &Map<String, Value>) -> HubResult<Resp> {
+    if pages_remote::machines().iter().all(|m| m != host) {
+        return Err(http(404, NOT_CONNECTED));
+    }
+    let folder = b.get("path").and_then(Value::as_str).map(|s| s.jtrim().to_owned()).unwrap_or_default();
+    if folder.is_empty() {
+        return Err(http(400, inyon_core::features::pages_core::NOT_ABSOLUTE));
+    }
+    let slug = match b.get("slug") {
+        None => None,
+        Some(Value::String(s)) if is_slug(s) => Some(s.as_str()),
+        Some(_) => return Err(http(400, BAD_SLUG)),
+    };
+    let name = match b.get("name") {
+        None => None,
+        Some(Value::String(n)) => Some(n.jtrim().to16(200).to_owned()),
+        Some(_) => return Err(http(400, "The name must be text")),
+    };
+    let added = pages_remote::add(host, &folder, name.as_deref(), slug).await?;
+    p.remote.forget(host);
+    Ok(ok_json(&Pages::remote_entry(host, &added)))
 }
 
 /// The API routes, behind sign-in (a cookie, or a paired phone's bearer).
@@ -867,16 +940,35 @@ pub async fn view(req: Req) -> Resp {
     let key = pages_key(&crate::password::session_secret());
     let epoch_of = |h: &str, s: &str| p.epochs.of(h, s);
     let phone_paired = |id: &str| crate::phones::phone_paired(id);
-    let site_root = |h: &str, s: &str| if h == LOCAL_HOST { p.registry.find(s).map(|r| PathBuf::from(r.path)) } else { None };
     // read the list first, so a page removed since the last request has its epoch moved on before
     // its token is checked
     p.registry.records();
-    let ctx = ViewContext { verify: VerifyContext { key: &key, now: (p.now)(), epoch_of: &epoch_of, phone_paired: &phone_paired }, site_root: &site_root, fs: p.fs.as_ref() };
     let inm = req.header("if-none-match");
     let method = req.method.as_str().to_owned();
+    let verify = VerifyContext { key: &key, now: (p.now)(), epoch_of: &epoch_of, phone_paired: &phone_paired };
+    // a page on another machine: what its inyon says about this request, asked once, up front
+    let remote = remote_listing(&p, &method, &target, &verify, inm.as_deref()).await;
+    let site_root = |h: &str, s: &str| match &remote {
+        Some(r) => (r.host == h && r.slug == s).then(|| r.root.clone()),
+        None if h == LOCAL_HOST => p.registry.find(s).map(|r| PathBuf::from(r.path)),
+        None => None,
+    };
+    let fs: &dyn ViewFs = match &remote {
+        Some(r) => &r.listing,
+        None => p.fs.as_ref(),
+    };
+    let ctx = ViewContext { verify, site_root: &site_root, fs };
     let vr = ViewRequest { method: &method, target: &target, origin: origin.as_deref(), if_none_match: inm.as_deref() };
     let d = decide_view(&vr, &ctx).await;
     let head = req.method == Method::HEAD;
+    if let Some(r) = &remote {
+        let Some((path, _)) = &d.file else { return respond(d, head, None) };
+        return match r.listing.bytes_for(path) {
+            Some(bytes) => respond_bytes(d, head, bytes.to_vec()),
+            None if r.listing.big => respond(too_big(&vr), head, None),
+            None => respond(gone_after_open(&vr), head, None),
+        };
+    }
     match (&d.file, &d.site) {
         (Some((path, _)), Some(site)) => match open_within(path, site).await {
             Some(opened) => respond(d, head, Some(opened)),
@@ -884,6 +976,35 @@ pub async fn view(req: Req) -> Resp {
         },
         _ => respond(d, head, None),
     }
+}
+
+/// A `/v/` request for a page on another machine, with what that machine said about it.
+struct RemoteView {
+    host: String,
+    slug: String,
+    /// the site's folder as the hub joins paths (slashed)
+    root: PathBuf,
+    listing: Listing,
+}
+
+/// For a request whose token is good and names a page on another machine that is still listed
+/// there: asks that machine about it, once. None for anything else, which decide_view then answers
+/// as it does (403, 404, 405, 301).
+async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyContext<'_>, if_none_match: Option<&str>) -> Option<RemoteView> {
+    if method != "GET" && method != "HEAD" {
+        return None;
+    }
+    let t = split_view_target(target)?;
+    let claims = verify_token(&t.token, verify).ok()?;
+    if claims.h == LOCAL_HOST || t.rest.is_empty() {
+        return None;
+    }
+    let (segments, slash) = view_segments(&t.rest)?;
+    let page = p.remote.find(&claims.h, &claims.s, (p.now)(), &p.saw()).await?;
+    let root = slashed(&page.record.path);
+    // a machine that doesn't answer leaves nothing listed, so the request is a 404
+    let listing = pages_remote::get(&claims.h, &claims.s, &root, &segments, slash, if_none_match).await.unwrap_or_default();
+    Some(RemoteView { host: claims.h, slug: claims.s, root, listing })
 }
 
 /// Opens a file decide_view checked, then makes sure the open file is still inside the site: a
@@ -985,6 +1106,16 @@ fn respond(d: ViewDecision, head: bool, opened: Option<(std::fs::File, u64)>) ->
         }
         None if !head && !d.body.is_empty() => *res.body_mut() = Body::from(d.body),
         None => {}
+    }
+    res
+}
+
+/// A 200 for a file another machine sent whole.
+fn respond_bytes(d: ViewDecision, head: bool, bytes: Vec<u8>) -> Resp {
+    let mut res = respond(ViewDecision { body: String::new(), ..d }, true, None);
+    res.headers_mut().insert(header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    if !head {
+        *res.body_mut() = Body::from(bytes);
     }
     res
 }

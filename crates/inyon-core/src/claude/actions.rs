@@ -2294,6 +2294,31 @@ pub async fn rename_pane(host_id: &str, pane_id: &str, raw: &str) -> HubResult<(
     Ok(())
 }
 
+/// Renames a tmux session (psmux on Windows too): `session` is its number, the `52` of `$52`.
+/// tmux won't have a dot or a colon in a session's name, so those become underscores, as tmux
+/// itself does; a # (a tmux format) becomes a dash, as when Inyon starts a session.
+pub async fn rename_tmux_session(host_id: &str, session: &str, raw: &str) -> HubResult<String> {
+    if !re!(r"^\d{1,9}$").is_match(session) {
+        return Err(http(400, "Bad session"));
+    }
+    let spaced = re!(r"\s+", "g").replace_all(raw, " ");
+    let name = re!(r"[.:]", "g").replace_all(spaced.jtrim(), "_").replace('#', "-").to16(80).to_owned();
+    if name.is_empty() {
+        return Err(http(400, "Type a name"));
+    }
+    let host = registry().host(host_id)?;
+    let r = host.run(&format!("tmux rename-session -t {} {}", shq(&format!("${session}")), shq(&name))).await?;
+    if r.code != 0 {
+        let err = r.stderr.jtrim();
+        if re!(r"duplicate session", "i").is_match(err) {
+            return Err(http(409, format!("There's already a tmux session called {name} on that machine")));
+        }
+        return Err(http(500, if err.is_empty() { "Could not rename the tmux session" } else { err }));
+    }
+    registry().refresh(host_id, 0);
+    Ok(name)
+}
+
 /// Types /rename for a name the agent hasn't taken yet, once it's idle with nothing open on screen.
 /// Called after a rename and again by the registry while one waits; tried at most every 20 s.
 pub async fn apply_pending_name(host_id: &str, pane_id: &str) -> HubResult<()> {

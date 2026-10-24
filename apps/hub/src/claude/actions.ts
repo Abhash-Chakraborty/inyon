@@ -1406,6 +1406,25 @@ export async function renamePane(hostId: string, paneId: string, raw: string) {
   registry.refresh(hostId, 0)
 }
 
+/**
+ * Renames a tmux session (psmux on Windows too): `session` is its number, the `52` of `$52`.
+ * tmux won't have a dot or a colon in a session's name, so those become underscores, as tmux
+ * itself does; a # (a tmux format) becomes a dash, as when Inyon starts a session.
+ */
+export async function renameTmuxSession(hostId: string, session: string, raw: string) {
+  if (!/^\d{1,9}$/.test(session)) throw new HttpError(400, 'Bad session')
+  const name = raw.replace(/\s+/g, ' ').trim().replace(/[.:]/g, '_').replaceAll('#', '-').slice(0, 80)
+  if (!name) throw new HttpError(400, 'Type a name')
+  const r = await registry.host(hostId).exec(`tmux rename-session -t ${shq(`$${session}`)} ${shq(name)}`)
+  if (r.code !== 0) {
+    const err = r.stderr.trim()
+    if (/duplicate session/i.test(err)) throw new HttpError(409, `There's already a tmux session called ${name} on that machine`)
+    throw new HttpError(500, err || 'Could not rename the tmux session')
+  }
+  registry.refresh(hostId, 0)
+  return name
+}
+
 const renameTried = new Map<string, number>()
 
 /**

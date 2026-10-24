@@ -13,6 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import type { PageEntry, PageList, PageOpen, PageRecord, PageRegister } from '@inyon/protocol'
 import { HttpError } from '../hosts/http-error.ts'
+import { registry as hosts } from '../hosts/registry.ts'
 import type { Store } from '../platform/store.ts'
 import {
   BAD_SLUG,
@@ -57,6 +58,8 @@ const LOCK_MAX = 256
 
 export const UNKNOWN_PAGE = 'Unknown page'
 export const OTHER_MACHINE = "Pages can only be added on the hub's own machine for now"
+/** a machine the hub doesn't have, or can't reach now (the Rust hub's answer too) */
+export const NOT_CONNECTED = "That machine isn't connected"
 export const BROKEN_FILE = "~/.inyon/pages.json isn't a page list Inyon can read. Fix it or delete it, then try again."
 export const LOCKED = 'Another program is changing ~/.inyon/pages.json. Try again in a moment.'
 export const NOT_SAVED = "The hub couldn't write to its data folder, so the old links stay closed only until it restarts. Check the hub's disk, then revoke again."
@@ -699,7 +702,8 @@ export function pagesFeature(o: PagesOptions) {
 
   const register: Handler = async (req) => {
     const b = await readBody(req)
-    if (req.params.host !== LOCAL_HOST) throw new HttpError(404, OTHER_MACHINE)
+    // the Bun hub adds pages on its own machine only; the Rust hub adds them on the others too
+    if (req.params.host !== LOCAL_HOST) throw new HttpError(404, hosts.get(req.params.host!)?.state.status === 'online' ? OTHER_MACHINE : NOT_CONNECTED)
     const given = typeof b.path === 'string' ? b.path.trim() : ''
     const folder = given.length > 1 ? given.replace(/[\\/]+$/, '') : given
     const problem = registry.folderProblem(folder)

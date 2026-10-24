@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Host, tmuxLiteral } from '../hosts/host.ts'
 import { registry } from '../hosts/registry.ts'
-import { launch, renamePane, respawnShell } from './actions.ts'
+import { launch, renamePane, renameTmuxSession, respawnShell } from './actions.ts'
 
 // tmux expands formats in session names, start folders and window names, and `#(cmd)` runs a
 // command. A folder or name with one in it must reach tmux as plain text. A tmux server of the
@@ -58,6 +58,18 @@ test('renaming a plain terminal keeps the name as typed', async () => {
   await Bun.sleep(300)
   expect(existsSync(ran('rename'))).toBe(false)
   expect(await tmux(`display -p -t ${pane} '#{window_name}'`)).toBe(`build ${runs('rename')} ##2`)
+})
+
+test('a tmux session is renamed by its number, with what tmux won\'t take out of the name', async () => {
+  const id = (await tmux(`new-session -d -s 0 -P -F '#{session_id}'`)).slice(1)
+  expect(await renameTmuxSession('literal', id, `  my  laptop.v2:${runs('session')} `)).toBe('my laptop_v2_-(cd $TMUX_TMPDIR; touch ran-session)')
+  await Bun.sleep(300)
+  expect(existsSync(ran('session'))).toBe(false)
+  expect(await tmux(`display -p -t '$${id}' '#{session_name}'`)).toBe('my laptop_v2_-(cd $TMUX_TMPDIR; touch ran-session)')
+  // a name another session has
+  await expect(renameTmuxSession('literal', id, 'guard')).rejects.toMatchObject({ status: 409 })
+  await expect(renameTmuxSession('literal', id, '  ')).rejects.toMatchObject({ status: 400 })
+  await expect(renameTmuxSession('literal', '$1;id', 'x')).rejects.toMatchObject({ status: 400 })
 })
 
 test('a restarted shell gets its folder doubled for tmux, but not on psmux', () => {

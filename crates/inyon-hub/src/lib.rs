@@ -20,6 +20,7 @@ pub mod limits;
 pub mod multipart;
 pub mod node_dist;
 pub mod pages;
+pub mod pages_remote;
 pub mod password;
 pub mod phones;
 pub mod push;

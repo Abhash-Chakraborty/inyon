@@ -2,7 +2,7 @@ import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protoco
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
-import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, setUltracode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
+import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, setUltracode, interrupt, reconnectAgent, renamePane, renameTmuxSession, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
@@ -559,6 +559,12 @@ export const coreRoutes: Routes = {
       const { name } = await body<{ name?: string }>(req)
       await renamePane(req.params.id, paneParam(req.params.pane), String(name ?? ''))
       return ok()
+    }),
+  },
+  '/api/hosts/:id/sessions/:session/name': {
+    PUT: api(async (req) => {
+      const { name } = await body<{ name?: string }>(req)
+      return json({ name: await renameTmuxSession(req.params.id, req.params.session, String(name ?? '')) })
     }),
   },
   '/api/hosts/:id/panes/:pane/reconnect': {
