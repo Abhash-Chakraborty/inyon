@@ -37,6 +37,7 @@ use crate::agents::opencode_controls::opencode_live;
 use crate::agents::opencode_db::{find_open_code_session, ocdb_session, OpenCodeProc, OCDB};
 use crate::agents::opencode_models::{model_from_footer, opencode_cli_models, peek_open_code_models, without_provider};
 use crate::agents::status::claude_status;
+use crate::claude::agent_hooks::{install_agent_hooks, HOOKED_AGENTS};
 use crate::claude::chat_cache::prune_chats;
 use crate::claude::driving::is_driving;
 use crate::claude::screen::{parse_screen, prompt_summary};
@@ -177,6 +178,8 @@ pub struct HostRuntime {
     stopped: bool,
     /// last time the agy status line was put back
     agy_healed_at: Option<u64>,
+    /// when an agent's missing hook was last added (see heal_integration)
+    hooks_healed_at: Option<u64>,
     live: Option<Rc<LiveTmux>>,
     /// panes with fresh output, re-read on a short debounce
     dirty: IndexSet<String>,
@@ -223,6 +226,7 @@ impl HostRuntime {
             status_cache: HashMap::new(),
             stopped: false,
             agy_healed_at: None,
+            hooks_healed_at: None,
             live: None,
             dirty: IndexSet::new(),
             dirty_timer: None,
@@ -407,7 +411,7 @@ pub struct Registry {
 
 thread_local! {
     static REGISTRY: Rc<Registry> = Rc::new(Registry::new());
-    /// Claude turns that go on while the screen reads idle (see turns.rs).
+    /// Turns that go on while the screen reads idle (see turns.rs).
     static TURNS: RefCell<Turns> = RefCell::new(Turns::new());
 }
 
@@ -1097,7 +1101,8 @@ impl Registry {
             let pr = pr.borrow();
             let proc = pr.agent_procs.get(&p.id).cloned().expect("an agent pane");
             let conv = pr.agy_conversations.get(&(proc.pid as i64)).cloned();
-            (proc, pr.hook_panes.get(&p.id).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv)
+            let kind = proc.kind;
+            (proc, pr.hook_panes.get(&p.id).filter(|h| h.from_agent(kind)).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv)
         };
         let pid = proc.pid as i64;
         live.borrow_mut().insert(pid);
@@ -1593,13 +1598,26 @@ impl Registry {
     async fn heal_integration(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>) -> HubResult<()> {
         let host = rt.borrow().host.clone();
         let cfg = host.config();
-        let (integration, agy, installed) = {
+        let (integration, agy, installed, hooked) = {
             let p = pr.borrow();
-            (p.integration, p.agy_integration, p.installed.clone())
+            (p.integration, p.agy_integration, p.installed.clone(), p.hooked.clone())
         };
         if integration == IntegrationState::Installed && cfg.keep_integration.is_none() {
             self.set_keep_integration(&cfg.id, true)?;
             return Ok(());
+        }
+        // an agent with hooks turned up after the integration was installed (or its settings were
+        // replaced): add Inyon's hook to it
+        let missing = HOOKED_AGENTS.iter().any(|k| installed.contains(k) && !hooked.contains(k));
+        if cfg.keep_integration == Some(true) && integration == IntegrationState::Installed && missing {
+            let healed = rt.borrow().hooks_healed_at;
+            if healed.is_none_or(|h| h == 0 || now_ms().saturating_sub(h) >= HEAL_EVERY_MS) {
+                rt.borrow_mut().hooks_healed_at = Some(now_ms());
+                console::log(&format!("agent hooks missing on {}: adding them", cfg.id));
+                install_agent_hooks(&host).await?;
+                self.refresh(&cfg.id, 500);
+                return Ok(());
+            }
         }
         // agy turned up after the integration was installed (or its settings were replaced): add its status line
         if cfg.keep_integration == Some(true) && integration == IntegrationState::Installed && agy == Some(false) && installed.contains(&AgentKind::Antigravity) {
@@ -1857,11 +1875,11 @@ fn was_active(pr: &mut ProbeResult, pane: &str, at: f64) {
     }
 }
 
-/// The pane's last Claude hook event, if it came from the agent running there now.
+/// The pane's last hook event, if it came from the agent running there now.
 fn live_hook(pr: &ProbeResult, pane: &str) -> Option<HookPaneState> {
     let hook = pr.hook_panes.get(pane)?;
     let proc = pr.agent_procs.get(pane)?;
-    (hook.ts >= proc.started_at - 5.0).then(|| hook.clone())
+    (hook.ts >= proc.started_at - 5.0 && hook.from_agent(proc.kind)).then(|| hook.clone())
 }
 
 /// What runs in the background after a screen read. The footer that lists it is hidden while a
@@ -1903,7 +1921,8 @@ fn apply_screen(p: &mut PaneInfo, mut sc: ScreenState, host: &Host, lines: &[Str
     } else {
         Shown::Idle
     };
-    info.state = if info.kind == AgentKind::Claude {
+    // the agents whose hooks say when a turn starts and ends
+    info.state = if matches!(info.kind, AgentKind::Claude | AgentKind::Copilot | AgentKind::Gemini | AgentKind::Antigravity) {
         shown_state(TURNS.with(|t| t.borrow_mut().state(&turn_key(&host_id, &p.id), shown, &lines.join("\n"), hook, now_ms())))
     } else {
         shown_state(shown)
