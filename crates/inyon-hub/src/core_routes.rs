@@ -20,6 +20,7 @@ use serde_json::{json, Map, Value};
 use crate::http::{as_str, field, fields, js_number, json_of, ok, ok_json, pane_param, str_or_empty, str_raw, to_int32, truthy, Req, Resp};
 use crate::multipart::{self, Part};
 use crate::server::{guarded, h, Routes};
+use inyon_core::claude::held;
 
 /// `validateHost(b)`: an SSH machine's settings, checked.
 pub fn validate_host(b: &Map<String, Value>) -> HubResult<HostConfig> {
@@ -628,6 +629,57 @@ pub fn add(routes: &mut Routes) {
         )],
     );
     guarded(routes, "/api/hosts/:id/panes/:pane/send", vec![(M::POST, h(send))]);
+    // messages the hub holds until the agent is free (from 0.22; see inyon_core::claude::held)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let text = as_str(field(&b, "text")?).unwrap_or_default();
+                Ok(json_of(&held::hold(&id(&r), &pane(&r), &text)?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held/:held",
+        vec![
+            (
+                M::PATCH,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    if let Some(text) = as_str(field(&b, "text")?) {
+                        held::edit(&id(&r), &pane(&r), &r.param("held"), &text)?;
+                    }
+                    let to = js_number(field(&b, "to")?);
+                    if to.is_finite() && to >= 0.0 {
+                        held::move_to(&id(&r), &pane(&r), &r.param("held"), to as usize)?;
+                    }
+                    Ok(ok())
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    held::remove(&id(&r), &pane(&r), &r.param("held"))?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held/:held/send",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                held::send_now(&id(&r), &pane(&r), &r.param("held")).await?;
+                Ok(ok())
+            }),
+        )],
+    );
     guarded(
         routes,
         "/api/hosts/:id/panes/:pane/answer",

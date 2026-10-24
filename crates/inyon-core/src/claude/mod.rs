@@ -6,6 +6,7 @@ pub mod chat_cache;
 pub mod delivery;
 pub mod drafts;
 pub mod driving;
+pub mod held;
 pub mod integration;
 pub mod integration_sh;
 pub mod keep_default;

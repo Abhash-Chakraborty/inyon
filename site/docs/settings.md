@@ -78,6 +78,7 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | `Alt N` / `⌥ N` | New session, even while typing a message (from 0.16; not in the terminal) |
 | `N` | New session, when you aren't typing |
 | `Enter` / `Shift Enter` | Send / new line |
+| `Alt Enter` / `⌥ Enter` | [Hold the message](sessions.md#holding-a-message-until-the-agent-is-free) until the agent is free (from 0.22) |
 | `Esc` | Stop the agent (with an empty message box), close a sheet or menu |
 | `↑` `↓`, `Enter`, `Tab` | Move through and pick from menus, `/` and `@` lists |
 | Any key | Focus the message box (on a computer) |

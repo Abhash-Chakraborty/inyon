@@ -80,6 +80,7 @@ macro_rules! with_types {
             SessionStats,
             SendStatus,
             SendState,
+            HeldPrompt,
             PastConversation,
             LiveKind,
             LiveItem,

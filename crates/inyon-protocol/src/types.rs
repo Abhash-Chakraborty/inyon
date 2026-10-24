@@ -547,6 +547,18 @@ pub struct SendState {
     pub setting: Option<bool>,
 }
 
+/// A message Inyon holds for a pane and types in once its agent is free (from 0.22): it can still
+/// be edited, moved or dropped. `error` says why the last try didn't go, and holding stops there.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct HeldPrompt {
+    pub id: String,
+    pub text: String,
+    pub at: u64,
+    pub error: Option<String>,
+}
+
 /// A conversation the agent saved in a pane's folder, which it can be started again with.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -639,6 +651,8 @@ pub struct ChatInfo {
     pub share: Option<String>,
     /// messages typed while the agent was busy, not yet picked up
     pub queue: Vec<String>,
+    /// messages Inyon holds until the agent is free, in the order they go (from 0.22)
+    pub held: Option<Vec<HeldPrompt>>,
     /// the turn under way, for the working timer (Codex: from its records and its live events)
     pub turn: Option<Turn>,
     /// recent sends and how far each got, matched by the hub against the agent's own record

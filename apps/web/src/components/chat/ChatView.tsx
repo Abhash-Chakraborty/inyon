@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type HostStatus, type LiveItem } from '@inyon/protocol'
+import { AGENTS, chatKey, type AgentKind, type HeldPrompt, type HostStatus, type LiveItem } from '@inyon/protocol'
 import { lastAsk } from '../../lib/lastAsk.ts'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
@@ -17,6 +17,7 @@ import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
 import { FailedScreen } from './FailedScreen.tsx'
+import { HeldBubble } from './HeldBubble.tsx'
 import { backgroundText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
 
@@ -24,6 +25,7 @@ const NO_AGENTS: AgentKind[] = []
 /** away longer than this, coming back jumps to the latest message */
 const AWAY_MS = 5 * 60_000
 const NO_QUEUE: string[] = []
+const NO_HELD: HeldPrompt[] = []
 const NO_PENDING: PendingMessage[] = []
 const NO_LIVE: LiveItem[] = []
 
@@ -64,6 +66,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const shownPrompt = prompt ?? (connected ? undefined : lastAsk(host, pane))
   const reconnecting = useReconnecting(machine?.status)
   const queue = chat?.info?.queue ?? NO_QUEUE
+  const held = chat?.info?.held ?? NO_HELD
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
   // what the agent is writing right now, and the running command's output for the working line
   const live = chat?.live ?? NO_LIVE
@@ -358,6 +361,11 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     {queue.map((q, i) => (
                       <div key={`${i}:${q}`} className={arriving.get(`q${q}`) ? 'animate-slide-up' : undefined}>
                         <QueuedBubble text={q} agent={agent} />
+                      </div>
+                    ))}
+                    {held.map((p, i) => (
+                      <div key={p.id} className="animate-slide-up">
+                        <HeldBubble host={host} pane={pane} p={p} index={i} count={held.length} agentName={agent ? AGENTS[agent].name : 'the agent'} />
                       </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}

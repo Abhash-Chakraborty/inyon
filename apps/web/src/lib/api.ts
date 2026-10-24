@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, HeldPrompt, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -343,6 +343,11 @@ export const api = {
   answer: (host: string, pane: string, option: number, text?: string, question?: string) =>
     request('POST', `${panePath(host, pane)}/answer`, { option, text, question }),
   interrupt: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/interrupt`),
+  // messages the hub holds until the agent is free (from 0.22)
+  hold: (host: string, pane: string, text: string) => request<HeldPrompt>('POST', `${panePath(host, pane)}/held`, { text }),
+  editHeld: (host: string, pane: string, id: string, b: { text?: string; to?: number }) => request('PATCH', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`, b),
+  dropHeld: (host: string, pane: string, id: string) => request('DELETE', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`),
+  sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),
   restart: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/restart`),

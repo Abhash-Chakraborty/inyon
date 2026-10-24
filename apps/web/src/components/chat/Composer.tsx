@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
-import { ArrowUp, Camera, Clock3, FileText, Folder, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
+import { ArrowUp, Camera, Clock3, FileText, Folder, Hourglass, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
 import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
@@ -10,6 +10,8 @@ import { socket } from '../../lib/socket.ts'
 import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.ts'
 import { bytes } from '../../lib/format.ts'
 import { openMenu } from '../ui/primitives.tsx'
+import { contextMenu } from '../ui/ContextMenu.tsx'
+import { keyLabel } from '../../lib/keys.ts'
 
 /** commands that open a picker in the agent's terminal; the composer's own menus (and OpenCode's providers sheet) do the job */
 const MENU_COMMANDS: Record<string, string> = { '/model': 'model', '/models': 'model', '/effort': 'effort', '/variants': 'effort', '/agents': 'mode', '/agent': 'mode', '/connect': 'providers' }
@@ -470,6 +472,25 @@ export function Composer({
     }
   }
 
+  // the hub keeps it and types it in once the agent is free; it can still be edited or dropped there
+  const hold = async () => {
+    const msg = text.trim()
+    if (!msg || uploading || files.length) return
+    try {
+      await api.hold(host, pane, msg)
+      clearTimeout(pushTimer.current)
+      pending.current = undefined
+      sent.current = { text, at: Date.now() }
+      synced.current = ''
+      setTextState('')
+      setOrigin(null)
+      setPop(null)
+    } catch (e) {
+      haptic('error')
+      toast({ title: "Couldn't hold the message", body: (e as Error).message, tone: 'error' })
+    }
+  }
+
   const [stopping, setStopping] = useState(false)
   const stop = async () => {
     setStopping(true)
@@ -651,6 +672,10 @@ export function Composer({
               e.preventDefault()
               return void stop()
             }
+            if (e.key === 'Enter' && e.altKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              return void hold()
+            }
             if (e.key === 'Enter' && !e.shiftKey && !touch && !e.nativeEvent.isComposing) {
               e.preventDefault()
               send()
@@ -695,6 +720,11 @@ export function Composer({
           {/* one button for Send and Stop: its colour fades between the two and the icon swaps with a fade */}
           <button
             type="button"
+            {...contextMenu(() => [
+              !showStop && !shellMode && { key: 'send', label: canSteer && steer ? 'Steer now' : working ? 'Queue follow-up' : 'Send', icon: <ArrowUp className="size-4" />, disabled: !canSend, onSelect: () => void send() },
+              !shellMode && { key: 'hold', label: `Hold until ${agentName} is free`, keys: keyLabel('alt', 'Enter'), icon: <Hourglass className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => void hold() },
+              showStop && { key: 'stop', label: 'Stop', icon: <Square className="size-4" />, onSelect: () => void stop() },
+            ])}
             onClick={() => (showStop ? stop() : send())}
             onMouseDown={(e) => e.preventDefault()}
             disabled={showStop ? stopping : !canSend}

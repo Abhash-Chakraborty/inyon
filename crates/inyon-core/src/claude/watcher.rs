@@ -1325,6 +1325,7 @@ impl ChatWatcher {
                 rc: m.rc.clone().or_else(|| st.remote.clone()),
                 share: m.share.clone(),
                 queue,
+                held: Some(super::held::list(&self.host_id, &self.pane_id)).filter(|h| !h.is_empty()),
                 turn: st.live.turn.clone().or_else(|| m.turn.clone()),
                 sends: Some(st.ledger.list()),
                 tasks: last40(m.tasks.values()),
@@ -2270,7 +2271,7 @@ impl ChatWatcher {
         self.st.borrow_mut().live_expiry = Some(t);
     }
 
-    fn schedule_info(&self) {
+    pub fn schedule_info(&self) {
         if self.st.borrow().info_timer.is_some() {
             return;
         }

@@ -238,6 +238,63 @@ fn an_agent_without_a_screen_parser_gets_no_blind_enter() {
 }
 
 #[test]
+fn held_messages_wait_for_the_agent_to_be_free_then_go_in_order() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(true);
+        let first = crate::claude::held::hold("local", "%4", "Write the migration").unwrap();
+        let second = crate::claude::held::hold("local", "%4", "Then run the tests").unwrap();
+        assert!(crate::claude::held::hold("local", "%4", "  ").is_err());
+        assert_eq!(crate::claude::held::hold("local", "%9", "x").unwrap_err().status, Some(404));
+        // reordered and edited while held
+        crate::claude::held::move_to("local", "%4", &second.id, 0).unwrap();
+        crate::claude::held::edit("local", "%4", &first.id, "Write the migration for users").unwrap();
+        let ids: Vec<String> = crate::claude::held::list("local", "%4").into_iter().map(|p| p.text).collect();
+        assert_eq!(ids, ["Then run the tests", "Write the migration for users"]);
+        // kept in the record
+        let saved = crate::platform::store::kv::get_value(crate::claude::held::KEY).unwrap().to_string();
+        assert!(saved.contains("Then run the tests"), "{saved}");
+        // idle, but not for long enough yet: nothing goes
+        let t0 = 1_000_000;
+        crate::claude::held::tick(t0).await;
+        sleep(50).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::tick(t0 + crate::claude::held::SETTLE_MS).await;
+        for _ in 0..200 {
+            if !b.borrow().1.is_empty() && crate::claude::held::list("local", "%4").len() == 1 {
+                break;
+            }
+            sleep(100).await;
+        }
+        assert_eq!(b.borrow().1, ["Then run the tests"]);
+        assert_eq!(crate::claude::held::list("local", "%4").len(), 1);
+        // dropped
+        crate::claude::held::remove("local", "%4", &first.id).unwrap();
+        assert!(crate::claude::held::list("local", "%4").is_empty());
+    });
+}
+
+#[test]
+fn a_held_message_that_fails_stays_first_with_the_reason_and_holding_stops() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(false);
+        let p = crate::claude::held::hold("local", "%4", "Summarise the failing tests").unwrap();
+        assert!(crate::claude::held::send_now("local", "%4", &p.id).await.is_err());
+        let left = crate::claude::held::list("local", "%4");
+        assert_eq!(left.len(), 1);
+        assert!(left[0].error.as_deref().unwrap().contains("Enter wasn't pressed"));
+        // the tick leaves it alone until it's edited, sent now or dropped
+        crate::claude::held::tick(1_000_000).await;
+        crate::claude::held::tick(1_000_000 + crate::claude::held::SETTLE_MS).await;
+        sleep(200).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::edit("local", "%4", &p.id, "Summarise the failing tests, briefly").unwrap();
+        assert_eq!(crate::claude::held::list("local", "%4")[0].error, None);
+    });
+}
+
+#[test]
 fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     run(|| async {
         let fake = Fake::install(|_, _, _| ok("%5\n"));

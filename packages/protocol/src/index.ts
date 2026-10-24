@@ -328,6 +328,15 @@ export interface LiveItem {
   turnId?: string
 }
 
+/** A message Inyon holds for a pane and types in once its agent is free (from 0.22): it can still
+ * be edited, moved or dropped. `error` says why the last try didn't go, and holding stops there. */
+export interface HeldPrompt {
+  id: string
+  text: string
+  at: number
+  error?: string
+}
+
 export interface ChatInfo {
   /** Live metrics from transcript/API adapters. */
   status?: AgentStatus
@@ -351,6 +360,8 @@ export interface ChatInfo {
   share?: string
   /** messages typed while the agent was busy, not yet picked up */
   queue: string[]
+  /** messages Inyon holds until the agent is free, in the order they go (from 0.22) */
+  held?: HeldPrompt[]
   /** the turn under way, for the working timer (Codex: from its records and its live events) */
   turn?: { id?: string; startedAt: number }
   /** recent sends and how far each got, matched by the hub against the agent's own record */
