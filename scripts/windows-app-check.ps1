@@ -96,7 +96,8 @@ $first = Page 'first page' "$helpers await drawn('the first page'); const s = aw
 Write-Host "drawn: Inyon $($first.version) on $($first.host), $($first.nav) pages in the side bar"
 if ($first.nav -lt 7) { Fail "the side bar has $($first.nav) pages, 7 expected" }
 
-# every page in the side bar, clicked like a person would
+# every page in the side bar, clicked like a person would (PowerShell fills in $ names inside @"..."@,
+# so the page's code here has no template strings)
 $pages = Page 'side bar' @"
 $helpers
 // a click redraws the side bar, so each button is looked up again
@@ -108,7 +109,7 @@ for (let i = 0; i < count; i++) {
   await sleep(400);
   await drawn(label);
   const shown = document.querySelector('#nav button[aria-current="page"] span');
-  if (shown?.textContent !== label) throw new Error(`clicked ${label}, the side bar shows ${shown?.textContent ?? 'nothing'}`);
+  if (shown?.textContent !== label) throw new Error('clicked ' + label + ', the side bar shows ' + (shown?.textContent ?? 'nothing'));
   seen.push(label);
 }
 return seen.join(', ');
