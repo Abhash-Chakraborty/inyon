@@ -1318,7 +1318,8 @@ const RELAY_SESSIONS_MAX: usize = 64;
 /// What the machine signs for a relay's challenge: bound to the relay's origin when it asks for
 /// v2. None for a nonce too short to be fresh, which the machine doesn't answer.
 fn relay_auth(url: &str, nonce: &str, v: Option<u64>) -> Option<Vec<u8>> {
-    if nonce.len() < inyon_link::MIN_NONCE {
+    // counted as the Bun engine counts it (UTF-16 units), so both answer the same challenges
+    if nonce.encode_utf16().count() < inyon_link::MIN_NONCE {
         return None;
     }
     match v {
@@ -2463,5 +2464,8 @@ mod tests {
         assert_eq!(relay_auth("https://relay.example/base/", nonce, Some(2)), Some(inyon_link::auth_message_v2("https://relay.example", nonce)));
         assert_ne!(relay_auth("https://a.example", nonce, Some(2)), relay_auth("https://b.example", nonce, Some(2)));
         assert_eq!(relay_auth("relay.example", nonce, Some(2)), None);
+        // eight é are 16 bytes but 8 UTF-16 units, as the Bun engine counts them
+        assert_eq!(relay_auth("https://relay.example", &"é".repeat(8), None), None);
+        assert!(relay_auth("https://relay.example", &"é".repeat(16), None).is_some());
     }
 }

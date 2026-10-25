@@ -602,9 +602,10 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
 
 /** Keeps one socket to a relay; each phone that connects through it becomes a session. */
 /** What the machine signs for a relay's challenge: bound to the relay it dialed for v2; undefined for a nonce too short to be fresh. */
-export function relayAuth(url: string, nonce: string | undefined, v: number | undefined): Uint8Array | undefined {
-  if (!nonce || nonce.length < MIN_NONCE) return undefined
-  if ((v ?? 1) < 2) return authMessage(nonce)
+export function relayAuth(url: string, nonce: unknown, v: unknown): Uint8Array | undefined {
+  // the relay is the untrusted side: its JSON may carry any type
+  if (typeof nonce !== 'string' || nonce.length < MIN_NONCE) return undefined
+  if (typeof v !== 'number' || v < 2) return authMessage(nonce)
   const origin = relayOrigin(url)
   return origin ? authMessageV2(origin, nonce) : undefined
 }
