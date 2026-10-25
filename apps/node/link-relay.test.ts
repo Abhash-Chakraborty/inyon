@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { mkdtempSync, rmSync } from 'node:fs'
 import type { ServerWebSocket } from 'bun'
-import { authMessage, connect, frame, generateKeyPair, noiseKeyOf, parsePairLink, unframe, verify, type Channel, type MachineToRelay, type Wire } from '@inyon/link'
+import { authMessageV2, connect, frame, generateKeyPair, noiseKeyOf, parsePairLink, unframe, verify, type Channel, type MachineToRelay, type Wire } from '@inyon/link'
 import { ENGINE } from './engine-under-test.ts'
 
 // The engine's link reached only through a relay: a stand-in relay here, speaking the relay's side
@@ -31,7 +31,8 @@ const relay = Bun.serve<{ id: string }>({
   websocket: {
     open(ws) {
       machine = ws
-      ws.send(JSON.stringify({ t: 'challenge', nonce }))
+      // v2: the answer is bound to this relay, so it can't be used to log in at another one
+      ws.send(JSON.stringify({ t: 'challenge', nonce, v: 2 }))
     },
     message(ws, raw) {
       if (typeof raw !== 'string') {
@@ -41,7 +42,7 @@ const relay = Bun.serve<{ id: string }>({
       }
       const m = JSON.parse(raw) as MachineToRelay
       if (m.t === 'auth') {
-        const ok = m.id === ws.data.id && verify(m.id, authMessage(nonce), Buffer.from(m.sig, 'base64'))
+        const ok = m.id === ws.data.id && verify(m.id, authMessageV2(`http://127.0.0.1:${relay.port}`, nonce), Buffer.from(m.sig, 'base64'))
         auths.push({ id: m.id, ok, path: ws.data.id })
         if (ok) {
           ws.send(JSON.stringify({ t: 'ready' }))
