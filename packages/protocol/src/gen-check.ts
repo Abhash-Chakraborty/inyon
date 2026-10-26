@@ -49,6 +49,7 @@ export type Checks = [
   Check<Same<G.SessionStats, H.SessionStats>>,
   Check<Same<G.SendState, H.SendState>>,
   Check<Same<G.HeldPrompt, H.HeldPrompt>>,
+  Check<Same<G.ChosenControls, H.ChosenControls>>,
   Check<Same<G.PastConversation, H.PastConversation>>,
   Check<Same<G.LiveItem, H.LiveItem>>,
   Check<Same<G.ChatInfo, H.ChatInfo>>,

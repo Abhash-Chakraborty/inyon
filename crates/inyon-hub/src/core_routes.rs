@@ -21,7 +21,7 @@ use serde_json::{json, Map, Value};
 use crate::http::{as_str, field, fields, js_number, json_of, ok, ok_json, pane_param, str_or_empty, str_raw, to_int32, truthy, Req, Resp};
 use crate::multipart::{self, Part};
 use crate::server::{guarded, h, Routes};
-use inyon_core::claude::held;
+use inyon_core::claude::{chosen, held};
 
 /// `validateHost(b)`: an SSH machine's settings, checked.
 pub fn validate_host(b: &Map<String, Value>) -> HubResult<HostConfig> {
@@ -658,7 +658,22 @@ pub fn add(routes: &mut Routes) {
             M::POST,
             h(|mut r| async move {
                 let b = r.body().await?;
-                actions::set_mode(&id(&r), &pane(&r), &str_raw(field(&b, "mode")?)).await?;
+                let mode = str_raw(field(&b, "mode")?);
+                if !chosen::hold_if_busy(&id(&r), &pane(&r), chosen::Pick::Mode, &mode)? {
+                    actions::set_mode(&id(&r), &pane(&r), &mode).await?;
+                }
+                Ok(ok())
+            }),
+        )],
+    );
+    // a model, effort or mode waiting for the agent to be free (from 0.22; see inyon_core::claude::chosen)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/chosen",
+        vec![(
+            M::DELETE,
+            h(|r| async move {
+                chosen::drop_all(&id(&r), &pane(&r));
                 Ok(ok())
             }),
         )],
@@ -897,6 +912,12 @@ async fn send(mut r: Req) -> HubResult<Resp> {
         Some(_) => return Err(http(400, "Invalid send id")),
     };
     let (host, pane_id) = (id(&r), pane(&r));
+    // a model or effort picked while the agent can't take it waits for it
+    if let Some((pick, value)) = chosen::from_setting(&text).filter(|_| setting) {
+        if chosen::hold_if_busy(&host, &pane_id, pick, &value)? {
+            return Ok(ok());
+        }
+    }
     match request_id {
         Some(rid) if !rid.is_empty() => {
             let key = inyon_core::js::stringify(&json!([host, r.param("pane"), rid]));

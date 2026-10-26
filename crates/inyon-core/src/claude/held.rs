@@ -209,13 +209,26 @@ fn free(host_id: &str, pane_id: &str, now: u64) -> bool {
     })
 }
 
-/// One look at every pane with held messages: the first goes where the agent is free.
+/// One look at every pane with held messages or picked controls: where the agent is free, the
+/// controls picked meanwhile go first (see chosen), then the first message.
 pub async fn tick(now: u64) {
+    for (host_id, pane_id) in super::chosen::ready() {
+        let k = key(&host_id, &pane_id);
+        if SENDING.with(|s| s.borrow().contains(&k)) || !free(&host_id, &pane_id, now) {
+            continue;
+        }
+        SENDING.with(|s| s.borrow_mut().insert(k.clone()));
+        spawn(async move {
+            super::chosen::apply(&host_id, &pane_id).await;
+            SENDING.with(|s| s.borrow_mut().remove(&k));
+            IDLE_SINCE.with(|m| m.borrow_mut().remove(&k));
+        });
+    }
     let ready: Vec<(String, String)> = with(|all| {
         all.iter().filter(|(_, l)| l.first().is_some_and(|p| p.error.is_none())).filter_map(|(k, _)| k.split_once('\u{1}').map(|(h, p)| (h.to_owned(), p.to_owned()))).collect()
     });
     for (host_id, pane_id) in ready {
-        if SENDING.with(|s| s.borrow().contains(&key(&host_id, &pane_id))) || !free(&host_id, &pane_id, now) {
+        if SENDING.with(|s| s.borrow().contains(&key(&host_id, &pane_id))) || super::chosen::pending(&host_id, &pane_id) || !free(&host_id, &pane_id, now) {
             continue;
         }
         spawn(async move {
@@ -231,7 +244,7 @@ pub fn start() {
     }
     spawn(async {
         loop {
-            if with(|all| !all.is_empty()) {
+            if with(|all| !all.is_empty()) || !super::chosen::ready().is_empty() {
                 tick(now_ms()).await;
             }
             sleep(TICK_MS).await;

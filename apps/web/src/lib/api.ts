@@ -367,6 +367,7 @@ export const api = {
   hold: (host: string, pane: string, text: string) => request<HeldPrompt>('POST', `${panePath(host, pane)}/held`, { text }),
   editHeld: (host: string, pane: string, id: string, b: { text?: string; to?: number }) => request('PATCH', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`, b),
   dropHeld: (host: string, pane: string, id: string) => request('DELETE', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`),
+  dropChosen: (host: string, pane: string) => request('DELETE', `${panePath(host, pane)}/chosen`),
   sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
   /** renames the tmux session itself (`session` is tmux's id, `$52`); answers the name tmux took (from 0.22) */

@@ -598,6 +598,20 @@ pub struct HeldPrompt {
     pub error: Option<String>,
 }
 
+/// Controls picked in the app while the agent couldn't take them (from 0.22): Inyon makes each
+/// pick once the agent is free, the last of each kind winning. The values are what was picked:
+/// a model as the agent's `/model` takes it, an effort level, a mode id. `error` says why the
+/// last try didn't take, and nothing more is tried until it's picked again or dropped.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct ChosenControls {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+    pub error: Option<String>,
+}
+
 /// A conversation the agent saved in a pane's folder, which it can be started again with.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -692,6 +706,8 @@ pub struct ChatInfo {
     pub queue: Vec<String>,
     /// messages Inyon holds until the agent is free, in the order they go (from 0.22)
     pub held: Option<Vec<HeldPrompt>>,
+    /// a model, effort or mode waiting for the agent to be free (from 0.22)
+    pub chosen: Option<ChosenControls>,
     /// the turn under way, for the working timer (Codex: from its records and its live events)
     pub turn: Option<Turn>,
     /// recent sends and how far each got, matched by the hub against the agent's own record
