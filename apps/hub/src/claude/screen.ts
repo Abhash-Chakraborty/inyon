@@ -8,7 +8,7 @@ const RULE = /^\s*─{12,}(?: [^─]{1,100} ─{1,12})?\s*$/
 const DIALOG_TOP = /^\s*▔{12,}/
 const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s(.*)$/
 const INPUT = /^\s*[❯>!](\s|$)/
-const SPINNER = /^\s*([^\s\w])\s+([A-Z][\w'’ -]*…)\s*(?:\((.*)\))?\s*$/u
+const SPINNER = /^\s*([^\s\w])\s+([A-Z][\p{L}'’ -]*…)\s*(?:\((.*)\))?\s*$/u
 const MODE = /(?:⏵⏵|⏸|⏵)\s+([a-z][a-z ]*?)(?: mode)? on\b/
 /** Claude Code 2.1.29x labels the input box's top rule "ultracode ─" while ultracode is on */
 const ULTRACODE_RULE = /(?:^|\s)ultracode ─{1,12}\s*$/

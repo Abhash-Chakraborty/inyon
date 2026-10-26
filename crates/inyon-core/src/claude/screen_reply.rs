@@ -8,7 +8,7 @@
 
 use inyon_protocol::AgentKind;
 
-use super::screen::unstyle;
+use super::screen::{sgr_codes, unstyle};
 use crate::re;
 
 /// What the screen shows of the reply being written.
@@ -36,7 +36,7 @@ pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32
     if !reads_reply(kind) {
         return None;
     }
-    let lines: Vec<String> = captured.iter().map(|l| unstyle(l).text.trim_end().to_owned()).collect();
+    let lines: Vec<String> = captured.iter().map(|l| dot_back(kind, l)).collect();
     let rule = re!(r"^\s*─{12,}");
     // the input box: a rule with the prompt sign on the line under it
     let input = if kind == AgentKind::Antigravity { re!(r"^>(\s|$)") } else { re!(r"^\s*❯(\s|$)") };
@@ -92,12 +92,47 @@ pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32
     Some(ScreenReply { text: paragraphs.join("\n\n"), whole: echo.is_some() || from > 0 })
 }
 
+/// A captured row as text. Claude Code and Copilot blink the dot of a tool while it runs: with it
+/// off the row starts with two spaces and the tool's name, drawn bold, and it would read as the
+/// reply going on, command and all, until the dot came back. So the dot is put back.
+fn dot_back(kind: AgentKind, raw: &str) -> String {
+    let text = unstyle(raw).text.trim_end().to_owned();
+    let blinked = matches!(kind, AgentKind::Claude | AgentKind::Copilot) && re!(r"^  [A-Z]").is_match(&text) && starts_bold(raw);
+    if blinked { format!("●{}", &text[1..]) } else { text }
+}
+
+/// Whether the first character that isn't a space is drawn bold.
+fn starts_bold(raw: &str) -> bool {
+    let mut bold = false;
+    let mut i = 0;
+    while i < raw.len() {
+        let rest = &raw[i..];
+        if let Some(sgr) = re!(r"^\x1b\[([\d;:]*)m").captures(rest) {
+            for c in sgr_codes(&sgr[1]) {
+                if c == 1.0 {
+                    bold = true;
+                } else if c == 0.0 || c == 22.0 {
+                    bold = false;
+                }
+            }
+            i += sgr[0].len();
+            continue;
+        }
+        let ch = rest.chars().next().unwrap();
+        if ch != ' ' {
+            return bold;
+        }
+        i += ch.len_utf8();
+    }
+    false
+}
+
 /// A row between the reply and the box that isn't the reply: a spinner, a count on the right, a
 /// notice or a status line.
 fn is_status(kind: AgentKind, row: &str) -> bool {
     match kind {
         // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens"
-        AgentKind::Claude => re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\w'’ -]*(…|\sfor\s\d)", "u").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
+        AgentKind::Claude => re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
         // "⣯  Generating..."
         AgentKind::Antigravity => re!(r"^[\u{2800}-\u{28ff}]\s").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
         // " /path/to/folder        Session: 0.42 AIC used"

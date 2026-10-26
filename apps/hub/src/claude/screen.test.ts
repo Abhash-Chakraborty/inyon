@@ -66,6 +66,14 @@ test('working', () => {
   expect(s.draft).toBeUndefined()
 })
 
+// Claude Code's spinner words can have accents ("Flambéing", "Sautéing"): the screen still says it
+// works. With letters read as ASCII only, it looked idle for the whole turn.
+test('a spinner word with an accent still says it works', () => {
+  const s = parseScreen(screenFixture('claude', 'reply-before-tool-dot-on'))
+  expect(s.working).toBe(true)
+  expect(s.activity).toBe('Flambéing… (3s · ↓ 54 tokens)')
+})
+
 test('word-wrapped option label keeps its space', () => {
   const s = parseScreen(
     screenFixture('claude', 'permission-wrapped'),
