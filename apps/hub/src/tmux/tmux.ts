@@ -19,6 +19,8 @@ const PANE_FORMAT = [
   '#{window_id}', '#{window_index}', '#{window_name}', '#{window_active}', '#{window_activity}',
   '#{pane_id}', '#{pane_index}', '#{pane_active}', '#{pane_pid}', '#{pane_current_command}',
   '#{pane_current_path}', '#{pane_title}', '#{pane_width}', '#{pane_height}', '#{pane_dead}',
+  // the window's size, for the Rust hub's resting grid
+  '#{window_width}', '#{window_height}',
 ].join(SEP)
 
 /**

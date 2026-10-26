@@ -42,6 +42,7 @@ fn put(id: &str, connected: bool) {
             hooked: vec![],
             machine_kind: None,
             keys_at: Default::default(),
+            unwatched: Default::default(),
         })));
     }
 }

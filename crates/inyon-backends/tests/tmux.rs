@@ -20,6 +20,7 @@ use inyon_core::hosts::host::{set_host_backends, ExecOptions, ExecResult, Host, 
 use inyon_core::hosts::http_error::HubResult;
 use inyon_core::hosts::registry::{registry, HostRuntime};
 use inyon_core::terminal::mirror::open_mirror;
+use inyon_core::tmux::grid::rest_command;
 use inyon_core::tmux::tmux::{capture_panes, type_into, AgentProc, ProbeResult, TmuxProbe};
 use inyon_protocol::{AgentKind, HostConfig, IntegrationState};
 use serde_json::json;
@@ -267,6 +268,7 @@ fn probe(agent_procs: IndexMap<String, AgentProc>) -> ProbeResult {
         hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
+        unwatched: Default::default(),
     }
 }
 
@@ -557,5 +559,49 @@ fn a_panes_screen_keeps_its_non_ascii_text() {
             3000,
         )
         .await;
+    });
+}
+
+// ---------- the resting grid ----------
+
+async fn window_size(host: &Host, w: &str) -> String {
+    tmux(host, &format!("display -p -t {w} '#{{window_width}}x#{{window_height}}'")).await
+}
+
+#[test]
+fn a_window_nobody_shows_rests_wide_and_the_next_client_still_sizes_it() {
+    let own = Own::new("grid");
+    run_core(|| async {
+        let host = own_tmux(&own, "grid").await;
+        let w = tmux(&host, "new-session -d -s g -x 80 -y 24 -P -F '#{window_id}' 'sleep 600'").await;
+        host.run(&rest_command(std::slice::from_ref(&w))).await.unwrap();
+        assert_eq!(window_size(&host, &w).await, "200x50");
+        assert_eq!(tmux(&host, &format!("show -wv -t {w} window-size")).await, "", "the option is back to the server's");
+
+        // someone attaches at 120×30: the window takes their size, as it would without Inyon
+        let client = host.pty("tmux attach -t g", 120, 30, |_| {}).unwrap();
+        let (h, w2) = (host.clone(), w.clone());
+        until(
+            move || {
+                let (h, w2) = (h.clone(), w2.clone());
+                Box::pin(async move { window_size(&h, &w2).await.starts_with("120x") })
+            },
+            5000,
+        )
+        .await;
+        client.kill();
+
+        // a window someone gave a window-size of its own is left as it is
+        let m = tmux(&host, "new-session -d -s m -x 80 -y 24 -P -F '#{window_id}' 'sleep 600'").await;
+        tmux(&host, &format!("set-option -w -t {m} window-size smallest")).await;
+        host.run(&rest_command(std::slice::from_ref(&m))).await.unwrap();
+        assert_eq!(window_size(&host, &m).await, "80x24");
+        assert_eq!(tmux(&host, &format!("show -wv -t {m} window-size")).await, "smallest");
+
+        // and none rest when every window is sized by hand
+        let n = tmux(&host, "new-session -d -s n -x 80 -y 24 -P -F '#{window_id}' 'sleep 600'").await;
+        tmux(&host, "set-option -g window-size manual").await;
+        host.run(&rest_command(std::slice::from_ref(&n))).await.unwrap();
+        assert_eq!(window_size(&host, &n).await, "80x24");
     });
 }

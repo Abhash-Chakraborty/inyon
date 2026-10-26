@@ -444,6 +444,7 @@ fn mode_probe(now: f64) -> ProbeResult {
         hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
+        unwatched: Default::default(),
     }
 }
 
@@ -777,4 +778,31 @@ fn quick_answers_come_only_with_a_whole_question() {
     let opts = |p| quick_options(&p).map(|o| o.into_iter().map(|q| (q.n, q.label)).collect::<Vec<_>>());
     assert_eq!(opts(claude("powershell-prompt")), Some(vec![(1, "Yes".to_owned()), (2, "Yes, and don't ask again for: npm test *".to_owned()), (3, "No".to_owned())]));
     assert_eq!(opts(claude("bash-gutter")), None);
+}
+
+#[test]
+fn an_agent_window_nobody_shows_is_rested_on_the_wide_grid_once() {
+    run(|| async {
+        let fake = Fake::install(|_, _, _| ok(""));
+        let state: HostState = from(
+            json!({ "config": { "id": "grid-box", "name": "Box", "kind": "ssh" }, "status": "online", "integration": "missing", "tmux": "ok", "agents": [], "sessions": mode_sessions(), "updatedAt": 0 }),
+        );
+        let rt = runtime("grid-box", state);
+        let host = rt.borrow().host.clone();
+        let mut p = mode_probe(1000.0);
+        p.unwatched.insert("@1".into(), (100, 30));
+        // no agent in it: left alone
+        p.unwatched.insert("@5".into(), (80, 24));
+        rest_windows(&rt, &host, &p);
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        let rests = || fake.cmds().into_iter().filter(|c| c.contains("resize-window")).collect::<Vec<_>>();
+        assert_eq!(rests(), [grid::rest_command(&["@1".into()])]);
+        // psmux sizes its windows its own way
+        p.os = "Windows".into();
+        p.unwatched.insert("@1".into(), (40, 20));
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        assert_eq!(rests().len(), 1);
+    });
 }

@@ -1428,6 +1428,7 @@ fn laptop(machine: Rc<Machine>) {
         hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
+        unwatched: Default::default(),
     })));
     inyon_core::hosts::registry::registry().insert_runtime("laptop", rt);
 }

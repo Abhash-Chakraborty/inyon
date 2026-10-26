@@ -102,7 +102,7 @@ The app is its own hub, so whoever holds the unlocked phone can reach your compu
 
 ## What Inyon changes on a machine
 
-Nothing, unless you turn on the Claude Code integration from the machine's Integration tab (or switch a Claude Code model, below). Then it:
+No files, unless you turn on the Claude Code integration from the machine's Integration tab (or switch a Claude Code model, below). Then it:
 
 - writes `~/.inyon/hook.sh` and `~/.inyon/statusline.sh`, and registers them in `~/.claude/settings.json`, backing that file up first to `settings.json.inyon-backup`. The hook runs on session start and end, a prompt, a notification, a permission request and the end of a turn, plus, from 0.22 with Claude Code 2.1.78 or later, a turn that ended on an error (StopFailure). Older Claude Code doesn't get that one, since before 2.1.101 an event it didn't know made it ignore the whole settings file;
 - keeps your own status line in `~/.inyon/statusline.orig` and still runs it;
@@ -112,6 +112,8 @@ Nothing, unless you turn on the Claude Code integration from the machine's Integ
 - for a session that was already running when its settings were replaced, adds the status line to that project's `.claude/settings.local.json` (only if it has none) and lists that file in `.git/info/exclude`, so git never sees it.
 
 Turning the integration off undoes all of it. The hub's fallback in Bun (`INYON_HUB_IMPL=bun`) adds and removes only Claude Code's and Antigravity CLI's status line parts, so turn the integration off from the Rust hub to take the other agents' hooks out. The hook's log holds your prompts, so `~/.inyon` is readable only by you.
+
+From 0.22 the hub also resizes the tmux window of an agent that no tmux client shows to 200×50, so its screen reads whole (see [The terminal](terminal.md#window-size)). A window a client shows, or one with a `window-size` of its own, is left alone.
 
 From 0.22, starting the [companion agent](companion-agent.md#what-asks-first) with Codex writes `~/.inyon/companion/.codex/rules/companion.rules` and adds that folder to `~/.codex/config.toml` as trusted, so Codex reads the rule that makes a send or an answer ask first. It adds the entry only when the file doesn't name the folder yet, and stopping the companion leaves both in place.
 
