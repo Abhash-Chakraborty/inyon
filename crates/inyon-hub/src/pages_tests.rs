@@ -1429,6 +1429,7 @@ fn laptop(machine: Rc<Machine>) {
         machine_kind: None,
         keys_at: Default::default(),
         unwatched: Default::default(),
+        claude_parked: Default::default(),
     })));
     inyon_core::hosts::registry::registry().insert_runtime("laptop", rt);
 }

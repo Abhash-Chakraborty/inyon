@@ -1,7 +1,7 @@
 // Shell shared by the integration scripts and the probe (kept apart to avoid an import cycle).
 
 /** Bump when the scripts change; the probe reports older copies as outdated. */
-export const MARKER_VERSION = 8
+export const MARKER_VERSION = 9
 export const MARKER = `inyon-integration ${MARKER_VERSION}`
 
 /**

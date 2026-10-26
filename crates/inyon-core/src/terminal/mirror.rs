@@ -222,11 +222,17 @@ pub struct Screen {
     pub height: f64,
     pub cursor: Cursor,
     pub lines: Vec<String>,
+    /// a full-screen program (the alternate screen), which takes the mouse wheel and clicks
+    pub mouse: bool,
 }
 
 /// Reads the pane's size, cursor and screen (with colours) in one go.
 pub fn read_command(pane: &str) -> String {
-    format!("tmux display -p -t {} '#{{pane_width}} #{{pane_height}} #{{cursor_x}} #{{cursor_y}} #{{cursor_flag}}' && tmux capture-pane -p -e -t {}", shq(pane), shq(pane))
+    format!(
+        "tmux display -p -t {} '#{{pane_width}} #{{pane_height}} #{{cursor_x}} #{{cursor_y}} #{{cursor_flag}} #{{alternate_on}}' && tmux capture-pane -p -e -t {}",
+        shq(pane),
+        shq(pane)
+    )
 }
 
 pub fn parse_screen(stdout: &str) -> Option<Screen> {
@@ -244,7 +250,7 @@ pub fn parse_screen(stdout: &str) -> Option<Screen> {
     let mut lines: Vec<String> = rows.take(n).map(str::to_owned).collect();
     lines.resize(n, String::new());
     let or0 = |v: f64| if v.is_nan() { 0.0 } else { v };
-    Some(Screen { width: w, height: h, cursor: Cursor { x: or0(x), y: or0(y), visible: nums.get(4).is_none_or(|f| *f != 0.0) }, lines })
+    Some(Screen { width: w, height: h, cursor: Cursor { x: or0(x), y: or0(y), visible: nums.get(4).is_none_or(|f| *f != 0.0) }, lines, mouse: nums.get(5) == Some(&1.0) })
 }
 
 /// What to write to the browser terminal to turn the last screen into this one: only the lines
@@ -253,6 +259,11 @@ pub fn parse_screen(stdout: &str) -> Option<Screen> {
 pub fn draw_screen(prev: Option<&Screen>, next: &Screen) -> String {
     // bracketed paste on, so a pasted block arrives as one paste rather than lines that each submit
     let mut out = if prev.is_some() { String::new() } else { "\x1b[?7l\x1b[?2004h\x1b[0m\x1b[H\x1b[2J".to_owned() };
+    // a full-screen program (Claude Code's, say) scrolls with the wheel: the browser terminal reports
+    // the mouse while one runs, and those reports go to it as they are (psmux passes them on)
+    if prev.is_some_and(|p| p.mouse) != next.mouse {
+        out.push_str(if next.mouse { "\x1b[?1000h\x1b[?1006h" } else { "\x1b[?1000l\x1b[?1006l" });
+    }
     for (i, line) in next.lines.iter().enumerate() {
         if prev.is_some_and(|p| p.lines.get(i) == Some(line) && p.width == next.width) {
             continue;

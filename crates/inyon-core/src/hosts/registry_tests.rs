@@ -446,6 +446,7 @@ fn mode_probe(now: f64) -> ProbeResult {
         machine_kind: None,
         keys_at: Default::default(),
         unwatched: Default::default(),
+        claude_parked: Default::default(),
     }
 }
 
@@ -824,5 +825,44 @@ fn a_rest_that_didnt_reach_tmux_is_tried_again() {
         rest_windows(&rt, &host, &p);
         wait(20).await;
         assert_eq!(fake.cmds().into_iter().filter(|c| c.contains("resize-window")).count(), 2);
+    });
+}
+
+/// Claude Code 2.1.310 can move a window's conversation to a background session: a new process and
+/// a new transcript, which the window shows and types into from then on. The chat follows it there,
+/// not the transcript the window started with (a laptop's chat stopped at the move, and every
+/// message sent after it was reported as not recorded).
+#[test]
+fn a_window_that_moved_its_conversation_to_the_background_follows_that_session() {
+    run(|| async {
+        let b = ModeBox::new();
+        b.draw(&idle(""));
+        let now = now_ms() as f64 / 1000.0;
+        let mut probe = mode_probe(now);
+        // what the window's own session last told the hook
+        let old = "/home/u/.claude/projects/-w/b3a31007-70aa-42cc-9ed6-7c142f4a3624.jsonl";
+        let hook = crate::tmux::tmux::HookPaneState {
+            pane: "%9".into(),
+            ts: now - 10.0,
+            data: json!({ "session_id": "b3a31007-70aa-42cc-9ed6-7c142f4a3624", "transcript_path": old, "hook_event_name": "Stop" }),
+            agent: None,
+            event: None,
+        };
+        probe.hook_panes.insert("%9".into(), hook);
+        let pr = Rc::new(RefCell::new(probe));
+        b.rt.borrow_mut().probe = Some(pr.clone());
+        registry().annotate_agents(&b.rt, &pr).await.unwrap();
+        let a = pr.borrow().sessions[0].windows[0].panes[0].agent.clone().unwrap();
+        assert_eq!(a.transcript_path.as_deref(), Some(old));
+
+        let moved = "/home/u/.claude/projects/-w/eef2ead0-8d08-4b84-96ac-fca9d926eee6.jsonl";
+        let mut probe = mode_probe(now);
+        probe.claude_parked.insert(7, crate::tmux::tmux::ParkedClaude { session_id: "eef2ead0-8d08-4b84-96ac-fca9d926eee6".into(), transcript: moved.into() });
+        let pr = Rc::new(RefCell::new(probe));
+        b.rt.borrow_mut().probe = Some(pr.clone());
+        registry().annotate_agents(&b.rt, &pr).await.unwrap();
+        let a = pr.borrow().sessions[0].windows[0].panes[0].agent.clone().unwrap();
+        assert_eq!((a.transcript_path.as_deref(), a.session_id.as_deref()), (Some(moved), Some("eef2ead0-8d08-4b84-96ac-fca9d926eee6")));
+        assert_eq!(a.mapped_by, Some(MappedBy::Process));
     });
 }

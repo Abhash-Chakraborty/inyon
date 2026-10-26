@@ -49,6 +49,8 @@ The agents never know Inyon is there. Close it and nothing breaks.
 
 Read from its transcripts in `~/.claude`. With the optional integration (turned on from a machine's Integration tab), a hook gives exact session matching and the status line gives live context, cost and limits. Models, effort, permission modes, goals, Remote Control, [ultracode](controls.md#ultracode), compact, clear and `/rewind` all work.
 
+Claude Code can move a window's conversation to a background session, which then runs as a process of its own, outside tmux, with a new transcript. The window keeps showing it and takes your messages for it. From 0.22.1 Inyon follows the conversation there too: the chat, sends and alerts go with the background session for as long as the window shows it.
+
 ## Codex
 
 Read from its session files in `~/.codex/sessions`. Model and effort go through Codex's own picker. It shows plan limits and credits, every message of yours can **Rewind to here**, and `$` lists skills. Codex runs its hooks inside a background process that can't tell which pane it belongs to, so Inyon reads Codex's prompts from the screen.

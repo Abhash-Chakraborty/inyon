@@ -1162,6 +1162,7 @@ mod tests {
                 machine_kind: None,
                 keys_at: Default::default(),
                 unwatched: Default::default(),
+                claude_parked: Default::default(),
             })));
             let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
             // Ghostex #253: uploads over 1 MiB failed there
@@ -1231,6 +1232,7 @@ mod tests {
             machine_kind: None,
             keys_at: Default::default(),
             unwatched: Default::default(),
+            claude_parked: Default::default(),
         }))
     }
 

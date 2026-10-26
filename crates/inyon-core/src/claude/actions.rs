@@ -214,6 +214,27 @@ async fn confirm_delivery(host_id: &str, pane_id: &str, id: &str, text: &str) ->
     Ok(())
 }
 
+/// Claude Code's panel for one background shell or monitor (opened from its "↓ to manage" list,
+/// easily by accident) covers the input box and takes every key, so a message typed there never
+/// arrives.
+pub fn claude_details_panel(lines: &[String]) -> bool {
+    let text = re!(r"\x1b\[[0-9;]*m", "g").replace_all(&lines.join("\n"), "").into_owned();
+    let tail: Vec<&str> = text.lines().rev().take(60).collect();
+    tail.iter().any(|l| re!(r"^\s*(Shell|Monitor) details\s*$").is_match(l)) && !tail.iter().any(|l| re!(r"^\s*❯").is_match(l))
+}
+
+/// Closes that panel with Esc, which only dismisses it, so the message goes to the input box.
+async fn close_claude_details(host: &Host, pane_id: &str) -> HubResult<()> {
+    for _ in 0..3 {
+        if !claude_details_panel(&screen_lines(host, pane_id).await?) {
+            break;
+        }
+        send_keys(host, pane_id, &["Escape"]).await?;
+        sleep(300).await;
+    }
+    Ok(())
+}
+
 /// Claude's preview of a paste, and nothing else: text left in front of it would be sent too.
 fn only_paste_preview(squashed: &str) -> bool {
     re!(r"^(\[Pastedtext#\d+(\+\d+lines?)?\])+$").is_match(squashed)
@@ -337,6 +358,9 @@ pub async fn send_message_to_pane(host_id: &str, pane_id: &str, text: &str, from
     // Claude Code saves a /model or /effort pick as the default for new sessions; from Inyon it's for this one
     if kind == AgentKind::Claude && re!(r"^/(model|effort)(\s|$)").is_match(text.jtrim()) {
         keep_claude_defaults(&host, KeepOptions::default()).await;
+    }
+    if kind == AgentKind::Claude {
+        close_claude_details(&host, pane_id).await?;
     }
     let screen = current_screen(host_id, pane_id).await?;
     if screen.prompt.is_some() {

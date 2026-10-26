@@ -34,7 +34,7 @@ test('typed text goes on stdin, never on the command line', () => {
 
 test('the screen is read with its size and cursor, one entry per row', () => {
   const s = parseScreen('10 3 2 1 1\nab\n\x1b[31mred\x1b[0m\n')!
-  expect(s).toEqual({ width: 10, height: 3, cursor: { x: 2, y: 1, visible: true }, lines: ['ab', '\x1b[31mred\x1b[0m', ''] })
+  expect(s).toEqual({ width: 10, height: 3, cursor: { x: 2, y: 1, visible: true }, lines: ['ab', '\x1b[31mred\x1b[0m', ''], mouse: false })
   expect(parseScreen('')).toBeUndefined()
   expect(parseScreen("can't find pane\n")).toBeUndefined()
 })
@@ -106,4 +106,13 @@ test('the terminal ends when its pane goes away', async () => {
   await Bun.sleep(200)
   await host.exec(`tmux kill-session -t gone`)
   expect(await Promise.race([term.exited, Bun.sleep(5000).then(() => 'still open')])).not.toBe('still open')
+})
+
+test('a full-screen program gets the mouse wheel, and a shell keeps the mouse to itself', () => {
+  const shell = parseScreen('10 2 0 0 1 0\n$ ls\n')!
+  const claude = parseScreen('10 2 0 0 1 1\n● Done.\n❯\n')!
+  expect(drawScreen(undefined, shell)).not.toContain('\x1b[?1000h')
+  expect(drawScreen(shell, claude).startsWith('\x1b[?1000h\x1b[?1006h')).toBe(true)
+  expect(drawScreen(claude, claude)).not.toContain('\x1b[?1000h')
+  expect(drawScreen(claude, shell).startsWith('\x1b[?1000l\x1b[?1006l')).toBe(true)
 })

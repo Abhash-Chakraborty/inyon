@@ -155,6 +155,14 @@ pub struct StatusPane {
     pub account_now: Option<String>,
 }
 
+/// The background session a Claude Code window moved its conversation to, which the window shows
+/// and takes messages for from then on, with that session's transcript.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParkedClaude {
+    pub session_id: String,
+    pub transcript: String,
+}
+
 /// Antigravity CLI's last status line payload for a pane.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgyStatusPane {
@@ -208,6 +216,8 @@ pub struct ProbeResult {
     /// window id → its size, for each window no person's tmux client is attached to (through any
     /// session holding it, Inyon's own views included)
     pub unwatched: IndexMap<String, (u32, u32)>,
+    /// Claude Code process id → the background session its window moved the conversation to
+    pub claude_parked: IndexMap<i64, ParkedClaude>,
     pub machine_kind: Option<MachineKind>,
 }
 
@@ -276,6 +286,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         machine_kind: None,
         keys_at: IndexMap::new(),
         unwatched: IndexMap::new(),
+        claude_parked: IndexMap::new(),
     };
     for line in stdout.split('\n') {
         if let Some(v) = line.strip_prefix("@@HOST ") {
@@ -351,6 +362,29 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         }
         None
     };
+
+    // Claude Code's records of its sessions: a window that moved its conversation to the background
+    // names that session's job, and the background session (still running) names its transcript
+    let mut background: HashMap<String, ParkedClaude> = HashMap::new();
+    let mut parked: Vec<(i64, String)> = Vec::new();
+    for line in section("CLAUDESESS") {
+        let Some((path, record)) = line.split_once('\t') else { continue };
+        let Some(v) = json::parse(record) else { continue };
+        let v = Some(&v);
+        let Some(pid) = v.at("pid").num().map(|p| p as i64) else { continue };
+        if let Some(job) = v.at("parkedJobId").str() {
+            parked.push((pid, job.to_owned()));
+        } else if let (Some("bg"), Some(job), Some(id)) = (v.at("kind").str(), v.at("jobId").str(), v.at("sessionId").str()) {
+            if path != "-" && (procs.is_empty() || procs.contains_key(&pid)) {
+                background.insert(job.to_owned(), ParkedClaude { session_id: id.to_owned(), transcript: path.to_owned() });
+            }
+        }
+    }
+    for (pid, job) in parked {
+        if let Some(b) = background.get(&job) {
+            res.claude_parked.insert(pid, b.clone());
+        }
+    }
 
     let bins: HashSet<&str> = section("BINS").iter().map(|l| l.jtrim()).filter(|l| !l.is_empty()).collect();
     res.installed = AGENT_KINDS.iter().copied().filter(|k| agents()[k].comm.iter().any(|c| bins.contains(c.as_str()))).collect();
@@ -496,6 +530,14 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
     for l in &windows {
         if let Some(size) = l.size.filter(|_| !watched.contains(l.window.as_str())) {
             res.unwatched.insert(l.window.clone(), size);
+        }
+    }
+    // the hook's last word from a window whose conversation went to the background is about the
+    // conversation it left, until the background session's own events reach it
+    for (pane, ap) in &res.agent_procs {
+        let Some(b) = res.claude_parked.get(&(ap.pid as i64)) else { continue };
+        if res.hook_panes.get(pane).is_some_and(|h| Some(&h.data).at("session_id").str() != Some(b.session_id.as_str())) {
+            res.hook_panes.shift_remove(pane);
         }
     }
     res.sessions = sessions.into_values().collect();
@@ -672,7 +714,7 @@ pub fn guess_transcript(stdout: &str, dir: &str, proc: &TranscriptProc) -> Optio
 /// Prints whether Claude's integration is installed, missing, removed from settings or outdated.
 pub const HOOK_STATE_SH: &str = r#"t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
@@ -768,7 +810,7 @@ for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-sta
 done
 for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
-  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
 # the agents other than Claude Code whose settings run Inyon's hook
 echo "@@HOOKED"
@@ -778,7 +820,7 @@ grep -qs 'inyon/hook.sh antigravity' "$HOME/.gemini/config/hooks.json" && echo a
 echo "@@HOOK"
 t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 8 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
@@ -804,6 +846,17 @@ echo "@@PANES"
 cat "$t"/panes/*.json 2>/dev/null
 echo "@@COMPACT"
 for f in "$t"/panes/*.compact; do [ -f "$f" ] && echo "$(basename "$f" .compact) $(cat "$f")"; done 2>/dev/null
+echo "@@CLAUDESESS"
+# Claude Code windows that moved their conversation to the background, and the background sessions with their transcripts
+cc="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+for f in "$cc"/sessions/*.json; do
+  [ -f "$f" ] || continue
+  l=$(tr -d '\n\r' < "$f")
+  case "$l" in
+  *'"parkedJobId":"'*) printf '%s\t%s\n' - "$l" ;;
+  *'"kind":"bg"'*) s=$(printf '%s' "$l" | sed -n 's/.*"sessionId":"\([0-9a-f-]*\)".*/\1/p'); tp=$([ -n "$s" ] && ls "$cc"/projects/*/"$s".jsonl 2>/dev/null | head -n 1); printf '%s\t%s\n' "${tp:--}" "$l" ;;
+  esac
+done 2>/dev/null
 echo "@@STATUS"
 # pane, mtime, account when written, account now, payload
 for f in "$t"/status/*.json; do
@@ -1080,6 +1133,29 @@ mod tests {
         assert_eq!((a.kind, a.pid, a.started_at, a.cwd.as_deref()), (AgentKind::Claude, 101.0, 1960.0, Some("/home/u/p/sub")));
         assert_eq!(a.resume.as_deref(), Some("7409eef9-d507-4808-a592-0bfabe896e3a"));
         assert_eq!(r.hook_panes["%1"].data["session_id"], "s");
+        assert!(r.claude_parked.is_empty());
+        // Claude Code moved the window's conversation to a background session, which the window
+        // now shows: that session's transcript, and none of the hook's word on the one it left
+        let sessions = [
+            "@@CLAUDESESS",
+            "-\t{\"pid\":101,\"sessionId\":\"s\",\"kind\":\"interactive\",\"tmux\":\"work:@1.%1\",\"parkedJobId\":\"eef2ead0\"}",
+            "/home/u/.claude/projects/-home-u-p/eef2ead0-8d08.jsonl\t{\"pid\":102,\"sessionId\":\"eef2ead0-8d08\",\"kind\":\"bg\",\"jobId\":\"eef2ead0\"}",
+            "@@STATUS",
+        ];
+        let moved = out.replace("@@STATUS", &sessions.join("\n"));
+        let running = parse_probe(&moved.replace("@@CWD", "  102     1   30 claude claude --bg\n@@CWD"), "", 0, 12.0).unwrap();
+        let want = ParkedClaude { session_id: "eef2ead0-8d08".into(), transcript: "/home/u/.claude/projects/-home-u-p/eef2ead0-8d08.jsonl".into() };
+        assert_eq!(running.claude_parked.get(&101), Some(&want));
+        assert!(!running.hook_panes.contains_key("%1"));
+        // once the background session's own events reach the window, they stay
+        let routed =
+            parse_probe(&moved.replace("@@CWD", "  102     1   30 claude claude --bg\n@@CWD").replace(r#""session_id":"s"}}"#, r#""session_id":"eef2ead0-8d08"}}"#), "", 0, 12.0)
+                .unwrap();
+        assert_eq!(routed.hook_panes["%1"].data["session_id"], "eef2ead0-8d08");
+        // a background session that has ended (its record left behind) moves nothing
+        let ended = parse_probe(&moved, "", 0, 12.0).unwrap();
+        assert!(ended.claude_parked.is_empty());
+        assert_eq!(ended.hook_panes["%1"].data["session_id"], "s");
         assert_eq!(r.compact_panes["%1"], 1990.0);
         assert_eq!((r.status_panes["%1"].account.as_deref(), r.status_panes["%1"].account_now.as_deref()), (Some("A"), None));
         // a custom agent (Settings › Agents) is the agent it works like, under its own name

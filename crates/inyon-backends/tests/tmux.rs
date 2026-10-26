@@ -269,6 +269,7 @@ fn probe(agent_procs: IndexMap<String, AgentProc>) -> ProbeResult {
         machine_kind: None,
         keys_at: Default::default(),
         unwatched: Default::default(),
+        claude_parked: Default::default(),
     }
 }
 

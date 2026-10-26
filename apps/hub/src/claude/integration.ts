@@ -22,6 +22,18 @@ event=$(printf '%s' "\${2:-}" | tr -cd 'A-Za-z0-9_-')
 p=$(tr -d '\\n\\r')
 [ -n "$p" ] || exit 0
 ${PANE_SH}
+# a conversation Claude Code moved to the background runs outside tmux: its events go to the window it left
+if [ -z "$pane" ] && [ -z "$agent" ]; then
+  j=$(printf '%s' "$p" | sed -n 's/^{"session_id":"\\([0-9a-f]\\{8\\}\\).*/\\1/p')
+  w=$([ -n "$j" ] && grep -h "\\"parkedJobId\\":\\"$j\\"" "\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json 2>/dev/null | sed -n 's/.*"tmux":"\\([^"]*\\)".*/\\1/p' | head -n 1)
+  case $w in *:@*.%*)
+    pane="%\${w##*.%}"
+    case $(tmux -V 2>/dev/null) in *psmux*)
+      s=$(tmux display -p -t "\${w%:@*}" '#{session_id}' 2>/dev/null | tr -d '$\\r')
+      case $s in ''|*[!0-9]*) pane= ;; *) pane="%$s.\${pane#%}" ;; esac ;;
+    esac ;;
+  esac
+fi
 if [ -n "$agent" ]; then
   line=$(printf '{"pane":"%s","ts":%s,"agent":"%s","event":"%s","data":%s}' "$pane" "$(date +%s)" "$agent" "$event" "$p")
 else

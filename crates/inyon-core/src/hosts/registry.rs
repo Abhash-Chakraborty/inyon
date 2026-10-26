@@ -1132,12 +1132,13 @@ impl Registry {
         live: Rc<RefCell<HashSet<i64>>>,
     ) -> HubResult<PaneInfo> {
         let host_id = host.id();
-        let (proc, hook, home, agy_conversation) = {
+        let (proc, hook, home, agy_conversation, parked) = {
             let pr = pr.borrow();
             let proc = pr.agent_procs.get(&p.id).cloned().expect("an agent pane");
             let conv = pr.agy_conversations.get(&(proc.pid as i64)).cloned();
+            let parked = pr.claude_parked.get(&(proc.pid as i64)).cloned().filter(|_| proc.kind == AgentKind::Claude);
             let kind = proc.kind;
-            (proc, pr.hook_panes.get(&p.id).filter(|h| h.from_agent(kind)).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv)
+            (proc, pr.hook_panes.get(&p.id).filter(|h| h.from_agent(kind)).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv, parked)
         };
         let pid = proc.pid as i64;
         live.borrow_mut().insert(pid);
@@ -1161,7 +1162,12 @@ impl Registry {
             failure: None,
         };
         let hook_path = hook.as_ref().and_then(|h| Some(&h.data).at("transcript_path").filter(|v| Some(*v).truthy()).map(json::value_string));
-        if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
+        if let Some(b) = parked {
+            // the window shows the background session it moved its conversation to, and types into it
+            info.transcript_path = Some(b.transcript);
+            info.session_id = Some(b.session_id);
+            info.mapped_by = Some(MappedBy::Process);
+        } else if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
             info.transcript_path = hook_path;
             info.session_id = hook.as_ref().and_then(|h| Some(&h.data).at("session_id").filter(|v| !v.is_null()).map(json::value_string));
             info.mapped_by = Some(MappedBy::Hook);

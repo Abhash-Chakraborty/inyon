@@ -43,6 +43,7 @@ fn put(id: &str, connected: bool) {
             machine_kind: None,
             keys_at: Default::default(),
             unwatched: Default::default(),
+            claude_parked: Default::default(),
         })));
     }
 }

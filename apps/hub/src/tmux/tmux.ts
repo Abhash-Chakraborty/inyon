@@ -178,6 +178,17 @@ echo "@@PANES"
 cat "$t"/panes/*.json 2>/dev/null
 echo "@@COMPACT"
 for f in "$t"/panes/*.compact; do [ -f "$f" ] && echo "$(basename "$f" .compact) $(cat "$f")"; done 2>/dev/null
+echo "@@CLAUDESESS"
+# Claude Code windows that moved their conversation to the background, and the background sessions with their transcripts
+cc="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+for f in "$cc"/sessions/*.json; do
+  [ -f "$f" ] || continue
+  l=$(tr -d '\\n\\r' < "$f")
+  case "$l" in
+  *'"parkedJobId":"'*) printf '%s\\t%s\\n' - "$l" ;;
+  *'"kind":"bg"'*) s=$(printf '%s' "$l" | sed -n 's/.*"sessionId":"\\([0-9a-f-]*\\)".*/\\1/p'); tp=$([ -n "$s" ] && ls "$cc"/projects/*/"$s".jsonl 2>/dev/null | head -n 1); printf '%s\\t%s\\n' "\${tp:--}" "$l" ;;
+  esac
+done 2>/dev/null
 echo "@@STATUS"
 # pane, mtime, account when written, account now, payload
 for f in "$t"/status/*.json; do
