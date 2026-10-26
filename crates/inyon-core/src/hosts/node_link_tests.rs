@@ -132,3 +132,49 @@ fn an_exec_that_gets_no_answer_times_out_and_kills_the_command() {
         assert_eq!(ws.sent.borrow()[1], json!({ "op": "kill", "id": "1" }));
     });
 }
+
+/// A laptop on Wi-Fi or a VPN drops its connection for a few seconds now and then. A message sent
+/// meanwhile failed at once, and the session looked offline until the next poll; it now waits for
+/// the machine to come back.
+#[test]
+fn a_command_sent_while_the_machine_reconnects_goes_in_once_its_back() {
+    run(|| async {
+        let c = config("blip");
+        let old: Socket = Rc::new(FakeSocket::default());
+        attach(&c.id, old.clone());
+        detach(&c.id, &old);
+        assert!(!is_up(&c.id) && reconnecting(&c.id));
+        let run = NodeBackend.exec(&c, "echo hi", ExecOptions::default());
+        let next = Rc::new(FakeSocket::default());
+        let (id, back) = (c.id.clone(), next.clone());
+        // back after 300 ms, and answering what it was sent
+        crate::platform::rt::spawn(async move {
+            wait(300).await;
+            attach(&id, back.clone());
+            while back.sent.borrow().is_empty() {
+                wait(20).await;
+            }
+            let op = back.sent.borrow()[0]["id"].as_str().unwrap().to_owned();
+            message(&id, &format!(r#"{{"id":"{op}","type":"exit","code":0,"stdout":"hi\n","stderr":""}}"#));
+        });
+        let r = run.await.unwrap();
+        assert_eq!((r.code, r.stdout.as_str()), (0, "hi\n"));
+        assert_eq!(next.sent.borrow()[0]["cmd"], "echo hi");
+        assert!(!reconnecting(&c.id));
+    });
+}
+
+#[test]
+fn a_machine_still_gone_after_the_grace_answers_503() {
+    run(|| async {
+        let c = config("gone");
+        let old: Socket = Rc::new(FakeSocket::default());
+        attach(&c.id, old.clone());
+        detach(&c.id, &old);
+        crate::clock::set_now(Some(now_ms() + RECONNECT_GRACE_MS + 1));
+        assert!(!reconnecting(&c.id));
+        let e = NodeBackend.exec(&c, "true", ExecOptions::default()).await.unwrap_err();
+        crate::clock::set_now(None);
+        assert_eq!(e.status, Some(503));
+    });
+}

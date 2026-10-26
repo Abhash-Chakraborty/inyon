@@ -54,7 +54,13 @@ struct NodeLinks {
     seq: u64,
     listeners: Vec<Listener>,
     info: HashMap<String, NodeInfo>,
+    /// when each machine's connection dropped, until it's back
+    dropped: HashMap<String, u64>,
 }
+
+/// A machine whose connection drops usually has it back within seconds (a Wi-Fi or VPN blip): for
+/// this long it still counts as there, and what's asked of it waits for it.
+pub const RECONNECT_GRACE_MS: u64 = 15_000;
 
 thread_local! {
     static LINKS: RefCell<NodeLinks> = RefCell::new(NodeLinks::default());
@@ -89,6 +95,7 @@ pub fn attach(host_id: &str, ws: Socket) {
         old.close(4000, "replaced by a newer connection");
     }
     with(|n| {
+        n.dropped.remove(host_id);
         n.sockets.insert(host_id.to_owned(), ws);
         n.info.insert(host_id.to_owned(), NodeInfo { version: None, os: None, warning: None, connected_at: now_ms() });
     });
@@ -99,6 +106,7 @@ pub fn detach(host_id: &str, ws: &Socket) {
     let mine = with(|n| {
         if n.sockets.get(host_id).is_some_and(|s| Rc::ptr_eq(s, ws)) {
             n.sockets.remove(host_id);
+            n.dropped.insert(host_id.to_owned(), now_ms());
             true
         } else {
             false
@@ -151,6 +159,19 @@ pub fn why(host_id: &str) -> Option<String> {
 
 pub fn is_up(host_id: &str) -> bool {
     with(|n| n.sockets.contains_key(host_id))
+}
+
+/// The machine's connection dropped a moment ago and it's most likely coming back.
+pub fn reconnecting(host_id: &str) -> bool {
+    with(|n| !n.sockets.contains_key(host_id) && n.dropped.get(host_id).is_some_and(|&t| now_ms().saturating_sub(t) < RECONNECT_GRACE_MS))
+}
+
+/// Waits while the machine is reconnecting; true once it's connected.
+pub async fn back(host_id: &str) -> bool {
+    while reconnecting(host_id) {
+        crate::platform::rt::sleep(200).await;
+    }
+    is_up(host_id)
 }
 
 pub fn disconnect(host_id: &str) {

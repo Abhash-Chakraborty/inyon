@@ -83,7 +83,9 @@ From 0.22, on a joined machine, `inyon hub machines`, `inyon sessions` and `inyo
 
 ## When a machine goes offline
 
-The hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back; trying says *This machine is not connected. Is inyon running on it?* When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.
+A machine that runs inyon and drops for up to 15 seconds, as a laptop on Wi-Fi or a VPN does now and then, isn't treated as gone from 0.22.2: its sessions keep their state, and a message sent meanwhile goes in once it's back.
+
+For longer, the hub keeps the last thing it saw. After a minute away, the machine shows as *Offline · last seen 5 min ago*, with its sessions and recent conversations still readable, and you're notified. You can't send to it until it's back; trying says *This machine is not connected. Is inyon running on it?* When it reconnects you're told how long it was away, and a turn that finished while it was gone still counts as finished.
 
 ## Updating machines
 
