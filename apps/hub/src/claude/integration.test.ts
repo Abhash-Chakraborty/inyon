@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs'
+import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HOOK_SCRIPT, STATUS_SCRIPT } from './integration.ts'
@@ -167,6 +167,49 @@ const sandboxHost = {
     return { code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
   },
 } as any
+
+describe('settings.json', () => {
+  // its own HOME, so the link and the files stay out of the other tests' way
+  const own = mkdtempSync(join(tmpdir(), 'inyon-int-'))
+  afterAll(() => rmSync(own, { recursive: true, force: true }))
+  const ownHost = {
+    exec: async (cmd: string, opts: { input?: string } = {}) => {
+      const r = Bun.spawnSync(['sh', '-c', cmd], { stdin: opts.input === undefined ? undefined : Buffer.from(opts.input), env: { HOME: own, PATH: process.env.PATH! } })
+      return { code: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() }
+    },
+  } as any
+
+  // Many keep it in their dotfiles, linked in: installing replaced the link with a file of its own
+  test('install and uninstall keep a linked settings file a link', async () => {
+    const { installIntegration, uninstallIntegration } = await import('./integration.ts')
+    Bun.spawnSync(['mkdir', '-p', join(own, '.claude'), join(own, 'dotfiles')])
+    const target = join(own, 'dotfiles/claude-settings.json')
+    writeFileSync(target, '{"model":"opus"}')
+    symlinkSync(target, join(own, '.claude/settings.json'))
+    await installIntegration(ownHost)
+    expect(lstatSync(join(own, '.claude/settings.json')).isSymbolicLink()).toBe(true)
+    const s = JSON.parse(readFileSync(target, 'utf8'))
+    expect([s.model, s.statusLine.command]).toEqual(['opus', '~/.inyon/statusline.sh'])
+    await uninstallIntegration(ownHost)
+    expect(lstatSync(join(own, '.claude/settings.json')).isSymbolicLink()).toBe(true)
+    expect(JSON.parse(readFileSync(target, 'utf8'))).toEqual({ model: 'opus' })
+  })
+
+  // Claude Code saves its settings while you work: a write from what was read before would put the old file back
+  test('settings changed since they were read are not written over', async () => {
+    const { READ_SETTINGS, writeSettingsCommand } = await import('./integration.ts')
+    const file = join(own, '.claude/settings.json')
+    rmSync(file, { force: true })
+    writeFileSync(file, '{"model":"opus"}')
+    const sum = (await ownHost.exec(READ_SETTINGS)).stdout.split('\n')[0]
+    writeFileSync(file, '{"model":"sonnet"}')
+    expect((await ownHost.exec(writeSettingsCommand(sum), { input: '{"model":"opus"}' })).code).toBe(3)
+    expect(readFileSync(file, 'utf8')).toBe('{"model":"sonnet"}')
+    const again = (await ownHost.exec(READ_SETTINGS)).stdout.split('\n')[0]
+    expect((await ownHost.exec(writeSettingsCommand(again), { input: '{"model":"sonnet","hooks":{}}' })).code).toBe(0)
+    expect(readFileSync(file, 'utf8')).toBe('{"model":"sonnet","hooks":{}}')
+  })
+})
 
 describe('installIntegration', () => {
   test('a Claude Code downgraded below StopFailure loses Inyon\'s StopFailure hook and keeps yours', async () => {

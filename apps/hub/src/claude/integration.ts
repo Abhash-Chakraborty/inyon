@@ -131,26 +131,53 @@ export function knowsStopFailure(version: string): boolean {
 
 const isOurs = (h: any) => ours(h?.command, 'hook.sh')
 
-async function readSettings(host: Host): Promise<any> {
-  const r = await host.exec('cat "$HOME/.claude/settings.json" 2>/dev/null')
-  if (!r.stdout.trim()) return {}
+/** The script that reads ~/.claude/settings.json: its checksum on the first line (or "none"), then the file. */
+export const READ_SETTINGS = `f="$HOME/.claude/settings.json"; [ -f "$f" ] || { echo none; exit 0; }; s=$(sum "$f") || exit 1; echo "$s"; cat "$f"`
+
+/**
+ * The script that writes it, only if it still has the checksum it was read with (none: it wasn't
+ * there), else exit 3. A settings.json that is a link to your dotfiles stays a link: the file it
+ * points to is written. Private to you (it often holds API keys), and no half-written copy left if
+ * the connection drops.
+ */
+export function writeSettingsCommand(sum: string): string {
+  const check = sum ? `{ [ -f "$f" ] && [ "$(sum "$f")" = ${shq(sum)} ]; } || exit 3` : '[ -e "$f" ] && exit 3'
+  return [
+    'umask 077; f="$HOME/.claude/settings.json"; t="$f.inyon-tmp"; mkdir -p "$HOME/.claude"',
+    check,
+    `trap 'rm -f "$t"' EXIT HUP INT TERM`,
+    '[ -f "$f" ] && [ ! -f "$f.tether-backup" ] && [ ! -f "$f.inyon-backup" ] && cp "$f" "$f.inyon-backup"',
+    'if [ -L "$f" ]; then cat > "$t" && cat "$t" > "$f"; else cat > "$t" && mv -f "$t" "$f"; fi',
+  ].join('\n')
+}
+
+/** The settings and the checksum they were read with ('' when there was no file). */
+async function readSettings(host: Host): Promise<{ settings: any; sum: string }> {
+  const r = await host.exec(READ_SETTINGS)
+  if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not read ~/.claude/settings.json')
+  const nl = r.stdout.indexOf('\n')
+  const [first, text] = nl < 0 ? [r.stdout, ''] : [r.stdout.slice(0, nl), r.stdout.slice(nl + 1)]
+  const sum = first.trim() === 'none' ? '' : first.trim()
+  if (!text.trim()) return { settings: {}, sum }
   try {
-    return JSON.parse(r.stdout)
+    return { settings: JSON.parse(text), sum }
   } catch {
     throw new HttpError(409, '~/.claude/settings.json on that machine is not valid JSON; fix it first')
   }
 }
 
-async function writeSettings(host: Host, settings: any) {
-  // private to you (settings.json often holds API keys), and no half-written copy left if the connection drops
-  const cmd = [
-    `umask 077; trap 'rm -f "$HOME/.claude/settings.json.inyon-tmp"' EXIT HUP INT TERM`,
-    'mkdir -p "$HOME/.claude"',
-    '[ -f "$HOME/.claude/settings.json" ] && [ ! -f "$HOME/.claude/settings.json.tether-backup" ] && [ ! -f "$HOME/.claude/settings.json.inyon-backup" ] && cp "$HOME/.claude/settings.json" "$HOME/.claude/settings.json.inyon-backup"',
-    'cat > "$HOME/.claude/settings.json.inyon-tmp" && mv "$HOME/.claude/settings.json.inyon-tmp" "$HOME/.claude/settings.json"',
-  ].join('; ')
-  const r = await host.exec(cmd, { input: JSON.stringify(settings, null, 2) + '\n' })
+/** False when the file changed since it was read (Claude Code saved a setting meanwhile). */
+async function writeSettings(host: Host, settings: any, sum: string): Promise<boolean> {
+  const r = await host.exec(writeSettingsCommand(sum), { input: JSON.stringify(settings, null, 2) + '\n' })
+  if (r.code === 3) return false
   if (r.code !== 0) throw new HttpError(500, r.stderr.trim() || 'Could not write settings')
+  return true
+}
+
+/** Runs a read, change and write of the settings again while they changed in between; throws when they changed every time. */
+async function editSettings(host: Host, once: () => Promise<boolean>) {
+  for (let i = 0; i < 3; i++) if (await once()) return
+  throw new HttpError(409, '~/.claude/settings.json kept changing while Inyon wrote it; try again')
 }
 
 async function writeFile(host: Host, path: string, content: string, mode = '600') {
@@ -179,36 +206,38 @@ export async function installIntegration(host: Host) {
   await writeFile(host, '.inyon/statusline.sh', STATUS_SCRIPT, '700')
   // ~/.inyon holds your prompts (events.jsonl, panes/): earlier versions left it readable by others
   await host.exec('umask 077; mkdir -p "$HOME/.inyon/panes" "$HOME/.inyon/status" && chmod 700 "$HOME/.inyon" && chmod 600 "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl" 2>/dev/null; true')
-  const settings = await readSettings(host)
-  const sl = settings.statusLine
-  if (!isOurStatus(sl?.command)) {
-    const cmd = sl?.type === 'command' && typeof sl.command === 'string' ? sl.command : ''
-    const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
-    // Settings synced from a Windows machine bring a status line that can't run here. Keep the one that does.
-    if (!(windowsPath(cmd) && prev && !windowsPath(prev))) await writeFile(host, '.inyon/statusline.orig', cmd ? `${cmd}\n` : '')
-    settings.statusLine = { ...(sl ?? { padding: 0 }), type: 'command', command: STATUS_CMD }
-  } else {
-    if (sl.command !== STATUS_CMD) settings.statusLine = { ...sl, command: STATUS_CMD }
-    // a saved "own" status line that is this wrapper again would start itself forever: use the one
-    // from before Inyon was installed instead, if there was one
-    const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
-    if (isOurStatus(prev)) {
-      const before = await statusBeforeInyon(host)
-      await writeFile(host, '.inyon/statusline.orig', before ? `${before}\n` : '')
+  await editSettings(host, async () => {
+    const { settings, sum } = await readSettings(host)
+    const sl = settings.statusLine
+    if (!isOurStatus(sl?.command)) {
+      const cmd = sl?.type === 'command' && typeof sl.command === 'string' ? sl.command : ''
+      const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
+      // Settings synced from a Windows machine bring a status line that can't run here. Keep the one that does.
+      if (!(windowsPath(cmd) && prev && !windowsPath(prev))) await writeFile(host, '.inyon/statusline.orig', cmd ? `${cmd}\n` : '')
+      settings.statusLine = { ...(sl ?? { padding: 0 }), type: 'command', command: STATUS_CMD }
+    } else {
+      if (sl.command !== STATUS_CMD) settings.statusLine = { ...sl, command: STATUS_CMD }
+      // a saved "own" status line that is this wrapper again would start itself forever: use the one
+      // from before Inyon was installed instead, if there was one
+      const prev = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
+      if (isOurStatus(prev)) {
+        const before = await statusBeforeInyon(host)
+        await writeFile(host, '.inyon/statusline.orig', before ? `${before}\n` : '')
+      }
     }
-  }
-  const version = (await host.exec('claude --version 2>/dev/null')).stdout
-  settings.hooks ??= {}
-  for (const ev of knowsStopFailure(version) ? [...EVENTS, STOP_FAILURE] : EVENTS) {
-    const groups: any[] = (settings.hooks[ev.name] ??= [])
-    // an entry naming the old folder points at the new one
-    for (const g of groups) for (const h of g.hooks ?? []) if (isOurs(h)) h.command = HOOK_CMD
-    if (groups.some((g) => (g.hooks ?? []).some(isOurs))) continue
-    groups.push({ ...(ev.matcher ? { matcher: ev.matcher } : {}), hooks: [{ type: 'command', command: HOOK_CMD }] })
-  }
-  // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
-  if (!knowsStopFailure(version)) dropOurs(settings.hooks, STOP_FAILURE.name)
-  await writeSettings(host, settings)
+    const version = (await host.exec('claude --version 2>/dev/null')).stdout
+    settings.hooks ??= {}
+    for (const ev of knowsStopFailure(version) ? [...EVENTS, STOP_FAILURE] : EVENTS) {
+      const groups: any[] = (settings.hooks[ev.name] ??= [])
+      // an entry naming the old folder points at the new one
+      for (const g of groups) for (const h of g.hooks ?? []) if (isOurs(h)) h.command = HOOK_CMD
+      if (groups.some((g) => (g.hooks ?? []).some(isOurs))) continue
+      groups.push({ ...(ev.matcher ? { matcher: ev.matcher } : {}), hooks: [{ type: 'command', command: HOOK_CMD }] })
+    }
+    // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
+    if (!knowsStopFailure(version)) dropOurs(settings.hooks, STOP_FAILURE.name)
+    return writeSettings(host, settings, sum)
+  })
   await installAgyIntegration(host)
 }
 
@@ -336,15 +365,17 @@ async function removeProjectStatusLines(host: Host) {
 
 export async function uninstallIntegration(host: Host) {
   await removeProjectStatusLines(host)
-  const settings = await readSettings(host)
-  if (isOurStatus(settings.statusLine?.command)) {
-    const orig = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
-    if (orig && !isOurStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
-    else delete settings.statusLine
-  }
-  for (const name of Object.keys(settings.hooks ?? {})) dropOurs(settings.hooks, name)
-  if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks
-  await writeSettings(host, settings)
+  await editSettings(host, async () => {
+    const { settings, sum } = await readSettings(host)
+    if (isOurStatus(settings.statusLine?.command)) {
+      const orig = (await host.exec('cat "$HOME/.inyon/statusline.orig" 2>/dev/null')).stdout.trim()
+      if (orig && !isOurStatus(orig)) settings.statusLine = { ...settings.statusLine, command: orig }
+      else delete settings.statusLine
+    }
+    for (const name of Object.keys(settings.hooks ?? {})) dropOurs(settings.hooks, name)
+    if (settings.hooks && !Object.keys(settings.hooks).length) delete settings.hooks
+    return writeSettings(host, settings, sum)
+  })
   // the hook's log holds your prompts: it goes with the hook
   await host.exec('rm -f "$HOME/.inyon/hook.sh" "$HOME/.inyon/statusline.sh" "$HOME/.inyon/statusline.orig" "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl"')
   await uninstallAgyIntegration(host)
