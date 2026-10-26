@@ -98,7 +98,11 @@ pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32
 fn dot_back(kind: AgentKind, raw: &str) -> String {
     let text = unstyle(raw).text.trim_end().to_owned();
     let blinked = matches!(kind, AgentKind::Claude | AgentKind::Copilot) && re!(r"^  [A-Z]").is_match(&text) && starts_bold(raw);
-    if blinked { format!("●{}", &text[1..]) } else { text }
+    if blinked {
+        format!("●{}", &text[1..])
+    } else {
+        text
+    }
 }
 
 /// Whether the first character that isn't a space is drawn bold.

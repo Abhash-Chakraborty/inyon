@@ -130,10 +130,10 @@ fn handshake(req: &Req) -> Option<Resp> {
 }
 
 /// Runs one socket once the upgrade is through.
-async fn pump(on: hyper::upgrade::OnUpgrade, ends: Ends, on_open: impl FnOnce(), on_text: impl Fn(&str), on_close: impl FnOnce()) {
+async fn pump(on: hyper::upgrade::OnUpgrade, ends: Ends, on_open: impl FnOnce(), on_text: impl Fn(&str), on_close: impl FnOnce(bool)) {
     match on.await {
         Ok(upgraded) => run(TokioIo::new(upgraded), ends, LIMITS, on_open, on_text, on_close).await,
-        Err(_) => on_close(),
+        Err(_) => on_close(true),
     }
 }
 
@@ -156,8 +156,9 @@ fn write<IO: AsyncRead + AsyncWrite + Unpin + 'static>(mut sink: Sink<IO>, m: Me
 
 /// Frames in go to `on_text`, the queue goes out, until either side ends it. A write is one branch
 /// among the others, never awaited in place: a peer that stops reading can hold up its own
-/// output, but not the idle limit, a close, or `on_close`.
-async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: Ends, limits: Limits, on_open: impl FnOnce(), on_text: impl Fn(&str), on_close: impl FnOnce()) {
+/// output, but not the idle limit, a close, or `on_close`, which hears whether the connection
+/// dropped (true) rather than being closed by either side.
+async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: Ends, limits: Limits, on_open: impl FnOnce(), on_text: impl Fn(&str), on_close: impl FnOnce(bool)) {
     let mut config = WebSocketConfig::default();
     config.max_message_size = Some(MAX_MESSAGE);
     config.max_frame_size = Some(MAX_MESSAGE);
@@ -167,6 +168,7 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
     let mut sink = Some(sink);
     let mut writing: Option<Writing<IO>> = None;
     let mut close: Option<(u16, String)> = None;
+    let mut goodbye = false;
     let mut last = Instant::now();
     let mut tick = tokio::time::interval(limits.idle / 4);
     tick.tick().await;
@@ -174,6 +176,7 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
         tokio::select! {
             c = ends.close_rx.recv() => {
                 close = c;
+                goodbye = true;
                 break;
             }
             _ = tokio::time::sleep_until(last + limits.idle) => break,
@@ -193,7 +196,11 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
                     }
                 }
                 Some(Ok(Message::Ping(_) | Message::Pong(_) | Message::Frame(_))) => last = Instant::now(),
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(Message::Close(_))) => {
+                    goodbye = true;
+                    break;
+                }
+                Some(Err(_)) | None => break,
             },
             done = async { writing.as_mut().expect("a write in progress").await }, if writing.is_some() => {
                 writing = None;
@@ -219,7 +226,7 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
     }
     ends.closed.set(true);
     // the clients list, terminals and machine links let go now, not after the goodbyes below
-    on_close();
+    on_close(!goodbye);
     if let Some((code, reason)) = close {
         // the write in progress gets a moment to finish so the close frame can follow it
         if let Some(w) = writing.take() {
@@ -289,7 +296,7 @@ pub fn app_upgrade(mut req: Req) -> Resp {
         ends,
         move || add(&c1),
         move |t| client_message(&c2, t),
-        move || {
+        move |_| {
             release();
             close_client(&c3);
         },
@@ -326,7 +333,7 @@ fn companion_upgrade(mut req: Req, c: crate::companions::CompanionRecord) -> Res
             Some(why) => s.close_with(4403, &why),
             None => client_message(&c2, t),
         },
-        move || {
+        move |_| {
             release();
             close_client(&c3);
         },
@@ -369,9 +376,13 @@ pub async fn node_upgrade(mut req: Req) -> Resp {
             node_link::attach(&a, s1);
         },
         move |t| node_link::message(&b, t),
-        move || {
+        move |dropped| {
             if *attached.borrow() {
-                node_link::detach(&c, &s2);
+                if dropped {
+                    node_link::lost(&c, &s2);
+                } else {
+                    node_link::detach(&c, &s2);
+                }
             }
         },
     ));
@@ -407,7 +418,7 @@ mod tests {
         let got = Rc::new(RefCell::new(vec![]));
         let closed_at = Rc::new(Cell::new(None));
         let (g, c) = (got.clone(), closed_at.clone());
-        tokio::task::spawn_local(run(hub_io, ends, limits, || {}, move |t| g.borrow_mut().push(t.to_owned()), move || c.set(Some(std::time::Instant::now()))));
+        tokio::task::spawn_local(run(hub_io, ends, limits, || {}, move |t| g.borrow_mut().push(t.to_owned()), move |_| c.set(Some(std::time::Instant::now()))));
         let peer = WebSocketStream::from_raw_socket(peer_io, Role::Client, None).await;
         Rig { sock, got, closed_at, peer }
     }

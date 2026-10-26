@@ -142,7 +142,7 @@ fn a_command_sent_while_the_machine_reconnects_goes_in_once_its_back() {
         let c = config("blip");
         let old: Socket = Rc::new(FakeSocket::default());
         attach(&c.id, old.clone());
-        detach(&c.id, &old);
+        lost(&c.id, &old);
         assert!(!is_up(&c.id) && reconnecting(&c.id));
         let run = NodeBackend.exec(&c, "echo hi", ExecOptions::default());
         let next = Rc::new(FakeSocket::default());
@@ -170,11 +170,18 @@ fn a_machine_still_gone_after_the_grace_answers_503() {
         let c = config("gone");
         let old: Socket = Rc::new(FakeSocket::default());
         attach(&c.id, old.clone());
-        detach(&c.id, &old);
+        lost(&c.id, &old);
         crate::clock::set_now(Some(now_ms() + RECONNECT_GRACE_MS + 1));
         assert!(!reconnecting(&c.id));
         let e = NodeBackend.exec(&c, "true", ExecOptions::default()).await.unwrap_err();
         crate::clock::set_now(None);
         assert_eq!(e.status, Some(503));
+        // one that said goodbye is gone at once
+        let c = config("bye");
+        let ws: Socket = Rc::new(FakeSocket::default());
+        attach(&c.id, ws.clone());
+        detach(&c.id, &ws);
+        assert!(!reconnecting(&c.id));
+        assert_eq!(NodeBackend.exec(&c, "true", ExecOptions::default()).await.unwrap_err().status, Some(503));
     });
 }

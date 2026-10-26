@@ -102,11 +102,24 @@ pub fn attach(host_id: &str, ws: Socket) {
     notify(host_id, true);
 }
 
+/// The machine closed its connection, or the hub did: it's gone until it connects again.
 pub fn detach(host_id: &str, ws: &Socket) {
+    end(host_id, ws, false);
+}
+
+/// The connection broke without a goodbye (the network dropped it): the machine is most likely
+/// coming back, so for a while it still counts as there.
+pub fn lost(host_id: &str, ws: &Socket) {
+    end(host_id, ws, true);
+}
+
+fn end(host_id: &str, ws: &Socket, dropped: bool) {
     let mine = with(|n| {
         if n.sockets.get(host_id).is_some_and(|s| Rc::ptr_eq(s, ws)) {
             n.sockets.remove(host_id);
-            n.dropped.insert(host_id.to_owned(), now_ms());
+            if dropped {
+                n.dropped.insert(host_id.to_owned(), now_ms());
+            }
             true
         } else {
             false
