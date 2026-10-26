@@ -2236,14 +2236,18 @@ impl ChatWatcher {
         changed
     }
 
-    /// Records came in: what they hold leaves the live text. True when it changed.
+    /// Records came in: what they hold leaves the live text. The app drops the screen's copy when
+    /// a new reply is on record, which can be an earlier turn's, so what's left is sent again.
+    /// True when there's something to send.
     fn settle_screen_live(&self) -> bool {
         let mut st = self.st.borrow_mut();
         let Some(live) = st.screen_live.take() else { return false };
         let text = unrecorded(&live.text, &recent_replies(&st.items));
-        let changed = text != live.text;
+        if !text.is_empty() {
+            st.live_json = String::new();
+        }
         st.screen_live = (!text.is_empty()).then_some(LiveItem { text, ..live });
-        changed
+        true
     }
 
     fn stop_live(&self) {

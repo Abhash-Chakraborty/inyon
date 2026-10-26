@@ -196,7 +196,10 @@ pub fn carry_on(before: &str, now: &str) -> String {
         if head.chars().count() < 20 {
             break;
         }
-        if let Some(at) = before.find(&head) {
+        // `before` holds the head, or ends partway into it (the last read caught it being written)
+        let start: String = head.chars().take(20).collect();
+        let at = before.match_indices(&start).map(|(at, _)| at).find(|&at| before[at..].starts_with(&head) || rest.starts_with(&before[at..]));
+        if let Some(at) = at {
             return format!("{}{rest}", &before[..at]);
         }
     }

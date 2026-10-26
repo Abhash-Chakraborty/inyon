@@ -363,6 +363,37 @@ fn a_reply_claude_writes_shows_live_until_its_record_lands_and_doesnt_come_back(
 }
 
 #[test]
+fn an_earlier_turns_record_landing_late_sends_the_reply_being_written_again() {
+    run(|| async {
+        let screen = crate::test_support::fixture("screens/claude/reply-streaming.txt");
+        let _fake = Fake::install(move |_, cmd, _| if cmd.contains("capture-pane") { ok(&format!("@@CAP %9\n{screen}")) } else { ok("") });
+        machine("live-late", "local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        let w = watchers().get("live-late", "%9");
+        let phone = Rc::new(Phone::default());
+        let sub: Sub = phone.clone();
+        w.subscribe(sub);
+        w.poll_screen().await;
+        wait(200).await;
+        let live = live_of(&phone).expect("live text");
+
+        // the turn before's reply is recorded only now: the app drops the screen's copy on it, so
+        // the hub sends that copy again, unchanged
+        let sent = phone.got.borrow().len();
+        let base = Base::new("u", "t");
+        w.st.borrow_mut().items.push(with_seq(base.with_uuid("a8").assistant("m8", None, inyon_protocol::AssistantBlock::Text { text: "Coffee came from Ethiopia.".into() }), 8));
+        assert!(w.settle_screen_live());
+        w.live_soon();
+        wait(200).await;
+        let again = phone.got.borrow()[sent..].iter().rev().find_map(|m| match m {
+            ServerMsg::ChatLive { items, .. } => Some(items.clone()),
+            _ => None,
+        });
+        assert_eq!(again, Some(live));
+        watchers().stop("live-late:%9");
+    });
+}
+
+#[test]
 fn nothing_is_live_while_the_agent_isnt_working() {
     run(|| async {
         // the finished reply, with no spinner: Claude is idle

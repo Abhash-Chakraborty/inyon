@@ -102,3 +102,12 @@ fn the_end_of_a_prompt_left_at_the_top_isnt_carried_on() {
         "The story of coffee begins in the ancient coffee forests of the Ethiopian plateau, where a goat herder named Kaldi noticed. Legend says more."
     );
 }
+
+#[test]
+fn a_paragraph_the_last_read_caught_half_written_still_carries_on() {
+    let before = "The opening paragraph, scrolled away by now.\n\nBy the seventeenth century, mar";
+    let now = "By the seventeenth century, maritime trade brought tea to Europe.";
+    assert_eq!(carry_on(before, now), "The opening paragraph, scrolled away by now.\n\nBy the seventeenth century, maritime trade brought tea to Europe.");
+    // a start that only looks alike isn't taken
+    assert_eq!(carry_on("Earlier text.\n\nBy the seventeenth century, few", now), now);
+}
