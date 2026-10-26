@@ -102,7 +102,7 @@ The app is its own hub, so whoever holds the unlocked phone can reach your compu
 
 ## What Inyon changes on a machine
 
-No files, unless you turn on the Claude Code integration from the machine's Integration tab (or switch a Claude Code model, below). Then it:
+One small file on its own: `~/.inyon/machine-kind`, where the hub's check notes whether the machine is a laptop, a desktop or a server, and looks again once a day. Nothing else, unless you turn on the Claude Code integration from the machine's Integration tab (or switch a Claude Code model, below). Then it:
 
 - writes `~/.inyon/hook.sh` and `~/.inyon/statusline.sh`, and registers them in `~/.claude/settings.json`, backing that file up first to `settings.json.inyon-backup`. The hook runs on session start and end, a prompt, a notification, a permission request and the end of a turn, plus, from 0.22 with Claude Code 2.1.78 or later, a turn that ended on an error (StopFailure). Older Claude Code doesn't get that one, since before 2.1.101 an event it didn't know made it ignore the whole settings file;
 - keeps your own status line in `~/.inyon/statusline.orig` and still runs it;

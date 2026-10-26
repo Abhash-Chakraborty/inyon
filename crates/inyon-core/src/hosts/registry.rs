@@ -63,9 +63,15 @@ fn rest_windows(rt: &Rt, host: &Host, p: &ProbeResult) {
         p.sessions.iter().flat_map(|s| &s.windows).filter(|w| w.panes.iter().any(|x| p.agent_procs.contains_key(&x.id))).map(|w| w.id.clone()).collect();
     let windows = grid::to_rest(&p.unwatched, &agent_windows, &mut rt.borrow_mut().rested);
     if !windows.is_empty() {
-        let host = host.clone();
+        let (rt, host) = (rt.clone(), host.clone());
         spawn(async move {
-            let _ = host.run(&grid::rest_command(&windows)).await;
+            // a call that didn't reach tmux is tried again on the next poll
+            if !host.run(&grid::rest_command(&windows)).await.is_ok_and(|r| r.code == 0) {
+                let rested = &mut rt.borrow_mut().rested;
+                for w in &windows {
+                    rested.remove(w);
+                }
+            }
         });
     }
 }
