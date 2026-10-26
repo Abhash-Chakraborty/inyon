@@ -331,7 +331,7 @@ The second line is where the page is in the app, not a link to share. A link tha
 - **Who added it** is saved too: `claude`, `codex`, `gemini` or `opencode` when one of those agents ran the command, `cli` otherwise.
 - **Adding a folder again** is safe. It keeps its slug and its place, and changes only the name or slug you pass.
 
-`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is.
+`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is. On the hub's own computer `--json` gives each page's place in the app as `app`. From 0.22 a computer joined to a hub leaves `app` out and names the computer to look under instead, since only the hub knows the computer's place in the app.
 
 On a computer joined to a hub, the hub shows its pages too, from 0.22 (both the hub and that computer need 0.22). `add` there says so instead of giving a place in the app:
 

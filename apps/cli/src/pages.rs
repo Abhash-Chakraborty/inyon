@@ -814,6 +814,8 @@ fn trouble(page: &Value, home: &str, real_home: &str) -> Option<String> {
     None
 }
 
+/// The page's path in the app. Only the hub's own machine knows it: the hub gives a machine joined
+/// to it an id of its own, which that machine never learns.
 fn app_link(slug: &str) -> String {
     format!("/pages/{LOCAL_HOST}/{slug}")
 }
@@ -851,17 +853,20 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
     let hub = crate::engine::hub_here();
     let joined = !hub && crate::commands::joined();
     let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub, joined);
-    Ok(json!({
+    let mut out = json!({
         "page": a.page,
         "host": LOCAL_HOST,
         "machine": machine,
-        "app": app_link(&slug),
         "changed": a.changed,
         "marker": a.marker,
         "hub": hub,
         "joined": joined,
         "message": lines.join("\n"),
-    }))
+    });
+    if hub {
+        out["app"] = json!(app_link(&slug));
+    }
+    Ok(out)
 }
 
 pub fn remove_command(slug: &str) -> Outcome {
@@ -880,6 +885,7 @@ pub fn list_command() -> Outcome {
     let home_text = home.to_string_lossy().into_owned();
     let real_home = real(&home).unwrap_or_else(|| home_text.clone());
     let all = list.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
+    let hub = crate::engine::hub_here();
     let mut seen = std::collections::HashSet::new();
     let mut pages = Vec::new();
     let mut skipped = 0;
@@ -889,7 +895,9 @@ pub fn list_command() -> Outcome {
             continue;
         }
         let mut row = p.clone();
-        row["app"] = json!(app_link(field(p, "slug")));
+        if hub {
+            row["app"] = json!(app_link(field(p, "slug")));
+        }
         if let Some(t) = trouble(p, &home_text, &real_home) {
             row["problem"] = json!(t);
         } else if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
@@ -898,7 +906,6 @@ pub fn list_command() -> Outcome {
         pages.push(row);
     }
     let machine = inyon_engine::hostname();
-    let hub = crate::engine::hub_here();
     let mut lines = Vec::new();
     if pages.is_empty() {
         lines.push("No pages on this machine yet. Add a site's folder with: inyon pages add <folder>".to_string());
@@ -914,7 +921,7 @@ pub fn list_command() -> Outcome {
             }
             lines.push(line);
         }
-        lines.push(format!("Open one in the app under Pages, or at {}", app_link("<slug>")));
+        lines.push(if hub { format!("Open one in the app under Pages, or at {}", app_link("<slug>")) } else { format!("Open one in the app under Pages > {machine}") });
     }
     if skipped > 0 {
         lines.push(format!(
