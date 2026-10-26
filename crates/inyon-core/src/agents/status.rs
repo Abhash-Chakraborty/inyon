@@ -279,6 +279,20 @@ mod tests {
             assert_eq!(st(&base(1000.0, "A", "s1"), 2000.0, "s1"), None);
         }
 
+        /// Ghostex #248: a session's model chip showed another session's model. Each pane reads
+        /// its own snapshot, and a pane without one shows none rather than its neighbour's.
+        #[test]
+        fn each_pane_shows_its_own_model_never_anothers() {
+            let mut b = base(1000.0, "A", "s1");
+            let mut other = payload("s2");
+            other["model"] = json!({ "id": "claude-haiku", "display_name": "Haiku" });
+            b.status_panes.insert("%4".into(), StatusPane { ts: 1000.0, data: other, account: Some("A".into()), account_now: Some("A".into()) });
+            let of = |pane: &str, session: &str| claude_status(b.integration, &b.status_panes, &b.compact_panes, pane, 900.0, Some(session)).and_then(|s| s.model);
+            assert_eq!(of("%9", "s1").as_deref(), Some("Opus"));
+            assert_eq!(of("%4", "s2").as_deref(), Some("Haiku"));
+            assert_eq!(of("%5", "s3"), None);
+        }
+
         /// limits are dropped after switching account
         #[test]
         fn limits_are_dropped_after_switching_account() {

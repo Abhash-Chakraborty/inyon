@@ -54,3 +54,9 @@ test('code text is escaped, not rendered as markup', async () => {
   expect(container.querySelector('pre img')).toBeNull()
   expect(container.querySelector('pre > code')!.textContent).toBe('<img src=x onerror=alert(1)>\n')
 })
+
+// Ghostex #252: a reply's code keeps its indent
+test('a code block keeps the indent of its lines', () => {
+  const { container } = render(<Markdown text={'```\ndef f():\n    return 1\n```'} />)
+  expect(container.querySelector('pre > code')!.textContent).toBe('def f():\n    return 1\n')
+})

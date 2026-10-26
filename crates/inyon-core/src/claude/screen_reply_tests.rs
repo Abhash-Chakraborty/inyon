@@ -111,3 +111,15 @@ fn a_paragraph_the_last_read_caught_half_written_still_carries_on() {
     // a start that only looks alike isn't taken
     assert_eq!(carry_on("Earlier text.\n\nBy the seventeenth century, few", now), now);
 }
+
+/// Ghostex #252: chat lost the leading indent of a reply's lines. The live copy takes off only the
+/// indent every row shares, so a nested list and a code sample keep theirs.
+#[test]
+fn a_reply_keeps_the_indent_of_its_nested_lines() {
+    let rule = "─".repeat(100);
+    let lines: Vec<String> = ["❯ show me", "", "● Steps:", "  - build", "    - with --release", "  - test", "", "  fn main() {", "      run();", "  }", "", &rule, "❯ ", &rule]
+        .map(str::to_owned)
+        .to_vec();
+    let r = screen_reply(&lines, AgentKind::Claude, Some(100)).unwrap();
+    assert_eq!(r.text, "Steps:\n- build\n  - with --release\n- test\n\nfn main() {\n    run();\n}");
+}

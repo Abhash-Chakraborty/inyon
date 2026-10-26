@@ -1142,6 +1142,10 @@ mod tests {
                 keys_at: Default::default(),
             })));
             let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
+            // Ghostex #253: uploads over 1 MiB failed there
+            let three = answered(upload(chunked_upload(&[], "photo.jpg", 3 * 1024 * 1024)).await).await;
+            assert_eq!(three.0, 200, "{}", three.1);
+            assert_eq!(three.1["files"][0]["size"], json!(3 * 1024 * 1024));
             // over the 100 MB setting (plus a megabyte for the form itself)
             let refused = answered(upload(chunked_upload(&[], "big.bin", 102 * 1024 * 1024)).await).await;
             (ok, refused)
