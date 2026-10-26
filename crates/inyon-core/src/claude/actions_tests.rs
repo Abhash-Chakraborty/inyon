@@ -71,6 +71,7 @@ fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, a
         machine_kind: None,
         keys_at: Default::default(),
         unwatched: Default::default(),
+        claude_parked: Default::default(),
     };
     rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
 }
@@ -90,17 +91,31 @@ struct ClaudeBox {
     sent: Vec<String>,
     /// the box hasn't drawn what was typed yet
     slow: bool,
+    /// a background shell's details panel covers the box and takes every key; Esc closes it
+    panel: bool,
+    escapes: usize,
 }
 
 /// Claude's input box as far as a send can tell: a long paste shows as "[Pasted text #N]" and Enter
 /// submits what's behind it, so a preview left over from an older draft looks like any other.
 fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     let pastes = start.iter().filter(|p| matches!(p, Piece::Paste(_))).count();
-    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![], slow: false }));
+    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![], slow: false, panel: false, escapes: 0 }));
     let state = b.clone();
     let re = keys_re();
     Fake::install(move |_, cmd, input| {
         let mut b = state.borrow_mut();
+        if cmd.contains("@@CAP") && b.panel {
+            let r = rule(R100);
+            return ok(&format!("@@CAP %9\n● Done.\n\n✻ Worked for 10s · 2 shells still running\n{r}\n  Shell details\n\n  Status:   running\n  Command:  node serve.mjs\n\n  Output:\n  │ Serving . at http://127.0.0.1:8790/\n"));
+        }
+        if b.panel {
+            if cmd.split(" && ").filter_map(|part| re.captures(part)).any(|k| k.get(2).is_some_and(|m| m.as_str() == "Escape")) {
+                b.panel = false;
+                b.escapes += 1;
+            }
+            return ok("");
+        }
         if cmd.contains("@@CAP") {
             let pastes = b.pastes;
             let shown: String = if b.slow {
@@ -146,6 +161,19 @@ fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     });
     pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "idle" } }]));
     b
+}
+
+/// A background shell's details panel, opened by accident from Claude's "↓ to manage", took every
+/// key of the next message: the send failed and the message never arrived (a laptop, 26 Oct 2026).
+#[test]
+fn a_shell_details_panel_over_the_box_is_closed_with_esc_and_the_message_goes_in() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        b.borrow_mut().panel = true;
+        send_message_to_pane("local", "%9", "start doing next things", true, false).await.unwrap();
+        assert_eq!((b.borrow().escapes, b.borrow().sent.clone()), (1, vec!["start doing next things".to_owned()]));
+        assert!(!claude_details_panel(&["● Done.".into(), "  Shell details".into(), "─".repeat(20), "❯ ".into(), "─".repeat(20)]));
+    });
 }
 
 #[test]

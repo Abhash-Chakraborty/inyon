@@ -16,7 +16,7 @@ use crate::re;
 pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: records coding agents' events so Inyon knows which tmux pane runs which session.
 # Safe to delete; turning Inyon's integration off removes it from each agent's settings.
-# inyon-integration 8
+# inyon-integration 9
 # the events hold your prompts: readable by you only
 umask 077
 d="$HOME/.inyon"
@@ -31,6 +31,18 @@ pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
   for _ in 1 2; do s=$(tmux display -p -t "$PSMUX_SESSION" '#{session_id}' 2>/dev/null | tr -d '$\r'); [ -n "$s" ] && break; done
   case $s in ''|*[!0-9]*) ;; *) pane="%$s.${pane#%}" ;; esac
+fi
+# a conversation Claude Code moved to the background runs outside tmux: its events go to the window it left
+if [ -z "$pane" ] && [ -z "$agent" ]; then
+  j=$(printf '%s' "$p" | sed -n 's/^{"session_id":"\([0-9a-f]\{8\}\).*/\1/p')
+  w=$([ -n "$j" ] && grep -h "\"parkedJobId\":\"$j\"" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json 2>/dev/null | sed -n 's/.*"tmux":"\([^"]*\)".*/\1/p' | head -n 1)
+  case $w in *:@*.%*)
+    pane="%${w##*.%}"
+    case $(tmux -V 2>/dev/null) in *psmux*)
+      s=$(tmux display -p -t "${w%:@*}" '#{session_id}' 2>/dev/null | tr -d '$\r')
+      case $s in ''|*[!0-9]*) pane= ;; *) pane="%$s.${pane#%}" ;; esac ;;
+    esac ;;
+  esac
 fi
 if [ -n "$agent" ]; then
   line=$(printf '{"pane":"%s","ts":%s,"agent":"%s","event":"%s","data":%s}' "$pane" "$(date +%s)" "$agent" "$event" "$p")
@@ -52,7 +64,7 @@ exit 0
 /// and rate limits. The wrapper saves it per tmux pane, then runs the user's own status line.
 pub const STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Claude Code's status line data per tmux pane, then runs your own status line.
-# inyon-integration 8
+# inyon-integration 9
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
@@ -80,7 +92,7 @@ exit 0
 pub const AGY_STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Antigravity CLI's status line data per tmux pane, then runs your own status line.
 # Safe to delete; remove "statusLine" from ~/.gemini/antigravity-cli/settings.json too.
-# inyon-integration 8
+# inyon-integration 9
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then

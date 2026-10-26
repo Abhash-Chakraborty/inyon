@@ -51,7 +51,7 @@ test("the terminal's commands reach the right psmux pane", async () => {
   const { readCommand, inputCommand } = await import('../terminal/mirror.ts')
   const r = run(`${readCommand('%14.1')}; ${inputCommand('%14.1', { keys: ['C-c', 'Up'] }).cmd}; ${inputCommand('%14.1', { hex: ['1b', '5b'] }).cmd}`)
   expect(await r.argv).toBe(
-    '[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}]\n' +
+    '[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{alternate_on}]\n' +
       '[capture-pane][-p][-e][-t][$14:.%1]\n' +
       '[send-keys][-t][$14:.%1][C-c][Up]\n' +
       '[send-keys][-t][$14:.%1][-H][1b][5b]\n',
