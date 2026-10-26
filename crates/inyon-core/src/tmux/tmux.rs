@@ -205,6 +205,9 @@ pub struct ProbeResult {
     pub hooked: Vec<AgentKind>,
     /// pane id → unix seconds of the last key a person pressed in a tmux client showing it
     pub keys_at: IndexMap<String, f64>,
+    /// window id → its size, for each window no person's tmux client is attached to (through any
+    /// session holding it, Inyon's own views included)
+    pub unwatched: IndexMap<String, (u32, u32)>,
     pub machine_kind: Option<MachineKind>,
 }
 
@@ -272,6 +275,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         hooked: vec![],
         machine_kind: None,
         keys_at: IndexMap::new(),
+        unwatched: IndexMap::new(),
     };
     for line in stdout.split('\n') {
         if let Some(v) = line.strip_prefix("@@HOST ") {
@@ -408,12 +412,22 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
 
     // tmux tree
     let mut sessions: IndexMap<String, SessionInfo> = IndexMap::new();
+    // every session's windows, hidden ones too
+    struct Linked {
+        session: String,
+        attached: bool,
+        window: String,
+        size: Option<(u32, u32)>,
+    }
+    let mut windows: Vec<Linked> = vec![];
     for line in section("TMUX") {
         let f = tmux_fields(line);
         if f.len() < 18 {
             continue;
         }
         let [sid, sname, sattached, wid, widx, wname, wactive, wact, pid, pidx, pactive, ppid, pcmd, pcwd, ptitle, pw, ph, pdead] = std::array::from_fn(|i| f[i].as_str());
+        let size = (f.get(18).and_then(|w| w.parse().ok()), f.get(19).and_then(|h| h.parse().ok()));
+        windows.push(Linked { session: sid.to_owned(), attached: num(sattached) > 0.0, window: wid.to_owned(), size: size.0.zip(size.1) });
         if hidden_session(sname) {
             continue;
         }
@@ -474,6 +488,14 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
     if sections.contains_key("CLIENTS") {
         for s in sessions.values_mut() {
             s.attached = inyon_protocol::Num(f64::from(people.get(s.id.as_str()).copied().unwrap_or(0)));
+        }
+    }
+    // a window shows in every session that links it, and any one with a person attached sizes it
+    let watched: HashSet<&str> =
+        windows.iter().filter(|l| if sections.contains_key("CLIENTS") { people.contains_key(l.session.as_str()) } else { l.attached }).map(|l| l.window.as_str()).collect();
+    for l in &windows {
+        if let Some(size) = l.size.filter(|_| !watched.contains(l.window.as_str())) {
+            res.unwatched.insert(l.window.clone(), size);
         }
     }
     res.sessions = sessions.into_values().collect();
@@ -699,7 +721,7 @@ echo "@@BINS"
 for b in claude codex opencode copilot gemini agy; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
 if command -v tmux >/dev/null 2>&1; then
   echo "@@TMUX"
-  tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}' 2>/dev/null || echo "@@NOSERVER"
+  tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}#{window_width}#{window_height}' 2>/dev/null || echo "@@NOSERVER"
 else
   echo "@@NOTMUX"
 fi
@@ -1052,6 +1074,8 @@ mod tests {
         let pane = &odd.sessions[0].windows[0].panes[0];
         assert!(pane.width.0.is_nan());
         assert_eq!(serde_json::to_value(pane).unwrap()["width"], serde_json::Value::Null);
+        // tmux older than the window size fields: nothing to rest
+        assert!(r.unwatched.is_empty());
         let a = &r.agent_procs["%1"];
         assert_eq!((a.kind, a.pid, a.started_at, a.cwd.as_deref()), (AgentKind::Claude, 101.0, 1960.0, Some("/home/u/p/sub")));
         assert_eq!(a.resume.as_deref(), Some("7409eef9-d507-4808-a592-0bfabe896e3a"));
@@ -1128,5 +1152,39 @@ mod tests {
         assert_eq!(guess_transcript("50 old.jsonl\n", &dir, &p), None);
         let r = TranscriptProc { resume: Some("r"), ..p };
         assert_eq!(guess_transcript("", &dir, &r), Some("/h/.claude/projects/-p/r.jsonl".into()));
+    }
+
+    #[test]
+    fn windows_no_person_is_attached_to_are_listed_with_their_size() {
+        let sep = "\u{1f}";
+        let row = |sid: &str, sname: &str, attached: &str, wid: &str, pane: &str, size: &str| {
+            [sid, sname, attached, wid, "1", "w", "1", "0", pane, "0", "1", "100", "zsh", "/h", "t", "80", "24", "0"].join(sep) + &format!("{sep}{}", size.replace('x', sep))
+        };
+        let out = [
+            "@@HOST box".to_owned(),
+            "@@OS Linux".into(),
+            "@@NOW 2000".into(),
+            "@@TMUX".into(),
+            // laptop attached to $1, which holds @1
+            row("$1", "work", "1", "@1", "%1", "120x29"),
+            // $2 is only Inyon's control client: @2 counts as unwatched
+            row("$2", "bg", "1", "@2", "%2", "80x24"),
+            // @3 sits in a detached session, but a phone's view session links it
+            row("$3", "other", "0", "@3", "%3", "40x20"),
+            row("$9", "inyon-view-ab12cd", "1", "@3", "%3", "40x20"),
+            // a size tmux didn't print: skipped
+            row("$4", "old", "0", "@4", "%4", "x"),
+            "@@CLIENTS".into(),
+            "$1 0 1990 %1".into(),
+            "$2 1 1999 %2".into(),
+            "$9 0 1995 %3".into(),
+            "@@END".into(),
+        ]
+        .join("\n");
+        let r = parse_probe(&out, "", 0, 12.0).unwrap();
+        assert_eq!(r.unwatched.into_iter().collect::<Vec<_>>(), [("@2".to_owned(), (80, 24))]);
+        // psmux lists no clients: tmux's own attached count decides
+        let psmux = parse_probe(&out.replace("@@CLIENTS\n$1 0 1990 %1\n$2 1 1999 %2\n$9 0 1995 %3\n", ""), "", 0, 12.0).unwrap();
+        assert!(psmux.unwatched.is_empty(), "{:?}", psmux.unwatched);
     }
 }

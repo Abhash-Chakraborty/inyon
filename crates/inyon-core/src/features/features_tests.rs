@@ -44,6 +44,7 @@ fn connected(id: &str, home: &str, panes: serde_json::Value) -> crate::hosts::re
         hooked: vec![],
         machine_kind: None,
         keys_at: Default::default(),
+        unwatched: Default::default(),
     };
     rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
     rt

@@ -34,6 +34,12 @@ On a phone, a bar above the keyboard has the keys it lacks:
 
 The terminal takes the agent's colours inside a session. Text too faint to read against its background is darkened or lightened until it is, and Inyon carries its own font for the media symbols (`⏵⏵`, `⏸`) that phone fonts often lack. It draws with WebGL where the device supports it, and falls back to ordinary page drawing; Settings → About → *Terminal drawing* says which. From 0.16.1 it also falls back when WebGL would draw at the wrong scale, which on some high-resolution screens showed a few giant lines instead of the whole screen.
 
+## Window size
+
+From 0.22, an agent's window that no tmux client shows rests at 200 columns by 50 rows, so the agent lays out its screen wide and Inyon reads it whole. A session started from the app no longer sits at tmux's 80 columns, and one you looked at in the terminal view doesn't stay at the phone's width after you close it. Inyon puts tmux's `window-size` option back at once, so the next client to attach, your laptop or the terminal view, sizes the window the way it always does.
+
+To keep a window as it is, give it a `window-size` of its own (`tmux set-option -w window-size latest`), or set `window-size manual` for every window. Windows with psmux, and the Bun hub (`INYON_HUB_IMPL=bun`), leave window sizes alone.
+
 ## When the terminal closes
 
 If the connection drops, the view says *Terminal closed* with **Reconnect**. If no agent is running, it offers buttons to start one.

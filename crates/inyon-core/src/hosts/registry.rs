@@ -50,7 +50,31 @@ use crate::platform::console;
 use crate::platform::rt::{self, set_timeout, sleep, spawn, Timer};
 use crate::platform::store::{key_part, kv};
 use crate::re;
+use crate::tmux::grid;
 use crate::tmux::tmux::{capture_panes, find_transcript, probe, AgentProc, HookPaneState, LiveTmux, ProbeResult, TmuxProbe, TranscriptProc};
+
+/// Puts the agent windows nobody's tmux client shows on the wide grid (see tmux::grid). psmux
+/// sizes its windows its own way, so Windows is left alone.
+fn rest_windows(rt: &Rt, host: &Host, p: &ProbeResult) {
+    if p.os == "Windows" {
+        return;
+    }
+    let agent_windows: HashSet<String> =
+        p.sessions.iter().flat_map(|s| &s.windows).filter(|w| w.panes.iter().any(|x| p.agent_procs.contains_key(&x.id))).map(|w| w.id.clone()).collect();
+    let windows = grid::to_rest(&p.unwatched, &agent_windows, &mut rt.borrow_mut().rested);
+    if !windows.is_empty() {
+        let (rt, host) = (rt.clone(), host.clone());
+        spawn(async move {
+            // a call that didn't reach tmux is tried again on the next poll
+            if !host.run(&grid::rest_command(&windows)).await.is_ok_and(|r| r.code == 0) {
+                let rested = &mut rt.borrow_mut().rested;
+                for w in &windows {
+                    rested.remove(w);
+                }
+            }
+        });
+    }
+}
 
 /// Fallback poll; tmux control mode delivers changes as they happen.
 const POLL_MS: u64 = 4000;
@@ -202,6 +226,8 @@ pub struct HostRuntime {
     usage_loading: bool,
     codex: Option<CodexLimits>,
     codex_loading: bool,
+    /// windows asked to rest on the wide grid, at the size each had then (see tmux::grid)
+    rested: HashMap<String, (u32, u32)>,
 }
 
 pub type Rt = Rc<RefCell<HostRuntime>>;
@@ -239,6 +265,7 @@ impl HostRuntime {
             screens: HashMap::new(),
             healed_at: None,
             resumed: HashSet::new(),
+            rested: HashMap::new(),
             reconnected: IndexMap::new(),
             usage: None,
             usage_loading: false,
@@ -864,6 +891,7 @@ impl Registry {
         let pr = Rc::new(RefCell::new(pr));
         rt.borrow_mut().probe = Some(pr.clone());
         self.annotate_agents(rt, &pr).await.map_err(|e| e.message)?;
+        rest_windows(rt, host, &pr.borrow());
         let config = host.config();
         let prev = rt.borrow().state.clone();
         let next = {

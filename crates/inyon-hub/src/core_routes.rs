@@ -1140,6 +1140,7 @@ mod tests {
                 hooked: vec![],
                 machine_kind: None,
                 keys_at: Default::default(),
+                unwatched: Default::default(),
             })));
             let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
             // over the 100 MB setting (plus a megabyte for the form itself)
@@ -1204,6 +1205,7 @@ mod tests {
             hooked: vec![],
             machine_kind: None,
             keys_at: Default::default(),
+            unwatched: Default::default(),
         }))
     }
 
