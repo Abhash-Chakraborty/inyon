@@ -99,7 +99,7 @@ fn working() {
 #[test]
 fn word_wrapped_option_label_keeps_its_space() {
     let p = claude(&screen_fixture("claude", "permission-wrapped"), Some(80)).prompt.unwrap();
-    assert_eq!(p.options[1].label, "Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project");
+    assert_eq!(p.options[1].label, "Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project");
     assert_eq!(p.options[1].detail, None);
 }
 

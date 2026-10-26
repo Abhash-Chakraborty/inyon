@@ -36,5 +36,5 @@
 
 [1m›[0m [2mAsk Codex to do anything[0m
 
-  [38;2;246;226;183mGPT-6-Luna high[39m · [38;2;171;223;167m/tmp/claude-1001/-home-ubuntu-development-custom-tmux/7409eef9-d507-4808-a592-0bfabe896e3a/scratchp…
+  [38;2;246;226;183mGPT-6-Luna high[39m · [38;2;171;223;167m/tmp/tester-1001/-home-ubuntu-development-custom-tmux/7409eef9-d507-4808-a592-0bfabe896e3a/scratchp…
 [39m  [1m←[0m for agents · [1m?[0m for shortcuts

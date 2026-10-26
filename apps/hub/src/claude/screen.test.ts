@@ -71,7 +71,7 @@ test('word-wrapped option label keeps its space', () => {
     screenFixture('claude', 'permission-wrapped'),
     80,
   )
-  expect(s.prompt!.options[1].label).toBe('Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project')
+  expect(s.prompt!.options[1].label).toBe('Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project')
   expect(s.prompt!.options[1].detail).toBeUndefined()
 })
 
