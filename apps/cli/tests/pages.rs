@@ -179,7 +179,8 @@ fn adding_again_changes_nothing_unless_asked() {
     let (code, v) = h.json(&["pages", "add", s(&site), "--name", "  Inyon plan  ", "--slug", "inyon"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["changed"], true);
-    assert_eq!(v["app"], "/pages/local/inyon");
+    // no hub here: the app's path is the hub's to give
+    assert!(v.get("app").is_none(), "{v}");
     let list = h.list();
     assert_eq!(list["pages"].as_array().unwrap().len(), 1);
     assert_eq!(list["pages"][0]["name"], "Inyon plan");
@@ -334,6 +335,10 @@ fn on_the_hub_machine_there_is_no_note() {
     assert!(m.contains("\"S\" is in Inyon: Pages > ") && m.contains(" > s\n"), "{m}");
     assert!(m.contains("Open it in the app at /pages/local/s"), "{m}");
     assert!(!m.contains("/v/"), "{m}");
+    assert_eq!(v["app"], "/pages/local/s");
+    let (_, list) = h.json(&["pages", "list"]);
+    assert_eq!(list["pages"][0]["app"], "/pages/local/s");
+    assert!(list["message"].as_str().unwrap().contains("Open one in the app under Pages, or at /pages/local/<slug>"), "{list}");
 }
 
 #[test]
@@ -399,7 +404,9 @@ fn the_list_shows_each_page_and_what_is_wrong() {
     assert_eq!(v["skipped"], 1);
     let rows = v["pages"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["app"], "/pages/local/alpha");
+    assert!(rows[0].get("app").is_none(), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Open one in the app under Pages > "), "{v}");
+    assert!(!v["message"].as_str().unwrap().contains("/pages/local/"), "{v}");
     assert!(rows[0].get("problem").is_none());
     assert_eq!(rows[1]["problem"], "the folder is gone");
 
