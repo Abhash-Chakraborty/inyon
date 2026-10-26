@@ -83,6 +83,7 @@ macro_rules! with_types {
             SendStatus,
             SendState,
             HeldPrompt,
+            ChosenControls,
             PastConversation,
             LiveKind,
             LiveItem,

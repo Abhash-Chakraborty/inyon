@@ -4,6 +4,7 @@
 pub mod actions;
 pub mod agent_hooks;
 pub mod chat_cache;
+pub mod chosen;
 pub mod delivery;
 pub mod drafts;
 pub mod driving;

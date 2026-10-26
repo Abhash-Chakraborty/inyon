@@ -369,6 +369,17 @@ export interface HeldPrompt {
   error?: string
 }
 
+/** Controls picked in the app while the agent couldn't take them (from 0.22): Inyon makes each
+ * pick once the agent is free, the last of each kind winning. The values are what was picked: a
+ * model as the agent's `/model` takes it, an effort level, a mode id. `error` says why the last try
+ * didn't take, and nothing more is tried until it's picked again or dropped. */
+export interface ChosenControls {
+  model?: string
+  effort?: string
+  mode?: string
+  error?: string
+}
+
 export interface ChatInfo {
   /** Live metrics from transcript/API adapters. */
   status?: AgentStatus
@@ -394,6 +405,8 @@ export interface ChatInfo {
   queue: string[]
   /** messages Inyon holds until the agent is free, in the order they go (from 0.22) */
   held?: HeldPrompt[]
+  /** a model, effort or mode waiting for the agent to be free (from 0.22) */
+  chosen?: ChosenControls
   /** the turn under way, for the working timer (Codex: from its records and its live events) */
   turn?: { id?: string; startedAt: number }
   /** recent sends and how far each got, matched by the hub against the agent's own record */

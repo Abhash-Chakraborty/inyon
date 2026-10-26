@@ -1341,6 +1341,7 @@ impl ChatWatcher {
                 share: m.share.clone(),
                 queue,
                 held: Some(super::held::list(&self.host_id, &self.pane_id)).filter(|h| !h.is_empty()),
+                chosen: super::chosen::get(&self.host_id, &self.pane_id),
                 turn: st.live.turn.clone().or_else(|| m.turn.clone()),
                 sends: Some(st.ledger.list()),
                 tasks: last40(m.tasks.values()),
