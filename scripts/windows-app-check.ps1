@@ -1,7 +1,7 @@
 # Opens the Inyon app's real window on Windows and checks it through WebView2's debug port: the
 # page draws itself from the app's state, every page in the side bar opens, a setting saved from
 # the window comes back, and Quit in the window ends the app. A script error on the page fails it.
-# On a failure it prints window.log.
+# On a failure it prints window.log and app.log.
 #
 #   pwsh scripts/windows-app-check.ps1 -Exe path\to\inyon.exe
 param(
@@ -17,6 +17,7 @@ $env:USERPROFILE = $root
 $env:HOME = $root
 $env:INYON_WEBVIEW_DEBUG_PORT = "$Port"
 $log = Join-Path $root '.inyon\node\window.log'
+$appLog = Join-Path $root '.inyon\node\app.log'
 
 # a copy of the app already running holds its single-instance lock, and the one started here would
 # only hand over to it: wait for any to end (an earlier step's), and name them if they don't
@@ -36,6 +37,7 @@ Write-Host "app started (pid $($app.Id))"
 function Fail([string] $why) {
   Write-Host "::error::$why"
   if (Test-Path $log) { Write-Host '--- window.log'; Get-Content $log | Write-Host }
+  if (Test-Path $appLog) { Write-Host '--- app.log'; Get-Content $appLog | Write-Host }
   if (!$app.HasExited) { Stop-Process -Id $app.Id -Force }
   exit 1
 }

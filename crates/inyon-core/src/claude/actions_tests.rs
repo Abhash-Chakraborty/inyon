@@ -187,6 +187,18 @@ fn an_old_draft_that_differs_only_in_whitespace_is_replaced_not_sent() {
     });
 }
 
+/// Ghostex #254: a long prompt was pasted but never sent. A message over the paste threshold goes
+/// in as a paste, and Enter follows once its preview shows in the box.
+#[test]
+fn a_long_message_goes_in_as_a_paste_and_is_sent() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        let message = "Look over the failing tests and fix them. ".repeat(40);
+        send_message_to_pane("local", "%9", &message, true, false).await.unwrap();
+        assert_eq!(b.borrow().sent, [message]);
+    });
+}
+
 /// Gemini's box as a send sees it: no parser reads it, so the screen is all there is. `shows`
 /// says whether typed text appears there.
 fn fake_gemini(shows: bool) -> Rc<RefCell<(String, Vec<String>)>> {
@@ -410,6 +422,35 @@ fn an_answer_meant_for_a_question_already_answered_elsewhere_never_lands_on_the_
         answer("box", "%7", 1, None, Some(&key(&now))).await.unwrap();
         assert_eq!(keys.borrow().len(), 1);
         assert!(keys.borrow()[0].ends_with(" 1"), "{}", keys.borrow()[0]);
+    });
+}
+
+/// Ghostex #251: answers to AskUserQuestion from the chat never reached the agent. A pick goes in
+/// as its number, and a typed answer as the "Type something" number followed by the text.
+#[test]
+fn a_question_from_ask_user_question_takes_a_pick_and_a_typed_answer() {
+    run(|| async {
+        let shown = crate::test_support::screen_fixture("claude", "question-single").join("\n");
+        let sent = Rc::new(RefCell::new(Vec::<(String, Option<String>)>::new()));
+        let s = sent.clone();
+        let _fake = Fake::install(move |_, cmd, input| {
+            if cmd.contains("capture-pane") {
+                return ok(&format!("@@CAP %7\n{shown}"));
+            }
+            if cmd.contains("send-keys") || cmd.contains("paste-buffer") {
+                s.borrow_mut().push((cmd.to_owned(), input.map(str::to_owned)));
+            }
+            ok("")
+        });
+        pane("box", json!([{ "id": "%7", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        answer("box", "%7", 2, None, None).await.unwrap();
+        assert_eq!(sent.borrow().len(), 1);
+        assert!(sent.borrow()[0].0.ends_with(" 2"), "{:?}", sent.borrow());
+        sent.borrow_mut().clear();
+        answer("box", "%7", 4, Some("Teal"), None).await.unwrap();
+        let sent = sent.borrow();
+        assert!(sent[0].0.ends_with(" 4"), "{sent:?}");
+        assert!(sent.iter().skip(1).any(|(cmd, input)| cmd.contains("Teal") || input.as_deref().is_some_and(|i| i.contains("Teal"))), "{sent:?}");
     });
 }
 
