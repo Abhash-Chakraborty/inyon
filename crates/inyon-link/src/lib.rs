@@ -19,4 +19,4 @@ pub use identity::{is_machine_id, noise_key_of, verify, z32decode, z32encode, Id
 pub use noise::{Initiator, KeyPair, NoiseError, Responder, Transport};
 pub use pair::{pair_link, parse_pair_link, PairInfo};
 pub use pkarr::{decode_published, encode_published, Published, Record, PKARR_RELAYS};
-pub use relay::{auth_message, frame, machine_path, phone_path, relay_ws, unframe};
+pub use relay::{auth_message, auth_message_v2, frame, machine_path, phone_path, relay_origin, relay_ws, unframe, MIN_NONCE};

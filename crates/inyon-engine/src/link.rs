@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore, SemaphorePermit};
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, WebSocketConfig};
 use tokio_tungstenite::tungstenite::Message;
@@ -639,8 +639,9 @@ fn sealing_sender(channel: Arc<Mutex<inyon_link::Channel>>, out: Arc<dyn WireOut
     })
 }
 
-/// One phone session: the encrypted handshake, then the same commands the hub sends.
-pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>, out: Arc<dyn WireOut>, via: String) {
+/// One phone session: the encrypted handshake, then the same commands the hub sends. `waiting` is
+/// its place among the connections still in their handshake, given back once the phone is in.
+pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>, out: Arc<dyn WireOut>, via: String, waiting: Option<SemaphorePermit<'static>>) {
     let first = match tokio::time::timeout(Duration::from_millis(inyon_link::channel::HANDSHAKE_MS), rx.recv()).await {
         Ok(Some(WireIn::Data(d))) => d,
         Ok(_) => return,
@@ -650,14 +651,14 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
         Ok(a) => a,
         Err(e) => {
             out.close(4401, "bad handshake");
-            return log(&format!("refused a connection via {via}: {e}"));
+            return refused(&format!("refused a connection via {via}: {e}"));
         }
     };
     let hello: Value = match serde_json::from_slice(accepting.hello()) {
         Ok(h) => h,
         Err(e) => {
             out.close(4401, "bad handshake");
-            return log(&format!("refused a connection via {via}: {e}"));
+            return refused(&format!("refused a connection via {via}: {e}"));
         }
     };
     let remote = *accepting.remote_static();
@@ -677,6 +678,7 @@ pub async fn session(id: Arc<Identity>, mut rx: mpsc::UnboundedReceiver<WireIn>,
     };
     let Ok((channel, msg2)) = accepting.welcome(welcome.to_string().as_bytes()) else { return out.close(4401, "bad handshake") };
     out.send(msg2);
+    drop(waiting);
     let key: String = remote.iter().map(|b| format!("{b:02x}")).collect();
     // forgotten while the handshake finished
     if !phones_raw().contains_key(&key) {
@@ -779,18 +781,116 @@ fn start_watching() {
     });
 }
 
+// ---------- limits on what strangers can make it do ----------
+
+/// Connections still in their handshake, through the listener and every relay together. The
+/// tunnel's address is public and every connection through it comes from 127.0.0.1, so this caps
+/// them all rather than per address; past it a connection is turned away at once.
+const WAITING_MAX: usize = 64;
+static WAITING: Semaphore = Semaphore::const_new(WAITING_MAX);
+
+fn wait_turn() -> Option<SemaphorePermit<'static>> {
+    let p = WAITING.try_acquire().ok();
+    if p.is_none() {
+        refused(&format!("turned a connection away: {WAITING_MAX} are already in their handshake"));
+    }
+    p
+}
+
+/// What may wait to go out to one phone (or one relay) before the session closes as too slow
+/// (4413), so a phone that stops reading can't fill this machine's memory with terminal output.
+const QUEUE_MAX: usize = 8 << 20;
+
+/// Bytes queued for a socket and not yet written. Past QUEUE_MAX the socket is done with: its
+/// reader and writer both stop (`overflowed`), which drops the queue and closes the connection.
+#[derive(Clone)]
+struct Queued {
+    bytes: Arc<std::sync::atomic::AtomicUsize>,
+    over: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Default for Queued {
+    fn default() -> Self {
+        Queued { bytes: Default::default(), over: Arc::new(tokio::sync::watch::channel(false).0) }
+    }
+}
+
+impl Queued {
+    /// False, and nothing counted, when `n` more would go past QUEUE_MAX.
+    fn add(&self, n: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        let mut q = self.bytes.load(Relaxed);
+        let ok = loop {
+            if q + n > QUEUE_MAX {
+                break false;
+            }
+            match self.bytes.compare_exchange_weak(q, q + n, Relaxed, Relaxed) {
+                Ok(_) => break true,
+                Err(now) => q = now,
+            }
+        };
+        if !ok {
+            self.over.send_replace(true);
+        }
+        ok
+    }
+
+    fn written(&self, m: &Message) {
+        if let Message::Binary(b) = m {
+            self.bytes.fetch_sub(b.len(), std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    async fn overflowed(&self) {
+        let _ = self.over.subscribe().wait_for(|over| *over).await;
+    }
+}
+
+/// One line for a refused connection, then at most one a minute that says how many more there
+/// were, so a stranger can't grow link.log as fast as they can connect.
+fn refused(line: &str) {
+    static LAST: Mutex<Option<(std::time::Instant, u64)>> = Mutex::new(None);
+    for l in refused_lines(&mut LAST.lock().unwrap_or_else(|e| e.into_inner()), std::time::Instant::now(), line) {
+        log(&l);
+    }
+}
+
+fn refused_lines(last: &mut Option<(std::time::Instant, u64)>, now: std::time::Instant, line: &str) -> Vec<String> {
+    match last {
+        Some((since, more)) if now.duration_since(*since) < Duration::from_secs(60) => {
+            *more += 1;
+            vec![]
+        }
+        _ => {
+            let more = last.map_or(0, |(_, n)| n);
+            *last = Some((now, 0));
+            let mut out = Vec::new();
+            if more > 0 {
+                out.push(format!("refused {more} more connection{} in the last minute", if more == 1 { "" } else { "s" }));
+            }
+            out.push(line.to_string());
+            out
+        }
+    }
+}
+
 // ---------- the local listener (behind the tunnel, on private networks, on the LAN if asked) ----------
 
 /// A WebSocket the listener took, as a wire.
-struct SocketOut(mpsc::UnboundedSender<Message>);
+struct SocketOut {
+    tx: mpsc::UnboundedSender<Message>,
+    queued: Queued,
+}
 
 impl WireOut for SocketOut {
     fn send(&self, data: Vec<u8>) {
-        let _ = self.0.send(Message::Binary(data.into()));
+        if self.queued.add(data.len()) {
+            let _ = self.tx.send(Message::Binary(data.into()));
+        }
     }
 
     fn close(&self, code: u16, reason: &str) {
-        let _ = self.0.send(Message::Close(Some(CloseFrame { code: CloseCode::from(code), reason: reason.to_string().into() })));
+        let _ = self.tx.send(Message::Close(Some(CloseFrame { code: CloseCode::from(code), reason: reason.to_string().into() })));
     }
 }
 
@@ -831,7 +931,7 @@ async fn answer_http(mut stream: TcpStream, status: &str, body: &str) {
     let _ = stream.shutdown().await;
 }
 
-async fn serve(id: Arc<Identity>, stream: TcpStream) {
+async fn serve(id: Arc<Identity>, stream: TcpStream, waiting: SemaphorePermit<'static>) {
     let Some((path, upgrade)) = peek_head(&stream).await else { return };
     let path = path.split('?').next().unwrap_or("").to_string();
     if path != "/link" {
@@ -846,10 +946,15 @@ async fn serve(id: Arc<Identity>, stream: TcpStream) {
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<WireIn>();
     let ping_tx = out_tx.clone();
+    let queued = Queued::default();
+    let (written, reading) = (queued.clone(), queued.clone());
     tokio::spawn(async move {
-        while let Some(m) = out_rx.recv().await {
+        loop {
+            let Some(m) = (tokio::select! { m = out_rx.recv() => m, _ = written.overflowed() => None }) else { break };
             let last = matches!(m, Message::Close(_));
-            if sink.send(m).await.is_err() || last {
+            written.written(&m);
+            let sent = tokio::select! { r = sink.send(m) => r.is_ok(), _ = written.overflowed() => false };
+            if !sent || last {
                 break;
             }
         }
@@ -861,6 +966,10 @@ async fn serve(id: Arc<Identity>, stream: TcpStream) {
         let mut heard = tokio::time::Instant::now();
         loop {
             tokio::select! {
+                _ = reading.overflowed() => {
+                    let _ = in_tx.send(WireIn::Closed(4413, "too slow".into()));
+                    break;
+                }
                 _ = tick.tick() => {
                     if heard.elapsed() > IDLE {
                         let _ = in_tx.send(WireIn::Closed(1006, String::new()));
@@ -890,7 +999,7 @@ async fn serve(id: Arc<Identity>, stream: TcpStream) {
             }
         }
     });
-    session(id, in_rx, Arc::new(SocketOut(out_tx)), "direct".into()).await;
+    session(id, in_rx, Arc::new(SocketOut { tx: out_tx, queued }), "direct".into(), Some(waiting)).await;
 }
 
 /// Listens on one address; the task ends (and the port is freed) when it's aborted.
@@ -901,8 +1010,10 @@ fn listen(id: Arc<Identity>, host: &str, port: u16) -> std::io::Result<tokio::ta
     Ok(tokio::spawn(async move {
         loop {
             let Ok((stream, _)) = listener.accept().await else { continue };
+            // dropped at once: the stranger sees the connection close
+            let Some(waiting) = wait_turn() else { continue };
             let _ = stream.set_nodelay(true);
-            tokio::spawn(serve(id.clone(), stream));
+            tokio::spawn(serve(id.clone(), stream, waiting));
         }
     }))
 }
@@ -1172,11 +1283,16 @@ struct RelayOut {
     sid: u32,
     tx: mpsc::UnboundedSender<Message>,
     sessions: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<WireIn>>>>,
+    /// what waits for the relay's one socket, from every session through it
+    queued: Queued,
 }
 
 impl WireOut for RelayOut {
     fn send(&self, data: Vec<u8>) {
-        let _ = self.tx.send(Message::Binary(inyon_link::frame(self.sid, &data).into()));
+        let f = inyon_link::frame(self.sid, &data);
+        if self.queued.add(f.len()) {
+            let _ = self.tx.send(Message::Binary(f.into()));
+        }
     }
 
     fn close(&self, _code: u16, _reason: &str) {
@@ -1196,6 +1312,22 @@ fn host_of(url: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The most sessions one relay may have open at once.
+const RELAY_SESSIONS_MAX: usize = 64;
+
+/// What the machine signs for a relay's challenge: bound to the relay's origin when it asks for
+/// v2. None for a nonce too short to be fresh, which the machine doesn't answer.
+fn relay_auth(url: &str, nonce: &str, v: Option<u64>) -> Option<Vec<u8>> {
+    // counted as the Bun engine counts it (UTF-16 units), so both answer the same challenges
+    if nonce.encode_utf16().count() < inyon_link::MIN_NONCE {
+        return None;
+    }
+    match v {
+        Some(v) if v >= 2 => Some(inyon_link::auth_message_v2(&inyon_link::relay_origin(url)?, nonce)),
+        _ => Some(inyon_link::auth_message(nonce)),
+    }
+}
+
 /// Keeps one socket to a relay; each phone that connects through it becomes a session.
 fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync + 'static) {
     tokio::spawn(async move {
@@ -1208,16 +1340,30 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                 Ok(socket) => {
                     let (mut sink, mut source) = socket.split();
                     let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+                    let queued = Queued::default();
+                    let written = queued.clone();
                     let writer = tokio::spawn(async move {
                         while let Some(m) = rx.recv().await {
+                            written.written(&m);
                             if sink.send(m).await.is_err() {
                                 break;
                             }
                         }
                     });
+                    // a relay that stops reading: the socket goes, and its sessions with it
+                    let full = queued.clone();
                     let sessions: Arc<Mutex<HashMap<u32, mpsc::UnboundedSender<WireIn>>>> = Arc::new(Mutex::new(HashMap::new()));
                     let mut code = 1006;
-                    while let Some(next) = source.next().await {
+                    loop {
+                        let next = tokio::select! {
+                            n = source.next() => n,
+                            _ = full.overflowed() => {
+                                code = 4413;
+                                log(&format!("relay {host}: stopped reading, closing"));
+                                break;
+                            }
+                        };
+                        let Some(next) = next else { break };
                         match next {
                             Ok(Message::Binary(b)) => {
                                 if let Some((sid, data)) = inyon_link::unframe(&b) {
@@ -1232,7 +1378,11 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                                 match m.get("t").and_then(Value::as_str) {
                                     Some("challenge") => {
                                         let nonce = m.get("nonce").and_then(Value::as_str).unwrap_or("");
-                                        let sig = B64.encode(id.sign(&inyon_link::auth_message(nonce)));
+                                        let Some(msg) = relay_auth(&url, nonce, m.get("v").and_then(Value::as_u64)) else {
+                                            log(&format!("relay {host}: its challenge is too short to answer"));
+                                            break;
+                                        };
+                                        let sig = B64.encode(id.sign(&msg));
                                         let _ = tx.send(Message::Text(json!({ "t": "auth", "id": id.id, "sig": sig }).to_string().into()));
                                     }
                                     Some("ready") => {
@@ -1242,10 +1392,15 @@ fn relay(id: Arc<Identity>, url: String, on_state: impl Fn(bool) + Send + Sync +
                                     }
                                     Some("open") => {
                                         let Some(sid) = sid else { continue };
+                                        let full = sessions.lock().unwrap_or_else(|e| e.into_inner()).len() >= RELAY_SESSIONS_MAX;
+                                        let Some(waiting) = (!full).then(wait_turn).flatten() else {
+                                            let _ = tx.send(Message::Text(json!({ "t": "close", "sid": sid }).to_string().into()));
+                                            continue;
+                                        };
                                         let (in_tx, in_rx) = mpsc::unbounded_channel();
                                         sessions.lock().unwrap_or_else(|e| e.into_inner()).insert(sid, in_tx);
-                                        let out = Arc::new(RelayOut { sid, tx: tx.clone(), sessions: sessions.clone() });
-                                        tokio::spawn(session(id.clone(), in_rx, out, format!("relay {host}")));
+                                        let out = Arc::new(RelayOut { sid, tx: tx.clone(), sessions: sessions.clone(), queued: queued.clone() });
+                                        tokio::spawn(session(id.clone(), in_rx, out, format!("relay {host}"), Some(waiting)));
                                     }
                                     Some("close") => {
                                         let Some(sid) = sid else { continue };
@@ -2217,5 +2372,100 @@ mod tests {
         // and comes back without a code
         assert!(check(&phone, &json!({})).is_ok());
         assert!(matches!(check(&[8u8; 32], &json!({})), Err(LinkError::NotPaired(_))));
+    }
+
+    /// LINK-10: the public tunnel lets anyone connect, all of them from 127.0.0.1, so connections
+    /// still in their handshake are capped; past the cap one closes at once, and a place comes
+    /// back when one of them goes.
+    #[test]
+    fn connections_past_the_handshake_cap_are_closed_at_once() {
+        use std::io::Read;
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let id = Arc::new(Identity::generate().unwrap());
+        let task = rt.block_on(async { listen(id, "127.0.0.1", port) }).unwrap();
+        let connect = || {
+            let s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+            s.set_read_timeout(Some(Duration::from_millis(400))).unwrap();
+            s
+        };
+        // closed: read gives 0 bytes (or a reset); held: it times out
+        let closed =
+            |mut s: &std::net::TcpStream| !matches!(s.read(&mut [0u8; 8]), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut);
+        let mut held: Vec<_> = (0..WAITING_MAX).map(|_| connect()).collect();
+        // the listener has taken them all
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while WAITING.available_permits() > 0 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(WAITING.available_permits(), 0);
+        let extra = connect();
+        assert!(closed(&extra), "the one past the cap is closed");
+        assert!(!closed(&held[0]), "the ones inside it are held");
+        drop(held.pop());
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while WAITING.available_permits() == 0 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let again = connect();
+        assert!(!closed(&again), "a place came back");
+        task.abort();
+        drop((held, again));
+    }
+
+    /// LINK-10: a phone that stops reading can't make terminal output pile up in memory: past
+    /// QUEUE_MAX nothing more is queued, and the socket's reader and writer are told to stop.
+    #[test]
+    fn a_queue_nobody_reads_stops_at_its_limit_and_ends_the_socket() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let out = SocketOut { tx, queued: Queued::default() };
+        let stop = out.queued.clone();
+        let chunk = vec![0u8; 64 * 1024];
+        for _ in 0..(QUEUE_MAX / chunk.len() + 10) {
+            out.send(chunk.clone());
+        }
+        let mut bytes = 0;
+        while let Ok(m) = rx.try_recv() {
+            bytes += m.len();
+        }
+        assert_eq!(bytes, QUEUE_MAX);
+        rt.block_on(async { tokio::time::timeout(Duration::from_secs(1), stop.overflowed()).await }).expect("told to stop");
+        // written bytes make room again
+        let q = Queued::default();
+        assert!(q.add(QUEUE_MAX));
+        assert!(!q.add(1));
+        q.written(&Message::Binary(vec![0u8; 10].into()));
+        assert!(q.add(10));
+    }
+
+    /// LINK-10: a stranger can't grow link.log as fast as they connect.
+    #[test]
+    fn refused_connections_log_one_line_then_a_count_a_minute() {
+        let mut last = None;
+        let t0 = std::time::Instant::now();
+        assert_eq!(refused_lines(&mut last, t0, "refused a"), vec!["refused a"]);
+        for n in 1..=500 {
+            assert!(refused_lines(&mut last, t0 + Duration::from_millis(n), "refused b").is_empty());
+        }
+        assert_eq!(refused_lines(&mut last, t0 + Duration::from_secs(61), "refused c"), vec!["refused 500 more connections in the last minute", "refused c"]);
+        assert!(refused_lines(&mut last, t0 + Duration::from_secs(62), "x").is_empty());
+        assert_eq!(refused_lines(&mut last, t0 + Duration::from_secs(200), "y"), vec!["refused 1 more connection in the last minute", "y"]);
+    }
+
+    /// LINK-9: the machine answers only a fresh-looking challenge, and binds its answer to the
+    /// relay it dialed when the relay asks for v2, whatever origin the relay might claim.
+    #[test]
+    fn relay_challenges_are_answered_only_when_long_and_bound_to_the_relay_for_v2() {
+        let nonce = "b9f7c1d2e3a4f5061728394a5b6c7d8e";
+        assert_eq!(relay_auth("https://relay.example", "", None), None);
+        assert_eq!(relay_auth("https://relay.example", "abc123", Some(2)), None);
+        assert_eq!(relay_auth("https://relay.example", nonce, None), Some(inyon_link::auth_message(nonce)));
+        assert_eq!(relay_auth("https://relay.example/base/", nonce, Some(2)), Some(inyon_link::auth_message_v2("https://relay.example", nonce)));
+        assert_ne!(relay_auth("https://a.example", nonce, Some(2)), relay_auth("https://b.example", nonce, Some(2)));
+        assert_eq!(relay_auth("relay.example", nonce, Some(2)), None);
+        // eight é are 16 bytes but 8 UTF-16 units, as the Bun engine counts them
+        assert_eq!(relay_auth("https://relay.example", &"é".repeat(8), None), None);
+        assert!(relay_auth("https://relay.example", &"é".repeat(16), None).is_some());
     }
 }
