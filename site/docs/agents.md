@@ -10,7 +10,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | | Claude Code | Codex | Gemini CLI | OpenCode | Copilot | Antigravity CLI |
 |---|---|---|---|---|---|---|
 | Chat view | Full | Full | Beta | Beta | Beta | Yes |
-| Reply shown as it's written | No | From 0.17.6 | No | No | No | No |
+| Reply shown as it's written | From 0.22 | From 0.17.6 | No | No | From 0.22 | From 0.22 |
 | Prompts as buttons | Yes | Yes | Yes | Yes, several answers too | Yes | Yes |
 | Sub-agents listed | Yes | From 0.17.6 | No | No | No | No |
 | Model | Yes | Yes | No | Live list | Live list | Yes |
@@ -34,12 +34,14 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 |---|---|
 | Panes and agents | tmux and the process tree; live changes through a read-only tmux control client |
 | Conversations | Each agent's own session files or local server |
-| Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
+| Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below). Claude Code, Copilot and Antigravity: the reply as their screen shows it (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
 | When a turn starts and ends | The screen, and with the integration the agent's own hooks: Claude Code's, and from 0.22 Copilot's, Gemini CLI's and Antigravity CLI's, so a turn shows as working or finished at once, even while the screen looks idle |
 | Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex: its status events, and from 0.21 the account itself through `codex app-server`, with no session running. Antigravity: its status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
 | Typing and answering | tmux, exactly as if you typed it: keys with `send-keys`, and from 0.20 text through a tmux paste buffer, so it never shows on a command line |
+
+From 0.22 the chat also shows Claude Code's, Copilot's and Antigravity's reply while it's being written. They save a message to their records only once it's finished, but their screen shows it as it streams, so Inyon reads it from there, the text after the last thing the agent ran, and shows it under the working line. When the message lands in the record it takes the place of that copy. Read off a screen, it can lose some formatting, such as a table, until then. When a long reply scrolls its start off the screen, Inyon keeps the part it already read.
 
 The agents never know Inyon is there. Close it and nothing breaks.
 
