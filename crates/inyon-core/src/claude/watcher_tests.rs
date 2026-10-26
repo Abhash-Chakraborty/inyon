@@ -317,3 +317,106 @@ fn a_clock_that_ticks_between_two_reads_never_trips_up_the_draft_mirror() {
         watchers().stop(KEY);
     });
 }
+
+// live replies read off the screen
+
+fn live_of(phone: &Phone) -> Option<Vec<inyon_protocol::LiveItem>> {
+    phone.got.borrow().iter().rev().find_map(|m| match m {
+        ServerMsg::ChatLive { items, .. } => Some(items.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_reply_claude_writes_shows_live_until_its_record_lands_and_doesnt_come_back() {
+    run(|| async {
+        let screen = crate::test_support::fixture("screens/claude/reply-streaming.txt");
+        let _fake = Fake::install(move |_, cmd, _| if cmd.contains("capture-pane") { ok(&format!("@@CAP %7\n{screen}")) } else { ok("") });
+        machine("live-test", "local", json!([{ "id": "%7", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        let w = watchers().get("live-test", "%7");
+        let phone = Rc::new(Phone::default());
+        let sub: Sub = phone.clone();
+        w.subscribe(sub);
+        w.poll_screen().await;
+        wait(200).await;
+        let live = live_of(&phone).expect("live text");
+        assert_eq!(live.len(), 1);
+        assert!(live[0].id.starts_with("screen:"), "{}", live[0].id);
+        assert!(live[0].text.starts_with("Tea likely began in southwestern China"), "{}", live[0].text);
+
+        // its record lands: the live copy goes
+        let base = Base::new("u", "t");
+        let text = "Tea likely began in southwestern China, where people chewed or boiled wild leaves. A legend credits the mythical emperor Shennong.";
+        w.st.borrow_mut().items.push(with_seq(base.with_uuid("a9").assistant("m9", None, inyon_protocol::AssistantBlock::Text { text: text.into() }), 9));
+        assert!(w.settle_screen_live());
+        w.live_soon();
+        wait(200).await;
+        assert_eq!(live_of(&phone), Some(vec![]));
+
+        // the screen still shows it, but it's on record now: it stays gone
+        let sent = phone.got.borrow().len();
+        w.poll_screen().await;
+        wait(200).await;
+        assert!(phone.got.borrow()[sent..].iter().all(|m| !matches!(m, ServerMsg::ChatLive { items, .. } if !items.is_empty())));
+        watchers().stop("live-test:%7");
+    });
+}
+
+#[test]
+fn nothing_is_live_while_the_agent_isnt_working() {
+    run(|| async {
+        // the finished reply, with no spinner: Claude is idle
+        let screen = crate::test_support::fixture("screens/claude/reply-long.txt");
+        let _fake = Fake::install(move |_, cmd, _| if cmd.contains("capture-pane") { ok(&format!("@@CAP %8\n{screen}")) } else { ok("") });
+        machine("live-idle", "local", json!([{ "id": "%8", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "idle" } }]));
+        let w = watchers().get("live-idle", "%8");
+        let phone = Rc::new(Phone::default());
+        let sub: Sub = phone.clone();
+        w.subscribe(sub);
+        w.poll_screen().await;
+        wait(200).await;
+        assert!(live_of(&phone).is_none_or(|l| l.is_empty()));
+        watchers().stop("live-idle:%8");
+    });
+}
+
+#[test]
+fn after_its_turn_the_screens_copy_waits_for_the_record_then_goes_on_its_own() {
+    run(|| async {
+        let screen = Rc::new(RefCell::new(crate::test_support::fixture("screens/claude/reply-streaming.txt")));
+        let s = screen.clone();
+        let _fake = Fake::install(move |_, cmd, _| if cmd.contains("capture-pane") { ok(&format!("@@CAP %6\n{}", s.borrow())) } else { ok("") });
+        machine("live-wait", "local", json!([{ "id": "%6", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        let w = watchers().get("live-wait", "%6");
+        let phone = Rc::new(Phone::default());
+        let sub: Sub = phone.clone();
+        w.subscribe(sub);
+        w.poll_screen().await;
+        wait(200).await;
+        assert!(live_of(&phone).is_some_and(|l| l.len() == 1));
+
+        // the turn ends (no spinner) before the record lands: the reply stays meanwhile
+        *screen.borrow_mut() = crate::test_support::fixture("screens/claude/reply-long.txt");
+        w.poll_screen().await;
+        wait(200).await;
+        assert!(live_of(&phone).is_some_and(|l| l.len() == 1), "kept until its record");
+        // the record comes in a snapshot, as Antigravity's and Gemini's do
+        let base = Base::new("u", "t");
+        let text = "Tea likely began in southwestern China, where people chewed or boiled wild leaves. A legend credits Shennong.";
+        w.publish_snapshot(vec![with_seq(base.with_uuid("a1").assistant("m1", None, inyon_protocol::AssistantBlock::Text { text: text.into() }), 1)]);
+        wait(200).await;
+        assert_eq!(live_of(&phone), Some(vec![]));
+
+        // a reply whose record never comes goes after a while
+        *screen.borrow_mut() = crate::test_support::fixture("screens/claude/reply-streaming.txt");
+        w.st.borrow_mut().items.clear();
+        w.poll_screen().await;
+        wait(200).await;
+        assert!(live_of(&phone).is_some_and(|l| l.len() == 1));
+        *screen.borrow_mut() = crate::test_support::fixture("screens/claude/reply-long.txt");
+        w.poll_screen().await;
+        wait(SCREEN_LIVE_WAIT_MS + 300).await;
+        assert_eq!(live_of(&phone), Some(vec![]));
+        watchers().stop("live-wait:%6");
+    });
+}

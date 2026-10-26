@@ -247,7 +247,10 @@ function onMessage(m: Tagged) {
         const head = m.items[0]
         const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
         const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
-        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends), live: withoutRecorded(c.live, m.items) }
+        // what this reset brings that wasn't here before, for text read off the screen
+        const known = new Set(c.items.map((i) => i.uuid))
+        const fresh = c.loaded ? m.items.filter((i) => !known.has(i.uuid)) : []
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends), live: withoutScreenRead(withoutRecorded(c.live, m.items), fresh) }
       })
       break
     case 'chat.live':
@@ -260,7 +263,7 @@ function onMessage(m: Tagged) {
       patchChat(m.key, (c) => {
         const last = c.items[c.items.length - 1]?.seq ?? -1
         const fresh = m.items.filter((i) => i.seq > last)
-        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends), live: withoutRecorded(c.live, fresh) }
+        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends), live: withoutScreenRead(withoutRecorded(c.live, fresh), fresh) }
       })
       break
     case 'chat.more':
@@ -322,6 +325,17 @@ export function withoutRecorded(live: LiveItem[] | undefined, items: ChatItem[])
   }
   const kept = live.filter((l) => !ids.has(l.id))
   return kept.length === live.length ? live : kept
+}
+
+/**
+ * Text the hub read off the screen (id "screen:…") has no record with its id. A new reply on record
+ * takes its place now; the hub sends whatever of it is still unrecorded a moment later, so the
+ * reply never shows twice in between.
+ */
+export function withoutScreenRead(live: LiveItem[] | undefined, fresh: ChatItem[]): LiveItem[] | undefined {
+  if (!live?.some((l) => l.id.startsWith('screen:'))) return live
+  if (!fresh.some((i) => i.kind === 'assistant' && i.block.type === 'text')) return live
+  return live.filter((l) => !l.id.startsWith('screen:'))
 }
 
 /** Sessions with a "needs you" notification up, by tag. */

@@ -379,7 +379,8 @@ export function WorkingIndicator({ activity, since, output }: { activity?: strin
 }
 
 /**
- * The reply as Codex writes it, above the working line: its thinking folded, the text and a plan
+ * The reply as the agent writes it, above the working line: Codex's from its app-server, with its
+ * thinking folded and a plan, and Claude Code's, Copilot's and Antigravity's as read off the screen,
  * as Markdown. It fades in once and then only grows; the finished message takes its place with the
  * same text, so nothing moves when it lands.
  */

@@ -1,0 +1,208 @@
+//! The reply an agent is writing, read off its screen. Claude Code, Copilot and Antigravity write a
+//! message to their records only once it's finished, but they show it on screen as it streams, so
+//! the chat can show it too until the record lands.
+//!
+//! On all three a turn looks the same: your prompt echoed, then blocks separated by blank lines
+//! (text, tool rows and their output, thinking), then a spinner or status line, then the input
+//! box. The reply is the run of text blocks after the last block that isn't text.
+
+use inyon_protocol::AgentKind;
+
+use super::screen::unstyle;
+use crate::re;
+
+/// What the screen shows of the reply being written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenReply {
+    pub text: String,
+    /// the reply starts on screen (its prompt is visible), so `text` is all of it so far; otherwise
+    /// its start has scrolled away and `text` carries on from what was read before
+    pub whole: bool,
+}
+
+/// The agents whose replies are read this way.
+pub fn reads_reply(kind: AgentKind) -> bool {
+    matches!(kind, AgentKind::Claude | AgentKind::Copilot | AgentKind::Antigravity)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Block {
+    Text,
+    Other,
+}
+
+/// The reply being written on a captured screen, or None when the screen shows none.
+pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32>) -> Option<ScreenReply> {
+    if !reads_reply(kind) {
+        return None;
+    }
+    let lines: Vec<String> = captured.iter().map(|l| unstyle(l).text.trim_end().to_owned()).collect();
+    let rule = re!(r"^\s*─{12,}");
+    // the input box: a rule with the prompt sign on the line under it
+    let input = if kind == AgentKind::Antigravity { re!(r"^>(\s|$)") } else { re!(r"^\s*❯(\s|$)") };
+    let box_top = (0..lines.len().saturating_sub(1)).rev().find(|&i| rule.is_match(&lines[i]) && input.is_match(&lines[i + 1]))?;
+    let prompt = match kind {
+        AgentKind::Antigravity => re!(r"^> \S"),
+        // Copilot puts the time at the end of your prompt; its thinking rows use the same sign
+        AgentKind::Copilot => re!(r"^ ?❯ .*\s\d{1,2}:\d\d$"),
+        _ => re!(r"^❯ \S"),
+    };
+    let echo = (0..box_top).rev().find(|&i| prompt.is_match(&lines[i]));
+    let mut start = match echo {
+        // past the prompt's own wrapped lines
+        Some(i) => {
+            let mut j = i + 1;
+            while j < box_top && !lines[j].is_empty() {
+                j += 1;
+            }
+            j
+        }
+        None => 0,
+    };
+    // the screen above the box can still hold an earlier turn when no prompt shows: start after a rule
+    if echo.is_none() {
+        if let Some(r) = (0..box_top).rev().find(|&i| rule.is_match(&lines[i])) {
+            start = r + 1;
+        }
+    }
+    let end = (start..box_top).find(|&i| is_status(kind, &lines[i])).unwrap_or(box_top);
+    let rows = &lines[start.min(end)..end];
+
+    // blocks, with what each is
+    let mut blocks: Vec<(Block, Vec<&str>)> = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    for row in rows.iter().map(String::as_str).chain(std::iter::once("")) {
+        if !row.is_empty() {
+            cur.push(row);
+            continue;
+        }
+        if cur.is_empty() {
+            continue;
+        }
+        let kind_of = classify(kind, cur[0], blocks.last().map(|b| b.0));
+        blocks.push((kind_of, std::mem::take(&mut cur)));
+    }
+    let from = blocks.iter().rposition(|b| b.0 == Block::Other).map_or(0, |i| i + 1);
+    let width = pane_width.map(|w| w as usize).unwrap_or_else(|| lines.iter().map(|l| l.chars().count()).max().unwrap_or(80));
+    let paragraphs: Vec<String> = blocks[from..].iter().map(|(_, rows)| paragraph(rows, width)).filter(|p| !p.is_empty()).collect();
+    if paragraphs.is_empty() {
+        return None;
+    }
+    // its start is on screen: right after your prompt, or after something it ran
+    Some(ScreenReply { text: paragraphs.join("\n\n"), whole: echo.is_some() || from > 0 })
+}
+
+/// A row between the reply and the box that isn't the reply: a spinner, a count on the right, a
+/// notice or a status line.
+fn is_status(kind: AgentKind, row: &str) -> bool {
+    match kind {
+        // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens"
+        AgentKind::Claude => re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\w'’ -]*(…|\sfor\s\d)", "u").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
+        // "⣯  Generating..."
+        AgentKind::Antigravity => re!(r"^[\u{2800}-\u{28ff}]\s").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
+        // " /path/to/folder        Session: 0.42 AIC used"
+        AgentKind::Copilot => re!(r"\sSession:\s").is_match(row) && re!(r"^ ?\S").is_match(row),
+        _ => false,
+    }
+}
+
+/// What a block is, from its first row (and the block before it, for one with no mark).
+fn classify(kind: AgentKind, first: &str, before: Option<Block>) -> Block {
+    let marked = re!(r"^ ?● (.*)$").captures(first);
+    match (kind, marked) {
+        // Antigravity marks only what it ran; its text has no mark
+        (AgentKind::Antigravity, Some(_)) => Block::Other,
+        (AgentKind::Antigravity, None) => {
+            // "▸ Thought for 7s", folded
+            if re!(r"^\s*[⎿└]").is_match(first) || re!(r"^\s*▸ ").is_match(first) {
+                Block::Other
+            } else {
+                Block::Text
+            }
+        }
+        (_, Some(m)) => {
+            let rest = m.get(1).map_or("", |g| g.as_str());
+            // "Bash(ls)", "Read 2 files (ctrl+o to expand)", "Tip: /skills"
+            let tool = re!(r"^[A-Z][\w-]*\(").is_match(rest) || rest.contains("(ctrl+o") || re!(r"^(Tip|MCP Servers?)\b").is_match(rest);
+            if tool {
+                Block::Other
+            } else {
+                Block::Text
+            }
+        }
+        // a thinking row, or a tool's output
+        (_, None) if re!(r"^ ?(❯|∴|✻) ").is_match(first) || re!(r"^\s*[⎿└]").is_match(first) => Block::Other,
+        // a paragraph of the text above, or what a tool printed
+        (_, None) => before.unwrap_or(Block::Other),
+    }
+}
+
+/// A block's rows as Markdown: the mark and the shared indent taken off, rows the agent wrapped at
+/// the screen's edge joined again, and • bullets as Markdown ones.
+fn paragraph(rows: &[&str], width: usize) -> String {
+    let rows: Vec<String> = rows.iter().map(|r| re!(r"^ ?● ").replace(r, |c: &regex::Captures| " ".repeat(c[0].chars().count())).into_owned()).collect();
+    let indent = rows.iter().filter(|r| !r.trim().is_empty()).map(|r| r.chars().take_while(|c| *c == ' ').count()).min().unwrap_or(0);
+    let mut out: Vec<String> = Vec::new();
+    let mut full = false;
+    for r in &rows {
+        let line: String = r.chars().skip(indent).collect();
+        let bullet = re!(r"^\s*([•\-*]|\d+[.)])(\s|$)").is_match(&line);
+        let line = re!(r"^(\s*)•(\s|$)").replace(&line, "$1- ").into_owned();
+        match out.last_mut() {
+            // the row before reached the edge: this one carries on the same line
+            Some(prev) if full && !bullet => {
+                prev.push(' ');
+                prev.push_str(line.trim_start());
+            }
+            _ => out.push(line),
+        }
+        // within a few columns of the edge, the agent wrapped it
+        full = r.chars().count() + 12 >= width;
+    }
+    out.join("\n").trim().to_owned()
+}
+
+/// Lowercase letters and digits only, so text read off the screen (Markdown drawn, lines wrapped)
+/// compares with the record it came from.
+pub fn bare(text: &str) -> String {
+    text.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+}
+
+/// The part of `live` that no record covers yet: leading paragraphs a recorded reply already
+/// holds are dropped, since the screen keeps showing them after their record lands.
+pub fn unrecorded(live: &str, recorded: &[&str]) -> String {
+    let recorded: Vec<String> = recorded.iter().map(|r| bare(r)).collect();
+    let paragraphs: Vec<&str> = live.split("\n\n").collect();
+    let covered = paragraphs
+        .iter()
+        .take_while(|p| {
+            let b = bare(p);
+            let head: String = b.chars().take(48).collect();
+            !head.is_empty() && recorded.iter().any(|r| r.contains(&head))
+        })
+        .count();
+    paragraphs[covered..].join("\n\n")
+}
+
+/// `before` and then `now`, read a moment apart from a screen whose top scrolled away in between:
+/// where `now` starts inside `before`, what came before that is kept.
+pub fn carry_on(before: &str, now: &str) -> String {
+    // the top of the screen can start with something else (the end of your prompt): from the
+    // first paragraph `before` holds
+    let paragraphs: Vec<&str> = now.split("\n\n").collect();
+    for k in 0..paragraphs.len() {
+        let rest = paragraphs[k..].join("\n\n");
+        let head: String = rest.chars().take(60).collect();
+        if head.chars().count() < 20 {
+            break;
+        }
+        if let Some(at) = before.find(&head) {
+            return format!("{}{rest}", &before[..at]);
+        }
+    }
+    now.to_owned()
+}
+
+#[cfg(test)]
+#[path = "screen_reply_tests.rs"]
+mod tests;
