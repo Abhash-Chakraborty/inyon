@@ -260,8 +260,9 @@ pub fn draw_screen(prev: Option<&Screen>, next: &Screen) -> String {
     // bracketed paste on, so a pasted block arrives as one paste rather than lines that each submit
     let mut out = if prev.is_some() { String::new() } else { "\x1b[?7l\x1b[?2004h\x1b[0m\x1b[H\x1b[2J".to_owned() };
     // a full-screen program (Claude Code's, say) scrolls with the wheel: the browser terminal reports
-    // the mouse while one runs, and those reports go to it as they are (psmux passes them on)
-    if prev.is_some_and(|p| p.mouse) != next.mouse {
+    // the mouse while one runs, and those reports go to it as they are (psmux passes them on); a full
+    // redraw (after a resize, say) says the mode again, since the browser terminal may still have it on
+    if prev.is_none_or(|p| p.mouse != next.mouse) {
         out.push_str(if next.mouse { "\x1b[?1000h\x1b[?1006h" } else { "\x1b[?1000l\x1b[?1006l" });
     }
     for (i, line) in next.lines.iter().enumerate() {

@@ -157,8 +157,9 @@ export function drawScreen(prev: Screen | undefined, next: Screen): string {
   // bracketed paste on, so a pasted block arrives as one paste rather than lines that each submit
   let out = prev ? '' : '\x1b[?7l\x1b[?2004h\x1b[0m\x1b[H\x1b[2J'
   // a full-screen program (Claude Code's, say) scrolls with the wheel: the browser terminal reports
-  // the mouse while one runs, and those reports go to it as they are (psmux passes them on)
-  if (!!prev?.mouse !== !!next.mouse) out += next.mouse ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l'
+  // the mouse while one runs, and those reports go to it as they are (psmux passes them on); a full
+  // redraw (after a resize, say) says the mode again, since the browser terminal may still have it on
+  if (!prev || !!prev.mouse !== !!next.mouse) out += next.mouse ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l'
   for (let i = 0; i < next.lines.length; i++) {
     if (prev && prev.lines[i] === next.lines[i] && prev.width === next.width) continue
     out += `\x1b[${i + 1};1H\x1b[0m${next.lines[i]}\x1b[0m\x1b[K`

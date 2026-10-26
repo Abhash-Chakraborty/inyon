@@ -112,6 +112,8 @@ test('a full-screen program gets the mouse wheel, and a shell keeps the mouse to
   const shell = parseScreen('10 2 0 0 1 0\n$ ls\n')!
   const claude = parseScreen('10 2 0 0 1 1\n● Done.\n❯\n')!
   expect(drawScreen(undefined, shell)).not.toContain('\x1b[?1000h')
+  // a full redraw after a resize turns it off for a shell, in case Claude had it on before
+  expect(drawScreen(undefined, shell)).toContain('\x1b[?1000l\x1b[?1006l')
   expect(drawScreen(shell, claude).startsWith('\x1b[?1000h\x1b[?1006h')).toBe(true)
   expect(drawScreen(claude, claude)).not.toContain('\x1b[?1000h')
   expect(drawScreen(claude, shell).startsWith('\x1b[?1000l\x1b[?1006l')).toBe(true)

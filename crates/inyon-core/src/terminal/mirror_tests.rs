@@ -118,6 +118,8 @@ fn a_full_screen_program_gets_the_mouse_wheel_and_a_shell_keeps_the_mouse_to_its
     let on = "\x1b[?1000h\x1b[?1006h";
     let off = "\x1b[?1000l\x1b[?1006l";
     assert!(!draw_screen(None, &shell).contains(on));
+    // a full redraw after a resize turns it off for a shell, in case Claude had it on before
+    assert!(draw_screen(None, &shell).contains(off));
     assert!(draw_screen(None, &claude).contains(on));
     assert!(draw_screen(Some(&shell), &claude).starts_with(on));
     // said once, not on every redraw
