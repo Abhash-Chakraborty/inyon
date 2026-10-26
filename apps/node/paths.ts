@@ -15,7 +15,16 @@ for (const [k, v] of Object.entries(process.env)) {
  * folder.
  */
 export const NAME = 'inyon'
-export const binDir = () => path.join(os.homedir(), '.inyon', 'bin')
+/**
+ * The user's home, read from the environment on each call: Bun's os.homedir() keeps the HOME it
+ * started with, so a test that points HOME elsewhere would still write to the real ~/.inyon. The
+ * same order as the inyon command's (USERPROFILE first on Windows).
+ */
+export function home(): string {
+  const order = process.platform === 'win32' ? ['USERPROFILE', 'HOME'] : ['HOME', 'USERPROFILE']
+  return order.map((k) => process.env[k]).find((h) => !!h) || os.homedir()
+}
+export const binDir = () => path.join(home(), '.inyon', 'bin')
 /** the installed program */
 export const installedBinary = (win = process.platform === 'win32') => path.join(binDir(), win ? `${NAME}.exe` : NAME)
 
@@ -46,8 +55,8 @@ export const runningFile = (role: Role) => path.join(nodeDir(), role === 'link' 
 export const logFile = (role: Role) => path.join(nodeDir(), `${role}.log`)
 
 /** The folder before the rename to Inyon, when this program was tether-node. */
-export const oldDir = () => path.join(os.homedir(), '.tether-node')
-const newDir = () => path.join(os.homedir(), '.inyon', 'node')
+export const oldDir = () => path.join(home(), '.tether-node')
+const newDir = () => path.join(home(), '.inyon', 'node')
 
 /**
  * The node's folder. A machine set up as tether-node has ~/.tether-node: it moves to ~/.inyon/node

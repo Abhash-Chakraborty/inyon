@@ -16,6 +16,12 @@ afterAll(() => {
   rmSync(home, { recursive: true, force: true })
 })
 
+// Bun's os.homedir() ignores the HOME set above; files written before paths.ts read HOME itself
+// landed in the real ~/.inyon/node
+test('the files go to the throwaway home, never the real one', () => {
+  expect(nodeDir().startsWith(home)).toBe(true)
+})
+
 const phoneA = 'a'.repeat(64)
 const phoneB = 'b'.repeat(64)
 const reg = (n: number, done = true) => ({

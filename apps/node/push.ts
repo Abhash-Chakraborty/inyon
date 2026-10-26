@@ -5,7 +5,7 @@ import { sendPush, type PushSubscriptionJSON, type Vapid } from '../hub/src/push
 import { backgroundOnScreen } from '../hub/src/claude/screen.ts'
 import { listPhones } from './link.ts'
 import { emit } from './output.ts'
-import { nodeDir } from './paths.ts'
+import { home, nodeDir } from './paths.ts'
 
 /**
  * Notifications for the web app while it's closed. The page has no server, so this machine sends
@@ -29,7 +29,7 @@ export interface PushEntry {
 }
 
 const file = () => path.join(nodeDir(), 'push.json')
-export const eventsFile = () => path.join(os.homedir(), '.inyon', 'events.jsonl')
+export const eventsFile = () => path.join(home(), '.inyon', 'events.jsonl')
 
 export function readEntries(): PushEntry[] {
   try {
