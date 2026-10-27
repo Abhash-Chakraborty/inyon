@@ -63,6 +63,52 @@ export function matchesPage(p: Page, machine: string, q: string) {
   return !t || [p.name, projectName(p.project), machine].some((s) => s.toLowerCase().includes(t))
 }
 
+// ---------- a session's pages ----------
+
+/** A folder as the app compares it: forward slashes, no slash at the end, and a Windows path in any case. */
+export function folderKey(p: string) {
+  const s = p.replace(/\\/g, '/').replace(/(.)\/+$/, '$1')
+  return /^[a-z]:/i.test(s) ? s.toLowerCase() : s
+}
+
+const within = (child: string, parent: string) => child === parent || child.startsWith(parent.endsWith('/') ? parent : `${parent}/`)
+
+/**
+ * The pages a session running in `cwd` on `host` works on, the newest change first: on the same
+ * machine, with the session inside the page's project, or the page's folder under the session's.
+ * A session in a home folder or higher (two folders deep or less) only gets its project's pages,
+ * or every page on the machine would be its own.
+ */
+export function sessionPages(pages: Page[], host: string, cwd: string | undefined): Page[] {
+  if (!cwd) return []
+  const at = folderKey(cwd)
+  const deep = at.replace(/^[a-z]:/, '').split('/').filter(Boolean).length > 2
+  return pages
+    .filter((p) => p.host === host && (within(at, folderKey(p.project)) || (deep && within(folderKey(p.folder), at))))
+    .sort((a, b) => changedAt(b) - changedAt(a))
+}
+
+/**
+ * The pages a reply links to, as `/pages/<host>/<slug>` (what `inyon pages add` prints), each once
+ * and in order, with the host as this app names it: a session that came through a paired hub
+ * names that hub's machines.
+ */
+export function linkedPages(text: string, sessionHost: string): string[] {
+  const hub = isHubHost(sessionHost) ? sessionHost.slice(0, sessionHost.indexOf('/') + 1) : ''
+  const out: string[] = []
+  for (const m of text.matchAll(/(?:^|[^\w/.-])(?:https?:\/\/[^\s/]+)?\/pages\/([\w.%-]+)\/([a-z0-9][a-z0-9-]{0,62})(?![\w-])/g)) {
+    let host: string
+    try {
+      host = decodeURIComponent(m[1]!)
+    } catch {
+      continue
+    }
+    const id = pageId(hub + host, m[2]!)
+    if (!out.includes(id)) out.push(id)
+  }
+  return out
+}
+
 // ---------- changed since you last opened it ----------
 
 const SEEN_KEY = 'inyon.pages.seen.v1'

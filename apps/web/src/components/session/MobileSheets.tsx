@@ -6,7 +6,7 @@ import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { openMenu, Segmented, Sheet, Toggle } from '../ui/primitives.tsx'
 import { UsagePanel } from './Usage.tsx'
-import { ActivityTab, ChangesTab, PreviewTab } from './Panels.tsx'
+import { ActivityTab, ChangesTab, PagesTab, PreviewTab, useSessionPages } from './Panels.tsx'
 import { FilesTab } from './Workspace.tsx'
 import { GoalSheet, modeMatches } from './ComposerControls.tsx'
 import { currentModelId, type SessionModel } from './useSession.ts'
@@ -163,18 +163,26 @@ export function ControlsSheet({ s, open, onClose }: { s: SessionModel; open: boo
 }
 
 export function ActivitySheet({ s, items, open, onClose, onTask, onSubagent }: { s: SessionModel; items: ChatItem[]; open: boolean; onClose: () => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void }) {
-  const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'preview'>('activity')
+  const [tab, setTab] = useState<'activity' | 'changes' | 'files' | 'preview' | 'pages'>('activity')
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
+  const pages = useSessionPages(s)
   return (
     <Sheet open={open} onClose={onClose} wide title="Activity">
       <div className="-mx-1 mb-3">
-        <Segmented full value={tab} onChange={setTab} options={[{ v: 'activity', label: 'Running' }, { v: 'changes', label: 'Changes' }, { v: 'files', label: 'Files' }, { v: 'preview', label: 'Preview' }]} />
+        <Segmented full value={tab} onChange={setTab} options={[
+            { v: 'activity', label: 'Running' },
+            { v: 'changes', label: 'Changes' },
+            { v: 'files', label: 'Files' },
+            { v: 'preview', label: 'Preview' },
+            ...(pages.length || tab === 'pages' ? [{ v: 'pages' as const, label: 'Pages' }] : []),
+          ]} />
       </div>
       <div key={tab} className="animate-fade-in -mx-5 flex min-h-[50dvh] flex-col">
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
         {tab === 'changes' && <ChangesTab items={items} p={p} onComposed={onClose} />}
         {tab === 'files' && p && <FilesTab p={p} onComposed={onClose} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={[]} />}
+        {tab === 'pages' && <PagesTab pages={pages} />}
       </div>
     </Sheet>
   )

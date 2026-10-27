@@ -1,6 +1,9 @@
-import { expect, test } from 'bun:test'
+import { afterEach, expect, test } from 'bun:test'
 import { render, screen } from '@testing-library/react'
-import { PendingBubble, QueuedBubble, UserMessage, uploadName, WorkingIndicator } from './Messages.tsx'
+import { MemoryRouter } from 'react-router-dom'
+import { AssistantTurn, PendingBubble, QueuedBubble, UserMessage, uploadName, WorkingIndicator } from './Messages.tsx'
+import { ChatHost } from './agent.ts'
+import { usePages, type Page } from '../../lib/pages.ts'
 import { buildRows } from '../../lib/chat.ts'
 import { item } from '../../test/fixtures.ts'
 
@@ -39,4 +42,25 @@ test('a message keeps the indent of its lines', () => {
   const bubble = container.querySelector('.bg-bubble')!
   expect(bubble.className).toContain('whitespace-pre-wrap')
   expect(bubble.textContent).toContain('\n    if x:\n        y()')
+})
+
+afterEach(() => usePages.setState({ pages: null }))
+
+test('a reply that links to a page shows it as a card that opens it, once the reply is done', () => {
+  const page: Page = { host: 'hub:h1/local', slug: 'my-plan', id: 'hub:h1/local/my-plan', name: 'My plan', project: '/home/me/code', by: 'claude', added: 1, folder: '/home/me/code/plans' }
+  usePages.setState({ pages: [page] })
+  const text = 'Added it. Open it in the app at /pages/local/my-plan, and /pages/local/gone is gone.'
+  const [done] = buildRows([item.text(text), item.user('thanks')])
+  const [open] = buildRows([item.text(text)])
+  if (done.type !== 'assistant' || open.type !== 'assistant') throw new Error('not a reply')
+  const at = (row: typeof done) => render(<MemoryRouter><ChatHost.Provider value="hub:h1/laptop"><AssistantTurn row={row} live={false} /></ChatHost.Provider></MemoryRouter>)
+  const shown = at(done)
+  const card = screen.getByRole('link', { name: /My plan/ })
+  expect(card.getAttribute('href')).toBe('/pages/hub%3Ah1%2Flocal/my-plan')
+  expect(screen.getAllByRole('link').filter((l) => l.getAttribute('href')?.startsWith('/pages/'))).toHaveLength(1)
+  shown.unmount()
+  if (open.open) {
+    at(open)
+    expect(screen.queryByRole('link', { name: /My plan/ })).toBeNull()
+  }
 })

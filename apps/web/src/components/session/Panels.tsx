@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, RefreshCw, Smartphone,
+  Bot, ExternalLink, FileDiff, Globe, LayoutPanelLeft, Link2, Monitor as MonitorIcon, PanelsTopLeft, RefreshCw, Smartphone,
   SquareTerminal, Timer, Workflow, Layers as Stack, Copy, Trash2, ShieldAlert,
 } from 'lucide-react'
 import type { BackgroundTask, ChatItem, SubagentInfo } from '@inyon/protocol'
@@ -17,7 +17,8 @@ import type { SessionModel } from './useSession.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { confirmAction } from '../Confirm.tsx'
-import { appOrigins, previewRefusal } from '../../lib/pages.ts'
+import { appOrigins, previewRefusal, sessionPages, usePages, type Page } from '../../lib/pages.ts'
+import { PageRows } from '../pages/shared.tsx'
 import { useFramesIsolated } from '../../lib/native.ts'
 import { FrameRefused } from '../FrameRefused.tsx'
 
@@ -370,7 +371,32 @@ export function PreviewTab({ storageKey, suggestions }: { storageKey: string; su
 
 // ---------- side panel ----------
 
-export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'usage'
+export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'pages' | 'usage'
+
+// ---------- pages ----------
+
+/** The pages this session works on (see sessionPages): its project's, and those in folders under it. */
+export function useSessionPages(s: SessionModel): Page[] {
+  const all = usePages((x) => x.pages)
+  const host = s.ref?.host.config.id
+  const cwd = s.ref?.pane.cwd
+  return useMemo(() => (host ? sessionPages(all ?? [], host, cwd) : []), [all, host, cwd])
+}
+
+export function PagesTab({ pages }: { pages: Page[] }) {
+  if (!pages.length) {
+    return (
+      <Empty icon={<PanelsTopLeft className="size-5" />} title="No pages here">
+        Sites an agent adds with <code className="font-mono text-[12.5px]">inyon pages add</code> in this project show up here.
+      </Empty>
+    )
+  }
+  return (
+    <div className="p-3">
+      <PageRows pages={pages} />
+    </div>
+  )
+}
 
 /**
  * One underline for a tab strip, moved under the chosen tab by transform alone (a 100px strip
@@ -407,6 +433,7 @@ function useTabUnderline(strip: React.RefObject<HTMLElement | null>, index: numb
 
 export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }: { s: SessionModel; items: ChatItem[]; tab: PanelTab; setTab: (t: PanelTab) => void; onTask: (t: BackgroundTask) => void; onSubagent: (a: SubagentInfo) => void; closing?: boolean }) {
   const changes = useChanges(items)
+  const pages = useSessionPages(s)
   const strip = useRef<HTMLDivElement>(null)
   const p = s.ref ? { host: s.ref.host.config.id, pane: s.ref.pane.id } : undefined
   // a background subagent is also listed as a task of the kind the transcript can't name: count it once
@@ -416,6 +443,8 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
     { id: 'files', label: 'Files' },
     { id: 'activity', label: 'Activity', badge: running || undefined },
     { id: 'preview', label: 'Preview' },
+    // only for a session that has pages, or while it's the tab on screen
+    ...(pages.length || tab === 'pages' ? [{ id: 'pages' as const, label: 'Pages', badge: pages.length || undefined }] : []),
     { id: 'usage', label: 'Usage' },
   ]
   const underline = useTabUnderline(strip, tabs.findIndex((t) => t.id === tab))
@@ -455,6 +484,7 @@ export function SidePanel({ s, items, tab, setTab, onTask, onSubagent, closing }
         {tab === 'files' && p && <FilesTab key={`${p.host}:${p.pane}`} p={p} />}
         {tab === 'activity' && <ActivityTab s={s} onTask={onTask} onSubagent={onSubagent} />}
         {tab === 'preview' && <PreviewTab storageKey={`${s.ref?.host.config.id}:${s.ref?.pane.id}`} suggestions={previewSuggestions} />}
+        {tab === 'pages' && <PagesTab pages={pages} />}
         {tab === 'usage' && (
           <div className="p-3">
             <UsagePanel status={s.status} info={s.info} host={s.ref?.host} agent={s.agent} agentInfo={s.ref?.pane.agent} pane={s.ref?.pane.id} onCompact={s.def?.set.compact ? s.actions.compact : undefined} />

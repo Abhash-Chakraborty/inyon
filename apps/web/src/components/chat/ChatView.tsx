@@ -12,6 +12,7 @@ import { api, isTransient, withRetries } from '../../lib/api.ts'
 import { AgentLogo, useReplyFont } from '../../lib/skin.tsx'
 import { Button, Empty, openMenu, Pulse, Waiting } from '../ui/primitives.tsx'
 import { AssistantTurn, ChatAgent, ChatRewind, CommandRow, GoalRow, LiveTurn, NoticeRow, PendingBubble, QueuedBubble, UserMessage, WorkingIndicator } from './Messages.tsx'
+import { ChatHost } from './agent.ts'
 import { ReplyFont } from './copy.tsx'
 import { PromptCard } from './PromptCard.tsx'
 import { ChatJobs } from './Tools.tsx'
@@ -319,6 +320,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
 
   return (
     <ChatAgent.Provider value={agent}>
+    <ChatHost.Provider value={host}>
     <ChatRewind.Provider value={agent === 'codex' && running && !working ? rewind : undefined}>
     <ChatJobs.Provider value={jobs}>
       <ReplyFont.Provider value={font}>
@@ -446,6 +448,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
       </ReplyFont.Provider>
     </ChatJobs.Provider>
     </ChatRewind.Provider>
+    </ChatHost.Provider>
     </ChatAgent.Provider>
   )
 }

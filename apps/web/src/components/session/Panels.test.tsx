@@ -7,6 +7,7 @@ import { SidePanel, type PanelTab } from './Panels.tsx'
 import { useSession } from './useSession.ts'
 import { useStore } from '../../lib/store.ts'
 import { agentPane, host } from '../../test/fixtures.ts'
+import { usePages, type Page } from '../../lib/pages.ts'
 
 function Panel({ closing }: { closing?: boolean }) {
   const s = useSession('box', '%1')
@@ -56,5 +57,29 @@ describe('the side panel', () => {
   test('comes in from its edge, and fades while it is closing', () => {
     expect(panel().container.querySelector('aside')!.className).toContain('animate-panel-in')
     expect(panel(true).container.querySelector('aside')!.className).toContain('animate-fade-out')
+  })
+})
+
+describe("the session's pages", () => {
+  const page = (slug: string, more: Partial<Page> = {}): Page => ({ host: 'box', slug, id: `box/${slug}`, name: `Plan ${slug}`, project: '/home/me/code', by: 'claude', added: 1, folder: `/home/me/code/private/plans/${slug}`, ...more })
+  beforeEach(() => useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude')] })] }))
+  afterEach(() => usePages.setState({ pages: null }))
+
+  test('a Pages tab with the pages from its project, each a link to its viewer', async () => {
+    usePages.setState({ pages: [page('robot', { progress: { done: 2, total: 3, now: 'Wiring' } }), page('elsewhere', { project: '/home/me/other', folder: '/home/me/other/p' })] })
+    const user = userEvent.setup()
+    panel()
+    await user.click(screen.getByRole('tab', { name: /Pages/ }))
+    const link = screen.getByRole('link', { name: /Plan robot/ })
+    expect(link.getAttribute('href')).toBe('/pages/box/robot')
+    expect(link.textContent).toContain('Wiring')
+    expect(link.textContent).toContain('2/3')
+    expect(screen.queryByText('Plan elsewhere')).toBeNull()
+  })
+
+  test('no Pages tab for a session with none', () => {
+    usePages.setState({ pages: [page('far', { host: 'other' })] })
+    panel()
+    expect(screen.queryByRole('tab', { name: /Pages/ })).toBeNull()
   })
 })
