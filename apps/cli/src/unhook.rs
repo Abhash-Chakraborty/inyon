@@ -109,6 +109,7 @@ mod tests {
         impl Dir {
             pub fn new() -> Self {
                 let p = std::env::temp_dir().join(format!("inyon-unhook-{}-{}", std::process::id(), rand_suffix()));
+                let _ = std::fs::remove_dir_all(&p);
                 std::fs::create_dir_all(&p).unwrap();
                 Dir(p)
             }
@@ -118,8 +119,11 @@ mod tests {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
-        fn rand_suffix() -> u128 {
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        /// A counter, not the clock: Windows hands two tests running at once the same nanoseconds,
+        /// and they then shared a folder and read each other's settings.
+        fn rand_suffix() -> u64 {
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         }
     }
 
