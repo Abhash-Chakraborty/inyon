@@ -131,6 +131,7 @@ pub fn serve() -> i32 {
         crate::core_routes::start_core();
         crate::push::start_hub_push();
         crate::boards::start();
+        crate::finding::start();
 
         // this machine's names on its private networks count as the hub's own
         let names = crate::server::ctx().network_names.clone();

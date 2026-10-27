@@ -721,3 +721,46 @@ fn the_list_names_a_sites_markdown_notes() {
     assert_eq!(page("robot")["notes"], serde_json::json!(["Internals.MD", "plan.md"]));
     assert!(page("bare").get("notes").is_none(), "{list}");
 }
+
+/// A Blueprint site: an index.html with the marker Blueprint writes next to it.
+fn blueprint(h: &Home, rel: &str, name: &str) -> PathBuf {
+    let d = h.site(rel, name);
+    fs::write(d.join(".inyon-page.json"), format!(r#"{{"v":1,"slug":"{}","name":"{name}","kind":"blueprint","created":1}}"#, pages::slugify(name))).unwrap();
+    d
+}
+
+// an agent made a plan and never ran `inyon pages add`: the hub finds it where the agent works
+#[test]
+fn find_adds_the_sites_under_an_agents_folder_once_and_never_one_taken_off() {
+    let h = Home::new("find");
+    let shop = h.dir.join("code").join("shop");
+    let plan = blueprint(&h, "code/shop/private/plans/checkout", "Checkout rewrite");
+    blueprint(&h, "code/shop/node_modules/pkg/docs", "Dependency docs");
+    blueprint(&h, "code/shop/a/b/c/d/e", "Too deep");
+    h.site("code/shop/site", "No marker");
+    let src = shop.join("src");
+    fs::create_dir_all(&src).unwrap();
+    assert!(Command::new("git").args(["init", "-q"]).arg(&shop).status().unwrap().success());
+    let find = |dir: &Path| {
+        let (code, v) = h.json(&["pages", "find", "--by", "claude", s(dir)]);
+        assert_eq!(code, 0, "{v}");
+        v["found"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>()
+    };
+    // the agent works in src: its project's private/plans is looked at too
+    assert_eq!(find(&src), ["Checkout rewrite"]);
+    assert_eq!(h.list()["pages"][0]["by"], "claude");
+    assert_eq!(h.list()["pages"][0]["slug"], "checkout-rewrite");
+    // listed now; no marker, too deep or inside node_modules: nothing else
+    assert!(find(&shop).is_empty());
+    // taken off the list: it stays off
+    assert_eq!(h.run(&["pages", "rm", "checkout-rewrite"]).0, 0);
+    assert!(find(&shop).is_empty());
+    assert!(h.list()["removed"].as_array().unwrap().iter().any(|p| p.as_str().is_some_and(|p| p.ends_with("checkout"))), "{}", h.list());
+    // added again on purpose: no longer remembered as removed
+    assert_eq!(h.run(&["pages", "add", s(&plan)]).0, 0);
+    assert_eq!(h.list()["removed"], serde_json::json!([]));
+    // the home folder itself isn't looked through, and a relative folder isn't either
+    blueprint(&h, "notes", "Home notes");
+    assert!(find(&h.dir).is_empty());
+    assert!(find(Path::new("notes")).is_empty());
+}

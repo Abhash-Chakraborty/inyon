@@ -1111,8 +1111,13 @@ fn removing_drops_the_page_from_the_file_and_ends_its_links_even_if_the_slug_com
         assert_eq!(call(h_remove, "DELETE", &[("host", "local"), ("slug", "gone")], None, &[]).await, Ok(json!({ "ok": true })));
         let slugs: Vec<Value> = read_list(&pages_file(&home))["pages"].as_array().unwrap().iter().map(|p| p["slug"].clone()).collect();
         assert_eq!(slugs, vec![json!("kept")]);
+        // remembered, so `inyon pages find` doesn't add it back by itself
+        let real = std::fs::canonicalize(&folder).unwrap().to_string_lossy().into_owned();
+        assert_eq!(read_list(&pages_file(&home))["removed"], json!([real]));
         assert_eq!(call(h_remove, "DELETE", &[("host", "local"), ("slug", "gone")], None, &[]).await.unwrap_err().0, 404);
         add_page(json!({ "path": folder, "slug": "gone" })).await.unwrap();
+        // added again on purpose: forgotten
+        assert_eq!(read_list(&pages_file(&home))["removed"], json!([]));
         assert_eq!(view_status(&url).await, 403);
         assert_eq!(view_status(&open_url("gone").await).await, 200);
     });
@@ -1829,5 +1834,45 @@ fn a_joined_machines_notes_are_listed_as_it_lists_them_and_rendered_by_the_hub()
         let (status, _, body) = view(&format!("{url}research/plan.md?as=note"), &[]).await;
         assert_eq!(status, 200);
         assert!(String::from_utf8(body).unwrap().contains("<h1>Plan</h1>"));
+    });
+}
+
+// an agent made a plan on the laptop and never added it: the hub has the laptop's inyon look
+#[test]
+fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
+    let tmp = Tmp::new("find");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
+        laptop(machine.clone());
+        let rt = inyon_core::hosts::registry::registry().get("laptop").unwrap();
+        rt.borrow_mut().state.sessions = serde_json::from_value(json!([{ "id": "$1", "name": "s", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+            { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "D:\\Dev\\shop", "title": "", "width": 80, "height": 24, "dead": false, "agent": { "kind": "claude", "pid": 1, "state": "idle" } }
+        ] }] }]))
+        .unwrap();
+        let found = Rc::new(Cell::new(true));
+        let f = found.clone();
+        *machine.answer.borrow_mut() = Box::new(move |args| {
+            if args.starts_with("find ") {
+                if f.get() {
+                    json!({ "v": 1, "found": [{ "slug": "plan" }], "message": "" })
+                } else {
+                    json!({ "v": 1, "ok": false, "error": "unrecognized subcommand 'find'" })
+                }
+            } else {
+                robot(true)
+            }
+        });
+        let mut not_before = std::collections::HashMap::new();
+        crate::finding::find_all(&mut not_before, 1_000).await;
+        assert_eq!(machine.calls.borrow().iter().filter(|c| c.starts_with("find ")).cloned().collect::<Vec<_>>(), ["find --json --by 'claude' -- 'D:\\Dev\\shop'"]);
+        // an inyon from before 0.22.4 is left alone for a while
+        found.set(false);
+        crate::finding::find_all(&mut not_before, 2_000).await;
+        assert_eq!(not_before.get("laptop"), Some(&(2_000 + crate::finding::RETRY_MS)));
+        let asked = machine.count("find ");
+        crate::finding::find_all(&mut not_before, 3_000).await;
+        assert_eq!(machine.count("find "), asked);
     });
 }

@@ -24,6 +24,12 @@ Open it in the app at /pages/local/my-plan
 
 In the app, **Add a folder** does the same: pick the machine, type the folder's full path (starting with `/`, or a drive letter on Windows) and a name.
 
+### Pages the hub finds
+
+From 0.22.4 a site an agent made but never added shows up by itself. Every 5 minutes, while the app is open somewhere or a browser takes page notifications, the hub has each machine's `inyon` look in the folders its agent sessions run in, up to 4 folders down, and in their project's `private/plans`. A folder with Blueprint's `.inyon-page.json` next to its `index.html` that isn't listed yet is added, as made by that session's agent. It skips folders starting with a dot, `node_modules`, `target`, `dist`, `build` and `vendor`, and doesn't look through `/` or your home folder itself.
+
+A page you remove stays removed: `pages.json` remembers its folder, and the hub doesn't add it again. Adding that folder yourself brings it back. A machine with an `inyon` from before 0.22.4 isn't looked through.
+
 From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/pages/…` link in it, the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine.
 
 ## Pages on your other computers

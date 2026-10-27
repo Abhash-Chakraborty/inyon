@@ -191,6 +191,11 @@ impl Registry {
     /// Changes the file under its lock. `change` gets every entry as written (readable or not) and
     /// returns the new list, or None to leave the file alone, with its result.
     pub async fn update<T>(&self, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
+        self.update_with(Removed::Keep, change).await
+    }
+
+    /// `update`, also changing the list's `removed` folders when the file is written.
+    pub async fn update_with<T>(&self, removed: Removed, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
         let file = self.file.clone();
         with_lock(&lock_of(&self.file), 3000, move || {
             let current = match read_list(&file) {
@@ -205,11 +210,45 @@ impl Registry {
                 let mut out = current;
                 out.insert("v".into(), json!(1));
                 out.insert("pages".into(), Value::Array(next));
+                removed.apply(&mut out);
                 write_atomic(&file, &format!("{}\n", inyon_core::js::json::stringify_pretty(&Value::Object(out)))).map_err(|e| HubError::plain(e.to_string()))?;
             }
             Ok(result)
         })
         .await
+    }
+}
+
+/// The most folders kept in pages.json's `removed`, the newest last (as the CLI keeps them).
+pub const REMOVED_MAX: usize = 200;
+
+/// What a change to the list does to its `removed` folders: those taken off the list, which
+/// `inyon pages find` leaves alone so a page you removed doesn't come back by itself.
+pub enum Removed {
+    Keep,
+    /// taken off the list
+    Remember(Vec<String>),
+    /// added again on purpose
+    Forget(Vec<String>),
+}
+
+impl Removed {
+    fn apply(self, list: &mut Map<String, Value>) {
+        let mut removed: Vec<String> = list.get("removed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let before = removed.clone();
+        match self {
+            Removed::Keep => return,
+            Removed::Remember(paths) => {
+                removed.retain(|p| !paths.contains(p));
+                removed.extend(paths);
+                let extra = removed.len().saturating_sub(REMOVED_MAX);
+                removed.drain(..extra);
+            }
+            Removed::Forget(paths) => removed.retain(|p| !paths.contains(p)),
+        }
+        if removed != before {
+            list.insert("removed".into(), json!(removed));
+        }
     }
 }
 
@@ -664,12 +703,8 @@ pub fn notes_of(site: &Path) -> Vec<String> {
         return vec![];
     }
     let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
-    let mut out: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| is_note(n))
-        .collect();
+    let mut out: Vec<String> =
+        entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).filter_map(|e| e.file_name().into_string().ok()).filter(|n| is_note(n)).collect();
     out.sort_by_key(|n| n.to_lowercase());
     out.truncate(NOTES_MAX);
     out
@@ -857,7 +892,7 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
     let now = (p.now)();
     let record = p
         .registry
-        .update(|pages| {
+        .update_with(Removed::Forget(vec![folder.clone(), real_or(&folder)]), |pages| {
             let records: Vec<Option<Record>> = pages.iter().map(as_record).collect();
             if let Some(i) = records.iter().position(|r| r.as_ref().is_some_and(|r| r.path == folder)) {
                 let same = records[i].clone().expect("found");
@@ -901,9 +936,10 @@ pub async fn remove(req: Req) -> HubResult<Resp> {
         p.epochs.bump(&host, &slug)?;
         return Ok(ok());
     }
+    let folders: Vec<String> = p.registry.records().iter().filter(|r| r.slug == slug).map(|r| real_or(&r.path)).collect();
     let gone = p
         .registry
-        .update(|pages| {
+        .update_with(Removed::Remember(folders), |pages| {
             let keep: Vec<Value> = pages.iter().filter(|v| !(v.is_object() && v.get("slug").and_then(Value::as_str) == Some(slug.as_str()))).cloned().collect();
             if keep.len() == pages.len() {
                 return Err(http(404, UNKNOWN_PAGE));
