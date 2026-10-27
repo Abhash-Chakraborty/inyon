@@ -881,9 +881,14 @@ pub fn find(file: &Path, home: &Path, dirs: &[PathBuf], by: &str, now: u64) -> R
         known.insert(path.to_string());
         known.extend(real(Path::new(path)));
     }
-    let mut budget = FIND_FOLDERS;
+    // each folder gets an even share of what's left, so a big one can't use it all up; what one
+    // doesn't use goes to the ones after it
+    let mut left = FIND_FOLDERS;
     let mut sites = vec![];
-    for dir in dirs.iter().filter(|d| d.is_absolute()) {
+    let roots: Vec<&PathBuf> = dirs.iter().filter(|d| d.is_absolute()).collect();
+    for (i, dir) in roots.iter().enumerate() {
+        let share = left / (roots.len() - i);
+        let mut budget = share;
         let Ok(dir) = absolute(dir) else { continue };
         let Ok(text) = text_of(&dir) else { continue };
         if folder_problem(&text, &home_text).is_some() || !dir.is_dir() {
@@ -894,6 +899,7 @@ pub fn find(file: &Path, home: &Path, dirs: &[PathBuf], by: &str, now: u64) -> R
         if !plans.starts_with(&dir) {
             sites_under(&plans, 1, &mut budget, &mut sites);
         }
+        left -= share - budget;
     }
     let mut added = vec![];
     for site in sites {

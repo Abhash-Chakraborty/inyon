@@ -52,10 +52,13 @@ pub async fn find_all(not_before: &mut HashMap<String, u64>, now: u64) {
         for (by, dirs) in agent_folders(&state) {
             match crate::pages_remote::find(&id, &by, &dirs.into_iter().collect::<Vec<_>>()).await {
                 Ok(n) => added += n,
-                Err(_) => {
+                // its inyon is too old (409) or refused (400, 501): leave it for a while. A timeout
+                // or a dropped connection is tried again next time
+                Err(e) if matches!(e.status, Some(400 | 409 | 501)) => {
                     not_before.insert(id.clone(), now + RETRY_MS);
                     break;
                 }
+                Err(_) => break,
             }
         }
         if added > 0 && id != LOCAL_HOST {

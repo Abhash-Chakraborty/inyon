@@ -764,3 +764,16 @@ fn find_adds_the_sites_under_an_agents_folder_once_and_never_one_taken_off() {
     assert!(find(&h.dir).is_empty());
     assert!(find(Path::new("notes")).is_empty());
 }
+
+#[test]
+fn find_shares_its_folder_budget_so_a_big_folder_leaves_room_for_the_next() {
+    let h = Home::new("find-budget");
+    let big = h.dir.join("big");
+    for i in 0..4100 {
+        fs::create_dir_all(big.join(format!("d{i:04}"))).unwrap();
+    }
+    blueprint(&h, "small/plans/board", "Board");
+    let (code, v) = h.json(&["pages", "find", "--by", "codex", s(&big), s(&h.dir.join("small"))]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["found"][0]["name"], "Board", "{v}");
+}

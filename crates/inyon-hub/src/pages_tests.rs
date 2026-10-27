@@ -1865,6 +1865,12 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
             }
         });
         let mut not_before = std::collections::HashMap::new();
+        // an answer that isn't one (a timeout, a dropped connection) is tried again next time
+        let answer = std::mem::replace(&mut *machine.answer.borrow_mut(), Box::new(|_| Value::Null));
+        crate::finding::find_all(&mut not_before, 500).await;
+        assert!(not_before.is_empty(), "{not_before:?}");
+        *machine.answer.borrow_mut() = answer;
+        machine.calls.borrow_mut().clear();
         crate::finding::find_all(&mut not_before, 1_000).await;
         assert_eq!(machine.calls.borrow().iter().filter(|c| c.starts_with("find ")).cloned().collect::<Vec<_>>(), ["find --json --by 'claude' -- 'D:\\Dev\\shop'"]);
         // an inyon from before 0.22.4 is left alone for a while
