@@ -394,10 +394,10 @@ pub fn on_close(anything_running: bool, note_shown: bool) -> Close {
     }
 }
 
-/// Whether the app should end: no window open and nothing to run (after it has had a moment to
-/// start what it was asked to).
-pub fn should_end(window_open: bool, anything: bool, settling: bool) -> bool {
-    !window_open && !anything && !settling
+/// Whether the app should end: no window open or being made, and nothing to run (after it has had
+/// a moment to start what it was asked to).
+pub fn should_end(window_open: bool, opening: bool, anything: bool, settling: bool) -> bool {
+    !window_open && !opening && !anything && !settling
 }
 
 /// The one-time note's marker: once it's shown, closing the window says nothing.
@@ -780,10 +780,12 @@ mod tests {
         assert_eq!(on_close(false, false), Close::Quit);
         assert_eq!(on_close(true, false), Close::ToTray { note: true });
         assert_eq!(on_close(true, true), Close::ToTray { note: false });
-        assert!(should_end(false, false, false));
-        assert!(!should_end(true, false, false), "the window keeps it open");
-        assert!(!should_end(false, true, false), "so does anything running");
-        assert!(!should_end(false, false, true), "and the moment it's starting what it was asked to");
+        assert!(should_end(false, false, false, false));
+        assert!(!should_end(true, false, false, false), "the window keeps it open");
+        // the app ended at start on a slow computer: WebView2 took past the 10 s settle to come up
+        assert!(!should_end(false, true, false, false), "so does a window still being made");
+        assert!(!should_end(false, false, true, false), "so does anything running");
+        assert!(!should_end(false, false, false, true), "and the moment it's starting what it was asked to");
     }
 
     #[test]

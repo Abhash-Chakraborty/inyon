@@ -27,7 +27,7 @@ Up to 0.20.2 the Inyon window's **Change**, **Show all** and **Details** each op
 
 ## The Inyon window doesn't open, or is blank (Windows)
 
-From 0.21 the window is drawn by Microsoft Edge WebView2. When it's missing or won't start, Inyon says so and opens Microsoft's download page; install the Evergreen runtime and open Inyon again. The phone link and the hub connection keep running meanwhile. `%USERPROFILE%\.inyon\node\window.log` says what went wrong. In 0.20.1 to 0.20.5, after the window was closed once, clicking the icon didn't open it again until you chose **Quit Inyon**; update to 0.21.
+From 0.21 the window is drawn by Microsoft Edge WebView2. When it's missing or won't start, Inyon says so and opens Microsoft's download page; install the Evergreen runtime and open Inyon again. The phone link and the hub connection keep running meanwhile. `%USERPROFILE%\.inyon\node\window.log` says what went wrong. In 0.20.1 to 0.20.5, after the window was closed once, clicking the icon didn't open it again until you chose **Quit Inyon**; update to 0.21. Up to 0.22.3, when WebView2 took more than 10 seconds to start (the first start after signing in, on a slow disk), Inyon closed before its window appeared and `app.log` said "nothing runs and no window is open: ending"; from 0.22.4 it waits for the window.
 
 ## The window keeps saying "Starting the tunnel" (Windows)
 
