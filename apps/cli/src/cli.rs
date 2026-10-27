@@ -317,6 +317,19 @@ enum PagesAction {
         /// The browser's If-None-Match: the file isn't sent when it still matches
         #[arg(long)]
         etag: Option<String>,
+        /// Send the file as base64 lines after the answer, for a hub reading a stream (up to 64 MB)
+        #[arg(long)]
+        lines: bool,
+    },
+    /// The pages, again whenever they change, for the hub this machine is joined to (with --json)
+    #[command(hide = true)]
+    Watch {
+        /// How often to look, in ms
+        #[arg(long, default_value_t = pages::WATCH_EVERY_MS)]
+        every: u64,
+        /// How long to go without printing before an empty line, in ms
+        #[arg(long, default_value_t = pages::WATCH_ALIVE_MS)]
+        alive: u64,
     },
 }
 
@@ -566,7 +579,11 @@ pub fn main() {
                 Some(PagesAction::Add { dir, name, slug }) => pages::add_command(&dir, name.as_deref(), slug.as_deref()),
                 Some(PagesAction::Rm { slug }) => pages::remove_command(&slug),
                 Some(PagesAction::Ls) | None => pages::list_command(),
-                Some(PagesAction::Get { slug, segments, slash, max, etag }) => pages::get_command(&slug, &segments, slash, max.min(pages::GET_MAX), etag.as_deref()),
+                Some(PagesAction::Get { slug, segments, slash, max, etag, lines: false }) => pages::get_command(&slug, &segments, slash, max.min(pages::GET_MAX), etag.as_deref()),
+                Some(PagesAction::Get { slug, segments, slash, max, etag, lines: true }) => {
+                    pages::get_lines_command(&slug, &segments, slash, max.min(pages::STREAM_MAX), etag.as_deref())
+                }
+                Some(PagesAction::Watch { every, alive }) => pages::watch_command(every, alive),
             },
             json,
         ),

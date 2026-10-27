@@ -610,3 +610,96 @@ fn a_symlink_out_of_the_site_is_listed_where_it_leads_and_never_sent() {
     assert!(v.get("data").is_none(), "{v}");
     assert!(get(&h, &["robot", "home", "secret.txt"]).get("data").is_none());
 }
+
+// a file over 8 MB on a joined machine was a 413: it had to fit in one message to the hub
+#[test]
+fn get_lines_sends_the_answer_then_the_file_as_base64_lines_of_48_kib() {
+    use base64::Engine;
+    let h = Home::new("get-lines");
+    let site = h.site("plans/robot", "Robot");
+    let film: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    fs::write(site.join("film.bin"), &film).unwrap();
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+
+    let (code, stdout, _) = h.run(&["pages", "get", "--json", "--lines", "--", "robot", "film.bin"]);
+    assert_eq!(code, 0);
+    let mut lines = stdout.lines();
+    let answer: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+    assert_eq!((answer["sends"].as_u64(), answer.get("data")), (Some(200_000), None), "{answer}");
+    let parts: Vec<Vec<u8>> = lines.map(|l| base64::engine::general_purpose::STANDARD.decode(l).unwrap()).collect();
+    assert_eq!(parts.iter().map(Vec::len).collect::<Vec<_>>(), [49152, 49152, 49152, 49152, 3392]);
+    assert_eq!(parts.concat(), film);
+
+    // over what the hub asked for: said, and nothing follows
+    let (_, stdout, _) = h.run(&["pages", "get", "--json", "--lines", "--max", "1000", "--", "robot", "film.bin"]);
+    let answer: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!((answer["big"].as_bool(), answer.get("sends")), (Some(true), None));
+    // a dot name is never sent
+    let (_, stdout, _) = h.run(&["pages", "get", "--json", "--lines", "--", "robot", ".env"]);
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+}
+
+#[test]
+fn a_sites_stamp_moves_on_when_a_file_it_serves_changes_and_not_for_dot_files() {
+    let h = Home::new("stamp");
+    let site = h.site("plans/robot", "Robot");
+    let first = pages::site_stamp(&site).unwrap();
+    assert_eq!(pages::site_stamp(&site).unwrap(), first);
+    fs::write(site.join(".notes"), "private").unwrap();
+    assert_eq!(pages::site_stamp(&site).unwrap(), first, "dot names aren't served, so they don't count");
+    fs::create_dir_all(site.join("mockups")).unwrap();
+    fs::write(site.join("mockups/a.html"), "a").unwrap();
+    let second = pages::site_stamp(&site).unwrap();
+    assert_ne!(second, first);
+    fs::write(site.join("mockups/a.html"), "ab").unwrap();
+    assert_ne!(pages::site_stamp(&site).unwrap(), second);
+    // too many files to look at every 2 s: no stamp, and the hub asks for each file
+    for i in 0..4000 {
+        fs::write(site.join(format!("f{i}")), "").unwrap();
+    }
+    assert_eq!(pages::site_stamp(&site), None);
+    assert_eq!(pages::site_stamp(&h.dir.join("nowhere")), None);
+}
+
+#[test]
+fn watch_prints_the_list_with_stamps_and_again_only_when_something_changes() {
+    use std::io::{BufRead, BufReader};
+    let h = Home::new("watch");
+    let site = h.site("plans/robot", "Robot");
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+    let mut child = h.cmd(&["pages", "watch", "--json", "--every", "200"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let stdout = child.stdout.take().unwrap();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let _ = tx.send(line.unwrap());
+        }
+    });
+    let next = |wait: u64| rx.recv_timeout(std::time::Duration::from_secs(wait)).ok().map(|l| serde_json::from_str::<Value>(&l).unwrap());
+    let first = next(10).expect("a first list");
+    assert_eq!((first["serves"].as_bool(), first["pages"][0]["slug"].as_str()), (Some(true), Some("robot")));
+    let stamp = first["pages"][0]["stamp"].as_str().unwrap().to_owned();
+    assert!(next(1).is_none(), "nothing changed, nothing printed");
+    fs::write(site.join("app.js"), "let x = 1").unwrap();
+    let after = next(10).expect("printed again after a change");
+    assert_ne!(after["pages"][0]["stamp"].as_str().unwrap(), stamp);
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+// a hub that went away without stopping it left `pages watch` looking for nobody, for good
+#[test]
+fn watch_ends_once_nobody_reads_it_even_when_nothing_changes() {
+    use std::io::Read;
+    let h = Home::new("watch-gone");
+    h.site("plans/robot", "Robot");
+    let mut child = h.cmd(&["pages", "watch", "--json", "--every", "200", "--alive", "500"]).stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let mut first = [0u8; 1];
+    child.stdout.as_mut().unwrap().read_exact(&mut first).unwrap();
+    drop(child.stdout.take());
+    let start = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "still running");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
