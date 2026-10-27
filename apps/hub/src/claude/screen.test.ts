@@ -628,22 +628,28 @@ ${R}
   ${status}${rows.map((r) => `\n  ${r}`).join('')}`)
   const agents = ['● main', '◯ general-purpose  Sleep briefly for a footer test                                                      6s · ↓ 37.9k tokens']
 
-  test('a shell and an agent, with bypass mode', () => {
+  test('a shell, with bypass mode', () => {
     const s = parseScreen(footer('⏵⏵ bypass permissions on · 1 shell · ← 1 agent', ...agents), 100)
-    expect(s).toMatchObject({ working: false, inputVisible: true, mode: 'bypass permissions', background: '1 shell, 1 agent' })
+    expect(s).toMatchObject({ working: false, inputVisible: true, mode: 'bypass permissions', background: '1 shell' })
     expect(s.draft).toBeUndefined()
     expect(s.prompt).toBeUndefined()
   })
 
   test('agents alone, without the mode segment', () => {
-    expect(parseScreen(footer('← 1 agent'), 100).background).toBe('1 agent')
     expect(parseScreen(footer('1 shell · 1 agent'), 100).background).toBe('1 shell, 1 agent')
-    expect(parseScreen(footer('← 2 agents', ...agents, '◯ Explore  Find the parser  12s · ↓ 4.1k tokens'), 100)).toMatchObject({ working: false, background: '2 agents' })
+  })
+
+  // every Claude pane on a machine with an old background session looked busy, so held messages never went in
+  test("the agents view's count is the machine's other sessions, not this pane's work", () => {
+    expect(parseScreen(footer('← 1 agent'), 100).background).toBeNull()
+    expect(parseScreen(footer('← 2 agents', ...agents, '◯ Explore  Find the parser  12s · ↓ 4.1k tokens'), 100)).toMatchObject({ working: false, background: null })
+    // Claude Code 2.1.311 on Windows, idle and fresh, with one old session in its agents view
+    expect(parseScreen(screenFixture('claude', 'idle-update-ready'))).toMatchObject({ working: false, inputVisible: true, mode: 'auto', background: null })
   })
 
   test('the agent list rows are not read as a footer', () => {
     const s = parseScreen(footer('⏵ plan mode on · ← 1 agent', '● main', '◯ general-purpose  Start 2 shells, then ⏵⏵ bypass permissions on  6s · ↓ 1.2k tokens'), 100)
-    expect(s).toMatchObject({ mode: 'plan', background: '1 agent' })
+    expect(s).toMatchObject({ mode: 'plan', background: null })
   })
 
   test('nothing in the background once the footer is bare, which is not the same as no footer', () => {
@@ -656,7 +662,17 @@ ${R}
     expect(parseScreen(footer('⏵⏵ bypass permissions on · 1 local agent'), 100).background).toBe('1 local agent')
     expect(parseScreen(footer('⏵⏵ auto mode on (shift+tab to cycle) · 1 background dynamic workflow'), 100).background).toBe('1 background dynamic workflow')
     expect(parseScreen(footer('1 MCP task · 1 Artifact comment monitor · 1 cloud session'), 100).background).toBe('1 MCP task, 1 Artifact comment monitor, 1 cloud session')
-    expect(parseScreen(footer('⏵⏵ bypass permissions on · 1 shell · /tasks to see subagents · ← 1 agent'), 100).background).toBe('1 shell, 1 agent')
+    expect(parseScreen(footer('⏵⏵ bypass permissions on · 1 shell · /tasks to see subagents · ← 1 agent'), 100).background).toBe('1 shell')
     expect(parseScreen(footer('3 background tasks'), 100).background).toBe('3 background tasks')
   })
+})
+
+// Claude Code 2.1.311's folder trust question (on Windows): no numbers, and "No, exit" first and highlighted
+test('the folder trust question without numbers has No, exit first', () => {
+  const p = parseScreen(screenFixture('claude', 'trust-folder')).prompt
+  expect(p?.options.map((o) => [o.n, o.label, o.selected])).toEqual([
+    [1, 'No, exit', true],
+    [2, 'Yes, I trust this folder', false],
+  ])
+  expect(p?.navigate).toBe(true)
 })

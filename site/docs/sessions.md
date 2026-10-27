@@ -98,6 +98,8 @@ From 0.22 the hub can hold a message for you and type it in once the agent has b
 
 If a held message can't be sent, it stays first in line with the reason, and nothing more goes until you edit it, send it now or drop it. Up to 50 messages can be held per session. The phone app holds messages only through a hub of 0.22 or later.
 
+Newer Claude Code versions show *← 1 agent* in their footer, a count of the other Claude Code sessions on the machine. Until 0.22.3 Inyon read it as this session's background work, so the session never looked free and held messages waited for good. From 0.22.3 that count is ignored.
+
 ## Renaming
 
 Click or tap the title in the header to rename a session (up to 80 characters), or choose **Use automatic name** to go back. The name stays with the conversation, even if you resume it later. Renaming a plain terminal renames its tmux window.

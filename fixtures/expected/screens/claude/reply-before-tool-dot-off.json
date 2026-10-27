@@ -6,7 +6,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "bypass permissions",
-      "background": "1 agent",
+      "background": null,
       "activity": "Flambéing… (3s · ↓ 44 tokens)"
     }
   },
@@ -17,7 +17,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "bypass permissions",
-      "background": "1 agent",
+      "background": null,
       "activity": "Flambéing… (3s · ↓ 44 tokens)"
     }
   },
@@ -28,7 +28,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "bypass permissions",
-      "background": "1 agent",
+      "background": null,
       "activity": "Flambéing… (3s · ↓ 44 tokens)"
     }
   }
