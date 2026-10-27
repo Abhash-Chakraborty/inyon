@@ -1368,10 +1368,34 @@ fn view_refuses_a_host_the_hub_does_not_answer_to_even_with_a_signed_in_cookie()
 /// What a fake machine answers to the arguments of `inyon pages …`.
 type Answer = Box<dyn Fn(&str) -> Value>;
 
-/// A machine whose `inyon pages …` answers come from `answer`, each command noted.
+/// What a fake machine prints for a streamed `inyon pages …`, through the callback it's given:
+/// Some(code) ends the stream there, None keeps it open (in `open`) for more lines later.
+type Streams = Box<dyn Fn(&str, &mut dyn FnMut(String)) -> Option<i32>>;
+
+/// A machine whose `inyon pages …` answers come from `answer`, each command noted. Streams stay
+/// open and print nothing unless `streams` says otherwise (they're noted as `stream <args>`).
 struct Machine {
     calls: RefCell<Vec<String>>,
     answer: RefCell<Answer>,
+    streams: RefCell<Option<Streams>>,
+    open: RefCell<Vec<(String, inyon_core::hosts::host::OnLine, inyon_core::platform::rt::Deferred<i32>)>>,
+}
+
+impl Machine {
+    fn new(answer: Answer) -> Machine {
+        Machine { calls: RefCell::default(), answer: RefCell::new(answer), streams: RefCell::default(), open: RefCell::default() }
+    }
+
+    /// Prints a line on every open stream whose arguments start with `args`.
+    fn print(&self, args: &str, line: &str) {
+        for (_, on_line, _) in self.open.borrow_mut().iter_mut().filter(|(a, _, _)| a.starts_with(args)) {
+            on_line(line.to_owned());
+        }
+    }
+
+    fn count(&self, prefix: &str) -> usize {
+        self.calls.borrow().iter().filter(|c| c.starts_with(prefix)).count()
+    }
 }
 
 impl inyon_core::hosts::host::HostBackend for Machine {
@@ -1387,8 +1411,18 @@ impl inyon_core::hosts::host::HostBackend for Machine {
         let out = (self.answer.borrow())(&args);
         Box::pin(async move { Ok(inyon_core::hosts::host::ExecResult { code: 0, stdout: format!("{out}\n"), stderr: String::new() }) })
     }
-    fn stream(&self, _: &inyon_protocol::HostConfig, _: &str, _: inyon_core::hosts::host::OnLine, _: bool) -> inyon_core::hosts::host::StreamHandle {
-        inyon_core::hosts::host::StreamHandle::new(|| {}, inyon_core::platform::rt::Deferred::new())
+    fn stream(&self, _: &inyon_protocol::HostConfig, cmd: &str, mut on_line: inyon_core::hosts::host::OnLine, _: bool) -> inyon_core::hosts::host::StreamHandle {
+        let args = cmd.split(inyon_core::features::temp::INYON_PAGES).nth(1).unwrap_or(cmd).trim().to_owned();
+        self.calls.borrow_mut().push(format!("stream {args}"));
+        let exited = inyon_core::platform::rt::Deferred::new();
+        let ends = self.streams.borrow().as_ref().map(|f| f(&args, &mut on_line));
+        match ends {
+            Some(Some(code)) => exited.resolve(code),
+            Some(None) => self.open.borrow_mut().push((args, on_line, exited.clone())),
+            None => {}
+        }
+        let killed = exited.clone();
+        inyon_core::hosts::host::StreamHandle::new(move || killed.resolve(-1), exited)
     }
     fn pty(&self, _: &inyon_protocol::HostConfig, _: &str, _: u16, _: u16, _: inyon_core::hosts::host::OnData) -> HubResult<inyon_core::hosts::host::PtyHandle> {
         Err(HubError::plain("no terminals here"))
@@ -1461,7 +1495,7 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
     crate::test_util::block(async {
         let now = clock(now_ms());
         hub(&home, now.clone());
-        let machine = Rc::new(Machine { calls: RefCell::default(), answer: RefCell::new(Box::new(|_| Value::Null)) });
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
         laptop(machine.clone());
         let answer = |f: Answer| *machine.answer.borrow_mut() = f;
         let listed = Rc::new(Cell::new(true));
@@ -1476,9 +1510,9 @@ fn a_joined_machines_pages_are_listed_and_served_through_its_own_inyon() {
             list["pages"],
             json!([{ "host": "laptop", "slug": "robot", "name": "Cardboard robot", "project": "D:\\Dev\\robot", "by": "claude", "added": 5, "folder": "D:\\Dev\\robot", "progress": { "done": 2, "total": 3, "now": "Wiring" } }])
         );
-        // read again only once it's 15 s old
+        // read again only once it's 15 s old (its inyon here has a `pages watch` that never prints)
         call(h_list, "GET", &[], None, &[]).await.unwrap();
-        assert_eq!(machine.calls.borrow().len(), 1);
+        assert_eq!(machine.count("--json"), 1);
 
         let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
         *get.borrow_mut() =
@@ -1580,14 +1614,11 @@ fn a_machine_whose_inyon_is_too_old_or_that_is_offline_lists_no_pages() {
     crate::test_util::block(async {
         hub(&home, clock(now_ms()));
         // 0.21's list: no `serves`, and no `pages get` to answer with
-        let machine = Rc::new(Machine {
-            calls: RefCell::default(),
-            answer: RefCell::new(Box::new(|_| {
-                let mut v = robot(true);
-                v.as_object_mut().unwrap().remove("serves");
-                v
-            })),
-        });
+        let machine = Rc::new(Machine::new(Box::new(|_| {
+            let mut v = robot(true);
+            v.as_object_mut().unwrap().remove("serves");
+            v
+        })));
         laptop(machine.clone());
         assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
         assert_eq!(call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap_err().0, 404);
@@ -1597,5 +1628,143 @@ fn a_machine_whose_inyon_is_too_old_or_that_is_offline_lists_no_pages() {
         let asked = machine.calls.borrow().len();
         assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"], json!([]));
         assert_eq!(machine.calls.borrow().len(), asked);
+    });
+}
+
+/// The robot page's list as `pages watch` prints it, its site stamped `stamp`.
+fn watched(stamp: &str) -> String {
+    let mut v = robot(true);
+    v["pages"][0]["stamp"] = json!(stamp);
+    v.as_object_mut().unwrap().remove("message");
+    v.to_string()
+}
+
+/// What `pages get --lines` prints for a file of the robot page: the answer, then the file as
+/// base64 lines of 48 KiB.
+fn sent_lines(name: &str, bytes: &[u8]) -> Vec<String> {
+    use base64::Engine;
+    let answer =
+        json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item(&format!("D:/Dev/robot/{name}"), true, bytes.len() as u64), Value::Null], "sends": bytes.len() });
+    std::iter::once(answer.to_string()).chain(bytes.chunks(48 * 1024).map(|c| base64::engine::general_purpose::STANDARD.encode(c))).collect()
+}
+
+// the hub read every machine's list each 15 s, fetched a file again on every request, and
+// refused anything over 8 MB
+#[test]
+fn a_watched_machine_is_not_asked_again_and_its_big_files_stream_and_are_kept_until_the_site_changes() {
+    let tmp = Tmp::new("remote-watch");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        let now = clock(now_ms());
+        hub(&home, now.clone());
+        let machine = Rc::new(Machine::new(Box::new(|_| robot(true))));
+        laptop(machine.clone());
+        let film: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new((0..20 * 1024 * 1024).map(|i| (i % 251) as u8).collect()));
+        assert!(film.borrow().len() as u64 > pages_remote::REMOTE_FILE_MAX);
+        let f = film.clone();
+        *machine.streams.borrow_mut() = Some(Box::new(move |args, print| {
+            if args.starts_with("watch --json") {
+                print(watched("one"));
+                None
+            } else {
+                assert_eq!(args, format!("get --json --lines --max {} -- 'robot' 'film.bin'", pages_remote::STREAM_FILE_MAX));
+                sent_lines("film.bin", &f.borrow()).into_iter().for_each(&mut *print);
+                Some(0)
+            }
+        }));
+
+        // the list comes from the watch, and stays its list however long it's been
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(list["pages"][0]["slug"], "robot");
+        now.set(now.get() + 3 * pages_remote::REMOTE_TTL_MS);
+        call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(machine.count("--json"), 0, "{:?}", machine.calls.borrow());
+        assert_eq!(machine.count("stream watch"), 1);
+
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        let (status, headers, body) = view(&format!("{url}film.bin"), &[]).await;
+        assert_eq!(status, 200);
+        assert!(body == *film.borrow(), "{} bytes back", body.len());
+        assert!(headers.contains(&("content-length".into(), film.borrow().len().to_string())), "{headers:?}");
+        assert_eq!(machine.count("stream get"), 1);
+
+        // asked again: the hub's copy, and a browser that has it gets a 304, the machine not asked
+        assert_eq!(view(&format!("{url}film.bin"), &[]).await.2.len(), film.borrow().len());
+        let etag = format!("\"{:x}-18bcfe56800\"", film.borrow().len());
+        assert_eq!(view(&format!("{url}film.bin"), &[("if-none-match", &etag)]).await.0, 304);
+        assert_eq!(machine.count("stream get"), 1);
+
+        // something in the site changed: fetched again
+        film.borrow_mut()[0] = 7;
+        machine.print("watch", &watched("two"));
+        assert_eq!(view(&format!("{url}film.bin"), &[]).await.2, *film.borrow());
+        assert_eq!(machine.count("stream get"), 2);
+        assert_eq!(machine.count("get --json"), 0, "never the old way");
+    });
+}
+
+#[test]
+fn a_file_that_comes_short_is_not_kept_and_one_over_the_stream_cap_is_too_big() {
+    let tmp = Tmp::new("remote-short");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| robot(true))));
+        laptop(machine.clone());
+        *machine.streams.borrow_mut() = Some(Box::new(|args, print| {
+            if args.starts_with("watch") {
+                print(watched("one"));
+                return None;
+            }
+            if args.ends_with("'huge.bin'") {
+                let size = pages_remote::STREAM_FILE_MAX + 1;
+                print(json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/huge.bin", true, size), Value::Null], "big": true }).to_string());
+                return Some(0);
+            }
+            // the file was cut short while it was read: one line of two
+            let mut lines = sent_lines("log.txt", &[b'x'; 64 * 1024]);
+            lines.pop();
+            lines.into_iter().for_each(&mut *print);
+            Some(0)
+        }));
+        call(h_list, "GET", &[], None, &[]).await.unwrap();
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        assert_eq!(view(&format!("{url}huge.bin"), &[]).await.0, 413);
+        let short = view(&format!("{url}log.txt"), &[]).await.0;
+        assert_ne!(short, 200);
+        view(&format!("{url}log.txt"), &[]).await;
+        assert_eq!(machine.count("stream get --json --lines --max 67108864 -- 'robot' 'log.txt'"), 2, "not kept");
+    });
+}
+
+#[test]
+fn a_machine_whose_inyon_has_no_watch_is_asked_the_old_way_and_tried_again_later() {
+    let tmp = Tmp::new("remote-nowatch");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        let now = clock(now_ms());
+        hub(&home, now.clone());
+        let machine = Rc::new(Machine::new(Box::new(|args| {
+            if args.starts_with("--json") {
+                robot(true)
+            } else {
+                json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot", false, 0), item("D:/Dev/robot/index.html", true, 5)], "data": "aGVsbG8=" })
+            }
+        })));
+        laptop(machine.clone());
+        // 0.22.2's inyon: `pages watch` is an unknown command, which prints nothing and fails
+        *machine.streams.borrow_mut() = Some(Box::new(|_, _| Some(2)));
+        assert_eq!(call(h_list, "GET", &[], None, &[]).await.unwrap()["pages"][0]["slug"], "robot");
+        inyon_core::platform::rt::yield_now().await;
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        assert_eq!(view(&url, &[]).await.2, b"hello");
+        assert_eq!(machine.count(&format!("get --json --max {} --slash", pages_remote::REMOTE_FILE_MAX)), 1);
+        now.set(now.get() + pages_remote::REMOTE_TTL_MS);
+        call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(machine.count("stream watch"), 1, "not tried again at once");
+        assert_eq!(machine.count("--json"), 2, "read every 15 s, as before");
+        now.set(now.get() + pages_remote::NO_WATCH_MS);
+        call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(machine.count("stream watch"), 2, "tried again once its inyon may have been updated");
     });
 }

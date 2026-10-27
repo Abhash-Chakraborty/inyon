@@ -954,7 +954,7 @@ pub async fn view(req: Req) -> Resp {
         None => None,
     };
     let fs: &dyn ViewFs = match &remote {
-        Some(r) => &r.listing,
+        Some(r) => r.listing.as_ref(),
         None => p.fs.as_ref(),
     };
     let ctx = ViewContext { verify, site_root: &site_root, fs };
@@ -984,12 +984,13 @@ struct RemoteView {
     slug: String,
     /// the site's folder as the hub joins paths (slashed)
     root: PathBuf,
-    listing: Listing,
+    listing: Rc<Listing>,
 }
 
 /// For a request whose token is good and names a page on another machine that is still listed
 /// there: asks that machine about it, once. None for anything else, which decide_view then answers
-/// as it does (403, 404, 405, 301).
+/// as it does (403, 404, 405, 301). While the machine's `pages watch` runs, a file it already sent
+/// is answered from the hub's copy until its site's stamp moves on, without asking again.
 async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyContext<'_>, if_none_match: Option<&str>) -> Option<RemoteView> {
     if method != "GET" && method != "HEAD" {
         return None;
@@ -1003,7 +1004,22 @@ async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyCo
     let page = p.remote.find(&claims.h, &claims.s, (p.now)(), &p.saw()).await?;
     let root = slashed(&page.record.path);
     // a machine that doesn't answer leaves nothing listed, so the request is a 404
-    let listing = pages_remote::get(&claims.h, &claims.s, &root, &segments, slash, if_none_match).await.unwrap_or_default();
+    let listing = if p.remote.watching(&claims.h) {
+        let key = pages_remote::file_key(&claims.h, &claims.s, &segments, slash);
+        let stamp = p.remote.stamp(&claims.h, &claims.s);
+        match stamp.as_deref().and_then(|st| p.remote.kept(&key, st)) {
+            Some(kept) => kept,
+            None => {
+                let l = Rc::new(pages_remote::get_lines(&claims.h, &claims.s, &root, &segments, slash).await.unwrap_or_default());
+                if let Some(st) = stamp.filter(|_| l.answered() && !l.short) {
+                    p.remote.keep(key, st, l.clone());
+                }
+                l
+            }
+        }
+    } else {
+        Rc::new(pages_remote::get(&claims.h, &claims.s, &root, &segments, slash, if_none_match).await.unwrap_or_default())
+    };
     Some(RemoteView { host: claims.h, slug: claims.s, root, listing })
 }
 

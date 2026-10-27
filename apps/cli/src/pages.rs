@@ -1024,7 +1024,64 @@ fn looked_up(p: &Path) -> Value {
 ///
 /// Only a page on this machine's list can be read, and only through its slug.
 pub fn get_command(slug: &str, segments: &[String], slash: bool, max: u64, etag: Option<&str>) -> Outcome {
-    let not_found = || Ok(json!({ "ok": true, "root": Value::Null, "items": [] }));
+    let (mut out, send) = get_answer(slug, segments, slash, max, etag)?;
+    if let Some(path) = send {
+        if let Ok(bytes) = read_plain(&path, max) {
+            use base64::Engine;
+            out["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+        }
+    }
+    Ok(out)
+}
+
+/// The biggest file `pages get --lines` sends.
+pub const STREAM_MAX: u64 = 64 * 1024 * 1024;
+/// A streamed file's bytes per line: 48 KiB, 64 KiB as base64.
+const LINE_BYTES: usize = 48 * 1024;
+
+/// `pages get --lines`: the same answer on one line, without `data`, then the file as base64 lines,
+/// for a hub that reads it as a stream. A file of any size up to STREAM_MAX then fits, since no
+/// one message has to hold it. The answer says how many bytes follow (`sends`); a file that
+/// can't be read after all ends the lines early, and the hub then has fewer than it was told.
+pub fn get_lines_command(slug: &str, segments: &[String], slash: bool, max: u64, etag: Option<&str>) -> Outcome {
+    use base64::Engine;
+    use std::io::{Read, Write};
+    let (mut out, send) = get_answer(slug, segments, slash, max, etag)?;
+    let opened = send.and_then(|p| open_plain(&p, false).ok()).filter(|(_, len)| *len <= max);
+    if let Some((_, len)) = &opened {
+        out["sends"] = json!(len);
+    }
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{}", serde_json::to_string(&crate::commands::with_v(out)).unwrap_or_default());
+    if let Some((file, len)) = opened {
+        let mut file = file.take(len);
+        let mut buf = vec![0u8; LINE_BYTES];
+        loop {
+            // a full line each time, so only the last one is short
+            let mut n = 0;
+            while n < buf.len() {
+                match file.read(&mut buf[n..]) {
+                    Ok(0) => break,
+                    Ok(k) => n += k,
+                    Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            if n == 0 || writeln!(stdout, "{}", base64::engine::general_purpose::STANDARD.encode(&buf[..n])).is_err() {
+                break;
+            }
+            if n < buf.len() {
+                break;
+            }
+        }
+    }
+    let _ = stdout.flush();
+    Ok(Value::Null)
+}
+
+/// get_command's answer without the file, and the file to send when there is one.
+fn get_answer(slug: &str, segments: &[String], slash: bool, max: u64, etag: Option<&str>) -> Result<(Value, Option<PathBuf>), String> {
+    let not_found = || Ok((json!({ "ok": true, "root": Value::Null, "items": [] }), None));
     let list = read_list(&pages_file())?;
     let home = paths::home();
     let home_text = home.to_string_lossy().into_owned();
@@ -1053,6 +1110,7 @@ pub fn get_command(slug: &str, segments: &[String], slash: bool, max: u64, etag:
         _ => &Value::Null,
     };
     let mut out = json!({ "ok": true, "root": root, "items": [first.clone(), index.clone()] });
+    let mut send = None;
     if let (Some(real_path), true) = (ends.get("real").and_then(Value::as_str), ends["file"] == true) {
         let size = ends["size"].as_u64().unwrap_or(0);
         let fresh = etag.is_some_and(|e| etag_matches(e, &etag_of(size, ends["mtime"].as_f64().unwrap_or(0.0))));
@@ -1060,13 +1118,97 @@ pub fn get_command(slug: &str, segments: &[String], slash: bool, max: u64, etag:
         if inside(&root, real_path) && (name == "progress.json" || !fresh) {
             if size > max {
                 out["big"] = json!(true);
-            } else if let Ok(bytes) = read_plain(Path::new(real_path), max) {
-                use base64::Engine;
-                out["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+            } else {
+                send = Some(PathBuf::from(real_path));
             }
         }
     }
-    Ok(out)
+    Ok((out, send))
+}
+
+// ---------- telling a hub when pages change ----------
+
+/// How often `pages watch` looks, in ms.
+pub const WATCH_EVERY_MS: u64 = 2000;
+/// How long `pages watch` goes without printing: an empty line then, so it finds out when nobody
+/// reads it any more, even if what stopped the hub's end never reached it.
+pub const WATCH_ALIVE_MS: u64 = 30_000;
+/// The most files a site's stamp covers; a bigger site has none, and the hub asks for each file.
+const STAMP_FILES: usize = 4000;
+/// How deep a site's stamp looks.
+const STAMP_DEPTH: usize = 8;
+
+/// A short tag for everything a hub could serve from a site: every file and folder without a dot
+/// name, with its size and mtime. Another tag means something changed. None when the site has
+/// more than STAMP_FILES of them, or more folders deep than STAMP_DEPTH, or can't be read. Symlinks
+/// count as themselves, not followed, so a link out of the site can't make it walk the disk; the
+/// hub doesn't serve what one leads out to anyway.
+pub fn site_stamp(site: &Path) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut seen = 0usize;
+    let mut todo = vec![(site.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = todo.pop() {
+        let mut names: Vec<(std::ffi::OsString, fs::Metadata)> = vec![];
+        for e in fs::read_dir(&dir).ok()? {
+            let e = e.ok()?;
+            let name = e.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                continue;
+            }
+            names.push((name, fs::symlink_metadata(e.path()).ok()?));
+        }
+        names.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, m) in names {
+            seen += 1;
+            if seen > STAMP_FILES {
+                return None;
+            }
+            let path = dir.join(&name);
+            path.strip_prefix(site).unwrap_or(&path).hash(&mut h);
+            (m.is_dir(), m.is_symlink(), m.len()).hash(&mut h);
+            mtime_ms(&m).to_bits().hash(&mut h);
+            if m.is_dir() && !m.is_symlink() {
+                if depth + 1 > STAMP_DEPTH {
+                    return None;
+                }
+                todo.push((path, depth + 1));
+            }
+        }
+    }
+    Some(format!("{:016x}", h.finish()))
+}
+
+/// `pages watch --json`: the list as `pages --json` gives it, each page with its site's `stamp`,
+/// printed once and then again whenever it changes (a page added or removed, a board moving on, a
+/// file written), so the hub this machine is joined to doesn't have to ask. It runs until the hub
+/// stops it, or until nobody reads what it prints (an empty line after `alive_ms` without one checks).
+pub fn watch_command(every_ms: u64, alive_ms: u64) -> Outcome {
+    use std::io::Write;
+    let mut last = String::new();
+    let mut printed = std::time::Instant::now();
+    loop {
+        let mut v = list_command()?;
+        if let Some(pages) = v.get_mut("pages").and_then(Value::as_array_mut) {
+            for p in pages.iter_mut().filter(|p| p.get("problem").is_none()) {
+                p["stamp"] = site_stamp(Path::new(field(p, "path"))).map_or(Value::Null, Value::from);
+            }
+        }
+        if let Some(m) = v.as_object_mut() {
+            m.remove("message");
+        }
+        let text = serde_json::to_string(&crate::commands::with_v(v)).unwrap_or_default();
+        let line = if text != last { Some(text.as_str()) } else { (printed.elapsed().as_millis() as u64 >= alive_ms).then_some("") };
+        if let Some(line) = line {
+            let mut out = std::io::stdout().lock();
+            if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
+                return Ok(Value::Null);
+            }
+            printed = std::time::Instant::now();
+        }
+        last = text;
+        std::thread::sleep(std::time::Duration::from_millis(every_ms.max(200)));
+    }
 }
 
 #[cfg(test)]

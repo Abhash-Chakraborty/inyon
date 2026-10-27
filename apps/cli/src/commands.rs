@@ -45,7 +45,7 @@ pub fn finish(r: Outcome, json: bool) -> i32 {
     }
 }
 
-fn with_v(mut v: Value) -> Value {
+pub(crate) fn with_v(mut v: Value) -> Value {
     if let Value::Object(m) = &mut v {
         m.insert("v".into(), json!(1));
         m.entry("ok").or_insert(json!(true));
