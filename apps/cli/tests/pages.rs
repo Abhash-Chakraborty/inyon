@@ -703,3 +703,21 @@ fn watch_ends_once_nobody_reads_it_even_when_nothing_changes() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
+
+// the hub lists a page's research notes for the viewer's Notes drawer, as its own pages list them
+#[test]
+fn the_list_names_a_sites_markdown_notes() {
+    let h = Home::new("notes");
+    let site = h.site("plans/robot", "Robot");
+    let bare = h.site("plans/bare", "Bare");
+    fs::create_dir_all(site.join("research/old")).unwrap();
+    for f in ["research/plan.md", "research/Internals.MD", "research/.draft.md", "research/data.json", "research/old/x.md"] {
+        fs::write(site.join(f), "# x").unwrap();
+    }
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+    assert_eq!(h.run(&["pages", "add", s(&bare), "--slug", "bare"]).0, 0);
+    let (_, list) = h.json(&["pages"]);
+    let page = |slug: &str| list["pages"].as_array().unwrap().iter().find(|p| p["slug"] == slug).unwrap().clone();
+    assert_eq!(page("robot")["notes"], serde_json::json!(["Internals.MD", "plan.md"]));
+    assert!(page("bare").get("notes").is_none(), "{list}");
+}

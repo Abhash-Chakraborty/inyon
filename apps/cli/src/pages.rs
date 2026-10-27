@@ -900,8 +900,14 @@ pub fn list_command() -> Outcome {
         }
         if let Some(t) = trouble(p, &home_text, &real_home) {
             row["problem"] = json!(t);
-        } else if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
-            row["progress"] = progress;
+        } else {
+            if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
+                row["progress"] = progress;
+            }
+            let notes = notes_of(Path::new(field(p, "path")));
+            if !notes.is_empty() {
+                row["notes"] = json!(notes);
+            }
         }
         pages.push(row);
     }
@@ -939,6 +945,29 @@ pub fn list_command() -> Outcome {
 }
 
 // ---------- serving a page to a hub ----------
+
+/// The most notes listed for one site.
+const NOTES_MAX: usize = 200;
+
+/// The Markdown notes in a site's `research/` folder, by name, sorted, as the hubs list them for
+/// their own pages (inyon-hub's pages::notes_of): plain files whose name has no dot first and ends
+/// in .md, and only when `research` is a real folder, not a symlink.
+pub fn notes_of(site: &Path) -> Vec<String> {
+    let dir = site.join("research");
+    if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        return vec![];
+    }
+    let Ok(entries) = fs::read_dir(&dir) else { return vec![] };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.') && n.len() <= 120 && n.len() > 3 && n.to_ascii_lowercase().ends_with(".md"))
+        .collect();
+    out.sort_by_key(|n| n.to_lowercase());
+    out.truncate(NOTES_MAX);
+    out
+}
 
 /// The biggest progress.json read, as the hubs read it.
 const PROGRESS_MAX: u64 = 1024 * 1024;

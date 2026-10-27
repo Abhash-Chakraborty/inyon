@@ -1034,6 +1034,9 @@ pub struct PageEntry {
     pub folder: String,
     /// left out when the site has no readable progress.json
     pub progress: Option<PageProgress>,
+    /// the Markdown notes in the site's `research/` folder, by file name (from 0.22.4); left out
+    /// when there are none
+    pub notes: Option<Vec<String>>,
 }
 
 /// GET /api/pages

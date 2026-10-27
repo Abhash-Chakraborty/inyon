@@ -166,6 +166,15 @@ export const PART_LABEL: Record<Part, string> = { plan: 'Plan', mockups: 'Mockup
  */
 export const frameSrc = (base: string, url: string, part: Part, theme: 'light' | 'dark') => `${base}${url}${PART_PATH[part]}?theme=${theme}`
 
+/**
+ * A note in the site's `research/` folder, which the hub shows as a page to read (`?as=note`)
+ * inside the same sandbox as the site.
+ */
+export const noteSrc = (base: string, url: string, note: string, theme: 'light' | 'dark') => `${base}${url}research/${encodeURIComponent(note)}?as=note&theme=${theme}`
+
+/** A note's name as the app shows it: the file name without `.md`. */
+export const noteTitle = (name: string) => name.replace(/\.md$/i, '')
+
 /** Messages a page may send the app. Anything else, or from anywhere but the frame, is ignored. */
 export type FrameMessage = { type: 'theme?' }
 const FRAME_TYPES = new Set<string>(['theme?'])

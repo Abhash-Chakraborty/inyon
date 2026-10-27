@@ -1768,3 +1768,66 @@ fn a_machine_whose_inyon_has_no_watch_is_asked_the_old_way_and_tried_again_later
         assert_eq!(machine.count("stream watch"), 2, "tried again once its inyon may have been updated");
     });
 }
+
+// the plan's research notes were only readable as raw files, or not at all on a phone
+#[test]
+fn a_sites_research_notes_are_listed_and_open_as_pages_in_the_sandbox() {
+    let tmp = Tmp::new("notes");
+    let home = tmp.join("home");
+    let dir = PathBuf::from(site(&tmp, "notes", false));
+    std::fs::create_dir_all(dir.join("research/deeper")).unwrap();
+    std::fs::write(dir.join("research/plan.md"), "# The plan\n\n<script>alert(1)</script>\n\nSee [internals](internals.md).\n").unwrap();
+    std::fs::write(dir.join("research/Internals.md"), "x").unwrap();
+    for skipped in ["research/.draft.md", "research/notes.txt", "research/deeper/more.md"] {
+        std::fs::write(dir.join(skipped), "x").unwrap();
+    }
+    write_list(&pages_file(&home), json!([record("notes", &s(&dir)), record("plain", &site(&tmp, "plain", false))]));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(list["pages"][0]["notes"], json!(["Internals.md", "plan.md"]));
+        assert!(list["pages"][1].get("notes").is_none(), "{list}");
+
+        let url = open_url("notes").await;
+        let (status, headers, body) = view(&format!("{url}research/plan.md?as=note&theme=dark"), &[]).await;
+        let body = String::from_utf8(body).unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("<h1>The plan</h1>") && body.contains("&lt;script&gt;") && body.contains("href=\"internals.md?as=note\""), "{body}");
+        let header = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!(header("content-type"), "text/html; charset=utf-8");
+        assert!(header("content-security-policy").starts_with("sandbox allow-scripts"), "{headers:?}");
+        assert!(header("etag").ends_with("-note\""), "{headers:?}");
+        // without ?as=note it's the file as it is, and the link's checks still hold
+        let (status, headers, _) = view(&format!("{url}research/plan.md"), &[]).await;
+        assert_eq!(status, 200);
+        assert!(headers.iter().any(|(k, v)| k == "content-type" && v.starts_with("text/plain")), "{headers:?}");
+        assert_eq!(view(&format!("{url}research/.draft.md?as=note"), &[]).await.0, 404);
+        assert_eq!(view("/v/not-a-token/research/plan.md?as=note", &[]).await.0, 403);
+    });
+}
+
+#[test]
+fn a_joined_machines_notes_are_listed_as_it_lists_them_and_rendered_by_the_hub() {
+    let tmp = Tmp::new("remote-notes");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
+        laptop(machine.clone());
+        *machine.answer.borrow_mut() = Box::new(|args| {
+            if args.starts_with("--json") {
+                let mut l = robot(true);
+                l["pages"][0]["notes"] = json!(["plan.md", "../escape.md", ".hidden.md", "plain.txt"]);
+                l
+            } else {
+                json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/research/plan.md", true, 7), Value::Null], "data": "IyBQbGFuCg==" })
+            }
+        });
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(list["pages"][0]["notes"], json!(["plan.md"]));
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        let (status, _, body) = view(&format!("{url}research/plan.md?as=note"), &[]).await;
+        assert_eq!(status, 200);
+        assert!(String::from_utf8(body).unwrap().contains("<h1>Plan</h1>"));
+    });
+}

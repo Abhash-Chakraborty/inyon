@@ -21,6 +21,7 @@ pub mod limits;
 pub mod machines;
 pub mod multipart;
 pub mod node_dist;
+pub mod notes;
 pub mod pages;
 pub mod pages_remote;
 pub mod password;
