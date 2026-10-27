@@ -115,6 +115,12 @@ pub fn visible() -> bool {
     VISIBLE.load(Ordering::SeqCst)
 }
 
+/// Whether the window's thread is still making it: WebView2's first start can take many seconds.
+/// A window that couldn't be made clears STARTED, so this ends either way.
+pub fn opening() -> bool {
+    STARTED.load(Ordering::SeqCst) && WINDOW.load(Ordering::SeqCst) == 0
+}
+
 /// Shows the window (made the first time), on `page` when given, with a pairing code when `pair`.
 pub fn show(page: Option<&str>, pair: bool) {
     {

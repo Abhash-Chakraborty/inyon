@@ -376,7 +376,7 @@ fn tick() {
     write(now, false);
     let end = with(|a| {
         let anything = !a.sup.is_empty() || !a.adopted.is_empty() || super::pairing();
-        should_end(crate::desktop::win::visible(), anything, now < a.settle_until)
+        should_end(crate::desktop::win::visible(), crate::desktop::win::opening(), anything, now < a.settle_until)
     })
     .unwrap_or(false);
     if end {
