@@ -34,7 +34,7 @@ The computer's own `inyon` reads the files and sends them to the hub, which chec
 
 ## On a phone
 
-**Pages** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot.
+**Pages** is the second tab, between **Overview** and **+**. Its badge counts pages that changed since you last opened them. The list is grouped by machine, then by project: the folder's git repository, or the repository's main folder when the site sits in a worktree. Each card shows the page's name, a bar with how many tasks are done out of how many, what the agent is on now and when that board was last updated. The bar, the line and the time come from the site's `progress.json`, so a page without one shows only its name and when it was added. The hub reads it only when it's a plain file of up to 1 MB, not a symlink. A page you haven't opened since it changed has a dot. From 0.22.4 a task done on a board also comes as a [notification](notifications.md#what-youre-told-about) that opens the page, so you hear "3 of 12 done" without opening the plan.
 
 Tap a card to open the page full screen. The bar on top has:
 

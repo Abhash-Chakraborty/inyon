@@ -50,6 +50,8 @@ export interface Settings {
   density: 'comfortable' | 'compact'
   termFontSize: number
   notifyDone: boolean
+  /** a notice when a task on a page's progress board is done (from 0.22.4) */
+  notifyPages: boolean
   sidePanel: boolean
   haptics: boolean
   /** chat: every tool call and background job as its own row ('all'), or long runs folded ('compact') */
@@ -64,6 +66,7 @@ const defaults: Settings = {
   density: 'comfortable',
   termFontSize: 13,
   notifyDone: true,
+  notifyPages: true,
   sidePanel: true,
   haptics: true,
   toolDetail: 'all',
@@ -284,6 +287,9 @@ function onMessage(m: Tagged) {
     case 'notify':
       notify(m)
       break
+    case 'page.notify':
+      pageNotify(m)
+      break
     case 'companion.reply':
       companionReply(m)
       break
@@ -404,21 +410,42 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
     return
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
-    try {
-      closeShown(tag)
-      const n = new Notification(m.title, { body: m.body, tag, icon: publicFile('icon-192.png'), badge: publicFile('badge-96.png') })
-      shown.set(tag, n)
-      if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
-      else asking.delete(tag)
-      n.onclose = () => shown.get(tag) === n && shown.delete(tag)
-      n.onclick = () => {
-        closeShown(tag)
-        window.focus()
-        window.history.pushState({}, '', appHref(href))
-        window.dispatchEvent(new PopStateEvent('popstate'))
-      }
-    } catch {}
+    if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
+    else asking.delete(tag)
+    browserNotice(m.title, m.body, href, tag)
   }
+}
+
+/** A notification from the browser itself (outside the phone app); tapping it opens `href`. */
+function browserNotice(title: string, body: string, href: string, tag: string) {
+  try {
+    closeShown(tag)
+    const n = new Notification(title, { body, tag, icon: publicFile('icon-192.png'), badge: publicFile('badge-96.png') })
+    shown.set(tag, n)
+    n.onclose = () => shown.get(tag) === n && shown.delete(tag)
+    n.onclick = () => {
+      closeShown(tag)
+      window.focus()
+      window.history.pushState({}, '', appHref(href))
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    }
+  } catch {}
+}
+
+/**
+ * A page's board moved on: a toast unless that page is on screen, and a notification while the
+ * app is hidden. One per page; the next replaces it.
+ */
+function pageNotify(m: Extract<ServerMsg, { t: 'page.notify' }>) {
+  if (!useStore.getState().settings.notifyPages) return
+  const href = `/pages/${encodeURIComponent(m.host)}/${m.slug}`
+  const tag = `page:${m.host}/${m.slug}`
+  if (document.visibilityState === 'visible') {
+    if (routeOf(location.pathname) !== href) toast({ title: m.title, body: m.body, tone: 'success', href })
+    return
+  }
+  if (isNative()) return void nativeNotify(m.title, m.body, href, tag, 'page')
+  if ('Notification' in window && Notification.permission === 'granted') browserNotice(m.title, m.body, href, tag)
 }
 
 socket.on(onMessage)

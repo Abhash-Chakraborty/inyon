@@ -745,6 +745,8 @@ export type ServerMsg =
   | { t: 'term.data'; id: string; d: string }
   | { t: 'term.exit'; id: string; reason?: string }
   | { t: 'notify'; host: string; pane: string; kind: 'waiting' | 'done' | 'offline' | 'online'; title: string; body: string; agent?: AgentKind }
+  /** a page's progress board moved on: a task on it is done (from 0.22.4) */
+  | { t: 'page.notify'; host: string; slug: string; title: string; body: string }
   | { t: 'pong' }
   | { t: 'companion.reply'; id: string; host: string; pane: string; text: string; error?: boolean; at: number }
 

@@ -69,6 +69,21 @@ pub fn on_notice(f: impl Fn(&ServerMsg) + 'static) {
     SINKS.with(|s| s.borrow_mut().push(Rc::new(f)));
 }
 
+/// A notice of the hub's own (a page's board moving on) to every app and to whatever hears notices.
+pub fn announce(msg: &ServerMsg) {
+    for c in all() {
+        c.send(msg);
+    }
+    for sink in SINKS.with(|s| s.borrow().clone()) {
+        sink(msg);
+    }
+}
+
+/// Whether any app is connected.
+pub fn any() -> bool {
+    CLIENTS.with(|l| !l.borrow().is_empty())
+}
+
 /// Sends the registry's overview and notifications on to the apps (core.ts's `registry.on`).
 pub fn listen() {
     let _ = registry().on(|e| match e {

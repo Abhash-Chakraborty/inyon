@@ -47,7 +47,7 @@ From 0.17 the hub tidies every machine by itself about every six hours, and agai
 
 ## Notifications
 
-**Allow**, **Send a test**, and *When an agent finishes*. On Android, also **Stay connected** and **Battery limits**. See [Notifications](notifications.md).
+**Allow**, **Send a test**, *When an agent finishes* and *When a page moves on*. On Android, also **Stay connected** and **Battery limits**. See [Notifications](notifications.md).
 
 ## Computers or Machines
 

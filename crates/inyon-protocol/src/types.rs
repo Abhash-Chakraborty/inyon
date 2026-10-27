@@ -1178,6 +1178,10 @@ pub enum ServerMsg {
     TermExit { id: String, reason: Option<String> },
     #[serde(rename = "notify")]
     Notify { host: String, pane: String, kind: NotifyKind, title: String, body: String, agent: Option<AgentKind> },
+    /// A page's progress board moved on: a task on it is done (from 0.22.4). `title` is the
+    /// page's name; `body` says how far it is, as "8 of 12 done · Payment sheet".
+    #[serde(rename = "page.notify")]
+    PageNotify { host: String, slug: String, title: String, body: String },
     #[serde(rename = "pong")]
     Pong,
     /// The companion agent finished a turn. `id` is unique per reply, so a reconnect never shows

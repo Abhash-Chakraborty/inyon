@@ -71,3 +71,11 @@ test('a new subscription the computers missed is handed over again, a few times 
   expect(gave.error).toBe('offline')
   expect(push.mock.calls.length).toBe(calls + 5)
 })
+
+test('the computers are told whether page notices are wanted', async () => {
+  browserWithPush()
+  await enablePush(true, false)
+  expect((api.push as any).mock.calls.at(-1)[0]).toMatchObject({ done: true, pages: false })
+  await enablePush(false)
+  expect((api.push as any).mock.calls.at(-1)[0]).toMatchObject({ done: false, pages: true })
+})

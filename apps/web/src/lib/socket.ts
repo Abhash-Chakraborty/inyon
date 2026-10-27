@@ -394,6 +394,7 @@ export class HubConn {
       }
       case 'notify':
       case 'companion.reply':
+      case 'page.notify':
         return { ...m, host: name(m.host) }
       case 'term.exit':
         this.terms.delete(m.id)
