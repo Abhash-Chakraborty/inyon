@@ -106,8 +106,76 @@ pub fn get_local(url: &str, headers: &[(String, String)]) -> Result<Response, St
     Ok(Response { status, location: None, body })
 }
 
+/// A request to a hub's API with a token: the hub on this machine (`local`, whose certificate may be
+/// its own) or the hub this machine joined (its pinned certificate, when join kept one).
+pub fn hub_call(method: &str, url: &str, token: &str, body: Option<&serde_json::Value>, local: bool) -> Result<Response, String> {
+    let agent = if local {
+        let c = ureq::Agent::config_builder().http_status_as_error(false).tls_config(ureq::tls::TlsConfig::builder().disable_verification(true).build());
+        inyon_engine::http::timed_agent(c, Limits::new(Duration::from_secs(15)))
+    } else {
+        let c = ureq::Agent::config_builder()
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .user_agent(format!("inyon/{}", env!("CARGO_PKG_VERSION")))
+            .tls_config(ureq::tls::TlsConfig::builder().root_certs(inyon_engine::http::ureq_roots()).build());
+        inyon_engine::http::timed_agent_for(url, c, Limits::new(Duration::from_secs(15)))
+    };
+    let auth = format!("Bearer {token}");
+    let mut res = match (method, body) {
+        ("POST", Some(b)) => agent.post(url).header("authorization", &auth).header("content-type", "application/json").send(b.to_string()),
+        ("POST", None) => agent.post(url).header("authorization", &auth).send_empty(),
+        ("DELETE", _) => agent.delete(url).header("authorization", &auth).call(),
+        ("GET", _) => agent.get(url).header("authorization", &auth).call(),
+        _ => return Err(format!("no {method} requests to the hub")),
+    }
+    .map_err(|e| e.to_string())?;
+    let status = res.status().as_u16();
+    let body = res.body_mut().with_config().limit(16 * 1024 * 1024).read_to_vec().map_err(|e| e.to_string())?;
+    Ok(Response { status, location: None, body })
+}
+
 /// The host part of a URL, for messages.
 pub fn host_of(url: &str) -> String {
     let rest = url.split("://").nth(1).unwrap_or(url);
     rest.split('/').next().unwrap_or(rest).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// The request line the hub would get for each method: a DELETE once went out as a GET.
+    #[test]
+    fn each_method_goes_out_as_itself() {
+        for (method, body) in [("GET", None), ("POST", Some(serde_json::json!({ "a": 1 }))), ("POST", None), ("DELETE", None)] {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/api/companion", l.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut line = String::new();
+                r.read_line(&mut line).unwrap();
+                // the whole request before answering: closing on a client still sending fails on macOS
+                let mut length = 0;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap();
+                    }
+                }
+                std::io::Read::read_exact(&mut r, &mut vec![0; length]).unwrap();
+                s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}").unwrap();
+                line
+            });
+            let res = super::hub_call(method, &url, "t", body.as_ref(), true).unwrap();
+            assert_eq!(res.status, 200);
+            assert_eq!(server.join().unwrap().trim_end(), format!("{method} /api/companion HTTP/1.1"));
+        }
+        assert!(super::hub_call("PUT", "http://127.0.0.1:9/", "t", None, true).is_err());
+    }
 }

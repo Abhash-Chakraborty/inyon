@@ -44,7 +44,7 @@ const BACKPRESSURE: usize = 4 * 1024 * 1024;
 /// a connection that says nothing for this long is closed
 const IDLE: Duration = Duration::from_secs(120);
 /// Bun's largest message
-const MAX_MESSAGE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 /// How long a socket waits for a peer before giving up on it.
 #[derive(Clone, Copy)]

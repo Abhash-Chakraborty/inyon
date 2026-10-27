@@ -90,12 +90,45 @@ struct Proc {
 }
 
 /// A line of ~/.inyon/panes/*.json: the hook's last word on a pane.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct HookPaneState {
     pub pane: String,
     pub ts: f64,
     /// session_id, transcript_path, cwd, hook_event_name and whatever else the hook sent
     pub data: Value,
+    /// the agent that sent it, when it isn't Claude Code (`hook.sh copilot agentStop`)
+    pub agent: Option<AgentKind>,
+    /// that agent's own name for the event
+    pub event: Option<String>,
+}
+
+impl HookPaneState {
+    /// Whether it came from this kind of agent: a line without a name is Claude Code's.
+    pub fn from_agent(&self, kind: AgentKind) -> bool {
+        self.agent.unwrap_or(AgentKind::Claude) == kind
+    }
+
+    /// The event in Claude Code's words, whichever agent sent it: a prompt (UserPromptSubmit), the
+    /// end of a turn (Stop), a question mid-turn (Notification), a session starting or ending.
+    pub fn event_name(&self) -> &str {
+        let data = Some(&self.data);
+        let Some(agent) = self.agent else { return data.at("hook_event_name").str().unwrap_or("") };
+        let event = self.event.as_deref().unwrap_or("");
+        match (agent, event) {
+            // Copilot starts its session on the first prompt, just after userPromptSubmitted (1.0.95),
+            // so its sessionStart says nothing about the turn
+            (AgentKind::Copilot, "sessionStart") => "",
+            (_, "SessionStart") => "SessionStart",
+            (_, "SessionEnd" | "sessionEnd") => "SessionEnd",
+            (AgentKind::Copilot, "userPromptSubmitted") | (AgentKind::Gemini, "BeforeAgent") | (AgentKind::Antigravity, "PreInvocation") => "UserPromptSubmit",
+            (AgentKind::Copilot, "agentStop") | (AgentKind::Gemini, "AfterAgent") | (AgentKind::Antigravity, "Stop") => "Stop",
+            // Copilot says it's idle as a notification; an error it can't recover from ends the turn
+            (AgentKind::Copilot, "notification") if data.at("notification_type").str() == Some("agent_idle") => "Stop",
+            (AgentKind::Copilot, "errorOccurred") if data.at("recoverable").and_then(Value::as_bool) == Some(false) => "Stop",
+            (AgentKind::Copilot, "notification" | "permissionRequest") | (AgentKind::Gemini, "Notification") => "Notification",
+            _ => "",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +141,8 @@ pub struct AgentProc {
     pub args: String,
     /// the pane's own process; equal to pid when the agent was started as the pane command
     pub pane_pid: f64,
+    /// the name of the custom agent this process is (Settings › Agents)
+    pub custom: Option<String>,
 }
 
 /// The last status line payload Claude wrote for a pane, with the account it was written under
@@ -118,6 +153,14 @@ pub struct StatusPane {
     pub data: Value,
     pub account: Option<String>,
     pub account_now: Option<String>,
+}
+
+/// The background session a Claude Code window moved its conversation to, which the window shows
+/// and takes messages for from then on, with that session's transcript.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParkedClaude {
+    pub session_id: String,
+    pub transcript: String,
 }
 
 /// Antigravity CLI's last status line payload for a pane.
@@ -166,6 +209,15 @@ pub struct ProbeResult {
     pub agy_titles: IndexMap<String, String>,
     /// whether Inyon's status line is in Antigravity CLI's settings (None when agy isn't installed)
     pub agy_integration: Option<bool>,
+    /// the agents other than Claude Code whose settings run Inyon's hook
+    pub hooked: Vec<AgentKind>,
+    /// pane id → unix seconds of the last key a person pressed in a tmux client showing it
+    pub keys_at: IndexMap<String, f64>,
+    /// window id → its size, for each window no person's tmux client is attached to (through any
+    /// session holding it, Inyon's own views included)
+    pub unwatched: IndexMap<String, (u32, u32)>,
+    /// Claude Code process id → the background session its window moved the conversation to
+    pub claude_parked: IndexMap<i64, ParkedClaude>,
     pub machine_kind: Option<MachineKind>,
 }
 
@@ -230,7 +282,11 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
+        keys_at: IndexMap::new(),
+        unwatched: IndexMap::new(),
+        claude_parked: IndexMap::new(),
     };
     for line in stdout.split('\n') {
         if let Some(v) = line.strip_prefix("@@HOST ") {
@@ -279,13 +335,23 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         procs.insert(p.pid as i64, p);
     }
     let cwds = proc_cwds(section("CWD"));
-    let find_agent = |root: i64| -> Option<(&Proc, AgentKind)> {
+    let find_agent = |root: i64| -> Option<(&Proc, AgentKind, Option<String>)> {
         let mut queue = VecDeque::from([(root, 0)]);
         while let Some((pid, depth)) = queue.pop_front() {
             let p = procs.get(&pid);
             if let Some(p) = p {
+                // yours first: `claude --dangerously-skip-permissions` saved as "claude-yolo" is that
+                if let Some(c) = crate::agents::custom::detect(&p.comm, &p.args) {
+                    // a saved wrapper script stands for the agent it starts, whose process holds the
+                    // session (pid, folder, resume flag); the wrapper itself is the fallback
+                    let started = children.get(&pid).into_iter().flatten().filter_map(|c| procs.get(c)).find_map(|cp| detect_agent(&cp.comm, &cp.args).map(|k| (cp, k)));
+                    return Some(match started {
+                        Some((cp, kind)) => (cp, kind, Some(c.name)),
+                        None => (p, c.like, Some(c.name)),
+                    });
+                }
                 if let Some(kind) = detect_agent(&p.comm, &p.args) {
-                    return Some((p, kind));
+                    return Some((p, kind, None));
                 }
             }
             if depth < 4 {
@@ -296,6 +362,29 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         }
         None
     };
+
+    // Claude Code's records of its sessions: a window that moved its conversation to the background
+    // names that session's job, and the background session (still running) names its transcript
+    let mut background: HashMap<String, ParkedClaude> = HashMap::new();
+    let mut parked: Vec<(i64, String)> = Vec::new();
+    for line in section("CLAUDESESS") {
+        let Some((path, record)) = line.split_once('\t') else { continue };
+        let Some(v) = json::parse(record) else { continue };
+        let v = Some(&v);
+        let Some(pid) = v.at("pid").num().map(|p| p as i64) else { continue };
+        if let Some(job) = v.at("parkedJobId").str() {
+            parked.push((pid, job.to_owned()));
+        } else if let (Some("bg"), Some(job), Some(id)) = (v.at("kind").str(), v.at("jobId").str(), v.at("sessionId").str()) {
+            if path != "-" && (procs.is_empty() || procs.contains_key(&pid)) {
+                background.insert(job.to_owned(), ParkedClaude { session_id: id.to_owned(), transcript: path.to_owned() });
+            }
+        }
+    }
+    for (pid, job) in parked {
+        if let Some(b) = background.get(&job) {
+            res.claude_parked.insert(pid, b.clone());
+        }
+    }
 
     let bins: HashSet<&str> = section("BINS").iter().map(|l| l.jtrim()).filter(|l| !l.is_empty()).collect();
     res.installed = AGENT_KINDS.iter().copied().filter(|k| agents()[k].comm.iter().any(|c| bins.contains(c.as_str()))).collect();
@@ -335,6 +424,7 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         Some("outdated") => IntegrationState::Outdated,
         _ => IntegrationState::Missing,
     };
+    res.hooked = AGENT_KINDS.iter().copied().filter(|k| section("HOOKED").iter().any(|l| l.jtrim() == k.as_str())).collect();
     for line in section("PANES") {
         if line.is_blank() {
             continue;
@@ -343,19 +433,35 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         let pane = Some(&v).at("pane");
         if pane.truthy() {
             let pane = pane.to_js_string();
-            let state = HookPaneState { pane: pane.clone(), ts: Some(&v).at("ts").num().unwrap_or(f64::NAN), data: Some(&v).at("data").cloned().unwrap_or(Value::Null) };
+            let state = HookPaneState {
+                pane: pane.clone(),
+                ts: Some(&v).at("ts").num().unwrap_or(f64::NAN),
+                data: Some(&v).at("data").cloned().unwrap_or(Value::Null),
+                agent: Some(&v).at("agent").str().and_then(|a| serde_json::from_value(Value::String(a.to_owned())).ok()),
+                event: Some(&v).at("event").str().map(str::to_owned),
+            };
             res.hook_panes.insert(pane, state);
         }
     }
 
     // tmux tree
     let mut sessions: IndexMap<String, SessionInfo> = IndexMap::new();
+    // every session's windows, hidden ones too
+    struct Linked {
+        session: String,
+        attached: bool,
+        window: String,
+        size: Option<(u32, u32)>,
+    }
+    let mut windows: Vec<Linked> = vec![];
     for line in section("TMUX") {
         let f = tmux_fields(line);
         if f.len() < 18 {
             continue;
         }
         let [sid, sname, sattached, wid, widx, wname, wactive, wact, pid, pidx, pactive, ppid, pcmd, pcwd, ptitle, pw, ph, pdead] = std::array::from_fn(|i| f[i].as_str());
+        let size = (f.get(18).and_then(|w| w.parse().ok()), f.get(19).and_then(|h| h.parse().ok()));
+        windows.push(Linked { session: sid.to_owned(), attached: num(sattached) > 0.0, window: wid.to_owned(), size: size.0.zip(size.1) });
         if hidden_session(sname) {
             continue;
         }
@@ -388,12 +494,15 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
             height: inyon_protocol::Num(num(ph)),
             dead: pdead == "1",
             agent: None,
+            companion: None,
         });
-        if let Some((cp, kind)) = find_agent(num(ppid) as i64) {
+        if let Some((cp, kind, custom)) = find_agent(num(ppid) as i64) {
             let resume = re!(r"(?:--resume|-r|resume)[ =]([0-9a-f]{8}-[0-9a-f-]{27})").captures(&cp.args).map(|c| c[1].to_owned());
             let cwd = cwds.get(&(cp.pid as i64)).cloned().unwrap_or_else(|| pcwd.to_owned());
-            res.agent_procs
-                .insert(pid.to_owned(), AgentProc { kind, pid: cp.pid, started_at: res.now - cp.etimes, cwd: Some(cwd), resume, args: cp.args.clone(), pane_pid: num(ppid) });
+            res.agent_procs.insert(
+                pid.to_owned(),
+                AgentProc { kind, pid: cp.pid, started_at: res.now - cp.etimes, cwd: Some(cwd), resume, args: cp.args.clone(), pane_pid: num(ppid), custom },
+            );
         }
     }
     // the "attached" count shouldn't include Inyon's own control-mode clients
@@ -403,11 +512,32 @@ pub fn parse_probe(stdout: &str, stderr: &str, code: i32, latency_ms: f64) -> Re
         let (sid, control) = (parts.next().unwrap_or(""), parts.next());
         if !sid.is_empty() && control == Some("0") {
             *people.entry(sid).or_default() += 1;
+            // the client's last key and the pane it shows (psmux answers without them)
+            if let (Some(at), Some(pane)) = (parts.next().map(num).filter(|t| *t > 0.0), parts.next().filter(|p| p.starts_with('%'))) {
+                let t = res.keys_at.entry(pane.to_owned()).or_insert(at);
+                *t = t.max(at);
+            }
         }
     }
     if sections.contains_key("CLIENTS") {
         for s in sessions.values_mut() {
             s.attached = inyon_protocol::Num(f64::from(people.get(s.id.as_str()).copied().unwrap_or(0)));
+        }
+    }
+    // a window shows in every session that links it, and any one with a person attached sizes it
+    let watched: HashSet<&str> =
+        windows.iter().filter(|l| if sections.contains_key("CLIENTS") { people.contains_key(l.session.as_str()) } else { l.attached }).map(|l| l.window.as_str()).collect();
+    for l in &windows {
+        if let Some(size) = l.size.filter(|_| !watched.contains(l.window.as_str())) {
+            res.unwatched.insert(l.window.clone(), size);
+        }
+    }
+    // the hook's last word from a window whose conversation went to the background is about the
+    // conversation it left, until the background session's own events reach it
+    for (pane, ap) in &res.agent_procs {
+        let Some(b) = res.claude_parked.get(&(ap.pid as i64)) else { continue };
+        if res.hook_panes.get(pane).is_some_and(|h| Some(&h.data).at("session_id").str() != Some(b.session_id.as_str())) {
+            res.hook_panes.shift_remove(pane);
         }
     }
     res.sessions = sessions.into_values().collect();
@@ -584,7 +714,7 @@ pub fn guess_transcript(stdout: &str, dir: &str, proc: &TranscriptProc) -> Optio
 /// Prints whether Claude's integration is installed, missing, removed from settings or outdated.
 pub const HOOK_STATE_SH: &str = r#"t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
@@ -633,12 +763,12 @@ echo "@@BINS"
 for b in claude codex opencode copilot gemini agy; do command -v "$b" >/dev/null 2>&1 && echo "$b"; done
 if command -v tmux >/dev/null 2>&1; then
   echo "@@TMUX"
-  tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}' 2>/dev/null || echo "@@NOSERVER"
+  tmux list-panes -a -F '#{session_id}#{session_name}#{session_attached}#{window_id}#{window_index}#{window_name}#{window_active}#{window_activity}#{pane_id}#{pane_index}#{pane_active}#{pane_pid}#{pane_current_command}#{pane_current_path}#{pane_title}#{pane_width}#{pane_height}#{pane_dead}#{window_width}#{window_height}' 2>/dev/null || echo "@@NOSERVER"
 else
   echo "@@NOTMUX"
 fi
 echo "@@CLIENTS"
-tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
+tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}' 2>/dev/null
 echo "@@PS"
 # etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
 ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{
@@ -680,12 +810,17 @@ for f in $(find "$HOME/.inyon/status" "$HOME/.inyon/panes" "$HOME/.inyon/agy-sta
 done
 for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$f" .json) $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f") $(cat "$f")"; done 2>/dev/null
 if command -v agy >/dev/null 2>&1; then
-  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
+  if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
+# the agents other than Claude Code whose settings run Inyon's hook
+echo "@@HOOKED"
+grep -qs 'inyon/hook.sh copilot' "${COPILOT_HOME:-$HOME/.copilot}/hooks/inyon.json" && echo copilot
+grep -qs 'inyon/hook.sh gemini' "$HOME/.gemini/settings.json" && echo gemini
+grep -qs 'inyon/hook.sh antigravity' "$HOME/.gemini/config/hooks.json" && echo antigravity
 echo "@@HOOK"
 t="$HOME/.inyon"
 s="$HOME/.claude/settings.json"
-current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 6 ]; }
+current() { v=$(sed -n 's/^# inyon-integration \([0-9][0-9]*\)$/\1/p' "$1" 2>/dev/null | head -n 1); [ -n "$v" ] && [ "$v" -ge 9 ]; }
 if [ ! -x "$t/hook.sh" ] || [ ! -x "$t/statusline.sh" ]; then echo missing
 # settings from before the rename to Inyon still name ~/.tether: outdated, so they're rewritten
 elif grep -q 'tether/hook.sh' "$s" 2>/dev/null || grep -q 'tether/statusline.sh' "$s" 2>/dev/null; then echo outdated
@@ -711,6 +846,17 @@ echo "@@PANES"
 cat "$t"/panes/*.json 2>/dev/null
 echo "@@COMPACT"
 for f in "$t"/panes/*.compact; do [ -f "$f" ] && echo "$(basename "$f" .compact) $(cat "$f")"; done 2>/dev/null
+echo "@@CLAUDESESS"
+# Claude Code windows that moved their conversation to the background, and the background sessions with their transcripts
+cc="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+for f in "$cc"/sessions/*.json; do
+  [ -f "$f" ] || continue
+  l=$(tr -d '\n\r' < "$f")
+  case "$l" in
+  *'"parkedJobId":"'*) printf '%s\t%s\n' - "$l" ;;
+  *'"kind":"bg"'*) s=$(printf '%s' "$l" | sed -n 's/.*"sessionId":"\([0-9a-f-]*\)".*/\1/p'); tp=$([ -n "$s" ] && ls "$cc"/projects/*/"$s".jsonl 2>/dev/null | head -n 1); printf '%s\t%s\n' "${tp:--}" "$l" ;;
+  esac
+done 2>/dev/null
 echo "@@STATUS"
 # pane, mtime, account when written, account now, payload
 for f in "$t"/status/*.json; do
@@ -727,6 +873,8 @@ pub async fn probe(host: &Host) -> Result<ProbeResult, String> {
     let t0 = now_ms();
     let r = host.exec(PROBE, ExecOptions::timeout(15000)).await.map_err(|e| e.message)?;
     let latency = now_ms().saturating_sub(t0) as f64;
+    // loads the custom agents for parse_probe, which reads only what's loaded
+    crate::agents::custom::list();
     parse_probe(&r.stdout, &r.stderr, r.code, latency)
 }
 
@@ -938,8 +1086,9 @@ mod tests {
             pane("1", "work", "%1", "100"),
             pane("2", "inyon-view-x", "%2", "200"),
             "@@CLIENTS".into(),
-            "$1 0".into(),
-            "$1 1".into(),
+            "$1 0 1990 %1".into(),
+            // Inyon's own control-mode client: neither attached nor typing
+            "$1 1 1999 %1".into(),
             "@@PS".into(),
             "  100     1   50 zsh -zsh".into(),
             "  101   100   40 /usr/bin/claude claude --resume 7409eef9-d507-4808-a592-0bfabe896e3a".into(),
@@ -966,18 +1115,67 @@ mod tests {
         assert_eq!(r.integration, IntegrationState::Installed);
         assert_eq!(r.sessions.len(), 1);
         assert_eq!(r.sessions[0].attached, inyon_protocol::Num(1.0));
+        assert_eq!(r.keys_at.iter().collect::<Vec<_>>(), [(&"%1".to_owned(), &1990.0)]);
+        // two people on the pane: the later key counts; psmux prints no time or pane
+        let two = parse_probe(&out.replace("$1 0 1990 %1", "$1 0 1990 %1\n$1 0 1995 %1\n$1 0 1980 %1"), "", 0, 12.0).unwrap();
+        assert_eq!((two.keys_at["%1"], two.sessions[0].attached), (1995.0, inyon_protocol::Num(3.0)));
+        let psmux = parse_probe(&out.replace("$1 0 1990 %1", "$1 0"), "", 0, 12.0).unwrap();
+        assert_eq!((psmux.keys_at.len(), psmux.sessions[0].attached), (0, inyon_protocol::Num(1.0)));
         // review: a width tmux didn't print as a number is NaN, null on the wire, as Number() gives
         assert_eq!(out.matches("120").count(), 2);
         let odd = parse_probe(&out.replacen("120", "wide", 1), "", 0, 12.0).unwrap();
         let pane = &odd.sessions[0].windows[0].panes[0];
         assert!(pane.width.0.is_nan());
         assert_eq!(serde_json::to_value(pane).unwrap()["width"], serde_json::Value::Null);
+        // tmux older than the window size fields: nothing to rest
+        assert!(r.unwatched.is_empty());
         let a = &r.agent_procs["%1"];
         assert_eq!((a.kind, a.pid, a.started_at, a.cwd.as_deref()), (AgentKind::Claude, 101.0, 1960.0, Some("/home/u/p/sub")));
         assert_eq!(a.resume.as_deref(), Some("7409eef9-d507-4808-a592-0bfabe896e3a"));
         assert_eq!(r.hook_panes["%1"].data["session_id"], "s");
+        assert!(r.claude_parked.is_empty());
+        // Claude Code moved the window's conversation to a background session, which the window
+        // now shows: that session's transcript, and none of the hook's word on the one it left
+        let sessions = [
+            "@@CLAUDESESS",
+            "-\t{\"pid\":101,\"sessionId\":\"s\",\"kind\":\"interactive\",\"tmux\":\"work:@1.%1\",\"parkedJobId\":\"eef2ead0\"}",
+            "/home/u/.claude/projects/-home-u-p/eef2ead0-8d08.jsonl\t{\"pid\":102,\"sessionId\":\"eef2ead0-8d08\",\"kind\":\"bg\",\"jobId\":\"eef2ead0\"}",
+            "@@STATUS",
+        ];
+        let moved = out.replace("@@STATUS", &sessions.join("\n"));
+        let running = parse_probe(&moved.replace("@@CWD", "  102     1   30 claude claude --bg\n@@CWD"), "", 0, 12.0).unwrap();
+        let want = ParkedClaude { session_id: "eef2ead0-8d08".into(), transcript: "/home/u/.claude/projects/-home-u-p/eef2ead0-8d08.jsonl".into() };
+        assert_eq!(running.claude_parked.get(&101), Some(&want));
+        assert!(!running.hook_panes.contains_key("%1"));
+        // once the background session's own events reach the window, they stay
+        let routed =
+            parse_probe(&moved.replace("@@CWD", "  102     1   30 claude claude --bg\n@@CWD").replace(r#""session_id":"s"}}"#, r#""session_id":"eef2ead0-8d08"}}"#), "", 0, 12.0)
+                .unwrap();
+        assert_eq!(routed.hook_panes["%1"].data["session_id"], "eef2ead0-8d08");
+        // a background session that has ended (its record left behind) moves nothing
+        let ended = parse_probe(&moved, "", 0, 12.0).unwrap();
+        assert!(ended.claude_parked.is_empty());
+        assert_eq!(ended.hook_panes["%1"].data["session_id"], "s");
         assert_eq!(r.compact_panes["%1"], 1990.0);
         assert_eq!((r.status_panes["%1"].account.as_deref(), r.status_panes["%1"].account_now.as_deref()), (Some("A"), None));
+        // a custom agent (Settings › Agents) is the agent it works like, under its own name
+        use crate::agents::custom::{set, CustomAgent};
+        set(vec![CustomAgent { id: "oc".into(), name: "OpenClaude".into(), command: "openclaude".into(), like: AgentKind::Claude }]);
+        let oc = parse_probe(&out.replace("/usr/bin/claude claude", "openclaude openclaude"), "", 0, 12.0).unwrap();
+        assert_eq!((oc.agent_procs["%1"].kind, oc.agent_procs["%1"].custom.as_deref()), (AgentKind::Claude, Some("OpenClaude")));
+        assert_eq!(r.agent_procs["%1"].custom, None);
+        // review: a saved wrapper that starts the agent without exec is followed to the agent
+        set(vec![CustomAgent { id: "w".into(), name: "Wrapped".into(), command: "run-claude".into(), like: AgentKind::Claude }]);
+        let wrapped = parse_probe(
+            &out.replace("  101   100   40 /usr/bin/claude claude", "  102   100   45 run-claude /bin/sh /home/u/bin/run-claude\n  101   102   40 /usr/bin/claude claude"),
+            "",
+            0,
+            12.0,
+        )
+        .unwrap();
+        let w = &wrapped.agent_procs["%1"];
+        assert_eq!((w.pid, w.kind, w.custom.as_deref(), w.resume.as_deref()), (101.0, AgentKind::Claude, Some("Wrapped"), Some("7409eef9-d507-4808-a592-0bfabe896e3a")));
+        set(vec![]);
         assert_eq!(parse_probe("oops\nfirst\nsecond", "", 1, 0.0), Err("first second".into()));
     }
 
@@ -1030,5 +1228,39 @@ mod tests {
         assert_eq!(guess_transcript("50 old.jsonl\n", &dir, &p), None);
         let r = TranscriptProc { resume: Some("r"), ..p };
         assert_eq!(guess_transcript("", &dir, &r), Some("/h/.claude/projects/-p/r.jsonl".into()));
+    }
+
+    #[test]
+    fn windows_no_person_is_attached_to_are_listed_with_their_size() {
+        let sep = "\u{1f}";
+        let row = |sid: &str, sname: &str, attached: &str, wid: &str, pane: &str, size: &str| {
+            [sid, sname, attached, wid, "1", "w", "1", "0", pane, "0", "1", "100", "zsh", "/h", "t", "80", "24", "0"].join(sep) + &format!("{sep}{}", size.replace('x', sep))
+        };
+        let out = [
+            "@@HOST box".to_owned(),
+            "@@OS Linux".into(),
+            "@@NOW 2000".into(),
+            "@@TMUX".into(),
+            // laptop attached to $1, which holds @1
+            row("$1", "work", "1", "@1", "%1", "120x29"),
+            // $2 is only Inyon's control client: @2 counts as unwatched
+            row("$2", "bg", "1", "@2", "%2", "80x24"),
+            // @3 sits in a detached session, but a phone's view session links it
+            row("$3", "other", "0", "@3", "%3", "40x20"),
+            row("$9", "inyon-view-ab12cd", "1", "@3", "%3", "40x20"),
+            // a size tmux didn't print: skipped
+            row("$4", "old", "0", "@4", "%4", "x"),
+            "@@CLIENTS".into(),
+            "$1 0 1990 %1".into(),
+            "$2 1 1999 %2".into(),
+            "$9 0 1995 %3".into(),
+            "@@END".into(),
+        ]
+        .join("\n");
+        let r = parse_probe(&out, "", 0, 12.0).unwrap();
+        assert_eq!(r.unwatched.into_iter().collect::<Vec<_>>(), [("@2".to_owned(), (80, 24))]);
+        // psmux lists no clients: tmux's own attached count decides
+        let psmux = parse_probe(&out.replace("@@CLIENTS\n$1 0 1990 %1\n$2 1 1999 %2\n$9 0 1995 %3\n", ""), "", 0, 12.0).unwrap();
+        assert!(psmux.unwatched.is_empty(), "{:?}", psmux.unwatched);
     }
 }

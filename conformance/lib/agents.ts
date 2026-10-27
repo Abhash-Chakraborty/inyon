@@ -30,13 +30,16 @@ const SPINNER = screen('claude', 'working')[1]!
 /**
  * Claude's screen around its input box, from claude/idle-draft.txt: the box holds `draft`, and the
  * fixture's "← 3 agents" (work left running in the background) is dropped, so a finished turn is
- * finished. `working` puts claude/working.txt's spinner right above the box, as Claude draws it.
+ * finished. `working` puts claude/working.txt's spinner right above the box, as Claude draws it, in
+ * place of the last reply.
  */
 export function claudeScreen(draft: string, working = false) {
   // a draft of several lines continues under the first, indented as Claude draws it
   const box = draft.split('\n').map((l, i) => (i ? `  ${l}` : `❯ ${l}`))
   const rows = IDLE.flatMap((l) => (l.startsWith('❯ ') ? box : [l.replace(' · ← 3 agents', '')]))
-  return working ? [rows[0]!, SPINNER, ...rows.slice(3)] : rows
+  // working, the last turn's reply isn't drawn right above the spinner: Claude shows your new prompt
+  // between them, and a reply over a spinner is one being written now
+  return working ? ['', SPINNER, ...rows.slice(3)] : rows
 }
 
 export interface ClaudeOptions {

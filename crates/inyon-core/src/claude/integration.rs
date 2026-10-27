@@ -10,16 +10,21 @@ use crate::js::json::{self, spread, stringify_pretty, Js};
 use crate::js::JsStr;
 use crate::re;
 
-/// The hook only appends Claude Code's own hook payload, tagged with the tmux pane, to a local
-/// log. It prints nothing and always exits 0, so it never changes what Claude does.
+/// The hook only appends the agent's own hook payload, tagged with the tmux pane, to a local log.
+/// It always exits 0 and changes nothing the agent does: Claude Code's hook prints nothing, and
+/// another agent's (`hook.sh copilot agentStop`) prints the empty answer those wait for.
 pub const HOOK_SCRIPT: &str = r#"#!/bin/sh
-# Inyon: records Claude Code events so Inyon knows which tmux pane runs which session.
-# Safe to delete; remove the matching entries from ~/.claude/settings.json too.
-# inyon-integration 6
+# Inyon: records coding agents' events so Inyon knows which tmux pane runs which session.
+# Safe to delete; turning Inyon's integration off removes it from each agent's settings.
+# inyon-integration 9
 # the events hold your prompts: readable by you only
 umask 077
 d="$HOME/.inyon"
 mkdir -p "$d/panes" 2>/dev/null
+# an agent other than Claude Code names itself and the event, and wants a JSON answer
+agent=$(printf '%s' "${1:-}" | tr -cd 'a-z0-9_-')
+event=$(printf '%s' "${2:-}" | tr -cd 'A-Za-z0-9_-')
+[ -n "$agent" ] && echo '{}'
 p=$(tr -d '\n\r')
 [ -n "$p" ] || exit 0
 pane=${TMUX_PANE:-}
@@ -27,7 +32,23 @@ if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
   for _ in 1 2; do s=$(tmux display -p -t "$PSMUX_SESSION" '#{session_id}' 2>/dev/null | tr -d '$\r'); [ -n "$s" ] && break; done
   case $s in ''|*[!0-9]*) ;; *) pane="%$s.${pane#%}" ;; esac
 fi
-line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "$pane" "$(date +%s)" "$p")
+# a conversation Claude Code moved to the background runs outside tmux: its events go to the window it left
+if [ -z "$pane" ] && [ -z "$agent" ]; then
+  j=$(printf '%s' "$p" | sed -n 's/^{"session_id":"\([0-9a-f]\{8\}\).*/\1/p')
+  w=$([ -n "$j" ] && grep -h "\"parkedJobId\":\"$j\"" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json 2>/dev/null | sed -n 's/.*"tmux":"\([^"]*\)".*/\1/p' | head -n 1)
+  case $w in *:@*.%*)
+    pane="%${w##*.%}"
+    case $(tmux -V 2>/dev/null) in *psmux*)
+      s=$(tmux display -p -t "${w%:@*}" '#{session_id}' 2>/dev/null | tr -d '$\r')
+      case $s in ''|*[!0-9]*) pane= ;; *) pane="%$s.${pane#%}" ;; esac ;;
+    esac ;;
+  esac
+fi
+if [ -n "$agent" ]; then
+  line=$(printf '{"pane":"%s","ts":%s,"agent":"%s","event":"%s","data":%s}' "$pane" "$(date +%s)" "$agent" "$event" "$p")
+else
+  line=$(printf '{"pane":"%s","ts":%s,"data":%s}' "$pane" "$(date +%s)" "$p")
+fi
 printf '%s\n' "$line" >> "$d/events.jsonl"
 [ -n "$pane" ] && printf '%s\n' "$line" > "$d/panes/${pane#%}.json"
 # after a compaction, so Inyon stops showing the context size from before it
@@ -43,7 +64,7 @@ exit 0
 /// and rate limits. The wrapper saves it per tmux pane, then runs the user's own status line.
 pub const STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Claude Code's status line data per tmux pane, then runs your own status line.
-# inyon-integration 6
+# inyon-integration 9
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
@@ -71,7 +92,7 @@ exit 0
 pub const AGY_STATUS_SCRIPT: &str = r#"#!/bin/sh
 # Inyon: saves Antigravity CLI's status line data per tmux pane, then runs your own status line.
 # Safe to delete; remove "statusLine" from ~/.gemini/antigravity-cli/settings.json too.
-# inyon-integration 6
+# inyon-integration 9
 in=$(cat)
 pane=${TMUX_PANE:-}
 if [ -n "$pane" ] && [ -n "${PSMUX_SESSION:-}" ]; then
@@ -109,6 +130,18 @@ fn is_ours(h: Option<&Value>) -> bool {
 
 const EVENTS: [(&str, Option<&str>); 6] =
     [("SessionStart", None), ("SessionEnd", None), ("UserPromptSubmit", None), ("Notification", None), ("PermissionRequest", Some("*")), ("Stop", None)];
+
+/// A turn that ended on an error (a rate limit, signed out, overloaded). Only for Claude Code 2.1.78
+/// and later, which have it: before 2.1.101 a hook event Claude Code doesn't know makes it ignore
+/// the whole settings file.
+const STOP_FAILURE: (&str, Option<&str>) = ("StopFailure", None);
+
+/// Whether `claude --version` (e.g. "2.1.309 (Claude Code)") names a version with StopFailure.
+pub fn knows_stop_failure(version: &str) -> bool {
+    let Some(v) = re!(r"^\s*(\d+)\.(\d+)\.(\d+)").captures(version) else { return false };
+    let n = |i: usize| v[i].parse::<u64>().unwrap_or(0);
+    (n(1), n(2), n(3)) >= (2, 1, 78)
+}
 
 /// `JSON.stringify(settings, null, 2) + '\n'`
 fn pretty(v: &Value) -> String {
@@ -241,13 +274,15 @@ pub async fn install_integration(host: &Host) -> HubResult<()> {
             write_file(host, ".inyon/statusline.orig", &if before.is_empty() { String::new() } else { format!("{before}\n") }, "600").await?;
         }
     }
+    let version = host.run("claude --version 2>/dev/null").await?.stdout;
+    let stop_failure = knows_stop_failure(&version).then_some(STOP_FAILURE);
     if settings.get("hooks").is_none_or(Value::is_null) {
         settings.insert("hooks".into(), Value::Object(Map::new()));
     }
     let Some(Value::Object(hooks)) = settings.get_mut("hooks") else {
         return Err(HubError::plain("~/.claude/settings.json has \"hooks\" that aren't an object"));
     };
-    for (name, matcher) in EVENTS {
+    for (name, matcher) in EVENTS.into_iter().chain(stop_failure) {
         if hooks.get(name).is_none_or(Value::is_null) {
             hooks.insert(name.into(), Value::Array(vec![]));
         }
@@ -274,8 +309,13 @@ pub async fn install_integration(host: &Host) -> HubResult<()> {
         entry.insert("hooks".into(), json!([{ "type": "command", "command": HOOK_CMD }]));
         groups.push(Value::Object(entry));
     }
+    // a Claude Code older than StopFailure (one downgraded since, say) ignores a settings file that has it
+    if stop_failure.is_none() {
+        drop_ours(hooks, STOP_FAILURE.0);
+    }
     write_settings(host, &settings).await?;
     install_agy_integration(host).await?;
+    crate::claude::agent_hooks::install_agent_hooks(host).await?;
     Ok(())
 }
 
@@ -419,6 +459,27 @@ async fn remove_project_status_lines(host: &Host) -> HubResult<()> {
     Ok(())
 }
 
+/// Takes Inyon's hook out of one event's groups, leaving yours; a group left empty goes, and so
+/// does the event when nothing is left.
+fn drop_ours(hooks: &mut Map<String, Value>, name: &str) {
+    let Some(Value::Array(groups)) = hooks.get(name) else { return };
+    let kept: Vec<Value> = groups
+        .iter()
+        .map(|g| {
+            let mut m = spread(Some(g));
+            let hs: Vec<Value> = Some(g).at("hooks").arr().map(|hs| hs.iter().filter(|h| !is_ours(Some(h))).cloned().collect()).unwrap_or_default();
+            m.insert("hooks".into(), Value::Array(hs));
+            Value::Object(m)
+        })
+        .filter(|g| g["hooks"].as_array().is_some_and(|h| !h.is_empty()))
+        .collect();
+    if !kept.is_empty() {
+        hooks.insert(name.to_owned(), Value::Array(kept));
+    } else {
+        hooks.shift_remove(name);
+    }
+}
+
 pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
     remove_project_status_lines(host).await?;
     let mut settings = read_settings(host).await?;
@@ -434,22 +495,7 @@ pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
     if let Some(Value::Object(hooks)) = settings.get_mut("hooks") {
         let names: Vec<String> = hooks.keys().cloned().collect();
         for name in names {
-            let Some(Value::Array(groups)) = hooks.get(&name) else { continue };
-            let kept: Vec<Value> = groups
-                .iter()
-                .map(|g| {
-                    let mut m = spread(Some(g));
-                    let hs: Vec<Value> = Some(g).at("hooks").arr().map(|hs| hs.iter().filter(|h| !is_ours(Some(h))).cloned().collect()).unwrap_or_default();
-                    m.insert("hooks".into(), Value::Array(hs));
-                    Value::Object(m)
-                })
-                .filter(|g| g["hooks"].as_array().is_some_and(|h| !h.is_empty()))
-                .collect();
-            if !kept.is_empty() {
-                hooks.insert(name, Value::Array(kept));
-            } else {
-                hooks.shift_remove(&name);
-            }
+            drop_ours(hooks, &name);
         }
         if hooks.is_empty() {
             settings.shift_remove("hooks");
@@ -458,6 +504,7 @@ pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
     write_settings(host, &settings).await?;
     // the hook's log holds your prompts: it goes with the hook
     host.run(r#"rm -f "$HOME/.inyon/hook.sh" "$HOME/.inyon/statusline.sh" "$HOME/.inyon/statusline.orig" "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl""#).await?;
+    crate::claude::agent_hooks::uninstall_agent_hooks(host).await?;
     uninstall_agy_integration(host).await
 }
 

@@ -9,8 +9,9 @@ on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
     # the protocol crate's tests also read packages/protocol and fixtures/
-    # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine
-    paths: ['apps/cli/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine;
+    # `inyon docs` carries site/docs inside the binary
+    paths: ['apps/cli/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -174,6 +175,12 @@ jobs:
         if: ${{ !matrix.cross }}
         shell: bash
         run: '"$RUNNER_TEMP/out/${{ matrix.name }}" version'
+      # the app's window in WebView2, which no other test opens
+      - name: The app's window
+        if: ${{ startsWith(matrix.runner, 'windows') && !matrix.cross }}
+        shell: pwsh
+        working-directory: .
+        run: ./scripts/windows-app-check.ps1 -Exe (Join-Path $env:RUNNER_TEMP "out/${{ matrix.name }}")
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}

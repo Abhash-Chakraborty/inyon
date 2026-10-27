@@ -57,6 +57,8 @@ describe('paneTitle', () => {
     expect(paneTitle(ref(agentPane('%1', 'claude'), 'zsh'))).toBe('Claude Code')
     expect(paneTitle(ref(agentPane('%1', 'codex'), 'powershell'))).toBe('Codex')
     expect(paneTitle(ref(agentPane('%1', 'claude', { command: 'node' }), 'node'))).toBe('Claude Code')
+    // your own agent shows its own name
+    expect(paneTitle(ref(agentPane('%1', 'claude', { agent: { kind: 'claude', custom: 'OpenClaude', pid: 1, state: 'idle' } }), 'sh'))).toBe('OpenClaude')
   })
 
   test('a plain terminal shows its window name, else its command', () => {

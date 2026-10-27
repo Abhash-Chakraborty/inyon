@@ -221,7 +221,11 @@ export type MappedBy = "hook" | "cwd" | "resume" | "process";
  */
 export type QuickOption = { n: number, label: string, };
 
-export type AgentPaneInfo = { kind: AgentKind, pid: number, sessionId?: string, transcriptPath?: string, 
+export type AgentPaneInfo = { kind: AgentKind, 
+/**
+ * a custom agent's name (Settings › Agents); `kind` is the agent it works like
+ */
+custom?: string, pid: number, sessionId?: string, transcriptPath?: string, 
 /**
  * where the pane → session mapping came from
  */
@@ -253,7 +257,25 @@ ultracode?: boolean, status?: AgentStatus,
 /**
  * the integration is on but this session stopped sending live numbers
  */
-statusStopped?: boolean, startedAt?: number, };
+statusStopped?: boolean, startedAt?: number, 
+/**
+ * the last turn ended on an error instead of finishing; gone with the next prompt
+ */
+failure?: TurnFailure, };
+
+/**
+ * Why a turn stopped (Claude Code's StopFailure hook).
+ */
+export type TurnFailure = { 
+/**
+ * "rate_limit", "billing_error", "authentication_failed", "overloaded", "server_error",
+ * "invalid_request", "max_output_tokens" or "unknown"
+ */
+error: string, 
+/**
+ * rate limits: when the full limit resets, unix seconds
+ */
+resetsAt?: number, };
 
 export type PaneInfo = { 
 /**
@@ -267,7 +289,11 @@ index: number, active: boolean, command: string, cwd: string, title: string,
 /**
  * the name you gave this session in Inyon
  */
-label?: string, width: number, height: number, dead: boolean, agent?: AgentPaneInfo, };
+label?: string, width: number, height: number, dead: boolean, agent?: AgentPaneInfo, 
+/**
+ * runs your companion agent (Settings › Companion); at most one pane across all machines
+ */
+companion?: boolean, };
 
 export type WindowInfo = { 
 /**
@@ -297,6 +323,20 @@ supported: boolean, state?: NodeUpdateState, error?: string, };
 export type MachineKind = "server" | "laptop" | "desktop";
 
 export type TmuxState = "unknown" | "ok" | "no-server" | "missing";
+
+/**
+ * An agent's plan limits on a machine, read from the account it's signed in to, with or without a
+ * session running.
+ */
+export type AccountLimits = { kind: AgentKind, fiveHour?: RateWindow, sevenDay?: RateWindow, plan?: string, credits?: Credits, 
+/**
+ * limit resets the account has banked (Codex): counted, never used
+ */
+resets?: number, 
+/**
+ * unix ms of the reading
+ */
+updatedAt: number, };
 
 export type HostState = { config: HostConfig, status: HostStatus, error?: string, 
 /**
@@ -343,7 +383,11 @@ lastSeen?: number,
 /**
  * when the machine stopped answering; its sessions are the last ones seen, saved on disk
  */
-offlineSince?: number, };
+offlineSince?: number, 
+/**
+ * plan limits of the accounts signed in there
+ */
+limits?: Array<AccountLimits>, };
 
 export type AssistantBlock = { "type": "text", text: string, } | { "type": "thinking", text: string, } | { "type": "tool_use", id: string, name: string, input: any, };
 
@@ -421,6 +465,20 @@ export type SendState = { id: string, text: string, at: number, state: SendStatu
 setting?: boolean, };
 
 /**
+ * A message Inyon holds for a pane and types in once its agent is free (from 0.22): it can still
+ * be edited, moved or dropped. `error` says why the last try didn't go, and holding stops there.
+ */
+export type HeldPrompt = { id: string, text: string, at: number, error?: string, };
+
+/**
+ * Controls picked in the app while the agent couldn't take them (from 0.22): Inyon makes each
+ * pick once the agent is free, the last of each kind winning. The values are what was picked:
+ * a model as the agent's `/model` takes it, an effort level, a mode id. `error` says why the
+ * last try didn't take, and nothing more is tried until it's picked again or dropped.
+ */
+export type ChosenControls = { model?: string, effort?: string, mode?: string, error?: string, };
+
+/**
  * A conversation the agent saved in a pane's folder, which it can be started again with.
  */
 export type PastConversation = { 
@@ -482,6 +540,14 @@ share?: string,
  * messages typed while the agent was busy, not yet picked up
  */
 queue: Array<string>, 
+/**
+ * messages Inyon holds until the agent is free, in the order they go (from 0.22)
+ */
+held?: Array<HeldPrompt>, 
+/**
+ * a model, effort or mode waiting for the agent to be free (from 0.22)
+ */
+chosen?: ChosenControls, 
 /**
  * the turn under way, for the working timer (Codex: from its records and its live events)
  */
@@ -853,4 +919,4 @@ export type DraftSource = "app" | "terminal";
 
 export type NotifyKind = "waiting" | "done" | "offline" | "online";
 
-export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "pong" };
+export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };

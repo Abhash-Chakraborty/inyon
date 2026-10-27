@@ -8,6 +8,7 @@ import { appHref, publicFile, routeOf } from './base.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 import { reuse } from './reuse.ts'
+import { allPanes } from './overview.ts'
 import { clearSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
 
@@ -246,7 +247,10 @@ function onMessage(m: Tagged) {
         const head = m.items[0]
         const keep = !!head && m.hasMore && c.items.some((i) => i.seq === head.seq && i.uuid === head.uuid)
         const items = keep ? [...c.items.filter((i) => i.seq < head.seq), ...m.items] : m.items
-        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends), live: withoutRecorded(c.live, m.items) }
+        // what this reset brings that wasn't here before, for text read off the screen
+        const known = new Set(c.items.map((i) => i.uuid))
+        const fresh = c.loaded ? m.items.filter((i) => !known.has(i.uuid)) : []
+        return { info: m.info, items, hasMore: keep ? c.hasMore : m.hasMore, loaded: true, stale: undefined, catchingUp: undefined, pending: settle(c.pending, m.items, m.info.sends), live: withoutScreenRead(withoutRecorded(c.live, m.items), fresh) }
       })
       break
     case 'chat.live':
@@ -259,7 +263,7 @@ function onMessage(m: Tagged) {
       patchChat(m.key, (c) => {
         const last = c.items[c.items.length - 1]?.seq ?? -1
         const fresh = m.items.filter((i) => i.seq > last)
-        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends), live: withoutRecorded(c.live, fresh) }
+        return { items: [...c.items, ...fresh], pending: settle(c.pending, fresh, c.info?.sends), live: withoutScreenRead(withoutRecorded(c.live, fresh), fresh) }
       })
       break
     case 'chat.more':
@@ -280,7 +284,30 @@ function onMessage(m: Tagged) {
     case 'notify':
       notify(m)
       break
+    case 'companion.reply':
+      companionReply(m)
+      break
   }
+}
+
+/** Replies already shown, so one that comes twice (two tabs of the hub, a reconnect) shows once. */
+const companionSeen = new Set<string>()
+
+/**
+ * The companion agent finished a turn: its reply as a toast unless its chat is open, and as a
+ * notification while the phone app is in the background.
+ */
+export function companionReply(m: Extract<ServerMsg, { t: 'companion.reply' }>) {
+  if (companionSeen.has(m.id)) return
+  companionSeen.add(m.id)
+  if (companionSeen.size > 50) companionSeen.delete(companionSeen.values().next().value!)
+  const href = `/m/${encodeURIComponent(m.host)}/p/${m.pane.replace(/^%/, '')}`
+  const body = m.text.length > 240 ? `${m.text.slice(0, 240).trimEnd()}…` : m.text
+  // its chat, not its terminal (?view=terminal), shows the reply already
+  const here = routeOf(location.pathname) === href && new URLSearchParams(location.search).get('view') !== 'terminal' && document.visibilityState === 'visible'
+  const agent = allPanes(useStore.getState().hosts).find((r) => r.host.config.id === m.host && r.pane.id === m.pane)?.pane.agent?.kind
+  if (!here) toast({ title: 'Companion', body, tone: m.error ? 'error' : 'info', href, agent })
+  if (document.visibilityState === 'hidden' && isNative()) void nativeNotify('Companion', body, href, notifyTag(m.host, m.pane), 'done')
 }
 
 /**
@@ -298,6 +325,17 @@ export function withoutRecorded(live: LiveItem[] | undefined, items: ChatItem[])
   }
   const kept = live.filter((l) => !ids.has(l.id))
   return kept.length === live.length ? live : kept
+}
+
+/**
+ * Text the hub read off the screen (id "screen:…") has no record with its id. A new reply on record
+ * takes its place now; the hub sends whatever of it is still unrecorded a moment later, so the
+ * reply never shows twice in between.
+ */
+export function withoutScreenRead(live: LiveItem[] | undefined, fresh: ChatItem[]): LiveItem[] | undefined {
+  if (!live?.some((l) => l.id.startsWith('screen:'))) return live
+  if (!fresh.some((i) => i.kind === 'assistant' && i.block.type === 'text')) return live
+  return live.filter((l) => !l.id.startsWith('screen:'))
 }
 
 /** Sessions with a "needs you" notification up, by tag. */
@@ -350,7 +388,8 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
   }
   if (m.kind === 'done' && !settings.notifyDone) return
   // don't toast about the conversation you're looking at
-  const here = routeOf(location.pathname) === href && document.visibilityState === 'visible'
+  // its chat, not its terminal (?view=terminal), shows the reply already
+  const here = routeOf(location.pathname) === href && new URLSearchParams(location.search).get('view') !== 'terminal' && document.visibilityState === 'visible'
   if (!here) toast({ title: m.title, body: m.body, tone: m.kind === 'waiting' || m.kind === 'offline' ? 'warn' : 'success', href, agent: m.agent })
   const tag = notifyTag(m.host, machine ? undefined : m.pane)
   // two short pulses when an agent needs you or finishes, once per prompt; a buzz for a lost machine

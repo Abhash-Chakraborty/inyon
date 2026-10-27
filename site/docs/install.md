@@ -3,7 +3,7 @@ title: Install
 description: How to install Inyon with the one-line installers or npm, where it lives on a computer, and how to update or remove it.
 ---
 
-Every computer that runs agents for you gets one program, `inyon` (written in Rust; about 4 MB on Windows, 10 to 13 MB on Linux and macOS, where from 0.20 it also holds the Rust hub). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. Only a [hub](hub.md) also gets `inyon-engine`, the larger program built with Bun that the hub runs on. Before 0.19 every computer had both. You only ever type `inyon`.
+Every computer that runs agents for you gets one program, `inyon` (written in Rust; about 4 MB on Windows, 10 to 13 MB on Linux and macOS, where from 0.20 it also holds the Rust hub). It sets things up, shows status, keeps everything updated, and from 0.19 does the work behind it too: the link to your phone and the connection to a hub. From 0.21 a [hub](hub.md) runs on `inyon` as well. `inyon-engine`, the larger program built with Bun, is downloaded only for a hub you put back on it, or with `INYON_LEGACY_ENGINE=1`. Before 0.19 every computer had both, and in 0.19 and 0.20 every hub did. You only ever type `inyon`.
 
 ## The one-line installers
 
@@ -33,9 +33,9 @@ The site's earlier address, inyon.abhashchakraborty.tech, still works and redire
 2. Download the release's `SHA256SUMS` and make sure it's the signed one. From 0.20 the copy of each installer this site serves carries the sha256 of the list the site checked against Inyon's release key when it published the release, so it needs no other tool. A copy from anywhere else, or one pointed at another release, checks the list's signature with [minisign](https://jedisct1.github.io/minisign/), and that the list is the one for the version it asked for. Without minisign it stops, unless you [tell it to go on](#without-minisign). Before 0.20 the installers checked the signature only when minisign was installed.
 3. Download the `inyon` command for this system, compressed when `gzip` is available, and check it against `SHA256SUMS`, both compressed and unpacked. A mismatch stops the install before anything runs.
 4. Put it in `~/.inyon/bin/inyon` (`%USERPROFILE%\.inyon\bin\inyon.exe` on Windows). On macOS it gets an ad-hoc signature so the system will run it.
-5. On Alpine, for a hub, add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to. Before 0.19 every Alpine install did this.
+5. On Alpine, for a hub with `INYON_HUB_IMPL=bun` (or with `INYON_LEGACY_ENGINE=1`), add `libstdc++` and `libgcc` with `apk` when running as root (the musl engine needs them), or say how to. Before 0.19 every Alpine install did this, and in 0.19 and 0.20 every hub.
 6. Put `inyon` on your `PATH` (from 0.17.1), so a new terminal finds it by name. See [Put inyon on your PATH](#put-inyon-on-your-path).
-7. Run `inyon setup`, which installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub`, which also downloads and checks `inyon-engine`, and prints the hub's address and setup code instead.
+7. Run `inyon setup`, which installs the background service and prints the pairing QR code. With `--hub` it runs `inyon setup --role hub`, which prints the hub's address and setup code instead (in 0.19 and 0.20 it also downloaded `inyon-engine`).
 
 Piped from `curl`, setup can't ask questions, so it takes the defaults: a computer that pairs with your phone through a free tunnel and your VPN, started at login. Run `inyon setup` again afterwards to choose differently with the [setup screens](cli.md#setup).
 
@@ -87,7 +87,7 @@ npm installs only the `inyon` command and puts it on your `PATH`. It picks the b
 
 ## Supported systems
 
-| System | `inyon` | `inyon-engine` (hubs only) | Can be a hub |
+| System | `inyon` | `inyon-engine` (hubs on Bun only) | Can be a hub |
 |---|---|---|---|
 | Linux x64, arm64 | Yes | Yes | Yes |
 | Alpine and other musl Linux, x64, arm64 | The same static build | Built for musl; needs `apk add libstdc++ libgcc` | Untested |
@@ -132,7 +132,7 @@ npm puts `inyon` on your `PATH` itself, so the installers' line isn't needed the
 
 | Path | What it holds |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub (or the copy described [below](#on-windows) on Windows) |
+| `~/.inyon/bin/` | `inyon`, `cloudflared` for the tunnel (from 0.20 setup downloads it; before, the first tunnel did), and `inyon-engine` on a hub on Bun (or the copy described [below](#on-windows) on Windows) |
 | `~/.inyon/node/` | This computer's identity key, paired phones, link settings, hub connection, logs (only you can read it) |
 | `~/.inyon/` | A hub's own records: password hash, machines, settings, `hub.env`, and from 0.20 `tls/`, the certificate setup makes for a hub on the LAN |
 
@@ -146,51 +146,30 @@ Setup runs Inyon as a service of your own user, so it starts on its own and come
 |---|---|---|---|
 | Linux | systemd user unit `inyon-link`, `inyon-node` or `inyon-hub` | Boot (lingering is turned on) | Restarts after 5 s |
 | macOS | LaunchAgent `tech.abhashchakraborty.inyon.<role>` | Login | Restarts |
-| Windows | Scheduled task "Inyon link" or "Inyon node" | Login | Retried every minute |
+| Windows | The Inyon app, opened at sign-in by the scheduled task "Inyon link" or "Inyon node" | Login | The app starts it again |
 | Linux without user systemd | A background process, plus an `@reboot` cron line | Boot, when cron exists | No |
 
 The role is `link` for a computer paired with your phone, `node` for one that joined a hub, and `hub` for a hub. `inyon service status` shows what's installed and running, and `inyon logs` shows its output.
 
 ### On Windows
 
-From 0.17.1 the task starts `inyon-engine.exe` itself. It has no console, so no window opens when you sign in, and its output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub). An install from an earlier version moves to this the next time it updates.
+From 0.20.3 Inyon on Windows is an app. Setup adds **Inyon** to the Start menu and to **Settings → Apps → Installed apps**, and both open `inyon-app.exe`, a copy of `inyon.exe` marked as a program without a console. Nothing Inyon does opens a terminal window: not at sign-in, not the window's buttons, and not the programs it starts (the engine, `cloudflared`, psmux, PowerShell).
 
-Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell sets `HOME` to another folder. Before 0.19 the `inyon` command followed `HOME` there, while the engine kept the keys and pairings under `%USERPROFILE%`.
+The app runs what Inyon keeps going in the background: the link to your phone (and its tunnel) or the connection to a hub. They're its own child processes, in a Windows job, so they end when the app ends, even if it crashes. The scheduled task only opens the app when you sign in; it starts nothing itself. Their output goes to `%USERPROFILE%\.inyon\node\link.log` (`node.log` for a computer that joined a hub), and the app's own to `app.log` beside them.
 
-From 0.19 `inyon-engine.exe` is a copy of `inyon.exe` marked as a program without a console, so the task, the firewall rule "Inyon link" and older commands keep the name they know. Setup and `inyon update` write it. A computer updated from 0.18 runs the old engine once more after the update; when its tray icon starts, it waits for the update to finish, then moves the task to the copy by itself (in a task of its own, "Inyon engine hand-over") and restarts it.
+The Inyon icon is in the notification area exactly while something runs. Click it to show or hide the Inyon window, and right-click it for its menu; [The Inyon app on Windows](windows-app.md) describes both.
 
-While it runs, the Inyon icon sits in the notification area of the taskbar. Click it for a menu:
+The `inyon` command works with the app instead of starting copies of its own. `inyon status` says what runs in the background and that the Inyon app runs it, `inyon stop` stops all of it, and `inyon service install` or `inyon update` ask the running app to start or restart a job. A computer set up by 0.20.2 or earlier moves to the app by itself the next time its old engine starts or it updates: the tasks are registered again to open the app, and the app takes over the running engine.
 
-| Item | Does |
-|---|---|
-| Open Inyon | [The Inyon window](#the-inyon-window) |
-| Pair a phone… | The Inyon window with a pairing code: the QR code to scan and the code to type (computers paired with the phone). It says "Starting the tunnel…" until the tunnel's address is in the code |
-| Show the log | Opens the log file |
-| Restart | Starts it again |
-| Quit Inyon | Stops it and its tunnel until you next sign in. `inyon service install` starts it sooner |
+Before 0.20.3 the task started `inyon-engine.exe` itself, the window's **Change**, **Show all** and **Details** opened a terminal, and the tray icon belonged to the engine, so it could be missing while the link ran. If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
 
-From 0.20 **Quit Inyon** also stops `cloudflared`, as **Restart** does; in 0.19 it kept running after the link had stopped. The window shows a pairing code as soon as it's ready and draws it again when the tunnel's address arrives, lists where the computer answers only while the link runs, and says when phones reach it only through the tunnel. Before 0.20 its **Pair a phone** button could wait for good when the button had to start the link itself.
-
-From 0.17.3 the first two open a small window of Inyon's own, so no terminal opens; when no phone is paired yet, it shows a pairing code without being asked. Nothing Inyon runs in the background opens a window either: from 0.17.3 every program the engine starts on Windows (psmux, PowerShell, the shell) runs hidden. In 0.17.1 and 0.17.2 they opened a terminal window (in 0.17.1 an empty one that closed at once). If Windows hides the icon under the arrow beside the clock, drag it onto the taskbar to keep it in view.
+Everything stays under `%USERPROFILE%\.inyon`, also when a Git or MSYS shell sets `HOME` to another folder. `inyon-engine.exe` stays as the windowless copy that runs the link and the hub connection, so the firewall rule "Inyon link" and older commands keep the name they know.
 
 ### The Inyon window
 
-From 0.20.1 the window is the control panel for this computer:
+From 0.21 the window has a page for each part of Inyon on this computer: the phone link and how phones reach it, Phones, a hub's web app, Pages, Temp files, Activity and Settings. See [The Inyon app on Windows](windows-app.md). From 0.20.1 to 0.20.5 it was a smaller window of a fixed size with the pairing code, the reach, the phones and this computer's service.
 
-| Part | Shows | Buttons |
-|---|---|---|
-| Header | The version, the computer's name, and Running, Starting, Stopped or Not set up | |
-| Pair a phone | The QR code and the ID and code to type in the app. It says so while the tunnel starts, and until the tunnel is up the code works on the same network or VPN. A used code names the phone that paired, an expired one says so, and in its last minute the note counts down ("gone in 42s") | Make a code, Copy link, and Show the log when the tunnel is slow or the code failed |
-| Reach | LAN, VPN and Tunnel, each on or off, and the addresses it answers on | Change opens `inyon setup` in a terminal |
-| Phones | Two paired phones and when each was last seen | Forget, with Undo for 5 seconds. Show all opens `inyon phones` in a terminal when there are more |
-| This computer | The background service, updates, the last checks and the agents found on `PATH` | Start or Stop and Restart, Update, Check, or Details, which opens `inyon doctor` |
-| Footer | The newest log line | Open the log, Quit Inyon |
-
-On a computer that runs the hub, the pairing card shows the hub's address and how many machines joined, with **Open the hub** and **Copy address**.
-
-The window has one size for each display scale. It opens in the middle of the screen whose tray you clicked, inside the area the taskbar leaves free. Nothing it shows changes its size: a refresh, a pairing code or a new phone only changes what's inside. It takes a new size only when the scale changes or you move it to a screen with another scale. A screen too small for it gets a narrower layout with three tabs, Pair, Phones and This computer. It follows the Windows app theme, light or dark, title bar included. Tab moves between the buttons and Esc closes it. Before 0.20.1 the window grew and shrank with every refresh.
-
-From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps**, with its version, and `inyon update` keeps the version current. **Uninstall** there runs `inyon uninstall --purge` in a window of its own, which stays open until you press Enter.
+Setup lists Inyon under **Settings → Apps → Installed apps** (from 0.17.2), with its version and the kite icon, and `inyon update` keeps the version current. An update from 0.20.2 or 0.20.3 leaves the old version's entry there; from 0.20.4 the Inyon app puts the right one back within a few minutes of starting. From 0.20.3 **Uninstall** there asks to confirm, then removes Inyon without opening a terminal and says when it's done; before, it ran `inyon uninstall --purge` in a console window that stayed open until you pressed Enter.
 
 ## Updating
 
@@ -198,7 +177,7 @@ From 0.17.2 setup also lists Inyon under **Settings → Apps → Installed apps*
 inyon update
 ```
 
-It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon`, and on a hub the new `inyon-engine`, checks them against that list, and only then swaps them in. From 0.19 a computer that isn't a hub doesn't download the engine, and an update removes the one an older version left (on Windows it's replaced by the copy of `inyon.exe`). A computer whose hub still hands out an `inyon` from before 0.19 keeps the engine, or gets the hub's, because that `inyon` still runs on it. Every running role restarts on the new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
+It reads the newest version from this site's `latest.json` and checks that the release's `SHA256SUMS` carries a good signature from Inyon's release key and lists that version's APK. Then it downloads the new `inyon`, and on a hub on Bun the new `inyon-engine`, checks them against that list, and only then swaps them in. From 0.19 a computer that isn't a hub doesn't download the engine, from 0.21 neither does a hub on the Rust hub, and an update removes the one an older version left (on Windows it's replaced by the copy of `inyon.exe`). A computer whose hub still hands out an `inyon` from before 0.19 keeps the engine, or gets the hub's, because that `inyon` still runs on it. Every running role restarts on the new version. On Windows the Inyon app itself starts again on its new version first, then runs the roles again; an update by 0.20.3 or 0.20.4 restarted only the roles and left the old app running until the next sign-in, and from 0.20.5 the new link or hub connection asks that old app to start its new version. If the new version doesn't stay up for a few seconds, the old files go back and the roles restart on them.
 
 Versions after 0.14.0 update from this site; 0.14.0 and earlier from GitHub. A computer that joined a hub updates from the hub instead, so it always matches the hub's version. From 0.20 it checks those files against the release's signed `SHA256SUMS`, which the hub passes on, and changes nothing when the hub has none (a hub from before 0.20): update the hub first. The hub can update it for you from its page under Machines. See [Updating hubs and machines](hub.md#updating).
 
@@ -216,9 +195,9 @@ inyon uninstall --yes      # don't ask anything
 
 From 0.17.1 both also take `inyon` back off your `PATH`: the lines marked `# added by Inyon`, Inyon's fish file, or the entry on the Windows user `Path`.
 
-From 0.17.2, when setup installed tmux (psmux on Windows) for you, uninstall asks whether to remove it too; the answer is no unless you say yes, and `--yes` keeps it. tmux that was there before Inyon is never touched. On Windows it also removes the entry under Settings → Apps.
+From 0.17.2, when setup installed tmux (psmux on Windows) for you, uninstall asks whether to remove it too; the answer is no unless you say yes, and `--yes` keeps it. tmux that was there before Inyon is never touched. On Windows it also removes the entry under Settings → Apps and, from 0.20.3, the Start menu shortcut.
 
-On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the engine, the tunnel and the tray icon), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one, and from 0.17.2 a file in use under `~/.inyon` (an agent's hook writing the event log, say) stops only itself from going, not the rest. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
+On Windows from 0.17.1, uninstalling first stops everything that runs from `~/.inyon/bin` (the Inyon app, the engine and the tunnel), since Windows can't delete a program that's running. `inyon.exe` itself goes a moment after the command ends. If a file still can't be removed, it says which one, and from 0.17.2 a file in use under `~/.inyon` (an agent's hook writing the event log, say) stops only itself from going, not the rest. It also removes the firewall rule "Inyon link" when setup added one, which Windows asks an administrator to allow.
 
 From 0.17, `--purge` first gives Claude Code and Antigravity their own status line back and drops Inyon's hooks from their settings, so they never call scripts that are gone. It also removes folders older versions left: `~/.tether`, `~/.tether-node` and `~/.cache/inyon-ssh`.
 
@@ -228,7 +207,7 @@ To stop being part of a hub but keep Inyon installed, use `inyon disconnect`. To
 
 Inyon was called Tether before 0.7.0, and its computer program was `tether-node`. Run the installer again, because those versions updated from a release address that no longer exists. Nothing else needs redoing: its files move from `~/.tether-node` to `~/.inyon/node` (leaving a link behind) the first time the new program runs, and `inyon` moves the old service to its new name the next time it updates or sets the machine up. Settings named `TETHER_*` are still read as `INYON_*`.
 
-Before 0.13, `inyon` was the Bun program itself. It became the small Rust command, and the Bun program became `inyon-engine`, which from 0.19 only a hub uses. Two things changed for people who type it:
+Before 0.13, `inyon` was the Bun program itself. It became the small Rust command, and the Bun program became `inyon-engine`, which from 0.19 only a hub uses, and from 0.21 only a hub you put back on Bun. Two things changed for people who type it:
 
 - Plain `inyon` now shows a [status dashboard](cli.md#status). Setup is `inyon setup`.
 - `inyon install` and `inyon uninstall <role>` became `inyon service install` and `inyon service uninstall`. The old forms still work.

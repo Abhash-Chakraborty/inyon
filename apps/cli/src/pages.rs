@@ -615,7 +615,7 @@ fn write_atomic(file: &Path, text: &str, mode: u32) -> std::io::Result<()> {
 /// The file as `{v: 1, pages: [...]}` (other keys kept), an empty list when it isn't there. The list
 /// may be a symlink (a dotfile setup); one that isn't a plain file of at most LIST_MAX bytes is a
 /// broken list.
-fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
+pub fn read_list(file: &Path) -> Result<Map<String, Value>, String> {
     let text = match read_capped(file, LIST_MAX, true).map(String::from_utf8) {
         Ok(Ok(t)) => t,
         Ok(Err(e)) => return Err(format!("Can't read {}: {e}", file.display())),
@@ -814,23 +814,32 @@ fn trouble(page: &Value, home: &str, real_home: &str) -> Option<String> {
     None
 }
 
+/// The page's path in the app. Only the hub's own machine knows it: the hub gives a machine joined
+/// to it an id of its own, which that machine never learns.
 fn app_link(slug: &str) -> String {
     format!("/pages/{LOCAL_HOST}/{slug}")
 }
 
-/// The hub's machine is the only one whose pages the app shows for now.
-fn not_hub_note() -> &'static str {
-    "This machine doesn't run a hub. For now the app shows pages from the hub's own machine only."
+/// Where a machine without a hub of its own has its pages shown: the hub it's joined to, or (paired
+/// with the phone only, say) nowhere yet.
+fn not_hub_note(joined: bool) -> &'static str {
+    if joined {
+        "This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."
+    } else {
+        "This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there."
+    }
 }
 
-/// What `add` says. Without a hub here the app can't open the page, so there's no app path to hand
-/// over: only where it's listed and why it can't be shown yet.
-fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool) -> Vec<String> {
+/// What `add` says. Without a hub here the page opens through the hub this machine is joined to,
+/// which gives it an address of its own, so there's no app path to hand over.
+fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bool, hub: bool, joined: bool) -> Vec<String> {
     let again = if changed { "" } else { " (already listed)" };
     if hub {
         vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), format!("Open it in the app at {}", app_link(slug))]
+    } else if joined {
+        vec![format!("\"{name}\" is in Inyon: Pages > {machine} > {project}{again}"), not_hub_note(true).into()]
     } else {
-        vec![format!("\"{name}\" is listed on {machine}, under {project}{again}."), format!("{} The app can't open this page yet.", not_hub_note())]
+        vec![format!("\"{name}\" is listed on {machine}, under {project}{again}."), not_hub_note(false).into()]
     }
 }
 
@@ -842,17 +851,22 @@ pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcom
     let slug = field(&a.page, "slug").to_string();
     let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
     let hub = crate::engine::hub_here();
-    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub);
-    Ok(json!({
+    let joined = !hub && crate::commands::joined();
+    let lines = added_lines(field(&a.page, "name"), &machine, &project, &slug, a.changed, hub, joined);
+    let mut out = json!({
         "page": a.page,
         "host": LOCAL_HOST,
         "machine": machine,
-        "app": app_link(&slug),
         "changed": a.changed,
         "marker": a.marker,
         "hub": hub,
+        "joined": joined,
         "message": lines.join("\n"),
-    }))
+    });
+    if hub {
+        out["app"] = json!(app_link(&slug));
+    }
+    Ok(out)
 }
 
 pub fn remove_command(slug: &str) -> Outcome {
@@ -871,6 +885,7 @@ pub fn list_command() -> Outcome {
     let home_text = home.to_string_lossy().into_owned();
     let real_home = real(&home).unwrap_or_else(|| home_text.clone());
     let all = list.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
+    let hub = crate::engine::hub_here();
     let mut seen = std::collections::HashSet::new();
     let mut pages = Vec::new();
     let mut skipped = 0;
@@ -880,14 +895,17 @@ pub fn list_command() -> Outcome {
             continue;
         }
         let mut row = p.clone();
-        row["app"] = json!(app_link(field(p, "slug")));
+        if hub {
+            row["app"] = json!(app_link(field(p, "slug")));
+        }
         if let Some(t) = trouble(p, &home_text, &real_home) {
             row["problem"] = json!(t);
+        } else if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
+            row["progress"] = progress;
         }
         pages.push(row);
     }
     let machine = inyon_engine::hostname();
-    let hub = crate::engine::hub_here();
     let mut lines = Vec::new();
     if pages.is_empty() {
         lines.push("No pages on this machine yet. Add a site's folder with: inyon pages add <folder>".to_string());
@@ -903,7 +921,7 @@ pub fn list_command() -> Outcome {
             }
             lines.push(line);
         }
-        lines.push(format!("Open one in the app under Pages, or at {}", app_link("<slug>")));
+        lines.push(if hub { format!("Open one in the app under Pages, or at {}", app_link("<slug>")) } else { format!("Open one in the app under Pages > {machine}") });
     }
     if skipped > 0 {
         lines.push(format!(
@@ -914,9 +932,141 @@ pub fn list_command() -> Outcome {
         ));
     }
     if !hub && !pages.is_empty() {
-        lines.push(not_hub_note().into());
+        lines.push(not_hub_note(crate::commands::joined()).into());
     }
-    Ok(json!({ "pages": pages, "host": LOCAL_HOST, "machine": machine, "hub": hub, "skipped": skipped, "message": lines.join("\n") }))
+    // `serves`: this inyon answers `pages get`, so a hub can show these pages (from 0.22)
+    Ok(json!({ "pages": pages, "host": LOCAL_HOST, "machine": machine, "hub": hub, "serves": true, "skipped": skipped, "message": lines.join("\n") }))
+}
+
+// ---------- serving a page to a hub ----------
+
+/// The biggest progress.json read, as the hubs read it.
+const PROGRESS_MAX: u64 = 1024 * 1024;
+/// The biggest file `pages get` sends; the hub asks for less with --max.
+pub const GET_MAX: u64 = 8 * 1024 * 1024;
+
+/// A site's progress.json counted as the hubs count it (pages_core's progress_summary): tasks done
+/// of all tasks across its releases, and its `now` and `updated` lines. None without a readable one.
+pub fn progress_of(site: &Path) -> Option<Value> {
+    let bytes = read_plain(&site.join("progress.json"), PROGRESS_MAX).ok()?;
+    let data: Value = serde_json::from_slice(&bytes).ok()?;
+    let releases = data.as_object()?.get("releases")?.as_array()?;
+    let (mut done, mut total) = (0u32, 0u32);
+    for t in releases.iter().filter_map(|r| r.get("tasks")?.as_array()).flatten().filter(|t| t.is_object()) {
+        total += 1;
+        done += u32::from(t.get("status").and_then(Value::as_str) == Some("done"));
+    }
+    let mut out = json!({ "done": done, "total": total });
+    for k in ["now", "updated"] {
+        if let Some(v) = data.get(k).and_then(Value::as_str) {
+            out[k] = json!(v);
+        }
+    }
+    Some(out)
+}
+
+/// A path as a hub on any system reads it: Windows' `\\?\` gone and its backslashes as slashes.
+fn slashed(p: &str) -> String {
+    strip_verbatim(p).replace('\\', "/")
+}
+
+/// Node's `mtimeMs`, as the hubs make it.
+fn mtime_ms(m: &fs::Metadata) -> f64 {
+    match m.modified().ok().map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
+        Some(Ok(d)) => d.as_secs() as f64 * 1e3 + f64::from(d.subsec_nanos()) / 1e6,
+        Some(Err(e)) => -(e.duration().as_secs_f64() * 1e3),
+        None => 0.0,
+    }
+}
+
+/// pages_core's `etag_of`: `"<size in hex>-<whole ms in hex>"`.
+fn etag_of(size: u64, mtime: f64) -> String {
+    let ms = mtime.floor() as i128;
+    if ms < 0 {
+        format!("\"{size:x}--{:x}\"", -ms)
+    } else {
+        format!("\"{size:x}-{ms:x}\"")
+    }
+}
+
+/// pages_core's `etag_matches`: `*`, or any listed tag equal to it (a `W/` prefix ignored).
+fn etag_matches(if_none_match: &str, etag: &str) -> bool {
+    let inm = if_none_match.trim();
+    !inm.is_empty() && (inm == "*" || inm.split(',').any(|t| t.trim().strip_prefix("W/").unwrap_or(t.trim()) == etag))
+}
+
+/// `real` is `root` or inside it, with no dot-named folder or file on the way (both slashed).
+fn inside(root: &str, real: &str) -> bool {
+    let root = root.trim_end_matches('/');
+    let rest = if real == root {
+        ""
+    } else if let Some(r) = real.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
+        r
+    } else {
+        return false;
+    };
+    rest.split('/').filter(|c| !c.is_empty()).all(|c| !c.starts_with('.'))
+}
+
+/// One path as `pages get` reports it: where it really leads and what is there.
+fn looked_up(p: &Path) -> Value {
+    let Some(real) = real(p) else { return Value::Null };
+    let Ok(m) = fs::metadata(&real) else { return Value::Null };
+    json!({ "real": slashed(&real), "file": m.is_file(), "dir": m.is_dir(), "size": m.len(), "mtime": mtime_ms(&m) })
+}
+
+/// What a hub needs to answer one request for a file of a page on this machine, in one go: where
+/// the site's folder really is, then the asked path and the index.html inside it (each where it
+/// really leads, whether it's a file or a folder, its size and mtime), and the file the request
+/// ends at, as base64. The hub decides the answer with its own rules; this side only lists what is
+/// there, and sends a file only when it's inside the site, with no dot name and no symlink leading
+/// out on the way, of at most `max` bytes, and not the one the browser has (`etag`).
+///
+/// Only a page on this machine's list can be read, and only through its slug.
+pub fn get_command(slug: &str, segments: &[String], slash: bool, max: u64, etag: Option<&str>) -> Outcome {
+    let not_found = || Ok(json!({ "ok": true, "root": Value::Null, "items": [] }));
+    let list = read_list(&pages_file())?;
+    let home = paths::home();
+    let home_text = home.to_string_lossy().into_owned();
+    let real_home = real(&home).unwrap_or_else(|| home_text.clone());
+    let pages = list.get("pages").and_then(Value::as_array).cloned().unwrap_or_default();
+    let Some(page) = pages.iter().find(|p| readable(p) && field(p, "slug") == slug) else { return not_found() };
+    if trouble(page, &home_text, &real_home).is_some() {
+        return not_found();
+    }
+    // as view_segments takes them, and no colon: on Windows `name:stream` reads another stream
+    if segments.iter().any(|s| s.is_empty() || s.starts_with('.') || s.contains(['/', '\\', '\0', ':'])) {
+        return not_found();
+    }
+    let folder = PathBuf::from(field(page, "path"));
+    let Some(root) = real(&folder).map(|r| slashed(&r)) else { return not_found() };
+    let asked = segments.iter().fold(folder, |p, s| p.join(s));
+    let first = looked_up(&asked);
+    let index = match first.get("real").and_then(Value::as_str) {
+        Some(r) if first["dir"] == true => looked_up(&Path::new(r).join("index.html")),
+        _ => Value::Null,
+    };
+    // the file the hub serves: the index.html of a folder asked for with its slash, or the file asked for
+    let ends = match (first["dir"] == true, slash) {
+        (true, true) => &index,
+        (false, false) => &first,
+        _ => &Value::Null,
+    };
+    let mut out = json!({ "ok": true, "root": root, "items": [first.clone(), index.clone()] });
+    if let (Some(real_path), true) = (ends.get("real").and_then(Value::as_str), ends["file"] == true) {
+        let size = ends["size"].as_u64().unwrap_or(0);
+        let fresh = etag.is_some_and(|e| etag_matches(e, &etag_of(size, ends["mtime"].as_f64().unwrap_or(0.0))));
+        let name = real_path.rsplit('/').next().unwrap_or("");
+        if inside(&root, real_path) && (name == "progress.json" || !fresh) {
+            if size > max {
+                out["big"] = json!(true);
+            } else if let Ok(bytes) = read_plain(Path::new(real_path), max) {
+                use base64::Engine;
+                out["data"] = json!(base64::engine::general_purpose::STANDARD.encode(bytes));
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

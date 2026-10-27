@@ -12,12 +12,13 @@ use std::rc::Rc;
 use futures_util::future::join_all;
 use indexmap::{IndexMap, IndexSet};
 use inyon_protocol::{
-    agents, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption, ScreenState,
-    SessionInfo, TmuxState, WindowInfo,
+    agents, AccountLimits, AgentKind, AgentPaneInfo, AgentState, AgentStatus, HostConfig, HostKind, HostState, HostStatus, IntegrationState, MappedBy, PaneInfo, QuickOption,
+    RateWindow, ScreenPrompt, ScreenState, SessionInfo, TmuxState, WindowInfo,
 };
 use serde_json::Value;
 
 use super::coalesce::coalesce;
+use super::failure::{failure_text, turn_failure};
 use super::host::{shq, Host, StreamHandle};
 use super::http_error::{HubError, HubResult};
 use super::names::{bare_title, name_taken, owns_title, pending_name, session_name};
@@ -27,6 +28,7 @@ use super::turns::{Shown, Turns};
 use crate::agents::antigravity::{agy_status, agy_transcript};
 use crate::agents::claude_usage::{fetch_claude_usage, AccountUsage};
 use crate::agents::codex::{codex_title, find_codex_rollout, read_codex_status, CodexProc};
+use crate::agents::codex_limits;
 use crate::agents::copilot::{find_copilot_session, CopilotProc};
 use crate::agents::gemini::{find_gemini_session, GeminiProc};
 use crate::agents::opencode::{opencode_endpoint, via_open_code_api};
@@ -35,9 +37,10 @@ use crate::agents::opencode_controls::opencode_live;
 use crate::agents::opencode_db::{find_open_code_session, ocdb_session, OpenCodeProc, OCDB};
 use crate::agents::opencode_models::{model_from_footer, opencode_cli_models, peek_open_code_models, without_provider};
 use crate::agents::status::claude_status;
+use crate::claude::agent_hooks::{install_agent_hooks, HOOKED_AGENTS};
 use crate::claude::chat_cache::prune_chats;
 use crate::claude::driving::is_driving;
-use crate::claude::screen::{parse_screen, prompt_summary};
+use crate::claude::screen::{parse_screen, prompt_summary, prompt_whole};
 use crate::claude::transcript_tail::until_stdin_closes;
 use crate::clock::now_ms;
 use crate::config::{load_hosts, load_settings, save_hosts};
@@ -47,13 +50,40 @@ use crate::platform::console;
 use crate::platform::rt::{self, set_timeout, sleep, spawn, Timer};
 use crate::platform::store::{key_part, kv};
 use crate::re;
+use crate::tmux::grid;
 use crate::tmux::tmux::{capture_panes, find_transcript, probe, AgentProc, HookPaneState, LiveTmux, ProbeResult, TmuxProbe, TranscriptProc};
+
+/// Puts the agent windows nobody's tmux client shows on the wide grid (see tmux::grid). psmux
+/// sizes its windows its own way, so Windows is left alone.
+fn rest_windows(rt: &Rt, host: &Host, p: &ProbeResult) {
+    if p.os == "Windows" {
+        return;
+    }
+    let agent_windows: HashSet<String> =
+        p.sessions.iter().flat_map(|s| &s.windows).filter(|w| w.panes.iter().any(|x| p.agent_procs.contains_key(&x.id))).map(|w| w.id.clone()).collect();
+    let windows = grid::to_rest(&p.unwatched, &agent_windows, &mut rt.borrow_mut().rested);
+    if !windows.is_empty() {
+        let (rt, host) = (rt.clone(), host.clone());
+        spawn(async move {
+            // a call that didn't reach tmux is tried again on the next poll
+            if !host.run(&grid::rest_command(&windows)).await.is_ok_and(|r| r.code == 0) {
+                let rested = &mut rt.borrow_mut().rested;
+                for w in &windows {
+                    rested.remove(w);
+                }
+            }
+        });
+    }
+}
 
 /// Fallback poll; tmux control mode delivers changes as they happen.
 const POLL_MS: u64 = 4000;
 /// while nobody is looking (the phone app in the background), poll much less: it costs battery and data
 const QUIET_POLL_MS: u64 = 20000;
 const MAX_BACKOFF_MS: u64 = 20000;
+/// Someone who pressed a key in a tmux client on the pane this recently is watching it: its
+/// finish isn't announced.
+const TYPING_S: f64 = 60.0;
 
 thread_local! {
     static POLL: Cell<u64> = const { Cell::new(POLL_MS) };
@@ -114,6 +144,12 @@ pub enum RegistryEvent {
         host: String,
         pane: String,
     },
+    /// the companion agent finished a turn (in place of its Done notice); `failure` says why it stopped
+    CompanionDone {
+        host: String,
+        pane: String,
+        failure: Option<String>,
+    },
 }
 
 /// agent pid → transcript found without hooks (by folder, resume id or Codex rollout)
@@ -141,6 +177,14 @@ struct Usage {
     ok_at: Option<u64>,
 }
 
+/// Codex's plan limits, asked of its app-server. `at` is the last attempt; the last numbers it
+/// gave are kept through errors.
+#[derive(Debug, Clone, Default)]
+struct CodexLimits {
+    limits: Option<AccountLimits>,
+    at: u64,
+}
+
 /// What the registry keeps per machine.
 pub struct HostRuntime {
     /// each agent's state when the machine went offline, kept to compare with once it's back
@@ -164,6 +208,8 @@ pub struct HostRuntime {
     stopped: bool,
     /// last time the agy status line was put back
     agy_healed_at: Option<u64>,
+    /// when an agent's missing hook was last added (see heal_integration)
+    hooks_healed_at: Option<u64>,
     live: Option<Rc<LiveTmux>>,
     /// panes with fresh output, re-read on a short debounce
     dirty: IndexSet<String>,
@@ -178,6 +224,10 @@ pub struct HostRuntime {
     reconnected: IndexMap<String, u64>,
     usage: Option<Usage>,
     usage_loading: bool,
+    codex: Option<CodexLimits>,
+    codex_loading: bool,
+    /// windows asked to rest on the wide grid, at the size each had then (see tmux::grid)
+    rested: HashMap<String, (u32, u32)>,
 }
 
 pub type Rt = Rc<RefCell<HostRuntime>>;
@@ -208,15 +258,19 @@ impl HostRuntime {
             status_cache: HashMap::new(),
             stopped: false,
             agy_healed_at: None,
+            hooks_healed_at: None,
             live: None,
             dirty: IndexSet::new(),
             dirty_timer: None,
             screens: HashMap::new(),
             healed_at: None,
             resumed: HashSet::new(),
+            rested: HashMap::new(),
             reconnected: IndexMap::new(),
             usage: None,
             usage_loading: false,
+            codex: None,
+            codex_loading: false,
         }
     }
 }
@@ -228,6 +282,33 @@ const STALL_S: f64 = 90.0;
 const USAGE_EVERY_MS: u64 = 3 * 60_000;
 const USAGE_RETRY_MS: u64 = 5 * 60_000;
 const USAGE_STALE_MS: u64 = 20 * 60_000;
+/// Codex's limits: asked every five minutes while someone's looking (each ask starts its app-server)
+const CODEX_EVERY_MS: u64 = 5 * 60_000;
+
+/// The plan limits a machine shows: Claude's account (as /usage reads it) and Codex's, each while
+/// it's fresh and has a window to show.
+fn limits_list(claude: Option<&Usage>, account: Option<&str>, codex: Option<&CodexLimits>, now: u64) -> Option<Vec<AccountLimits>> {
+    let fresh = |at: u64| now.saturating_sub(at) <= USAGE_STALE_MS;
+    let mut out = vec![];
+    if let Some(u) = claude.filter(|u| u.account.as_deref() == account) {
+        if let Some(at) = u.ok_at.filter(|at| *at != 0 && fresh(*at)) {
+            out.push(AccountLimits {
+                kind: AgentKind::Claude,
+                five_hour: u.u.five_hour.clone(),
+                seven_day: u.u.seven_day.clone(),
+                plan: u.u.plan.clone(),
+                credits: None,
+                resets: None,
+                updated_at: at,
+            });
+        }
+    }
+    if let Some(l) = codex.and_then(|c| c.limits.clone()).filter(|l| fresh(l.updated_at)) {
+        out.push(l);
+    }
+    out.retain(|l| l.five_hour.is_some() || l.seven_day.is_some());
+    (!out.is_empty()).then_some(out)
+}
 /// don't fight a tool that keeps rewriting settings.json
 const HEAL_EVERY_MS: u64 = 10 * 60_000;
 
@@ -363,7 +444,7 @@ pub struct Registry {
 
 thread_local! {
     static REGISTRY: Rc<Registry> = Rc::new(Registry::new());
-    /// Claude turns that go on while the screen reads idle (see turns.rs).
+    /// Turns that go on while the screen reads idle (see turns.rs).
     static TURNS: RefCell<Turns> = RefCell::new(Turns::new());
 }
 
@@ -376,6 +457,16 @@ pub fn registry() -> Rc<Registry> {
 
 fn turn_key(host: &str, pane: &str) -> String {
     crate::js::stringify(&serde_json::json!([host, pane]))
+}
+
+/// Whether a person typed in a tmux client showing the pane within the last minute, by the
+/// machine's own clock.
+fn typed_lately(rt: &Rt, pane: &str) -> bool {
+    let r = rt.borrow();
+    r.probe.as_ref().is_some_and(|p| {
+        let p = p.borrow();
+        p.keys_at.get(pane).is_some_and(|at| p.now - at <= TYPING_S)
+    })
 }
 
 impl Registry {
@@ -550,6 +641,7 @@ impl Registry {
                 updated_at: 0,
                 last_seen: None,
                 offline_since: None,
+                limits: None,
             },
         };
         let id = config.id.clone();
@@ -799,6 +891,7 @@ impl Registry {
         let pr = Rc::new(RefCell::new(pr));
         rt.borrow_mut().probe = Some(pr.clone());
         self.annotate_agents(rt, &pr).await.map_err(|e| e.message)?;
+        rest_windows(rt, host, &pr.borrow());
         let config = host.config();
         let prev = rt.borrow().state.clone();
         let next = {
@@ -832,6 +925,10 @@ impl Registry {
                 updated_at: now,
                 last_seen: Some(now),
                 offline_since: None,
+                limits: {
+                    let r = rt.borrow();
+                    limits_list(r.usage.as_ref(), p.account.as_deref(), r.codex.as_ref(), now)
+                },
             }
         };
         {
@@ -1006,12 +1103,14 @@ impl Registry {
         if let Some(e) = first_error {
             return Err(e);
         }
+        crate::features::companion::mark(&host.id(), &mut pr.borrow_mut().sessions, crate::features::companion::agent().is_some());
         let agent_ids: Vec<String> = {
             let p = pr.borrow();
             panes(&p.sessions).filter(|x| p.agent_procs.contains_key(&x.id)).map(|x| x.id.clone()).collect()
         };
         self.check_reporting(rt, pr, &agent_ids).await?;
         self.apply_usage(rt, pr, &agent_ids);
+        self.ask_codex_limits(rt, pr);
         let live = live.borrow();
         let mut r = rt.borrow_mut();
         r.cwd_map.retain(|pid, _| live.contains(pid));
@@ -1033,16 +1132,19 @@ impl Registry {
         live: Rc<RefCell<HashSet<i64>>>,
     ) -> HubResult<PaneInfo> {
         let host_id = host.id();
-        let (proc, hook, home, agy_conversation) = {
+        let (proc, hook, home, agy_conversation, parked) = {
             let pr = pr.borrow();
             let proc = pr.agent_procs.get(&p.id).cloned().expect("an agent pane");
             let conv = pr.agy_conversations.get(&(proc.pid as i64)).cloned();
-            (proc, pr.hook_panes.get(&p.id).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv)
+            let parked = pr.claude_parked.get(&(proc.pid as i64)).cloned().filter(|_| proc.kind == AgentKind::Claude);
+            let kind = proc.kind;
+            (proc, pr.hook_panes.get(&p.id).filter(|h| h.from_agent(kind)).cloned(), Some(pr.home.clone()).filter(|h| !h.is_empty()), conv, parked)
         };
         let pid = proc.pid as i64;
         live.borrow_mut().insert(pid);
         let mut info = AgentPaneInfo {
             kind: proc.kind,
+            custom: proc.custom.clone(),
             pid: proc.pid as u32,
             session_id: None,
             transcript_path: None,
@@ -1057,9 +1159,15 @@ impl Registry {
             status: None,
             status_stopped: None,
             started_at: Some(crate::js::js_round(proc.started_at * 1000.0) as u64),
+            failure: None,
         };
         let hook_path = hook.as_ref().and_then(|h| Some(&h.data).at("transcript_path").filter(|v| Some(*v).truthy()).map(json::value_string));
-        if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
+        if let Some(b) = parked {
+            // the window shows the background session it moved its conversation to, and types into it
+            info.transcript_path = Some(b.transcript);
+            info.session_id = Some(b.session_id);
+            info.mapped_by = Some(MappedBy::Process);
+        } else if proc.kind == AgentKind::Claude && hook_path.is_some() && hook.as_ref().is_some_and(|h| h.ts >= proc.started_at - 5.0) {
             info.transcript_path = hook_path;
             info.session_id = hook.as_ref().and_then(|h| Some(&h.data).at("session_id").filter(|v| !v.is_null()).map(json::value_string));
             info.mapped_by = Some(MappedBy::Hook);
@@ -1220,6 +1328,9 @@ impl Registry {
             apply_screen(&mut p, sc.clone(), host, lines, hook.as_ref(), was.as_ref(), mode);
             p = apply_open_code_live(host, p, Some(&sc)).await;
         }
+        if proc.kind == AgentKind::Claude {
+            self.apply_failure(rt, pr, &mut p);
+        }
         let info = p.agent.clone().expect("the agent");
         // a rename the agent hasn't taken yet: done once its title says so, else typed when it's idle
         if let Some(want) = pending_name(&host_id, info.session_id.as_deref()) {
@@ -1243,6 +1354,26 @@ impl Registry {
             }
         }
         Ok(p)
+    }
+
+    /// A turn that ended on an error (the pane's last hook is a StopFailure) says why, and when a
+    /// full rate limit resets: from the session's own numbers and the account's.
+    fn apply_failure(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>, p: &mut PaneInfo) {
+        let hook = live_hook(&pr.borrow(), &p.id);
+        // the account's limits only as apply_usage takes them: this account's, and fresh
+        let signed_in = pr.borrow().account.clone();
+        let account = rt
+            .borrow()
+            .usage
+            .as_ref()
+            .filter(|u| u.account == signed_in && u.ok_at.is_some_and(|o| o != 0 && now_ms().saturating_sub(o) <= USAGE_STALE_MS))
+            .map(|u| (u.u.five_hour.clone(), u.u.seven_day.clone()));
+        let Some(a) = p.agent.as_mut() else { return };
+        a.failure = hook.filter(|_| a.state != AgentState::Working).and_then(|h| {
+            let own = a.status.as_ref().map(|s| (s.five_hour.clone(), s.seven_day.clone()));
+            let windows: Vec<RateWindow> = [own, account].into_iter().flatten().flat_map(|(f, s)| [f, s]).flatten().collect();
+            turn_failure(&h, &windows.iter().collect::<Vec<_>>(), now_ms() as f64 / 1000.0)
+        });
     }
 
     /// The agent the machine's current state shows in a pane (`findPane(..)?.pane.agent`).
@@ -1320,6 +1451,49 @@ impl Registry {
             }
             a.status = Some(st);
         }
+    }
+
+    /// Asks Codex for its limits on a machine where it's installed and signed in, every few minutes
+    /// while someone's looking.
+    fn ask_codex_limits(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>) {
+        let ready = {
+            let p = pr.borrow();
+            p.installed.contains(&AgentKind::Codex) && p.signed_in.contains(&AgentKind::Codex)
+        };
+        if !ready {
+            rt.borrow_mut().codex = None;
+            return;
+        }
+        let watched = POLL.with(|p| p.get()) != QUIET_POLL_MS;
+        let (due, host) = {
+            let r = rt.borrow();
+            (!r.codex_loading && r.codex.as_ref().is_none_or(|c| now_ms().saturating_sub(c.at) > CODEX_EVERY_MS), r.host.clone())
+        };
+        if !due || !watched {
+            return;
+        }
+        rt.borrow_mut().codex_loading = true;
+        let rt2 = rt.clone();
+        spawn(async move {
+            let got = match codex_limits::fetch(&host).await {
+                Ok(r) => r,
+                Err(e) => Err(e.message),
+            };
+            let id = host.id();
+            {
+                let mut me = rt2.borrow_mut();
+                let kept = me.codex.as_ref().and_then(|c| c.limits.clone());
+                me.codex = Some(match got {
+                    Ok(limits) => CodexLimits { limits, at: now_ms() },
+                    Err(e) => {
+                        console::error(&format!("codex limits {id}: {e}"));
+                        CodexLimits { limits: kept, at: now_ms() }
+                    }
+                });
+                me.codex_loading = false;
+            }
+            registry().refresh(&id, 0);
+        });
     }
 
     /// A Claude session writes its status line after every message. If its transcript has moved on
@@ -1466,13 +1640,26 @@ impl Registry {
     async fn heal_integration(&self, rt: &Rt, pr: &Rc<RefCell<ProbeResult>>) -> HubResult<()> {
         let host = rt.borrow().host.clone();
         let cfg = host.config();
-        let (integration, agy, installed) = {
+        let (integration, agy, installed, hooked) = {
             let p = pr.borrow();
-            (p.integration, p.agy_integration, p.installed.clone())
+            (p.integration, p.agy_integration, p.installed.clone(), p.hooked.clone())
         };
         if integration == IntegrationState::Installed && cfg.keep_integration.is_none() {
             self.set_keep_integration(&cfg.id, true)?;
             return Ok(());
+        }
+        // an agent with hooks turned up after the integration was installed (or its settings were
+        // replaced): add Inyon's hook to it
+        let missing = HOOKED_AGENTS.iter().any(|k| installed.contains(k) && !hooked.contains(k));
+        if cfg.keep_integration == Some(true) && integration == IntegrationState::Installed && missing {
+            let healed = rt.borrow().hooks_healed_at;
+            if healed.is_none_or(|h| h == 0 || now_ms().saturating_sub(h) >= HEAL_EVERY_MS) {
+                rt.borrow_mut().hooks_healed_at = Some(now_ms());
+                console::log(&format!("agent hooks missing on {}: adding them", cfg.id));
+                install_agent_hooks(&host).await?;
+                self.refresh(&cfg.id, 500);
+                return Ok(());
+            }
         }
         // agy turned up after the integration was installed (or its settings were replaced): add its status line
         if cfg.keep_integration == Some(true) && integration == IntegrationState::Installed && agy == Some(false) && installed.contains(&AgentKind::Antigravity) {
@@ -1538,9 +1725,25 @@ impl Registry {
                     }
                     let kind = p.agent.as_ref().map(|a| a.kind);
                     let done = {
-                        let (host, pane, title) = (host_id.clone(), p.id.clone(), title.clone());
-                        let body = format!("{agent_name} finished");
-                        move || registry().emit(RegistryEvent::Notify { host, pane, kind: NotifyKind::Done, title, body, agent: kind })
+                        let (host, pane, title, rt) = (host_id.clone(), p.id.clone(), title.clone(), rt.clone());
+                        let failure = p.agent.as_ref().and_then(|a| a.failure.as_ref()).map(|f| failure_text(f, now_ms() as f64 / 1000.0));
+                        let body = match &failure {
+                            Some(f) => format!("{agent_name} stopped: {f}"),
+                            None => format!("{agent_name} finished"),
+                        };
+                        let companion = p.companion == Some(true);
+                        let stopped = failure.is_some().then(|| body.clone());
+                        move || {
+                            // its reply goes to wherever you talk to it, typed in the terminal or not
+                            if companion {
+                                return registry().emit(RegistryEvent::CompanionDone { host, pane, failure: stopped });
+                            }
+                            // they're at that terminal and saw it finish
+                            if typed_lately(&rt, &pane) {
+                                return;
+                            }
+                            registry().emit(RegistryEvent::Notify { host, pane, kind: NotifyKind::Done, title, body, agent: kind })
+                        }
                     };
                     if was == now {
                         if now == AgentState::Idle && had_background && !background {
@@ -1720,11 +1923,11 @@ fn was_active(pr: &mut ProbeResult, pane: &str, at: f64) {
     }
 }
 
-/// The pane's last Claude hook event, if it came from the agent running there now.
+/// The pane's last hook event, if it came from the agent running there now.
 fn live_hook(pr: &ProbeResult, pane: &str) -> Option<HookPaneState> {
     let hook = pr.hook_panes.get(pane)?;
     let proc = pr.agent_procs.get(pane)?;
-    (hook.ts >= proc.started_at - 5.0).then(|| hook.clone())
+    (hook.ts >= proc.started_at - 5.0 && hook.from_agent(proc.kind)).then(|| hook.clone())
 }
 
 /// What runs in the background after a screen read. The footer that lists it is hidden while a
@@ -1766,7 +1969,8 @@ fn apply_screen(p: &mut PaneInfo, mut sc: ScreenState, host: &Host, lines: &[Str
     } else {
         Shown::Idle
     };
-    info.state = if info.kind == AgentKind::Claude {
+    // the agents whose hooks say when a turn starts and ends
+    info.state = if matches!(info.kind, AgentKind::Claude | AgentKind::Copilot | AgentKind::Gemini | AgentKind::Antigravity) {
         shown_state(TURNS.with(|t| t.borrow_mut().state(&turn_key(&host_id, &p.id), shown, &lines.join("\n"), hook, now_ms())))
     } else {
         shown_state(shown)
@@ -1803,11 +2007,17 @@ fn apply_screen(p: &mut PaneInfo, mut sc: ScreenState, host: &Host, lines: &[Str
         }
         return;
     };
-    if !prompt.multi && prompt.tabs.as_ref().is_none_or(Vec::is_empty) && prompt.input.is_none() {
-        info.options =
-            Some(prompt.options.iter().filter(|o| Some(o.n) != prompt.free_text_option).take(4).map(|o| QuickOption { n: o.n as u32, label: o.label.clone() }).collect());
-    }
+    info.options = quick_options(prompt);
     info.waiting_for = Some(prompt_summary(prompt));
+}
+
+/// The answers the overview offers beside its one line (single-choice prompts only, up to four):
+/// none when that line doesn't hold the whole question (`prompt_whole`).
+pub fn quick_options(prompt: &ScreenPrompt) -> Option<Vec<QuickOption>> {
+    if prompt.multi || prompt.tabs.as_ref().is_some_and(|t| !t.is_empty()) || prompt.input.is_some() || !prompt_whole(prompt) {
+        return None;
+    }
+    Some(prompt.options.iter().filter(|o| Some(o.n) != prompt.free_text_option).take(4).map(|o| QuickOption { n: o.n as u32, label: o.label.clone() }).collect())
 }
 
 /// A host's settings as the browser sees them: the pairing token's hash stays on the hub.
@@ -1893,9 +2103,10 @@ async fn apply_open_code_live(host: &Host, mut pane: PaneInfo, sc: Option<&Scree
         // its subagents' work counts as background, like a shell the footer lists
         info.background = live.background.clone();
         if let Some(perm) = &live.permission {
+            // only the permission's kind ("bash"), not what it would allow: no quick answers, as
+            // for any question the one line doesn't hold (prompt_whole)
             info.waiting_for = Some(Some(perm).at("permission").filter(|v| !v.is_null()).map_or_else(|| "Permission requested".to_owned(), json::value_string));
-            info.options =
-                Some(vec![QuickOption { n: 1, label: "Allow once".into() }, QuickOption { n: 2, label: "Always allow".into() }, QuickOption { n: 3, label: "Reject".into() }]);
+            info.options = None;
         }
     }
     let needs_id = pane.agent.as_ref().and_then(|a| a.status.as_ref()).is_some_and(|s| s.model_id.is_none());

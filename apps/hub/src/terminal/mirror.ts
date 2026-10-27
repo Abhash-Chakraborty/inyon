@@ -130,20 +130,22 @@ export interface Screen {
   height: number
   cursor: { x: number; y: number; visible: boolean }
   lines: string[]
+  /** a full-screen program (the alternate screen), which takes the mouse wheel and clicks */
+  mouse?: boolean
 }
 
 /** Reads the pane's size, cursor and screen (with colours) in one go. */
 export const readCommand = (pane: string) =>
-  `tmux display -p -t ${shq(pane)} '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}' && tmux capture-pane -p -e -t ${shq(pane)}`
+  `tmux display -p -t ${shq(pane)} '#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{alternate_on}' && tmux capture-pane -p -e -t ${shq(pane)}`
 
 export function parseScreen(stdout: string): Screen | undefined {
   const [head, ...lines] = stdout.replace(/\r\n/g, '\n').split('\n')
-  const [w, h, x, y, flag] = (head ?? '').trim().split(/\s+/).map(Number)
+  const [w, h, x, y, flag, alt] = (head ?? '').trim().split(/\s+/).map(Number)
   if (!(w > 0 && h > 0)) return undefined
   // capture-pane ends with a newline; keep exactly one entry per row
   if (lines.length > h) lines.length = h
   while (lines.length < h) lines.push('')
-  return { width: w, height: h, cursor: { x: x || 0, y: y || 0, visible: flag !== 0 }, lines }
+  return { width: w, height: h, cursor: { x: x || 0, y: y || 0, visible: flag !== 0 }, lines, mouse: alt === 1 }
 }
 
 /**
@@ -154,6 +156,10 @@ export function parseScreen(stdout: string): Screen | undefined {
 export function drawScreen(prev: Screen | undefined, next: Screen): string {
   // bracketed paste on, so a pasted block arrives as one paste rather than lines that each submit
   let out = prev ? '' : '\x1b[?7l\x1b[?2004h\x1b[0m\x1b[H\x1b[2J'
+  // a full-screen program (Claude Code's, say) scrolls with the wheel: the browser terminal reports
+  // the mouse while one runs, and those reports go to it as they are (psmux passes them on); a full
+  // redraw (after a resize, say) says the mode again, since the browser terminal may still have it on
+  if (!prev || !!prev.mouse !== !!next.mouse) out += next.mouse ? '\x1b[?1000h\x1b[?1006h' : '\x1b[?1000l\x1b[?1006l'
   for (let i = 0; i < next.lines.length; i++) {
     if (prev && prev.lines[i] === next.lines[i] && prev.width === next.width) continue
     out += `\x1b[${i + 1};1H\x1b[0m${next.lines[i]}\x1b[0m\x1b[K`

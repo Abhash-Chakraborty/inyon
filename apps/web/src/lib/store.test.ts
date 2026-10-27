@@ -54,6 +54,28 @@ describe('hub messages', () => {
     expect(chat('live').live).toEqual([])
   })
 
+  test('text read off the screen gives way to a new reply on record, and comes back only if the hub sends it again', () => {
+    reset('scr', [item.user('tea?'), item.text('An older reply.')])
+    emit({ t: 'chat.live', key: 'scr', items: [{ id: 'screen:1', kind: 'text', text: 'Tea likely began in China' }] })
+    // records already there (an older reply) don't hide it
+    expect(chat('scr').live).toEqual([{ id: 'screen:1', kind: 'text', text: 'Tea likely began in China' }])
+    // a tool call on record isn't the reply: it stays
+    emit({ t: 'chat.append', key: 'scr', items: [{ ...(item.text('x') as Extract<ChatItem, { kind: 'assistant' }>), seq: 100_050, block: { type: 'tool_use', id: 't1', name: 'Bash', input: {} } }] })
+    expect(chat('scr').live).toHaveLength(1)
+    // the reply lands: the screen copy goes in the same update
+    emit({ t: 'chat.append', key: 'scr', items: [{ ...item.text('Tea likely began in China, where...'), seq: 100_051 }] })
+    expect(chat('scr').live).toEqual([])
+    // what's still being written after it comes back from the hub
+    emit({ t: 'chat.live', key: 'scr', items: [{ id: 'screen:1', kind: 'text', text: 'During the Tang dynasty' }] })
+    expect(chat('scr').live).toEqual([{ id: 'screen:1', kind: 'text', text: 'During the Tang dynasty' }])
+    // Antigravity and Gemini send the whole conversation again: a new reply in it does the same
+    const all = chat('scr').items
+    emit({ t: 'chat.reset', key: 'scr', info: chatInfo({ title: 'T' }), items: all, hasMore: false })
+    expect(chat('scr').live).toHaveLength(1)
+    emit({ t: 'chat.reset', key: 'scr', info: chatInfo({ title: 'T' }), items: [...all, { ...item.text('During the Tang dynasty, tea'), seq: 100_060 }], hasMore: false })
+    expect(chat('scr').live).toEqual([])
+  })
+
   test('a resent latest page keeps the earlier messages already loaded', () => {
     const old = [item.user('1'), item.text('2'), item.user('3'), item.text('4')]
     reset('k', old, true)
@@ -159,6 +181,40 @@ describe('pending messages', () => {
     patchChat('k', () => ({ pending: [p('a')] }))
     patchChat('k', () => ({ pending: [] }))
     expect(sessionStorage.getItem('inyon.pending.k')).toBeNull()
+  })
+})
+
+describe('the companion agent', () => {
+  test('its reply shows once as a toast that opens its chat, cut short when long', () => {
+    useStore.setState({ toasts: [] })
+    const reply = { t: 'companion.reply' as const, id: 'r-1', host: 'local', pane: '%9', text: 'Codex on the laptop needs you.', at: 1 }
+    emit(reply)
+    emit(reply)
+    expect(useStore.getState().toasts.map((t) => [t.title, t.body, t.href, t.tone])).toEqual([['Companion', 'Codex on the laptop needs you.', '/m/local/p/9', 'info']])
+    // with its agent's mark, once the overview shows the pane
+    useStore.setState({ hosts: [host('local', { panes: [agentPane('%9', 'codex', { companion: true })] })] })
+    emit({ ...reply, id: 'r-1b' })
+    expect(useStore.getState().toasts.at(-1)!.agent).toBe('codex')
+    emit({ ...reply, id: 'r-2', text: 'word '.repeat(80), error: true })
+    const last = useStore.getState().toasts.at(-1)!
+    expect(last.tone).toBe('error')
+    expect(last.body!.length).toBeLessThanOrEqual(241)
+    expect(last.body!.endsWith('…')).toBe(true)
+  })
+
+  test('its open chat holds the toast back, its terminal does not', () => {
+    const reply = { t: 'companion.reply' as const, host: 'local', pane: '%9', text: 'Done.', at: 1 }
+    try {
+      history.replaceState(null, '', '/m/local/p/9')
+      useStore.setState({ toasts: [] })
+      emit({ ...reply, id: 'v-1' })
+      expect(useStore.getState().toasts).toEqual([])
+      history.replaceState(null, '', '/m/local/p/9?view=terminal')
+      emit({ ...reply, id: 'v-2' })
+      expect(useStore.getState().toasts.map((t) => t.body)).toEqual(['Done.'])
+    } finally {
+      history.replaceState(null, '', '/')
+    }
   })
 })
 

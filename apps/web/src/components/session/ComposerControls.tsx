@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
-import { ChevronDown, Gauge, Plug, Shield, Target } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@inyon/protocol'
+import { AlertCircle, ChevronDown, Clock3, Gauge, Plug, Shield, Target } from 'lucide-react'
+import { AGENTS, type AgentKind, type AgentDef, type ChosenControls } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
 import { modelName } from '../../lib/format.ts'
@@ -41,6 +41,29 @@ export function EffortBars({ level, levels }: { level?: string; levels: string[]
   )
 }
 
+/** The model a pick held for later names: its id, or the agent's own `/model` value for it. */
+export function chosenModel(def: Pick<AgentDef, 'models' | 'set'>, value: string, effort?: string) {
+  return def.models.find((m) => m.id === value || def.set.model?.(m.id, effort) === `/model ${value}`)
+}
+
+/** What a control's chip and menu show for a pick held until the agent is free (see the hub's
+ * chosen.rs): the picked value marked as waiting, or why it didn't take. */
+function waiting(c: ChosenControls | undefined, picked: string | undefined, label: string | undefined, agentName: string, current: string, drop: () => void) {
+  if (picked === undefined || !label) return undefined
+  if (c?.error) {
+    return {
+      mark: <AlertCircle className="size-3.5 shrink-0 text-danger" aria-label="Didn't switch" />,
+      title: `Couldn't switch to ${label}: ${c.error}`,
+      items: [{ key: 'chosen', separated: true, label: `Couldn't switch to ${label}`, hint: c.error, icon: <AlertCircle className="size-4" />, onSelect: drop } satisfies MenuItem],
+    }
+  }
+  return {
+    mark: <Clock3 className="size-3 shrink-0 opacity-70" aria-label="Waiting" />,
+    title: `Switches to ${label} when ${agentName} is free`,
+    items: [{ key: 'chosen', separated: true, label: "Don't switch", hint: `Keeps ${current}`, onSelect: drop } satisfies MenuItem],
+  }
+}
+
 /** Model, effort, permission mode and goal, in the composer where you use them. */
 export function ComposerControls({ s }: { s: SessionModel }) {
   const [goalOpen, setGoalOpen] = useState(false)
@@ -63,10 +86,21 @@ export function ComposerControls({ s }: { s: SessionModel }) {
   const listed = def.models.find((m) => m.id === modelId)?.label.split(' · ').pop()
   const modelLabel = listed ?? status?.model ?? (info?.model ? modelName(info.model) : 'Default model')
   const mode = s.screen?.mode ?? s.ref?.pane.agent?.mode ?? info?.mode
+  // picks waiting for the agent to be free, or that didn't take
+  const chosen = info?.chosen
+  const name = AGENTS[agent].name
+  const effortLabel = status?.effort ? EFFORT_LABEL[status.effort] ?? status.effort : 'Default'
+  const pickedModel = chosen?.model !== undefined ? chosenModel(def, chosen.model, status?.effort) : undefined
+  const wModel = waiting(chosen, chosen?.model, pickedModel?.label.split(' · ').pop() ?? chosen?.model, name, modelLabel, actions.dropChosen)
+  const wEffort = waiting(chosen, chosen?.effort, chosen?.effort && (EFFORT_LABEL[chosen.effort] ?? chosen.effort), name, effortLabel, actions.dropChosen)
+  const wMode = waiting(chosen, chosen?.mode, chosen?.mode && modeLabel(chosen.mode, agent, def.modes), name, modeLabel(mode, agent, def.modes), actions.dropChosen)
+  const pendingModel = !chosen?.error ? pickedModel?.id : undefined
+  const pendingEffort = !chosen?.error ? chosen?.effort : undefined
+  const pendingMode = !chosen?.error ? chosen?.mode : undefined
   const goal = info?.goal
   const goalOn = !!goal && !goal.met
   const modelItems: MenuItem[] = [
-    ...def.models.map((m) => ({ key: m.id, label: m.label, hint: m.note, selected: m.id === modelId, onSelect: () => actions.setModel(m.id) })),
+    ...def.models.map((m) => ({ key: m.id, label: m.label, hint: m.note, selected: m.id === (pendingModel ?? modelId), onSelect: () => actions.setModel(m.id) })),
     // OpenCode's list is what its connected providers offer; one more provider adds to it
     ...(agent === 'opencode' ? [{ key: 'connect', label: 'Connect a provider…', icon: <Plug className="size-4" />, separated: def.models.length > 0, onSelect: () => setProviders(true) }] : []),
   ]
@@ -76,10 +110,11 @@ export function ComposerControls({ s }: { s: SessionModel }) {
         <Menu
           name="model"
           header="Model"
-          items={modelItems}
+          items={[...modelItems, ...(wModel?.items ?? [])]}
           trigger={({ toggle, ref, open }) => (
-            <Chip innerRef={ref} onClick={toggle} open={open} title="Model">
-              <span className="truncate">{modelLabel}</span>
+            <Chip innerRef={ref} onClick={toggle} open={open} title={wModel?.title ?? 'Model'}>
+              {wModel?.mark}
+              <span className="truncate">{wModel && !chosen?.error ? (pickedModel?.label.split(' · ').pop() ?? chosen?.model) : modelLabel}</span>
               <ChevronDown className="size-3 shrink-0 opacity-60" />
             </Chip>
           )}
@@ -93,16 +128,18 @@ export function ComposerControls({ s }: { s: SessionModel }) {
           items={[
             // OpenCode runs a model without a variant unless one is picked
             ...(agent === 'opencode' ? [{ key: 'default', label: 'Default', selected: !status?.effort, onSelect: () => actions.setEffort('default') }] : []),
-            ...s.efforts.map((e) => ({ key: e, label: EFFORT_LABEL[e] ?? e, selected: status?.effort === e, onSelect: () => actions.setEffort(e) })),
+            ...s.efforts.map((e) => ({ key: e, label: EFFORT_LABEL[e] ?? e, selected: (pendingEffort ?? status?.effort) === e, onSelect: () => actions.setEffort(e) })),
             // Claude Code keeps its ultracode switch next to the levels; so does this menu
             ...(def.set.ultracode
               ? [{ key: 'ultracode', separated: true, label: `Ultracode: ${s.ultracode ? 'on' : 'off'}`, hint: 'A dynamic workflow for every task', icon: <Gauge className="size-4" />, selected: !!s.ultracode, onSelect: () => actions.ultracode(!s.ultracode) }]
               : []),
+            ...(wEffort?.items ?? []),
           ]}
           trigger={({ toggle, ref, open }) => (
-            <Chip innerRef={ref} onClick={toggle} open={open} title={`Reasoning effort${status?.effort ? `: ${EFFORT_LABEL[status.effort] ?? status.effort}` : ''}${s.ultracode ? ' · Ultracode on' : ''}`}>
-              <EffortBars level={status?.effort} levels={s.efforts} />
-              <span>{status?.effort ? EFFORT_LABEL[status.effort] ?? status.effort : 'Default'}</span>
+            <Chip innerRef={ref} onClick={toggle} open={open} title={wEffort?.title ?? `Reasoning effort${status?.effort ? `: ${effortLabel}` : ''}${s.ultracode ? ' · Ultracode on' : ''}`}>
+              {wEffort?.mark}
+              <EffortBars level={pendingEffort ?? status?.effort} levels={s.efforts} />
+              <span>{pendingEffort ? EFFORT_LABEL[pendingEffort] ?? pendingEffort : effortLabel}</span>
               {s.ultracode && <Gauge className="ultracode-mark size-3.5 shrink-0" aria-label="Ultracode on" />}
             </Chip>
           )}
@@ -113,11 +150,14 @@ export function ComposerControls({ s }: { s: SessionModel }) {
           name="mode"
           header={agent === 'opencode' ? 'Agent' : 'Permission mode'}
           width={220}
-          items={def.modes.map((m) => ({ key: m.id, label: m.label, selected: modeMatches(mode, m.id, agent), onSelect: () => actions.setMode(m.id) }))}
+          items={[
+            ...def.modes.map((m) => ({ key: m.id, label: m.label, selected: pendingMode ? pendingMode === m.id : modeMatches(mode, m.id, agent), onSelect: () => actions.setMode(m.id) })),
+            ...(wMode?.items ?? []),
+          ]}
           trigger={({ toggle, ref, open }) => (
-            <Chip innerRef={ref} onClick={toggle} open={open} title={`${agent === 'opencode' ? 'Agent' : 'Permission mode'}: ${modeLabel(mode, agent, def.modes)}`}>
-              <Shield className="size-3.5 shrink-0" />
-              <span className="hidden truncate @[460px]:inline">{modeLabel(mode, agent, def.modes)}</span>
+            <Chip innerRef={ref} onClick={toggle} open={open} title={wMode?.title ?? `${agent === 'opencode' ? 'Agent' : 'Permission mode'}: ${modeLabel(mode, agent, def.modes)}`}>
+              {wMode?.mark ?? <Shield className="size-3.5 shrink-0" />}
+              <span className="hidden truncate @[460px]:inline">{modeLabel(pendingMode ?? mode, agent, def.modes)}</span>
             </Chip>
           )}
         />

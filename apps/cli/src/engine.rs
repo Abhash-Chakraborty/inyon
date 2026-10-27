@@ -52,12 +52,11 @@ pub fn remember_legacy(unset_forgets: bool) {
     }
 }
 
-/// The hub in Rust, an opt-in test of what 0.20 makes the default: INYON_HUB_IMPL=rust runs the
-/// hub built into this program instead of the Bun engine's, and `bun` goes back. Set in the
-/// environment or in hub.env; without either, the note `INYON_HUB_IMPL=rust inyon hub start` left
-/// still counts, so the service keeps to the hub it was set up with. Linux and macOS only, as the
-/// hub is. The kill switch (INYON_LEGACY_ENGINE) puts everything back on the Bun engine, the hub
-/// included.
+/// The hub built into this program, in Rust: the default from 0.21 (an opt-in test in 0.20).
+/// INYON_HUB_IMPL=bun runs the Bun engine's hub instead, set in the environment or in hub.env;
+/// without either, the note `INYON_HUB_IMPL=bun inyon hub start` left still counts, so the
+/// service keeps to the hub it was set up with. Linux and macOS only, as the hub is. The kill
+/// switch (INYON_LEGACY_ENGINE) puts everything back on the Bun engine, the hub included.
 pub fn rust_hub() -> bool {
     picks_rust_hub(cfg!(unix), legacy(), hub_impl_wanted())
 }
@@ -66,9 +65,24 @@ fn picks_rust_hub(unix: bool, legacy: bool, wanted: bool) -> bool {
     unix && !legacy && wanted
 }
 
-/// Whether INYON_HUB_IMPL (or the note) asks for the Rust hub, the kill switch aside.
+/// Whether the hub is the Rust one, the kill switch aside: what INYON_HUB_IMPL says, else the
+/// note, else yes.
 pub fn hub_impl_wanted() -> bool {
-    hub_impl_asked().unwrap_or_else(|| hub_impl_note().exists())
+    wanted_from(hub_impl_asked(), hub_impl_noted)
+}
+
+fn wanted_from(asked: Option<bool>, noted: impl FnOnce() -> Option<bool>) -> bool {
+    asked.or_else(noted).unwrap_or(true)
+}
+
+/// What the note says: false when the hub was set up with INYON_HUB_IMPL=bun. A note from 0.20
+/// says rust.
+fn hub_impl_noted() -> Option<bool> {
+    std::fs::read_to_string(hub_impl_note()).ok().map(|t| note_says_rust(&t))
+}
+
+fn note_says_rust(text: &str) -> bool {
+    !text.to_ascii_lowercase().contains("bun")
 }
 
 /// INYON_HUB_IMPL in hub.env, when it's there.
@@ -103,24 +117,26 @@ fn says_rust(value: &str) -> bool {
     value.trim().eq_ignore_ascii_case("rust")
 }
 
-/// The note that this machine's hub service runs the Rust hub.
+/// The note of the hub the service was set up with, when INYON_HUB_IMPL chose it.
 pub fn hub_impl_note() -> PathBuf {
     crate::paths::node_dir().join("hub-impl")
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum NoteChange {
-    Write,
+    /// the Bun hub was asked for in the shell
+    WriteBun,
     Remove,
     Keep,
 }
 
 /// What setting up the hub does to the note. Only the shell's variable is written down: a line in
-/// hub.env is read by the service itself, so deleting it later works as anyone would expect.
+/// hub.env is read by the service itself, so deleting it later works as anyone would expect. The
+/// Rust hub is the default, so asking for it needs no note.
 fn note_change(from_env: Option<bool>, from_file: Option<bool>, unset_forgets: bool) -> NoteChange {
     match (from_env, from_file) {
-        (Some(true), _) => NoteChange::Write,
-        (Some(false), _) | (None, Some(false)) => NoteChange::Remove,
+        (Some(false), _) => NoteChange::WriteBun,
+        (Some(true), _) | (None, Some(true)) => NoteChange::Remove,
         (None, None) if unset_forgets => NoteChange::Remove,
         _ => NoteChange::Keep,
     }
@@ -130,9 +146,9 @@ fn note_change(from_env: Option<bool>, from_file: Option<bool>, unset_forgets: b
 /// switch. Called when the hub's service is set up.
 pub fn remember_hub_impl(unset_forgets: bool) {
     match note_change(env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)), hub_impl_in_file(), unset_forgets) {
-        NoteChange::Write => {
+        NoteChange::WriteBun => {
             let _ = crate::paths::ensure_node_dir();
-            let _ = std::fs::write(hub_impl_note(), "INYON_HUB_IMPL=rust when the hub was set up\n");
+            let _ = std::fs::write(hub_impl_note(), "INYON_HUB_IMPL=bun when the hub was set up\n");
         }
         NoteChange::Remove => {
             let _ = std::fs::remove_file(hub_impl_note());
@@ -148,8 +164,24 @@ pub fn needs_bun(first: &str) -> bool {
 }
 
 /// Answers an engine command with the engine built into this program, as `inyon-engine` would.
-/// `hub` goes on to the Bun engine, or runs the Rust hub with INYON_HUB_IMPL=rust.
+/// `hub` runs the Rust hub, or goes on to the Bun engine with INYON_HUB_IMPL=bun.
 pub fn run_builtin(args: &[String]) -> i32 {
+    // a link or hub connection the Inyon app started: a new version of the app replaces an old one
+    // an older updater left running (see app::relaunch_if_older)
+    if cfg!(windows) && crate::paths::env_var("INYON_APP").is_some() && args.first().is_some_and(|a| a == "link" || a == "connect") {
+        std::thread::spawn(|| {
+            // not while the update that started this engine is still restarting jobs: its next
+            // restart would find the app gone. Then once, 10 seconds after. A "running" status an
+            // updater left behind stops counting after 30 minutes, so this waits a little longer
+            for _ in 0..31 * 6 {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                if !crate::update::under_way() {
+                    crate::app::relaunch_if_older(&crate::sys::RealProc);
+                    return;
+                }
+            }
+        });
+    }
     inyon_engine::cli::run(args, |rest| {
         if cfg!(windows) {
             eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
@@ -358,6 +390,7 @@ pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
 /// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by whichever engine
 /// connects (crates/inyon-engine/src/hub_tls.rs, apps/node/pin.ts), never made an authority here.
 fn command(engine: &Path) -> Command {
+    // hidden by the caller: quiet for what's read back, console_child for a terminal
     let mut c = Command::new(engine);
     c.env("INYON_CLI", std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default());
     c
@@ -388,6 +421,7 @@ fn engine_command(first: &str, download: bool) -> Result<(Command, PathBuf), Str
     }
     if !needs_bun(first) {
         let me = std::env::current_exe().map_err(|e| e.to_string())?;
+        // hidden by the caller, as above
         let mut c = Command::new(&me);
         c.arg("engine");
         return Ok((c, me));
@@ -467,6 +501,7 @@ fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
         return c.stdin(Stdio::inherit()).stdout(Stdio::inherit()).stderr(Stdio::inherit()).status();
     }
     c.env("INYON_CONSOLE", "1").stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    crate::sys::console_child(&mut c);
     let mut child = c.spawn()?;
     #[cfg(windows)]
     let _job = inyon_engine::winjob::ends_with_me(&child);
@@ -552,6 +587,8 @@ pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String>
     // asked from the Inyon window, which has no console, the engine mustn't open one of its own
     quiet(&mut c);
     let mut child = c.spawn().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))?;
+    // asked from the Inyon app's window: it ends with the app, like everything the app runs
+    crate::app::hold(&child);
     let stderr = child.stderr.take().map(|mut e| {
         std::thread::spawn(move || {
             let mut text = String::new();
@@ -664,17 +701,33 @@ mod tests {
     }
 
     #[test]
-    fn only_the_shells_variable_is_written_down_and_bun_anywhere_forgets_it() {
+    fn only_the_shells_bun_is_written_down_and_rust_anywhere_forgets_it() {
         use NoteChange::*;
-        assert_eq!(note_change(Some(true), None, false), Write);
-        assert_eq!(note_change(Some(true), Some(false), true), Write);
+        assert_eq!(note_change(Some(false), None, false), WriteBun);
+        assert_eq!(note_change(Some(false), Some(true), true), WriteBun);
         // a hub.env line stays where the service reads it: deleting it later switches back
-        assert_eq!(note_change(None, Some(true), false), Keep);
-        assert_eq!(note_change(None, Some(true), true), Keep);
-        assert_eq!(note_change(None, Some(false), false), Remove);
-        assert_eq!(note_change(Some(false), Some(true), false), Remove);
+        assert_eq!(note_change(None, Some(false), false), Keep);
+        assert_eq!(note_change(None, Some(false), true), Keep);
+        assert_eq!(note_change(None, Some(true), false), Remove);
+        assert_eq!(note_change(Some(true), Some(false), false), Remove);
         assert_eq!(note_change(None, None, true), Remove);
         assert_eq!(note_change(None, None, false), Keep);
+    }
+
+    #[test]
+    fn a_note_says_bun_only_when_bun_was_asked_for() {
+        assert!(!note_says_rust("INYON_HUB_IMPL=bun when the hub was set up\n"));
+        // what 0.20 wrote for the opt-in
+        assert!(note_says_rust("INYON_HUB_IMPL=rust when the hub was set up\n"));
+        assert!(note_says_rust(""));
+    }
+
+    #[test]
+    fn the_rust_hub_is_the_default() {
+        assert!(wanted_from(None, || None), "no variable, no hub.env line, no note");
+        assert!(!wanted_from(None, || Some(false)), "set up on the Bun hub, it stays there");
+        assert!(wanted_from(Some(true), || Some(false)), "INYON_HUB_IMPL comes first");
+        assert!(!wanted_from(Some(false), || None));
     }
 
     #[test]

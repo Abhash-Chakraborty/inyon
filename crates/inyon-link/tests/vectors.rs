@@ -9,7 +9,7 @@ use inyon_link::identity::{is_machine_id, noise_key_of, verify, z32decode, z32en
 use inyon_link::noise::{Initiator, KeyPair, Responder, Transport, PROTOCOL};
 use inyon_link::pair::{pair_link, parse_pair_link, PairInfo};
 use inyon_link::pkarr::{decode_published, encode_published, signable, Record, PKARR_RELAYS};
-use inyon_link::relay::{auth_message, frame, machine_path, phone_path, relay_ws, unframe};
+use inyon_link::relay::{auth_message, auth_message_v2, frame, machine_path, phone_path, relay_origin, relay_ws, unframe};
 use serde_json::{json, Value};
 
 fn read(name: &str) -> Value {
@@ -287,6 +287,19 @@ fn relay_frames_and_auth() {
         let msg = auth_message(s(&a["nonce"]));
         assert_eq!(hex::encode(&msg), s(&a["message"]));
         assert_eq!(hex::encode(id.sign(&msg)), s(&a["signature"]));
+    }
+    for a in v["auth_v2"].as_array().unwrap() {
+        let id = Identity::from_seed(key(&a["seed"]));
+        let msg = auth_message_v2(s(&a["origin"]), s(&a["nonce"]));
+        assert_eq!(hex::encode(&msg), s(&a["message"]));
+        assert_eq!(hex::encode(id.sign(&msg)), s(&a["signature"]));
+        // made for one relay, it doesn't verify for another
+        let other = auth_message_v2("https://other.example", s(&a["nonce"]));
+        assert!(inyon_link::verify(&id.id, &msg, &id.sign(&msg)));
+        assert!(!inyon_link::verify(&id.id, &other, &id.sign(&msg)));
+    }
+    for o in v["origins"].as_array().unwrap() {
+        assert_eq!(relay_origin(s(&o["relay"])).as_deref(), o["origin"].as_str(), "{}", o["relay"]);
     }
     let id = s(&read("pkarr")["machine_id"]).to_string();
     assert_eq!(machine_path(&id), s(&v["paths"]["machine"]));

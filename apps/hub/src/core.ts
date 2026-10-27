@@ -2,12 +2,13 @@ import type { AgentKind, ClientMsg, HostConfig, ServerMsg } from '@inyon/protoco
 import { loadSettings, saveSettings } from './config.ts'
 import { HttpError, publicConfig, registry } from './hosts/registry.ts'
 import { watchers, type Subscriber } from './claude/watcher.ts'
-import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, setUltracode, interrupt, reconnectAgent, renamePane, restartAgent, startAgent, stopTask } from './claude/actions.ts'
+import { answer, codexRewind, endSession, exitAgent, findTaskOutput, forkConversation, inputAnswer, keys, launch, remoteControl, sendMessage, setMode, setUltracode, interrupt, reconnectAgent, renamePane, renameTmuxSession, restartAgent, startAgent, stopTask } from './claude/actions.ts'
 import {
   cleanUploads, listCommands, listConfigs, listFiles, listSubagents, readConfig, readTranscript,
   startUploadJanitor, taskOutput, uploadFiles, uploadPiece, uploadUsage, writeConfig,
 } from './features/features.ts'
 import { ensureSessions, runSetup, setKeepSession, setupReport } from './features/setup.ts'
+import { tempDelete, tempFiles, tempList, tempPreview } from './features/temp.ts'
 import { answerSignIn, readSignIn, startSignIn, stopSignIn } from './features/signin.ts'
 import { connectProvider, disconnectProvider, listProviders } from './features/providers.ts'
 import { installIntegration, uninstallIntegration } from './claude/integration.ts'
@@ -341,6 +342,7 @@ export const coreRoutes: Routes = {
         ...cur,
         keepSession: cur.keepSession,
         autoResume: typeof b.autoResume === 'boolean' ? b.autoResume : cur.autoResume,
+        machinesSend: typeof b.machinesSend === 'boolean' ? b.machinesSend : cur.machinesSend,
         uploads: {
           retentionDays: Math.max(0, Math.min(365, Number(u.retentionDays ?? cur.uploads.retentionDays) | 0)),
           maxMB: Math.max(1, Math.min(2048, Number(u.maxMB ?? cur.uploads.maxMB) | 0)),
@@ -377,6 +379,22 @@ export const coreRoutes: Routes = {
     POST: api(async (req) => {
       const b = await body<{ olderThanDays?: number }>(req)
       return json(await cleanUploads(req.params.id, Number(b.olderThanDays ?? 0)))
+    }),
+  },
+  // agent temp files, through the machine's own `inyon temp` (features/temp.ts)
+  '/api/hosts/:id/temp': {
+    GET: api(async (req) => json(await tempList(req.params.id))),
+  },
+  '/api/hosts/:id/temp/files': {
+    GET: api(async (req) => json(await tempFiles(req.params.id, q(req, 'path')))),
+  },
+  '/api/hosts/:id/temp/preview': {
+    GET: api(async (req) => json(await tempPreview(req.params.id, q(req, 'path'), Number(q(req, 'max')) || undefined))),
+  },
+  '/api/hosts/:id/temp/delete': {
+    POST: api(async (req) => {
+      const b = await body<{ paths?: unknown }>(req)
+      return json(await tempDelete(req.params.id, b.paths))
     }),
   },
   '/api/hosts/:id/setup': {
@@ -542,6 +560,12 @@ export const coreRoutes: Routes = {
       const { name } = await body<{ name?: string }>(req)
       await renamePane(req.params.id, paneParam(req.params.pane), String(name ?? ''))
       return ok()
+    }),
+  },
+  '/api/hosts/:id/sessions/:session/name': {
+    PUT: api(async (req) => {
+      const { name } = await body<{ name?: string }>(req)
+      return json({ name: await renameTmuxSession(req.params.id, req.params.session, String(name ?? '')) })
     }),
   },
   '/api/hosts/:id/panes/:pane/reconnect': {

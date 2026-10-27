@@ -136,20 +136,23 @@ Eight wrong codes in a minute from one address, or thirty from all of them, get 
 | machine | `config` with only `id`, `name` and `kind`, `status` (`online`, `connecting` or `error`), `sessions` |
 | session | `id`, `name` (the tmux session's name), `windows` |
 | window | `id`, `index`, `name`, `active`, `panes` |
-| pane | `id`, `index`, `active`, `title`, `label` (the name you gave it in Inyon), `dead`, `agent` |
+| pane | `id`, `index`, `active`, `title`, `label` (the name you gave it in Inyon), `dead`, `agent`, and from 0.22 `companion` |
 
 A companion never sees how the hub reaches a machine, folders, transcript paths, session or process ids, or the agent's usage numbers. A pane running an agent has an `agent` with:
 
 | Field | Holds |
 |---|---|
 | `kind` | `claude`, `codex`, `opencode`, `copilot`, `gemini` or `antigravity` |
+| `custom` | from 0.22, the name of [your own agent](agents.md#your-own-agents) when the pane runs one; `kind` is then the agent it works like |
 | `state` | `idle`, `working`, `waiting` or `unknown` |
 | `waitingFor` | a short line about the question, while `state` is `waiting` |
-| `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question |
+| `options` | the answers on offer, `[{ "n": 1, "label": "Yes" }, …]`, for a single-choice question. From 0.22 it's left out when `waitingFor` doesn't hold the whole question: a command or diff of more than one line, a Codex edit, an OpenCode permission, or a line cut at 200 characters. Answer those from `chat.screen`, which has the whole prompt |
 | `activity` | the working line, such as `Undulating… (2s · thinking with high effort)` |
 | `mode` | the agent's mode, such as `manual` or `plan` |
 
 A pane is named by its machine's `config.id` and its tmux pane id, such as `box` and `%3`.
+
+From 0.22 the pane running the [companion agent](companion-agent.md) has `"companion": true`. At most one pane has it, across all the hub's machines; send your user's words to that pane to talk to the companion.
 
 ### The WebSocket
 
@@ -166,11 +169,19 @@ A companion may send:
 
 Anything else closes the socket with code `4403` and a reason naming the frame, such as `Not for companion apps: term.open`. When you're removed in Inyon, the socket closes with `4001` and `Companion removed`.
 
-It receives `overview`, `chat.info`, `chat.screen`, `notify` and `pong`, and never the chat history, live text, drafts, the queue, the text of sends, Remote Control or share links, or terminal data. `chat.info` is `{ "t": "chat.info", "key": "box:%3", "info": { … } }` with only `hostId`, `paneId`, `agent`, `title`, `model`, `mode`, `running`, `status` (the agent's live numbers), `turn` (when the turn under way started) and `sends`, each send as `{ "id": "companion-legato-7f3a", "state": "delivered", "at": 1792038540000 }` without its text. The title is the name you gave the conversation, else the agent's own title for it, else the terminal's title, which Claude Code sets to the task and tmux otherwise sets to the machine's name. The tmux session's name is `name` in the overview's `sessions`. Alerts look like this, with `kind` one of `waiting`, `done`, `offline` and `online`:
+It receives `overview`, `chat.info`, `chat.screen`, `notify`, `companion.reply` and `pong`, and never the chat history, live text, drafts, the queue, the text of sends, Remote Control or share links, or terminal data. `chat.info` is `{ "t": "chat.info", "key": "box:%3", "info": { … } }` with only `hostId`, `paneId`, `agent`, `title`, `model`, `mode`, `running`, `status` (the agent's live numbers), `turn` (when the turn under way started) and `sends`, each send as `{ "id": "companion-legato-7f3a", "state": "delivered", "at": 1792038540000 }` without its text. The title is the name you gave the conversation, else the agent's own title for it, else the terminal's title, which Claude Code sets to the task and tmux otherwise sets to the machine's name. The tmux session's name is `name` in the overview's `sessions`. Alerts look like this, with `kind` one of `waiting`, `done`, `offline` and `online`:
 
 ```json
 { "t": "notify", "host": "box", "pane": "%3", "kind": "waiting", "title": "Claude needs you", "body": "Bash: rm -rf build", "agent": "claude" }
 ```
+
+From 0.22, with the **chat** permission, each turn the companion agent finishes comes as a `companion.reply`, with no `sub.chat` needed:
+
+```json
+{ "t": "companion.reply", "id": "1a16fa3b4de-2", "host": "local", "pane": "%1", "text": "Two sessions need you. Codex on laptop wants to run the tests.", "at": 1792038540000 }
+```
+
+`text` is the reply as plain text, markdown taken out and line breaks kept, cut at a word near 2,000 characters. `id` is different for every reply, so a reply that comes twice can be shown once. `"error": true` marks a turn that stopped on an error, and `text` then says why. The companion's own questions, such as asking to run `inyon send`, come the usual way: `waiting` in the overview and a `notify`. On the WebSocket the hub sends no `done` notice for the companion, since `companion.reply` takes its place. Web Push still gets one, titled "Companion", with the start of the reply as its text.
 
 ### A question and its key
 

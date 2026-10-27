@@ -59,7 +59,7 @@ fn local_node(s: &HostState) -> Value {
 
 /// The inyon command on this machine reads the hub's machines over loopback with the token the hub
 /// wrote as it started, readable only by this user.
-fn from_this_machine(req: &Req) -> bool {
+pub(crate) fn from_this_machine(req: &Req) -> bool {
     // loopback, or the hub's own address when it listens on one (a VPN address, say): either way this machine
     let ip = req.ip();
     if !loopback(&ip) && ip.strip_prefix("::ffff:").unwrap_or(&ip) != ctx().bind {

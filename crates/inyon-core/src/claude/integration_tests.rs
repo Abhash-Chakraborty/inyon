@@ -365,3 +365,93 @@ fn settings_that_are_not_an_object_are_refused_as_invalid() {
         assert_eq!(e.status, Some(409));
     });
 }
+
+#[test]
+fn stop_failure_is_only_registered_for_a_claude_code_that_has_it() {
+    assert!(knows_stop_failure("2.1.309 (Claude Code)\n"));
+    assert!(knows_stop_failure("2.1.78 (Claude Code)"));
+    assert!(knows_stop_failure("3.0.0"));
+    assert!(!knows_stop_failure("2.1.77 (Claude Code)"));
+    assert!(!knows_stop_failure("1.0.120 (Claude Code)"));
+    assert!(!knows_stop_failure(""));
+    // before 2.1.101 an unknown event made Claude Code ignore the whole file
+    for (version, want) in [("2.1.309 (Claude Code)", true), ("2.1.60 (Claude Code)", false)] {
+        let home = TempDir::new("inyon-int-");
+        run_rt(|| async {
+            Sandbox::install_with(&home.s(), &format!("claude() {{ echo '{version}'; }}; "));
+            install_integration(&host("local", "local")).await.unwrap();
+            let hooks = &parse(&home.read(".claude/settings.json"))["hooks"];
+            assert_eq!(hooks.get("StopFailure").is_some(), want, "{version}");
+            assert!(hooks.get("Stop").is_some());
+        });
+    }
+    // a Claude Code downgraded since: Inyon's StopFailure comes out again, yours stays
+    let home = TempDir::new("inyon-int-");
+    run_rt(|| async {
+        Sandbox::install_with(&home.s(), "claude() { echo '2.1.309 (Claude Code)'; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        let mut settings = parse(&home.read(".claude/settings.json"));
+        settings["hooks"]["StopFailure"].as_array_mut().unwrap().push(json!({ "hooks": [{ "type": "command", "command": "~/bin/mine.sh" }] }));
+        home.write(".claude/settings.json", &settings.to_string());
+        Sandbox::install_with(&home.s(), "claude() { echo '2.1.60 (Claude Code)'; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        let hooks = &parse(&home.read(".claude/settings.json"))["hooks"];
+        assert_eq!(hooks["StopFailure"], json!([{ "hooks": [{ "type": "command", "command": "~/bin/mine.sh" }] }]));
+        assert!(hooks.get("Stop").is_some());
+    });
+    // and a machine without claude on its path doesn't get it either
+    let home = TempDir::new("inyon-int-");
+    run_rt(|| async {
+        Sandbox::install_with(&home.s(), "claude() { return 127; }; ");
+        install_integration(&host("local", "local")).await.unwrap();
+        assert!(parse(&home.read(".claude/settings.json"))["hooks"].get("StopFailure").is_none());
+    });
+}
+
+/// A Claude Code window that moved its conversation to the background (`parkedJobId`) still shows
+/// it; the background session runs outside tmux, so its hook has no pane of its own.
+fn run_background(home: &TempDir, tmux: &str, input: &str) {
+    home.write(
+        ".claude/sessions/4242.json",
+        r#"{"pid":4242,"sessionId":"b3a31007-70aa-42cc-9ed6-7c142f4a3624","kind":"interactive","tmux":"Find development:@1.%2","parkedJobId":"eef2ead0"}"#,
+    );
+    home.write(".claude/sessions/4343.json", r#"{"pid":4343,"sessionId":"eef2ead0-8d08-4b84-96ac-fca9d926eee6","kind":"bg","jobId":"eef2ead0"}"#);
+    let bin = TempDir::new("inyon-tmux-");
+    bin.write("tmux", tmux);
+    sh(&format!("chmod 755 '{}'", bin.path("tmux").display()), None, &[]);
+    let path = format!("{}:{}", bin.s(), std::env::var("PATH").unwrap_or_default());
+    let mut c = std::process::Command::new("sh");
+    c.arg("-c").arg(HOOK_SCRIPT).env_clear().env("HOME", home.s()).env("PATH", path);
+    c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    let mut child = c.spawn().unwrap();
+    {
+        use std::io::Write;
+        let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
+    }
+    child.wait().unwrap();
+}
+
+#[test]
+fn a_background_sessions_events_go_to_the_window_that_moved_it_there() {
+    let prompt = r#"{"session_id":"eef2ead0-8d08-4b84-96ac-fca9d926eee6","hook_event_name":"UserPromptSubmit","prompt":"don?"}"#;
+    let home = TempDir::new("inyon-int-");
+    run_background(&home, "#!/bin/sh\n[ \"$1\" = -V ] && echo 'tmux 3.4'\n", prompt);
+    assert_eq!(parse(&home.read(".inyon/panes/2.json"))["data"]["prompt"], "don?");
+    // psmux numbers panes per session: the hub's name for it has the session's id in it
+    let home = TempDir::new("inyon-int-");
+    run_background(
+        &home,
+        "#!/bin/sh\n[ \"$1\" = -V ] && echo 'tmux 3.3.8 psmux 3.3.8'\n[ \"$*\" = \"display -p -t Find development #{session_id}\" ] && printf '$55\\r\\n'\n",
+        prompt,
+    );
+    assert_eq!(parse(&home.read(".inyon/panes/55.2.json"))["pane"], "%55.2");
+    // psmux didn't say which session: no file under a name another session's pane may have
+    let home = TempDir::new("inyon-int-");
+    run_background(&home, "#!/bin/sh\n[ \"$1\" = -V ] && echo 'tmux 3.3.8 psmux 3.3.8'\n", prompt);
+    assert!(!home.exists(".inyon/panes/2.json"));
+    // a session nobody moved stays unrouted, as before
+    let home = TempDir::new("inyon-int-");
+    run_background(&home, "#!/bin/sh\necho 'tmux 3.4'\n", r#"{"session_id":"0000aaaa-8d08-4b84-96ac-fca9d926eee6","hook_event_name":"Stop"}"#);
+    assert!(!home.exists(".inyon/panes/2.json"));
+    assert!(home.read(".inyon/events.jsonl").contains(r#""pane":"""#));
+}

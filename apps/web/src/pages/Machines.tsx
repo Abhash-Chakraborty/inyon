@@ -30,6 +30,7 @@ import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { machineMenu, paneMenu, removeMachine } from '../components/menus.tsx'
 import { MachinePages } from '../components/pages/shared.tsx'
+import { TempFiles } from './Temp.tsx'
 
 function PageHeader({ title, back, right }: { title: React.ReactNode; back?: string; right?: React.ReactNode }) {
   return (
@@ -189,7 +190,7 @@ export function MachinesPage() {
 /** A machine added with a pairing command that hasn't run it yet. */
 const waitingToPair = (h: HostState) => h.config.kind === 'node' && !h.config.pairedAt && h.status !== 'online'
 
-type Tab = 'sessions' | 'setup' | 'config' | 'uploads' | 'integration'
+type Tab = 'sessions' | 'setup' | 'config' | 'uploads' | 'temp' | 'integration'
 
 export function MachinePage() {
   const id = decodeURIComponent(useParams().host!)
@@ -265,7 +266,7 @@ export function MachinePage() {
         <>
         <div className="mb-5">
           <div className="no-scrollbar overflow-x-auto">
-            <Segmented value={tab} onChange={setTab} options={[{ v: 'sessions', label: 'Sessions' }, { v: 'setup', label: needsSetup ? 'Setup ·' : 'Setup' }, { v: 'config', label: 'Config' }, { v: 'uploads', label: 'Uploads' }, { v: 'integration', label: 'Integration' }]} />
+            <Segmented value={tab} onChange={setTab} options={[{ v: 'sessions', label: 'Sessions' }, { v: 'setup', label: needsSetup ? 'Setup ·' : 'Setup' }, { v: 'config', label: 'Config' }, { v: 'uploads', label: 'Uploads' }, { v: 'temp', label: 'Temp files' }, { v: 'integration', label: 'Integration' }]} />
           </div>
         </div>
         <div key={tab} className="animate-fade-in">
@@ -273,6 +274,7 @@ export function MachinePage() {
           {tab === 'setup' && <SetupPanel host={host} />}
           {tab === 'config' && <ConfigTab host={host} />}
           {tab === 'uploads' && <UploadsCard key={host.config.id} host={host} />}
+          {tab === 'temp' && <TempFiles key={host.config.id} host={host} />}
           {tab === 'integration' && <IntegrationCard host={host} />}
         </div>
         <MachinePages host={host.config.id} />

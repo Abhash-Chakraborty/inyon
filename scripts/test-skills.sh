@@ -42,6 +42,23 @@ if $p task nope done 2>/dev/null; then echo "progress.py took an unknown task"; 
 
 node "$bp/scripts/stills.mjs" "$tmp/site" --audit
 
+# a plan with no screens (--no-mockups): nothing links to them, and the plan and the matrix still
+# render with no console errors or dead buttons
+node "$bp/scripts/new-site.mjs" "$tmp/bare" --name "Parts" --no-mockups
+for f in mockups kit/shell.js kit/menus.js; do [ ! -e "$tmp/bare/$f" ] || { echo "--no-mockups left $f"; exit 1; }; done
+if grep -q 'mockups/' "$tmp/bare/index.html"; then echo "--no-mockups left a link to the screens"; exit 1; fi
+node "$bp/scripts/serve.mjs" "$tmp/bare" --port 0 > "$tmp/serve.log" &
+spid=$!
+for _ in $(seq 50); do grep -q 'http://' "$tmp/serve.log" && break; sleep 0.1; done
+url=$(grep -o 'http://[^ ]*' "$tmp/serve.log") || { echo "serve.mjs didn't start"; kill $spid; exit 1; }
+for page in index.html matrix.html; do
+  for size in "390 844" "1440 900"; do
+    said=$(AUDIT=1 node "$bp/scripts/shoot.mjs" "$url$page" "$tmp/bare-shot.png" $size light)
+    if ! grep -q 'no dead controls' <<<"$said" || ! grep -q 'no console errors' <<<"$said"; then echo "$page at $size:"; echo "$said"; kill $spid; exit 1; fi
+  done
+done
+kill $spid
+
 # publishing to Inyon's list of pages, serve.mjs against the hub's /v/ fixtures, progress.py's locking
 bun test "$bp/tests"
 python3 "$bp/tests/test_progress.py"

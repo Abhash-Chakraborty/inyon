@@ -20,6 +20,8 @@ Each agent offers its own choices. Claude Code's modes are *Ask each time*, *Acc
 
 Inyon changes them the agent's own way, through its picker or its keys, so the terminal shows the same thing. For OpenCode, from 0.17.6, the terminal's footer is what the app shows, in both directions: a pick in the app goes through OpenCode's own keys, a pick in the terminal shows in the app at its next screen read, and while a menu or a question hides the footer the last values stand. Some can't change mid-reply: a mode change waits until the agent finishes working.
 
+From 0.22, a model, effort or mode you pick for Claude Code, Codex or Antigravity while it's working, or while it asks you something, waits until it's free. The control shows your pick with a small clock until then, on every device, and its menu has **Don't switch** to keep what runs now. Pick again before it's made and the newer pick is the one that goes. Messages held for the agent go after it. If the agent doesn't take the pick, the control shows why, and nothing more is tried until you pick again or dismiss it from the menu.
+
 A model or effort you pick in Inyon is for that session only. Claude Code saves a `/model` or `/effort` pick as your default for new sessions, so from 0.17.1 Inyon puts `model`, `effortLevel` and `modelSettings` in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`) back the way they were once Claude Code has written them. Nothing else in the file changes. To change the default, pick the model in the terminal.
 
 ## Goals
@@ -51,7 +53,7 @@ In Codex, every one of your messages also has **Rewind to here** while the agent
 
 ## Stopping and ending
 
-- **Stop** (or `Esc` in an empty message box) interrupts the agent, like pressing `Esc` in the terminal.
+- **Stop** (or `Esc` in an empty message box) interrupts the agent, like pressing `Esc` in the terminal. From 0.22 a stop pressed on two devices at once, or twice within a second, sends `Esc` once: a second `Esc` after the agent stopped would open Claude Code's rewind menu.
 - **Exit to shell** quits the agent and leaves the pane at a shell prompt, after asking.
 - **End session…** closes the pane, its window or the whole tmux session. The confirmation says exactly which, and the session disappears at once.
 - **Copy session ID** copies the agent's conversation ID, for resuming it elsewhere.

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, HeldPrompt, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -108,6 +108,64 @@ export interface UploadUsage {
   days?: number
 }
 
+/** One folder Inyon looks in for temp files (`inyon temp`): Claude Code's temp folder, its paste cache, … */
+export interface TempRoot {
+  id: string
+  agent: string
+  label: string
+  path: string
+  size: number
+  items: number
+  exists: boolean
+}
+
+/** One thing in a temp folder that can go as a whole: a Claude session's folder, an upload day, a file. */
+export interface TempItem {
+  id: string
+  root: string
+  path: string
+  name: string
+  kind: 'dir' | 'file'
+  size: number
+  files: number
+  /** ms, the newest change inside */
+  modified: number
+  /** changed in the last 30 minutes: an agent may still be using it */
+  recent: boolean
+  /** up to four images inside, newest first */
+  images: string[]
+}
+
+export interface TempListing {
+  v: number
+  host: string
+  roots: TempRoot[]
+  items: TempItem[]
+}
+
+export interface TempFile {
+  path: string
+  rel: string
+  size: number
+  modified: number
+  kind: 'image' | 'text' | 'other'
+}
+
+export interface TempPreview {
+  path: string
+  mime: string
+  size: number
+  text?: string
+  base64?: string
+  truncated: boolean
+}
+
+export interface TempRemoved {
+  removed: string[]
+  freed: number
+  failed: [path: string, why: string][]
+}
+
 export interface ConfigFile {
   agent: AgentKind
   label: string
@@ -191,6 +249,19 @@ export interface ServerForm {
 export interface HubSettings {
   uploads: { retentionDays: number; maxMB: number; maxTotalMB: number; longPasteLines: number }
   autoResume?: boolean
+  /** joined machines may hold messages for agents with `inyon send` */
+  machinesSend?: boolean
+  /** your own agents; missing until the first is saved, and the Bun hub never keeps them */
+  customAgents?: CustomAgent[]
+}
+
+/** Any command, run and read as the built-in agent it works like (Settings › Agents). */
+export interface CustomAgent {
+  /** from the name, set by the hub */
+  id: string
+  name: string
+  command: string
+  like: AgentKind
 }
 
 /** The hub's own update (hub mode only; see apps/hub/src/features/hub-update.ts). */
@@ -242,6 +313,22 @@ export interface GitState {
 
 type Hunk = NonNullable<ToolResultMeta['patch']>[number]
 
+/**
+ * How long the app waits for a machine's temp files. The hub gives up on the machine after 60 s
+ * (100 s for a delete) and says why, so these wait a little longer to get that answer.
+ */
+export const TEMP_WAIT = 70_000
+export const TEMP_DELETE_WAIT = 110_000
+
+export type SendFailure = { at: number; host: string; pane: string; agent?: string | null; error: string; chars: number; screen: string[] }
+
+/** The companion agent (`GET /api/companion`): its agent while it's on, its pane while it runs. Rust hub only. */
+export interface CompanionStatus {
+  agent: 'claude' | 'codex' | null
+  host: string
+  pane: string | null
+}
+
 export const api = {
   /** `version` and `commit` say what the hub runs, once signed in */
   session: () => request<{ authed: boolean; setup?: boolean; setupCode?: boolean; version?: string; commit?: string }>('GET', '/api/session'),
@@ -266,7 +353,7 @@ export const api = {
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
   /** brings the machine's inyon up to date (it restarts and reconnects by itself) */
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
-  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; model?: string; mode?: string; prompt?: string }) =>
+  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
   /** `steer`: while Codex works, hand it the message now (Enter) instead of queueing it for after the turn (Tab) */
   send: (host: string, pane: string, text: string, requestId?: string, steer?: boolean) => request('POST', `${panePath(host, pane)}/send`, { text, requestId, ...(steer && { steer }) }, 310_000),
@@ -276,7 +363,16 @@ export const api = {
   answer: (host: string, pane: string, option: number, text?: string, question?: string) =>
     request('POST', `${panePath(host, pane)}/answer`, { option, text, question }),
   interrupt: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/interrupt`),
+  // messages the hub holds until the agent is free (from 0.22)
+  hold: (host: string, pane: string, text: string) => request<HeldPrompt>('POST', `${panePath(host, pane)}/held`, { text }),
+  editHeld: (host: string, pane: string, id: string, b: { text?: string; to?: number }) => request('PATCH', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`, b),
+  dropHeld: (host: string, pane: string, id: string) => request('DELETE', `${panePath(host, pane)}/held/${encodeURIComponent(id)}`),
+  dropChosen: (host: string, pane: string) => request('DELETE', `${panePath(host, pane)}/chosen`),
+  sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
+  /** renames the tmux session itself (`session` is tmux's id, `$52`); answers the name tmux took (from 0.22) */
+  renameTmuxSession: (host: string, session: string, name: string) =>
+    request<{ name: string }>('PUT', `${h(host)}/sessions/${encodeURIComponent(session.replace(/^\$/, ''))}/name`, { name }),
   reconnect: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/reconnect`),
   restart: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/restart`),
   exit: (host: string, pane: string) => request('POST', `${panePath(host, pane)}/exit`),
@@ -325,15 +421,27 @@ export const api = {
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),
   startHubUpdate: () => request<{ started: boolean }>('POST', '/api/hub/update'),
   settings: () => request<HubSettings>('GET', '/api/settings'),
+  /** sends that failed, newest first, each with the bottom of the screen it failed on (from 0.22) */
+  sendFailures: () => request<SendFailure[]>('GET', '/api/send-failures'),
   push: (b: { subscription: PushSubscriptionJSON; vapid: { privateJwk: JsonWebKey; subject: string }; done: boolean }) => request('POST', '/api/push', b),
   unpush: (endpoint: string) => request('DELETE', '/api/push', { endpoint }),
   pushTest: (endpoint: string) => request<{ sent: number }>('POST', '/api/push/test', { endpoint }, 30_000),
   saveSettings: (s: Partial<HubSettings>) => request<HubSettings>('PUT', '/api/settings', s),
+  companion: () => request<CompanionStatus>('GET', '/api/companion'),
+  /** starting types the agent into a new tmux session, which takes a few seconds */
+  startCompanion: (agent: 'claude' | 'codex') => request<CompanionStatus>('POST', '/api/companion', { agent }, 60_000),
+  stopCompanion: () => request('DELETE', '/api/companion'),
   uploadUsage: (id: string) => request<UploadUsage>('GET', `${h(id)}/uploads`),
   cleanUploads: (id: string, olderThanDays: number) => request<UploadUsage>('POST', `${h(id)}/uploads/clean`, { olderThanDays }),
   configs: (id: string) => request<ConfigFile[]>('GET', `${h(id)}/configs`),
   readConfig: (id: string, path: string) => request<{ path: string; content: string }>('GET', `${h(id)}/config${qs({ path })}`),
   writeConfig: (id: string, path: string, content: string) => request('PUT', `${h(id)}/config`, { path, content }),
+  // ---- temp files agents leave on a machine, through its `inyon temp` (walking gigabytes takes a while) ----
+  tempList: (id: string) => request<TempListing>('GET', `${h(id)}/temp`, undefined, TEMP_WAIT),
+  tempFiles: (id: string, path: string) => request<{ path: string; files: TempFile[]; truncated: boolean }>('GET', `${h(id)}/temp/files${qs({ path })}`, undefined, TEMP_WAIT),
+  /** `max`: the largest image sent whole; a bigger one comes back without its bytes */
+  tempPreview: (id: string, path: string, max?: number) => request<TempPreview>('GET', `${h(id)}/temp/preview${qs(max ? { path, max: String(max) } : { path })}`, undefined, TEMP_WAIT),
+  tempDelete: (id: string, paths: string[]) => request<TempRemoved>('POST', `${h(id)}/temp/delete`, { paths }, TEMP_DELETE_WAIT),
   subagents: (id: string, transcript: string) =>
     request<{ agentId: string; toolUseId?: string; type?: string; description?: string; path: string }[]>('GET', `${h(id)}/subagents${qs({ transcript })}`),
   transcript: (id: string, path: string) => request<ChatItem[]>('GET', `${h(id)}/transcript${qs({ path })}`),

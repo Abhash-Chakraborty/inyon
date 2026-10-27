@@ -184,7 +184,7 @@ pub fn claim_phone(ip: &str, claim: &Value, now: u64) -> HubResult<Value> {
 // ---------- signed-in phones ----------
 
 /// `req.headers.get('authorization')?.match(/^Bearer\s+(\S+)$/i)?.[1]`
-fn bearer(req: &Req) -> Option<String> {
+pub(crate) fn bearer(req: &Req) -> Option<String> {
     let h = req.header("authorization")?;
     let rest = h.get(..6).filter(|p| p.eq_ignore_ascii_case("bearer")).map(|_| &h[6..])?;
     let token = rest.trim_start_matches(inyon_core::js::text::is_space);

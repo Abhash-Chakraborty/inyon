@@ -7,7 +7,7 @@ members = ["apps/cli", "crates/inyon-protocol", "crates/inyon-link", "crates/iny
 
 [workspace.package]
 # the release number, the same as package.json; every crate takes it from here
-version = "0.20.2"
+version = "0.22.1"
 edition = "2021"
 license = "MIT"
 publish = false

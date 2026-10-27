@@ -64,6 +64,8 @@ export function useSession(host: string, pane: string) {
       ? setting(`/model ${selectedModel.variants[level]}`, 'Could not change effort')
       : def?.set.effort && setting(def.set.effort(level), 'Could not change effort'),
     setMode: (mode: string) => run('Could not switch mode', () => api.mode(host, pane, mode)),
+    /** forgets a model, effort or mode picked while the agent couldn't take it */
+    dropChosen: () => run('Could not cancel the switch', () => api.dropChosen(host, pane)),
     setGoal: (text: string) => def?.set.goal && setting(def.set.goal(text), 'Could not set goal'),
     clearGoal: () => def?.set.clearGoal && setting(def.set.clearGoal, 'Could not clear goal'),
     compact: () => def?.set.compact && send(def.set.compact, 'Could not compact'),

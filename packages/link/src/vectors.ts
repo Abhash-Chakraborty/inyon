@@ -8,7 +8,7 @@ import { identityFromSeed, isMachineId, noiseKeyOf, sign, verify, z32decode, z32
 import { Initiator, Responder, type KeyPair, type Transport } from './noise.ts'
 import { pairLink, parsePairLink, type PairInfo } from './pair.ts'
 import { decodePublished, encodePublished, type Published } from './pkarr.ts'
-import { authMessage, frame, machinePath, phonePath, relayWs, unframe } from './relay.ts'
+import { authMessage, authMessageV2, frame, machinePath, phonePath, relayOrigin, relayWs, unframe } from './relay.ts'
 
 /**
  * Cross-language vectors for the phone link: everything the Rust port (crates/inyon-link) has to
@@ -432,7 +432,7 @@ function relayVectors() {
   const nonces = ['abc123', 'b9f7c1d2e3a4f5061728394a5b6c7d8e']
   return {
     about:
-      'Relay transport: on the machine socket (/m/<id>) binary frames carry a 4-byte big-endian session number then the bytes; phones open /p/<id>. The machine proves its id by signing "tether-relay-auth:<nonce>".',
+      'Relay transport: on the machine socket (/m/<id>) binary frames carry a 4-byte big-endian session number then the bytes; phones open /p/<id>. The machine proves its id by signing "tether-relay-auth:<nonce>", or "tether-relay-auth:v2:<origin>:<nonce>" when the challenge has v: 2, with the origin of the address it dialed.',
     frames: frames.map(([sid, data]) => {
       const f = frame(sid, data)
       const back = unframe(f)
@@ -440,6 +440,23 @@ function relayVectors() {
       return { sid, data: hex(data), framed: hex(f) }
     }),
     auth: nonces.map((nonce) => ({ seed: hex(machine.seed), id: machine.id, nonce, message: hex(authMessage(nonce)), signature: hex(sign(machine, authMessage(nonce))) })),
+    auth_v2: nonces.map((nonce) => {
+      const origin = 'https://relay.example'
+      return { seed: hex(machine.seed), origin, nonce, message: hex(authMessageV2(origin, nonce)), signature: hex(sign(machine, authMessageV2(origin, nonce))) }
+    }),
+    origins: [
+      ['https://relay.example', 'https://relay.example'],
+      ['https://Relay.Example:443/base/', 'https://relay.example'],
+      ['wss://relay.example:8443/m/x', 'https://relay.example:8443'],
+      ['http://127.0.0.1:80', 'http://127.0.0.1'],
+      ['ws://user@relay.example:9000?x', 'http://relay.example:9000'],
+      ['ftp://relay.example', null],
+      ['https://', null],
+    ].map(([relay, want]) => {
+      const origin = relayOrigin(relay!) ?? null
+      check(origin === want, `origin of ${relay}`)
+      return { relay, origin }
+    }),
     paths: { machine: machinePath(machine.id), phone: phonePath(machine.id) },
     ws_urls: [
       ['https://relay.example', '/m/x'],

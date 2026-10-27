@@ -178,6 +178,8 @@ pub struct QuickOption {
 #[ts(optional_fields)]
 pub struct AgentPaneInfo {
     pub kind: AgentKind,
+    /// a custom agent's name (Settings › Agents); `kind` is the agent it works like
+    pub custom: Option<String>,
     pub pid: u32,
     pub session_id: Option<String>,
     pub transcript_path: Option<String>,
@@ -200,6 +202,21 @@ pub struct AgentPaneInfo {
     /// the integration is on but this session stopped sending live numbers
     pub status_stopped: Option<bool>,
     pub started_at: Option<u64>,
+    /// the last turn ended on an error instead of finishing; gone with the next prompt
+    pub failure: Option<TurnFailure>,
+}
+
+/// Why a turn stopped (Claude Code's StopFailure hook).
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct TurnFailure {
+    /// "rate_limit", "billing_error", "authentication_failed", "overloaded", "server_error",
+    /// "invalid_request", "max_output_tokens" or "unknown"
+    pub error: String,
+    /// rate limits: when the full limit resets, unix seconds
+    pub resets_at: Option<u64>,
 }
 
 #[skip_serializing_none]
@@ -220,6 +237,8 @@ pub struct PaneInfo {
     pub height: Num,
     pub dead: bool,
     pub agent: Option<AgentPaneInfo>,
+    /// runs your companion agent (Settings › Companion); at most one pane across all machines
+    pub companion: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -289,6 +308,24 @@ pub enum TmuxState {
     Missing,
 }
 
+/// An agent's plan limits on a machine, read from the account it's signed in to, with or without a
+/// session running.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct AccountLimits {
+    pub kind: AgentKind,
+    pub five_hour: Option<RateWindow>,
+    pub seven_day: Option<RateWindow>,
+    pub plan: Option<String>,
+    pub credits: Option<Credits>,
+    /// limit resets the account has banked (Codex): counted, never used
+    pub resets: Option<u32>,
+    /// unix ms of the reading
+    pub updated_at: u64,
+}
+
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
@@ -325,6 +362,8 @@ pub struct HostState {
     pub last_seen: Option<u64>,
     /// when the machine stopped answering; its sessions are the last ones seen, saved on disk
     pub offline_since: Option<u64>,
+    /// plan limits of the accounts signed in there
+    pub limits: Option<Vec<AccountLimits>>,
 }
 
 // ---------- Chat (normalized Claude Code transcript) ----------
@@ -547,6 +586,32 @@ pub struct SendState {
     pub setting: Option<bool>,
 }
 
+/// A message Inyon holds for a pane and types in once its agent is free (from 0.22): it can still
+/// be edited, moved or dropped. `error` says why the last try didn't go, and holding stops there.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct HeldPrompt {
+    pub id: String,
+    pub text: String,
+    pub at: u64,
+    pub error: Option<String>,
+}
+
+/// Controls picked in the app while the agent couldn't take them (from 0.22): Inyon makes each
+/// pick once the agent is free, the last of each kind winning. The values are what was picked:
+/// a model as the agent's `/model` takes it, an effort level, a mode id. `error` says why the
+/// last try didn't take, and nothing more is tried until it's picked again or dropped.
+#[skip_serializing_none]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct ChosenControls {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+    pub error: Option<String>,
+}
+
 /// A conversation the agent saved in a pane's folder, which it can be started again with.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -639,6 +704,10 @@ pub struct ChatInfo {
     pub share: Option<String>,
     /// messages typed while the agent was busy, not yet picked up
     pub queue: Vec<String>,
+    /// messages Inyon holds until the agent is free, in the order they go (from 0.22)
+    pub held: Option<Vec<HeldPrompt>>,
+    /// a model, effort or mode waiting for the agent to be free (from 0.22)
+    pub chosen: Option<ChosenControls>,
     /// the turn under way, for the working timer (Codex: from its records and its live events)
     pub turn: Option<Turn>,
     /// recent sends and how far each got, matched by the hub against the agent's own record
@@ -1111,6 +1180,11 @@ pub enum ServerMsg {
     Notify { host: String, pane: String, kind: NotifyKind, title: String, body: String, agent: Option<AgentKind> },
     #[serde(rename = "pong")]
     Pong,
+    /// The companion agent finished a turn. `id` is unique per reply, so a reconnect never shows
+    /// one twice; `text` is plain (markdown taken out), up to 2000 characters; `error` marks a turn
+    /// that ended on an error, which `text` then names. `at` is unix ms.
+    #[serde(rename = "companion.reply")]
+    CompanionReply { id: String, host: String, pane: String, text: String, error: Option<bool>, at: u64 },
 }
 
 /// The key a chat's messages carry: `host:pane`.

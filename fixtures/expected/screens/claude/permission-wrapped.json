@@ -17,7 +17,7 @@
           },
           {
             "n": 2,
-            "label": "Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project",
+            "label": "Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project",
             "selected": false
           },
           {
@@ -50,7 +50,7 @@
           },
           {
             "n": 2,
-            "label": "Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this",
+            "label": "Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this",
             "selected": false,
             "detail": "project"
           },
@@ -84,7 +84,7 @@
           },
           {
             "n": 2,
-            "label": "Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project",
+            "label": "Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project",
             "selected": false
           },
           {

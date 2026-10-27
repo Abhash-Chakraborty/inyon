@@ -3,7 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import {
-  accept, authMessage, formatShortId, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, resolve, shortCodeIdentity, shortSecret, sign, unframe,
+  accept, authMessage, authMessageV2, formatShortId, MIN_NONCE, relayOrigin, frame, identityFromSeed, LinkError, machinePath, newIdentity, newShortCode, PKARR_RELAYS, publish, relayWs, resolve, shortCodeIdentity, shortSecret, sign, unframe,
   type Identity, type RelayToMachine, type Wire,
 } from '@inyon/link'
 import { attemptAfter, backoff } from '@inyon/protocol'
@@ -23,7 +23,7 @@ import { binDir, nodeDir } from './paths.ts'
  * machine publishes its current addresses under its own key (pkarr) and the phone looks them up.
  */
 
-export const VERSION = '0.20.2'
+export const VERSION = '0.22.1'
 const file = (name: string) => path.join(nodeDir(), name)
 const PAIR_MINUTES = 10
 
@@ -601,6 +601,15 @@ function tunnel(port: number, onUrl: (url: string | undefined) => void) {
 // ---------- relays ----------
 
 /** Keeps one socket to a relay; each phone that connects through it becomes a session. */
+/** What the machine signs for a relay's challenge: bound to the relay it dialed for v2; undefined for a nonce too short to be fresh. */
+export function relayAuth(url: string, nonce: unknown, v: unknown): Uint8Array | undefined {
+  // the relay is the untrusted side: its JSON may carry any type
+  if (typeof nonce !== 'string' || nonce.length < MIN_NONCE) return undefined
+  if (typeof v !== 'number' || v < 2) return authMessage(nonce)
+  const origin = relayOrigin(url)
+  return origin ? authMessageV2(origin, nonce) : undefined
+}
+
 function relay(id: Identity, url: string, onState: (up: boolean) => void) {
   let attempt = 0
   const connect = () => {
@@ -621,7 +630,13 @@ function relay(id: Identity, url: string, onState: (up: boolean) => void) {
         return
       }
       if (m.t === 'challenge') {
-        ws.send(JSON.stringify({ t: 'auth', id: id.id, sig: Buffer.from(sign(id, authMessage(m.nonce))).toString('base64') }))
+        const msg = relayAuth(url, m.nonce, m.v)
+        if (!msg) {
+          console.log(`relay ${new URL(url).host}: its challenge is too short to answer`)
+          ws.close()
+          return
+        }
+        ws.send(JSON.stringify({ t: 'auth', id: id.id, sig: Buffer.from(sign(id, msg)).toString('base64') }))
       } else if (m.t === 'ready') {
         readyAt = Date.now()
         console.log(`relay ${new URL(url).host}: connected`)

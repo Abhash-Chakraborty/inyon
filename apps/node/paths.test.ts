@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
 import os from 'node:os'
 import path from 'node:path'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -6,12 +6,13 @@ import { nodeDir, savedEnv, savedHub } from './paths.ts'
 
 // A machine set up as tether-node, before the rename to Inyon, in a throwaway home.
 let home: string
+const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
 beforeEach(() => {
   home = mkdtempSync(path.join(os.tmpdir(), 'inyon-paths-'))
-  spyOn(os, 'homedir').mockReturnValue(home)
+  process.env.HOME = process.env.USERPROFILE = home
 })
 afterEach(() => {
-  mock.restore()
+  for (const [k, v] of Object.entries(saved)) v === undefined ? delete process.env[k] : (process.env[k] = v)
   rmSync(home, { recursive: true, force: true })
 })
 

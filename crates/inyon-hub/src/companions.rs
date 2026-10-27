@@ -496,10 +496,15 @@ pub fn inbound_refusal(raw: &str, scopes: &[CompanionScope]) -> Option<String> {
 pub const COMPANION_HOST: [&str; 3] = ["config", "status", "sessions"];
 pub const COMPANION_SESSION: [&str; 3] = ["id", "name", "windows"];
 pub const COMPANION_WINDOW: [&str; 5] = ["id", "index", "name", "active", "panes"];
-pub const COMPANION_PANE: [&str; 7] = ["id", "index", "active", "title", "label", "dead", "agent"];
-pub const COMPANION_AGENT: [&str; 6] = ["kind", "state", "mode", "waitingFor", "options", "activity"];
+pub const COMPANION_PANE: [&str; 8] = ["id", "index", "active", "title", "label", "dead", "agent", "companion"];
+pub const COMPANION_AGENT: [&str; 7] = ["kind", "custom", "state", "mode", "waitingFor", "options", "activity"];
 
 pub fn companion_hosts(hosts: &mut Value) {
+    shape_hosts(hosts, &COMPANION_PANE)
+}
+
+/// The overview cut down to what a client outside the app needs, with these fields on each pane.
+pub fn shape_hosts(hosts: &mut Value, pane_keys: &[&str]) {
     // each level picked, then the level below it in place
     fn each(v: &mut Map<String, Value>, key: &str, keys: &[&str], inner: impl Fn(&mut Map<String, Value>)) {
         for item in v.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
@@ -515,7 +520,7 @@ pub fn companion_hosts(hosts: &mut Value) {
         host.insert("config".into(), json!({ "id": c["id"], "name": c["name"], "kind": c["kind"] }));
         each(&mut host, "sessions", &COMPANION_SESSION, |s| {
             each(s, "windows", &COMPANION_WINDOW, |w| {
-                each(w, "panes", &COMPANION_PANE, |p| {
+                each(w, "panes", pane_keys, |p| {
                     if let Some(a) = p.get("agent").filter(|a| a.is_object()) {
                         let a = Value::Object(pick(a, &COMPANION_AGENT));
                         p.insert("agent".into(), a);
@@ -556,7 +561,7 @@ pub fn companion_screen(screen: &inyon_protocol::ScreenState) -> Value {
 }
 
 /// What a companion gets of a message to the app: the overview, notices, a chat's info and screen
-/// (its question with the key to answer it by), and pong. Chat history, live text, drafts and
+/// (its question with the key to answer it by), the companion agent's replies, and pong. Chat history, live text, drafts and
 /// terminal data never go to a companion.
 pub fn companion_frame(msg: &ServerMsg, scopes: &[CompanionScope]) -> Option<Value> {
     let can = |s: CompanionScope| scopes.contains(&s);
@@ -572,6 +577,8 @@ pub fn companion_frame(msg: &ServerMsg, scopes: &[CompanionScope]) -> Option<Val
         ServerMsg::ChatInfo { key, info } | ServerMsg::ChatReset { key, info, .. } if can(CompanionScope::Chat) => {
             Some(json!({ "t": "chat.info", "key": key, "info": companion_info(info) }))
         }
+        // the companion agent's replies, to every companion that may watch chats, subscribed or not
+        ServerMsg::CompanionReply { .. } if can(CompanionScope::Chat) => whole(),
         ServerMsg::ChatScreen { key, screen } if can(CompanionScope::Chat) => Some(json!({ "t": "chat.screen", "key": key, "screen": companion_screen(screen) })),
         _ => None,
     }

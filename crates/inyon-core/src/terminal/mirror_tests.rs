@@ -48,7 +48,10 @@ fn typed_text_goes_on_stdin_never_on_the_command_line() {
 #[test]
 fn the_screen_is_read_with_its_size_and_cursor_one_entry_per_row() {
     let s = parse_screen("10 3 2 1 1\nab\n\x1b[31mred\x1b[0m\n").unwrap();
-    assert_eq!(s, Screen { width: 10.0, height: 3.0, cursor: Cursor { x: 2.0, y: 1.0, visible: true }, lines: vec!["ab".into(), "\x1b[31mred\x1b[0m".into(), String::new()] });
+    assert_eq!(
+        s,
+        Screen { width: 10.0, height: 3.0, cursor: Cursor { x: 2.0, y: 1.0, visible: true }, lines: vec!["ab".into(), "\x1b[31mred\x1b[0m".into(), String::new()], mouse: false }
+    );
     assert_eq!(parse_screen(""), None);
     assert_eq!(parse_screen("can't find pane\n"), None);
 }
@@ -82,7 +85,7 @@ fn the_terminals_commands_reach_the_right_psmux_pane() {
     sh(&format!("{PRELUDE}\n{cmd}"), None, &[("PATH", &path)]);
     assert_eq!(
         bin.read("argv"),
-        "[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}]\n\
+        "[display][-p][-t][$14:.%1][#{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{alternate_on}]\n\
          [capture-pane][-p][-e][-t][$14:.%1]\n\
          [send-keys][-t][$14:.%1][C-c][Up]\n\
          [send-keys][-t][$14:.%1][-H][1b][5b]\n"
@@ -102,4 +105,30 @@ fn a_keystroke_batch_is_one_shell_and_each_more_piece_of_text_starts_the_next() 
     let inputs: Vec<_> = batch_commands("%1", &to_input("a\x1b[Ab")).into_iter().map(|(_, i)| i).collect();
     assert_eq!(inputs, [Some("a".to_string()), Some("b".to_string())]);
     assert_eq!(batch_commands("%1", &to_input("\x1b[A")), [("tmux send-keys -t '%1' 'Up'".to_string(), None)]);
+}
+
+/// Claude Code runs full screen, so its history scrolls with the wheel inside it. On Windows the
+/// terminal view had no way to scroll at all: the browser terminal never reported the mouse, so the
+/// wheel (and a finger drag on a phone, which becomes wheel steps) did nothing.
+#[test]
+fn a_full_screen_program_gets_the_mouse_wheel_and_a_shell_keeps_the_mouse_to_itself() {
+    let shell = parse_screen("10 2 0 0 1 0\n$ ls\n").unwrap();
+    let claude = parse_screen("10 2 0 0 1 1\n● Done.\n❯\n").unwrap();
+    assert!(!shell.mouse && claude.mouse);
+    let on = "\x1b[?1000h\x1b[?1006h";
+    let off = "\x1b[?1000l\x1b[?1006l";
+    assert!(!draw_screen(None, &shell).contains(on));
+    // a full redraw after a resize turns it off for a shell, in case Claude had it on before
+    assert!(draw_screen(None, &shell).contains(off));
+    assert!(draw_screen(None, &claude).contains(on));
+    assert!(draw_screen(Some(&shell), &claude).starts_with(on));
+    // said once, not on every redraw
+    assert!(!draw_screen(Some(&claude), &claude).contains(on));
+    assert!(draw_screen(Some(&claude), &shell).starts_with(off));
+    // psmux before alternate_on: no sixth number, so no mouse
+    assert!(!parse_screen("10 2 0 0 1\nx\n").unwrap().mouse);
+    // the wheel the browser terminal reports goes to the program as the bytes it is
+    let up = to_input("\x1b[<64;10;5M");
+    assert_eq!(up, [Input::Hex("\x1b[<64;10;5M".bytes().map(|b| format!("{b:02x}")).collect())]);
+    assert_eq!(batch_commands("%55.2", &up)[0].0, "tmux send-keys -t '%55.2' -H 1b 5b 3c 36 34 3b 31 30 3b 35 4d");
 }

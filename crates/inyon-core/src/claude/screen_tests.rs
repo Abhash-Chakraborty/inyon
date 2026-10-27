@@ -99,7 +99,7 @@ fn working() {
 #[test]
 fn word_wrapped_option_label_keeps_its_space() {
     let p = claude(&screen_fixture("claude", "permission-wrapped"), Some(80)).prompt.unwrap();
-    assert_eq!(p.options[1].label, "Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project");
+    assert_eq!(p.options[1].label, "Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project");
     assert_eq!(p.options[1].detail, None);
 }
 
@@ -317,6 +317,8 @@ mod other_agents {
         );
         // the alert and the overview say what would run
         assert_eq!(prompt_summary(&p), "Run printf 'hi\\n' > hello.txt");
+        // the line is the whole question: quick answers are offered
+        assert!(prompt_whole(&p));
     }
 
     /// a file change approval names the file
@@ -329,6 +331,8 @@ mod other_agents {
         assert!(p.options[0].selected);
         // the path was wrapped by the terminal ("…/notes2" and ".txt"); the file is still named
         assert_eq!(prompt_summary(&p), "Edit notes2.txt?");
+        // the line leaves out what an answer agrees to: no quick answers
+        assert!(!prompt_whole(&p));
     }
 
     /// the review presets
@@ -674,6 +678,8 @@ fn command_prompt_with_a_gutter_keeps_its_lines_and_loses_the_gutter() {
     assert_eq!(p.whole_lines, Some(true));
     assert_eq!(labels(&p), vec!["Yes", "No"]);
     assert_eq!(prompt_summary(&p), "Append empty-cart test and run the suite: cat >> test/cart.test.js <<'EOF'");
+    // the line leaves out what an answer agrees to: no quick answers
+    assert!(!prompt_whole(&p));
 }
 
 /// a PowerShell prompt reads as what the command is for
@@ -682,6 +688,8 @@ fn a_powershell_prompt_reads_as_what_the_command_is_for() {
     let p = claude(&screen_fixture("claude", "powershell-prompt"), Some(100)).prompt.unwrap();
     assert_eq!(p.body[3..], ["npm test", "╌", "This command requires approval", "Do you want to proceed?"]);
     assert_eq!(prompt_summary(&p), "Re-run the test suite: npm test");
+    // the line is the whole question: quick answers are offered
+    assert!(prompt_whole(&p));
 }
 
 /// lines Claude wrapped are joined, real line breaks stay
@@ -697,6 +705,8 @@ fn lines_claude_wrapped_are_joined_real_line_breaks_stay() {
         ]
     );
     assert_eq!(prompt_summary(&p), "Switch model?");
+    // the line is the whole question: quick answers are offered
+    assert!(prompt_whole(&p));
 }
 
 /// an alert for a command names what it is for, not the tip
@@ -704,6 +714,8 @@ fn lines_claude_wrapped_are_joined_real_line_breaks_stay() {
 fn an_alert_for_a_command_names_what_it_is_for_not_the_tip() {
     let p = claude(&screen_fixture("claude", "permission-tip"), None).prompt.unwrap();
     assert_eq!(prompt_summary(&p), "Write hello-inyon to out.txt: echo hello-inyon > out.txt");
+    // the line is the whole question: quick answers are offered
+    assert!(prompt_whole(&p));
 }
 
 /// an edit prompt names the file, not the first line of the diff
@@ -711,6 +723,8 @@ fn an_alert_for_a_command_names_what_it_is_for_not_the_tip() {
 fn an_edit_prompt_names_the_file_not_the_first_line_of_the_diff() {
     let p = claude(&screen_fixture("claude", "edit-prompt"), None).prompt.unwrap();
     assert_eq!(prompt_summary(&p), "Edit file: test\\cart.test.js");
+    // the line leaves out what an answer agrees to: no quick answers
+    assert!(!prompt_whole(&p));
 }
 
 /// describe('ultracode in Claude Code 2.1.299')

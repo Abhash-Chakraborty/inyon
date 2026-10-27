@@ -17,6 +17,7 @@ use super::drafts::clear_input;
 use super::driving::start_driving;
 use super::keep_default::{keep_claude_defaults, KeepOptions};
 use super::screen::{codex_browsing, parse_screen, CodexBrowsing};
+use super::send_check;
 use super::watcher::watchers;
 use crate::agents::antigravity_models::agy_models;
 use crate::agents::codex_models::codex_models;
@@ -91,6 +92,8 @@ const CHECKED: [AgentKind; 5] = [AgentKind::Claude, AgentKind::Codex, AgentKind:
 thread_local! {
     static LANES: RefCell<HashMap<String, Deferred<()>>> = RefCell::new(HashMap::new());
     static RENAME_TRIED: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
+    /// when each pane's last stop ended (u64::MAX while one runs)
+    static STOPPING: RefCell<HashMap<String, u64>> = RefCell::new(HashMap::new());
 }
 
 /// Lets the next action in the lane go when this one ends, however it ends.
@@ -161,9 +164,25 @@ async fn send_and_follow(host_id: &str, pane_id: &str, text: &str, from_composer
     .await;
     if let Err(e) = &r {
         w.settle_send(&id, Some(SendStatus::Failed), Some(e.message.clone()));
+        keep_failure(host_id, pane_id, &e.message, text).await;
     }
     w.idle_later();
     r
+}
+
+/// The pane's screen as plain lines.
+async fn screen_lines(host: &Host, pane_id: &str) -> HubResult<Vec<String>> {
+    Ok(capture_panes(host, &[pane_id.to_owned()]).await?.shift_remove(pane_id).unwrap_or_default())
+}
+
+/// Writes a failed send down with the screen it failed on (see send_check).
+async fn keep_failure(host_id: &str, pane_id: &str, error: &str, text: &str) {
+    let agent = registry().find_pane(host_id, pane_id).and_then(|f| f.pane.agent).map(|a| a.kind.as_str());
+    let screen = match registry().host(host_id) {
+        Ok(host) => screen_lines(&host, pane_id).await.unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+    send_check::record_failure(host_id, pane_id, agent, error, text, &screen);
 }
 
 /// Keys accepted on screen don't prove the agent took the message: a dialog can swallow them, or
@@ -192,6 +211,27 @@ async fn confirm_delivery(host_id: &str, pane_id: &str, id: &str, text: &str) ->
         ));
     }
     // typed and accepted on screen, but not in a record we can read yet: the ledger keeps looking
+    Ok(())
+}
+
+/// Claude Code's panel for one background shell or monitor (opened from its "↓ to manage" list,
+/// easily by accident) covers the input box and takes every key, so a message typed there never
+/// arrives.
+pub fn claude_details_panel(lines: &[String]) -> bool {
+    let text = re!(r"\x1b\[[0-9;]*m", "g").replace_all(&lines.join("\n"), "").into_owned();
+    let tail: Vec<&str> = text.lines().rev().take(60).collect();
+    tail.iter().any(|l| re!(r"^\s*(Shell|Monitor) details\s*$").is_match(l)) && !tail.iter().any(|l| re!(r"^\s*❯").is_match(l))
+}
+
+/// Closes that panel with Esc, which only dismisses it, so the message goes to the input box.
+async fn close_claude_details(host: &Host, pane_id: &str) -> HubResult<()> {
+    for _ in 0..3 {
+        if !claude_details_panel(&screen_lines(host, pane_id).await?) {
+            break;
+        }
+        send_keys(host, pane_id, &["Escape"]).await?;
+        sleep(300).await;
+    }
     Ok(())
 }
 
@@ -319,6 +359,9 @@ pub async fn send_message_to_pane(host_id: &str, pane_id: &str, text: &str, from
     if kind == AgentKind::Claude && re!(r"^/(model|effort)(\s|$)").is_match(text.jtrim()) {
         keep_claude_defaults(&host, KeepOptions::default()).await;
     }
+    if kind == AgentKind::Claude {
+        close_claude_details(&host, pane_id).await?;
+    }
     let screen = current_screen(host_id, pane_id).await?;
     if screen.prompt.is_some() {
         return Err(http(409, "The agent is waiting for an answer to a question first"));
@@ -399,10 +442,24 @@ impl Typing<'_> {
         if is_codex && !nonempty(&screen.model) {
             return Err(http(409, "Codex input is not visible. Open the terminal to check before sending."));
         }
-        // Claude, Codex and agy show their input box, so the text can be checked into place before Enter
+        // Claude, Codex and agy show their input box, so the text can be checked into place before Enter.
+        // Any other agent still gets no Enter until the text shows on its screen
         if !CHECKED.contains(&self.kind) {
+            let before = screen_lines(host, pane_id).await?;
             type_into(host, pane_id, text, false).await?;
-            sleep(300).await;
+            let mut shown = false;
+            for i in 0..20 {
+                sleep(if i < 3 { 80 } else { 150 }).await;
+                if send_check::arrived(&before, &screen_lines(host, pane_id).await?, text) {
+                    shown = true;
+                    break;
+                }
+            }
+            if !shown {
+                let name = name_of(self.kind);
+                return Err(http(409, format!("The message didn't show in {name}'s input box, so Enter wasn't pressed. Your message is available to copy or retry.")));
+            }
+            sleep(150).await;
             send_keys(host, pane_id, &["Enter"]).await?;
             if let Some(w) = watchers().peek(host_id, pane_id) {
                 w.draft_sent(None, 0);
@@ -1372,8 +1429,7 @@ pub fn launch_bin_command(bin: &str) -> String {
 
 /// The agent's command as the pane's shell will find it: the plain name when it is on that shell's
 /// PATH, otherwise the full path the hub found (e.g. installed under another nvm Node version).
-async fn launch_bin(host: &Host, agent: AgentKind) -> HubResult<String> {
-    let launch = &agent.def().launch;
+async fn launch_bin(host: &Host, launch: &str) -> HubResult<String> {
     let bin = launch.split(' ').next().unwrap_or(launch);
     let r = host.exec(&launch_bin_command(bin), ExecOptions::timeout(10_000)).await?;
     let found = r.stdout.jtrim().rsplit('\n').next().filter(|f| !f.is_empty()).unwrap_or(bin);
@@ -1449,7 +1505,7 @@ pub async fn type_start(host_id: &str, pane_id: &str, agent: AgentKind, resume: 
             _ => format!("{} --resume {r}", def.launch),
         },
     };
-    let line = with_bin(&cmd, &launch_bin(&host, agent).await?);
+    let line = with_bin(&cmd, &launch_bin(&host, &def.launch).await?);
     type_into(&host, pane_id, &line, true).await?;
     registry().refresh(host_id, 1500);
     Ok(())
@@ -1476,6 +1532,34 @@ pub async fn reconnect_agent(host_id: &str, pane_id: &str) -> HubResult<()> {
 /// Stops the current turn. Esc only while the spinner is up (a stray double Esc on an idle Claude
 /// opens the rewind menu), then waits for the spinner to go and tries once more if it hasn't.
 pub async fn interrupt(host_id: &str, pane_id: &str) -> HubResult<()> {
+    // one stop at a time per pane, and none within a second of the last: a second Esc that lands
+    // after the agent stopped opens Claude Code's rewind menu or clears the box
+    let k = format!("{host_id}\u{1}{pane_id}");
+    let now = now_ms();
+    let busy = STOPPING.with(|s| {
+        let mut s = s.borrow_mut();
+        match s.get(&k) {
+            Some(at) if now.saturating_sub(*at) < INTERRUPT_GAP_MS => true,
+            _ => {
+                // still running counts as just now
+                s.insert(k.clone(), u64::MAX);
+                false
+            }
+        }
+    });
+    if busy {
+        return Ok(());
+    }
+    let r = interrupt_now(host_id, pane_id).await;
+    let end = now_ms();
+    STOPPING.with(|s| s.borrow_mut().insert(k, end));
+    r
+}
+
+/// How long after a stop another is ignored.
+pub const INTERRUPT_GAP_MS: u64 = 1000;
+
+async fn interrupt_now(host_id: &str, pane_id: &str) -> HubResult<()> {
     let (host, found) = agent_pane(host_id, pane_id)?;
     let agent = found.pane.agent.as_ref();
     let is_open_code = agent.is_some_and(|a| a.kind == AgentKind::Opencode);
@@ -1695,7 +1779,7 @@ pub async fn restart_agent(host_id: &str, pane_id: &str) -> HubResult<()> {
             host.run(&format!("tmux respawn-pane {}-t {p} {cwd} {}", if win { "-k " } else { "" }, shq(&cmd))).await?;
         } else {
             sleep(400).await;
-            let line = with_bin(&cmd, &launch_bin(&host, a.kind).await?);
+            let line = with_bin(&cmd, &launch_bin(&host, &a.kind.def().launch).await?);
             type_into(&host, pane_id, &line, true).await?;
         }
         Ok(())
@@ -1953,6 +2037,11 @@ pub struct LaunchOpts {
     pub model: Option<String>,
     pub mode: Option<String>,
     pub prompt: Option<String>,
+    /// a custom agent's id (Settings › Agents), started in place of `agent`
+    pub custom: Option<String>,
+    /// more flags for the agent's command, from the hub itself (the companion's)
+    #[serde(skip)]
+    pub extra: Vec<String>,
 }
 
 /// zsh's first-run questions in a home with no ~/.zshrc; "q" leaves it for next time and changes nothing
@@ -1997,11 +2086,19 @@ pub async fn shell_ready(host: &Host, pane_id: &str, ms: u64) -> HubResult<()> {
 /// New tmux window (in an existing or new session) at `cwd`, optionally starting an agent.
 pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
     let host = registry().host(host_id)?;
-    let agent_name = opts.agent.as_deref().filter(|a| !a.is_empty() && *a != "shell");
     // before anything is created: an unknown agent would fail after the window exists
-    let agent = match agent_name {
-        Some(a) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
+    let custom = match opts.custom.as_deref().filter(|c| !c.is_empty()) {
+        Some(id) => Some(crate::agents::custom::by_id(id).ok_or_else(|| http(400, "Unknown custom agent"))?),
         None => None,
+    };
+    let agent_name = match &custom {
+        Some(c) => Some(c.name.as_str()),
+        None => opts.agent.as_deref().filter(|a| !a.is_empty() && *a != "shell"),
+    };
+    let agent = match (&custom, agent_name) {
+        (Some(c), _) => Some(c.like),
+        (None, Some(a)) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
+        (None, None) => None,
     };
     let cwd = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
     let home = cwd == "~" || cwd.starts_with("~/");
@@ -2028,7 +2125,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         return Err(http(400, if err.is_empty() { "Could not create window" } else { err }));
     }
     if let Some(agent) = agent {
-        let mut parts = vec![agent.def().launch.clone()];
+        let mut parts = vec![custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone())];
         // OpenCode names models "provider/model"
         if let Some(model) = opts.model.as_deref().filter(|m| if agent == AgentKind::Opencode { re!(r"^[\w.:-]+/[\w.:/-]+$").is_match(m) } else { re!(r"^[\w.:-]+$").is_match(m) })
         {
@@ -2045,6 +2142,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         if agent == AgentKind::Antigravity && (mode == "acceptEdits" || mode == "plan") {
             parts.push(format!("--mode {}", if mode == "plan" { "plan" } else { "accept-edits" }));
         }
+        parts.extend(opts.extra.iter().cloned());
         // files you attach land in ~/.inyon/uploads; without this agy asks before reading each one
         if agent == AgentKind::Antigravity {
             host.run(r#"mkdir -p "$HOME/.inyon/uploads""#).await?;
@@ -2060,7 +2158,7 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
                 _ => text,
             });
         }
-        parts[0] = with_bin(&parts[0], &launch_bin(&host, agent).await?);
+        parts[0] = with_bin(&parts[0], &launch_bin(&host, &parts[0]).await?);
         shell_ready(&host, &pane_id, 8000).await?;
         type_into(&host, &pane_id, &parts.join(" "), true).await?;
     }
@@ -2110,7 +2208,7 @@ pub async fn fork_conversation(host_id: &str, pane_id: &str) -> HubResult<String
         return Err(http(500, if err.is_empty() { "Could not open a window" } else { err }));
     }
     shell_ready(&host, &new_pane, 8000).await?;
-    let line = with_bin(&cmd, &launch_bin(&host, a.kind).await?);
+    let line = with_bin(&cmd, &launch_bin(&host, &a.kind.def().launch).await?);
     type_into(&host, &new_pane, &line, true).await?;
     registry().refresh(host_id, 1500);
     Ok(new_pane)
@@ -2231,6 +2329,31 @@ pub async fn rename_pane(host_id: &str, pane_id: &str, raw: &str) -> HubResult<(
     apply_pending_name(host_id, pane_id).await?;
     registry().refresh(host_id, 0);
     Ok(())
+}
+
+/// Renames a tmux session (psmux on Windows too): `session` is its number, the `52` of `$52`.
+/// tmux won't have a dot or a colon in a session's name, so those become underscores, as tmux
+/// itself does; a # (a tmux format) becomes a dash, as when Inyon starts a session.
+pub async fn rename_tmux_session(host_id: &str, session: &str, raw: &str) -> HubResult<String> {
+    if !re!(r"^\d{1,9}$").is_match(session) {
+        return Err(http(400, "Bad session"));
+    }
+    let spaced = re!(r"\s+", "g").replace_all(raw, " ");
+    let name = re!(r"[.:]", "g").replace_all(spaced.jtrim(), "_").replace('#', "-").to16(80).to_owned();
+    if name.is_empty() {
+        return Err(http(400, "Type a name"));
+    }
+    let host = registry().host(host_id)?;
+    let r = host.run(&format!("tmux rename-session -t {} -- {}", shq(&format!("${session}")), shq(&name))).await?;
+    if r.code != 0 {
+        let err = r.stderr.jtrim();
+        if re!(r"duplicate session", "i").is_match(err) {
+            return Err(http(409, format!("There's already a tmux session called {name} on that machine")));
+        }
+        return Err(http(500, if err.is_empty() { "Could not rename the tmux session" } else { err }));
+    }
+    registry().refresh(host_id, 0);
+    Ok(name)
 }
 
 /// Types /rename for a name the agent hasn't taken yet, once it's idle with nothing open on screen.

@@ -50,3 +50,10 @@ test('the chat comes in the way the terminal does, and again for another session
   expect(screen.getByRole('radio', { name: 'Terminal' })).toBeTruthy()
   expect(container.querySelector('.animate-page')).toBe(chat)
 })
+
+test('the companion goes by that name in its header, whatever its conversation is called', async () => {
+  useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'claude', { companion: true, title: 'Status check' })] })], hostsLoaded: true, connected: true })
+  await page()
+  await waitFor(() => expect(screen.getAllByText('Companion').length).toBeGreaterThan(0))
+  expect(screen.queryByText('Status check')).toBeNull()
+})

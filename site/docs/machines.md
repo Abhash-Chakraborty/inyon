@@ -50,6 +50,7 @@ The tabs:
 - **Setup:** what it has and what it's missing (below).
 - **Config:** each agent's config files, editable, with JSON checked before saving and the last five versions kept as backups.
 - **Uploads:** how much space uploaded files take, with buttons to clean older ones or delete them all.
+- **Temp files:** the files its coding agents left behind, to preview and delete (from 0.21, see [Agent temp files](temp-files.md)).
 - **Integration:** Inyon's optional Claude Code integration, and which agents are signed in.
 
 ### The Setup tab
@@ -72,9 +73,13 @@ When an install or update fails, the row opens with the likely cause (npm can't 
 
 ### The Claude Code integration
 
-Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
+Turning it on gives Inyon exact session matching and live numbers (context, cost, limits) for Claude Code. It adds a small hook script and wraps your status line, backing up `~/.claude/settings.json` first, and turning it off puts everything back. From 0.22 the same hook goes into GitHub Copilot CLI, Gemini CLI and Antigravity CLI when they're installed, so their turns show as working or finished the moment they start or end. An agent installed later gets it within ten minutes. [Security](security.md#what-inyon-changes-on-a-machine) lists every file.
 
 When a new version of Inyon changes these scripts, it updates them on the machine by itself, as long as it has seen the integration on there before. Otherwise the button says *Update* instead of *Turn on*. From 0.17.1, an older copy of Inyon (a phone that hasn't updated yet) leaves scripts from a newer one alone.
+
+## From a machine's terminal
+
+From 0.22, on a joined machine, `inyon hub machines`, `inyon sessions` and `inyon pages --hub` show what the hub sees, and `inyon send` gives an agent on another machine a message once it's free, if the hub allows that. See [Sessions and messages](cli.md#sessions-and-messages).
 
 ## When a machine goes offline
 

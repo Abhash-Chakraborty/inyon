@@ -145,6 +145,9 @@ pub fn pair(args: &[String], json: bool) -> Outcome {
     let hide_link = inyon_engine::output::link_hidden(args.iter().any(|a| a == "--show-link"));
     let args: Vec<String> = args.iter().filter(|a| *a != "--show-link").cloned().collect();
     let args = pair_args(&args, json, std::io::stdout().is_terminal());
+    // the Inyon app runs the link on Windows: it starts it, so the code comes from its link
+    // rather than one this command would start and keep running
+    link_in_app(&crate::sys::RealProc);
     engine::pair(&args, &mut |v| {
         if json {
             println!("{}", serde_json::to_string(&with_v(v.clone())).unwrap_or_default());
@@ -155,6 +158,25 @@ pub fn pair(args: &[String], json: bool) -> Outcome {
     })?;
     // printed already
     Ok(Value::Null)
+}
+
+/// Has the running Inyon app run the link, and waits up to 20 s for it to answer.
+fn link_in_app(proc: &dyn sys::Proc) {
+    let Some(a) = crate::app::running(proc) else { return };
+    if a.runs(Role::Link) {
+        return;
+    }
+    if crate::app::ask(proc, crate::app::Do::Start, Some(Role::Link), None, 5000).is_err() {
+        return;
+    }
+    eprintln!("The Inyon app is starting the link…");
+    let port = state::link_config().port.unwrap_or(4780);
+    for _ in 0..40 {
+        if service::link_answers(port) {
+            return;
+        }
+        proc.sleep_ms(500);
+    }
 }
 
 /// What the engine's `pair` gets. Drawn for no terminal (an installer in a script or a container),
@@ -235,6 +257,65 @@ pub fn hub_reset_password(sys: &Sys, password: Option<&str>) -> Outcome {
 
 /// Checks a hub address; refuses to send a token over plain http to anything but this machine or a
 /// VPN address. A name has to point only at those (a MagicDNS name does; a LAN's .local doesn't).
+/// What `inyon join` says when it's missing the hub or the token.
+pub const JOIN_USAGE: &str = "usage: INYON_TOKEN=<token> inyon join <hub-url> (or paste the whole command from the hub's Machines page, Add a machine)";
+
+/// What `inyon join` and setup say to a phone's pairing link.
+pub const PHONE_LINK: &str = "That link pairs a phone with the hub; to add this computer, run the command from the hub's Machines page (Add a machine) here instead.";
+
+/// Whether `text` is a link that pairs a phone (the hub's QR code or a machine's), not a hub.
+pub fn is_phone_link(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with("inyon://") || t.contains("#hub?") || t.contains("#pair?") || t.contains("#pair&") || t.ends_with("#pair")
+}
+
+/// What the hub's "Add a machine" command says: the hub, and the token and certificate it carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MachineCommand {
+    pub hub: String,
+    pub token: Option<String>,
+    pub cert: Option<String>,
+}
+
+/// Reads what was pasted into setup's Join screen: the hub's Add a machine command whole (the
+/// Linux and macOS one or the Windows one), or only the hub's address. A phone's pairing link is
+/// refused with where the command is.
+pub fn parse_add_machine(text: &str) -> Result<MachineCommand, String> {
+    let t = text.trim();
+    if is_phone_link(t) {
+        return Err(PHONE_LINK.into());
+    }
+    let word_after = |key: &str| -> Option<String> {
+        let at = t.find(key)? + key.len();
+        let w: String = t[at..].chars().take_while(|c| !c.is_whitespace() && *c != '\'' && *c != '"').collect();
+        (!w.is_empty()).then_some(w)
+    };
+    let quoted_after = |key: &str| -> Option<String> {
+        let at = t.find(key)? + key.len();
+        let rest = &t[at..];
+        let end = rest.find('\'')?;
+        (end > 0).then(|| rest[..end].to_string())
+    };
+    let url = |w: &str| (w.starts_with("https://") || w.starts_with("http://")).then(|| w.trim_end_matches('/').to_string());
+    // Windows: powershell … install.ps1 … -Hub '<hub>' -Token '<token>'
+    if let Some(hub) = quoted_after("-Hub '").and_then(|h| url(&h)) {
+        return Ok(MachineCommand { hub, token: quoted_after("-Token '"), cert: quoted_after("-Cert '") });
+    }
+    // Linux and macOS: INYON_TOKEN=<token> … sh -c '<script>' inyon <hub> <sha256>
+    if let Some(token) = word_after("INYON_TOKEN=") {
+        let after_script = t.rfind("' inyon ").map(|i| &t[i + "' inyon ".len()..]);
+        let hub = after_script.and_then(|rest| rest.split_whitespace().next()).and_then(url).or_else(|| t.split_whitespace().find_map(url));
+        let Some(hub) = hub else {
+            return Err("That command has a token but no hub address. Copy the whole command from the hub's Machines page (Add a machine).".into());
+        };
+        return Ok(MachineCommand { hub, token: Some(token), cert: word_after("INYON_HUB_CERT=") });
+    }
+    if let Some(hub) = url(t).filter(|_| !t.contains(char::is_whitespace)) {
+        return Ok(MachineCommand { hub, token: None, cert: None });
+    }
+    Err("Paste the command from the hub's Machines page (Add a machine), or the hub's address (https://…).".into())
+}
+
 pub fn check_hub_url(hub: &str) -> Result<(), String> {
     check_hub_url_with(hub, &|host, port| inyon_engine::hub::check_name_now(host, port))
 }
@@ -324,16 +405,19 @@ fn claim_token(hub: &str, token: &str, post: &dyn Fn(&str, &str) -> Result<inyon
 
 /// `inyon join <hub-url>`, what the hub's "Add a machine" command runs: saves the hub and token
 /// (readable only by you) and runs the connection in the background.
-pub fn join(sys: &Sys, hub: &str, token: &str, autostart: bool) -> Outcome {
-    let hub = hub.trim_end_matches('/');
+pub fn join(sys: &Sys, hub: &str, token: &str, cert: Option<&str>, autostart: bool) -> Outcome {
+    let hub = hub.trim().trim_end_matches('/');
+    if is_phone_link(hub) {
+        return Err(PHONE_LINK.into());
+    }
     if hub.is_empty() || token.is_empty() {
-        return Err("usage: INYON_TOKEN=<token> inyon join <hub-url>".into());
+        return Err(JOIN_USAGE.into());
     }
     check_hub_url(hub)?;
     let dir = paths::ensure_node_dir().map_err(|e| e.to_string())?;
     let before = paths::saved_env();
-    let pin = paths::env_var("INYON_HUB_CERT").filter(|c| !c.trim().is_empty());
-    trust_hub_cert(hub, pin.as_deref(), &|url| http::get_unverified(url), &inyon_engine::http::hub_cert_file())?;
+    let pin = cert.filter(|c| !c.trim().is_empty());
+    trust_hub_cert(hub, pin, &|url| http::get_unverified(url), &inyon_engine::http::hub_cert_file())?;
     let win = sys.platform == Platform::Windows;
     // the version that joined, so the connection knows this address passed this check (one saved
     // before 0.20 on plain http still connects, with a warning); and INYON_ALLOW_INSECURE if it was needed
@@ -413,6 +497,43 @@ pub fn disconnect(sys: &Sys) -> Outcome {
         return Err(format!("Left {what}, but couldn't remove everything: {}.", r.how));
     }
     Ok(json!({ "hub": hub, "message": format!("Left {what}; {}.", r.how) }))
+}
+
+/// `inyon stop`: everything inyon runs in the background here stops (the Inyon app with all it
+/// runs on Windows, the user services elsewhere) until the next sign-in or `inyon setup`. The hub
+/// keeps running; `inyon hub stop` stops it.
+pub fn stop(sys: &Sys) -> Outcome {
+    let mut stopped: Vec<String> = Vec::new();
+    if sys.platform == Platform::Windows {
+        if let Some(a) = crate::app::running(sys.proc) {
+            let what = if a.running.is_empty() { "the Inyon app".to_string() } else { format!("the Inyon app and what it ran ({})", a.running.join(", ")) };
+            match crate::app::ask(sys.proc, crate::app::Do::Quit, None, None, 10_000) {
+                Ok(_) => {
+                    stopped.push(what);
+                    // what it ran ends with its job
+                    sys.proc.sleep_ms(500);
+                }
+                Err(e) => return Err(format!("{e} Quit Inyon in the tray icon's menu instead.")),
+            }
+        }
+    }
+    // what runs outside the app: an older version's engine, a service, a copy started in the background
+    for role in [Role::Link, Role::Node] {
+        let running = update::read_running(role).and_then(|r| r.pid).filter(|p| *p != sys.pid && sys.proc.alive(*p));
+        let what = if role == Role::Link { "the phone link" } else { "the hub connection" };
+        let r = service::stop_now(sys, role, running);
+        if r || running.is_some() {
+            stopped.push(what.to_string());
+        }
+    }
+    if stopped.is_empty() {
+        return Ok(json!({ "stopped": [], "message": "Nothing of inyon's runs in the background here." }));
+    }
+    let again = match sys.platform {
+        Platform::Windows => "Opening Inyon from the Start menu, or the next sign-in, starts it again.",
+        _ => "The next sign-in starts it again; `inyon service uninstall` turns that off.",
+    };
+    Ok(json!({ "stopped": stopped, "message": format!("Stopped {}. {again}", stopped.join(" and ")) }))
 }
 
 // ---------- services ----------
@@ -666,7 +787,9 @@ pub fn logs(sys: &Sys, role: Option<&str>, lines: usize, follow: bool) -> Outcom
         if follow {
             args.push("-f");
         }
-        let status = std::process::Command::new(args[0]).args(&args[1..]).status().map_err(|e| e.to_string())?;
+        let mut c = std::process::Command::new(args[0]);
+        c.args(&args[1..]);
+        let status = sys::console_child(&mut c).status().map_err(|e| e.to_string())?;
         return if status.success() { Ok(json!({ "message": "" })) } else { Err("journalctl couldn't show the log".into()) };
     }
     let text = fs::read_to_string(&file).unwrap_or_default();
@@ -726,6 +849,37 @@ fn link_reach(platform: Platform, cfg: &state::LinkConfig, answers: &dyn Fn(u16)
     out
 }
 
+/// What doctor's "hub engine" line has to go on.
+struct HubEngine {
+    legacy: bool,
+    asked: Option<bool>,
+    rust: bool,
+    here: bool,
+}
+
+impl HubEngine {
+    /// Which hub runs, when there's one to say: the Rust hub, else the Bun hub and why. `bun` is
+    /// the Bun engine's line when it's here.
+    fn line(&self, bun: impl FnOnce() -> Option<String>) -> Option<(bool, String)> {
+        if self.legacy {
+            if self.asked == Some(true) {
+                return Some((false, "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
+            }
+            return self.here.then(|| (true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into()));
+        }
+        if self.rust {
+            return Some((true, "the Rust hub, built in".into()));
+        }
+        if !self.here {
+            return None;
+        }
+        Some(match bun() {
+            Some(line) => (true, format!("{line}, the Bun hub (INYON_HUB_IMPL=bun)")),
+            None => (false, "not here yet; `inyon hub start` downloads it".into()),
+        })
+    }
+}
+
 pub fn doctor(sys: &Sys) -> Outcome {
     let mut checks: Vec<(bool, String, String)> = Vec::new();
     // the Bun engine, for a hub or with the kill switch; everything else is built in
@@ -738,19 +892,12 @@ pub fn doctor(sys: &Sys) -> Outcome {
             Some(p) => checks.push((true, "engine".into(), format!("{}, the Bun engine (INYON_LEGACY_ENGINE is set)", bun_line(p)))),
             None => checks.push((false, "engine".into(), "INYON_LEGACY_ENGINE is set but the Bun engine isn't here; run `inyon service install`".into())),
         }
-        if engine::hub_impl_wanted() {
-            checks.push((false, "hub engine".into(), "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
-        }
     } else {
         checks.push((true, "engine".into(), format!("built in ({VERSION})")));
-        if engine::rust_hub() {
-            checks.push((true, "hub engine".into(), "the Rust hub, built in (INYON_HUB_IMPL=rust)".into()));
-        } else if service::has_service(sys, Role::Hub) || engine::hub_here() {
-            match &bun {
-                Some(p) => checks.push((true, "hub engine".into(), bun_line(p))),
-                None => checks.push((false, "hub engine".into(), "not here yet; `inyon hub start` downloads it".into())),
-            }
-        }
+    }
+    let hub = HubEngine { legacy: engine::legacy(), asked: engine::hub_impl_asked(), rust: engine::rust_hub(), here: service::has_service(sys, Role::Hub) || engine::hub_here() };
+    if let Some((ok, line)) = hub.line(|| bun.as_deref().map(bun_line)) {
+        checks.push((ok, "hub engine".into(), line));
     }
     checks.push((true, "inyon".into(), format!("{VERSION} at {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default())));
     match service::missing_mux(sys.platform) {
@@ -891,9 +1038,12 @@ pub fn update_command(sys: &Sys, background: bool, json: bool) -> Outcome {
             if npm {
                 r.message = format!("{} The inyon command itself came from npm. Update it with:\n  {}", r.message, update::NPM_UPDATE);
             }
-            if r.changed {
-                // the version Settings → Apps shows on Windows
-                service::register_app(sys);
+            if r.changed && sys.platform == Platform::Windows {
+                // the Start menu, the version Settings → Apps shows, and logon tasks set up by an
+                // earlier version, which open the Inyon app from now on
+                if let Err(e) = service::adopt_app(sys) {
+                    crate::app::trace(&format!("! after the update: {e}"));
+                }
             }
             Ok(json!({ "changed": r.changed, "version": r.version, "message": r.message }))
         }
@@ -1025,6 +1175,12 @@ pub fn wants_hand_over(sys: &Sys) -> bool {
 /// With `ask`, a terminal is there to answer whether tmux that setup installed goes as well.
 pub fn uninstall_all(sys: &Sys, purge: bool, ask: bool) -> Outcome {
     let mut lines = Vec::new();
+    // the Inyon app stops what it runs and ends, so its files can go
+    if crate::app::running(sys.proc).is_some() {
+        if let Ok(r) = crate::app::ask(sys.proc, crate::app::Do::Quit, None, None, 10_000) {
+            lines.push(r.message);
+        }
+    }
     // asked first, while the record of what setup installed is still there
     let mux = service::remove_mux(sys, ask);
     for r in ROLES {
@@ -1129,6 +1285,8 @@ pub struct SetupFlags {
     pub port: Option<u16>,
     pub autostart: Option<bool>,
     pub hub: Option<String>,
+    /// no pairing code at the end: the Inyon window runs setup and shows its own
+    pub no_code: bool,
 }
 
 pub fn plan_from_flags(platform: Platform, nets: Vec<networks::Network>, f: &SetupFlags) -> Result<Plan, String> {
@@ -1140,7 +1298,8 @@ pub fn plan_from_flags(platform: Platform, nets: Vec<networks::Network>, f: &Set
         }
     }
     if let Some(h) = &f.hub {
-        plan.hub_url = h.clone();
+        // the hub's address, or its whole Add a machine command
+        plan.set_join(h)?;
         if f.role.is_none() {
             plan.role = RoleChoice::Join;
         }
@@ -1158,7 +1317,7 @@ pub fn plan_from_flags(platform: Platform, nets: Vec<networks::Network>, f: &Set
         return Err("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.".into());
     }
     if plan.role == RoleChoice::Join && plan.hub_url.is_empty() {
-        return Err("--hub <url> says which hub to join (with the token in INYON_TOKEN).".into());
+        return Err("--hub <url> says which hub to join (with the token in INYON_TOKEN), or give it the hub's whole Add a machine command.".into());
     }
     Ok(plan)
 }
@@ -1220,12 +1379,12 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
         // the first command that needs it says so in full
         eprintln!("! The engine couldn't be downloaded yet; it's fetched again on the next command that needs it.");
     }
-    apply(sys, &plan, ask, interactive)
+    apply(sys, &plan, ask, interactive, !flags.is_some_and(|f| f.no_code))
 }
 
 /// Carries the plan out. `ask` says whether to ask before installing tmux; `interactive` whether
 /// a terminal is there at all (sudo can ask for a password).
-pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
+pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool, code: bool) -> Outcome {
     let mut lines = vec![service::install_mux(sys, ask, interactive)];
     // Windows lists it under Settings → Apps, with Uninstall there running `inyon uninstall`
     lines.extend(service::register_app(sys));
@@ -1239,8 +1398,10 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
     }
     match plan.role {
         RoleChoice::Join => {
-            let token = paths::env_var("INYON_TOKEN").unwrap_or_default();
-            let r = join(sys, &plan.hub_url, &token, plan.autostart)?;
+            // from the command pasted in setup, else the environment, as the hub's command sets it
+            let token = Some(plan.hub_token.clone()).filter(|t| !t.is_empty()).or_else(|| paths::env_var("INYON_TOKEN")).unwrap_or_default();
+            let cert = Some(plan.hub_cert.clone()).filter(|c| !c.is_empty()).or_else(|| paths::env_var("INYON_HUB_CERT"));
+            let r = join(sys, &plan.hub_url, &token, cert.as_deref(), plan.autostart)?;
             lines.push(r["message"].as_str().unwrap_or("").to_string());
             Ok(json!({ "role": "join", "message": lines.join("\n") }))
         }
@@ -1319,6 +1480,9 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool) -> Outcome {
                 }
             }
             println!("{}", lines.join("\n"));
+            if !code {
+                return Ok(json!({ "role": "node", "message": "" }));
+            }
             // the engine makes the secret and publishes it; the code is drawn here
             pair(&[], false)?;
             if plan.autostart {
@@ -1383,6 +1547,10 @@ pub fn hub_settings(bind: &Bind, env: &mut std::collections::BTreeMap<String, St
 
 /// Everything the engine still has to say, for `inyon hub …` forms this program doesn't handle.
 pub fn hub_other(args: &[String]) -> ! {
+    if cfg!(windows) {
+        eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
+        std::process::exit(1);
+    }
     let mut all = vec!["hub".to_string()];
     all.extend(args.iter().cloned());
     engine::forward(&all)
@@ -1487,6 +1655,23 @@ pub fn skill_remove(name: &str, to: Option<PathBuf>) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn doctor_says_which_hub_runs_and_why() {
+        let hub = |legacy, asked, rust, here| HubEngine { legacy, asked, rust, here };
+        let bun = || Some("~/.inyon/bin/inyon-engine (0.21.0)".to_string());
+        // the default from 0.21, whether or not a hub was set up yet
+        assert_eq!(hub(false, None, true, true).line(bun), Some((true, "the Rust hub, built in".into())));
+        // INYON_HUB_IMPL=bun, with the engine and without it
+        assert_eq!(hub(false, Some(false), false, true).line(bun), Some((true, "~/.inyon/bin/inyon-engine (0.21.0), the Bun hub (INYON_HUB_IMPL=bun)".into())));
+        assert!(!hub(false, Some(false), false, true).line(|| None).unwrap().0);
+        // on a machine with no hub there's nothing to say about the Bun one
+        assert_eq!(hub(false, Some(false), false, false).line(bun), None);
+        // the kill switch puts the hub on Bun: said when a hub is here, a warning when rust was asked for
+        assert_eq!(hub(true, None, false, true).line(bun), Some((true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into())));
+        assert_eq!(hub(true, None, false, false).line(bun), None);
+        assert!(!hub(true, Some(true), false, false).line(bun).unwrap().0);
+    }
 
     #[test]
     fn a_hub_certificate_covers_the_address_it_was_told_to_listen_on() {
@@ -1742,21 +1927,21 @@ mod tests {
 
     #[test]
     fn flags_make_the_same_plan_as_the_screens() {
-        let f = SetupFlags { yes: true, role: Some("hub".into()), network: Some("lan".into()), port: Some(8443), autostart: Some(false), hub: None };
+        let f = SetupFlags { yes: true, role: Some("hub".into()), network: Some("lan".into()), port: Some(8443), autostart: Some(false), hub: None, no_code: false };
         let p = plan_from_flags(Platform::Linux, Vec::new(), &f).unwrap();
         assert_eq!(p.role, RoleChoice::Hub);
         assert_eq!(p.bind, Bind::Lan);
         assert_eq!(p.port_number(), 8443);
         assert!(!p.autostart);
-        let f = SetupFlags { yes: true, role: None, network: Some("tunnel,vpn,wss://me.example/link".into()), port: None, autostart: None, hub: None };
+        let f = SetupFlags { yes: true, role: None, network: Some("tunnel,vpn,wss://me.example/link".into()), port: None, autostart: None, hub: None, no_code: false };
         let p = plan_from_flags(Platform::Linux, Vec::new(), &f).unwrap();
         assert!(p.tunnel && p.vpn && !p.lan);
         assert_eq!(p.own_url, "wss://me.example/link");
-        let f = SetupFlags { yes: true, role: None, network: None, port: None, autostart: None, hub: Some("https://hub".into()) };
+        let f = SetupFlags { yes: true, role: None, network: None, port: None, autostart: None, hub: Some("https://hub".into()), no_code: false };
         assert_eq!(plan_from_flags(Platform::Linux, Vec::new(), &f).unwrap().role, RoleChoice::Join);
-        let f = SetupFlags { yes: true, role: Some("join".into()), network: None, port: None, autostart: None, hub: None };
+        let f = SetupFlags { yes: true, role: Some("join".into()), network: None, port: None, autostart: None, hub: None, no_code: false };
         assert!(plan_from_flags(Platform::Linux, Vec::new(), &f).is_err());
-        let f = SetupFlags { yes: true, role: Some("hub".into()), network: None, port: None, autostart: None, hub: None };
+        let f = SetupFlags { yes: true, role: Some("hub".into()), network: None, port: None, autostart: None, hub: None, no_code: false };
         assert!(plan_from_flags(Platform::Windows, Vec::new(), &f).unwrap_err().contains("WSL"));
     }
 }

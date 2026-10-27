@@ -19,6 +19,8 @@ const PANE_FORMAT = [
   '#{window_id}', '#{window_index}', '#{window_name}', '#{window_active}', '#{window_activity}',
   '#{pane_id}', '#{pane_index}', '#{pane_active}', '#{pane_pid}', '#{pane_current_command}',
   '#{pane_current_path}', '#{pane_title}', '#{pane_width}', '#{pane_height}', '#{pane_dead}',
+  // the window's size, for the Rust hub's resting grid
+  '#{window_width}', '#{window_height}',
 ].join(SEP)
 
 /**
@@ -119,7 +121,7 @@ else
   echo "@@NOTMUX"
 fi
 echo "@@CLIENTS"
-tmux list-clients -F '#{session_id} #{client_control_mode}' 2>/dev/null
+tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}' 2>/dev/null
 echo "@@PS"
 # etimes (seconds) is Linux procps; elsewhere (macOS, BusyBox) etime is [[dd-]hh:]mm:ss
 ps -e -o pid=,ppid=,etimes=,comm=,args= 2>/dev/null || ps -A -o pid=,ppid=,etime=,comm=,args= 2>/dev/null | awk '{
@@ -162,6 +164,11 @@ for f in "$HOME"/.inyon/agy-status/*.json; do [ -f "$f" ] && echo "$(basename "$
 if command -v agy >/dev/null 2>&1; then
   if grep -q 'inyon/agy-statusline.sh' "$HOME/.gemini/antigravity-cli/settings.json" 2>/dev/null && { ${CURRENT_SH}; current "$HOME/.inyon/agy-statusline.sh"; }; then echo "@@AGYINT installed"; else echo "@@AGYINT missing"; fi
 fi
+# the agents other than Claude Code whose settings run Inyon's hook
+echo "@@HOOKED"
+grep -qs 'inyon/hook.sh copilot' "\${COPILOT_HOME:-$HOME/.copilot}/hooks/inyon.json" && echo copilot
+grep -qs 'inyon/hook.sh gemini' "$HOME/.gemini/settings.json" && echo gemini
+grep -qs 'inyon/hook.sh antigravity' "$HOME/.gemini/config/hooks.json" && echo antigravity
 echo "@@HOOK"
 ${HOOK_STATE_SH}
 t="$HOME/.inyon"
@@ -171,6 +178,17 @@ echo "@@PANES"
 cat "$t"/panes/*.json 2>/dev/null
 echo "@@COMPACT"
 for f in "$t"/panes/*.compact; do [ -f "$f" ] && echo "$(basename "$f" .compact) $(cat "$f")"; done 2>/dev/null
+echo "@@CLAUDESESS"
+# Claude Code windows that moved their conversation to the background, and the background sessions with their transcripts
+cc="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+for f in "$cc"/sessions/*.json; do
+  [ -f "$f" ] || continue
+  l=$(tr -d '\\n\\r' < "$f")
+  case "$l" in
+  *'"parkedJobId":"'*) printf '%s\\t%s\\n' - "$l" ;;
+  *'"kind":"bg"'*) s=$(printf '%s' "$l" | sed -n 's/.*"sessionId":"\\([0-9a-f-]*\\)".*/\\1/p'); tp=$([ -n "$s" ] && ls "$cc"/projects/*/"$s".jsonl 2>/dev/null | head -n 1); printf '%s\\t%s\\n' "\${tp:--}" "$l" ;;
+  esac
+done 2>/dev/null
 echo "@@STATUS"
 # pane, mtime, account when written, account now, payload
 for f in "$t"/status/*.json; do
@@ -289,8 +307,9 @@ export async function probe(host: Host): Promise<ProbeResult> {
   for (const line of sections.get('PANES') ?? []) {
     if (!line.trim()) continue
     try {
-      const s = JSON.parse(line) as HookPaneState
-      if (s.pane) res.hookPanes.set(s.pane, s)
+      // a line tagged with another agent (`hook.sh copilot agentStop`): this hub reads Claude Code's only
+      const s = JSON.parse(line) as HookPaneState & { agent?: string }
+      if (s.pane && !s.agent) res.hookPanes.set(s.pane, s)
     } catch {}
   }
 

@@ -22,6 +22,7 @@ const Settings = lazy(() => import('./pages/Settings.tsx').then((m) => ({ defaul
 const MachinesPage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ default: m.MachinesPage })))
 const MachinePage = lazy(() => import('./pages/Machines.tsx').then((m) => ({ default: m.MachinePage })))
 const PagesPage = lazy(() => import('./pages/Pages.tsx').then((m) => ({ default: m.PagesPage })))
+const TempPage = lazy(() => import('./pages/Temp.tsx').then((m) => ({ default: m.TempPage })))
 import { installTapHaptics } from './lib/haptics.ts'
 import { installKeepAlive } from './lib/keepalive.ts'
 import { installNative, isNative, nativeTheme, takePairFragment } from './lib/native.ts'
@@ -92,6 +93,8 @@ function App() {
           <Route path="machines/:host" element={<MachinePage />} />
           <Route path="pages" element={<PagesPage />} />
           <Route path="pages/:host/:slug" element={<PagesPage />} />
+          <Route path="temp" element={<TempPage />} />
+          <Route path="temp/:host" element={<TempPage />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Home />} />
         </Route>
@@ -110,7 +113,7 @@ installNative()
 // a page going away writes what it was about to keep
 window.addEventListener('pagehide', flushSnapshots)
 // fetch the other pages once the first screen is up, so opening one doesn't wait on the network
-setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx'), import('./pages/Pages.tsx')]).catch(() => {}), 1500)
+setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx'), import('./pages/Pages.tsx'), import('./pages/Temp.tsx')]).catch(() => {}), 1500)
 installKeepAlive()
 // the Android app looks for a newer APK once a day; it never installs one by itself
 if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m.startAppUpdateCheck()), 4000)

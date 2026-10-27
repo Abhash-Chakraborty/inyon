@@ -87,6 +87,19 @@ describe('psmux (Windows)', () => {
   })
 })
 
+test("another agent's hook line is left to the Rust hub, and Claude Code's is read as before", async () => {
+  const out = [
+    '@@PANES',
+    JSON.stringify({ pane: '%4', ts: 1700000000, data: { session_id: 's-claude', hook_event_name: 'Stop' } }),
+    JSON.stringify({ pane: '%5', ts: 1700000000, agent: 'copilot', event: 'agentStop', data: { sessionId: 's-copilot' } }),
+    '@@END',
+  ].join('\n')
+  const fake = { config: { id: 'm', name: 'm', kind: 'local' }, exec: async () => ({ stdout: out, stderr: '', code: 0 }) } as unknown as Host
+  const r = await probe(fake)
+  expect(r.hookPanes.get('%4')?.data.session_id).toBe('s-claude')
+  expect(r.hookPanes.has('%5')).toBe(false)
+})
+
 describe('claudeStatus', () => {
   const base = (over: Partial<{ ts: number; account: string; accountNow: string; session: string }> = {}) => ({
     integration: 'installed' as const,
@@ -156,6 +169,22 @@ const sandboxHost = {
 } as any
 
 describe('installIntegration', () => {
+  test('a Claude Code downgraded below StopFailure loses Inyon\'s StopFailure hook and keeps yours', async () => {
+    const { installIntegration } = await import('./integration.ts')
+    const withClaude = (version: string) => ({
+      exec: (cmd: string, opts?: { input?: string }) => sandboxHost.exec(`claude() { echo '${version}'; }; ${cmd}`, opts),
+    }) as any
+    const file = join(home, '.claude/settings.json')
+    await installIntegration(withClaude('2.1.309 (Claude Code)'))
+    const s = JSON.parse(readFileSync(file, 'utf8'))
+    s.hooks.StopFailure.push({ hooks: [{ type: 'command', command: '~/bin/mine.sh' }] })
+    writeFileSync(file, JSON.stringify(s))
+    await installIntegration(withClaude('2.1.60 (Claude Code)'))
+    const hooks = JSON.parse(readFileSync(file, 'utf8')).hooks
+    expect(hooks.StopFailure).toEqual([{ hooks: [{ type: 'command', command: '~/bin/mine.sh' }] }])
+    expect(hooks.Stop).toBeTruthy()
+  })
+
   test('a status line synced from Windows does not replace the one that runs here', async () => {
     const { installIntegration } = await import('./integration.ts')
     const settings = (cmd: string) => {
@@ -408,4 +437,15 @@ test('scripts from a newer Inyon count as installed, so an older app leaves them
   } finally {
     rmSync(h, { recursive: true, force: true })
   }
+})
+
+test('StopFailure is only registered for a Claude Code that has it', async () => {
+  const { knowsStopFailure } = await import('./integration.ts')
+  expect(knowsStopFailure('2.1.309 (Claude Code)\n')).toBe(true)
+  expect(knowsStopFailure('2.1.78 (Claude Code)')).toBe(true)
+  expect(knowsStopFailure('3.0.0')).toBe(true)
+  // before 2.1.101 an unknown event made Claude Code ignore the whole file
+  expect(knowsStopFailure('2.1.77 (Claude Code)')).toBe(false)
+  expect(knowsStopFailure('1.0.120 (Claude Code)')).toBe(false)
+  expect(knowsStopFailure('')).toBe(false)
 })

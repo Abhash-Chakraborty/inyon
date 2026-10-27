@@ -45,7 +45,7 @@ impl Home {
 
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_inyon"));
-        c.args(args).env("HOME", &self.dir).env("USERPROFILE", &self.dir).current_dir(&self.dir);
+        c.args(args).env("HOME", &self.dir).env("USERPROFILE", &self.dir).env_remove("INYON_HUB").env_remove("TETHER_HUB").current_dir(&self.dir);
         for v in AGENT_VARS {
             c.env_remove(v);
         }
@@ -115,13 +115,23 @@ fn adding_a_folder_lists_it_and_marks_it() {
     let site = h.site("work/handy-redesign", "Handy &amp; redesign");
     let (code, stdout, stderr) = h.run(&["pages", "add", "work/handy-redesign/"]);
     assert_eq!(code, 0, "{stderr}");
-    // no hub on this machine: where it's listed, and no app path that would open nothing
+    // no hub on this machine and none it's joined to: where it's listed, that nothing shows it yet,
+    // and no app path that would open nothing
     assert!(stdout.contains("\"Handy & redesign\" is listed on "), "{stdout}");
     assert!(stdout.contains(", under handy-redesign.\n"), "{stdout}");
-    assert!(stdout.contains("This machine doesn't run a hub"), "{stdout}");
-    assert!(stdout.contains("The app can't open this page yet."), "{stdout}");
+    assert!(stdout.contains("isn't joined to one, so the app can't open this page"), "{stdout}");
+    assert!(!stdout.contains("joined to shows"), "{stdout}");
     assert!(!stdout.contains("/pages/local/"), "{stdout}");
     assert!(!stdout.contains("/v/"), "{stdout}");
+    // joined to a hub: that hub shows it, under this machine
+    fs::create_dir_all(h.dir.join(".inyon/node")).unwrap();
+    fs::write(h.dir.join(".inyon/node/env"), "INYON_HUB=https://hub.example.ts.net\nINYON_TOKEN=t\n").unwrap();
+    let (_, joined) = h.json(&["pages", "add", "work/handy-redesign/"]);
+    let said = joined["message"].as_str().unwrap();
+    assert!(said.starts_with("\"Handy & redesign\" is in Inyon: Pages > ") && said.contains(" > handy-redesign (already listed)\n"), "{said}");
+    assert!(said.ends_with("This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later)."), "{said}");
+    assert_eq!((joined["hub"].as_bool(), joined["joined"].as_bool()), (Some(false), Some(true)));
+    fs::remove_file(h.dir.join(".inyon/node/env")).unwrap();
 
     let list = h.list();
     assert_eq!(list["v"], 1);
@@ -161,7 +171,7 @@ fn adding_again_changes_nothing_unless_asked() {
 
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("\"Plan\" is listed on ") && stdout.contains("(already listed)"), "{stdout}");
+    assert!(stdout.contains("\"Plan\" is listed on ") && stdout.contains("(already listed)."), "{stdout}");
     assert_eq!(fs::read(h.file()).unwrap(), before);
     assert_eq!(fs::read(site.join(".inyon-page.json")).unwrap(), marker_before);
 
@@ -169,7 +179,8 @@ fn adding_again_changes_nothing_unless_asked() {
     let (code, v) = h.json(&["pages", "add", s(&site), "--name", "  Inyon plan  ", "--slug", "inyon"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["changed"], true);
-    assert_eq!(v["app"], "/pages/local/inyon");
+    // no hub here: the app's path is the hub's to give
+    assert!(v.get("app").is_none(), "{v}");
     let list = h.list();
     assert_eq!(list["pages"].as_array().unwrap().len(), 1);
     assert_eq!(list["pages"][0]["name"], "Inyon plan");
@@ -284,7 +295,7 @@ fn the_project_is_the_git_top_level() {
     let site = h.site("my-repo/private/plans/plan", "Plan");
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains("under my-repo"), "{stdout}");
+    assert!(stdout.contains(", under my-repo."), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
     assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }
@@ -304,7 +315,7 @@ fn the_project_of_a_folder_in_a_linked_worktree_is_the_main_checkout() {
     let site = h.site("my-repo/.claude/worktrees/feature/private/plans/plan", "Plan");
     let (code, stdout, _) = h.run(&["pages", "add", s(&site)]);
     assert_eq!(code, 0, "{stdout}");
-    assert!(stdout.contains("under my-repo."), "{stdout}");
+    assert!(stdout.contains(", under my-repo.\n"), "{stdout}");
     let project = h.list()["pages"][0]["project"].as_str().unwrap().to_string();
     assert_eq!(fs::canonicalize(project).unwrap(), fs::canonicalize(&repo).unwrap());
 }
@@ -324,6 +335,10 @@ fn on_the_hub_machine_there_is_no_note() {
     assert!(m.contains("\"S\" is in Inyon: Pages > ") && m.contains(" > s\n"), "{m}");
     assert!(m.contains("Open it in the app at /pages/local/s"), "{m}");
     assert!(!m.contains("/v/"), "{m}");
+    assert_eq!(v["app"], "/pages/local/s");
+    let (_, list) = h.json(&["pages", "list"]);
+    assert_eq!(list["pages"][0]["app"], "/pages/local/s");
+    assert!(list["message"].as_str().unwrap().contains("Open one in the app under Pages, or at /pages/local/<slug>"), "{list}");
 }
 
 #[test]
@@ -389,7 +404,9 @@ fn the_list_shows_each_page_and_what_is_wrong() {
     assert_eq!(v["skipped"], 1);
     let rows = v["pages"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(rows[0]["app"], "/pages/local/alpha");
+    assert!(rows[0].get("app").is_none(), "{v}");
+    assert!(v["message"].as_str().unwrap().contains("Open one in the app under Pages > "), "{v}");
+    assert!(!v["message"].as_str().unwrap().contains("/pages/local/"), "{v}");
     assert!(rows[0].get("problem").is_none());
     assert_eq!(rows[1]["problem"], "the folder is gone");
 
@@ -511,4 +528,85 @@ fn a_lock_held_by_another_writer_is_waited_for_then_refused() {
     assert!(start.elapsed() >= std::time::Duration::from_secs(4));
     assert!(lock.exists(), "someone else's lock stays");
     assert!(!h.file().exists());
+}
+
+/// `inyon pages get` as the hub runs it.
+fn get(h: &Home, args: &[&str]) -> Value {
+    let mut a = vec!["pages", "get"];
+    a.extend_from_slice(args);
+    let (code, v) = h.json(&a);
+    assert_eq!(code, 0, "{v}");
+    v
+}
+
+fn data(v: &Value) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(v["data"].as_str().unwrap_or_else(|| panic!("no data: {v}"))).unwrap()
+}
+
+// a laptop joined to a hub had pages its hub never showed: the hub now asks the machine for them
+#[test]
+fn a_hub_gets_a_pages_list_with_its_progress_and_each_file_from_the_machine() {
+    let h = Home::new("get");
+    let site = h.site("plans/robot", "Robot");
+    fs::write(
+        site.join("progress.json"),
+        r#"{"now":"Wiring","updated":"2026-10-24T10:00:00Z","releases":[{"tasks":[{"status":"done"},{"status":"doing"}]},{"tasks":[{"status":"done"}]}]}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(site.join("mockups")).unwrap();
+    fs::write(site.join("mockups/index.html"), "<p>mockups</p>").unwrap();
+    fs::write(site.join("app.js"), "let x = 1").unwrap();
+    fs::write(site.join(".env"), "SECRET=1").unwrap();
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+
+    let (_, list) = h.json(&["pages"]);
+    assert_eq!(list["serves"], true);
+    assert_eq!(list["pages"][0]["progress"], serde_json::json!({ "done": 2, "total": 3, "now": "Wiring", "updated": "2026-10-24T10:00:00Z" }));
+
+    let root = get(&h, &["robot", "--slash"]);
+    let real_site = pages::strip_verbatim(s(&fs::canonicalize(&site).unwrap())).replace('\\', "/");
+    assert_eq!(root["root"], real_site.as_str());
+    assert_eq!(root["items"][0]["dir"], true);
+    assert_eq!(root["items"][1]["real"], format!("{real_site}/index.html").as_str());
+    assert!(String::from_utf8(data(&root)).unwrap().contains("<title>Robot</title>"));
+
+    let js = get(&h, &["robot", "app.js"]);
+    assert_eq!((js["items"][0]["file"].as_bool(), js["items"][0]["size"].as_u64()), (Some(true), Some(9)));
+    assert_eq!(data(&js), b"let x = 1");
+    // what the browser has already isn't sent again, but progress.json always is
+    let etag = format!("\"9-{:x}\"", js["items"][0]["mtime"].as_f64().unwrap().floor() as i64);
+    assert!(get(&h, &["robot", "app.js", "--etag", &format!("W/{etag}")]).get("data").is_none());
+    assert!(get(&h, &["robot", "progress.json", "--etag", "*"]).get("data").is_some());
+    // a folder without its slash: listed, nothing sent (the hub redirects)
+    let folder = get(&h, &["robot", "mockups"]);
+    assert_eq!(folder["items"][0]["dir"], true);
+    assert!(folder.get("data").is_none());
+    assert_eq!(data(&get(&h, &["robot", "mockups", "--slash"])), b"<p>mockups</p>");
+    // too big for what the hub asked: said, not sent
+    let big = get(&h, &["robot", "app.js", "--max", "4"]);
+    assert_eq!((big["big"].as_bool(), big.get("data")), (Some(true), None));
+
+    // never a dot name, a path out of the site, a page that isn't listed, or another stream
+    for args in
+        [&["robot", ".env"][..], &["robot", ".."], &["robot", "..", "..", ".inyon", "pages.json"], &["other", "index.html"], &["robot", "index.html:x"], &["robot", "a/../../x"]]
+    {
+        let v = get(&h, args);
+        assert!(v.get("data").is_none(), "{args:?} → {v}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_out_of_the_site_is_listed_where_it_leads_and_never_sent() {
+    let h = Home::new("get-link");
+    let site = h.site("plans/robot", "Robot");
+    fs::write(h.dir.join("secret.txt"), "private").unwrap();
+    std::os::unix::fs::symlink(h.dir.join("secret.txt"), site.join("leak.txt")).unwrap();
+    std::os::unix::fs::symlink(&h.dir, site.join("home")).unwrap();
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+    let v = get(&h, &["robot", "leak.txt"]);
+    assert_eq!(v["items"][0]["real"], s(&h.dir.join("secret.txt")));
+    assert!(v.get("data").is_none(), "{v}");
+    assert!(get(&h, &["robot", "home", "secret.txt"]).get("data").is_none());
 }

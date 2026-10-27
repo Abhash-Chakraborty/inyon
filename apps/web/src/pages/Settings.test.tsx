@@ -10,6 +10,7 @@ import { forgetHub } from '../lib/updates.ts'
 import { fresh, host } from '../test/fixtures.ts'
 import { flush, renderSettled as render } from '../test/render.tsx'
 import { ConfirmHost } from '../components/Confirm.tsx'
+import { OLD_HUB } from '../components/CustomAgents.tsx'
 
 const hosts = [host('box'), host('pi', { status: 'error' })]
 const poll = () => act(() => emit({ t: 'overview', hosts: fresh(hosts) }))
@@ -68,11 +69,91 @@ describe('Settings keeps what you type while live data flows', () => {
     expect(api.saveSettings.mock.calls[0][0]).toEqual({ uploads: { retentionDays: 30, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false })
   })
 
+  test('machines can message agents only once the switch is on', async () => {
+    const user = userEvent.setup()
+    api.saveSettings.mockImplementation(async (s) => s as any)
+    await render(page())
+    const toggle = screen.getByRole('switch', { name: 'Machines can message agents' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    await user.click(toggle)
+    await flush()
+    expect(api.saveSettings.mock.calls[0][0]).toMatchObject({ machinesSend: true, autoResume: false })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+  })
+
   test('appearance settings apply at once', async () => {
     const user = userEvent.setup()
     await render(page())
     await user.click(screen.getByText('Compact'))
     expect(useStore.getState().settings.toolDetail).toBe('compact')
+  })
+})
+
+describe('Your own agents', () => {
+  const base = { uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false }
+  // the hub gives each an id from its name
+  const hubSaves = () => api.saveSettings.mockImplementation(async (s: any) => ({ ...s, customAgents: s.customAgents?.map((a: any) => ({ ...a, id: a.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') })) }))
+
+  test('adding one keeps what you type through refreshes and saves it with the agent it works like', async () => {
+    const user = userEvent.setup()
+    hubSaves()
+    await render(page())
+    await user.click(screen.getByText('Add an agent'))
+    await user.type(field('Claude YOLO'), 'Codex ')
+    poll()
+    await user.type(field('Claude YOLO'), 'OSS')
+    await user.type(field('claude --dangerously-skip-permissions'), 'codex --oss')
+    poll()
+    await user.click(screen.getByRole('combobox', { name: 'Works like' }))
+    await user.click(screen.getByRole('option', { name: /Codex/ }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await flush()
+    expect(api.saveSettings.mock.calls[0][0]).toMatchObject({ autoResume: false, customAgents: [{ name: 'Codex OSS', command: 'codex --oss', like: 'codex' }] })
+    expect(screen.getByText('Codex OSS')).toBeTruthy()
+    expect(screen.getByText('Works like Codex')).toBeTruthy()
+    expect(screen.getAllByText('codex --oss')).toHaveLength(2)
+  })
+
+  test('the hub refusing one shows why in the sheet, and so does a Bun hub that keeps none', async () => {
+    const user = userEvent.setup()
+    api.saveSettings.mockRejectedValueOnce(new Error('x: pick the agent it works like'))
+    await render(page())
+    await user.click(screen.getByText('Add an agent'))
+    await user.type(field('Claude YOLO'), 'x')
+    await user.type(field('claude --dangerously-skip-permissions'), 'x')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await flush()
+    expect(screen.getByRole('alert').textContent).toBe('x: pick the agent it works like')
+    // the Bun hub answers with its settings, the list dropped
+    api.saveSettings.mockImplementation(async (s: any) => ({ ...s, customAgents: undefined }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await flush()
+    expect(screen.getByRole('alert').textContent).toBe(OLD_HUB)
+  })
+
+  test('editing renames it in place, and removing it can be undone', async () => {
+    const user = userEvent.setup()
+    hubSaves()
+    api.settings.mockResolvedValue({ ...base, customAgents: [{ id: 'yolo', name: 'yolo', command: 'claude --dangerously-skip-permissions', like: 'claude' }] })
+    await render(page())
+    await user.click(screen.getByRole('button', { name: 'Options for yolo' }))
+    await user.click(screen.getByText('Edit'))
+    expect(field('Claude YOLO').value).toBe('yolo')
+    await user.type(field('Claude YOLO'), '2')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await flush()
+    expect(api.saveSettings.mock.calls[0][0].customAgents as unknown[]).toEqual([{ name: 'yolo2', command: 'claude --dangerously-skip-permissions', like: 'claude' }])
+    await user.click(screen.getByRole('button', { name: 'Options for yolo2' }))
+    await user.click(screen.getByText('Remove'))
+    await flush()
+    expect(api.saveSettings.mock.calls[1][0].customAgents as unknown[]).toEqual([])
+    expect(screen.queryByText('yolo2')).toBeNull()
+    const toast = useStore.getState().toasts.at(-1)!
+    expect(toast.title).toBe('Removed yolo2')
+    await act(async () => toast.action!.onSelect())
+    await flush()
+    expect(api.saveSettings.mock.calls[2][0].customAgents as unknown[]).toEqual([{ id: 'yolo2', name: 'yolo2', command: 'claude --dangerously-skip-permissions', like: 'claude' }])
+    expect(screen.getByText('yolo2')).toBeTruthy()
   })
 })
 

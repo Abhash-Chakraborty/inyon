@@ -4,7 +4,7 @@ nav: inyon command
 description: Every command and flag, the setup screens, the status dashboard and JSON output.
 ---
 
-`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. From 0.19 it also runs the link to your phone and the connection to a hub itself; only a hub runs on `inyon-engine`, which `inyon` downloads, starts and talks to for you. Before 0.19 all of the work happened in `inyon-engine`.
+`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. From 0.19 it also runs the link to your phone and the connection to a hub itself, and from 0.21 the hub too. Only a hub you put back on Bun runs on `inyon-engine`, which `inyon` downloads, starts and talks to for you. Before 0.19 all of the work happened in `inyon-engine`.
 
 If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` on your `PATH` from 0.17.1. Before that, or with `INYON_NO_MODIFY_PATH=1`, see [Put inyon on your PATH](install.md#put-inyon-on-your-path).
 
@@ -24,17 +24,23 @@ If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` o
 | `inyon hub code` | Show the hub's setup code |
 | `inyon hub companion-code` | Make a code for a companion app, such as Legato |
 | `inyon hub reset-password` | Choose a new hub password |
+| `inyon hub machines` | List the hub's machines |
+| `inyon sessions` | List the tmux sessions on the hub's machines, and their agents |
+| `inyon send <machine>/<session> "text"` | Give an agent on any of the hub's machines a message |
 | `inyon push` | List the browsers this computer sends notifications to |
 | `inyon service install`, `uninstall`, `status` | Manage the background service |
+| `inyon stop` | Stop everything Inyon runs in the background here |
 | `inyon logs` | Show the service's output |
 | `inyon doctor` | Check that everything is in place |
 | `inyon update` | Update to the newest release |
 | `inyon skill list`, `add`, `remove` | Install the agent skills that come with each release |
 | `inyon pages add`, `ls`, `rm` | Show a site's folder in the app under Pages |
+| `inyon temp`, `files`, `show`, `rm`, `clean` | List, look at and delete the temp files agents leave here |
+| `inyon docs [topic]` | Read these docs in the terminal |
 | `inyon uninstall` | Remove Inyon |
 | `inyon version` | Show the version |
 
-Every command takes `--json` and `-h`/`--help`. `inyon -V` prints the version.
+Every command takes `--json` and `-h`/`--help`. `inyon -V` prints the version. From 0.22 `inyon --help` ends with where the docs are.
 
 ## Status
 
@@ -56,7 +62,11 @@ On Windows before 0.20.1 a key could act twice, because Windows also reports a k
 
 The dashboard and setup draw in greys that suit the terminal's background. From 0.20.2 they ask the terminal whether it's light or dark and use darker greys on a light one, so muted text stays readable on white. A terminal that doesn't answer gets the greys for a dark one; set `INYON_THEME=light` to say otherwise.
 
+From 0.20.3 it says what runs in the background and how to stop it. On Windows that's the Inyon app (**Quit Inyon** in the icon's menu, or `inyon stop`); elsewhere `inyon stop` for the link and the hub connection, and `inyon hub stop` for a hub.
+
 `--plain` prints the same as lines of text, and `--json` as one object. Outside a terminal, `inyon` prints the plain form on its own.
+
+From 0.22 the plain form ends with where the docs are, and on a machine joined to a hub, a line saying its sessions and pages show in the hub's app. `--json` carries the same lines as `hints`, and the docs' address as `docs`.
 
 From 0.17.2 the link counts as running when something answers on its port the way the engine does, not only when the process it last recorded is alive, so a stale record never shows a running link as stopped.
 
@@ -80,12 +90,12 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
    - *Own address*: a `wss://` address you publish yourself.
    - *Port*: 4780 by default.
 
-   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, type the hub's address.
+   For a hub, pick where it listens: *This machine only*, the LAN, or one of the VPN networks found, or type an address. The port is 4777. From 0.20 the LAN, or any address that isn't a VPN's, gets HTTPS on a certificate setup makes, with its fingerprint printed; see [The LAN](hub.md#the-lan). To join a hub, paste the hub's whole *Add a machine* command (from 0.20.3), or type the hub's address and then the token. The token shows as dots, also inside a command typed into the box, and one hub's token is never sent to a different hub you type in afterwards. A phone's pairing link (`inyon://hub?…`, what the hub's QR code holds) is turned away with where the machine command is. Before 0.20.3 *Add it to a hub* took only the address, so it failed with a usage line unless `INYON_TOKEN` was set.
 3. **Background.** *Run in the background* (a service that starts at login or boot), or *Only while this window is open*.
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
 
-For a hub, setup downloads and checks `inyon-engine` before it starts the hub. Before 0.19 every computer needed it, and setup downloaded it in the background while you answered, with the progress in the footer.
+For a hub on Bun (`INYON_HUB_IMPL=bun`), setup downloads and checks `inyon-engine` before it starts the hub; in 0.19 and 0.20 it did so for every hub. Before 0.19 every computer needed it, and setup downloaded it in the background while you answered, with the progress in the footer.
 
 After the screens, from 0.17.2, setup installs tmux (psmux on Windows) if it's missing: it asks first, then runs winget (or cargo) on Windows, Homebrew on macOS, or your package manager with `sudo` on Linux. With `--yes` it doesn't ask; without a terminal on Linux it prints the command to run instead, since `sudo` needs one. On Windows it also lists Inyon under Settings → Apps.
 
@@ -116,7 +126,7 @@ With `--yes`, or without a terminal (as when piped from `curl`), setup takes fla
 | `--network <list>` | For a node: any of `tunnel`, `lan`, `vpn` and one `wss://` address, comma-separated. For a hub: `localhost`, `lan`, `vpn` or an address |
 | `--port <n>` | The port to listen on |
 | `--autostart`, `--no-autostart` | Install the background service, or not. A hub without it runs in the foreground |
-| `--hub <url>` | The hub to join. The machine's token goes in `INYON_TOKEN` |
+| `--hub <url>` | The hub to join. The machine's token goes in `INYON_TOKEN`. From 0.20.3 it also takes the hub's whole *Add a machine* command, token included |
 
 ```sh
 inyon setup --yes --role node --network tunnel,vpn
@@ -160,7 +170,7 @@ inyon hub companion-code     # a one-time code for a companion app, such as Lega
 inyon hub reset-password     # asks for the new password without showing it, then restarts the hub
 ```
 
-`hub start` waits until the hub answers, then prints its address and setup code. Hubs run on Linux and macOS. Plain `inyon hub` runs one in the foreground.
+`hub start` waits until the hub answers, then prints its address and setup code. Hubs run on Linux and macOS. Plain `inyon hub` runs one in the foreground; on Windows it says to use WSL (from 0.22; before, it fetched the engine and failed, `inyon hub --help` too).
 
 From 0.20 `hub companion-code` asks the running hub for a pairing code, the one **Settings › Paired devices › Pair a companion app** shows, and prints it with the hub's address (a hub that listens only on `127.0.0.1` says to use the address you open it at). It works once, for 5 minutes, and a new code ends the last one. See [Companion apps](companions.md).
 
@@ -170,6 +180,59 @@ inyon disconnect
 ```
 
 `join` saves the hub's address and this machine's token (readable only by you) and installs the `node` service. From 0.20.3 it first trades the pasted token for a new one the hub hands out once, so the command in your shell history no longer works; running the same command again on the machine keeps the token it got. An older hub doesn't trade, and the pasted token stays. When the hub says the token was used already or replaced, `join` stops with "The hub refused this token", and you need a new command from **Add a machine**. Before 0.19 it also fetched the matching engine from the hub. You rarely type it: the hub's *Add a machine* gives you a one-line command that does this. `disconnect` removes the service and the saved hub.
+
+Given a phone's pairing link instead of a hub's address, `join` says from 0.20.3 that the link pairs a phone, and that the command to add this computer is under the hub's **Machines → Add a machine**.
+
+## Sessions and messages
+
+```sh
+inyon hub machines                         # the hub's machines and what runs on them
+inyon sessions                             # every tmux session and the agent in it
+inyon pages --hub                          # the pages on all the hub's machines
+inyon send laptop/experiment "The report is in ~/inyon-reports"
+inyon send abhash-arm/main:1.0 - < notes.md
+```
+
+From 0.22, on the hub's computer or one joined to it, with no sign-in. On the hub's computer they use the token the hub writes for the `inyon` command as it starts; on a joined computer, the token that computer keeps for its link to the hub. Both need hub 0.22 or later, running the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) refuses them.
+
+```
+abhash-arm/main    claude  working  /home/abhash/development/custom-tmux
+abhash-arm/notes   none
+laptop/experiment  codex   idle     C:\demo\robot
+```
+
+`send` names a session as `machine/session`, or as `machine/session:window.pane` when it runs more than one agent, and `-` reads the message from stdin. The hub holds the message and types it in once the agent has been idle for a moment, the same as a message you hold in the app, so it shows in the app until then and you can edit or drop it there. A machine name is matched in any case; a session name as tmux has it.
+
+- **From the hub's computer**, `send` always works.
+- **From a joined computer**, it works only when **Settings › Machines › Machines can message agents** is on. It's off until you turn it on, because a joined computer could then type into agents on all your machines. Reading machines, sessions and pages needs no switch.
+
+These commands can only read and hold messages. Everything else the hub answers with 403. `--json` gives the hub's answer as it came: `hosts` for `hub machines` and `sessions`, `pages` for `pages --hub`, and `held` with the message's `id` for `send`.
+
+### Reading and answering, on the hub's computer
+
+```sh
+inyon read abhash-arm/main                 # the last 20 messages of that conversation
+inyon read abhash-arm/main -n 40
+inyon answer laptop/experiment 1           # picks choice 1 of the question on screen
+inyon answer laptop/experiment "don't ask again"
+```
+
+From 0.22, on the hub's computer only; from a joined computer the hub refuses them with *Only the inyon command on the hub's own machine can read conversations, answer questions and run the companion.* The [companion agent](companion-agent.md) uses them.
+
+`read` prints one line per message: `you:` for what was typed, `agent:` for the agent's words, `tool:` for each command or file it used, and `error:` for a tool that failed. Thinking and tool output are left out. `-n` takes 1 to 200.
+
+`answer` takes the choice's number, or words from it: the whole label in any case, else the one label that starts with them, else the one that contains them. When more than one matches, or none, it lists the choices. It answers only the question on screen now, and says *No question is waiting in that session* when there is none.
+
+### The companion agent
+
+```sh
+inyon companion                            # whether it runs
+inyon companion start                      # with Claude Code
+inyon companion start --agent codex
+inyon companion stop
+```
+
+From 0.22, on the hub's computer. It starts or stops the [companion agent](companion-agent.md), as **Settings › Companion** does.
 
 ## Notifications to browsers
 
@@ -187,7 +250,13 @@ inyon service install [link|node|hub]
 inyon service uninstall [link|node|hub]
 ```
 
-Without a role, `install` picks `node` if a hub is saved and `link` otherwise. From 0.20, installing the link also downloads `cloudflared` when the tunnel is on and it isn't there yet. [Install](install.md#the-background-service) has the details for each system.
+Without a role, `install` picks `node` if a hub is saved and `link` otherwise. On Windows from 0.20.3 the Inyon app runs it, and `install` asks the running app to start it.
+
+```sh
+inyon stop
+```
+
+From 0.20.3 `stop` stops everything Inyon runs in the background on this computer: on Windows the Inyon app and all it runs, elsewhere the link and hub connection services. They start again at the next sign-in, or with `inyon setup` or `inyon service install`. A hub keeps running; `inyon hub stop` stops it. From 0.20, installing the link also downloads `cloudflared` when the tunnel is on and it isn't there yet. [Install](install.md#the-background-service) has the details for each system.
 
 ## Logs
 
@@ -262,16 +331,64 @@ The second line is where the page is in the app, not a link to share. A link tha
 - **Who added it** is saved too: `claude`, `codex`, `gemini` or `opencode` when one of those agents ran the command, `cli` otherwise.
 - **Adding a folder again** is safe. It keeps its slug and its place, and changes only the name or slug you pass.
 
-`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is.
+`ls` prints each page's slug, name and folder, with a note when a page can't open (its folder is gone, say). `rm` takes a page out of the app and leaves its folder as it is. On the hub's own computer `--json` gives each page's place in the app as `app`. From 0.22 a computer joined to a hub leaves `app` out and names the computer to look under instead, since only the hub knows the computer's place in the app.
 
-> **Note:** For now the app shows pages from the hub's own computer only. On any other computer `add` still saves the page, but answers with where it's listed instead of a place in the app:
+On a computer joined to a hub, the hub shows its pages too, from 0.22 (both the hub and that computer need 0.22). `add` there says so instead of giving a place in the app:
+
+```
+"Inyon plan" is in Inyon: Pages > laptop > custom-tmux
+This machine doesn't run a hub. The hub it's joined to shows its pages (hub 0.22 or later).
+```
+
+A computer with no hub that isn't joined to one either, such as one paired only with the phone, has nothing to show its pages. From 0.22 `add` says so there, and `--json` carries `"joined": false`:
 
 ```
 "Inyon plan" is listed on laptop, under custom-tmux.
-This machine doesn't run a hub. For now the app shows pages from the hub's own machine only. The app can't open this page yet.
+This machine doesn't run a hub and isn't joined to one, so the app can't open this page. Add it to a hub (Machines > Add a machine) to show its pages there.
 ```
 
 If an agent's sandbox can't write to `~/.inyon`, the command says so. Run the same line in your own terminal.
+
+## Docs
+
+```sh
+inyon docs                   # every page, with what it covers
+inyon docs machines          # one page
+inyon docs add machine       # words from its title work too
+```
+
+From 0.22. Every page of these docs is inside the program, as the Markdown this site is built from, so it matches the version you have and reads with no browser or network. A topic is a page's name, the start of one (`trouble`), or words from its title or description. `--json` gives the page's `title`, `description`, `url` and `text`, or with no topic the list as `pages`. A topic that matches nothing exits with code 1.
+
+It's meant for coding agents as much as for you: the [inyon skill](skills.md#inyon) tells an agent to read the right page before it guesses.
+
+## Temp files
+
+```sh
+inyon temp                               # what's there, per agent, and the biggest items; the same as inyon temp ls
+inyon temp files /tmp/claude-1000/-home-me-dev-site/7409eef9-d507-4808-a592-0bfabe896e3a
+inyon temp show /tmp/claude-1000/-home-me-dev-site/7409eef9-d507-4808-a592-0bfabe896e3a/scratchpad/notes.md
+inyon temp rm ~/.claude/paste-cache/0a49e8c135b0fa0a.txt /tmp/claude-1000/shots
+inyon temp clean --older-than 7d
+```
+
+From 0.21. `inyon temp` lists the folders coding agents keep temporary files in, with one item per Claude Code session, upload day or loose file. [Agent temp files](temp-files.md#whats-listed) has the folders; transcripts and history are never among them.
+
+```
+Agent temp files on laptop: 3.3 GB in 153 items
+  Claude Code temp files         3.3 GB    56 items  /tmp/claude-1000
+  Claude Code pasted text        1.3 MB    79 items  ~/.claude/paste-cache
+```
+
+The biggest items follow, with their size, age and path.
+
+| Command | What it does |
+|---|---|
+| `inyon temp files <item>` | Every file inside one item, newest first (at most 5,000). `<item>` is its path, or its `id` from `inyon temp ls --json` |
+| `inyon temp show <path>` | Prints a text file (the first 256 KB), or says what kind of file it is. With `--json` an image comes as base64, up to `--max` bytes (8 MB) |
+| `inyon temp rm <path>…` | Deletes items or files for good and says how much it freed. Exit code 1 if anything stayed |
+| `inyon temp clean --older-than <age>` | Deletes every item older than `7d`, `24h`, `30m` or `2w`. It lists them and asks first; `--yes` skips the question, and without a terminal nothing is deleted unless you pass it |
+
+`rm` and `clean` delete only what's inside those folders, never a folder itself, and refuse a path with `..` in it or one that leads out through a symlink. A symlink is deleted as a link. Items changed in the last 30 minutes are left alone by `clean`, since an agent may still be using them, and so are folders it couldn't read all the way through.
 
 ## JSON output
 

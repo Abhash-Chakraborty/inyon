@@ -21,6 +21,12 @@ Under reduced motion (a system setting), nothing slides or moves; sheets and men
 
 Where each agent is installed (*On laptop, server*), the command that starts it, and whether its sessions open as a chat or in the terminal.
 
+From 0.22, **Add an agent** below them saves a command of your own with the agent it works like, and it shows up in **New session**. Right-click it, or use its **⋯** menu, to edit or remove it. See [Your own agents](agents.md#your-own-agents).
+
+## Companion
+
+From 0.22, on the hub's web app: start the [companion agent](companion-agent.md) with **Claude Code** or **Codex**, then **Open** its chat or **Stop** it. If its agent quits, **Start again** and **Turn off** take the place of the buttons. A hub on Bun says it has no companion.
+
 ## Live numbers
 
 **Restart sessions that stop reporting.** If a session's live numbers stop updating, Inyon reconnects or restarts it by itself.
@@ -35,6 +41,8 @@ Where each agent is installed (*On laptop, server*), the command that starts it,
 
 Uploads are stored on each machine in `~/.inyon/uploads`. The machine's page shows how much space they take, with buttons to clean older ones or delete them all.
 
+From 0.21, **Agent temp files** below the machines opens [Temp files](temp-files.md): the pasted images, screenshots and scratch folders agents leave on each machine.
+
 From 0.17 the hub tidies every machine by itself about every six hours, and again when a machine comes back online: it deletes uploads past their age, then the oldest ones while the folder is over **Keep at most**. A file whose upload broke off keeps a `.part` ending and is deleted after an hour, so a half-sent file never looks finished. Computers paired only with a phone tidy their own uploads the same way, with the rules the hub last used there (7 days and 1 GB if there never was one).
 
 ## Notifications
@@ -44,6 +52,8 @@ From 0.17 the hub tidies every machine by itself about every six hours, and agai
 ## Computers or Machines
 
 A shortcut to the list. The app calls them *Computers*; a hub calls them *Machines*.
+
+From 0.22 a hub adds **Machines can message agents** below the list. With it on, an agent on a joined machine can use [`inyon send`](cli.md#sessions-and-messages) to give agents on your other machines a message, which goes in once each is free. It's off until you turn it on. Listing machines, sessions and pages from a joined machine needs no switch.
 
 ## On a hub
 
@@ -76,6 +86,7 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | `Alt N` / `⌥ N` | New session, even while typing a message (from 0.16; not in the terminal) |
 | `N` | New session, when you aren't typing |
 | `Enter` / `Shift Enter` | Send / new line |
+| `Alt Enter` / `⌥ Enter` | [Hold the message](sessions.md#holding-a-message-until-the-agent-is-free) until the agent is free (from 0.22) |
 | `Esc` | Stop the agent (with an empty message box), close a sheet or menu |
 | `↑` `↓`, `Enter`, `Tab` | Move through and pick from menus, `/` and `@` lists |
 | Any key | Focus the message box (on a computer) |

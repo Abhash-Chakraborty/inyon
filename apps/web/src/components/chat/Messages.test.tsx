@@ -29,3 +29,14 @@ test('the working line fades in', () => {
   const { container } = render(<WorkingIndicator activity="Pondering…" />)
   expect(container.firstElementChild!.className).toContain('animate-fade-in')
 })
+
+// Ghostex #252: chat lost the leading indent of a message's lines
+test('a message keeps the indent of its lines', () => {
+  const text = 'fix this:\n    if x:\n        y()'
+  const [row] = buildRows([item.user(text)])
+  if (row.type !== 'user') throw new Error('not a user row')
+  const { container } = render(<UserMessage row={row} />)
+  const bubble = container.querySelector('.bg-bubble')!
+  expect(bubble.className).toContain('whitespace-pre-wrap')
+  expect(bubble.textContent).toContain('\n    if x:\n        y()')
+})

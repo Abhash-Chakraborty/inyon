@@ -128,6 +128,28 @@ describe('NewSessionSheet', () => {
     expect(startButton().textContent).toBe('Start Codex')
   })
 
+  test('your own agents start with their own id, as the agent they work like', async () => {
+    const user = userEvent.setup()
+    useStore.setState({ hosts })
+    api.settings.mockResolvedValue({ uploads: {} as any, customAgents: [{ id: 'yolo', name: 'Claude YOLO', command: 'claude --dangerously-skip-permissions', like: 'claude' }] })
+    api.launch.mockResolvedValue({ pane: '%3' })
+    await render(sheet())
+    await flush()
+    await user.click(screen.getByText('Claude YOLO'))
+    expect(startButton().textContent).toBe('Start Claude YOLO')
+    // picking a built-in one leaves yours
+    await user.click(screen.getByText('Codex'))
+    expect(startButton().textContent).toBe('Start Codex')
+    await user.click(screen.getByText('Claude YOLO'))
+    expect(field('Claude YOLO')).toBeTruthy()
+    // the agent it works like still offers its permissions
+    expect(screen.getByRole('combobox', { name: 'Permissions' })).toBeTruthy()
+    await user.click(startButton())
+    await flush()
+    expect(api.launch.mock.calls[0][1]).toMatchObject({ agent: 'claude', custom: 'yolo' })
+    api.settings.mockResolvedValue({} as any)
+  })
+
   test('the machine you picked stays picked', async () => {
     const user = userEvent.setup()
     useStore.setState({ hosts })

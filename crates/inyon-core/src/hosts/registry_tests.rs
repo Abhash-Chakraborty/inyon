@@ -8,6 +8,7 @@ use inyon_protocol::{AgentPaneInfo, HostState, ScreenState, VERSION};
 use serde_json::{json, Value};
 
 use super::*;
+use crate::hosts::host::ExecResult;
 use crate::test_support::fake::{ok, Fake};
 use crate::test_support::rt::{run, wait};
 use crate::test_support::{assert_match, host, screen_fixture};
@@ -319,6 +320,83 @@ fn a_turn_that_ends_with_agents_still_running_is_reported_finished_once_they_are
     });
 }
 
+#[test]
+fn the_companions_turn_ends_as_its_own_event_even_when_typed_at_in_tmux() {
+    run(|| async {
+        const ID: &str = "companion-test";
+        let with_mark = |agent: &str| {
+            let mut s = one_pane(ID, agent, None);
+            s.sessions[0].windows[0].panes[0].companion = Some(true);
+            s
+        };
+        let rt = runtime(ID, with_mark("working"));
+        let (got, off) = notifications(ID);
+        type Done = Vec<(String, Option<String>)>;
+        let done: Rc<RefCell<Done>> = Rc::default();
+        let d = done.clone();
+        let off2 = registry().on(move |e| {
+            if let RegistryEvent::CompanionDone { host, pane, failure } = e {
+                if host == ID {
+                    d.borrow_mut().push((pane.clone(), failure.clone()));
+                }
+            }
+        });
+        let mut p = mode_probe(5000.0);
+        p.keys_at.insert("%1".into(), 4990.0);
+        rt.borrow_mut().probe = Some(Rc::new(RefCell::new(p)));
+        let me = registry();
+        let step = |agent: &str| {
+            let prev = rt.borrow().state.clone();
+            rt.borrow_mut().state = with_mark(agent);
+            me.diff_notify(&rt, &prev);
+        };
+        step("idle");
+        assert_eq!(*done.borrow(), [("%1".to_owned(), None)]);
+        // no "finished" notice for it; a question it asks still is one
+        assert!(got.borrow().is_empty());
+        step("waiting");
+        assert_eq!(*got.borrow(), ["waiting"]);
+        off();
+        off2();
+    });
+}
+
+#[test]
+fn no_finished_notice_while_someone_types_at_that_pane_in_tmux() {
+    run(|| async {
+        const ID: &str = "typing-test";
+        let rt = runtime(ID, one_pane(ID, "working", None));
+        let (got, off) = notifications(ID);
+        let me = registry();
+        let typed = |ago: f64, pane: &str| {
+            let mut p = mode_probe(5000.0);
+            p.keys_at.insert(pane.to_owned(), 5000.0 - ago);
+            rt.borrow_mut().probe = Some(Rc::new(RefCell::new(p)));
+        };
+        let step = |agent: &str| {
+            let prev = rt.borrow().state.clone();
+            rt.borrow_mut().state = one_pane(ID, agent, None);
+            me.diff_notify(&rt, &prev);
+        };
+        // a key 20 s ago in a client on this pane: they watched it finish
+        typed(20.0, "%1");
+        step("idle");
+        assert!(got.borrow().is_empty());
+        // a question still comes through
+        step("waiting");
+        assert_eq!(*got.borrow(), ["waiting"]);
+        // the last key two minutes ago, or keys on another pane: announced as before
+        step("working");
+        typed(120.0, "%1");
+        step("idle");
+        step("working");
+        typed(5.0, "%2");
+        step("idle");
+        assert_eq!(*got.borrow(), ["waiting", "done", "done"]);
+        off();
+    });
+}
+
 // mode-while-asked.test.ts
 
 const MODE_ID: &str = "mode-test";
@@ -342,7 +420,7 @@ fn mode_probe(now: f64) -> ProbeResult {
     let mut agent_procs = IndexMap::new();
     agent_procs.insert(
         "%9".to_owned(),
-        AgentProc { kind: AgentKind::Claude, pid: 7.0, started_at: now - 100.0, cwd: Some("/w".into()), resume: None, args: "claude".into(), pane_pid: 7.0 },
+        AgentProc { kind: AgentKind::Claude, pid: 7.0, started_at: now - 100.0, cwd: Some("/w".into()), resume: None, args: "claude".into(), pane_pid: 7.0, custom: None },
     );
     ProbeResult {
         hostname: "box".into(),
@@ -364,7 +442,11 @@ fn mode_probe(now: f64) -> ProbeResult {
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
+        keys_at: Default::default(),
+        unwatched: Default::default(),
+        claude_parked: Default::default(),
     }
 }
 
@@ -588,5 +670,199 @@ fn a_machines_latest_sessions_are_saved_before_closing_even_inside_the_15_s_limi
         assert_eq!(names, ["new one"]);
         registry().hosts.borrow_mut().shift_remove("snap-test");
         kv::del("snapshots/snap-test");
+    });
+}
+
+#[test]
+fn a_machine_lists_each_accounts_limits_while_they_are_fresh() {
+    use inyon_protocol::{Num, RateWindow};
+    let w = |pct: f64| Some(RateWindow { pct: Num(pct), resets_at: None });
+    let now = 100 * 60_000;
+    let claude = Usage {
+        u: AccountUsage { five_hour: w(30.0), seven_day: w(60.0), at: now - 1000, error: None, plan: Some("Max 20x".into()) },
+        account: Some("acct-a".into()),
+        ok_at: Some(now - 1000),
+    };
+    let codex = |at: u64, five: Option<RateWindow>| CodexLimits {
+        limits: Some(AccountLimits { kind: AgentKind::Codex, five_hour: five, seven_day: None, plan: Some("plus".into()), credits: None, resets: Some(1), updated_at: at }),
+        at,
+    };
+    let got = limits_list(Some(&claude), Some("acct-a"), Some(&codex(now - 2000, w(41.0))), now).unwrap();
+    assert_eq!(
+        got.iter().map(|l| (l.kind, l.five_hour.clone(), l.plan.as_deref(), l.updated_at)).collect::<Vec<_>>(),
+        [(AgentKind::Claude, w(30.0), Some("Max 20x"), now - 1000), (AgentKind::Codex, w(41.0), Some("plus"), now - 2000),]
+    );
+    // Claude signed in to another account since, Codex's reading 25 minutes old: nothing to show
+    assert_eq!(limits_list(Some(&claude), Some("acct-b"), Some(&codex(now - 25 * 60_000, w(41.0))), now), None);
+    // a Codex plan with no 5-hour or weekly window (the free plan's is 30 days) isn't listed
+    assert_eq!(limits_list(None, None, Some(&codex(now, None)), now), None);
+}
+
+// stopped notices
+
+#[test]
+fn a_turn_that_stops_on_a_rate_limit_shows_why_and_when_the_full_limit_resets() {
+    run(|| async {
+        let b = ModeBox::new();
+        b.draw(&idle("? for shortcuts"));
+        let now = now_ms() as f64 / 1000.0;
+        let usage = |account: Option<&str>| {
+            Some(Usage {
+                u: AccountUsage { five_hour: Some(RateWindow { pct: 100.0.into(), resets_at: Some((now + 7200.0).into()) }), ..Default::default() },
+                account: account.map(str::to_owned),
+                ok_at: Some(now_ms()),
+            })
+        };
+        b.rt.borrow_mut().usage = usage(None);
+        let poll = |data: Value| {
+            let mut p = mode_probe(now);
+            p.hook_panes.insert("%9".into(), HookPaneState { pane: "%9".into(), ts: now - 1.0, data, ..Default::default() });
+            let pr = Rc::new(RefCell::new(p));
+            b.rt.borrow_mut().probe = Some(pr.clone());
+            let rt = b.rt.clone();
+            async move {
+                registry().annotate_agents(&rt, &pr).await.unwrap();
+                rt.borrow_mut().state.sessions = pr.borrow().sessions.clone();
+                registry().find_pane(MODE_ID, "%9").and_then(|f| f.pane.agent).and_then(|a| a.failure)
+            }
+        };
+        let f = poll(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).await.unwrap();
+        assert_eq!(f.error, "rate_limit");
+        assert_eq!(f.resets_at, Some((now + 7200.0) as u64));
+        // limits read for an account signed out of since don't give the reset
+        b.rt.borrow_mut().usage = usage(Some("someone-else"));
+        let f = poll(json!({ "hook_event_name": "StopFailure", "error": "rate_limit" })).await.unwrap();
+        assert_eq!((f.error.as_str(), f.resets_at), ("rate_limit", None));
+        b.rt.borrow_mut().usage = usage(None);
+        // the next prompt clears it
+        assert_eq!(poll(json!({ "hook_event_name": "UserPromptSubmit" })).await, None);
+        assert_eq!(poll(json!({ "hook_event_name": "Stop" })).await, None);
+    });
+}
+
+#[test]
+fn the_alert_for_a_turn_that_stopped_on_an_error_says_so_instead_of_finished() {
+    run(|| async {
+        const ID: &str = "stopped-test";
+        let rt = runtime(ID, one_pane(ID, "working", None));
+        let bodies: Rc<RefCell<Vec<String>>> = Rc::default();
+        let g = bodies.clone();
+        let off = registry().on(move |e| {
+            if let RegistryEvent::Notify { host, body, .. } = e {
+                if host == ID {
+                    g.borrow_mut().push(body.clone());
+                }
+            }
+        });
+        let me = registry();
+        let step = |agent: &str, failure: Option<Value>| {
+            let prev = rt.borrow().state.clone();
+            let mut s = one_pane(ID, agent, None);
+            if let Some(f) = failure {
+                s.sessions[0].windows[0].panes[0].agent.as_mut().unwrap().failure = Some(serde_json::from_value(f).unwrap());
+            }
+            rt.borrow_mut().state = s;
+            me.diff_notify(&rt, &prev);
+        };
+        step("idle", Some(json!({ "error": "authentication_failed" })));
+        step("working", None);
+        step("idle", None);
+        assert_eq!(*bodies.borrow(), ["Claude Code stopped: signed out", "Claude Code finished"]);
+        off();
+    });
+}
+
+/// Quick answers only for a question the overview's one line holds whole: never a heredoc you
+/// can't see, which a notification's Yes would approve.
+#[test]
+fn quick_answers_come_only_with_a_whole_question() {
+    let claude = |name: &str| crate::claude::screen::parse_screen(&crate::test_support::screen_fixture("claude", name), Some(100), AgentKind::Claude).prompt.unwrap();
+    let opts = |p| quick_options(&p).map(|o| o.into_iter().map(|q| (q.n, q.label)).collect::<Vec<_>>());
+    assert_eq!(opts(claude("powershell-prompt")), Some(vec![(1, "Yes".to_owned()), (2, "Yes, and don't ask again for: npm test *".to_owned()), (3, "No".to_owned())]));
+    assert_eq!(opts(claude("bash-gutter")), None);
+}
+
+#[test]
+fn an_agent_window_nobody_shows_is_rested_on_the_wide_grid_once() {
+    run(|| async {
+        let fake = Fake::install(|_, _, _| ok(""));
+        let state: HostState = from(
+            json!({ "config": { "id": "grid-box", "name": "Box", "kind": "ssh" }, "status": "online", "integration": "missing", "tmux": "ok", "agents": [], "sessions": mode_sessions(), "updatedAt": 0 }),
+        );
+        let rt = runtime("grid-box", state);
+        let host = rt.borrow().host.clone();
+        let mut p = mode_probe(1000.0);
+        p.unwatched.insert("@1".into(), (100, 30));
+        // no agent in it: left alone
+        p.unwatched.insert("@5".into(), (80, 24));
+        rest_windows(&rt, &host, &p);
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        let rests = || fake.cmds().into_iter().filter(|c| c.contains("resize-window")).collect::<Vec<_>>();
+        assert_eq!(rests(), [grid::rest_command(&["@1".into()])]);
+        // psmux sizes its windows its own way
+        p.os = "Windows".into();
+        p.unwatched.insert("@1".into(), (40, 20));
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        assert_eq!(rests().len(), 1);
+    });
+}
+
+#[test]
+fn a_rest_that_didnt_reach_tmux_is_tried_again() {
+    run(|| async {
+        let fake = Fake::install(|_, _, _| ExecResult { code: 255, stdout: String::new(), stderr: "Connection closed".into() });
+        let state: HostState = from(
+            json!({ "config": { "id": "grid-box", "name": "Box", "kind": "ssh" }, "status": "online", "integration": "missing", "tmux": "ok", "agents": [], "sessions": mode_sessions(), "updatedAt": 0 }),
+        );
+        let rt = runtime("grid-box", state);
+        let host = rt.borrow().host.clone();
+        let mut p = mode_probe(1000.0);
+        p.unwatched.insert("@1".into(), (100, 30));
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        rest_windows(&rt, &host, &p);
+        wait(20).await;
+        assert_eq!(fake.cmds().into_iter().filter(|c| c.contains("resize-window")).count(), 2);
+    });
+}
+
+/// Claude Code 2.1.310 can move a window's conversation to a background session: a new process and
+/// a new transcript, which the window shows and types into from then on. The chat follows it there,
+/// not the transcript the window started with (a laptop's chat stopped at the move, and every
+/// message sent after it was reported as not recorded).
+#[test]
+fn a_window_that_moved_its_conversation_to_the_background_follows_that_session() {
+    run(|| async {
+        let b = ModeBox::new();
+        b.draw(&idle(""));
+        let now = now_ms() as f64 / 1000.0;
+        let mut probe = mode_probe(now);
+        // what the window's own session last told the hook
+        let old = "/home/u/.claude/projects/-w/b3a31007-70aa-42cc-9ed6-7c142f4a3624.jsonl";
+        let hook = crate::tmux::tmux::HookPaneState {
+            pane: "%9".into(),
+            ts: now - 10.0,
+            data: json!({ "session_id": "b3a31007-70aa-42cc-9ed6-7c142f4a3624", "transcript_path": old, "hook_event_name": "Stop" }),
+            agent: None,
+            event: None,
+        };
+        probe.hook_panes.insert("%9".into(), hook);
+        let pr = Rc::new(RefCell::new(probe));
+        b.rt.borrow_mut().probe = Some(pr.clone());
+        registry().annotate_agents(&b.rt, &pr).await.unwrap();
+        let a = pr.borrow().sessions[0].windows[0].panes[0].agent.clone().unwrap();
+        assert_eq!(a.transcript_path.as_deref(), Some(old));
+
+        let moved = "/home/u/.claude/projects/-w/eef2ead0-8d08-4b84-96ac-fca9d926eee6.jsonl";
+        let mut probe = mode_probe(now);
+        probe.claude_parked.insert(7, crate::tmux::tmux::ParkedClaude { session_id: "eef2ead0-8d08-4b84-96ac-fca9d926eee6".into(), transcript: moved.into() });
+        let pr = Rc::new(RefCell::new(probe));
+        b.rt.borrow_mut().probe = Some(pr.clone());
+        registry().annotate_agents(&b.rt, &pr).await.unwrap();
+        let a = pr.borrow().sessions[0].windows[0].panes[0].agent.clone().unwrap();
+        assert_eq!((a.transcript_path.as_deref(), a.session_id.as_deref()), (Some(moved), Some("eef2ead0-8d08-4b84-96ac-fca9d926eee6")));
+        assert_eq!(a.mapped_by, Some(MappedBy::Process));
     });
 }

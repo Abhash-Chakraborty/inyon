@@ -10,7 +10,9 @@ import { StateDot, shownState } from './ui/status.tsx'
 import { MachineIcon, machineKindOf } from './ui/MachineIcon.tsx'
 import { FilterInput } from './ui/FilterInput.tsx'
 import { contextMenu, type MenuItems } from './ui/ContextMenu.tsx'
-import { machineMenu, paneMenu } from './menus.tsx'
+import { machineMenu, paneMenu, tmuxSessionMenu } from './menus.tsx'
+
+const notCompanion = (r: PaneRef) => !r.pane.companion
 
 /** Past this many panes the tree gets a search box. */
 export const TREE_SEARCH_FROM = 8
@@ -25,8 +27,9 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [folded, setFolded] = useState(loadFolded)
-  const all = useMemo(() => groupPanes(hosts), [hosts])
-  const groups = useMemo(() => (q ? groupPanes(hosts, { query: q }) : all), [hosts, q, all])
+  // the companion has its own place under Overview
+  const all = useMemo(() => groupPanes(hosts, { keep: notCompanion }), [hosts])
+  const groups = useMemo(() => (q ? groupPanes(hosts, { query: q, keep: notCompanion }) : all), [hosts, q, all])
   const total = all.reduce((n, g) => n + g.panes, 0)
   if (!total) return null
   const oneHost = hosts.length <= 1
@@ -54,6 +57,7 @@ export function SessionTree({ hosts }: { hosts: HostState[] }) {
             open={open(`s:${s.key}`)}
             onToggle={() => toggle(`s:${s.key}`)}
             depth={oneHost ? 0 : 1}
+            menu={() => tmuxSessionMenu(s.panes[0])}
             label={<span className="truncate font-mono text-[12.5px]">{s.session.name}</span>}
             count={s.panes.length}
             waiting={s.waiting}

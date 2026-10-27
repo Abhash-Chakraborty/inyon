@@ -326,8 +326,11 @@ export class Machine {
     }
     const pane = this.target(typeof flags['-t'] === 'string' ? flags['-t'] : undefined)
     // a buffer loaded from a temp file: the file's name is random, what was in it is what matters
+    // the Rust hub rests agent windows nobody shows at 200×50 and the Bun hub doesn't: sizing a
+    // window isn't part of what the two are compared on
+    const sizing = sub === 'resize-window' || (/^set(-option|w|-window-option)?$/.test(sub) && words.includes('window-size'))
     if (sub === 'load-buffer') this.record('buffers', { tmux: [...args.slice(0, -1), '<file>'], text: input ?? '' })
-    else if (!READS.has(sub)) this.record(typeof flags['-t'] === 'string' ? (pane?.id ?? flags['-t']) : 'tmux', { tmux: args })
+    else if (!READS.has(sub) && !sizing) this.record(typeof flags['-t'] === 'string' ? (pane?.id ?? flags['-t']) : 'tmux', { tmux: args })
     switch (sub) {
       case 'list-panes': {
         const fmt = typeof flags['-F'] === 'string' ? flags['-F'] : '#{pane_id}'

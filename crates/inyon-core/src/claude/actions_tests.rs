@@ -46,7 +46,7 @@ fn pane(host: &str, panes: serde_json::Value) -> crate::hosts::registry::Rt {
 /// What the last probe found in a pane (`registry.agentProc`).
 fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, args: &str) {
     let mut procs = IndexMap::new();
-    procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: Some(cwd.into()), resume: None, args: args.into(), pane_pid: 0.0 });
+    procs.insert(pane.to_owned(), AgentProc { kind: AgentKind::Claude, pid, started_at: 0.0, cwd: Some(cwd.into()), resume: None, args: args.into(), pane_pid: 0.0, custom: None });
     let probe = ProbeResult {
         hostname: "box".into(),
         home: "/home/u".into(),
@@ -67,7 +67,11 @@ fn with_proc(rt: &crate::hosts::registry::Rt, pane: &str, pid: f64, cwd: &str, a
         agy_status: IndexMap::new(),
         agy_titles: IndexMap::new(),
         agy_integration: None,
+        hooked: vec![],
         machine_kind: None,
+        keys_at: Default::default(),
+        unwatched: Default::default(),
+        claude_parked: Default::default(),
     };
     rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
 }
@@ -87,17 +91,31 @@ struct ClaudeBox {
     sent: Vec<String>,
     /// the box hasn't drawn what was typed yet
     slow: bool,
+    /// a background shell's details panel covers the box and takes every key; Esc closes it
+    panel: bool,
+    escapes: usize,
 }
 
 /// Claude's input box as far as a send can tell: a long paste shows as "[Pasted text #N]" and Enter
 /// submits what's behind it, so a preview left over from an older draft looks like any other.
 fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     let pastes = start.iter().filter(|p| matches!(p, Piece::Paste(_))).count();
-    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![], slow: false }));
+    let b = Rc::new(RefCell::new(ClaudeBox { pieces: start, pastes, sent: vec![], slow: false, panel: false, escapes: 0 }));
     let state = b.clone();
     let re = keys_re();
     Fake::install(move |_, cmd, input| {
         let mut b = state.borrow_mut();
+        if cmd.contains("@@CAP") && b.panel {
+            let r = rule(R100);
+            return ok(&format!("@@CAP %9\n● Done.\n\n✻ Worked for 10s · 2 shells still running\n{r}\n  Shell details\n\n  Status:   running\n  Command:  node serve.mjs\n\n  Output:\n  │ Serving . at http://127.0.0.1:8790/\n"));
+        }
+        if b.panel {
+            if cmd.split(" && ").filter_map(|part| re.captures(part)).any(|k| k.get(2).is_some_and(|m| m.as_str() == "Escape")) {
+                b.panel = false;
+                b.escapes += 1;
+            }
+            return ok("");
+        }
         if cmd.contains("@@CAP") {
             let pastes = b.pastes;
             let shown: String = if b.slow {
@@ -145,6 +163,19 @@ fn fake_claude(start: Vec<Piece>) -> Rc<RefCell<ClaudeBox>> {
     b
 }
 
+/// A background shell's details panel, opened by accident from Claude's "↓ to manage", took every
+/// key of the next message: the send failed and the message never arrived (a laptop, 26 Oct 2026).
+#[test]
+fn a_shell_details_panel_over_the_box_is_closed_with_esc_and_the_message_goes_in() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        b.borrow_mut().panel = true;
+        send_message_to_pane("local", "%9", "start doing next things", true, false).await.unwrap();
+        assert_eq!((b.borrow().escapes, b.borrow().sent.clone()), (1, vec!["start doing next things".to_owned()]));
+        assert!(!claude_details_panel(&["● Done.".into(), "  Shell details".into(), "─".repeat(20), "❯ ".into(), "─".repeat(20)]));
+    });
+}
+
 #[test]
 fn a_box_slow_to_show_the_text_gets_it_typed_once_never_twice() {
     run(|| async {
@@ -184,6 +215,153 @@ fn an_old_draft_that_differs_only_in_whitespace_is_replaced_not_sent() {
     });
 }
 
+/// Ghostex #254: a long prompt was pasted but never sent. A message over the paste threshold goes
+/// in as a paste, and Enter follows once its preview shows in the box.
+#[test]
+fn a_long_message_goes_in_as_a_paste_and_is_sent() {
+    run(|| async {
+        let b = fake_claude(vec![]);
+        let message = "Look over the failing tests and fix them. ".repeat(40);
+        send_message_to_pane("local", "%9", &message, true, false).await.unwrap();
+        assert_eq!(b.borrow().sent, [message]);
+    });
+}
+
+/// Gemini's box as a send sees it: no parser reads it, so the screen is all there is. `shows`
+/// says whether typed text appears there.
+fn fake_gemini(shows: bool) -> Rc<RefCell<(String, Vec<String>)>> {
+    let b = Rc::new(RefCell::new((String::new(), Vec::new())));
+    let state = b.clone();
+    let re = keys_re();
+    Fake::install(move |_, cmd, input| {
+        let mut b = state.borrow_mut();
+        if cmd.contains("@@CAP") {
+            let shown = if shows { b.0.clone() } else { String::new() };
+            return ok(&format!("@@CAP %4\n✦ Done.\n╭────────────╮\n│ > {shown} │\n╰────────────╯\n"));
+        }
+        if cmd.contains("paste-buffer") {
+            b.0.push_str(input.unwrap_or(""));
+        }
+        for part in cmd.split(" && ") {
+            if let Some(k) = re.captures(part) {
+                match k.get(1) {
+                    Some(t) => b.0.push_str(&unq(t.as_str())),
+                    None if &k[2] == "Enter" => {
+                        let sent = std::mem::take(&mut b.0);
+                        b.1.push(sent);
+                    }
+                    None => {}
+                }
+            }
+        }
+        ok("")
+    });
+    pane("local", json!([{ "id": "%4", "width": 100, "agent": { "kind": "gemini", "pid": 7, "state": "idle" } }]));
+    b
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_enter_once_the_text_shows() {
+    run(|| async {
+        let b = fake_gemini(true);
+        send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap();
+        assert_eq!(b.borrow().1, ["Summarise the failing tests"]);
+    });
+}
+
+#[test]
+fn an_agent_without_a_screen_parser_gets_no_blind_enter() {
+    run(|| async {
+        let b = fake_gemini(false);
+        let e = send_message_to_pane("local", "%4", "Summarise the failing tests", true, false).await.unwrap_err();
+        assert!(e.message.contains("Enter wasn't pressed"), "{}", e.message);
+        assert!(b.borrow().1.is_empty());
+    });
+}
+
+#[test]
+fn held_messages_wait_for_the_agent_to_be_free_then_go_in_order() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(true);
+        let first = crate::claude::held::hold("local", "%4", "Write the migration").unwrap();
+        let second = crate::claude::held::hold("local", "%4", "Then run the tests").unwrap();
+        assert!(crate::claude::held::hold("local", "%4", "  ").is_err());
+        assert_eq!(crate::claude::held::hold("local", "%9", "x").unwrap_err().status, Some(404));
+        // reordered and edited while held
+        crate::claude::held::move_to("local", "%4", &second.id, 0).unwrap();
+        crate::claude::held::edit("local", "%4", &first.id, "Write the migration for users").unwrap();
+        let ids: Vec<String> = crate::claude::held::list("local", "%4").into_iter().map(|p| p.text).collect();
+        assert_eq!(ids, ["Then run the tests", "Write the migration for users"]);
+        // kept in the record
+        let saved = crate::platform::store::kv::get_value(crate::claude::held::KEY).unwrap().to_string();
+        assert!(saved.contains("Then run the tests"), "{saved}");
+        // idle, but not for long enough yet: nothing goes
+        let t0 = 1_000_000;
+        crate::claude::held::tick(t0).await;
+        sleep(50).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::tick(t0 + crate::claude::held::SETTLE_MS).await;
+        for _ in 0..200 {
+            if !b.borrow().1.is_empty() && crate::claude::held::list("local", "%4").len() == 1 {
+                break;
+            }
+            sleep(100).await;
+        }
+        assert_eq!(b.borrow().1, ["Then run the tests"]);
+        assert_eq!(crate::claude::held::list("local", "%4").len(), 1);
+        // dropped
+        crate::claude::held::remove("local", "%4", &first.id).unwrap();
+        assert!(crate::claude::held::list("local", "%4").is_empty());
+    });
+}
+
+#[test]
+fn a_held_message_that_fails_stays_first_with_the_reason_and_holding_stops() {
+    run(|| async {
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+        let b = fake_gemini(false);
+        let p = crate::claude::held::hold("local", "%4", "Summarise the failing tests").unwrap();
+        assert!(crate::claude::held::send_now("local", "%4", &p.id).await.is_err());
+        let left = crate::claude::held::list("local", "%4");
+        assert_eq!(left.len(), 1);
+        assert!(left[0].error.as_deref().unwrap().contains("Enter wasn't pressed"));
+        // the tick leaves it alone until it's edited, sent now or dropped
+        crate::claude::held::tick(1_000_000).await;
+        crate::claude::held::tick(1_000_000 + crate::claude::held::SETTLE_MS).await;
+        sleep(200).await;
+        assert!(b.borrow().1.is_empty());
+        crate::claude::held::edit("local", "%4", &p.id, "Summarise the failing tests, briefly").unwrap();
+        assert_eq!(crate::claude::held::list("local", "%4")[0].error, None);
+    });
+}
+
+#[test]
+fn two_stops_at_once_send_one_escape() {
+    run(|| async {
+        let escapes = Rc::new(RefCell::new(0));
+        let seen = escapes.clone();
+        let working = include_str!("../../../../fixtures/screens/claude/working.txt").to_owned();
+        Fake::install(move |_, cmd, _| {
+            if cmd.contains("@@CAP") {
+                let screen = if *seen.borrow() == 0 { working.clone() } else { working.replace("✽ Undulating… (2s · thinking with high effort)", "● Stopped.") };
+                return ok(&format!("@@CAP %9\n{screen}"));
+            }
+            if cmd.contains("send-keys") && cmd.contains("Escape") {
+                *seen.borrow_mut() += 1;
+            }
+            ok("")
+        });
+        pane("local", json!([{ "id": "%9", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        // the phone and the laptop press Stop together, then once more straight after
+        let (a, b) = futures_util::future::join(interrupt("local", "%9"), interrupt("local", "%9")).await;
+        a.unwrap();
+        b.unwrap();
+        interrupt("local", "%9").await.unwrap();
+        assert_eq!(*escapes.borrow(), 1);
+    });
+}
+
 #[test]
 fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
     run(|| async {
@@ -192,6 +370,26 @@ fn a_new_session_with_an_unknown_agent_is_refused_before_anything_is_created() {
         let opts = LaunchOpts { agent: Some("nonsense".into()), ..Default::default() };
         assert_eq!(launch("local", &opts).await.unwrap_err().message, "Unknown agent");
         assert!(fake.cmds().is_empty());
+    });
+}
+
+#[test]
+fn a_custom_agent_starts_with_its_own_command_and_the_flags_of_the_agent_it_works_like() {
+    run(|| async {
+        use crate::agents::custom::{set, CustomAgent};
+        let fake = Fake::install(|_, cmd, _| if cmd.contains("command -v") { ok("claude\n") } else { ok("%5\n") });
+        pane("local", json!([]));
+        set(vec![CustomAgent { id: "yolo".into(), name: "Claude YOLO".into(), command: "claude --dangerously-skip-permissions".into(), like: AgentKind::Claude }]);
+        let opts = LaunchOpts { custom: Some("yolo".into()), agent: Some("codex".into()), model: Some("opus".into()), ..Default::default() };
+        assert_eq!(launch("local", &opts).await.unwrap(), "%5");
+        let cmds = fake.cmds();
+        assert!(cmds.iter().any(|c| c.contains("n='Claude YOLO'")), "{cmds:?}");
+        assert!(cmds.iter().any(|c| c.contains("claude --dangerously-skip-permissions --model opus")), "{cmds:?}");
+        let gone = LaunchOpts { custom: Some("gone".into()), ..Default::default() };
+        let before = fake.cmds().len();
+        assert_eq!(launch("local", &gone).await.unwrap_err().message, "Unknown custom agent");
+        assert_eq!(fake.cmds().len(), before);
+        set(vec![]);
     });
 }
 
@@ -252,6 +450,35 @@ fn an_answer_meant_for_a_question_already_answered_elsewhere_never_lands_on_the_
         answer("box", "%7", 1, None, Some(&key(&now))).await.unwrap();
         assert_eq!(keys.borrow().len(), 1);
         assert!(keys.borrow()[0].ends_with(" 1"), "{}", keys.borrow()[0]);
+    });
+}
+
+/// Ghostex #251: answers to AskUserQuestion from the chat never reached the agent. A pick goes in
+/// as its number, and a typed answer as the "Type something" number followed by the text.
+#[test]
+fn a_question_from_ask_user_question_takes_a_pick_and_a_typed_answer() {
+    run(|| async {
+        let shown = crate::test_support::screen_fixture("claude", "question-single").join("\n");
+        let sent = Rc::new(RefCell::new(Vec::<(String, Option<String>)>::new()));
+        let s = sent.clone();
+        let _fake = Fake::install(move |_, cmd, input| {
+            if cmd.contains("capture-pane") {
+                return ok(&format!("@@CAP %7\n{shown}"));
+            }
+            if cmd.contains("send-keys") || cmd.contains("paste-buffer") {
+                s.borrow_mut().push((cmd.to_owned(), input.map(str::to_owned)));
+            }
+            ok("")
+        });
+        pane("box", json!([{ "id": "%7", "width": 100, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        answer("box", "%7", 2, None, None).await.unwrap();
+        assert_eq!(sent.borrow().len(), 1);
+        assert!(sent.borrow()[0].0.ends_with(" 2"), "{:?}", sent.borrow());
+        sent.borrow_mut().clear();
+        answer("box", "%7", 4, Some("Teal"), None).await.unwrap();
+        let sent = sent.borrow();
+        assert!(sent[0].0.ends_with(" 4"), "{sent:?}");
+        assert!(sent.iter().skip(1).any(|(cmd, input)| cmd.contains("Teal") || input.as_deref().is_some_and(|i| i.contains("Teal"))), "{sent:?}");
     });
 }
 
@@ -627,5 +854,24 @@ fn a_send_whose_caller_went_away_is_still_typed_and_settled() {
         let state = w.delivery("gone").map(|d| d.state);
         assert!(state.is_some_and(|s| s != SendStatus::Sending), "{state:?}");
         watchers().stop("local:%9");
+    });
+}
+
+#[test]
+fn a_tmux_session_is_renamed_by_its_number_with_what_tmux_wont_take_out_of_the_name() {
+    run(|| async {
+        let fake =
+            Fake::install(|_, cmd, _| if cmd.contains("'taken'") { ExecResult { code: 1, stdout: String::new(), stderr: "duplicate session: taken".into() } } else { ok("") });
+        pane("local", json!([]));
+        assert_eq!(rename_tmux_session("local", "52", "  my  experiment ").await.unwrap(), "my experiment");
+        assert_eq!(fake.cmds().last().unwrap(), "tmux rename-session -t '$52' -- 'my experiment'");
+        // tmux turns . and : into _ itself; # would be a format
+        assert_eq!(rename_tmux_session("local", "3", "api.v2:#(id)").await.unwrap(), "api_v2_-(id)");
+        let e = rename_tmux_session("local", "3", "taken").await.unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(409), "There's already a tmux session called taken on that machine"));
+        let n = fake.cmds().len();
+        assert_eq!(rename_tmux_session("local", "3", "   ").await.unwrap_err().message, "Type a name");
+        assert_eq!(rename_tmux_session("local", "$3; rm -rf ~", "x").await.unwrap_err().message, "Bad session");
+        assert_eq!(fake.cmds().len(), n);
     });
 }

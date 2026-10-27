@@ -58,3 +58,32 @@ describe('GoalSheet keeps what you type while live data flows', () => {
     expect(actions.clearGoal).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('a pick made while the agent works waits, and says so', () => {
+  const picked = (chosen: ChatInfo['chosen']) =>
+    ({ agent: 'claude', def: AGENTS.claude, info: chatInfo({ chosen }), status: { effort: 'high' }, efforts: AGENTS.claude.efforts, actions: { ...actions, dropChosen } }) as unknown as SessionModel
+  const dropChosen = mock(() => {})
+  const model = AGENTS.claude.models[0]!
+
+  test('the chip shows what was picked, and the menu can keep the current one', async () => {
+    const user = userEvent.setup()
+    dropChosen.mockClear()
+    await render(<ComposerControls s={picked({ model: model.id, effort: 'low' })} />)
+    const chip = screen.getByTitle(`Switches to ${model.label.split(' · ').pop()} when Claude Code is free`)
+    expect(chip.textContent).toContain(model.label.split(' · ').pop()!)
+    expect(screen.getByTitle('Switches to Low when Claude Code is free').textContent).toContain('Low')
+    await user.click(chip)
+    await user.click(screen.getByText("Don't switch"))
+    expect(dropChosen).toHaveBeenCalledTimes(1)
+  })
+
+  test("one that didn't take shows why, and picking that row dismisses it", async () => {
+    const user = userEvent.setup()
+    dropChosen.mockClear()
+    await render(<ComposerControls s={picked({ mode: 'plan', error: 'Answer the open question first' })} />)
+    const chip = screen.getByTitle("Couldn't switch to Plan: Answer the open question first")
+    await user.click(chip)
+    await user.click(screen.getByText("Couldn't switch to Plan"))
+    expect(dropChosen).toHaveBeenCalledTimes(1)
+  })
+})

@@ -3,11 +3,12 @@
 //! sign-in (see `server::guarded`).
 
 use axum::http::Method;
+use inyon_core::agents::custom as custom_agents;
 use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
-use inyon_core::features::{conversations, features as feat, models, providers, setup, signin, workspace};
+use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
 use inyon_core::hosts::node_update::node_updates;
@@ -20,6 +21,7 @@ use serde_json::{json, Map, Value};
 use crate::http::{as_str, field, fields, js_number, json_of, ok, ok_json, pane_param, str_or_empty, str_raw, to_int32, truthy, Req, Resp};
 use crate::multipart::{self, Part};
 use crate::server::{guarded, h, Routes};
+use inyon_core::claude::{chosen, held};
 
 /// `validateHost(b)`: an SSH machine's settings, checked.
 pub fn validate_host(b: &Map<String, Value>) -> HubResult<HostConfig> {
@@ -167,6 +169,18 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
     if let Some(Value::Bool(a)) = b.get("autoResume") {
         next.insert("autoResume".into(), json!(a));
     }
+    // joined machines may hold messages for agents with `inyon send` (crate::machines)
+    if let Some(Value::Bool(a)) = b.get("machinesSend") {
+        next.insert("machinesSend".into(), json!(a));
+    }
+    // checked whole: a bad entry is refused rather than dropped (inyon_core::agents::custom)
+    let custom = match b.get("customAgents") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(custom_agents::parse_list(v).map_err(|e| http(400, &e))?),
+    };
+    if let Some(list) = &custom {
+        next.insert("customAgents".into(), serde_json::to_value(list).map_err(|e| HubError::plain(e.to_string()))?);
+    }
     next.insert(
         "uploads".into(),
         json!({
@@ -177,6 +191,9 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
         }),
     );
     save_settings(&HubSettings(next.clone())).map_err(HubError::plain)?;
+    if let Some(list) = custom {
+        custom_agents::set(list);
+    }
     Ok(Value::Object(next))
 }
 
@@ -230,6 +247,25 @@ async fn node_update(r: Req) -> HubResult<Resp> {
     Ok(ok())
 }
 
+async fn temp_list(r: Req) -> HubResult<Resp> {
+    Ok(json_of(&temp::temp_list(&id(&r)).await?))
+}
+
+async fn temp_files(r: Req) -> HubResult<Resp> {
+    Ok(json_of(&temp::temp_files(&id(&r), &r.q("path")).await?))
+}
+
+async fn temp_preview(r: Req) -> HubResult<Resp> {
+    // `Number(q) || undefined`: no limit asked for, or not a number, is the default
+    let max = Some(inyon_core::js::to_number(&r.q("max"))).filter(|m| *m != 0.0 && !m.is_nan());
+    Ok(json_of(&temp::temp_preview(&id(&r), &r.q("path"), max).await?))
+}
+
+async fn temp_delete(mut r: Req) -> HubResult<Resp> {
+    let b = r.body().await?;
+    Ok(json_of(&temp::temp_delete(&id(&r), field(&b, "paths")?).await?))
+}
+
 /// The routes, each behind sign-in.
 /// What the overview shows, as the WebSocket's overview message carries it (a companion app reads this too).
 pub fn overview() -> Resp {
@@ -239,6 +275,8 @@ pub fn overview() -> Resp {
 pub fn add(routes: &mut Routes) {
     use Method as M;
     guarded(routes, "/api/overview", vec![(M::GET, h(|_r| async move { Ok(overview()) }))]);
+    // sends that failed, newest first, with the bottom of the screen each failed on (from 0.22)
+    guarded(routes, "/api/send-failures", vec![(M::GET, h(|_r| async move { Ok(json_of(&inyon_core::claude::send_check::failures())) }))]);
     guarded(
         routes,
         "/api/refresh",
@@ -371,11 +409,36 @@ pub fn add(routes: &mut Routes) {
                     model: loose(b.get("model")),
                     mode: loose(b.get("mode")),
                     prompt: loose(b.get("prompt")),
+                    custom: loose(b.get("custom")),
+                    ..Default::default()
                 };
                 let pane = actions::launch(&id(&r), &opts).await?;
                 Ok(ok_json(&json!({ "pane": pane })))
             }),
         )],
+    );
+    // the companion agent (features/companion): whether it runs, start it with an agent, stop it
+    guarded(
+        routes,
+        "/api/companion",
+        vec![
+            (M::GET, h(|_r| async { Ok(ok_json(&companion::status())) })),
+            (
+                M::POST,
+                h(|mut r| async move {
+                    let b = fields(&r.body().await?)?;
+                    let agent = loose(b.get("agent")).unwrap_or_else(|| "claude".into());
+                    Ok(ok_json(&companion::start(&agent).await?))
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|_r| async {
+                    companion::stop().await?;
+                    Ok(ok())
+                }),
+            ),
+        ],
     );
     guarded(
         routes,
@@ -404,6 +467,11 @@ pub fn add(routes: &mut Routes) {
             }),
         )],
     );
+    // agent temp files, through the machine's own `inyon temp` (features/temp)
+    guarded(routes, "/api/hosts/:id/temp", vec![(M::GET, h(temp_list))]);
+    guarded(routes, "/api/hosts/:id/temp/files", vec![(M::GET, h(temp_files))]);
+    guarded(routes, "/api/hosts/:id/temp/preview", vec![(M::GET, h(temp_preview))]);
+    guarded(routes, "/api/hosts/:id/temp/delete", vec![(M::POST, h(temp_delete))]);
     guarded(
         routes,
         "/api/hosts/:id/setup",
@@ -539,6 +607,12 @@ pub fn add(routes: &mut Routes) {
         "/api/hosts/:id/panes/:pane/fork",
         vec![(M::POST, h(|r| async move { Ok(ok_json(&json!({ "pane": actions::fork_conversation(&id(&r), &pane(&r)).await? }))) }))],
     );
+    // a session's latest messages, condensed (`inyon read`)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/history",
+        vec![(M::GET, h(|r| async move { Ok(json_of(&companion::history(&id(&r), &pane(&r), history_limit(&r.q("limit"))).await?)) }))],
+    );
     guarded(routes, "/api/hosts/:id/panes/:pane/files", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::list_files(&id(&r), &pane(&r)).await?)) }))]);
     guarded(
         routes,
@@ -584,7 +658,22 @@ pub fn add(routes: &mut Routes) {
             M::POST,
             h(|mut r| async move {
                 let b = r.body().await?;
-                actions::set_mode(&id(&r), &pane(&r), &str_raw(field(&b, "mode")?)).await?;
+                let mode = str_raw(field(&b, "mode")?);
+                if !chosen::hold_if_busy(&id(&r), &pane(&r), chosen::Pick::Mode, &mode)? {
+                    actions::set_mode(&id(&r), &pane(&r), &mode).await?;
+                }
+                Ok(ok())
+            }),
+        )],
+    );
+    // a model, effort or mode waiting for the agent to be free (from 0.22; see inyon_core::claude::chosen)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/chosen",
+        vec![(
+            M::DELETE,
+            h(|r| async move {
+                chosen::drop_all(&id(&r), &pane(&r));
                 Ok(ok())
             }),
         )],
@@ -602,6 +691,57 @@ pub fn add(routes: &mut Routes) {
         )],
     );
     guarded(routes, "/api/hosts/:id/panes/:pane/send", vec![(M::POST, h(send))]);
+    // messages the hub holds until the agent is free (from 0.22; see inyon_core::claude::held)
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held",
+        vec![(
+            M::POST,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let text = as_str(field(&b, "text")?).unwrap_or_default();
+                Ok(json_of(&held::hold(&id(&r), &pane(&r), &text)?))
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held/:held",
+        vec![
+            (
+                M::PATCH,
+                h(|mut r| async move {
+                    let b = r.body().await?;
+                    if let Some(text) = as_str(field(&b, "text")?) {
+                        held::edit(&id(&r), &pane(&r), &r.param("held"), &text)?;
+                    }
+                    let to = js_number(field(&b, "to")?);
+                    if to.is_finite() && to >= 0.0 {
+                        held::move_to(&id(&r), &pane(&r), &r.param("held"), to as usize)?;
+                    }
+                    Ok(ok())
+                }),
+            ),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    held::remove(&id(&r), &pane(&r), &r.param("held"))?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/panes/:pane/held/:held/send",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                held::send_now(&id(&r), &pane(&r), &r.param("held")).await?;
+                Ok(ok())
+            }),
+        )],
+    );
     guarded(
         routes,
         "/api/hosts/:id/panes/:pane/answer",
@@ -655,6 +795,18 @@ pub fn add(routes: &mut Routes) {
                 let b = r.body().await?;
                 actions::rename_pane(&id(&r), &pane(&r), &str_or_empty(field(&b, "name")?)).await?;
                 Ok(ok())
+            }),
+        )],
+    );
+    guarded(
+        routes,
+        "/api/hosts/:id/sessions/:session/name",
+        vec![(
+            M::PUT,
+            h(|mut r| async move {
+                let b = r.body().await?;
+                let name = actions::rename_tmux_session(&id(&r), &r.param("session"), &str_or_empty(field(&b, "name")?)).await?;
+                Ok(json_of(&json!({ "name": name })))
             }),
         )],
     );
@@ -760,6 +912,12 @@ async fn send(mut r: Req) -> HubResult<Resp> {
         Some(_) => return Err(http(400, "Invalid send id")),
     };
     let (host, pane_id) = (id(&r), pane(&r));
+    // a model or effort picked while the agent can't take it waits for it
+    if let Some((pick, value)) = chosen::from_setting(&text).filter(|_| setting) {
+        if chosen::hold_if_busy(&host, &pane_id, pick, &value)? {
+            return Ok(ok());
+        }
+    }
     match request_id {
         Some(rid) if !rid.is_empty() => {
             let key = inyon_core::js::stringify(&json!([host, r.param("pane"), rid]));
@@ -775,6 +933,11 @@ async fn send(mut r: Req) -> HubResult<Resp> {
         _ => actions::send_message(&host, &pane_id, &text, false, None, setting, steer).await?,
     }
     Ok(ok())
+}
+
+/// `?limit=`: how many entries `inyon read` asked for, 20 when it didn't say.
+pub fn history_limit(q: &str) -> usize {
+    q.parse().unwrap_or(20)
 }
 
 #[cfg(test)]
@@ -857,7 +1020,7 @@ mod tests {
         let cur = HubSettings(obj(
             json!({ "keepSession": { "a": true }, "uploads": { "retentionDays": 7, "maxMB": 100, "maxTotalMB": 1024, "longPasteLines": 40, "extra": 1 }, "other": "x" }),
         ));
-        let next = settings_put(&json!({ "autoResume": true, "uploads": { "retentionDays": 999, "maxMB": "0", "longPasteLines": 2.9 } }), cur);
+        let next = settings_put(&json!({ "autoResume": true, "machinesSend": "yes", "uploads": { "retentionDays": 999, "maxMB": "0", "longPasteLines": 2.9 } }), cur);
         // saving needs a store; the clamped value is what matters here
         let next = match next {
             Ok(v) => v,
@@ -867,6 +1030,24 @@ mod tests {
             inyon_core::js::stringify(&next),
             r#"{"keepSession":{"a":true},"uploads":{"retentionDays":365,"maxMB":1,"maxTotalMB":1024,"longPasteLines":5},"other":"x","autoResume":true}"#
         );
+    }
+
+    #[test]
+    fn custom_agents_are_saved_checked_and_used_at_once() {
+        crate::test_util::core();
+        let yolo = json!([{ "name": "Claude YOLO", "command": "claude --dangerously-skip-permissions", "like": "claude" }]);
+        let next = settings_put(&json!({ "customAgents": yolo }), load_settings()).unwrap();
+        assert_eq!(next["customAgents"][0]["id"], "claude-yolo");
+        assert_eq!(custom_agents::by_id("claude-yolo").map(|a| a.like), Some(inyon_protocol::AgentKind::Claude));
+        // a bad list is refused whole and the saved one stays
+        let err = settings_put(&json!({ "customAgents": [{ "name": "x", "command": "x", "like": "vim" }] }), load_settings()).unwrap_err();
+        assert_eq!((err.status, err.message.as_str()), (Some(400), "x: pick the agent it works like"));
+        assert_eq!(load_settings().0["customAgents"][0]["name"], "Claude YOLO");
+        // other saves leave the list alone; an empty list clears it
+        settings_put(&json!({ "autoResume": true }), load_settings()).unwrap();
+        assert_eq!(custom_agents::list().len(), 1);
+        settings_put(&json!({ "customAgents": [] }), load_settings()).unwrap();
+        assert_eq!(custom_agents::list(), vec![]);
     }
 
     // node-update.test.ts and uploads.test.ts: routes run on a machine put in the registry
@@ -977,9 +1158,17 @@ mod tests {
                 agy_status: Default::default(),
                 agy_titles: Default::default(),
                 agy_integration: None,
+                hooked: vec![],
                 machine_kind: None,
+                keys_at: Default::default(),
+                unwatched: Default::default(),
+                claude_parked: Default::default(),
             })));
             let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
+            // Ghostex #253: uploads over 1 MiB failed there
+            let three = answered(upload(chunked_upload(&[], "photo.jpg", 3 * 1024 * 1024)).await).await;
+            assert_eq!(three.0, 200, "{}", three.1);
+            assert_eq!(three.1["files"][0]["size"], json!(3 * 1024 * 1024));
             // over the 100 MB setting (plus a megabyte for the form itself)
             let refused = answered(upload(chunked_upload(&[], "big.bin", 102 * 1024 * 1024)).await).await;
             (ok, refused)
@@ -988,5 +1177,124 @@ mod tests {
         assert_eq!(ok.0, 200, "{}", ok.1);
         assert_eq!(ok.1["files"][0]["size"], json!(1000));
         assert_eq!(refused, (413, json!({ "error": "Uploads are limited to 100 MB" })));
+    }
+
+    // features/temp.test.ts: the routes hand the machine's `inyon temp` answer on
+
+    /// A machine whose commands are answered by `answer`, each noted with what it got on stdin.
+    struct Scripted {
+        calls: RefCell<Vec<(String, Option<String>)>>,
+        answer: RefCell<inyon_core::hosts::host::ExecResult>,
+    }
+
+    impl inyon_core::hosts::host::HostBackend for Scripted {
+        fn exec(
+            &self,
+            _: &HostConfig,
+            cmd: &str,
+            opts: inyon_core::hosts::host::ExecOptions,
+        ) -> futures_util::future::LocalBoxFuture<'static, HubResult<inyon_core::hosts::host::ExecResult>> {
+            let cmd = cmd.strip_prefix(inyon_core::hosts::host::UTF8_TMUX).unwrap_or(cmd).to_owned();
+            self.calls.borrow_mut().push((cmd, opts.input.map(|i| String::from_utf8_lossy(&i).into_owned())));
+            let r = self.answer.borrow().clone();
+            Box::pin(async move { Ok(r) })
+        }
+        fn stream(&self, _: &HostConfig, _: &str, _: inyon_core::hosts::host::OnLine, _: bool) -> inyon_core::hosts::host::StreamHandle {
+            inyon_core::hosts::host::StreamHandle::new(|| {}, inyon_core::platform::rt::Deferred::new())
+        }
+        fn pty(&self, _: &HostConfig, _: &str, _: u16, _: u16, _: inyon_core::hosts::host::OnData) -> HubResult<inyon_core::hosts::host::PtyHandle> {
+            Err(HubError::plain("no terminals here"))
+        }
+    }
+
+    fn probe(home: &str) -> Rc<RefCell<inyon_core::tmux::tmux::ProbeResult>> {
+        Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult {
+            hostname: "box".into(),
+            home: home.into(),
+            os: "Linux".into(),
+            now: 0.0,
+            latency_ms: 0.0,
+            tmux: inyon_core::tmux::tmux::TmuxProbe::Ok,
+            integration: inyon_protocol::IntegrationState::Missing,
+            sessions: vec![],
+            agent_procs: Default::default(),
+            hook_panes: Default::default(),
+            status_panes: Default::default(),
+            account: None,
+            compact_panes: Default::default(),
+            installed: vec![],
+            signed_in: vec![],
+            agy_conversations: Default::default(),
+            agy_status: Default::default(),
+            agy_titles: Default::default(),
+            agy_integration: None,
+            hooked: vec![],
+            machine_kind: None,
+            keys_at: Default::default(),
+            unwatched: Default::default(),
+            claude_parked: Default::default(),
+        }))
+    }
+
+    #[test]
+    fn the_hub_gives_up_on_a_machines_temp_files_before_the_idle_limit_drops_the_app() {
+        let idle = u64::try_from(crate::idle::IDLE.as_millis()).unwrap();
+        assert!(temp::WAIT < temp::DELETE_WAIT && temp::DELETE_WAIT < idle);
+    }
+
+    #[test]
+    fn the_temp_routes_hand_the_machines_answer_on_with_the_right_status() {
+        crate::test_util::block(async {
+            let fake = Rc::new(Scripted { calls: RefCell::default(), answer: RefCell::default() });
+            let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = fake.clone();
+            inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
+            put(host_state("studio", "node", json!({}))).borrow_mut().probe = Some(probe("/home/me"));
+            put(host_state("away", "node", json!({})));
+            let say =
+                |code: i32, stdout: &str, stderr: &str| *fake.answer.borrow_mut() = inyon_core::hosts::host::ExecResult { code, stdout: stdout.into(), stderr: stderr.into() };
+            let req = |method: &str, url: &str, body: &str| {
+                let mut r = crate::server::test_req(method, url, &[("content-type", "application/json")], body);
+                r.params = vec![("id".into(), url.split('/').nth(3).unwrap().into())];
+                r
+            };
+
+            say(0, r#"{"v":1,"ok":true,"host":"studio","roots":[],"items":[]}"#, "");
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/studio/temp", "")).await).await, (200, json!({ "v": 1, "ok": true, "host": "studio", "roots": [], "items": [] })));
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} ls --json", temp::INYON));
+            say(2, "", "error: unrecognized subcommand 'temp'\n");
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/studio/temp", "")).await).await, (409, json!({ "error": "Update Inyon on studio to see its temp files" })));
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/nope/temp", "")).await).await, (404, json!({ "error": "Unknown machine" })));
+            assert_eq!(answered(temp_list(req("GET", "/api/hosts/away/temp", "")).await).await, (503, json!({ "error": "Machine is not connected yet" })));
+
+            say(1, r#"{"v":1,"ok":false,"error":"That isn't inside one of the temp folders Inyon lists"}"#, "");
+            let refused = answered(temp_preview(req("GET", "/api/hosts/studio/temp/preview?path=%2Fetc%2Fpasswd&max=1500000", "")).await).await;
+            assert_eq!(refused, (400, json!({ "error": "That isn't inside one of the temp folders Inyon lists" })));
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} show --json --max 1500000 -- '/etc/passwd'", temp::INYON));
+            say(0, r#"{"v":1,"ok":true,"path":"/tmp/x","files":[],"truncated":false}"#, "");
+            assert_eq!(answered(temp_files(req("GET", "/api/hosts/studio/temp/files?path=%2Ftmp%2Fx", "")).await).await.0, 200);
+            assert_eq!(fake.calls.borrow().last().unwrap().0, format!("{} files --json -- '/tmp/x'", temp::INYON));
+            answered(temp_preview(req("GET", "/api/hosts/studio/temp/preview?path=%2Ftmp%2Fx&max=nope", "")).await).await;
+            assert!(fake.calls.borrow().last().unwrap().0.contains("--max 8388608 "));
+
+            say(0, r#"{"v":1,"ok":true,"removed":["/tmp/x"],"freed":5,"failed":[]}"#, "");
+            let done = answered(temp_delete(req("POST", "/api/hosts/studio/temp/delete", r#"{"paths":["/tmp/x"]}"#)).await).await;
+            assert_eq!(done, (200, json!({ "v": 1, "ok": true, "removed": ["/tmp/x"], "freed": 5, "failed": [] })));
+            assert_eq!(fake.calls.borrow().last().unwrap().1.as_deref(), Some(r#"["/tmp/x"]"#));
+            let bad = answered(temp_delete(req("POST", "/api/hosts/studio/temp/delete", r#"{"paths":"/tmp/x"}"#)).await).await;
+            assert_eq!(bad, (400, json!({ "error": "Send the paths to delete" })));
+
+            // each path finds its handler, for the method the app uses
+            let mut routes = Routes::default();
+            add(&mut routes);
+            for (path, method) in [("/api/hosts/a/temp", "GET"), ("/api/hosts/a/temp/files", "GET"), ("/api/hosts/a/temp/preview", "GET"), ("/api/hosts/a/temp/delete", "POST")] {
+                match routes.find(path) {
+                    Some((crate::server::Route::Methods(list), params)) => {
+                        assert!(list.iter().any(|(m, _)| m.as_str() == method), "{path}");
+                        assert_eq!(params, [("id".to_owned(), "a".to_owned())]);
+                    }
+                    _ => panic!("no route for {path}"),
+                }
+            }
+        });
     }
 }

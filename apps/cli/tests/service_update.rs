@@ -105,34 +105,33 @@ fn fake_exe(subsystem: u16) -> Vec<u8> {
     exe
 }
 
+// the sign-in task ran inyon.exe in a console window that stayed open while the link ran: from
+// 0.20.3 it opens the Inyon app, a copy of inyon marked to run without a console
 #[test]
 #[cfg_attr(windows, ignore)]
-fn windows_inyons_own_task_is_registered_again_to_start_the_engine_with_no_console() {
+fn windows_the_sign_in_task_opens_the_inyon_app_with_no_console() {
     let _g = lock();
     let home = setup(&["powershell.exe"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
-    // the command and the Bun engine next to it, as an install by 0.18 leaves them
     let bin = home.dir.join(".inyon").join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    // inyon 0.19 or later: it carries the mark of the engine built in
     let mut program = fake_exe(3);
     program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
     std::fs::write(bin.join("inyon"), &program).unwrap();
-    std::fs::write(bin.join("inyon-engine"), "the Bun engine").unwrap();
     let cli = bin.join("inyon").to_string_lossy().into_owned();
-    let engine = bin.join("inyon-engine").to_string_lossy().into_owned();
-    assert!(restart_service(&sys, Role::Link, &v(&[&cli])).ok);
-    // from 0.19 the task's engine is the windowless copy of the command, made in the Bun engine's place
-    assert_eq!(std::fs::read(bin.join("inyon-engine")).unwrap(), inyon_cli::engine::make_copy(&program).unwrap());
+    let app = bin.join("inyon-app").to_string_lossy().into_owned();
+    // nothing here plays the app, so it never reports the link running: that's said, not hidden
+    let r = restart_service(&sys, Role::Link, &v(&[&cli]));
+    assert!(!r.ok && r.how.contains("the Inyon app didn't start"), "{}", r.how);
+    assert_eq!(std::fs::read(&app).unwrap(), inyon_cli::engine::make_copy(&program).unwrap(), "the app is inyon without a console");
     let calls = home.calls();
-    let ps = calls.last().unwrap().last().unwrap().clone();
-    assert!(ps.contains(&format!("New-ScheduledTaskAction -Execute '{engine}' -Argument 'link'")), "{ps}");
-    assert!(!ps.contains("powershell.exe"), "no PowerShell window in between: {ps}");
-    assert!(ps.find("Stop-ScheduledTask").unwrap() < ps.find("Register-ScheduledTask").unwrap(), "{ps}");
-    assert!(ps.contains("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'"), "{ps}");
-    // the Startup-folder fallback starts the engine too
-    assert!(ps.contains(&format!("$l.TargetPath = '{engine}'")), "{ps}");
+    let register = calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("Register-ScheduledTask")).expect("the task is registered");
+    assert!(register.contains(&format!("New-ScheduledTaskAction -Execute '{app}' -Argument 'app --background link'")), "{register}");
+    assert!(register.contains(&format!("$l.TargetPath = '{app}'")), "the Startup-folder fallback opens the app too: {register}");
+    assert!(!register.contains("Start-ScheduledTask"), "registering starts nothing; the app does: {register}");
+    let start = calls.last().unwrap().last().unwrap().clone();
+    assert!(start.find("Get-Process -Name 'inyon', 'inyon-engine', 'tether-node'").unwrap() < start.find("Start-ScheduledTask").unwrap(), "older copies stop first: {start}");
 }
 
 #[test]
@@ -353,32 +352,38 @@ fn the_kill_switch_set_at_service_install_holds_for_what_starts_without_it() {
 
 #[test]
 #[cfg_attr(not(target_os = "linux"), ignore)]
-fn the_rust_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line_can_simply_go() {
+fn the_bun_hub_set_up_from_the_shell_survives_other_services_and_a_hub_env_line_can_simply_go() {
     let _g = lock();
     let home = setup(&["systemctl", "loginctl", "systemd-run"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
     let note = home.dir.join(".inyon/node/hub-impl");
-    // INYON_HUB_IMPL=rust inyon service install hub: the shell's variable is written down
-    std::env::set_var("INYON_HUB_IMPL", "rust");
+    home.put(".inyon/bin/inyon-engine", "the Bun engine");
+    // the Rust hub is the default: nothing to write down
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!note.exists() && inyon_cli::engine::rust_hub());
+    // INYON_HUB_IMPL=bun inyon service install hub: the shell's variable is written down
+    std::env::set_var("INYON_HUB_IMPL", "bun");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
     std::env::remove_var("INYON_HUB_IMPL");
-    assert!(note.exists());
+    assert!(note.exists() && !inyon_cli::engine::rust_hub());
     // putting the link's service back in place later doesn't undo it
     assert!(inyon_cli::commands::service_install(&sys, Some("link")).is_ok());
-    assert!(note.exists() && inyon_cli::engine::rust_hub());
-    // bun in hub.env goes back, and forgets the note (the Bun engine is still here)
-    home.put(".inyon/bin/inyon-engine", "the Bun engine");
-    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
-    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    assert!(!note.exists() && !inyon_cli::engine::rust_hub());
-    // turned on in hub.env, as the docs say: the service reads the line, nothing is written down,
-    // so deleting the line switches back
+    assert!(note.exists() && !inyon_cli::engine::rust_hub());
+    // rust in hub.env goes back, and forgets the note
     home.put(".inyon/hub.env", "INYON_HUB_IMPL=rust\n");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    assert!(inyon_cli::engine::rust_hub() && !note.exists());
+    assert!(!note.exists() && inyon_cli::engine::rust_hub());
+    // bun in hub.env, as the docs say: the service reads the line, nothing is written down, so
+    // deleting the line switches back
+    home.put(".inyon/hub.env", "INYON_HUB_IMPL=bun\n");
+    assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    assert!(!inyon_cli::engine::rust_hub() && !note.exists());
     home.put(".inyon/hub.env", "PORT=4777\n");
-    assert!(!inyon_cli::engine::rust_hub());
+    assert!(inyon_cli::engine::rust_hub());
+    // a note 0.20 left for its opt-in test still means the Rust hub
+    home.put(".inyon/node/hub-impl", "INYON_HUB_IMPL=rust when the hub was set up\n");
+    assert!(inyon_cli::engine::rust_hub());
 }
 
 #[test]
@@ -408,12 +413,11 @@ fn going_back_with_service_install_fetches_the_bun_engine_before_the_service_run
     let home = setup(&["systemctl", "loginctl", "systemd-run"]);
     let proc = FakeProc::new(&home);
     let sys = sys(&proc, Platform::Linux, std::path::Path::new(BIN));
-    std::env::set_var("INYON_HUB_IMPL", "rust");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
-    std::env::remove_var("INYON_HUB_IMPL");
-    // the engine went while the Rust hub ran; back without the variable, offline
+    // the engine went while the Rust hub ran; back with the variable, offline
     home.clear_calls();
     std::env::set_var("INYON_DOWNLOAD", "http://127.0.0.1:9/nothing");
+    std::env::set_var("INYON_HUB_IMPL", "bun");
     let r = inyon_cli::commands::service_install(&sys, Some("hub"));
     std::env::remove_var("INYON_DOWNLOAD");
     assert!(r.is_err(), "{r:?}");
@@ -421,6 +425,7 @@ fn going_back_with_service_install_fetches_the_bun_engine_before_the_service_run
     // with the engine there it goes ahead
     home.put(".inyon/bin/inyon-engine", "the Bun engine");
     assert!(inyon_cli::commands::service_install(&sys, Some("hub")).is_ok());
+    std::env::remove_var("INYON_HUB_IMPL");
     assert!(!inyon_cli::engine::rust_hub());
 }
 
@@ -491,4 +496,64 @@ fn quit_on_windows_ends_the_task_then_the_engine_then_its_tunnel_as_restart_does
     home.clear_calls();
     inyon_cli::service::quit(&sys, Role::Node, None);
     assert_eq!(home.calls(), vec![v(&["schtasks.exe", "/End", "/TN", "Inyon node"])]);
+}
+
+// both sign-in tasks open the app and one app runs both jobs, so one task's process is the app:
+// ending that task to stop the hub connection killed the phone link with it
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_with_the_app_running_a_stop_or_uninstall_leaves_its_task_running() {
+    let _g = lock();
+    let home = setup(&["schtasks.exe", "powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, std::path::Path::new(BIN));
+    proc.set(5150, &["inyon-app.exe", "app", "--background", "link"]);
+    let seen = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+    home.put(
+        ".inyon/node/app.json",
+        &format!(r#"{{"pid":5150,"version":"0.20.3","started":{seen},"seen":{seen},"running":["link","hub connection"],"jobs":[{{"role":"link"}},{{"role":"node"}}]}}"#),
+    );
+    inyon_cli::service::quit(&sys, Role::Node, None);
+    assert!(!home.calls().iter().any(|c| c.contains(&"/End".to_string())), "{:?}", home.calls());
+    home.clear_calls();
+    std::env::set_var("FAKE_PS_NO", "Get-ScheduledTask -TaskName 'Inyon node'");
+    inyon_cli::service::uninstall_service(&sys, Role::Node);
+    std::env::remove_var("FAKE_PS_NO");
+    let calls = home.calls();
+    let script = calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("Unregister-ScheduledTask")).expect("the task is unregistered");
+    assert!(!script.contains("Stop-ScheduledTask"), "{script}");
+    assert!(proc.signals.borrow().is_empty(), "the app itself is left running");
+}
+
+// an update by 0.20.2 ended by writing its own version into Settings → Apps, after the new
+// version had listed itself: the app puts the installed version back, and from 0.20.4 the entry
+// names the installed program's version, not the updater's
+#[test]
+#[cfg_attr(windows, ignore)]
+fn windows_settings_apps_names_the_installed_version_and_is_put_right_when_an_older_updater_wrote_its_own() {
+    let _g = lock();
+    let home = setup(&["powershell.exe"]);
+    let proc = FakeProc::new(&home);
+    let sys = sys(&proc, Platform::Windows, home.dir.join("x").as_path());
+    let bin = home.dir.join(".inyon").join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let mut program = fake_exe(3);
+    program.extend_from_slice(inyon_cli::engine::COPY_MARK.as_bytes());
+    program.extend_from_slice(b"..inyon-build:0.20.9;..");
+    std::fs::write(bin.join("inyon"), &program).unwrap();
+    let entry = |calls: &[Vec<String>]| calls.iter().map(|c| c.last().unwrap().clone()).find(|ps| ps.contains("DisplayVersion ="));
+    // the entry is this version's: nothing is written
+    assert!(!inyon_cli::service::repair_app_entry(&sys));
+    let calls = home.calls();
+    let check = calls[0].last().unwrap();
+    let app = bin.join("inyon-app").to_string_lossy().into_owned();
+    assert!(check.contains("$e.DisplayVersion -eq '0.20.9'") && check.contains(&format!("$e.UninstallString -eq '\"{app}\" uninstall --purge'")), "{check}");
+    assert!(entry(&calls).is_none());
+    // an older updater's entry: listed again, with the installed program's version
+    home.clear_calls();
+    std::env::set_var("FAKE_PS_NO", "$e.DisplayVersion -eq");
+    assert!(inyon_cli::service::repair_app_entry(&sys));
+    std::env::remove_var("FAKE_PS_NO");
+    let script = entry(&home.calls()).expect("the entry is written");
+    assert!(script.contains("DisplayVersion = '0.20.9'") && script.contains("inyon-app\" uninstall --purge"), "{script}");
 }

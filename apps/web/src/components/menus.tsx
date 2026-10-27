@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { ArrowRight, CircleX, Download, ExternalLink, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { ArrowRight, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
 import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
 import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
@@ -37,10 +37,19 @@ export function paneMenu(r: PaneRef, nav: NavigateFunction): MenuItem[] {
     a && { key: 'terminal', label: 'Open terminal', icon: <SquareTerminal className="size-4" />, onSelect: () => nav(paneHref(host, r.pane.id, 'terminal')) },
     newTab(href),
     { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, separated: true, onSelect: () => openActionSheet({ kind: 'rename', r }) },
+    { key: 'rename-session', label: 'Rename tmux session…', icon: <Pencil className="size-4" />, onSelect: () => openActionSheet({ kind: 'tmux-session', r }) },
     a && !!AGENTS[a.kind]?.conversations?.length && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => openActionSheet({ kind: 'conversations', r }) },
     !!a?.sessionId && copyItem('copy', 'Copy session ID', a.sessionId!, 'Session ID'),
     { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, separated: true, onSelect: () => void endSession(r) },
   ])
+}
+
+/** A tmux session heading: `r` is any pane in it. */
+export function tmuxSessionMenu(r: PaneRef): MenuItem[] {
+  return [
+    { key: 'rename', label: 'Rename tmux session…', icon: <Pencil className="size-4" />, onSelect: () => openActionSheet({ kind: 'tmux-session', r }) },
+    copyItem('copy', 'Copy tmux name', r.session.name, 'tmux name'),
+  ]
 }
 
 /** A machine (or a phone's computer). */
@@ -51,6 +60,7 @@ export function machineMenu(h: HostState, nav: NavigateFunction): MenuItem[] {
     { key: 'open', label: 'Open', icon: <Server className="size-4" />, onSelect: () => nav(href) },
     paired && h.status === 'online' && { key: 'new', label: 'New session', icon: <Plus className="size-4" />, onSelect: () => openActionSheet({ kind: 'new', hostId: h.config.id }) },
     newTab(href),
+    paired && { key: 'temp', label: 'Temp files', icon: <FolderOpen className="size-4" />, onSelect: () => nav(`/temp/${encodeURIComponent(h.config.id)}`) },
     { key: 'rename', label: h.config.kind === 'ssh' ? 'Edit…' : 'Rename…', icon: <Pencil className="size-4" />, separated: true, onSelect: () => openActionSheet({ kind: 'edit', host: h }) },
     h.nodeUpdate?.supported && h.nodeUpdate.state !== 'updating' && h.nodeUpdate.state !== 'updated' && h.status === 'online' && { key: 'update', label: `Update to inyon ${h.nodeUpdate.latest}`, icon: <Download className="size-4" />, onSelect: () => void updateMachine(h) },
     h.config.kind !== 'local' && { key: 'remove', label: 'Remove…', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removeMachine(h) },
@@ -80,7 +90,7 @@ export async function removeMachine(h: HostState, after?: () => void) {
 
 // ---------- the sheets these menus open ----------
 
-type Sheet = { kind: 'rename' | 'conversations'; r: PaneRef } | { kind: 'new'; hostId: string } | { kind: 'edit'; host: HostState }
+type Sheet = { kind: 'rename' | 'tmux-session' | 'conversations'; r: PaneRef } | { kind: 'new'; hostId: string } | { kind: 'edit'; host: HostState }
 
 let request: ((s: Sheet) => void) | undefined
 export const openActionSheet = (s: Sheet) => request?.(s)
@@ -101,6 +111,8 @@ export function ActionSheets() {
   if (!sheet) return null
   if (sheet.kind === 'rename')
     return <RenameSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} current={paneName(sheet.r)} agent={!!sheet.r.pane.agent} open={open} onClose={close} />
+  if (sheet.kind === 'tmux-session')
+    return <RenameSheet host={sheet.r.host.config.id} pane={sheet.r.session.id} session={sheet.r.session.id} current={sheet.r.session.name} agent={false} open={open} onClose={close} />
   if (sheet.kind === 'conversations' && sheet.r.pane.agent)
     return <ConversationsSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} agent={sheet.r.pane.agent.kind} working={isBusy(sheet.r.pane.agent)} open={open} onClose={close} />
   if (sheet.kind === 'new') return <NewSessionSheet open={open} hostId={sheet.hostId} onClose={close} />

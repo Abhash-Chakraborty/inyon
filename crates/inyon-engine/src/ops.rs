@@ -52,6 +52,17 @@ pub fn hide_window_std(c: &mut std::process::Command) -> &mut std::process::Comm
     c
 }
 
+/// For a child whose output goes to this terminal: it shares this program's console when there is
+/// one to see, and gets a hidden one when this runs without (the windowless copy, the app).
+pub fn console_child_std(c: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    // SAFETY: takes nothing and only reads this process's console
+    if unsafe { windows_sys::Win32::System::Console::GetConsoleWindow() }.is_null() {
+        hide_window_std(c);
+    }
+    c
+}
+
 /// Starts a command in a session (and process group) of its own, as Node's `detached` does, so
 /// ending it ends everything it started.
 fn own_session(c: &mut tokio::process::Command) {
@@ -1039,6 +1050,8 @@ mod tests {
     #[test]
     fn list_clients_is_answered_per_session_from_psmux_default_output() {
         assert_eq!(Psmux::new().run("tmux list-clients -F '#{session_id} #{client_control_mode}'", &[]).0, "$14 1\n");
+        // the probe's longer format (with the last key and the pane) gets the same two fields
+        assert_eq!(Psmux::new().run("tmux list-clients -F '#{session_id} #{client_control_mode} #{client_activity} #{pane_id}'", &[]).0, "$14 1\n");
     }
 
     #[cfg(unix)]

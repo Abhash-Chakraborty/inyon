@@ -13,7 +13,8 @@ use std::rc::{Rc, Weak};
 use futures_util::future::{join, LocalBoxFuture};
 use indexmap::IndexMap;
 use inyon_protocol::{
-    chat_key, AgentKind, AgentPaneInfo, ChatInfo, ChatItem, HostKind, HostStatus, PromptOption, RemoteControl, ScreenPrompt, ScreenState, SendStatus, ServerMsg, SubagentInfo,
+    chat_key, AgentKind, AgentPaneInfo, ChatInfo, ChatItem, HostKind, HostStatus, LiveItem, LiveKind, PromptOption, RemoteControl, ScreenPrompt, ScreenState, SendStatus,
+    ServerMsg, SubagentInfo,
 };
 use serde_json::Value;
 
@@ -22,6 +23,7 @@ use super::delivery::{has_paste_preview, input_contains, SendLedger};
 use super::drafts::{get_draft, mirror_to_terminal, set_draft, squash, Draft, DraftSource};
 use super::driving::{is_driving, start_driving};
 use super::screen::parse_screen;
+use super::screen_reply::{carry_on, reads_reply, screen_reply, unrecorded};
 use super::transcript::{load_meta, new_meta, normalize, save_meta, with_seq, TranscriptMeta};
 use super::transcript_tail::{codex_meta_command, meta_command, parse_size, range_command, size_command, tail_command, TranscriptReader};
 use crate::agents::antigravity::AntigravityDoc;
@@ -53,6 +55,8 @@ const SCREEN_MS: u64 = 2000;
 /// while the phone app is in the background nobody sees the screen: read it rarely
 const QUIET_SCREEN_MS: u64 = 20_000;
 const IDLE_SHUTDOWN_MS: u64 = 120_000;
+/// how long a reply read off the screen stays after its turn, waiting for its record
+const SCREEN_LIVE_WAIT_MS: u64 = 5000;
 /// agents whose input box Inyon can read and retype, so a draft follows you between app and terminal
 const MIRRORS: [AgentKind; 5] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Antigravity, AgentKind::Opencode, AgentKind::Copilot];
 
@@ -218,9 +222,13 @@ struct State {
     generation: u64,
     /// Codex's reply as it's being written, from its app-server's live events (codex_live.rs)
     live: CodexLiveState,
+    /// the reply Claude Code, Copilot or Antigravity is writing, read off the screen (screen_reply.rs)
+    screen_live: Option<LiveItem>,
     live_tail: Option<StreamHandle>,
     live_timer: Option<Timer>,
     live_expiry: Option<Timer>,
+    /// how long the screen's copy of a reply waits for its record once the turn is over
+    screen_live_expiry: Option<Timer>,
     live_retry_timer: Option<Timer>,
     live_retries: u32,
     live_json: String,
@@ -309,9 +317,11 @@ impl ChatWatcher {
                 remote: None,
                 generation: 0,
                 live: CodexLiveState::new(),
+                screen_live: None,
                 live_tail: None,
                 live_timer: None,
                 live_expiry: None,
+                screen_live_expiry: None,
                 live_retry_timer: None,
                 live_retries: 0,
                 live_json: String::new(),
@@ -592,7 +602,7 @@ impl ChatWatcher {
                 msgs.push(p.clone());
             }
             msgs.push(ServerMsg::ChatScreen { key: self.key.clone(), screen: Box::new(st.screen.clone()) });
-            let live = st.live.list();
+            let live = live_items(&st);
             if !live.is_empty() {
                 msgs.push(ServerMsg::ChatLive { key: self.key.clone(), items: live });
             }
@@ -795,6 +805,11 @@ impl ChatWatcher {
             self.st.borrow_mut().mirror_timer = Some(t);
         }
         self.broadcast_draft(None);
+    }
+
+    /// Its first page is loaded (from a transcript, or an agent's own server).
+    pub fn ready(&self) -> bool {
+        self.st.borrow().ready
     }
 
     /// Following the agent's transcript, so `recorded` can be trusted.
@@ -1325,6 +1340,8 @@ impl ChatWatcher {
                 rc: m.rc.clone().or_else(|| st.remote.clone()),
                 share: m.share.clone(),
                 queue,
+                held: Some(super::held::list(&self.host_id, &self.pane_id)).filter(|h| !h.is_empty()),
+                chosen: super::chosen::get(&self.host_id, &self.pane_id),
                 turn: st.live.turn.clone().or_else(|| m.turn.clone()),
                 sends: Some(st.ledger.list()),
                 tasks: last40(m.tasks.values()),
@@ -1388,6 +1405,9 @@ impl ChatWatcher {
         };
         if let Some(m) = msg {
             self.broadcast(&m);
+        }
+        if self.settle_screen_live() {
+            self.live_soon();
         }
     }
 
@@ -2028,6 +2048,9 @@ impl ChatWatcher {
                         self.live_soon();
                     }
                 }
+                if self.settle_screen_live() {
+                    self.live_soon();
+                }
             }
         }
         if self.reading() {
@@ -2175,15 +2198,70 @@ impl ChatWatcher {
         });
     }
 
+    /// The reply being written on screen, carried on from the last read when its start has
+    /// scrolled away, without what a record holds already. True when it changed.
+    fn read_screen_live(&self, lines: &[String], width: Option<u32>, kind: AgentKind, working: bool) -> bool {
+        // the turn is over: what was read waits for its record, so the reply doesn't blink out
+        // between the two, and goes after a while if no record has it
+        if !working {
+            if self.st.borrow().screen_live.is_some() && self.st.borrow().screen_live_expiry.is_none() {
+                let t = self.later(SCREEN_LIVE_WAIT_MS, |w| {
+                    let had = {
+                        let mut st = w.st.borrow_mut();
+                        st.screen_live_expiry = None;
+                        st.screen_live.take().is_some()
+                    };
+                    if had {
+                        w.live_soon();
+                    }
+                });
+                self.st.borrow_mut().screen_live_expiry = Some(t);
+            }
+            return false;
+        }
+        let mut st = self.st.borrow_mut();
+        rt::clear(&mut st.screen_live_expiry);
+        let read = screen_reply(lines, kind, width);
+        let before = st.screen_live.take();
+        let next = read.and_then(|r| {
+            let text = match &before {
+                Some(b) if !r.whole => carry_on(&b.text, &r.text),
+                _ => r.text,
+            };
+            let text = unrecorded(&text, &recent_replies(&st.items));
+            let id = before.as_ref().map_or_else(|| format!("screen:{}", now_ms()), |b| b.id.clone());
+            (!text.is_empty()).then_some(LiveItem { id, kind: LiveKind::Text, text, turn_id: None })
+        });
+        let changed = next.as_ref().map(|n| &n.text) != before.as_ref().map(|b| &b.text);
+        st.screen_live = next;
+        changed
+    }
+
+    /// Records came in: what they hold leaves the live text. The app drops the screen's copy when
+    /// a new reply is on record, which can be an earlier turn's, so what's left is sent again.
+    /// True when there's something to send.
+    fn settle_screen_live(&self) -> bool {
+        let mut st = self.st.borrow_mut();
+        let Some(live) = st.screen_live.take() else { return false };
+        let text = unrecorded(&live.text, &recent_replies(&st.items));
+        if !text.is_empty() {
+            st.live_json = String::new();
+        }
+        st.screen_live = (!text.is_empty()).then_some(LiveItem { text, ..live });
+        true
+    }
+
     fn stop_live(&self) {
         let (t, had, stopped) = {
             let mut st = self.st.borrow_mut();
             rt::clear(&mut st.live_retry_timer);
             rt::clear(&mut st.live_timer);
             rt::clear(&mut st.live_expiry);
+            rt::clear(&mut st.screen_live_expiry);
             let t = st.live_tail.take();
-            let had = !st.live.items.is_empty();
+            let had = !st.live.items.is_empty() || st.screen_live.is_some();
             st.live.clear();
+            st.screen_live = None;
             st.live_json = String::new();
             (t, had, st.stopped)
         };
@@ -2235,7 +2313,7 @@ impl ChatWatcher {
             let msg = {
                 let mut st = w.st.borrow_mut();
                 st.live_timer = None;
-                let items = st.live.list();
+                let items = live_items(&st);
                 let json = to_json(&items);
                 if json == st.live_json {
                     return;
@@ -2270,7 +2348,7 @@ impl ChatWatcher {
         self.st.borrow_mut().live_expiry = Some(t);
     }
 
-    fn schedule_info(&self) {
+    pub fn schedule_info(&self) {
         if self.st.borrow().info_timer.is_some() {
             return;
         }
@@ -2343,6 +2421,9 @@ impl ChatWatcher {
         let agent = pane.agent.clone().expect("an agent");
         let width = (*pane.width >= 0.0 && pane.width.is_finite()).then_some(*pane.width as u32);
         let mut screen = parse_screen(lines, width, agent.kind);
+        if reads_reply(agent.kind) && self.read_screen_live(lines, width, agent.kind, screen.working) {
+            self.live_soon();
+        }
         // a menu Inyon is working through itself stays out of the app
         if is_driving(&self.host_id, &self.pane_id) && screen.prompt.is_some() {
             screen.prompt = None;
@@ -2542,6 +2623,27 @@ fn last40<'a, T: Clone + 'a>(it: impl Iterator<Item = &'a T>) -> Vec<T> {
 }
 
 /// The ids a conversation item is known by, for matching it to the live copy written before it.
+/// What's being written now: Codex's live items, then the reply read off the screen.
+fn live_items(st: &State) -> Vec<LiveItem> {
+    let mut items = st.live.list();
+    items.extend(st.screen_live.clone());
+    items
+}
+
+/// The texts of the latest replies on record, which live text read off the screen is checked against.
+fn recent_replies(items: &[ChatItem]) -> Vec<&str> {
+    use inyon_protocol::AssistantBlock;
+    items
+        .iter()
+        .rev()
+        .take(60)
+        .filter_map(|it| match it {
+            ChatItem::Assistant { block: AssistantBlock::Text { text }, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
 fn record_ids(it: &ChatItem) -> Vec<Option<String>> {
     use inyon_protocol::AssistantBlock;
     let msg_id = match it {

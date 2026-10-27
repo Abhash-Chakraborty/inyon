@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fixture, screenFixture } from '../fixtures.ts'
-import { codexBrowsing, parseScreen, promptSummary, unstyle } from './screen.ts'
+import { codexBrowsing, parseScreen, promptSummary, promptWhole, unstyle } from './screen.ts'
 
 // Captures live in fixtures/screens/<agent>/ at the repo root; the Claude Code ones are from
 // 2.1.296 at 100 columns. The builders below vary one part of a screen per test.
@@ -71,7 +71,7 @@ test('word-wrapped option label keeps its space', () => {
     screenFixture('claude', 'permission-wrapped'),
     80,
   )
-  expect(s.prompt!.options[1].label).toBe('Yes, and always allow access to /tmp/claude-1001/scratchpad/play from this project')
+  expect(s.prompt!.options[1].label).toBe('Yes, and always allow access to /tmp/tester-1001/scratchpad/play from this project')
   expect(s.prompt!.options[1].detail).toBeUndefined()
 })
 
@@ -257,6 +257,8 @@ describe('other agents', () => {
     expect(p.options.map((o) => o.label)).toEqual(['Yes, proceed', "Yes, and don't ask again for commands that start with `printf 'hi\\n' > hello.txt`", 'No, and tell Codex what to do differently'])
     // the alert and the overview say what would run
     expect(promptSummary(p)).toBe("Run printf 'hi\\n' > hello.txt")
+    // the line is the whole question: quick answers are offered
+    expect(promptWhole(p)).toBe(true)
   })
 
   test('a file change approval names the file', () => {
@@ -268,6 +270,8 @@ describe('other agents', () => {
     expect(p.options[0].selected).toBe(true)
     // the path was wrapped by the terminal ("…/notes2" and ".txt"); the file is still named
     expect(promptSummary(p)).toBe('Edit notes2.txt?')
+    // the line leaves out what an answer agrees to: no quick answers
+    expect(promptWhole(p)).toBe(false)
   })
 
   test('the review presets', () => {
@@ -532,6 +536,8 @@ test('command prompt with a gutter keeps its lines and loses the gutter', () => 
   expect(p.wholeLines).toBe(true)
   expect(p.options.map((o) => o.label)).toEqual(['Yes', 'No'])
   expect(promptSummary(p)).toBe("Append empty-cart test and run the suite: cat >> test/cart.test.js <<'EOF'")
+  // the line leaves out what an answer agrees to: no quick answers
+  expect(promptWhole(p)).toBe(false)
 })
 
 test('a PowerShell prompt reads as what the command is for', () => {
@@ -541,6 +547,7 @@ test('a PowerShell prompt reads as what the command is for', () => {
   )
   expect(s.prompt!.body.slice(3)).toEqual(['npm test', '╌', 'This command requires approval', 'Do you want to proceed?'])
   expect(promptSummary(s.prompt!)).toBe('Re-run the test suite: npm test')
+  expect(promptWhole(s.prompt!)).toBe(true)
 })
 
 test('lines Claude wrapped are joined, real line breaks stay', () => {
@@ -554,11 +561,13 @@ test('lines Claude wrapped are joined, real line breaks stay', () => {
     'This conversation is cached for the current model. Switching to Sonnet 5.5 means the full history gets re-read on your next message.',
   ])
   expect(promptSummary(s.prompt!)).toBe('Switch model?')
+  expect(promptWhole(s.prompt!)).toBe(true)
 })
 
 test('an alert for a command names what it is for, not the tip', () => {
   const s = parseScreen(screenFixture('claude', 'permission-tip'))
   expect(promptSummary(s.prompt!)).toBe('Write hello-inyon to out.txt: echo hello-inyon > out.txt')
+  expect(promptWhole(s.prompt!)).toBe(true)
 })
 
 test('an edit prompt names the file, not the first line of the diff', () => {
@@ -566,6 +575,7 @@ test('an edit prompt names the file, not the first line of the diff', () => {
     screenFixture('claude', 'edit-prompt'),
   )
   expect(promptSummary(s.prompt!)).toBe('Edit file: test\\cart.test.js')
+  expect(promptWhole(s.prompt!)).toBe(false)
 })
 
 describe('ultracode in Claude Code 2.1.299', () => {

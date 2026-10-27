@@ -13,9 +13,25 @@ The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH
 
 From 0.19 the link and the hub connection run inside `inyon` rather than in the Bun engine. If a computer did something in 0.18 that it doesn't in 0.19, set `INYON_LEGACY_ENGINE=1` and run `inyon service install` to go back to the Bun engine while it gets fixed. On Linux and macOS that writes the variable into the service, and the Bun engine downloads when the service starts; on Windows `inyon service install` downloads it. [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) has the steps for each system, and `inyon doctor` shows which engine runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
 
+## Something stopped working on a hub after updating to 0.21
+
+From 0.21 the hub runs on the hub built into `inyon`, in Rust. If your hub did something in 0.20 that it doesn't now, add `INYON_HUB_IMPL=bun` to `~/.inyon/hub.env` and run `inyon hub restart` to put it back on the Bun hub, with the same password, phones and machines (see [The hub in Rust](hub.md#the-hub-in-rust)). `inyon doctor` says which hub runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
+
 ## The phone reached the computer once, then couldn't
 
 Before 0.17.2, `inyon pair` on Windows could miss the link already running in the background and start a second one. The second one published its own address, and when it ended with the terminal, the phone was left pointing at it. Update both sides; from 0.17.2 `pair` sees a running link by its port too. Until then, `inyon service install link` restarts the background link, which publishes the right address again.
+
+## A console window opens, or the icon is missing (Windows)
+
+Up to 0.20.2 the Inyon window's **Change**, **Show all** and **Details** each opened a terminal, **Uninstall** in Settings → Apps opened a console that waited for Enter, and the tray icon belonged to the engine, so it could be missing while the link ran. From 0.20.3 Inyon is an app: nothing opens a terminal, and its icon shows exactly while something runs. `inyon update` moves a computer to it; run `inyon status` afterwards to see what the app runs.
+
+## The Inyon window doesn't open, or is blank (Windows)
+
+From 0.21 the window is drawn by Microsoft Edge WebView2. When it's missing or won't start, Inyon says so and opens Microsoft's download page; install the Evergreen runtime and open Inyon again. The phone link and the hub connection keep running meanwhile. `%USERPROFILE%\.inyon\node\window.log` says what went wrong. In 0.20.1 to 0.20.5, after the window was closed once, clicking the icon didn't open it again until you chose **Quit Inyon**; update to 0.21.
+
+## The window keeps saying "Starting the tunnel" (Windows)
+
+In 0.20.1 to 0.20.5 the window asked for a new pairing code every time it opened, and while Tunnel was on the code card said "Starting the tunnel…" until the tunnel's address came, which looked as if a change to the switches hadn't applied. From 0.21 the window makes a code only when you choose **Pair a phone**, and the switches on This computer show what the link uses. `link.log` shows when the tunnel starts and stops.
 
 ## The tray menu opens an empty window (Windows)
 

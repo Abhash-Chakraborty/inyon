@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import {
   Clock3,
   AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, File as FileIcon, Image as ImageIcon, Info, Layers, Lightbulb,
-  Code as CodeIcon, Loader2, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
+  Code as CodeIcon, Loader2, MonitorX, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
 import { AGENTS, type AgentKind, type LiveItem } from '@inyon/protocol'
 import type { Part, Row } from '../../lib/chat.ts'
@@ -110,13 +110,14 @@ function LinkedPaths({ text }: { text: string }) {
   )
 }
 
-export function PendingBubble({ p, onRetry, onDismiss }: { p: PendingMessage; onRetry: () => void; onDismiss: () => void }) {
+export function PendingBubble({ p, onRetry, onDismiss, onScreen }: { p: PendingMessage; onRetry: () => void; onDismiss: () => void; onScreen?: () => void }) {
   return (
     <div className="flex flex-col items-end">
       <div
         {...contextMenu(() => [
           copyItem('copy', 'Copy message', p.text, 'Message'),
           p.status === 'failed' && { key: 'retry', label: 'Retry', icon: <RotateCcw className="size-4" />, onSelect: onRetry },
+          p.status === 'failed' && onScreen && { key: 'screen', label: 'What was on screen', icon: <MonitorX className="size-4" />, onSelect: onScreen },
           p.status === 'failed' && { key: 'dismiss', label: 'Dismiss', icon: <X className="size-4" />, separated: true, onSelect: onDismiss },
         ])}
         // the same box as the message it becomes, so nothing moves when the agent takes it
@@ -378,7 +379,8 @@ export function WorkingIndicator({ activity, since, output }: { activity?: strin
 }
 
 /**
- * The reply as Codex writes it, above the working line: its thinking folded, the text and a plan
+ * The reply as the agent writes it, above the working line: Codex's from its app-server, with its
+ * thinking folded and a plan, and Claude Code's, Copilot's and Antigravity's as read off the screen,
  * as Markdown. It fades in once and then only grows; the finished message takes its place with the
  * same text, so nothing moves when it lands.
  */

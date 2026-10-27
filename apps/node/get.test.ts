@@ -399,7 +399,7 @@ test("without gzip, the website's release takes the plain file from GitHub, chec
   expect(existsSync(installed())).toBe(false)
 })
 
-test('on musl (Alpine) only a hub is told what the musl engine needs', async () => {
+test('on musl (Alpine) only a hub on Bun is told what the musl engine needs', async () => {
   release.split = true
   // an ldd that answers as musl's does, in front of everything else
   const bin = tools([])
@@ -409,11 +409,15 @@ test('on musl (Alpine) only a hub is told what the musl engine needs', async () 
   expect(started()).toBe('started with setup\n')
   // from 0.19 a computer that isn't a hub runs on the static inyon alone
   expect(r.out).not.toContain('libstdc++')
+  // from 0.21 the hub runs on the inyon command too
   const hub = await run({ PATH: `${bin}:${process.env.PATH}` }, ['--hub'])
   expect(hub.code).toBe(0)
   expect(started()).toBe('started with setup --role hub\n')
+  expect(hub.out).not.toContain('libstdc++')
+  const bunHub = await run({ PATH: `${bin}:${process.env.PATH}`, INYON_HUB_IMPL: 'bun' }, ['--hub'])
+  expect(bunHub.code).toBe(0)
   // Alpine's libstdc++ lives in /usr/lib; elsewhere the line is the hint setup repeats
-  if (!existsSync('/usr/lib/libstdc++.so.6')) expect(hub.out).toContain('apk add libstdc++ libgcc')
+  if (!existsSync('/usr/lib/libstdc++.so.6')) expect(bunHub.out).toContain('apk add libstdc++ libgcc')
   // a release without a musl engine is taken for one from before the split
   release.sums = `${sha(PROGRAM)}  ${NAME}\n${sha('engine')}  ${ENGINE_NAME}\n`
   expect((await run({ PATH: `${bin}:${process.env.PATH}` }, ['--hub'])).code).toBe(0)

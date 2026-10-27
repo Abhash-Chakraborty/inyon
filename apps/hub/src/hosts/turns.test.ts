@@ -54,3 +54,10 @@ test('Esc from Inyon ends it at once', () => {
   t.end('p', T0 + 100)
   expect(t.state('p', 'idle', 'x', hook('PermissionRequest', T0 / 1000 - 1), T0 + 200)).toBe('idle')
 })
+
+test('a turn that stops on an error ends like a Stop', () => {
+  const t = new Turns()
+  t.start('p', T0)
+  expect(t.state('p', 'idle', 'Running 1s', undefined, T0 + 1000)).toBe('working')
+  expect(t.state('p', 'idle', 'Running 2s', hook('StopFailure', T0 / 1000 + 2, { error: 'rate_limit' }), T0 + 2500)).toBe('idle')
+})

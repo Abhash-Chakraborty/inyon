@@ -11,6 +11,8 @@ import { Button, Menu, Pulse, Segmented, Sheet, Toggle, Waiting, inputClass, typ
 import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { confirmAction } from '../components/Confirm.tsx'
 import { CompanionSheet } from '../components/CompanionSheet.tsx'
+import { CustomAgentRows } from '../components/CustomAgents.tsx'
+import { CompanionRows } from '../components/CompanionAgent.tsx'
 import { HostDot, hostLine, sshAddress } from '../components/ui/status.tsx'
 import { askNativeNotifications, isNative, nativeNotificationsOn, nativeNotify, plugin } from '../lib/native.ts'
 import { isHosted, publicFile } from '../lib/base.ts'
@@ -315,6 +317,7 @@ function Row({ label, hint, children }: { label: React.ReactNode; hint?: React.R
 const NAV = [
   ['appearance', 'Appearance'],
   ['agents', 'Agents'],
+  ...(isPhone() ? [] : ([['companion', 'Companion']] as const)),
   ['uploads', 'Uploads and clipboard'],
   ['notifications', 'Notifications'],
   ['machines', isPhone() ? 'Computers' : 'Machines'],
@@ -433,7 +436,7 @@ export function Settings() {
             </Row>
           </Section>
 
-          <Section id="agents" title="Agents" desc="Found on your machines. Inyon picks the right one for each pane automatically.">
+          <Section id="agents" title="Agents" desc="Found on your machines. Inyon picks the right one for each pane automatically. Add your own command to run it as one of these.">
             {agentsByKind.map(({ a, on }) => (
               <Row
                 key={a.kind}
@@ -453,7 +456,14 @@ export function Settings() {
                 </div>
               </Row>
             ))}
+            {hub && <CustomAgentRows hub={hub} onSaved={setHub} />}
           </Section>
+
+          {!isPhone() && (
+            <Section id="companion" title="Companion" desc="An agent you talk to about your other sessions, here, on your phone or on Legato's island. It reads every session, and sends a message or answers a question when you ask it to.">
+              <CompanionRows />
+            </Section>
+          )}
 
           <section id="sessions" className="scroll-mt-20">
             <h2 className="text-[15px] font-semibold tracking-tight">Live numbers</h2>
@@ -496,6 +506,13 @@ export function Settings() {
                 <UploadsCard key={h.config.id} host={h} compact />
               ))}
             </div>
+            <Link to="/temp" className="mt-3 flex items-center gap-3 rounded-3xl border border-line bg-elev px-4 py-3.5 shadow-card hover:bg-hover/50">
+              <span className="min-w-0 flex-1">
+                <span className="block text-[14px]">Agent temp files</span>
+                <span className="mt-0.5 block text-[12.5px] leading-snug text-fg-3">Pasted images, screenshots and scratch files agents leave behind.</span>
+              </span>
+              <ChevronRight className="size-4 shrink-0 text-fg-3" />
+            </Link>
           </section>
 
           <Section id="notifications" title="Notifications">
@@ -529,6 +546,11 @@ export function Settings() {
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>
             ))}
+            {hub && (
+              <Row label={isPhone() ? 'Computers can message agents' : 'Machines can message agents'} hint="An agent on a joined machine can use inyon send to type into agents on your other machines, each once it's free. Reading sessions and pages needs no switch.">
+                <Toggle on={!!hub.machinesSend} onChange={(v) => saveHub({}, { machinesSend: v })} label="Machines can message agents" />
+              </Row>
+            )}
           </Section>
 
           {isPhone() ? (

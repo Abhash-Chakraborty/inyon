@@ -10,7 +10,7 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 | | Claude Code | Codex | Gemini CLI | OpenCode | Copilot | Antigravity CLI |
 |---|---|---|---|---|---|---|
 | Chat view | Full | Full | Beta | Beta | Beta | Yes |
-| Reply shown as it's written | No | From 0.17.6 | No | No | No | No |
+| Reply shown as it's written | From 0.22 | From 0.17.6 | No | No | From 0.22 | From 0.22 |
 | Prompts as buttons | Yes | Yes | Yes | Yes, several answers too | Yes | Yes |
 | Sub-agents listed | Yes | From 0.17.6 | No | No | No | No |
 | Model | Yes | Yes | No | Live list | Live list | Yes |
@@ -34,17 +34,22 @@ Inyon works with the agent CLIs you already use, signed in however you like. It 
 |---|---|
 | Panes and agents | tmux and the process tree; live changes through a read-only tmux control client |
 | Conversations | Each agent's own session files or local server |
-| Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below) |
+| Replies as they're written | Codex: the live events of its own app-server, joined on the machine (see below). Claude Code, Copilot and Antigravity: the reply as their screen shows it (see below) |
 | Prompts and spinners | The pane's screen, parsed into options |
-| Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex and Antigravity: their own status events |
+| When a turn starts and ends | The screen, and with the integration the agent's own hooks: Claude Code's, and from 0.22 Copilot's, Gemini CLI's and Antigravity CLI's, so a turn shows as working or finished at once, even while the screen looks idle |
+| Plan limits | Claude: the account's usage, read on the machine the same way `/usage` does. Codex: its status events, and from 0.21 the account itself through `codex app-server`, with no session running. Antigravity: its status events |
 | Context and cost | Claude's status line data (with the integration) and transcripts; OpenCode's own record, plus its sidebar and status row; the others' own events |
 | Typing and answering | tmux, exactly as if you typed it: keys with `send-keys`, and from 0.20 text through a tmux paste buffer, so it never shows on a command line |
+
+From 0.22 the chat also shows Claude Code's, Copilot's and Antigravity's reply while it's being written. They save a message to their records only once it's finished, but their screen shows it as it streams, so Inyon reads it from there, the text after the last thing the agent ran, and shows it under the working line. When the message lands in the record it takes the place of that copy. Read off a screen, it can lose some formatting, such as a table, until then. When a long reply scrolls its start off the screen, Inyon keeps the part it already read.
 
 The agents never know Inyon is there. Close it and nothing breaks.
 
 ## Claude Code
 
 Read from its transcripts in `~/.claude`. With the optional integration (turned on from a machine's Integration tab), a hook gives exact session matching and the status line gives live context, cost and limits. Models, effort, permission modes, goals, Remote Control, [ultracode](controls.md#ultracode), compact, clear and `/rewind` all work.
+
+Claude Code can move a window's conversation to a background session, which then runs as a process of its own, outside tmux, with a new transcript. The window keeps showing it and takes your messages for it. From 0.22.1 Inyon follows the conversation there too: the chat, sends and alerts go with the background session for as long as the window shows it.
 
 ## Codex
 
@@ -56,7 +61,7 @@ The same release reads more of Codex's record: a question Codex asks mid-turn sh
 
 ## Gemini CLI (beta)
 
-The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. Inyon can't change Gemini's model yet, and doesn't list its past conversations: resume those in the terminal. `/compress` compacts.
+The app lists it as *Gemini CLI (legacy)*, next to Google's newer Antigravity CLI. Read from Gemini's chat recordings in `~/.gemini/tmp`. Prompts become buttons and context is shown. From 0.22 the integration adds Inyon's hook to `~/.gemini/settings.json`, next to any of your own. Inyon can't change Gemini's model yet, and doesn't list its past conversations: resume those in the terminal. `/compress` compacts.
 
 ## OpenCode (beta)
 
@@ -76,11 +81,27 @@ A password-protected OpenCode server isn't supported. A plain `opencode` already
 
 ## GitHub Copilot (beta)
 
-Found through its process locks and event log. Its models come from the CLI's own catalog, so they match what your account can use. Assisted approval and effort changes stay in the terminal, and sign-in uses Copilot's device-code flow.
+Found through its process locks and event log. Its models come from the CLI's own catalog, so they match what your account can use. Assisted approval and effort changes stay in the terminal, and sign-in uses Copilot's device-code flow. From 0.22 the integration adds Inyon's hook to Copilot, in a file of its own (`~/.copilot/hooks/inyon.json`).
 
 ## Antigravity CLI
 
-Google's `agy`. Read from its transcripts, with plan quotas from its own status line. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
+Google's `agy`. Read from its transcripts, with plan quotas from its own status line. From 0.22 the integration also adds an entry named `inyon` to its hooks in `~/.gemini/config/hooks.json`. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
+
+## Your own agents
+
+From 0.22, **Settings › Agents › Add an agent** saves any command under a name of your own, with the agent it works like. Use it for an agent started with flags you always want (`claude --dangerously-skip-permissions`), for a build of an agent under another name (`openclaude`), or for a wrapper of your own.
+
+| Field | What it does |
+|---|---|
+| Name | Shown in **New session** and on the session's card. Up to 40 characters, unique |
+| Command | What a new session types. Model, mode and the first message are added after it, the same flags the agent it works like takes |
+| Works like | Claude Code, Codex, Gemini CLI, OpenCode, Copilot or Antigravity CLI. The session gets that agent's logo, chat view, prompts as buttons and controls |
+
+Inyon spots one already running in any pane, too: a process whose program is the command's first word (by name, by path, or as the script `node`, `bun`, `deno`, `python` or `uv` runs) and whose command line holds every other word of it. Yours are tried before the built-in agents, so plain `claude` stays Claude Code while `claude --dangerously-skip-permissions --model opus` is the agent saved with that flag. When the command you saved is a script that starts the agent without `exec`, Inyon follows it to the agent and keeps your name.
+
+The list is the hub's, for every machine, with at most 24 agents. Custom agents need the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) says so when you try to save one.
+
+Hooks come with it when it reads the same settings files as the agent it works like. One with hooks of its own can tell Inyon when a turn starts and ends the same way the integration does: from inside tmux, pipe the event's JSON to `~/.inyon/hook.sh <agent> <event>`, where `<agent>` is the agent it works like (`copilot`, `gemini` or `antigravity`) and `<event>` that agent's event name. For one that works like Claude Code, run `~/.inyon/hook.sh` with no arguments and Claude Code's hook JSON.
 
 ## Pages an agent makes
 
@@ -90,6 +111,6 @@ From 0.20 any of them can put a site it built, such as a plan or mockups, in the
 
 A machine's **Setup** tab installs any of them, with the official installer or npm (Codex, Gemini CLI and Copilot need Node.js, which it can install too), and runs each one's sign-in as steps in the app. From 0.17.4 it also shows which of the six has a newer version and updates it with one button, from the browser or the phone. See [Adding machines](machines.md#the-setup-tab).
 
-## Adding an agent
+## Adding support for an agent
 
 Most of what Inyon knows about an agent lives in one file, `packages/protocol/src/agents.ts`. A chat view also needs a reader for the agent's session files. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how.

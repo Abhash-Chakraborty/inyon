@@ -20,7 +20,7 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
 | `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines. A mirror needs `SHA256SUMS.minisig` beside `SHA256SUMS`: from 0.20 the hub checks it with the release key first |
-| `INYON_HUB_IMPL` | `bun` | `rust` runs the hub built into `inyon` instead of the Bun engine's, and the Bun engine isn't downloaded (from 0.20, an opt-in test). `bun` goes back, and so does `INYON_LEGACY_ENGINE=1`. See [Trying the hub in Rust](hub.md#trying-the-hub-in-rust) |
+| `INYON_HUB_IMPL` | `rust` | `bun` runs the Bun engine's hub instead of the one built into `inyon`, and the Bun engine is downloaded for it. `rust` is the default from 0.21 (in 0.20 it was an opt-in test, and `bun` the default). `INYON_LEGACY_ENGINE=1` puts the hub on Bun too. See [The hub in Rust](hub.md#the-hub-in-rust) |
 | `INYON_DEBUG` | | Any value turns on extra log lines from the chat watcher, for a bug report |
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.
@@ -61,12 +61,13 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 
 | Path | What's there |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which the logon task starts |
-| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=rust` set in the shell, and from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256 |
+| `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub on Bun. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which runs the link and the hub connection; from 0.20.3 `inyon-app.exe` is another such copy, the Inyon app, which the Start menu and the logon task open, and `inyon.ico` is its icon |
+| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=bun` set in the shell (from 0.21; in 0.20 it noted `rust`), from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256, and on Windows from 0.20.3 the Inyon app's `app.json` (what it runs), `app.log` and `app-requests/`, and from 0.21 the window's `desktop.json` (its settings and the hubs it shows), `window.log` and `webview/` (WebView2's data, with the hubs' sign-in cookies) |
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
-| `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots |
+| `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots, and from 0.22 `send-failures.json`, the last 20 sends that failed with the screen each failed on, and `held-prompts.json`, the messages held until an agent is free |
 | `~/.inyon/uploads/` | Files you attached, per day and session |
+| `~/.inyon/companion/` | From 0.22, the [companion agent](companion-agent.md)'s folder on the hub's computer: `AGENTS.md` and `CLAUDE.md`, its instructions, and `.claude/settings.json`, the commands it may run without asking, and for Codex `.codex/rules/companion.rules`, the commands that ask first |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |
 | `~/.inyon/pages.json` | From 0.20, the pages on this machine: each one's slug, name, folder, project, who added it and when. `inyon pages add`, Blueprint and the app write it, and the hub reads it again whenever it changes. It stays in your home folder even with `INYON_DATA_DIR` set. It can be a symlink into your dotfiles: Inyon reads through the link and writes the file it leads to, so the link stays. A file over 4 MB counts as a list Inyon can't read |

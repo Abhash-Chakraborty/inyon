@@ -7,6 +7,7 @@ import {
 import { isBusy } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { RenameSheet } from './RenameSheet.tsx'
+import { openActionSheet } from '../menus.tsx'
 import { ConversationsSheet } from './ConversationsSheet.tsx'
 import { contextOf, UsageSummary, useTick } from './Usage.tsx'
 import { AgentLogo } from '../../lib/skin.tsx'
@@ -96,7 +97,8 @@ export function SessionHeader({
     window.addEventListener('inyon:open-menu', onOpen)
     return () => window.removeEventListener('inyon:open-menu', onOpen)
   }, [switchable])
-  const title = ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
+  // the companion goes by that name, whatever its conversation is called
+  const title = (ref?.pane.companion && 'Companion') || ref?.pane.label || info?.title || (ref ? (ref.pane.agent ? paneTitle(ref) : terminalName(ref) ?? paneTitle(ref)) : 'Session')
   // a background subagent is also listed as a task (the kind the transcript can't name), so only
   // shells, monitors and workflows count from the task list
   const busy = (info?.tasks.filter((t) => t.status === 'running' && t.type !== 'other').length ?? 0) + (info?.subagents.filter((x) => x.status === 'running').length ?? 0)
@@ -208,6 +210,7 @@ export function SessionHeader({
               switchable && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => setConvos(true) },
               actions.canFork && ref && { key: 'fork', label: 'Fork conversation', icon: <GitFork className="size-4" />, onSelect: () => actions.fork((p) => nav(paneHref(ref.host.config.id, p))) },
               { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, onSelect: () => setRenaming(true) },
+              ref && { key: 'rename-session', label: 'Rename tmux session…', icon: <Pencil className="size-4" />, onSelect: () => openActionSheet({ kind: 'tmux-session', r: ref }) },
               { key: 'copy', label: 'Copy session ID', icon: <Copy className="size-4" />, onSelect: actions.copyId },
               def.set.clear && { key: 'clear', label: 'Clear conversation', icon: <Trash2 className="size-4" />, danger: true, onSelect: actions.clear },
               { key: 'exit', label: 'Exit to shell', icon: <LogOut className="size-4" />, onSelect: actions.exit },
