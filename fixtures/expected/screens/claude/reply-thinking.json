@@ -6,7 +6,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent",
+      "background": null,
       "activity": "Julienning… (4s · thinking)"
     }
   },
@@ -17,7 +17,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent",
+      "background": null,
       "activity": "Julienning… (4s · thinking)"
     }
   },
@@ -28,7 +28,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent",
+      "background": null,
       "activity": "Julienning… (4s · thinking)"
     }
   }

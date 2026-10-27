@@ -797,11 +797,11 @@ mod background_agents_in_the_claude_footer {
         claude(&footer(status, &[]), Some(100)).background
     }
 
-    /// a shell and an agent, with bypass mode
+    /// a shell, with bypass mode
     #[test]
-    fn a_shell_and_an_agent_with_bypass_mode() {
+    fn a_shell_with_bypass_mode() {
         let s = claude(&footer("⏵⏵ bypass permissions on · 1 shell · ← 1 agent", &AGENTS), Some(100));
-        matches(&s, json!({ "working": false, "inputVisible": true, "mode": "bypass permissions", "background": "1 shell, 1 agent" }));
+        matches(&s, json!({ "working": false, "inputVisible": true, "mode": "bypass permissions", "background": "1 shell" }));
         assert_eq!(s.draft, None);
         assert_eq!(s.prompt, None);
     }
@@ -809,17 +809,27 @@ mod background_agents_in_the_claude_footer {
     /// agents alone, without the mode segment
     #[test]
     fn agents_alone_without_the_mode_segment() {
-        assert_eq!(bg("← 1 agent"), Some(Some("1 agent".into())));
         assert_eq!(bg("1 shell · 1 agent"), Some(Some("1 shell, 1 agent".into())));
+    }
+
+    /// the agents view's count is the machine's other sessions, not this pane's work: every Claude
+    /// pane on a machine with an old background session looked busy, so held messages never went in
+    #[test]
+    fn the_agents_views_count_is_the_machines_other_sessions_not_this_panes_work() {
+        assert_eq!(bg("← 1 agent"), Some(None));
         let rows = [AGENTS[0], AGENTS[1], "◯ Explore  Find the parser  12s · ↓ 4.1k tokens"];
-        matches(&claude(&footer("← 2 agents", &rows), Some(100)), json!({ "working": false, "background": "2 agents" }));
+        matches(&claude(&footer("← 2 agents", &rows), Some(100)), json!({ "working": false, "background": null }));
+        // Claude Code 2.1.311 on Windows, idle and fresh, with one old session in its agents view
+        let s = claude(&screen_fixture("claude", "idle-update-ready"), None);
+        matches(&s, json!({ "working": false, "inputVisible": true, "mode": "auto", "background": null }));
+        assert!(!inyon_protocol::is_busy(inyon_protocol::AgentState::Idle, s.background.flatten().as_deref()));
     }
 
     /// the agent list rows are not read as a footer
     #[test]
     fn the_agent_list_rows_are_not_read_as_a_footer() {
         let s = claude(&footer("⏵ plan mode on · ← 1 agent", &["● main", "◯ general-purpose  Start 2 shells, then ⏵⏵ bypass permissions on  6s · ↓ 1.2k tokens"]), Some(100));
-        matches(&s, json!({ "mode": "plan", "background": "1 agent" }));
+        matches(&s, json!({ "mode": "plan", "background": null }));
     }
 
     /// nothing in the background once the footer is bare, which is not the same as no footer
@@ -836,7 +846,19 @@ mod background_agents_in_the_claude_footer {
         assert_eq!(bg("⏵⏵ bypass permissions on · 1 local agent"), Some(Some("1 local agent".into())));
         assert_eq!(bg("⏵⏵ auto mode on (shift+tab to cycle) · 1 background dynamic workflow"), Some(Some("1 background dynamic workflow".into())));
         assert_eq!(bg("1 MCP task · 1 Artifact comment monitor · 1 cloud session"), Some(Some("1 MCP task, 1 Artifact comment monitor, 1 cloud session".into())));
-        assert_eq!(bg("⏵⏵ bypass permissions on · 1 shell · /tasks to see subagents · ← 1 agent"), Some(Some("1 shell, 1 agent".into())));
+        assert_eq!(bg("⏵⏵ bypass permissions on · 1 shell · /tasks to see subagents · ← 1 agent"), Some(Some("1 shell".into())));
         assert_eq!(bg("3 background tasks"), Some(Some("3 background tasks".into())));
     }
+}
+
+/// Claude Code 2.1.311's folder trust question (on Windows): no numbers, and "No, exit" first and
+/// highlighted, so a choice has to be picked by moving to it, never by its place
+#[test]
+fn the_folder_trust_question_without_numbers_has_no_exit_first() {
+    let s = claude(&screen_fixture("claude", "trust-folder"), None);
+    let p = s.prompt.expect("a question");
+    let options: Vec<(u64, &str, bool)> = p.options.iter().map(|o| (o.n, o.label.as_str(), o.selected)).collect();
+    assert_eq!(options, vec![(1, "No, exit", true), (2, "Yes, I trust this folder", false)]);
+    assert_eq!(p.navigate, Some(true));
+    assert!(p.body.iter().any(|l| l.starts_with("Quick safety check")), "{:?}", p.body);
 }

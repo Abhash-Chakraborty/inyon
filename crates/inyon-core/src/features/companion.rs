@@ -270,7 +270,8 @@ pub async fn history(host_id: &str, pane_id: &str, limit: usize) -> HubResult<Va
 }
 
 /// The choice `inyon answer` names, by its number or its words: the whole label first (any case),
-/// then the one label that starts with them, then the one that contains them.
+/// then the one label that starts with them, then the one that contains them, then the one that
+/// has each of the words somewhere ("yes trust" for "Yes, I trust this folder").
 pub fn pick_choice(options: &[PromptOption], choice: &str) -> Result<(u64, String), String> {
     let c = choice.jtrim().to_lowercase();
     let list = || options.iter().map(|o| format!("{}. {}", o.n, o.label)).collect::<Vec<_>>().join(", ");
@@ -280,7 +281,12 @@ pub fn pick_choice(options: &[PromptOption], choice: &str) -> Result<(u64, Strin
     if let Ok(n) = c.parse::<u64>() {
         return options.iter().find(|o| o.n == n).map(|o| (o.n, o.label.clone())).ok_or_else(|| format!("That question has no choice {n}. Its choices: {}", list()));
     }
-    let tests: [&dyn Fn(&str) -> bool; 3] = [&|l| l == c, &|l| l.starts_with(&c), &|l| l.contains(&c)];
+    let words = |t: &str| t.split(|ch: char| !ch.is_alphanumeric() && ch != '\'').filter(|w| !w.is_empty()).map(str::to_owned).collect::<Vec<_>>();
+    let asked = words(&c);
+    let tests: [&dyn Fn(&str) -> bool; 4] = [&|l| l == c, &|l| l.starts_with(&c), &|l| l.contains(&c), &|l| {
+        let have = words(l);
+        !asked.is_empty() && asked.iter().all(|w| have.contains(w))
+    }];
     for test in tests {
         let found: Vec<&PromptOption> = options.iter().filter(|o| test(&o.label.to_lowercase())).collect();
         match found.as_slice() {

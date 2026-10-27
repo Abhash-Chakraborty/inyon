@@ -61,15 +61,25 @@ macro_rules! FOOTER {
         re!(r"(Esc to|Enter to|to cancel|to navigate|to select|to confirm)", "i")
     };
 }
-/// "1 shell", "2 monitors", "← 1 agent", "1 local agent", "1 background dynamic workflow" in the
-/// footer: background work owned by the Claude process (2.1.299 names each kind, and "N background
-/// tasks" for a mix)
+/// "1 shell", "2 monitors", "1 local agent", "1 background dynamic workflow" in the footer:
+/// background work owned by the Claude process (2.1.299 names each kind, and "N background tasks"
+/// for a mix). "← 1 agent" isn't one of them: it counts the sessions in Claude Code's agents view,
+/// the machine's other conversations, so it's dropped before these are read (see AGENTS_VIEW).
 macro_rules! BACKGROUND {
     () => {
         re!(
             r"\b\d+ (?:local |background |remote |MCP |Artifact comment )?(?:shells?|monitors?|agents?|tasks?|terminals?|teams?|cloud sessions?|(?:dynamic )?workflows?|bash)\b",
             "g"
         )
+    };
+}
+/// "← 2 agents" in the footer: how many other sessions Claude Code's agents view (← opens it) lists
+/// on this machine, a background session from weeks ago included. Not this pane's work: read as
+/// such, every Claude pane on a machine with one old background session looked busy for good, and
+/// messages held for it never went in.
+macro_rules! AGENTS_VIEW {
+    () => {
+        re!(r"←\s*\d+ agents?\b", "g")
     };
 }
 /// The agent list under the footer (toggled with ↓): "● main", "◯ general-purpose  Sleep briefly  6s · ↓ 37.9k tokens"
@@ -345,7 +355,8 @@ pub fn parse_screen(captured: &[String], pane_width: Option<u32>, agent: AgentKi
                 if let Some(m) = MODE!().captures(l) {
                     state.mode = Some(m[1].jtrim().to_owned());
                 }
-                background.extend(BACKGROUND!().find_iter(l).map(|m| m.as_str().to_owned()));
+                let l = AGENTS_VIEW!().replace_all(l, "");
+                background.extend(BACKGROUND!().find_iter(&l).map(|m| m.as_str().to_owned()));
             }
             // the footer was read: nothing listed means nothing running (a hidden footer says nothing)
             state.background = Some(if background.is_empty() { None } else { Some(background.join(", ")) });

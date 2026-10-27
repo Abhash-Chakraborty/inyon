@@ -6,7 +6,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent"
+      "background": null
     }
   },
   "120": {
@@ -16,7 +16,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent"
+      "background": null
     }
   },
   "auto": {
@@ -26,7 +26,7 @@
       "inputVisible": true,
       "ultracode": false,
       "mode": "auto",
-      "background": "1 agent"
+      "background": null
     }
   }
 }

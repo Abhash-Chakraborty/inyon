@@ -16,9 +16,16 @@ const ULTRACODE_RULE = /(?:^|\s)ultracode ─{1,12}\s*$/
 const EFFORT_LINE = /[◉●]\s+(low|medium|high|xhigh|max|auto)(\s+·\s+ultracode)?\s+·\s+\/effort\b/
 const FOOTER = /(Esc to|Enter to|to cancel|to navigate|to select|to confirm)/i
 /**
- * "1 shell", "2 monitors", "← 1 agent", "1 local agent", "1 background dynamic workflow" in the
- * footer: background work owned by the Claude process (2.1.299 names each kind, and "N background
- * tasks" for a mix)
+ * "← 2 agents" in the footer: how many other sessions Claude Code's agents view (← opens it) lists
+ * on this machine, a background session from weeks ago included. Not this pane's work: read as
+ * such, every Claude pane on a machine with one old background session looked busy for good, and
+ * messages held for it never went in.
+ */
+const AGENTS_VIEW = /←\s*\d+ agents?\b/g
+/**
+ * "1 shell", "2 monitors", "1 local agent", "1 background dynamic workflow" in the footer:
+ * background work owned by the Claude process (2.1.299 names each kind, and "N background tasks"
+ * for a mix). AGENTS_VIEW is dropped before these are read.
  */
 const BACKGROUND = /\b\d+ (?:local |background |remote |MCP |Artifact comment )?(?:shells?|monitors?|agents?|tasks?|terminals?|teams?|cloud sessions?|(?:dynamic )?workflows?|bash)\b/g
 /** The agent list under the footer (toggled with ↓): "● main", "◯ general-purpose  Sleep briefly  6s · ↓ 37.9k tokens" */
@@ -128,7 +135,7 @@ export function parseScreen(captured: string[], paneWidth?: number, agent: Agent
         if (AGENT_ROW.test(l)) continue
         const m = l.match(MODE)
         if (m) state.mode = m[1].trim()
-        background.push(...(l.match(BACKGROUND) ?? []))
+        background.push(...(l.replace(AGENTS_VIEW, '').match(BACKGROUND) ?? []))
       }
       // the footer was read: nothing listed means nothing running (a hidden footer says nothing)
       state.background = background.length ? background.join(', ') : null

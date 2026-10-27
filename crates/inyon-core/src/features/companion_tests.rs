@@ -69,6 +69,19 @@ fn a_choice_is_picked_by_its_number_or_its_words() {
     assert!(pick_choice(&o, "  ").unwrap_err().starts_with("Name a choice"));
 }
 
+// "inyon answer … yes trust" was refused for Claude Code's "Yes, I trust this folder"
+#[test]
+fn a_choice_is_picked_by_its_words_in_any_place() {
+    let trust = opts(&["No, exit", "Yes, I trust this folder"]);
+    assert_eq!(pick_choice(&trust, "yes trust").unwrap(), (2, "Yes, I trust this folder".into()));
+    assert_eq!(pick_choice(&trust, "Trust, yes").unwrap().0, 2);
+    // whole words only, and every one of them
+    assert!(pick_choice(&trust, "yes exit").is_err());
+    assert!(pick_choice(&trust, "trus folder").is_err());
+    let o = opts(&["Yes, allow once", "Yes, allow always"]);
+    assert!(pick_choice(&o, "allow yes").unwrap_err().contains("More than one"));
+}
+
 fn items(v: Value) -> Vec<ChatItem> {
     serde_json::from_value(v).unwrap()
 }
