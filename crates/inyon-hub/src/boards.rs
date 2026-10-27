@@ -30,9 +30,11 @@ impl Boards {
     }
 
     /// The notices for the pages in `entries` (as GET /api/pages lists them) whose board has more
-    /// tasks done than last time, and whether anything changed. Pages no longer listed are
-    /// forgotten; a page without a board isn't counted.
-    pub fn moved(&mut self, entries: &[Value]) -> (Vec<ServerMsg>, bool) {
+    /// tasks done than last time, and whether anything changed. A page no longer listed is
+    /// forgotten when its machine is `here` (connected), and kept while it's away, so a task done
+    /// while it was out of reach still comes as a notice when it's back. A page without a board
+    /// isn't counted.
+    pub fn moved(&mut self, entries: &[Value], here: &dyn Fn(&str) -> bool) -> (Vec<ServerMsg>, bool) {
         let mut out = vec![];
         let mut next = HashMap::new();
         for e in entries {
@@ -51,6 +53,12 @@ impl Boards {
             }
             next.insert(id, done);
         }
+        for (id, done) in &self.0 {
+            let host = id.rsplit_once('/').map_or(id.as_str(), |(h, _)| h);
+            if !next.contains_key(id) && !here(host) {
+                next.insert(id.clone(), *done);
+            }
+        }
         let changed = next != self.0;
         self.0 = next;
         (out, changed)
@@ -68,7 +76,9 @@ pub fn start() {
                 continue;
             }
             let entries = crate::pages::entries(&crate::pages::pages()).await;
-            let (notices, changed) = boards.moved(&entries);
+            let connected = crate::pages_remote::machines();
+            let here = |host: &str| host == inyon_core::features::pages_core::LOCAL_HOST || connected.iter().any(|m| m == host);
+            let (notices, changed) = boards.moved(&entries, &here);
             if changed {
                 boards.save();
             }
@@ -88,6 +98,10 @@ mod tests {
         json!({ "host": "laptop", "slug": slug, "name": format!("Plan {slug}"), "progress": { "done": done, "total": total, "now": now } })
     }
 
+    fn everywhere(_: &str) -> bool {
+        true
+    }
+
     fn bodies(n: &[ServerMsg]) -> Vec<String> {
         n.iter()
             .map(|m| match m {
@@ -101,23 +115,33 @@ mod tests {
     #[test]
     fn a_task_done_on_a_board_is_a_notice_and_a_new_page_or_a_reset_is_not() {
         let mut b = Boards::default();
-        let (n, changed) = b.moved(&[page("robot", 2, 12, "Wiring")]);
+        let (n, changed) = b.moved(&[page("robot", 2, 12, "Wiring")], &everywhere);
         assert!(n.is_empty() && changed, "a page seen for the first time is only noted");
-        assert_eq!(b.moved(&[page("robot", 2, 12, "Wiring")]), (vec![], false));
-        assert_eq!(bodies(&b.moved(&[page("robot", 3, 12, "Payment sheet")]).0), ["laptop/robot Plan robot: 3 of 12 done · Payment sheet"]);
+        assert_eq!(b.moved(&[page("robot", 2, 12, "Wiring")], &everywhere), (vec![], false));
+        assert_eq!(bodies(&b.moved(&[page("robot", 3, 12, "Payment sheet")], &everywhere).0), ["laptop/robot Plan robot: 3 of 12 done · Payment sheet"]);
         // the board was rewritten with fewer done: noted, nothing said
-        assert!(b.moved(&[page("robot", 1, 14, "Again")]).0.is_empty());
-        assert_eq!(bodies(&b.moved(&[page("robot", 14, 14, "Done")]).0), ["laptop/robot Plan robot: All 14 done"]);
+        assert!(b.moved(&[page("robot", 1, 14, "Again")], &everywhere).0.is_empty());
+        assert_eq!(bodies(&b.moved(&[page("robot", 14, 14, "Done")], &everywhere).0), ["laptop/robot Plan robot: All 14 done"]);
     }
 
     #[test]
     fn a_page_without_a_board_or_no_longer_listed_is_forgotten() {
         let mut b = Boards::default();
-        b.moved(&[page("robot", 2, 3, ""), page("gone", 1, 3, "")]);
-        let (_, changed) = b.moved(&[page("robot", 2, 3, ""), json!({ "host": "laptop", "slug": "plain", "name": "Plain" })]);
+        b.moved(&[page("robot", 2, 3, ""), page("gone", 1, 3, "")], &everywhere);
+        let (_, changed) = b.moved(&[page("robot", 2, 3, ""), json!({ "host": "laptop", "slug": "plain", "name": "Plain" })], &everywhere);
         assert!(changed);
         assert_eq!(b.0, HashMap::from([("laptop/robot".to_owned(), 2)]));
         // back again later: noted afresh, no notice for what it did meanwhile
-        assert!(b.moved(&[page("robot", 2, 3, ""), page("gone", 3, 3, "")]).0.is_empty());
+        assert!(b.moved(&[page("robot", 2, 3, ""), page("gone", 3, 3, "")], &everywhere).0.is_empty());
+    }
+
+    // the laptop dropped off for a poll: its pages left the list, then came back further on
+    #[test]
+    fn a_page_on_a_machine_out_of_reach_keeps_its_count() {
+        let mut b = Boards::default();
+        b.moved(&[page("robot", 2, 12, "")], &everywhere);
+        let away = |h: &str| h != "laptop";
+        assert_eq!(b.moved(&[], &away), (vec![], false));
+        assert_eq!(bodies(&b.moved(&[page("robot", 3, 12, "")], &everywhere).0), ["laptop/robot Plan robot: 3 of 12 done"]);
     }
 }

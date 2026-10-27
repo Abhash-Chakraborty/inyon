@@ -51,7 +51,15 @@ async function worker() {
 }
 
 /** Subscribes (or reuses the subscription) and hands it over; the endpoint, or why not. */
-export async function enablePush(done = useStore.getState().settings.notifyDone, pages = useStore.getState().settings.notifyPages): Promise<{ endpoint?: string; error?: string }> {
+export function enablePush(done = useStore.getState().settings.notifyDone, pages = useStore.getState().settings.notifyPages): Promise<{ endpoint?: string; error?: string }> {
+  // one at a time: an older registration landing last would put back a switch just turned off
+  const run = registering.then(() => register(done, pages))
+  registering = run.catch(() => {})
+  return run
+}
+let registering: Promise<unknown> = Promise.resolve()
+
+async function register(done: boolean, pages: boolean): Promise<{ endpoint?: string; error?: string }> {
   if (!pushSupported()) return { error: 'unsupported' }
   if (Notification.permission !== 'granted') return { error: 'not allowed' }
   try {
