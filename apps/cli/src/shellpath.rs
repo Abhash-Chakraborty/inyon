@@ -103,9 +103,12 @@ mod tests {
         assert!(WINDOWS_ADD_SCRIPT.contains("'added'") && WINDOWS_SCRIPT.contains("'removed'"));
     }
 
+    /// Numbered, not timed: two tests at once can read the same clock on Windows.
     fn dir() -> PathBuf {
-        let p =
-            std::env::temp_dir().join(format!("inyon-shellpath-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!("inyon-shellpath-{}-{n}", std::process::id()));
+        let _ = fs::remove_dir_all(&p);
         fs::create_dir_all(&p).unwrap();
         p
     }
