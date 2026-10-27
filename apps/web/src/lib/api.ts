@@ -423,7 +423,7 @@ export const api = {
   settings: () => request<HubSettings>('GET', '/api/settings'),
   /** sends that failed, newest first, each with the bottom of the screen it failed on (from 0.22) */
   sendFailures: () => request<SendFailure[]>('GET', '/api/send-failures'),
-  push: (b: { subscription: PushSubscriptionJSON; vapid: { privateJwk: JsonWebKey; subject: string }; done: boolean }) => request('POST', '/api/push', b),
+  push: (b: { subscription: PushSubscriptionJSON; vapid: { privateJwk: JsonWebKey; subject: string }; done: boolean; pages?: boolean }) => request('POST', '/api/push', b),
   unpush: (endpoint: string) => request('DELETE', '/api/push', { endpoint }),
   pushTest: (endpoint: string) => request<{ sent: number }>('POST', '/api/push/test', { endpoint }, 30_000),
   saveSettings: (s: Partial<HubSettings>) => request<HubSettings>('PUT', '/api/settings', s),

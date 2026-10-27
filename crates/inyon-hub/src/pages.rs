@@ -755,13 +755,17 @@ async fn read_body(req: &mut Req) -> HubResult<Map<String, Value>> {
     }
 }
 
-pub async fn list(_req: Req) -> HubResult<Resp> {
-    let p = pages();
+/// Every machine's pages with their progress, as GET /api/pages lists them.
+pub async fn entries(p: &Pages) -> Vec<Value> {
     let mut all: Vec<Value> = p.registry.records().iter().map(|r| p.entry(r)).collect();
     for (host, list) in p.remote.all((p.now)(), &p.saw()).await {
         all.extend(list.iter().map(|r| Pages::remote_entry(&host, r)));
     }
-    Ok(ok_json(&json!({ "pages": all })))
+    all
+}
+
+pub async fn list(_req: Req) -> HubResult<Resp> {
+    Ok(ok_json(&json!({ "pages": entries(&pages()).await })))
 }
 
 pub async fn open(req: Req) -> HubResult<Resp> {

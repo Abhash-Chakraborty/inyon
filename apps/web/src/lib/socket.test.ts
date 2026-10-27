@@ -86,6 +86,9 @@ test("the hub's machines get its id, and a draft keeps saying where it was typed
   // the companion's reply has no chat key: its machine is tagged as a notice's is
   ws.hear({ t: 'companion.reply', id: 'r1', host: 'local', pane: '%9', text: 'All quiet.', at: 1 })
   expect(heard[4]).toEqual({ t: 'companion.reply', id: 'r1', host: 'hub:h1/local', pane: '%9', text: 'All quiet.', at: 1 })
+  // a page's board moving on opens that hub's copy of the page
+  ws.hear({ t: 'page.notify', host: 'local', slug: 'robot', title: 'Robot', body: '3 of 12 done' })
+  expect(heard[5]).toEqual({ t: 'page.notify', host: 'hub:h1/local', slug: 'robot', title: 'Robot', body: '3 of 12 done' })
 })
 
 test('a hub out of reach when the app opens lists the machines this device remembers as connecting', async () => {

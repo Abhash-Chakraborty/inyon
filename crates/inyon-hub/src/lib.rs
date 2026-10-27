@@ -7,6 +7,7 @@
 //! listener included; see `server` for why.
 
 pub mod auth;
+pub mod boards;
 pub mod cli;
 pub mod clients;
 pub mod companions;

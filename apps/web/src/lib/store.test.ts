@@ -251,6 +251,47 @@ test("a chat left a while ago doesn't show its old goal when opened again", () =
   }
 })
 
+describe('page notices', () => {
+  const moved = (host = 'laptop') => emit({ t: 'page.notify', host, slug: 'robot', title: 'Robot', body: '3 of 12 done · Payment sheet' })
+  afterEach(() => history.pushState({}, '', '/'))
+
+  test("a page's board moving on toasts with a link to the page, unless that page is open", () => {
+    moved('hub:h1/box')
+    expect(useStore.getState().toasts[0]).toMatchObject({ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/pages/hub%3Ah1%2Fbox/robot' })
+    expect(useStore.getState().activity).toEqual([])
+    useStore.setState({ toasts: [] })
+    history.pushState({}, '', '/pages/laptop/robot')
+    moved()
+    expect(useStore.getState().toasts).toEqual([])
+  })
+
+  test('page notices can be turned off', () => {
+    useStore.getState().setSettings({ notifyPages: false })
+    moved()
+    expect(useStore.getState().toasts).toEqual([])
+    useStore.getState().setSettings({ notifyPages: true })
+  })
+
+  test("in the phone app's background: one native notification per page that opens it", async () => {
+    const posted: any[] = []
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
+      Plugins: { InyonDevice: { postNotification: async (o: any) => void posted.push(o) } },
+    }
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    try {
+      moved()
+      await Promise.resolve()
+      expect(posted).toEqual([{ title: 'Robot', body: '3 of 12 done · Payment sheet', href: '/pages/laptop/robot', tag: 'page:laptop/robot', kind: 'page' }])
+      expect(useStore.getState().toasts).toEqual([])
+    } finally {
+      delete (window as any).Capacitor
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    }
+  })
+})
+
 describe('notify', () => {
   const note = (kind: 'waiting' | 'done' | 'offline' | 'online', title = 'Claude needs you') => emit({ t: 'notify', host: 'box', pane: '%3', kind, title, body: 'b', agent: 'claude' })
   afterEach(() => history.pushState({}, '', '/'))

@@ -51,7 +51,15 @@ async function worker() {
 }
 
 /** Subscribes (or reuses the subscription) and hands it over; the endpoint, or why not. */
-export async function enablePush(done = useStore.getState().settings.notifyDone): Promise<{ endpoint?: string; error?: string }> {
+export function enablePush(done = useStore.getState().settings.notifyDone, pages = useStore.getState().settings.notifyPages): Promise<{ endpoint?: string; error?: string }> {
+  // one at a time: an older registration landing last would put back a switch just turned off
+  const run = registering.then(() => register(done, pages))
+  registering = run.catch(() => {})
+  return run
+}
+let registering: Promise<unknown> = Promise.resolve()
+
+async function register(done: boolean, pages: boolean): Promise<{ endpoint?: string; error?: string }> {
   if (!pushSupported()) return { error: 'unsupported' }
   if (Notification.permission !== 'granted') return { error: 'not allowed' }
   try {
@@ -66,7 +74,7 @@ export async function enablePush(done = useStore.getState().settings.notifyDone)
     }
     sub ??= await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key.raw })
     const json = sub.toJSON() as PushSubscriptionJSON
-    await api.push({ subscription: json, vapid: { privateJwk: key.jwk, subject: WEB_URL }, done })
+    await api.push({ subscription: json, vapid: { privateJwk: key.jwk, subject: WEB_URL }, done, pages })
     return { endpoint: sub.endpoint }
   } catch (err) {
     return { error: (err as Error).message || 'failed' }
@@ -106,14 +114,14 @@ export function watchPush() {
     window.history.pushState({}, '', appHref(e.data.href))
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
-  let done = useStore.getState().settings.notifyDone
+  let { notifyDone: done, notifyPages: pages } = useStore.getState().settings
   // a computer was removed (apps/hub/src/phone/index.ts)
   window.addEventListener('inyon:push-rotate', () => void rotatePush(done))
-  void enablePush(done)
+  void enablePush(done, pages)
   useStore.subscribe((s) => {
-    if (s.settings.notifyDone === done) return
-    done = s.settings.notifyDone
-    void enablePush(done)
+    if (s.settings.notifyDone === done && s.settings.notifyPages === pages) return
+    ;({ notifyDone: done, notifyPages: pages } = s.settings)
+    void enablePush(done, pages)
   })
 }
 

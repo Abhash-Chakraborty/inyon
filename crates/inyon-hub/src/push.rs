@@ -24,7 +24,14 @@ pub struct Registration {
     pub vapid: Vapid,
     /// notices when an agent finishes too, not only when it needs you
     pub done: bool,
+    /// notices when a page's board moves on (from 0.22.4; on for a registration from before)
+    #[serde(default = "yes")]
+    pub pages: bool,
     pub at: u64,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn key(endpoint: &str) -> String {
@@ -57,6 +64,7 @@ pub fn valid_registration(b: &Value) -> HubResult<Registration> {
         subscription: Subscription { endpoint, keys: Keys { p256dh, auth } },
         vapid: Vapid { private_jwk: EcJwk { kty: "EC".into(), crv: "P-256".into(), d, x, y }, subject },
         done: b.get("done") != Some(&Value::Bool(false)),
+        pages: b.get("pages") != Some(&Value::Bool(false)),
         at: now_ms(),
     })
 }
@@ -97,6 +105,17 @@ pub fn payload_for(host: &str, pane: &str, kind: &str, title: &str, body: &str) 
     })
 }
 
+/// A page's board moving on: one notice per page, the next replacing it, opening the page.
+pub fn page_payload(host: &str, slug: &str, title: &str, body: &str) -> Value {
+    json!({
+        "title": title,
+        "body": body,
+        "kind": "page",
+        "tag": format!("page:{host}/{slug}"),
+        "href": format!("/pages/{}/{slug}", inyon_core::js::text::encode_uri_component(host)),
+    })
+}
+
 pub fn test_payload() -> Value {
     json!({ "title": "Inyon", "body": "Notifications work, even with Inyon closed.", "tag": "test", "href": "/settings#notifications", "kind": "test" })
 }
@@ -110,8 +129,13 @@ fn web_push() -> Sender {
 /// Sends one notice to every browser that wants it; drops the ones their push service says are gone.
 pub async fn push_all(p: Value, send: Option<Sender>, only: Option<&str>) -> usize {
     let send = send.unwrap_or_else(web_push);
-    let done = p.get("kind").and_then(Value::as_str) == Some("done");
-    let to: Vec<Registration> = registrations().into_iter().filter(|r| (!done || r.done) && only.is_none_or(|o| r.subscription.endpoint == o)).collect();
+    let kind = p.get("kind").and_then(Value::as_str);
+    let wants = |r: &Registration| match kind {
+        Some("done") => r.done,
+        Some("page") => r.pages,
+        _ => true,
+    };
+    let to: Vec<Registration> = registrations().into_iter().filter(|r| wants(r) && only.is_none_or(|o| r.subscription.endpoint == o)).collect();
     let sends = to.into_iter().map(|r| {
         let (send, p) = (send.clone(), p.clone());
         async move {
@@ -140,13 +164,17 @@ pub async fn push_all(p: Value, send: Option<Sender>, only: Option<&str>) -> usi
 /// Every notice the open app gets goes to the browsers too.
 pub fn start_hub_push() {
     crate::clients::on_notice(|n| {
-        if let ServerMsg::Notify { host, pane, kind, title, body, .. } = n {
-            let kind = serde_json::to_value(kind).ok().and_then(|k| k.as_str().map(str::to_owned)).unwrap_or_default();
-            let p = payload_for(host, pane, &kind, title, body);
-            inyon_core::platform::rt::spawn(async move {
-                push_all(p, None, None).await;
-            });
-        }
+        let p = match n {
+            ServerMsg::Notify { host, pane, kind, title, body, .. } => {
+                let kind = serde_json::to_value(kind).ok().and_then(|k| k.as_str().map(str::to_owned)).unwrap_or_default();
+                payload_for(host, pane, &kind, title, body)
+            }
+            ServerMsg::PageNotify { host, slug, title, body } => page_payload(host, slug, title, body),
+            _ => return,
+        };
+        inyon_core::platform::rt::spawn(async move {
+            push_all(p, None, None).await;
+        });
     });
 }
 
@@ -267,6 +295,35 @@ mod tests {
             to.borrow_mut().clear();
             assert_eq!(push_all(payload_for("h", "%1", "waiting", "t", "b"), Some(send), Some("https://push.example.net/2")).await, 1);
             assert_eq!(*to.borrow(), ["2"]);
+        });
+    }
+
+    // a page's board moving on goes to the browsers that want it, which one registered before
+    // 0.22.4 does
+    #[test]
+    fn a_pages_notice_opens_the_page_and_skips_browsers_that_turned_page_notices_off() {
+        crate::test_util::core();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        tokio::task::LocalSet::new().block_on(&rt, async {
+            inyon_core::platform::rt::install(Rc::new(inyon_backends::runtime::TokioRuntime));
+            let p = page_payload("my box", "robot", "Robot plan", "3 of 12 done");
+            assert_eq!((p["kind"].as_str(), p["tag"].as_str(), p["href"].as_str()), (Some("page"), Some("page:my box/robot"), Some("/pages/my%20box/robot")));
+            let mut off = browser(1, true);
+            off["pages"] = json!(false);
+            add_registration(&valid_registration(&off).unwrap());
+            let mut old = serde_json::to_value(valid_registration(&browser(2, true)).unwrap()).unwrap();
+            old.as_object_mut().unwrap().remove("pages");
+            let old: Registration = serde_json::from_value(old).unwrap();
+            assert!(old.pages);
+            add_registration(&old);
+            let to = Rc::new(RefCell::new(Vec::<String>::new()));
+            let seen = to.clone();
+            let send: Sender = Rc::new(move |r: Registration, _p: Value| {
+                seen.borrow_mut().push(r.subscription.endpoint.clone());
+                Box::pin(async move { Ok(Sent { ok: true, status: 201, gone: false }) })
+            });
+            assert_eq!(push_all(p, Some(send), None).await, 1);
+            assert_eq!(*to.borrow(), ["https://push.example.net/2"]);
         });
     }
 

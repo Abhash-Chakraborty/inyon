@@ -71,3 +71,28 @@ test('a new subscription the computers missed is handed over again, a few times 
   expect(gave.error).toBe('offline')
   expect(push.mock.calls.length).toBe(calls + 5)
 })
+
+test('the computers are told whether page notices are wanted', async () => {
+  browserWithPush()
+  await enablePush(true, false)
+  expect((api.push as any).mock.calls.at(-1)[0]).toMatchObject({ done: true, pages: false })
+  await enablePush(false)
+  expect((api.push as any).mock.calls.at(-1)[0]).toMatchObject({ done: false, pages: true })
+})
+
+test('registrations reach the computers one at a time, in the order the switches changed', async () => {
+  browserWithPush()
+  const push = api.push as any
+  let busy = 0
+  let most = 0
+  const sent: boolean[] = []
+  push.mockImplementation(async (b: any) => {
+    most = Math.max(most, ++busy)
+    await new Promise((ok) => setTimeout(ok, sent.length ? 0 : 20))
+    sent.push(b.pages)
+    busy--
+  })
+  await Promise.all([enablePush(true, true), enablePush(true, false)])
+  expect(most).toBe(1)
+  expect(sent).toEqual([true, false])
+})

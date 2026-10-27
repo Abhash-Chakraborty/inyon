@@ -519,6 +519,9 @@ export function Settings() {
             <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
               <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />
             </Row>
+            <Row label="When a page moves on" hint="A notice when a task on a page's progress board is done.">
+              <Toggle on={settings.notifyPages} onChange={(notifyPages) => set({ notifyPages })} label="Page notices" />
+            </Row>
             <Row label={<span className="flex items-center gap-2"><Bell className="size-4 text-fg-3" /> System notifications</span>} hint={!secure ? 'Browsers only allow these over HTTPS or in the installed app. In-app notices still work.' : perm === 'unsupported' && appleMobile() && !standalone() ? 'On iPhone, add Inyon to the Home Screen to get these' : perm === 'granted' ? (pushSupported() ? 'On for this device, also while Inyon is closed' : 'On for this device') : perm === 'denied' ? 'Turned off in your phone\'s settings for Inyon' : 'Alerts when an agent needs you, even with Inyon closed'}>
               {perm !== 'granted' && perm !== 'unsupported' && perm !== 'denied' && secure && (
                 <button type="button" onClick={allow} className="h-8 rounded-full border border-line bg-elev px-3.5 shadow-card text-[13px] font-medium hover:bg-hover">
