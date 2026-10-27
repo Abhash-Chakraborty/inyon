@@ -191,6 +191,11 @@ impl Registry {
     /// Changes the file under its lock. `change` gets every entry as written (readable or not) and
     /// returns the new list, or None to leave the file alone, with its result.
     pub async fn update<T>(&self, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
+        self.update_with(Removed::Keep, change).await
+    }
+
+    /// `update`, also changing the list's `removed` folders when the file is written.
+    pub async fn update_with<T>(&self, removed: Removed, change: impl FnOnce(&[Value]) -> HubResult<(Option<Vec<Value>>, T)>) -> HubResult<T> {
         let file = self.file.clone();
         with_lock(&lock_of(&self.file), 3000, move || {
             let current = match read_list(&file) {
@@ -205,11 +210,45 @@ impl Registry {
                 let mut out = current;
                 out.insert("v".into(), json!(1));
                 out.insert("pages".into(), Value::Array(next));
+                removed.apply(&mut out);
                 write_atomic(&file, &format!("{}\n", inyon_core::js::json::stringify_pretty(&Value::Object(out)))).map_err(|e| HubError::plain(e.to_string()))?;
             }
             Ok(result)
         })
         .await
+    }
+}
+
+/// The most folders kept in pages.json's `removed`, the newest last (as the CLI keeps them).
+pub const REMOVED_MAX: usize = 200;
+
+/// What a change to the list does to its `removed` folders: those taken off the list, which
+/// `inyon pages find` leaves alone so a page you removed doesn't come back by itself.
+pub enum Removed {
+    Keep,
+    /// taken off the list
+    Remember(Vec<String>),
+    /// added again on purpose
+    Forget(Vec<String>),
+}
+
+impl Removed {
+    fn apply(self, list: &mut Map<String, Value>) {
+        let mut removed: Vec<String> = list.get("removed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let before = removed.clone();
+        match self {
+            Removed::Keep => return,
+            Removed::Remember(paths) => {
+                removed.retain(|p| !paths.contains(p));
+                removed.extend(paths);
+                let extra = removed.len().saturating_sub(REMOVED_MAX);
+                removed.drain(..extra);
+            }
+            Removed::Forget(paths) => removed.retain(|p| !paths.contains(p)),
+        }
+        if removed != before {
+            list.insert("removed".into(), json!(removed));
+        }
     }
 }
 
@@ -643,6 +682,34 @@ fn lexical(p: &Path) -> PathBuf {
     out
 }
 
+/// The folder of a site's notes, which the app lists in the viewer's Notes drawer.
+pub const NOTES_DIR: &str = "research";
+/// The most notes listed for one site.
+pub const NOTES_MAX: usize = 200;
+
+/// Whether a file in a site's notes folder is listed as a note: Markdown, a name a `/v/` address
+/// can carry (no dot first, no slash), and not too long.
+pub fn is_note(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.starts_with('.') && name.len() <= 120 && lower.ends_with(".md") && lower.len() > 3 && !name.contains(['/', '\\', '\0'])
+}
+
+/// The Markdown notes in a site's `research/` folder, by name, sorted: plain files only, and only
+/// when `research` is a real folder, not a symlink. `inyon pages --json` lists them the same way
+/// (apps/cli/src/pages.rs) for a page on another machine.
+pub fn notes_of(site: &Path) -> Vec<String> {
+    let dir = site.join(NOTES_DIR);
+    if !std::fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        return vec![];
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return vec![] };
+    let mut out: Vec<String> =
+        entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file())).filter_map(|e| e.file_name().into_string().ok()).filter(|n| is_note(n)).collect();
+    out.sort_by_key(|n| n.to_lowercase());
+    out.truncate(NOTES_MAX);
+    out
+}
+
 /// The name and slug in a site's `.inyon-page.json`, when it has usable ones.
 fn marker_of(folder: &str) -> (Option<String>, Option<String>) {
     let Some(Value::Object(m)) = read_plain(&Path::new(folder).join(".inyon-page.json"), MARKER_MAX).ok().and_then(|b| inyon_core::js::json::parse(&String::from_utf8_lossy(&b)))
@@ -690,6 +757,10 @@ impl Pages {
         if let Some(p) = self.progress.of(&r.path, (self.now)()) {
             v["progress"] = serde_json::to_value(p).unwrap_or(Value::Null);
         }
+        let notes = notes_of(Path::new(&r.path));
+        if !notes.is_empty() {
+            v["notes"] = json!(notes);
+        }
         v
     }
 
@@ -699,6 +770,9 @@ impl Pages {
         let mut v = json!({ "host": host, "slug": r.slug, "name": r.name, "project": r.project, "by": r.by, "added": Value::Number(r.added.clone()), "folder": r.path });
         if let Some(progress) = &p.progress {
             v["progress"] = progress.clone();
+        }
+        if !p.notes.is_empty() {
+            v["notes"] = json!(p.notes);
         }
         v
     }
@@ -818,7 +892,7 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
     let now = (p.now)();
     let record = p
         .registry
-        .update(|pages| {
+        .update_with(Removed::Forget(vec![folder.clone(), real_or(&folder)]), |pages| {
             let records: Vec<Option<Record>> = pages.iter().map(as_record).collect();
             if let Some(i) = records.iter().position(|r| r.as_ref().is_some_and(|r| r.path == folder)) {
                 let same = records[i].clone().expect("found");
@@ -862,9 +936,10 @@ pub async fn remove(req: Req) -> HubResult<Resp> {
         p.epochs.bump(&host, &slug)?;
         return Ok(ok());
     }
+    let folders: Vec<String> = p.registry.records().iter().filter(|r| r.slug == slug).map(|r| real_or(&r.path)).collect();
     let gone = p
         .registry
-        .update(|pages| {
+        .update_with(Removed::Remember(folders), |pages| {
             let keep: Vec<Value> = pages.iter().filter(|v| !(v.is_object() && v.get("slug").and_then(Value::as_str) == Some(slug.as_str()))).cloned().collect();
             if keep.len() == pages.len() {
                 return Err(http(404, UNKNOWN_PAGE));
@@ -965,9 +1040,11 @@ pub async fn view(req: Req) -> Resp {
     let vr = ViewRequest { method: &method, target: &target, origin: origin.as_deref(), if_none_match: inm.as_deref() };
     let d = decide_view(&vr, &ctx).await;
     let head = req.method == Method::HEAD;
+    let note = d.file.as_ref().is_some_and(|(path, size)| *size <= crate::notes::NOTE_MAX as u64 && crate::notes::wants_note(&req.query, path));
     if let Some(r) = &remote {
         let Some((path, _)) = &d.file else { return respond(d, head, None) };
         return match r.listing.bytes_for(path) {
+            Some(bytes) if note => respond_note(d, head, bytes),
             Some(bytes) => respond_bytes(d, head, bytes.to_vec()),
             None if r.listing.big => respond(too_big(&vr), head, None),
             None => respond(gone_after_open(&vr), head, None),
@@ -975,11 +1052,37 @@ pub async fn view(req: Req) -> Resp {
     }
     match (&d.file, &d.site) {
         (Some((path, _)), Some(site)) => match open_within(path, site).await {
+            Some((file, size)) if note => match read_opened(file, size) {
+                Some(bytes) => respond_note(d, head, &bytes),
+                None => respond(gone_after_open(&vr), head, None),
+            },
             Some(opened) => respond(d, head, Some(opened)),
             None => respond(gone_after_open(&vr), head, None),
         },
         _ => respond(d, head, None),
     }
+}
+
+/// An opened file read whole, when it is still `size` bytes long.
+fn read_opened(mut file: std::fs::File, size: u64) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.by_ref().take(size + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 == size).then_some(bytes)
+}
+
+/// A note (`?as=note`) as a page to read, with the headers decide_view gave the file but its own
+/// type and tag, so a cached copy of the Markdown and of the page are never taken for each other.
+fn respond_note(mut d: ViewDecision, head: bool, md: &[u8]) -> Resp {
+    let name = d.file.as_ref().and_then(|(p, _)| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    for (k, v) in d.headers.iter_mut() {
+        match *k {
+            "content-type" => *v = "text/html; charset=utf-8".into(),
+            "etag" => *v = format!("{}-note\"", v.trim_end_matches('"')),
+            _ => {}
+        }
+    }
+    respond_bytes(d, head, crate::notes::page(&name, &String::from_utf8_lossy(md)).into_bytes())
 }
 
 /// A `/v/` request for a page on another machine, with what that machine said about it.

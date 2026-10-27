@@ -213,6 +213,46 @@ describe('the viewer', () => {
     expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/mockups/?theme=light')
   })
 
+  test("on a phone, a site's research notes open from the Notes button, and Back returns to the plan", async () => {
+    viewport(390, 844)
+    usePages.setState({ pages: [{ ...PLAN, notes: ['ghostex features.md', 'plan.md'] }, HANDY, LAPTOP] })
+    const user = userEvent.setup()
+    const first = await at('/pages/local/ghostex')
+    await flush()
+    await user.click(screen.getByRole('button', { name: 'Notes' }))
+    expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['ghostex features', 'plan'])
+    await user.click(screen.getByRole('menuitem', { name: 'ghostex features' }))
+    expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/research/ghostex%20features.md?as=note&theme=light')
+    expect(screen.getByRole('button', { name: 'Notes: ghostex features open' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Back to Plan' }))
+    expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/?theme=light')
+    // a page without notes has no Notes button
+    first.unmount()
+    await at('/pages/local/handy')
+    await flush()
+    expect(screen.queryByRole('button', { name: 'Notes' })).toBeNull()
+  })
+
+  test('on a desktop, a note takes the place of the part, and a part brings the page back', async () => {
+    globalThis.fetch = mock(async (url: string) => new Response(null, { status: String(url).endsWith('mockups/') ? 200 : 404 })) as any
+    usePages.setState({ pages: [{ ...PLAN, notes: ['plan.md'] }, HANDY, LAPTOP] })
+    const user = userEvent.setup()
+    await at('/pages/local/ghostex')
+    await flush()
+    await flush()
+    await user.click(screen.getByRole('button', { name: 'Notes' }))
+    await user.click(screen.getByRole('menuitem', { name: 'plan' }))
+    expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/research/plan.md?as=note&theme=light')
+    expect(screen.getByRole('radio', { name: 'Plan' }).getAttribute('aria-checked')).toBe('false')
+    await user.click(screen.getByRole('radio', { name: 'Mockups' }))
+    expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/mockups/?theme=light')
+    // a note no longer listed (deleted from the folder) gives way to the page
+    await user.click(screen.getByRole('button', { name: 'Notes' }))
+    await user.click(screen.getByRole('menuitem', { name: 'plan' }))
+    act(() => usePages.setState({ pages: [{ ...PLAN, notes: [] }, HANDY, LAPTOP] }))
+    expect(document.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/mockups/?theme=light')
+  })
+
   test('on a desktop, the list and the viewer sit side by side, with device sizes', async () => {
     const user = userEvent.setup()
     const { container } = await at('/pages/local/ghostex')

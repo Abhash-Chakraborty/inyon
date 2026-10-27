@@ -1111,8 +1111,13 @@ fn removing_drops_the_page_from_the_file_and_ends_its_links_even_if_the_slug_com
         assert_eq!(call(h_remove, "DELETE", &[("host", "local"), ("slug", "gone")], None, &[]).await, Ok(json!({ "ok": true })));
         let slugs: Vec<Value> = read_list(&pages_file(&home))["pages"].as_array().unwrap().iter().map(|p| p["slug"].clone()).collect();
         assert_eq!(slugs, vec![json!("kept")]);
+        // remembered, so `inyon pages find` doesn't add it back by itself
+        let real = std::fs::canonicalize(&folder).unwrap().to_string_lossy().into_owned();
+        assert_eq!(read_list(&pages_file(&home))["removed"], json!([real]));
         assert_eq!(call(h_remove, "DELETE", &[("host", "local"), ("slug", "gone")], None, &[]).await.unwrap_err().0, 404);
         add_page(json!({ "path": folder, "slug": "gone" })).await.unwrap();
+        // added again on purpose: forgotten
+        assert_eq!(read_list(&pages_file(&home))["removed"], json!([]));
         assert_eq!(view_status(&url).await, 403);
         assert_eq!(view_status(&open_url("gone").await).await, 200);
     });
@@ -1766,5 +1771,114 @@ fn a_machine_whose_inyon_has_no_watch_is_asked_the_old_way_and_tried_again_later
         now.set(now.get() + pages_remote::NO_WATCH_MS);
         call(h_list, "GET", &[], None, &[]).await.unwrap();
         assert_eq!(machine.count("stream watch"), 2, "tried again once its inyon may have been updated");
+    });
+}
+
+// the plan's research notes were only readable as raw files, or not at all on a phone
+#[test]
+fn a_sites_research_notes_are_listed_and_open_as_pages_in_the_sandbox() {
+    let tmp = Tmp::new("notes");
+    let home = tmp.join("home");
+    let dir = PathBuf::from(site(&tmp, "notes", false));
+    std::fs::create_dir_all(dir.join("research/deeper")).unwrap();
+    std::fs::write(dir.join("research/plan.md"), "# The plan\n\n<script>alert(1)</script>\n\nSee [internals](internals.md).\n").unwrap();
+    std::fs::write(dir.join("research/Internals.md"), "x").unwrap();
+    for skipped in ["research/.draft.md", "research/notes.txt", "research/deeper/more.md"] {
+        std::fs::write(dir.join(skipped), "x").unwrap();
+    }
+    write_list(&pages_file(&home), json!([record("notes", &s(&dir)), record("plain", &site(&tmp, "plain", false))]));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(list["pages"][0]["notes"], json!(["Internals.md", "plan.md"]));
+        assert!(list["pages"][1].get("notes").is_none(), "{list}");
+
+        let url = open_url("notes").await;
+        let (status, headers, body) = view(&format!("{url}research/plan.md?as=note&theme=dark"), &[]).await;
+        let body = String::from_utf8(body).unwrap();
+        assert_eq!(status, 200);
+        assert!(body.contains("<h1>The plan</h1>") && body.contains("&lt;script&gt;") && body.contains("href=\"internals.md?as=note\""), "{body}");
+        let header = |k: &str| headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!(header("content-type"), "text/html; charset=utf-8");
+        assert!(header("content-security-policy").starts_with("sandbox allow-scripts"), "{headers:?}");
+        assert!(header("etag").ends_with("-note\""), "{headers:?}");
+        // without ?as=note it's the file as it is, and the link's checks still hold
+        let (status, headers, _) = view(&format!("{url}research/plan.md"), &[]).await;
+        assert_eq!(status, 200);
+        assert!(headers.iter().any(|(k, v)| k == "content-type" && v.starts_with("text/plain")), "{headers:?}");
+        assert_eq!(view(&format!("{url}research/.draft.md?as=note"), &[]).await.0, 404);
+        assert_eq!(view("/v/not-a-token/research/plan.md?as=note", &[]).await.0, 403);
+    });
+}
+
+#[test]
+fn a_joined_machines_notes_are_listed_as_it_lists_them_and_rendered_by_the_hub() {
+    let tmp = Tmp::new("remote-notes");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
+        laptop(machine.clone());
+        *machine.answer.borrow_mut() = Box::new(|args| {
+            if args.starts_with("--json") {
+                let mut l = robot(true);
+                l["pages"][0]["notes"] = json!(["plan.md", "../escape.md", ".hidden.md", "plain.txt"]);
+                l
+            } else {
+                json!({ "v": 1, "ok": true, "root": "D:/Dev/robot", "items": [item("D:/Dev/robot/research/plan.md", true, 7), Value::Null], "data": "IyBQbGFuCg==" })
+            }
+        });
+        let list = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(list["pages"][0]["notes"], json!(["plan.md"]));
+        let url = call(h_open, "POST", &[("host", "laptop"), ("slug", "robot")], None, &[]).await.unwrap()["url"].as_str().unwrap().to_owned();
+        let (status, _, body) = view(&format!("{url}research/plan.md?as=note"), &[]).await;
+        assert_eq!(status, 200);
+        assert!(String::from_utf8(body).unwrap().contains("<h1>Plan</h1>"));
+    });
+}
+
+// an agent made a plan on the laptop and never added it: the hub has the laptop's inyon look
+#[test]
+fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
+    let tmp = Tmp::new("find");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let machine = Rc::new(Machine::new(Box::new(|_| Value::Null)));
+        laptop(machine.clone());
+        let rt = inyon_core::hosts::registry::registry().get("laptop").unwrap();
+        rt.borrow_mut().state.sessions = serde_json::from_value(json!([{ "id": "$1", "name": "s", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+            { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "D:\\Dev\\shop", "title": "", "width": 80, "height": 24, "dead": false, "agent": { "kind": "claude", "pid": 1, "state": "idle" } }
+        ] }] }]))
+        .unwrap();
+        let found = Rc::new(Cell::new(true));
+        let f = found.clone();
+        *machine.answer.borrow_mut() = Box::new(move |args| {
+            if args.starts_with("find ") {
+                if f.get() {
+                    json!({ "v": 1, "found": [{ "slug": "plan" }], "message": "" })
+                } else {
+                    json!({ "v": 1, "ok": false, "error": "unrecognized subcommand 'find'" })
+                }
+            } else {
+                robot(true)
+            }
+        });
+        let mut not_before = std::collections::HashMap::new();
+        // an answer that isn't one (a timeout, a dropped connection) is tried again next time
+        let answer = std::mem::replace(&mut *machine.answer.borrow_mut(), Box::new(|_| Value::Null));
+        crate::finding::find_all(&mut not_before, 500).await;
+        assert!(not_before.is_empty(), "{not_before:?}");
+        *machine.answer.borrow_mut() = answer;
+        machine.calls.borrow_mut().clear();
+        crate::finding::find_all(&mut not_before, 1_000).await;
+        assert_eq!(machine.calls.borrow().iter().filter(|c| c.starts_with("find ")).cloned().collect::<Vec<_>>(), ["find --json --by 'claude' -- 'D:\\Dev\\shop'"]);
+        // an inyon from before 0.22.4 is left alone for a while
+        found.set(false);
+        crate::finding::find_all(&mut not_before, 2_000).await;
+        assert_eq!(not_before.get("laptop"), Some(&(2_000 + crate::finding::RETRY_MS)));
+        let asked = machine.count("find ");
+        crate::finding::find_all(&mut not_before, 3_000).await;
+        assert_eq!(machine.count("find "), asked);
     });
 }

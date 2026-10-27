@@ -53,6 +53,8 @@ pub struct RemotePage {
     pub record: Record,
     /// what its progress.json counts, as the machine read it
     pub progress: Option<Value>,
+    /// the Markdown files in its `research/` folder, as the machine listed them
+    pub notes: Vec<String>,
 }
 
 /// A path from another machine as the hub joins and compares paths: Windows' backslashes as slashes.
@@ -105,7 +107,18 @@ pub fn pages_in(m: &Map<String, Value>) -> Vec<(RemotePage, Option<String>)> {
             continue;
         }
         let stamp = p.get("stamp").and_then(Value::as_str).map(str::to_owned);
-        out.push((RemotePage { record, progress: p.get("progress").filter(|v| v.is_object()).cloned() }, stamp));
+        // a name the hub wouldn't list for its own pages is left out
+        let notes = p
+            .get("notes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|n| crate::pages::is_note(n))
+            .take(crate::pages::NOTES_MAX)
+            .map(str::to_owned)
+            .collect();
+        out.push((RemotePage { record, progress: p.get("progress").filter(|v| v.is_object()).cloned(), notes }, stamp));
     }
     out
 }
@@ -352,7 +365,19 @@ pub async fn add(id: &str, folder: &str, name: Option<&str>, slug: Option<&str>)
     args.push_str(&format!(" -- {}", shq(folder)));
     let m = run(id, &args, LIST_WAIT).await?;
     let record = m.get("page").and_then(as_record).ok_or_else(|| http(500, "The machine added the page but didn't say how"))?;
-    Ok(RemotePage { record, progress: None })
+    Ok(RemotePage { record, progress: None, notes: vec![] })
+}
+
+/// Adds the Blueprint sites under `dirs` on a machine (the hub's own too) that aren't listed there
+/// yet, with its own `inyon pages find`, as added by agent `by`. How many it added; an error when
+/// it couldn't be asked or its inyon is from before 0.22.4.
+pub async fn find(id: &str, by: &str, dirs: &[String]) -> HubResult<usize> {
+    let mut args = format!("find --json --by {} --", shq(by));
+    for d in dirs {
+        args.push_str(&format!(" {}", shq(d)));
+    }
+    let m = run(id, &args, LIST_WAIT).await?;
+    m.get("found").and_then(Value::as_array).map(Vec::len).ok_or_else(|| http(501, "This machine's inyon can't find pages"))
 }
 
 /// Takes a page off another machine's list, with its own `inyon pages rm`.

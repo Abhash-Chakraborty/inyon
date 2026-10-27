@@ -703,3 +703,77 @@ fn watch_ends_once_nobody_reads_it_even_when_nothing_changes() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
+
+// the hub lists a page's research notes for the viewer's Notes drawer, as its own pages list them
+#[test]
+fn the_list_names_a_sites_markdown_notes() {
+    let h = Home::new("notes");
+    let site = h.site("plans/robot", "Robot");
+    let bare = h.site("plans/bare", "Bare");
+    fs::create_dir_all(site.join("research/old")).unwrap();
+    for f in ["research/plan.md", "research/Internals.MD", "research/.draft.md", "research/data.json", "research/old/x.md"] {
+        fs::write(site.join(f), "# x").unwrap();
+    }
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+    assert_eq!(h.run(&["pages", "add", s(&bare), "--slug", "bare"]).0, 0);
+    let (_, list) = h.json(&["pages"]);
+    let page = |slug: &str| list["pages"].as_array().unwrap().iter().find(|p| p["slug"] == slug).unwrap().clone();
+    assert_eq!(page("robot")["notes"], serde_json::json!(["Internals.MD", "plan.md"]));
+    assert!(page("bare").get("notes").is_none(), "{list}");
+}
+
+/// A Blueprint site: an index.html with the marker Blueprint writes next to it.
+fn blueprint(h: &Home, rel: &str, name: &str) -> PathBuf {
+    let d = h.site(rel, name);
+    fs::write(d.join(".inyon-page.json"), format!(r#"{{"v":1,"slug":"{}","name":"{name}","kind":"blueprint","created":1}}"#, pages::slugify(name))).unwrap();
+    d
+}
+
+// an agent made a plan and never ran `inyon pages add`: the hub finds it where the agent works
+#[test]
+fn find_adds_the_sites_under_an_agents_folder_once_and_never_one_taken_off() {
+    let h = Home::new("find");
+    let shop = h.dir.join("code").join("shop");
+    let plan = blueprint(&h, "code/shop/private/plans/checkout", "Checkout rewrite");
+    blueprint(&h, "code/shop/node_modules/pkg/docs", "Dependency docs");
+    blueprint(&h, "code/shop/a/b/c/d/e", "Too deep");
+    h.site("code/shop/site", "No marker");
+    let src = shop.join("src");
+    fs::create_dir_all(&src).unwrap();
+    assert!(Command::new("git").args(["init", "-q"]).arg(&shop).status().unwrap().success());
+    let find = |dir: &Path| {
+        let (code, v) = h.json(&["pages", "find", "--by", "claude", s(dir)]);
+        assert_eq!(code, 0, "{v}");
+        v["found"].as_array().unwrap().iter().map(|p| p["name"].as_str().unwrap().to_owned()).collect::<Vec<_>>()
+    };
+    // the agent works in src: its project's private/plans is looked at too
+    assert_eq!(find(&src), ["Checkout rewrite"]);
+    assert_eq!(h.list()["pages"][0]["by"], "claude");
+    assert_eq!(h.list()["pages"][0]["slug"], "checkout-rewrite");
+    // listed now; no marker, too deep or inside node_modules: nothing else
+    assert!(find(&shop).is_empty());
+    // taken off the list: it stays off
+    assert_eq!(h.run(&["pages", "rm", "checkout-rewrite"]).0, 0);
+    assert!(find(&shop).is_empty());
+    assert!(h.list()["removed"].as_array().unwrap().iter().any(|p| p.as_str().is_some_and(|p| p.ends_with("checkout"))), "{}", h.list());
+    // added again on purpose: no longer remembered as removed
+    assert_eq!(h.run(&["pages", "add", s(&plan)]).0, 0);
+    assert_eq!(h.list()["removed"], serde_json::json!([]));
+    // the home folder itself isn't looked through, and a relative folder isn't either
+    blueprint(&h, "notes", "Home notes");
+    assert!(find(&h.dir).is_empty());
+    assert!(find(Path::new("notes")).is_empty());
+}
+
+#[test]
+fn find_shares_its_folder_budget_so_a_big_folder_leaves_room_for_the_next() {
+    let h = Home::new("find-budget");
+    let big = h.dir.join("big");
+    for i in 0..4100 {
+        fs::create_dir_all(big.join(format!("d{i:04}"))).unwrap();
+    }
+    blueprint(&h, "small/plans/board", "Board");
+    let (code, v) = h.json(&["pages", "find", "--by", "codex", s(&big), s(&h.dir.join("small"))]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["found"][0]["name"], "Board", "{v}");
+}

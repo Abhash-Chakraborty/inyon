@@ -24,6 +24,12 @@ Open it in the app at /pages/local/my-plan
 
 In the app, **Add a folder** does the same: pick the machine, type the folder's full path (starting with `/`, or a drive letter on Windows) and a name.
 
+### Pages the hub finds
+
+From 0.22.4 a site an agent made but never added shows up by itself. Every 5 minutes, while the app is open somewhere or a browser takes page notifications, the hub has each machine's `inyon` look in the folders its agent sessions run in, up to 4 folders down, and in their project's `private/plans`. A folder with Blueprint's `.inyon-page.json` next to its `index.html` that isn't listed yet is added, as made by that session's agent. It skips folders starting with a dot, `node_modules`, `target`, `dist`, `build` and `vendor`, and doesn't look through `/` or your home folder itself.
+
+A page you remove stays removed: `pages.json` remembers its folder, and the hub doesn't add it again. Adding that folder yourself brings it back. A machine with an `inyon` from before 0.22.4 isn't looked through.
+
 From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/pages/…` link in it, the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine.
 
 ## Pages on your other computers
@@ -40,6 +46,7 @@ Tap a card to open the page full screen. The bar on top has:
 
 - **Back**, which returns to the list. The phone's own back button does the same, even after you've clicked around inside the page.
 - The machine's name, a menu of the other pages on that machine and a way to open the machine.
+- **Notes**, from 0.22.4, when the site has a `research` folder with Markdown files in it. See [Notes](#notes).
 - **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser**. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
 
 Under the bar, a line says **Sandboxed page: never sign in here**. It stays on screen, so a page can't pass itself off as the app asking for your password.
@@ -60,12 +67,19 @@ Above the page:
 |---|---|
 | The path | Machine, project and page, so you know which copy you're looking at |
 | **Plan**, **Mockups**, **Matrix** | Jump between a Blueprint site's parts, when it has more than one. A click always loads the part, also the one already selected |
+| **Notes** | From 0.22.4, when the site has notes: open one in place of the page. See [Notes](#notes) |
 | **Fit**, **Phone**, **Tablet**, **Desktop** | Show the page filling the pane, or at 390 × 844, 820 × 1180 or 1440 × 900, scaled down to fit |
 | Reload | Load the page again, with a new link |
 | Open in new tab | The page on its own in a browser tab, with a new 12-hour link |
 | **⋯** | **Revoke links**, **Copy folder path**, **Show folder** and **Remove** |
 
 A machine's own page lists its pages too, under **Pages on this machine**.
+
+## Notes
+
+From 0.22.4 the Markdown files in a site's `research` folder, where Blueprint keeps the notes a plan is built from, open in the viewer. **Notes** lists them by name; pick one and it takes the page's place, set as a page to read in the app's light or dark. A line under the bar (on a phone) or the **Notes** button (on a desktop) says which note is open, and **Back to Plan**, or any of **Plan**, **Mockups** and **Matrix**, brings the page back. A link from one note to another opens as a note too.
+
+Only files directly in `research` count, ending in `.md` and not starting with a dot, up to 200 of them, and only when `research` is a real folder rather than a symlink. A note is served under the same link and sandbox as the page, so the same checks apply, HTML written in a note shows as text instead of running, and a link that isn't to a web or email address or to the page's own files does nothing. A note over 1 MB is shown as plain text. For a page on another computer, that computer's `inyon` lists its notes, from 0.22.4.
 
 ## Links and removing
 

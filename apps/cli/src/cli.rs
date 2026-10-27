@@ -321,6 +321,15 @@ enum PagesAction {
         #[arg(long)]
         lines: bool,
     },
+    /// Add the Blueprint sites under these folders that aren't listed yet, for the hub (with --json)
+    #[command(hide = true)]
+    Find {
+        /// The folders agents work in
+        dirs: Vec<std::path::PathBuf>,
+        /// The agent working there
+        #[arg(long, default_value = "found")]
+        by: String,
+    },
     /// The pages, again whenever they change, for the hub this machine is joined to (with --json)
     #[command(hide = true)]
     Watch {
@@ -584,6 +593,7 @@ pub fn main() {
                     pages::get_lines_command(&slug, &segments, slash, max.min(pages::STREAM_MAX), etag.as_deref())
                 }
                 Some(PagesAction::Watch { every, alive }) => pages::watch_command(every, alive),
+                Some(PagesAction::Find { dirs, by }) => pages::find_command(&dirs, &by),
             },
             json,
         ),

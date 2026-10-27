@@ -847,7 +847,12 @@ folder: string,
 /**
  * left out when the site has no readable progress.json
  */
-progress?: PageProgress, };
+progress?: PageProgress, 
+/**
+ * the Markdown notes in the site's `research/` folder, by file name (from 0.22.4); left out
+ * when there are none
+ */
+notes?: Array<string>, };
 
 /**
  * GET /api/pages

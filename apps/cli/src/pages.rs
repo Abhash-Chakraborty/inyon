@@ -769,6 +769,10 @@ pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Optio
                 Some(i) => pages[i] = page.clone(),
                 None => pages.push(page.clone()),
             }
+        }
+        // added on purpose: `pages find` may add it again after a later rm
+        let was_removed = forget_removed(&mut list, &path, &real_path);
+        if changed || was_removed {
             write_list(file, &list)?;
         }
         Ok((page, changed))
@@ -791,9 +795,135 @@ pub fn remove(file: &Path, slug: &str) -> Result<Vec<Value>, String> {
         if gone.is_empty() {
             return Err(missing());
         }
+        for p in &gone {
+            let path = field(p, "path");
+            remember_removed(&mut list, &real(Path::new(path)).unwrap_or_else(|| path.to_string()));
+        }
         write_list(file, &list)?;
         Ok(gone)
     })
+}
+
+// ---------- finding pages ----------
+
+/// The most folders kept in pages.json's `removed`, the newest last.
+pub const REMOVED_MAX: usize = 200;
+/// How deep `pages find` looks under a folder, and how many folders it looks at in all.
+const FIND_DEPTH: usize = 4;
+const FIND_FOLDERS: usize = 4000;
+/// Folders `pages find` doesn't look inside: dependencies and build output.
+const FIND_SKIP: [&str; 6] = ["node_modules", "target", "dist", "build", "vendor", "__pycache__"];
+
+/// The folders taken off the list, which `pages find` leaves alone (the hub keeps the same list).
+fn removed_of(list: &Map<String, Value>) -> Vec<String> {
+    list.get("removed").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).map(String::from).collect()
+}
+
+fn remember_removed(list: &mut Map<String, Value>, folder: &str) {
+    let mut removed = removed_of(list);
+    removed.retain(|p| p != folder);
+    removed.push(folder.to_string());
+    let extra = removed.len().saturating_sub(REMOVED_MAX);
+    removed.drain(..extra);
+    list.insert("removed".into(), json!(removed));
+}
+
+/// Takes a folder out of `removed`; whether it was there.
+fn forget_removed(list: &mut Map<String, Value>, path: &str, real_path: &str) -> bool {
+    let removed = removed_of(list);
+    let keep: Vec<String> = removed.iter().filter(|p| *p != path && *p != real_path).cloned().collect();
+    if keep.len() == removed.len() {
+        return false;
+    }
+    list.insert("removed".into(), json!(keep));
+    true
+}
+
+/// The Blueprint sites under `dir`, up to `depth` folders down: a folder with a `.inyon-page.json`
+/// and an `index.html`, both plain files. Symlinks aren't followed, dot folders and FIND_SKIP aren't
+/// looked in, and nothing inside a site is. `budget` counts down the folders looked at.
+fn sites_under(dir: &Path, depth: usize, budget: &mut usize, out: &mut Vec<PathBuf>) {
+    let mut todo = vec![(dir.to_path_buf(), 0usize)];
+    while let Some((d, level)) = todo.pop() {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let plain = |name: &str| fs::symlink_metadata(d.join(name)).is_ok_and(|m| m.is_file());
+        if plain(".inyon-page.json") && plain("index.html") {
+            out.push(d);
+            continue;
+        }
+        if level == depth {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&d) else { continue };
+        let mut subs: Vec<PathBuf> = entries
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter(|e| e.file_name().to_str().is_some_and(|n| !n.starts_with('.') && !FIND_SKIP.contains(&n)))
+            .map(|e| e.path())
+            .collect();
+        subs.sort();
+        todo.extend(subs.into_iter().rev().map(|p| (p, level + 1)));
+    }
+}
+
+/// Adds the Blueprint sites found where agents work: under each of `dirs`, and in the
+/// `private/plans` of its project. A site already listed, or taken off the list before, is left
+/// alone, and so is a folder that can't be a page (`/`, the home folder). The entries added.
+pub fn find(file: &Path, home: &Path, dirs: &[PathBuf], by: &str, now: u64) -> Result<Vec<Value>, String> {
+    let home_text = text_of(home)?;
+    let list = if file.exists() { read_list(file)? } else { Map::new() };
+    let mut known: std::collections::HashSet<String> = removed_of(&list).into_iter().collect();
+    for p in list.get("pages").and_then(Value::as_array).into_iter().flatten() {
+        let path = field(p, "path");
+        known.insert(path.to_string());
+        known.extend(real(Path::new(path)));
+    }
+    // each folder gets an even share of what's left, so a big one can't use it all up; what one
+    // doesn't use goes to the ones after it
+    let mut left = FIND_FOLDERS;
+    let mut sites = vec![];
+    let roots: Vec<&PathBuf> = dirs.iter().filter(|d| d.is_absolute()).collect();
+    for (i, dir) in roots.iter().enumerate() {
+        let share = left / (roots.len() - i);
+        let mut budget = share;
+        let Ok(dir) = absolute(dir) else { continue };
+        let Ok(text) = text_of(&dir) else { continue };
+        if folder_problem(&text, &home_text).is_some() || !dir.is_dir() {
+            continue;
+        }
+        sites_under(&dir, FIND_DEPTH, &mut budget, &mut sites);
+        let plans = Path::new(&project_of(&text)).join("private").join("plans");
+        if !plans.starts_with(&dir) {
+            sites_under(&plans, 1, &mut budget, &mut sites);
+        }
+        left -= share - budget;
+    }
+    let mut added = vec![];
+    for site in sites {
+        let Ok(path) = text_of(&site) else { continue };
+        if known.contains(&path) || real(&site).is_some_and(|r| known.contains(&r)) {
+            continue;
+        }
+        known.insert(path);
+        // one that can't be added (a broken list, a site out of a private folder) is skipped
+        if let Ok(a) = add(file, home, &site, None, None, by, now) {
+            added.push(a.page);
+        }
+    }
+    Ok(added)
+}
+
+pub fn find_command(dirs: &[PathBuf], by: &str) -> Outcome {
+    let by = if !by.is_empty() && by.len() <= 32 && by.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') { by } else { "found" };
+    let found = find(&pages_file(), &paths::home(), dirs, by, crate::state::now_ms() as u64)?;
+    let message = match found.len() {
+        0 => "No new pages.".to_string(),
+        n => format!("Added {n} page{}: {}", if n == 1 { "" } else { "s" }, found.iter().map(|p| field(p, "name")).collect::<Vec<_>>().join(", ")),
+    };
+    Ok(json!({ "found": found, "message": message }))
 }
 
 /// What keeps a listed page from opening in the app, when something does.
@@ -900,8 +1030,14 @@ pub fn list_command() -> Outcome {
         }
         if let Some(t) = trouble(p, &home_text, &real_home) {
             row["problem"] = json!(t);
-        } else if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
-            row["progress"] = progress;
+        } else {
+            if let Some(progress) = progress_of(Path::new(field(p, "path"))) {
+                row["progress"] = progress;
+            }
+            let notes = notes_of(Path::new(field(p, "path")));
+            if !notes.is_empty() {
+                row["notes"] = json!(notes);
+            }
         }
         pages.push(row);
     }
@@ -939,6 +1075,29 @@ pub fn list_command() -> Outcome {
 }
 
 // ---------- serving a page to a hub ----------
+
+/// The most notes listed for one site.
+const NOTES_MAX: usize = 200;
+
+/// The Markdown notes in a site's `research/` folder, by name, sorted, as the hubs list them for
+/// their own pages (inyon-hub's pages::notes_of): plain files whose name has no dot first and ends
+/// in .md, and only when `research` is a real folder, not a symlink.
+pub fn notes_of(site: &Path) -> Vec<String> {
+    let dir = site.join("research");
+    if !fs::symlink_metadata(&dir).is_ok_and(|m| m.is_dir()) {
+        return vec![];
+    }
+    let Ok(entries) = fs::read_dir(&dir) else { return vec![] };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !n.starts_with('.') && n.len() <= 120 && n.len() > 3 && n.to_ascii_lowercase().ends_with(".md"))
+        .collect();
+    out.sort_by_key(|n| n.to_lowercase());
+    out.truncate(NOTES_MAX);
+    out
+}
 
 /// The biggest progress.json read, as the hubs read it.
 const PROGRESS_MAX: u64 = 1024 * 1024;

@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   BookOpen, ChevronDown, ChevronLeft, ChevronRight, CloudOff, Copy, Ellipsis, ExternalLink, FileText, FolderOpen, FolderPlus, LayoutTemplate, Link2Off, PanelsTopLeft,
-  QrCode, RotateCw, Router, Search, ShieldCheck, Smartphone, Table2, Tablet, Monitor, Trash2,
+  NotebookText, QrCode, RotateCw, Router, Search, ShieldCheck, Smartphone, Table2, Tablet, Monitor, Trash2,
 } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { ApiError } from '../lib/api.ts'
@@ -12,7 +12,7 @@ import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
 import { listHubs } from '../lib/hubs.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
+  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
   usePages, type Device, type Page, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
@@ -59,20 +59,34 @@ function useViewer(page: Page | undefined) {
   const { link, error, retry } = usePageLink(page)
   const parts = useSiteParts(page, link)
   const [want, setPart] = useState<Part>('plan')
-  useEffect(() => setPart('plan'), [page?.id])
+  // a note from the site's research folder shown instead of a part, while it's still listed
+  const [wantNote, setNote] = useState<string>()
+  useEffect(() => {
+    setPart('plan')
+    setNote(undefined)
+  }, [page?.id])
   const part = parts.includes(want) ? want : 'plan'
+  const note = wantNote && page?.notes?.includes(wantNote) ? wantNote : undefined
   const [n, setN] = useState(0)
   const theme = useStore((s) => s.resolvedTheme)
   const themeNow = useRef(theme)
   themeNow.current = theme
   // the theme isn't part of the address's identity: a theme change is a message, not a reload
-  const src = useMemo(() => (page && link ? frameSrc(pageBase(page.host), link.url, part, themeNow.current) : undefined), [page?.host, link?.url, part])
+  const src = useMemo(
+    () => (page && link ? (note ? noteSrc(pageBase(page.host), link.url, note, themeNow.current) : frameSrc(pageBase(page.host), link.url, part, themeNow.current)) : undefined),
+    [page?.host, link?.url, part, note],
+  )
   // a new link every time: the one on screen may have been revoked from another device. The new
   // address reloads the frame; when no link comes (the hub is out of reach) the old one is tried again
   const reload = () => void retry().then((renewed) => renewed || setN((x) => x + 1))
   // picking a part always loads it, also the one the control shows when the page moved on by its own links
   const pickPart = (p: Part) => {
     setPart(p)
+    setNote(undefined)
+    setN((x) => x + 1)
+  }
+  const pickNote = (name: string) => {
+    setNote(name)
     setN((x) => x + 1)
   }
   // looking at a page clears its changed mark, also when it changes while it's open
@@ -82,7 +96,17 @@ function useViewer(page: Page | undefined) {
   }, [page?.id, changed])
   // the page's hub didn't answer the last poll: a frame already showing stays, marked out of date
   const stale = usePages((s) => !!page && hubUnreachable(page.host, s.unreachable))
-  return { link, error, retry, parts, part, setPart: pickPart, src, frameKey: `${src}#${n}`, reload, stale }
+  return { link, error, retry, parts, part, setPart: pickPart, note, setNote: pickNote, src, frameKey: `${src}#${n}`, reload, stale }
+}
+
+type Viewer = ReturnType<typeof useViewer>
+
+/** The site's research notes, and the way back to the page while one is open. */
+function notesMenu(page: Page, v: Viewer): MenuItem[] {
+  return [
+    ...(v.note ? [{ key: 'back', label: `Back to ${PART_LABEL[v.part]}`, icon: PART_ICON[v.part], onSelect: () => v.setPart(v.part) }] : []),
+    ...(page.notes ?? []).map((name, i) => ({ key: `note:${name}`, label: noteTitle(name), icon: <FileText className="size-4" />, selected: v.note === name, separated: !!v.note && i === 0, disabled: !v.link, onSelect: () => v.setNote(name) })),
+  ]
 }
 
 const PART_ICON: Record<Part, React.ReactNode> = { plan: <FileText className="size-4" />, mockups: <LayoutTemplate className="size-4" />, matrix: <Table2 className="size-4" /> }
@@ -337,7 +361,7 @@ function PhoneViewer({ id }: { id: string }) {
   const more: MenuItem[] = page
     ? [
         { key: 'reload', label: 'Reload', icon: <RotateCw className="size-4" />, disabled: !v.link, onSelect: v.reload },
-        ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
+        ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
         { key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page) },
       ]
     : []
@@ -366,6 +390,16 @@ function PhoneViewer({ id }: { id: string }) {
               )}
             />
           )}
+          {!!page?.notes?.length && (
+            <Menu
+              align="end"
+              header="Notes"
+              items={notesMenu(page, v)}
+              trigger={({ toggle, ref }) => (
+                <IconButton label={v.note ? `Notes: ${noteTitle(v.note)} open` : 'Notes'} className={clsx('size-11 rounded-xl', v.note && 'text-fg')} onClick={toggle} ref={ref}><NotebookText className="size-[18px]" /></IconButton>
+              )}
+            />
+          )}
           {page && <Menu align="end" items={more} trigger={({ toggle, ref }) => <IconButton label="More" className="size-11 rounded-xl" onClick={toggle} ref={ref}><Ellipsis className="size-[18px]" /></IconButton>} />}
         </div>
         {/* always on screen, so a page can't pass itself off as the app asking for a password */}
@@ -374,6 +408,13 @@ function PhoneViewer({ id }: { id: string }) {
           <span className="truncate">{SANDBOX_NOTE}</span>
         </div>
         {v.stale && m && <StaleLine name={m.name} className="h-6 border-t border-line px-3" />}
+        {v.note && (
+          <div className="flex h-9 items-center gap-1.5 border-t border-line pr-1 pl-3 text-[13px]">
+            <NotebookText className="size-3.5 shrink-0 text-fg-3" />
+            <span className="min-w-0 flex-1 truncate">{noteTitle(v.note)}</span>
+            <button type="button" onClick={() => v.setPart(v.part)} className="press h-9 shrink-0 rounded-lg px-2.5 font-medium text-fg-2">Back to {PART_LABEL[v.part]}</button>
+          </div>
+        )}
       </header>
       <div className="relative flex min-h-0 flex-1 flex-col">
         {!page ? (
@@ -590,7 +631,27 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
           <span className="text-fg-3">/</span>
           <b className="truncate font-semibold text-fg">{page.name}</b>
         </nav>
-        {v.parts.length > 1 && <Segmented size="sm" label="Part of the page" value={v.part} onChange={v.setPart} options={v.parts.map((p) => ({ v: p, label: PART_LABEL[p] }))} />}
+        {v.parts.length > 1 && <Segmented size="sm" label="Part of the page" value={v.note ? ('' as Part) : v.part} onChange={v.setPart} options={v.parts.map((p) => ({ v: p, label: PART_LABEL[p] }))} />}
+        {!!page.notes?.length && (
+          <Menu
+            align="end"
+            header="Notes"
+            items={notesMenu(page, v)}
+            trigger={({ toggle, ref }) => (
+              <button
+                ref={ref}
+                type="button"
+                onClick={toggle}
+                aria-label={v.note ? `Notes: ${noteTitle(v.note)} open` : 'Notes'}
+                className={clsx('press flex h-[30px] max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[12px] font-medium', v.note ? 'border-line-strong bg-elev text-fg shadow-card' : 'border-line text-fg-2 hover:text-fg')}
+              >
+                <NotebookText className="size-3.5 shrink-0" />
+                <span className="truncate">{v.note ? noteTitle(v.note) : 'Notes'}</span>
+                <ChevronDown className="size-3.5 shrink-0 text-fg-3" />
+              </button>
+            )}
+          />
+        )}
         <Segmented size="sm" label="Frame size" value={device} onChange={setDevice} options={DEVICE_OPTIONS} />
         <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
         {/* a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page */}
