@@ -79,7 +79,7 @@ A machine's own page lists its pages too, under **Pages on this machine**.
 
 From 0.22.4 the Markdown files in a site's `research` folder, where Blueprint keeps the notes a plan is built from, open in the viewer. **Notes** lists them by name; pick one and it takes the page's place, set as a page to read in the app's light or dark. A line under the bar (on a phone) or the **Notes** button (on a desktop) says which note is open, and **Back to Plan**, or any of **Plan**, **Mockups** and **Matrix**, brings the page back. A link from one note to another opens as a note too.
 
-Only files directly in `research` count, ending in `.md` and not starting with a dot, up to 200 of them, and only when `research` is a real folder rather than a symlink. A note is served under the same link and sandbox as the page, so the same checks apply, and HTML written in a note shows as text instead of running. A note over 1 MB is shown as plain text. For a page on another computer, that computer's `inyon` lists its notes, from 0.22.4.
+Only files directly in `research` count, ending in `.md` and not starting with a dot, up to 200 of them, and only when `research` is a real folder rather than a symlink. A note is served under the same link and sandbox as the page, so the same checks apply, HTML written in a note shows as text instead of running, and a link that isn't to a web or email address or to the page's own files does nothing. A note over 1 MB is shown as plain text. For a page on another computer, that computer's `inyon` lists its notes, from 0.22.4.
 
 ## Links and removing
 

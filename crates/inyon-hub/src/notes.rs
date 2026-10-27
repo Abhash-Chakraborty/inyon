@@ -2,7 +2,8 @@
 //! drawer opens at `/v/<token>/research/<name>.md?as=note`. The file is found and checked exactly
 //! as any other file of the page (the token, dot names, symlinks out of the site, other machines);
 //! only the answer differs: the Markdown as a page to read, in the app's light or dark, under the
-//! same sandbox. HTML written in the Markdown is shown as text, not run.
+//! same sandbox. Nothing in a note runs: HTML written in it is shown as text, headings take no
+//! attributes, and a link or image may only lead to http(s), mailto, an anchor or a path in the site.
 
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 
@@ -16,8 +17,23 @@ pub fn wants_note(query: &str, path: &std::path::Path) -> bool {
     query.split('&').any(|p| p == AS_NOTE) && path.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
 }
 
+/// Whether a link or image may keep its address: one in the site (a path or an anchor), or
+/// http(s) or mailto. Anything else (`javascript:`, `data:`, `vbscript:`…) is dropped. Browsers
+/// ignore tabs, newlines and leading spaces in an address, so those don't count when judging it.
+fn safe_dest(dest: &str) -> bool {
+    let d: String = dest.chars().filter(|c| !c.is_ascii_whitespace() && !c.is_ascii_control()).collect::<String>().to_ascii_lowercase();
+    let scheme_end = d.find([':', '/', '?', '#']);
+    match scheme_end {
+        Some(i) if d.as_bytes()[i] == b':' => ["http:", "https:", "mailto:"].iter().any(|s| d.starts_with(s)),
+        _ => true,
+    }
+}
+
 /// A relative link to another Markdown file stays a note when followed.
 fn note_link(dest: CowStr<'_>) -> CowStr<'_> {
+    if !safe_dest(&dest) {
+        return CowStr::Borrowed("");
+    }
     let relative = !dest.contains(':') && !dest.starts_with('/') && !dest.starts_with('#');
     let (path, frag) = dest.split_once('#').map_or((&*dest, None), |(p, f)| (p, Some(f)));
     if !relative || path.contains('?') || !path.to_ascii_lowercase().ends_with(".md") {
@@ -37,10 +53,14 @@ fn escape(s: &str) -> String {
 
 /// The note's Markdown as HTML: tables, task lists and strikethrough, raw HTML as text.
 pub fn render(md: &str) -> String {
-    let opts = Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_HEADING_ATTRIBUTES;
+    // no ENABLE_HEADING_ATTRIBUTES: `# x {onclick=…}` would put a handler on the heading
+    let opts = Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS | Options::ENABLE_STRIKETHROUGH;
     let events = Parser::new_ext(md, opts).map(|e| match e {
         Event::Html(h) | Event::InlineHtml(h) => Event::Text(h),
         Event::Start(Tag::Link { link_type, dest_url, title, id }) => Event::Start(Tag::Link { link_type, dest_url: note_link(dest_url), title, id }),
+        Event::Start(Tag::Image { link_type, dest_url, title, id }) => {
+            Event::Start(Tag::Image { link_type, dest_url: if safe_dest(&dest_url) { dest_url } else { CowStr::Borrowed("") }, title, id })
+        }
         e => e,
     });
     let mut out = String::with_capacity(md.len() * 3 / 2);
@@ -101,6 +121,21 @@ mod tests {
         assert!(h.contains("href=\"#plan\""), "{h}");
         assert!(h.contains("href=\"../index.html\""), "{h}");
         assert!(h.contains("<table>") && h.contains("checkbox"), "{h}");
+    }
+
+    // a note could put script on the page through a heading's attributes or a link's address
+    #[test]
+    fn nothing_in_a_note_can_run() {
+        let h = render("# Read this {onmouseover=alert(1)}\n\n[a](javascript:alert(1)) [b](JavaScript:alert(1)) [c](<java\tscript:alert(1)>) <javascript:alert(1)> [d](vbscript:x) [e](data:text/html,x) ![i](javascript:alert(1)) [ok](https://x.dev) [mail](mailto:a@b.c) [rel](plan.md) [path](a/b:c.html)\n");
+        // the attribute stays text in the heading
+        assert!(h.contains("<h1>Read this {onmouseover=alert(1)}</h1>"), "{h}");
+        for bad in ["javascript:", "JavaScript:", "vbscript:", "data:text"] {
+            assert!(!h.contains(&format!("href=\"{bad}")) && !h.contains(&format!("src=\"{bad}")), "{bad} in {h}");
+        }
+        assert!(!h.contains("java\tscript") && !h.contains("java%09script"), "{h}");
+        for good in ["href=\"https://x.dev\"", "href=\"mailto:a@b.c\"", "href=\"plan.md?as=note\"", "href=\"a/b:c.html\""] {
+            assert!(h.contains(good), "{good} missing in {h}");
+        }
     }
 
     #[test]
