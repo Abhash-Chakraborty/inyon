@@ -36,7 +36,7 @@ macro_rules! INPUT {
 }
 macro_rules! SPINNER {
     () => {
-        re!(r"^\s*([^\s\w])\s+([A-Z][\w'’ -]*…)\s*(?:\((.*)\))?\s*$", "u")
+        re!(r"^\s*([^\s\w])\s+([A-Z][\p{L}'’ -]*…)\s*(?:\((.*)\))?\s*$", "u")
     };
 }
 macro_rules! MODE {

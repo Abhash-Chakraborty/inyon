@@ -505,6 +505,12 @@ impl Registry {
                 if let Some(l) = live {
                     l.stop();
                 }
+                // a blip (Wi-Fi, a VPN finding a new path) is over in seconds: its sessions stay as
+                // they are meanwhile, and the machine is down only if it isn't back by then
+                if node_link::reconnecting(id) {
+                    me.refresh(id, node_link::RECONNECT_GRACE_MS + 100);
+                    return;
+                }
                 let w = waiting_for(&rt.borrow().host.config());
                 me.mark_down(&rt, HostStatus::Connecting, &w);
                 me.emit(RegistryEvent::Overview);
@@ -848,6 +854,11 @@ impl Registry {
         }
         let config = host.config();
         if reached_through_inyon(&config) && !node_link::is_up(&config.id) {
+            if node_link::reconnecting(&config.id) {
+                let t = Self::poll_later(&rt, 1000);
+                rt.borrow_mut().timer = Some(t);
+                return;
+            }
             self.mark_down(&rt, HostStatus::Connecting, &waiting_for(&config));
             let t = Self::poll_later(&rt, 5000);
             rt.borrow_mut().timer = Some(t);
@@ -857,6 +868,8 @@ impl Registry {
         let mut next = poll_ms();
         match self.poll_once(&rt, &host).await {
             Ok(()) => {}
+            // the read in flight when the connection dropped: not a fault of the machine's
+            Err(_) if reached_through_inyon(&config) && node_link::reconnecting(&config.id) => next = 1000,
             Err(error) => {
                 let failures = {
                     let mut r = rt.borrow_mut();

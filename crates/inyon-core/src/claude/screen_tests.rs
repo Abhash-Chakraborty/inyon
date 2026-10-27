@@ -95,6 +95,15 @@ fn working() {
     assert_eq!(s.draft, None);
 }
 
+/// Claude Code's spinner words can have accents ("Flambéing", "Sautéing"): the screen still says
+/// it works. With letters read as ASCII only, it looked idle for the whole turn.
+#[test]
+fn a_spinner_word_with_an_accent_still_says_it_works() {
+    let s = claude(&screen_fixture("claude", "reply-before-tool-dot-on"), None);
+    assert!(s.working);
+    assert_eq!(s.activity.as_deref(), Some("Flambéing… (3s · ↓ 54 tokens)"));
+}
+
 /// word-wrapped option label keeps its space
 #[test]
 fn word_wrapped_option_label_keeps_its_space() {

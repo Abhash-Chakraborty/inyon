@@ -455,3 +455,54 @@ fn a_background_sessions_events_go_to_the_window_that_moved_it_there() {
     assert!(!home.exists(".inyon/panes/2.json"));
     assert!(home.read(".inyon/events.jsonl").contains(r#""pane":"""#));
 }
+
+/// Many keep ~/.claude/settings.json in their dotfiles, linked in. Installing replaced the link with
+/// a file of its own, so the dotfiles stopped getting the change and Claude Code's next save went
+/// to the copy.
+#[test]
+fn install_and_uninstall_keep_a_linked_settings_file_a_link() {
+    let home = TempDir::new("inyon-int-");
+    run_rt(|| async {
+        Sandbox::install(&home.s());
+        let h = host("local", "local");
+        home.write("dotfiles/claude-settings.json", r#"{"model":"opus"}"#);
+        std::fs::create_dir_all(format!("{}/.claude", home.s())).unwrap();
+        std::os::unix::fs::symlink(format!("{}/dotfiles/claude-settings.json", home.s()), format!("{}/.claude/settings.json", home.s())).unwrap();
+        let linked = || std::fs::symlink_metadata(format!("{}/.claude/settings.json", home.s())).unwrap().file_type().is_symlink();
+        install_integration(&h).await.unwrap();
+        assert!(linked());
+        let s = parse(&home.read("dotfiles/claude-settings.json"));
+        assert_eq!((s["model"].as_str(), s["statusLine"]["command"].as_str()), (Some("opus"), Some("~/.inyon/statusline.sh")));
+        assert!(s["hooks"]["Stop"].is_array());
+        uninstall_integration(&h).await.unwrap();
+        assert!(linked());
+        assert_eq!(parse(&home.read("dotfiles/claude-settings.json")), json!({ "model": "opus" }));
+    });
+}
+
+/// Claude Code saves its settings while you work (a model you picked, a permission you allowed):
+/// a write from what was read before that would put the old file back.
+#[test]
+fn settings_changed_since_they_were_read_are_not_written_over() {
+    let home = TempDir::new("inyon-int-");
+    let env = [("HOME", home.s())];
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    home.write(".claude/settings.json", r#"{"model":"opus"}"#);
+    let read = sh(READ_SETTINGS, None, &env).1;
+    let sum = read.lines().next().unwrap().to_owned();
+    assert_eq!(read.split_once('\n').unwrap().1, r#"{"model":"opus"}"#);
+    // Claude Code saves a switch meanwhile
+    home.write(".claude/settings.json", r#"{"model":"sonnet"}"#);
+    let (code, _, _) = sh(&write_settings_command(&sum), Some(br#"{"model":"opus","hooks":{}}"#), &env);
+    assert_eq!(code, 3);
+    assert_eq!(home.read(".claude/settings.json"), r#"{"model":"sonnet"}"#);
+    // read again, it goes in
+    let sum = sh(READ_SETTINGS, None, &env).1.lines().next().unwrap().to_owned();
+    assert_eq!(sh(&write_settings_command(&sum), Some(br#"{"model":"sonnet","hooks":{}}"#), &env).0, 0);
+    assert_eq!(home.read(".claude/settings.json"), r#"{"model":"sonnet","hooks":{}}"#);
+    // a file that appeared after "none" was read isn't written over either
+    std::fs::remove_file(format!("{}/.claude/settings.json", home.s())).unwrap();
+    assert_eq!(sh(READ_SETTINGS, None, &env).1.trim(), "none");
+    home.write(".claude/settings.json", "{}");
+    assert_eq!(sh(&write_settings_command(""), Some(br#"{"a":1}"#), &env).0, 3);
+}

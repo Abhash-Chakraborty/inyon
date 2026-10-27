@@ -1,7 +1,7 @@
 use inyon_protocol::AgentKind;
 
 use super::*;
-use crate::test_support::screen_fixture;
+use crate::test_support::{screen, screen_fixture};
 
 fn reply(agent: &str, name: &str, kind: AgentKind) -> Option<ScreenReply> {
     screen_reply(&screen_fixture(agent, name), kind, Some(100))
@@ -122,4 +122,18 @@ fn a_reply_keeps_the_indent_of_its_nested_lines() {
         .to_vec();
     let r = screen_reply(&lines, AgentKind::Claude, Some(100)).unwrap();
     assert_eq!(r.text, "Steps:\n- build\n  - with --release\n- test\n\nfn main() {\n    run();\n}");
+}
+
+/// Claude Code blinks the dot of a command while it runs. With the dot off, the command row read as
+/// the reply going on, so the chat showed the command and its output as the reply, then dropped it
+/// when the dot came back, over and over.
+#[test]
+fn a_running_commands_blinking_dot_doesnt_make_it_part_of_the_reply() {
+    let on = reply("claude", "reply-before-tool-dot-on", AgentKind::Claude);
+    let off = reply("claude", "reply-before-tool-dot-off", AgentKind::Claude);
+    assert_eq!(on, None, "{on:?}");
+    assert_eq!(off, on, "{off:?}");
+    // a reply's own paragraph that opens in bold still reads as the reply
+    let bold = screen(&format!("{}\n\n● Done.\n\n  \x1b[1mTests:\x1b[0m all pass.\n\n{}\n❯ \n{}", "❯ check it", "─".repeat(40), "─".repeat(40)));
+    assert_eq!(screen_reply(&bold, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Done.\n\nTests: all pass.".into()));
 }

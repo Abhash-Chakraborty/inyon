@@ -166,28 +166,53 @@ fn parse_object(text: &str) -> Option<Map<String, Value>> {
     }
 }
 
-async fn read_settings(host: &Host) -> HubResult<Map<String, Value>> {
-    let r = host.run(r#"cat "$HOME/.claude/settings.json" 2>/dev/null"#).await?;
-    if r.stdout.jtrim().is_empty() {
-        return Ok(Map::new());
-    }
-    parse_object(&r.stdout).ok_or_else(|| HubError::http(409, "~/.claude/settings.json on that machine is not valid JSON; fix it first"))
+/// The script that reads ~/.claude/settings.json: its checksum on the first line (or "none"), then the file.
+pub(crate) const READ_SETTINGS: &str = r#"f="$HOME/.claude/settings.json"; [ -f "$f" ] || { echo none; exit 0; }; s=$(sum "$f") || exit 1; echo "$s"; cat "$f""#;
+
+/// The script that writes it, only if it still has the checksum it was read with (none: it wasn't
+/// there), else exit 3. A settings.json that is a link to your dotfiles stays a link: the file it
+/// points to is written. Private to you (it often holds API keys), and no half-written copy left if
+/// the connection drops.
+pub(crate) fn write_settings_command(sum: &str) -> String {
+    let check = if sum.is_empty() { r#"[ -e "$f" ] && exit 3"#.to_owned() } else { format!(r#"{{ [ -f "$f" ] && [ "$(sum "$f")" = {} ]; }} || exit 3"#, shq(sum)) };
+    [
+        r#"umask 077; f="$HOME/.claude/settings.json"; t="$f.inyon-tmp"; mkdir -p "$HOME/.claude""#,
+        &check,
+        r#"trap 'rm -f "$t"' EXIT HUP INT TERM"#,
+        r#"[ -f "$f" ] && [ ! -f "$f.tether-backup" ] && [ ! -f "$f.inyon-backup" ] && cp "$f" "$f.inyon-backup""#,
+        r#"if [ -L "$f" ]; then cat > "$t" && cat "$t" > "$f"; else cat > "$t" && mv -f "$t" "$f"; fi"#,
+    ]
+    .join("\n")
 }
 
-async fn write_settings(host: &Host, settings: &Map<String, Value>) -> HubResult<()> {
-    // private to you (settings.json often holds API keys), and no half-written copy left if the connection drops
-    let cmd = [
-        r#"umask 077; trap 'rm -f "$HOME/.claude/settings.json.inyon-tmp"' EXIT HUP INT TERM"#,
-        r#"mkdir -p "$HOME/.claude""#,
-        r#"[ -f "$HOME/.claude/settings.json" ] && [ ! -f "$HOME/.claude/settings.json.tether-backup" ] && [ ! -f "$HOME/.claude/settings.json.inyon-backup" ] && cp "$HOME/.claude/settings.json" "$HOME/.claude/settings.json.inyon-backup""#,
-        r#"cat > "$HOME/.claude/settings.json.inyon-tmp" && mv "$HOME/.claude/settings.json.inyon-tmp" "$HOME/.claude/settings.json""#,
-    ]
-    .join("; ");
-    let r = host.exec(&cmd, ExecOptions::input(pretty(&Value::Object(settings.clone())))).await?;
+/// The settings and the checksum they were read with ("" when there was no file).
+async fn read_settings(host: &Host) -> HubResult<(Map<String, Value>, String)> {
+    let r = host.run(READ_SETTINGS).await?;
     if r.code != 0 {
-        return Err(HubError::http(500, or_message(&r.stderr, "Could not write settings")));
+        return Err(HubError::http(500, or_message(&r.stderr, "Could not read ~/.claude/settings.json")));
     }
-    Ok(())
+    let (first, text) = r.stdout.split_once('\n').unwrap_or((r.stdout.as_str(), ""));
+    let sum = if first.jtrim() == "none" { String::new() } else { first.jtrim().to_owned() };
+    if text.jtrim().is_empty() {
+        return Ok((Map::new(), sum));
+    }
+    let settings = parse_object(text).ok_or_else(|| HubError::http(409, "~/.claude/settings.json on that machine is not valid JSON; fix it first"))?;
+    Ok((settings, sum))
+}
+
+/// False when the file changed since it was read (Claude Code saved a setting meanwhile).
+async fn write_settings(host: &Host, settings: &Map<String, Value>, sum: &str) -> HubResult<bool> {
+    let r = host.exec(&write_settings_command(sum), ExecOptions::input(pretty(&Value::Object(settings.clone())))).await?;
+    match r.code {
+        0 => Ok(true),
+        3 => Ok(false),
+        _ => Err(HubError::http(500, or_message(&r.stderr, "Could not write settings"))),
+    }
+}
+
+/// Settings that kept changing under each try.
+fn settings_kept_changing() -> HubError {
+    HubError::http(409, "~/.claude/settings.json kept changing while Inyon wrote it; try again")
 }
 
 async fn write_file(host: &Host, path: &str, content: &str, mode: &str) -> HubResult<()> {
@@ -239,12 +264,19 @@ fn with_command(sl: Option<&Value>, command: &str) -> Value {
     Value::Object(m)
 }
 
-pub async fn install_integration(host: &Host) -> HubResult<()> {
-    write_file(host, ".inyon/hook.sh", HOOK_SCRIPT, "700").await?;
-    write_file(host, ".inyon/statusline.sh", STATUS_SCRIPT, "700").await?;
-    // ~/.inyon holds your prompts (events.jsonl, panes/): earlier versions left it readable by others
-    host.run(r#"umask 077; mkdir -p "$HOME/.inyon/panes" "$HOME/.inyon/status" && chmod 700 "$HOME/.inyon" && chmod 600 "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl" 2>/dev/null; true"#).await?;
-    let mut settings = read_settings(host).await?;
+/// Puts the status line and the hooks into ~/.claude/settings.json, read again and redone when it
+/// changed in between; false when it changed every time.
+async fn install_settings(host: &Host) -> HubResult<bool> {
+    for _ in 0..3 {
+        if install_settings_once(host).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn install_settings_once(host: &Host) -> HubResult<bool> {
+    let (mut settings, sum) = read_settings(host).await?;
     let sl = settings.get("statusLine").cloned();
     let sl = sl.as_ref();
     if !is_our_status(sl.at("command")) {
@@ -313,7 +345,17 @@ pub async fn install_integration(host: &Host) -> HubResult<()> {
     if stop_failure.is_none() {
         drop_ours(hooks, STOP_FAILURE.0);
     }
-    write_settings(host, &settings).await?;
+    write_settings(host, &settings, &sum).await
+}
+
+pub async fn install_integration(host: &Host) -> HubResult<()> {
+    write_file(host, ".inyon/hook.sh", HOOK_SCRIPT, "700").await?;
+    write_file(host, ".inyon/statusline.sh", STATUS_SCRIPT, "700").await?;
+    // ~/.inyon holds your prompts (events.jsonl, panes/): earlier versions left it readable by others
+    host.run(r#"umask 077; mkdir -p "$HOME/.inyon/panes" "$HOME/.inyon/status" && chmod 700 "$HOME/.inyon" && chmod 600 "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl" 2>/dev/null; true"#).await?;
+    if !install_settings(host).await? {
+        return Err(settings_kept_changing());
+    }
     install_agy_integration(host).await?;
     crate::claude::agent_hooks::install_agent_hooks(host).await?;
     Ok(())
@@ -480,9 +522,19 @@ fn drop_ours(hooks: &mut Map<String, Value>, name: &str) {
     }
 }
 
-pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
-    remove_project_status_lines(host).await?;
-    let mut settings = read_settings(host).await?;
+/// Takes the status line and the hooks out of ~/.claude/settings.json, redone when it changed in
+/// between; false when it changed every time.
+async fn uninstall_settings(host: &Host) -> HubResult<bool> {
+    for _ in 0..3 {
+        if uninstall_settings_once(host).await? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn uninstall_settings_once(host: &Host) -> HubResult<bool> {
+    let (mut settings, sum) = read_settings(host).await?;
     let sl = settings.get("statusLine").cloned();
     if is_our_status(sl.as_ref().at("command")) {
         let orig = cat_trimmed(host, r#"cat "$HOME/.inyon/statusline.orig" 2>/dev/null"#).await?;
@@ -501,7 +553,14 @@ pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
             settings.shift_remove("hooks");
         }
     }
-    write_settings(host, &settings).await?;
+    write_settings(host, &settings, &sum).await
+}
+
+pub async fn uninstall_integration(host: &Host) -> HubResult<()> {
+    remove_project_status_lines(host).await?;
+    if !uninstall_settings(host).await? {
+        return Err(settings_kept_changing());
+    }
     // the hook's log holds your prompts: it goes with the hook
     host.run(r#"rm -f "$HOME/.inyon/hook.sh" "$HOME/.inyon/statusline.sh" "$HOME/.inyon/statusline.orig" "$HOME/.inyon/events.jsonl" "$HOME/.inyon/events.old.jsonl""#).await?;
     crate::claude::agent_hooks::uninstall_agent_hooks(host).await?;

@@ -36,6 +36,15 @@ fn code(m: &Value) -> i32 {
 
 impl HostBackend for NodeBackend {
     fn exec(&self, config: &HostConfig, cmd: &str, opts: ExecOptions) -> LocalBoxFuture<'static, HubResult<ExecResult>> {
+        // a machine that dropped a moment ago is most likely coming back: a message sent meanwhile
+        // goes in once it's there, rather than failing
+        if node_link::reconnecting(&config.id) {
+            let (config, cmd) = (config.clone(), cmd.to_owned());
+            return Box::pin(async move {
+                node_link::back(&config.id).await;
+                NodeBackend.exec(&config, &cmd, opts).await
+            });
+        }
         let result: Deferred<ExecResult> = Deferred::new();
         let op_cell: Rc<RefCell<Option<NodeOp>>> = Rc::default();
         let timer_cell: Rc<RefCell<Option<Timer>>> = Rc::default();
