@@ -417,19 +417,19 @@ function AddFolderSheet({ open, onClose }: { open: boolean; onClose: () => void 
   )
 }
 
-/** "Pages on this machine", on a machine's page; nothing when it has none. */
-export function MachinePages({ host }: { host: string }) {
-  const all = usePages((s) => s.pages)
+/**
+ * Pages as rows in one card, each a link to its viewer with the page menu: on a machine's page, in
+ * a session's Pages tab and under a reply that links to them. `where` adds the machine's name.
+ */
+export function PageRows({ pages, where, className }: { pages: Page[]; where?: boolean; className?: string }) {
   const seen = usePages((s) => s.seen)
   const nav = useNavigate()
-  const machine = useMachines()(host)
-  const pages = useMemo(() => (all ?? []).filter((p) => p.host === host).sort((a, b) => changedAt(b) - changedAt(a)), [all, host])
-  if (!pages.length) return null
+  const machineOf = useMachines()
   return (
-    <section className="mt-8">
-      <SectionLabel>Pages on this machine</SectionLabel>
-      <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
-        {pages.map((p) => (
+    <div className={clsx('divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card', className)}>
+      {pages.map((p) => {
+        const machine = machineOf(p.host)
+        return (
           <Link key={p.id} to={pageHref(p.host, p.slug)} {...contextMenu(() => pageMenu(p, machine, nav), { touch: true, header: p.name })} className="flex min-h-[52px] items-center gap-3 px-4 py-2.5 hover:bg-hover/60 active:bg-hover">
             <PanelsTopLeft className="size-4 shrink-0 text-fg-3" />
             <div className="min-w-0 flex-1">
@@ -438,19 +438,33 @@ export function MachinePages({ host }: { host: string }) {
                 {isChanged(p, seen) && <ChangedDot />}
               </div>
               <div className="truncate font-mono text-[12px] text-fg-3">
-                {projectName(p.project)} · {updatedLine(p)}
+                {where ? `${machine.name} · ` : ''}
+                {p.progress?.now ? p.progress.now : projectName(p.project)} · {machine.online ? updatedLine(p) : 'offline'}
               </div>
             </div>
             {p.progress && (
-              <span className="tabular hidden items-center gap-2 font-mono text-[12px] text-fg-2 sm:flex">
-                <ProgressBar done={p.progress.done} total={p.progress.total} className="h-[3px] w-12" />
+              <span className="tabular flex shrink-0 items-center gap-2 font-mono text-[12px] text-fg-2">
+                <ProgressBar done={p.progress.done} total={p.progress.total} className="h-[3px] w-12 max-sm:hidden" />
                 {p.progress.done}/{p.progress.total}
               </span>
             )}
             <ChevronRight className="size-4 shrink-0 text-fg-3" />
           </Link>
-        ))}
-      </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** "Pages on this machine", on a machine's page; nothing when it has none. */
+export function MachinePages({ host }: { host: string }) {
+  const all = usePages((s) => s.pages)
+  const pages = useMemo(() => (all ?? []).filter((p) => p.host === host).sort((a, b) => changedAt(b) - changedAt(a)), [all, host])
+  if (!pages.length) return null
+  return (
+    <section className="mt-8">
+      <SectionLabel>Pages on this machine</SectionLabel>
+      <PageRows pages={pages} />
     </section>
   )
 }

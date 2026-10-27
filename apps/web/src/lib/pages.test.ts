@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, frameMessage, frameSrc, groupPages, isChanged, leftText, loadPages, localDeadline, markSeen, matchesPage, pageHosts, pageId,
-  previewRefusal, projectName, renewIn, shouldRenew, usePages, type Page,
+  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupPages, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
+  pageHosts, pageId, previewRefusal, projectName, renewIn, sessionPages, shouldRenew, usePages, type Page,
 } from './pages.ts'
 import { api } from '../test/fakes.ts'
 import { ApiError } from './api.ts'
@@ -49,6 +49,45 @@ describe('grouping', () => {
     expect(matchesPage(p, 'studio', 'handy')).toBe(false)
     expect(matchesPage(p, 'studio', '  ')).toBe(true)
     expect(projectName('/a/b/c/')).toBe('c')
+  })
+})
+
+describe("a session's pages", () => {
+  const plan = entry('plan', { added: 5 })
+  const site = entry('site', { project: '/home/me/code/site', folder: '/home/me/code/site/docs', added: 9 })
+  const scratch = entry('scratch', { project: '/home/me/scratch/x', folder: '/home/me/scratch/x' })
+  const win = entry('win', { host: 'laptop', project: 'C:\\Dev\\Robot', folder: 'C:\\Dev\\Robot\\plans' })
+  const all = [plan, site, scratch, win]
+  test("the session's project, from anywhere inside it", () => {
+    expect(sessionPages(all, 'local', '/home/me/code/app').map((p) => p.slug)).toEqual(['plan'])
+    expect(sessionPages(all, 'local', '/home/me/code/app/apps/web/').map((p) => p.slug)).toEqual(['plan'])
+    // not a folder that only starts the same
+    expect(sessionPages(all, 'local', '/home/me/code/application')).toEqual([])
+  })
+  test('pages in folders under the session, but not every page under a home folder', () => {
+    expect(sessionPages(all, 'local', '/home/me/code').map((p) => p.slug)).toEqual(['site', 'plan'])
+    expect(sessionPages(all, 'local', '/home/me')).toEqual([])
+    expect(sessionPages(all, 'local', '/')).toEqual([])
+  })
+  test('the same machine only, Windows paths in any case and slash', () => {
+    expect(sessionPages(all, 'laptop', 'c:/dev/robot').map((p) => p.slug)).toEqual(['win'])
+    expect(sessionPages(all, 'laptop', '/home/me/code/app')).toEqual([])
+    expect(sessionPages(all, 'local', undefined)).toEqual([])
+    expect(folderKey('C:\\Dev\\')).toBe('c:/dev')
+    expect(folderKey('/')).toBe('/')
+  })
+})
+
+describe('pages a reply links to', () => {
+  test('what inyon pages add prints, each once, and the full address', () => {
+    const text = 'Added it. Open it in the app at /pages/local/my-plan\nor `/pages/local/my-plan`, and https://hub.example:8080/pages/laptop/robot.'
+    expect(linkedPages(text, 'local')).toEqual(['local/my-plan', 'laptop/robot'])
+  })
+  test("a session through a paired hub names that hub's machines", () => {
+    expect(linkedPages('at /pages/local/my-plan', 'hub:h1/laptop')).toEqual(['hub:h1/local/my-plan'])
+  })
+  test('not a source path that has pages in it', () => {
+    expect(linkedPages('see apps/web/src/pages/Pages.tsx and /home/me/pages/local/x', 'local')).toEqual([])
   })
 })
 

@@ -69,6 +69,7 @@ The layers button in the header (or the side panel on a wide screen) shows what'
 - **Files** (from 0.17): the session's folder, read only. Open a folder, read a file with syntax highlighting, see an image, or read a Markdown file rendered (**Source** shows the text). **Mention** adds `@path` to your message. Files over 512 KB show their first 512 KB.
 - **Preview:** a dev server the agent started, in a frame, with a phone-width toggle. Inyon suggests the local ports it finds.
 - **Artifacts** (Claude Code): pages the agent published, with **Open**, **Copy link**, and a button that asks the agent to delete one.
+- **Pages** (from 0.22.3, when the session has any): the [pages](pages.md) in the session's project, with their progress. Tap one to open it.
 
 ## Reviewing changes
 

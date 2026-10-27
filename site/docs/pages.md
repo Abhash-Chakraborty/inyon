@@ -24,6 +24,8 @@ Open it in the app at /pages/local/my-plan
 
 In the app, **Add a folder** does the same: pick the machine, type the folder's full path (starting with `/`, or a drive letter on Windows) and a name.
 
+From 0.22.3 a page also shows where you work with the agent that made it. When a reply has the page's `/pages/…` link in it, the page shows as a card under the reply; tap it to open the page. A session's side panel (the **Activity** sheet on a phone) gets a **Pages** tab when the session has pages: those in its project, and those in folders under the one it runs in, on the same machine.
+
 ## Pages on your other computers
 
 From 0.22 the hub also shows the pages on the computers joined to it, such as a Windows laptop, and on servers it reaches over SSH that have `inyon` installed. Run `inyon pages add` on that computer, or use **Add a folder** and pick it, and the page shows under that computer's name. Both the hub and the computer need 0.22 or later; an older computer's pages don't show until you update it.

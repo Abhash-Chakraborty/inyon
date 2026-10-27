@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Clock3,
@@ -15,7 +15,9 @@ import { CopyButton, Markdown } from './Markdown.tsx'
 import { contextMenu, copyItem } from '../ui/ContextMenu.tsx'
 import { Fold, useFold } from '../ui/Fold.tsx'
 import { SpecialTool, ToolGroup, TurnSettled, useArrived } from './Tools.tsx'
-import { ChatAgent } from './agent.ts'
+import { ChatAgent, ChatHost } from './agent.ts'
+import { linkedPages, usePages } from '../../lib/pages.ts'
+import { PageRows } from '../pages/shared.tsx'
 
 export { ChatAgent }
 /** Rewinds the conversation to just before a message, when the agent can (Codex). */
@@ -221,6 +223,20 @@ export function AgentMark({ active }: { active?: boolean }) {
   return <AgentSpinner kind={kind} active={active} className="text-[19px]" />
 }
 
+/**
+ * The pages a finished reply links to (what `inyon pages add` prints), as cards that open them.
+ * Only pages the list has, so a link to one that's gone or on a hub this app doesn't reach shows
+ * nothing.
+ */
+function PageCards({ text }: { text: string }) {
+  const host = useContext(ChatHost)
+  const all = usePages((s) => s.pages)
+  const ids = useMemo(() => (host ? linkedPages(text, host) : []), [text, host])
+  const pages = useMemo(() => ids.flatMap((id) => all?.find((p) => p.id === id) ?? []).slice(0, 3), [ids, all])
+  if (!pages.length) return null
+  return <PageRows pages={pages} className="my-3" />
+}
+
 export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: Extract<Row, { type: 'assistant' }>; live: boolean }) {
   const text = row.parts.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('\n\n')
   const menu = contextMenu((e) => {
@@ -244,6 +260,7 @@ export const AssistantTurn = memo(function AssistantTurn({ row, live }: { row: E
             <PartView key={p.key} part={p} live={live && row.open} />
           ))}
         </TurnSettled.Provider>
+        {!row.open && text.includes('/pages/') && <PageCards text={text} />}
         {!row.open && (
           <div className="mt-1 flex h-7 items-center gap-1 text-[12px] text-fg-3 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 max-sm:opacity-100">
             {text && <CopyButton text={text} className="-ml-1.5" />}
