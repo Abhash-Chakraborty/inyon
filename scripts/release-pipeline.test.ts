@@ -127,6 +127,13 @@ describe('the release list', () => {
     // no signing of its own
     expect(script).not.toContain('minisign -S')
   })
+
+  test('node.yml run again on a tag keeps the APK line through keep-apk.sh, before it signs', () => {
+    const script = run('node.yml', 'publish')
+    const keep = script.indexOf('.github/scripts/keep-apk.sh" "$was" SHA256SUMS')
+    expect(keep).toBeGreaterThan(script.indexOf('xargs sha256sum > SHA256SUMS'))
+    expect(script.indexOf('minisign -S')).toBeGreaterThan(keep)
+  })
 })
 
 // ---------- list-apk.sh against the test key ----------
@@ -227,5 +234,52 @@ describe.skipIf(!SIGNED)('list-apk.sh', () => {
     expect((await listApk(sums, { KEY: '' })).code).toBe(1)
     expect((await listApk(sums, { PUBKEY: '' })).code).toBe(1)
     expect(read(sums)).toBe(LIST)
+  })
+})
+
+// ---------- keep-apk.sh against the test key ----------
+
+describe.skipIf(!SIGNED)('keep-apk.sh', () => {
+  let dir: string
+  const OLD = `${sha('cli')}  inyon-linux-x64\n${sha('the app')}  inyon-0.20.0.apk\n`
+  const NEW = `${sha('cli 2')}  inyon-linux-x64\n`
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'inyon-keep-apk-'))
+    writeFileSync(path.join(dir, 'inyon-0.20.0.apk'), 'the app')
+    writeFileSync(path.join(dir, 'SHA256SUMS'), OLD)
+    Bun.spawnSync(['minisign', '-S', '-s', path.join(KEYS, 'test.key'), '-m', path.join(dir, 'SHA256SUMS'), '-x', path.join(dir, 'SHA256SUMS.minisig')], { stdin: 'ignore' })
+    writeFileSync(path.join(dir, 'new'), NEW)
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  async function keep(env: Record<string, string> = {}) {
+    const p = Bun.spawn(['/bin/sh', path.join(ROOT, '.github/scripts/keep-apk.sh'), dir, path.join(dir, 'new')], {
+      env: { PATH: process.env.PATH!, PUBKEY, ...env },
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited])
+    return { code, out: out + err, list: readFileSync(path.join(dir, 'new'), 'utf8') }
+  }
+
+  test('keeps the APK line from the signed list, once', async () => {
+    expect(await keep()).toMatchObject({ code: 0, list: `${NEW}${sha('the app')}  inyon-0.20.0.apk\n` })
+    expect((await keep()).list).toBe(`${NEW}${sha('the app')}  inyon-0.20.0.apk\n`)
+  })
+
+  test('nothing is kept from a list changed after it was signed, or from an APK swapped since', async () => {
+    writeFileSync(path.join(dir, 'SHA256SUMS'), OLD.replace(sha('the app'), sha('evil')))
+    writeFileSync(path.join(dir, 'inyon-0.20.0.apk'), 'evil')
+    expect(await keep()).toMatchObject({ code: 0, list: NEW })
+    writeFileSync(path.join(dir, 'SHA256SUMS'), OLD)
+    const r = await keep()
+    expect(r).toMatchObject({ code: 0, list: NEW })
+    expect(r.out).toContain("doesn't match its signed line")
+  })
+
+  test('a first run, with nothing on the release yet, keeps nothing and goes on', async () => {
+    rmSync(path.join(dir, 'SHA256SUMS'))
+    expect(await keep()).toMatchObject({ code: 0, list: NEW })
+    expect((await keep({ PUBKEY: '' })).code).toBe(1)
   })
 })

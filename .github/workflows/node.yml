@@ -95,6 +95,8 @@ jobs:
         env:
           # a password-less minisign secret key; forks and runs without it get an unsigned list
           KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          PUBKEY: RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+          GH_TOKEN: ${{ github.token }}
         run: |
           cd "$RUNNER_TEMP/dist"
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
@@ -115,9 +117,18 @@ jobs:
             keyfile="$RUNNER_TEMP/minisign.key"
             # minisign wants the key file whole, a comment line above the key
             (umask 077 && { case "$KEY" in "untrusted comment:"*) ;; *) echo "untrusted comment: minisign secret key" ;; esac; printf '%s\n' "$KEY"; } > "$keyfile")
+            # run again on a tag after android.yml listed the APK: keep its line (keep-apk.sh
+            # takes it only from the list the release key signed), or the website stops at the
+            # release before
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              was="$RUNNER_TEMP/was" && mkdir -p "$was"
+              gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -p SHA256SUMS.minisig -D "$was" 2>/dev/null || true
+              gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'inyon-*.apk' -D "$was" 2>/dev/null || true
+              "$GITHUB_WORKSPACE/.github/scripts/keep-apk.sh" "$was" SHA256SUMS
+            fi
             minisign -S -s "$keyfile" -m SHA256SUMS -x SHA256SUMS.minisig < /dev/null
             rm -f "$keyfile"
-            minisign -V -m SHA256SUMS -x SHA256SUMS.minisig -P RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
+            minisign -V -m SHA256SUMS -x SHA256SUMS.minisig -P "$PUBKEY"
           else
             echo "::notice::MINISIGN_SECRET_KEY isn't set, so SHA256SUMS is not signed"
           fi
