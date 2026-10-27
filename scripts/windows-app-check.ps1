@@ -84,9 +84,17 @@ function Cdp([string] $method, $params = @{}) {
   }
 }
 
-# runs `js` (an async function body) in the page and returns what it returns, or fails
+# runs `js` (an async function body) in the page and returns what it returns, or fails. A page that
+# loads again while the call runs (the window can navigate once more as it starts) ends the context
+# it ran in, with "Execution context was destroyed"; that call is tried again, up to five times.
 function Page([string] $what, [string] $js) {
-  $r = Cdp 'Runtime.evaluate' @{ expression = "(async () => { $js })()"; awaitPromise = $true; returnByValue = $true; timeout = 60000 }
+  for ($try = 1; ; $try++) {
+    $r = Cdp 'Runtime.evaluate' @{ expression = "(async () => { $js })()"; awaitPromise = $true; returnByValue = $true; timeout = 60000 }
+    $said = $r.error.message ?? $r.result.exceptionDetails.exception.description ?? ''
+    if ($try -ge 5 -or $said -notmatch 'Execution context was destroyed|Cannot find context') { break }
+    Write-Host "$what`: the page loaded again, trying once more"
+    Start-Sleep -Seconds 1
+  }
   if ($r.error) { Fail "$what`: $($r.error.message)" }
   if ($r.result.exceptionDetails) { Fail "$what`: $($r.result.exceptionDetails.exception.description ?? $r.result.exceptionDetails.text)" }
   $r.result.result.value
