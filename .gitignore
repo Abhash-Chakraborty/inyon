@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-hosted
+# the Rust phone core as wasm, written by apps/web/scripts/phone-core.ts
+apps/web/src/phone-core/
 *.tsbuildinfo
 .DS_Store
 

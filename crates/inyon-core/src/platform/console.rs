@@ -17,11 +17,13 @@ pub fn set_sink(sink: Option<Sink>) {
 }
 
 fn write(error: bool, line: &str) {
-    if let Some(f) = SINK.with(|s| s.borrow().clone()) {
-        return f(error, line);
+    match SINK.with(|s| s.borrow().clone()) {
+        Some(f) => f(error, line),
+        #[cfg(not(target_arch = "wasm32"))]
+        None => eprintln!("{line}"),
+        #[cfg(target_arch = "wasm32")]
+        None => {}
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    eprintln!("{line}");
 }
 
 /// `console.log(line)`
