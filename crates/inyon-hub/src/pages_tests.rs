@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use axum::http::Method;
-use http_body_util::BodyExt;
 use inyon_core::features::pages_core::{error_page, pages_key, verify_token, VerifyContext, CANT_WRITE_LIST, GIT_TIMEOUT_MS, NO_INDEX, PAGES_LIST_MAX, PRIVATE_FOLDER, TOO_WIDE};
 use inyon_core::platform::store::kv;
 use serde_json::{json, Value};
@@ -132,7 +131,7 @@ fn hub(home: &Path, now: Rc<Cell<u64>>) {
     crate::phones::init();
     kv::set_value(EPOCHS_KEY, &t["epochs"]).unwrap();
     install(Pages::new(home.to_owned(), Rc::new(move || now.get())));
-    let mut routes = Routes::default();
+    let mut routes = crate::server::hub_routes();
     add(&mut routes);
     install_ctx(
         CtxInit {
@@ -161,7 +160,7 @@ fn now_ms() -> u64 {
 }
 
 async fn body_json(r: Resp) -> Value {
-    let b = r.into_body().collect().await.unwrap().to_bytes();
+    let b = r.into_body().bytes().await.unwrap();
     serde_json::from_slice(&b).unwrap_or(Value::Null)
 }
 
@@ -1391,7 +1390,7 @@ fn view_refuses_a_host_the_hub_does_not_answer_to_even_with_a_signed_in_cookie()
         assert_eq!(res.status().as_u16(), 421);
         assert!(res.headers()["content-security-policy"].to_str().unwrap().starts_with("sandbox allow-scripts allow-forms allow-popups allow-downloads;"));
         assert!(res.headers().get("set-cookie").is_none());
-        let b = res.into_body().collect().await.unwrap().to_bytes();
+        let b = res.into_body().bytes().await.unwrap();
         assert_eq!(String::from_utf8_lossy(&b), error_page(421));
         // and a forwarded name it doesn't know, behind a local proxy
         let res = dispatch(test_req("GET", &url, &[("host", HOST), ("x-forwarded-host", "evil.example")], "")).await;
@@ -1522,7 +1521,7 @@ async fn view(url: &str, headers: &[(&str, &str)]) -> (u16, Vec<(String, String)
     let r = dispatch(test_req("GET", url, &h, "")).await;
     let status = r.status().as_u16();
     let headers = r.headers().iter().map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_owned())).collect();
-    (status, headers, r.into_body().collect().await.unwrap().to_bytes().to_vec())
+    (status, headers, r.into_body().bytes().await.unwrap().to_vec())
 }
 
 // a laptop joined to the hub made pages with Blueprint, and the hub's Pages never showed them

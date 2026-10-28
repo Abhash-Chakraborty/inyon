@@ -86,7 +86,7 @@ fn post(routes: &mut Routes, pattern: &str, f: ApiHandler, o: Opts) {
 const ALREADY: &str = "This hub already has a password. Sign in instead.";
 
 pub fn routes(updater: Rc<crate::hub_update::HubUpdater>) -> Routes {
-    let mut r = Routes::default();
+    let mut r = crate::server::hub_routes();
     r.add(
         "/api/session",
         Route::Any(api(

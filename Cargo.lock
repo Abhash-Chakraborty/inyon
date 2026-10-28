@@ -1479,6 +1479,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "inyon-api"
+version = "0.22.5"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "futures-util",
+ "getrandom 0.3.4",
+ "http",
+ "indexmap",
+ "inyon-backends",
+ "inyon-core",
+ "inyon-protocol",
+ "regex",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "inyon-backends"
 version = "0.22.5"
 dependencies = [
@@ -1579,6 +1600,7 @@ version = "0.22.5"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "bytes",
  "flate2",
  "futures-util",
  "getrandom 0.3.4",
@@ -1587,6 +1609,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "indexmap",
+ "inyon-api",
  "inyon-backends",
  "inyon-core",
  "inyon-engine",

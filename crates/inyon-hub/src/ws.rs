@@ -121,7 +121,7 @@ fn handshake(req: &Req) -> Option<Resp> {
         return None;
     }
     let key = req.header("sec-websocket-key").filter(|k| !k.is_empty())?;
-    let mut r = Response::new(axum::body::Body::empty());
+    let mut r = Response::new(crate::http::Body::empty());
     *r.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     r.headers_mut().insert(header::UPGRADE, HeaderValue::from_static("websocket"));
     r.headers_mut().insert(header::CONNECTION, HeaderValue::from_static("Upgrade"));
@@ -280,7 +280,7 @@ pub fn app_upgrade(mut req: Req) -> Resp {
     if !as_phone && !is_authed(&req) {
         return text(401, "Not signed in");
     }
-    let (Some(res), Some(on)) = (handshake(&req), req.upgrade.take()) else { return text(400, "Upgrade failed") };
+    let (Some(res), Some(on)) = (handshake(&req), req.extensions.remove::<hyper::upgrade::OnUpgrade>()) else { return text(400, "Upgrade failed") };
     let (sock, ends) = Socket::new();
     let s = sock.clone();
     let client = new_client(move |msg| s.send_text(wire(msg)));
@@ -310,7 +310,7 @@ fn companion_upgrade(mut req: Req, c: crate::companions::CompanionRecord) -> Res
     if let Some(refused) = crate::companions::contract_refusal(&req, req.query_get("contract")) {
         return refused;
     }
-    let (Some(res), Some(on)) = (handshake(&req), req.upgrade.take()) else { return text(400, "Upgrade failed") };
+    let (Some(res), Some(on)) = (handshake(&req), req.extensions.remove::<hyper::upgrade::OnUpgrade>()) else { return text(400, "Upgrade failed") };
     let (sock, ends) = Socket::new();
     let scopes = Rc::new(c.scopes.clone());
     let (s, sc) = (sock.clone(), scopes.clone());
@@ -360,7 +360,7 @@ pub async fn node_upgrade(mut req: Req) -> Resp {
             return text(403, if other.is_some() { "This pairing command expired; get a new one from the hub" } else { "Unknown token" });
         }
     };
-    let (Some(res), Some(on)) = (handshake(&req), req.upgrade.take()) else { return text(400, "Upgrade failed") };
+    let (Some(res), Some(on)) = (handshake(&req), req.extensions.remove::<hyper::upgrade::OnUpgrade>()) else { return text(400, "Upgrade failed") };
     let (sock, ends) = Socket::new();
     let id = cfg.id.clone();
     let (a, b, c) = (id.clone(), id.clone(), id.clone());

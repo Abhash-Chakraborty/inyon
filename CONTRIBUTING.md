@@ -61,8 +61,9 @@ apps/hub           the Bun hub: machines, tmux, agent readers, API, WebSocket
 apps/node          inyon-engine, the Bun program a hub runs on (and INYON_LEGACY_ENGINE=1)
 apps/web           React + Vite app, also served by the hub
 apps/mobile        Capacitor shell for Android (and an unshipped iOS project); scripts/icons.ts renders every icon
-crates/            the Rust side: inyon-core (readers, machines), inyon-hub (the opt-in Rust hub),
-                   inyon-engine and inyon-link (the phone link), inyon-backends, inyon-protocol
+crates/            the Rust side: inyon-core (readers, machines), inyon-api (the routes and app
+                   sockets, no server), inyon-hub (the hub), inyon-engine and inyon-link (the
+                   phone link), inyon-backends, inyon-protocol
 packages/protocol  types and the agent registry shared by hub and app
 packages/link      the phone link in TypeScript (Noise, pkarr, relay)
 conformance/       recorded scenarios both hubs must answer the same way

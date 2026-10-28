@@ -1,12 +1,11 @@
 //! The inyon command on the API: a joined machine's token or the hub's local token reads the
 //! machines, sessions and pages, and holds a message for an agent only as far as Settings allows.
 
-use http_body_util::BodyExt;
 use inyon_core::platform::store::kv;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::server::{dispatch, install_ctx, test_req, CtxInit, Routes};
+use crate::server::{dispatch, install_ctx, test_req, CtxInit};
 
 const HOST: &str = "hub.test:4777";
 const LOCAL: &str = "the-local-token";
@@ -19,7 +18,7 @@ fn hub() {
     crate::auth::init();
     crate::phones::init();
     crate::companions::init();
-    let mut routes = Routes::default();
+    let mut routes = crate::server::hub_routes();
     crate::core_routes::add(&mut routes);
     install_ctx(
         CtxInit {
@@ -57,7 +56,7 @@ async fn ask(method: &str, path: &str, token: &str, body: &str, peer: Option<&st
     }
     let res = dispatch(req).await;
     let status = res.status().as_u16();
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let bytes = res.into_body().bytes().await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 

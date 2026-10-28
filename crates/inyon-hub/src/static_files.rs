@@ -2,7 +2,7 @@
 //! serves it: the file asked for, or index.html for any other path (the app routes itself), with
 //! the page headers on both.
 
-use axum::body::Body;
+use crate::http::Body;
 use axum::http::{header, HeaderValue, Response, StatusCode};
 use rust_embed::RustEmbed;
 

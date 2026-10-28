@@ -122,6 +122,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_hub_gives_up_on_a_machines_temp_files_before_the_idle_limit_drops_the_app() {
+        use inyon_core::features::temp;
+        let idle = u64::try_from(super::IDLE.as_millis()).unwrap();
+        assert!(temp::WAIT < temp::DELETE_WAIT && temp::DELETE_WAIT < idle);
+    }
+
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

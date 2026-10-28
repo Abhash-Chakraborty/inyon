@@ -52,6 +52,10 @@ jobs:
       # and transcript tail against them, each tmux test on a server in a folder of its own
       - run: command -v tmux || { sudo apt-get update -q && sudo apt-get install -y -q tmux; }
       - run: cargo test -p inyon-backends
+      # the API every hub serves (from 0.23 its own crate): the core routes and the app's
+      # WebSocket clients, which the phone app will run as wasm, so it builds as wasm too
+      - run: cargo test -p inyon-api
+      - run: cargo check --target wasm32-unknown-unknown -p inyon-api
       # the hub in Rust (from 0.20): its routes, sockets, sign-in and updates, as the Bun hub's
       # tests had them
       - run: cargo test -p inyon-hub
@@ -135,7 +139,7 @@ jobs:
       # Windows has no hub; the others run its tests on their own system too (sockets, file limits)
       - name: Test the hub
         if: ${{ !matrix.cross && !startsWith(matrix.runner, 'windows') }}
-        run: cargo test --target ${{ matrix.target }} -p inyon-hub
+        run: cargo test --target ${{ matrix.target }} -p inyon-api -p inyon-hub
       # the hub in Rust (INYON_HUB_IMPL=rust) carries the web app, embedded from apps/web/dist
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: ${{ !startsWith(matrix.runner, 'windows') }}

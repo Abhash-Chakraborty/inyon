@@ -16,7 +16,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use axum::body::{Body, Bytes};
+use bytes::Bytes;
+
+use crate::http::Body;
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
 use inyon_core::features::pages_core::{
     decide_view, gone_after_open, is_slug, mint_token, pages_key, progress_summary, site_path_problem, slugify, split_view_target, too_big, unique_slug, verify_token, view_origin,

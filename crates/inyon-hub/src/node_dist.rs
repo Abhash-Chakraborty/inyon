@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use axum::body::Body;
+use crate::http::Body;
 use axum::http::{header, HeaderValue, Response, StatusCode};
 use futures_util::future::{FutureExt, LocalBoxFuture, Shared};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};

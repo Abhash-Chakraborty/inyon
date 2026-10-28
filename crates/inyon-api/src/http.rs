@@ -4,12 +4,12 @@
 
 use std::net::SocketAddr;
 
-use axum::body::Body;
-use axum::http::{header, HeaderMap, HeaderValue, Method, Response, StatusCode};
-use http_body_util::BodyExt;
+use http::{header, Extensions, HeaderMap, HeaderValue, Method, Response, StatusCode};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::platform::console;
 use serde_json::{Map, Value};
+
+pub use crate::body::Body;
 
 pub type Resp = Response<Body>;
 
@@ -27,8 +27,8 @@ pub struct Req {
     pub https: bool,
     pub body: Option<Body>,
     pub params: Vec<(String, String)>,
-    /// the connection, for a WebSocket upgrade
-    pub upgrade: Option<hyper::upgrade::OnUpgrade>,
+    /// what the server carrying the request adds (the hub's connection, for a WebSocket upgrade)
+    pub extensions: Extensions,
 }
 
 impl Req {
@@ -88,14 +88,12 @@ impl Req {
             return Err(http(413, message));
         }
         let mut out = Vec::new();
-        while let Some(frame) = body.frame().await {
-            let frame = frame.map_err(|e| HubError::plain(e.to_string()))?;
-            if let Ok(data) = frame.into_data() {
-                out.extend_from_slice(&data);
-                if out.len() > limit {
-                    drain(body).await;
-                    return Err(http(413, message));
-                }
+        while let Some(data) = body.next_chunk().await {
+            let data = data.map_err(|e| HubError::plain(e.to_string()))?;
+            out.extend_from_slice(&data);
+            if out.len() > limit {
+                drain(body).await;
+                return Err(http(413, message));
             }
         }
         Ok(out)
@@ -125,14 +123,14 @@ impl Req {
 async fn drain(mut body: Body) {
     let mut seen = 0usize;
     let read = async {
-        while let Some(Ok(f)) = body.frame().await {
-            seen += f.data_ref().map_or(0, |d| d.len());
+        while let Some(Ok(d)) = body.next_chunk().await {
+            seen += d.len();
             if seen > 16 << 20 {
                 break;
             }
         }
     };
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), read).await;
+    futures_util::future::select(Box::pin(read), inyon_core::platform::rt::sleep(5_000)).await;
 }
 
 // ---------- answers ----------
@@ -346,6 +344,26 @@ pub fn sha256(s: &str) -> String {
     inyon_core::sha::sha256_hex(s)
 }
 
+/// A request for tests: method, path with query, headers, body.
+pub fn test_req(method: &str, path_q: &str, headers: &[(&str, &str)], body: &str) -> Req {
+    let (path, query) = path_q.split_once('?').unwrap_or((path_q, ""));
+    let mut h = HeaderMap::new();
+    for (k, v) in headers {
+        h.append(http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
+    }
+    Req {
+        method: method.parse().unwrap(),
+        path: path.to_owned(),
+        query: query.to_owned(),
+        headers: h,
+        peer: "127.0.0.1:50000".parse().unwrap(),
+        https: false,
+        body: Some(Body::from(body.to_owned())),
+        params: vec![],
+        extensions: Extensions::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,10 +385,10 @@ mod tests {
             } else {
                 Some(vec![b'a'; size])
             };
-            async move { chunk.map(|c| (Ok::<_, std::io::Error>(axum::body::Bytes::from(c)), ())) }
+            async move { chunk.map(|c| (Ok::<_, std::io::Error>(bytes::Bytes::from(c)), ())) }
         });
-        let mut r = crate::server::test_req("POST", "/api/login", &[], "");
-        r.body = Some(axum::body::Body::from_stream(stream));
+        let mut r = test_req("POST", "/api/login", &[], "");
+        r.body = Some(Body::from_stream(stream));
         (r, pulled)
     }
 
@@ -397,12 +415,12 @@ mod tests {
     #[test]
     fn small_bodies_still_parse_and_bad_ones_say_so() {
         crate::test_util::block(async {
-            let mut ok = crate::server::test_req("POST", "/", &[], r#"{"password":"pw"}"#);
+            let mut ok = test_req("POST", "/", &[], r#"{"password":"pw"}"#);
             assert_eq!(ok.json_body(8 * 1024).await.unwrap(), serde_json::json!({ "password": "pw" }));
-            let mut bad = crate::server::test_req("POST", "/", &[], "{nope");
+            let mut bad = test_req("POST", "/", &[], "{nope");
             assert_eq!(bad.body().await.unwrap_err().message, "Invalid JSON");
             let big = "x".repeat(9000);
-            let mut long = crate::server::test_req("POST", "/", &[("content-length", "9000")], &big);
+            let mut long = test_req("POST", "/", &[("content-length", "9000")], &big);
             let e = long.json_body(8 * 1024).await.unwrap_err();
             assert_eq!((e.status, e.message.as_str()), (Some(413), "Request too large"));
         });
