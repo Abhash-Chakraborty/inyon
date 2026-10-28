@@ -348,6 +348,17 @@ export function SpecialTool({ call, live }: { call: ToolCall; live: boolean }) {
                   <Check className="mt-0.5 size-3.5 shrink-0" />
                   {answers[q.question]}
                 </div>
+              ) : (q.options ?? []).some((o: any) => o.description || o.preview) ? (
+                // what each choice means, and its preview: the terminal shows only the highlighted one's
+                <ul className="mt-2 space-y-2.5">
+                  {(q.options ?? []).map((o: any, k: number) => (
+                    <li key={k} className="min-w-0">
+                      <div className="text-sm">{o.label}</div>
+                      {o.description && <div className="text-[13px] leading-relaxed text-fg-3">{o.description}</div>}
+                      {o.preview && <pre className="mt-1.5 max-h-72 overflow-auto rounded-xl border border-line bg-bg px-3 py-2 font-mono text-[12px] leading-[1.35] text-fg-2">{o.preview}</pre>}
+                    </li>
+                  ))}
+                </ul>
               ) : (
                 <div className="mt-1 text-sm text-fg-3">{(q.options ?? []).map((o: any) => o.label).join(' · ')}</div>
               )}

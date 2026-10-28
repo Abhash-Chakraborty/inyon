@@ -482,6 +482,31 @@ fn a_question_from_ask_user_question_takes_a_pick_and_a_typed_answer() {
     });
 }
 
+/// With previews, a number only moved the highlight: the chat's pick was taken (200) and nothing
+/// was answered. It moves the highlight and presses Enter.
+#[test]
+fn a_question_with_previews_is_answered_with_the_arrows_and_enter() {
+    run(|| async {
+        let shown = crate::test_support::screen_fixture("claude", "question-preview-tabs").join("\n");
+        let sent = Rc::new(RefCell::new(Vec::<String>::new()));
+        let s = sent.clone();
+        let _fake = Fake::install(move |_, cmd, _| {
+            if cmd.contains("capture-pane") {
+                return ok(&format!("@@CAP %8\n{shown}"));
+            }
+            if cmd.contains("send-keys") {
+                s.borrow_mut().push(cmd.to_owned());
+            }
+            ok("")
+        });
+        pane("preview", json!([{ "id": "%8", "width": 200, "agent": { "kind": "claude", "pid": 7, "state": "working" } }]));
+        answer("preview", "%8", 2, None, None).await.unwrap();
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].contains("Down") && sent[0].trim_end().ends_with("Enter") && !sent[0].ends_with(" 2"), "{sent:?}");
+    });
+}
+
 // ---------- empty-send.test.ts ----------
 
 #[test]

@@ -151,6 +151,22 @@ describe('ChatView', () => {
     expect(screen.getByText('Red')).toBeTruthy()
   })
 
+  // the terminal draws only the highlighted option's preview, so the card shows every one
+  test("a question's choices show what they mean and their previews", async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'claude')] })] })
+    render(view())
+    const options = [
+      { label: 'Heading', description: 'The session name heads the group.', preview: '┌──────┐\n│ Legato │\n└──────┘' },
+      { label: 'On each row', description: 'Each page says where it came from.' },
+    ]
+    load([item.user('ask me'), item.tool('call_p', 'AskUserQuestion', { questions: [{ question: 'Where should it show?', options }] })])
+    await flush()
+    expect(screen.getByText('The session name heads the group.')).toBeTruthy()
+    expect(screen.getByText('Each page says where it came from.')).toBeTruthy()
+    expect(screen.getByText(/│ Legato │/).tagName).toBe('PRE')
+    expect(screen.queryByText('Heading · On each row')).toBeNull()
+  })
+
   test('a turn that stopped on an error says why under the last message, until the next prompt', async () => {
     const stopped = (failure?: { error: string }) => host('box', { panes: [agentPane('%1', 'claude', { agent: { kind: 'claude', pid: 1, state: 'idle', failure } })] })
     useStore.setState({ connected: true, hosts: [stopped({ error: 'authentication_failed' })] })

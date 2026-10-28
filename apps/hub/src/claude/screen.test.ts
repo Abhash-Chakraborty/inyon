@@ -31,6 +31,18 @@ test('ask user question, single select', () => {
   expect(p.tabs?.[0].current).toBe(true)
 })
 
+// the highlighted option's preview is drawn beside the labels; a number only moves the highlight
+test('ask user question with previews', () => {
+  const p = parseScreen(screenFixture('claude', 'question-preview-tabs')).prompt!
+  expect(p.body).toEqual(['Where should the live name show?'])
+  expect(p.options.map((o) => o.label)).toEqual(['Heading (Recommended)', 'On each row', 'Rename the page too'])
+  expect(p.options.every((o) => o.detail === undefined)).toBe(true)
+  expect(p.navigate).toBe(true)
+  const one = parseScreen(screenFixture('claude', 'question-preview')).prompt!
+  expect(one.body).toEqual(['Which layout?'])
+  expect(one.tabs?.map((t) => t.label)).toEqual(['Layout'])
+})
+
 test('ask user question, multi select', () => {
   const s = parseScreen(screenFixture('claude', 'question-multi'))
   const p = s.prompt!
