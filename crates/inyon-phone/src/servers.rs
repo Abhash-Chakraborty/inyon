@@ -223,6 +223,10 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
                             };
                             tidy_machine(&host, Some(state), &also).await;
                         }
+                        conn.forget(&id).await;
+                        keys.drop_secret(&id).await;
+                        // with nothing awaited between them: while it's still listed, the
+                        // registry's next change would have the phone connect to it again
                         let told = match cur.as_ref().filter(|c| c.kind == HostKind::Link) {
                             Some(c) => links.forget(&id, Some(c)),
                             None => {
@@ -230,8 +234,6 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
                                 true
                             }
                         };
-                        conn.forget(&id).await;
-                        keys.drop_secret(&id).await;
                         registry().remove(&id, true)?;
                         // only now: dropped any earlier, the registry would re-probe it and the
                         // phone connect again; what still waits on its link ends here

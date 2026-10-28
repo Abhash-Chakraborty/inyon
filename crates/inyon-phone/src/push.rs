@@ -57,12 +57,21 @@ pub fn start_node_push(phone_key: PhoneKey) {
     let (s1, k1) = (s.clone(), phone_key.clone());
     let _ = registry().on(move |e| {
         if matches!(e, RegistryEvent::Overview) {
+            forget_gone(&s1);
             sync(s1.clone(), k1.clone());
         }
     });
     let (s2, k2) = (s.clone(), phone_key.clone());
     on_registrations(move || sync(s2.clone(), k2.clone()));
     sync(s, phone_key);
+}
+
+/// A removed computer's entries go with it (the registry says so just after it removes one): one paired
+/// again under the same id starts from nothing, so it's given the registrations again.
+fn forget_gone(s: &Sync) {
+    let ids: std::collections::HashSet<String> = registry().overview().into_iter().map(|h| h.config.id).collect();
+    s.given.borrow_mut().retain(|id, _| ids.contains(id));
+    s.failed_at.borrow_mut().retain(|id, _| ids.contains(id));
 }
 
 fn sync(s: Rc<Sync>, phone_key: PhoneKey) {

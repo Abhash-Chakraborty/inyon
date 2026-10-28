@@ -6,6 +6,8 @@ use inyon_api::http::test_req;
 use inyon_core::platform::store::MemoryStore;
 use serde_json::Value;
 
+use inyon_core::platform::rt::Deferred;
+
 use super::*;
 use crate::phone::{start, Options, Phone};
 use crate::ssh::B64;
@@ -215,29 +217,38 @@ fn a_server_can_be_reached_through_a_paired_computer_instead_of_the_phone() {
     });
 }
 
+/// The phone, connected to a paired laptop ("laptop") at a LAN address.
+async fn with_laptop(seed: [u8; 32]) -> (Phone, Rc<FakeSsh>, Rc<FakeMachine>) {
+    let me = inyon_link::Identity::from_seed(seed);
+    let net = net();
+    let m = FakeMachine::new(9);
+    m.paired.borrow_mut().push(me.noise.public);
+    net.put("ws://10.0.0.5:4890", Answer::Machine(m.clone()));
+    let fake = FakeSsh::new();
+    fake.secrets.borrow_mut().insert("phone-key".into(), json!({ "seed": B64.encode(seed), "pub": B64.encode(me.public_key) }).to_string());
+    let p = start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone(), reach: net.reach(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) });
+    let laptop = HostConfig {
+        id: "laptop".into(),
+        name: "Laptop".into(),
+        kind: HostKind::Link,
+        machine_id: Some(m.id.id.clone()),
+        urls: Some(vec!["ws://10.0.0.5:4890".into()]),
+        relays: Some(vec![]),
+        ..empty_config()
+    };
+    registry().add(laptop, true).unwrap();
+    until(|| node_link::is_up("laptop")).await;
+    (p, fake, m)
+}
+
+fn pings(m: &FakeMachine) -> usize {
+    m.heard.borrow().iter().filter(|h| h["op"] == "ping").count()
+}
+
 #[test]
 fn removing_a_connected_computer_ends_what_waits_on_it_and_it_stays_removed() {
-    let seed = [7u8; 32];
-    let me = inyon_link::Identity::from_seed(seed);
     on_core(|| async move {
-        let net = net();
-        let m = FakeMachine::new(9);
-        m.paired.borrow_mut().push(me.noise.public);
-        net.put("ws://10.0.0.5:4890", Answer::Machine(m.clone()));
-        let fake = FakeSsh::new();
-        fake.secrets.borrow_mut().insert("phone-key".into(), json!({ "seed": B64.encode(seed), "pub": B64.encode(me.public_key) }).to_string());
-        let p = start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake, reach: net.reach(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) });
-        let laptop = HostConfig {
-            id: "laptop".into(),
-            name: "Laptop".into(),
-            kind: HostKind::Link,
-            machine_id: Some(m.id.id.clone()),
-            urls: Some(vec!["ws://10.0.0.5:4890".into()]),
-            relays: Some(vec![]),
-            ..empty_config()
-        };
-        registry().add(laptop, true).unwrap();
-        until(|| node_link::is_up("laptop")).await;
+        let (p, _, _) = with_laptop([7; 32]).await;
         // a stream the computer is still sending
         let ended = Rc::new(std::cell::RefCell::new(None));
         let e = ended.clone();
@@ -249,5 +260,29 @@ fn removing_a_connected_computer_ends_what_waits_on_it_and_it_stays_removed() {
         // nothing connects it again
         tokio::time::sleep(Duration::from_secs(60)).await;
         assert!(!node_link::is_up("laptop") && registry().get("laptop").is_none());
+    });
+}
+
+#[test]
+fn a_change_while_a_computer_is_being_removed_doesnt_connect_it_again() {
+    on_core(|| async move {
+        let (p, fake, m) = with_laptop([7; 32]).await;
+        // one from before 0.17 would take the phone back
+        m.ignores_unpair.set(true);
+        // the keystore is slow to answer, and something else changes meanwhile
+        let slow = Deferred::new();
+        fake.held.borrow_mut().insert("deleteSecret", slow.clone());
+        let meanwhile = async {
+            until(|| !fake.calls_of("deleteSecret").is_empty()).await;
+            registry().emit_for_test(inyon_core::hosts::registry::RegistryEvent::Overview);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            slow.resolve(());
+        };
+        let (removed, _) = futures_util::future::join(call(&p, "DELETE", "/api/hosts/laptop", Value::Null), meanwhile).await;
+        assert_eq!(removed.0, 200);
+        // no connection is left to ping it
+        let before = pings(&m);
+        tokio::time::sleep(Duration::from_secs(90)).await;
+        assert_eq!(pings(&m), before);
     });
 }

@@ -50,6 +50,8 @@ pub struct FakeSsh {
     pub exec_answer: RefCell<Option<Value>>,
     /// while set, connecting waits for it: the plugin still dialing
     pub dialing: RefCell<Option<Deferred<()>>>,
+    /// any other call waits for the one held for its method
+    pub held: RefCell<HashMap<&'static str, Deferred<()>>>,
 }
 
 impl FakeSsh {
@@ -92,7 +94,7 @@ impl SshPlugin for FakeSsh {
                 _ => Value::Null,
             }),
         };
-        let dialing = if method == "connect" { self.dialing.borrow().clone() } else { None };
+        let dialing = if method == "connect" { self.dialing.borrow().clone() } else { self.held.borrow().get(method).cloned() };
         Box::pin(async move {
             if let Some(d) = dialing {
                 d.wait().await;
@@ -253,6 +255,8 @@ pub struct FakeMachine {
     pub heard: RefCell<Vec<Value>>,
     pub hellos: RefCell<Vec<Value>>,
     pub answers_pings: Cell<bool>,
+    /// inyon before 0.17, which ignores being told to forget the phone
+    pub ignores_unpair: Cell<bool>,
     /// the addresses it lists in its welcome
     pub urls: RefCell<Vec<String>>,
 }
@@ -267,6 +271,7 @@ impl FakeMachine {
             heard: RefCell::default(),
             hellos: RefCell::default(),
             answers_pings: Cell::new(true),
+            ignores_unpair: Cell::new(false),
             urls: RefCell::default(),
         })
     }
@@ -298,7 +303,7 @@ impl FakeMachine {
         self.heard.borrow_mut().push(msg.clone());
         match msg["op"].as_str() {
             Some("ping") if self.answers_pings.get() => self.send(s, &json!({ "type": "pong", "t": msg["t"] })),
-            Some("unpair") => self.paired.borrow_mut().retain(|k| *k != s.phone_key),
+            Some("unpair") if !self.ignores_unpair.get() => self.paired.borrow_mut().retain(|k| *k != s.phone_key),
             Some("exec") => {
                 self.send(s, &json!({ "id": msg["id"], "type": "exit", "code": 0, "stdout": format!("ran {}", msg["cmd"].as_str().unwrap_or_default()), "stderr": "" }))
             }

@@ -85,6 +85,31 @@ fn removing_a_machine_has_the_page_make_new_push_keys_once_there_are_any() {
 }
 
 #[test]
+fn a_computer_paired_again_under_the_same_id_is_given_the_registrations_again() {
+    on_phone(|p, _| async move {
+        let id =
+            call(&p, "POST", "/api/hosts", json!({ "name": "Laptop", "target": "me@10.0.0.9", "hostKey": FINGERPRINT, "auth": "none" })).await.1["id"].as_str().unwrap().to_owned();
+        let s = Sync::default();
+        s.given.borrow_mut().insert(id.clone(), "what it had".into());
+        s.failed_at.borrow_mut().insert(id.clone(), 1);
+        forget_gone(&s);
+        assert!(s.given.borrow().contains_key(&id) && s.failed_at.borrow().contains_key(&id));
+        // removed: what it was given goes too, as the registry says it's gone
+        let s = Rc::new(s);
+        let s2 = s.clone();
+        let _ = registry().on(move |e| {
+            if matches!(e, RegistryEvent::Overview) {
+                forget_gone(&s2);
+            }
+        });
+        assert_eq!(call(&p, "DELETE", &format!("/api/hosts/{id}"), Value::Null).await.0, 200);
+        // the registry gathers its changes for 100 ms before saying so
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(s.given.borrow().is_empty() && s.failed_at.borrow().is_empty());
+    });
+}
+
+#[test]
 fn a_computer_is_given_what_it_needs_to_send_and_only_from_the_first_inyon_that_can() {
     let r = valid_registration(&browser(1)).unwrap();
     let input: Value = serde_json::from_str(&push_set_input("ab", "laptop", &[r])).unwrap();
