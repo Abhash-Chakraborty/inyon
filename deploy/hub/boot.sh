@@ -6,6 +6,12 @@ set -euo pipefail
 : "${PORT:=8080}"
 HUB_PORT=4777
 
+# The image's PATH starts with folders the inyon user, and every agent it runs, can write to. This
+# script runs as root first and then handles INYON_PASSWORD, so it finds programs in the system's
+# folders only. The hub gets the image's PATH back, for the shells and agents it starts.
+export INYON_USER_PATH=${INYON_USER_PATH:-$PATH}
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Hosts mount the volume root-owned (with a lost+found), so HOME is a folder inside it, given to
 # the inyon user before this script runs again as that user.
 if [ "$(id -u)" = 0 ]; then
@@ -17,28 +23,6 @@ fi
 
 export SHELL=/bin/bash USER=inyon
 mkdir -p "$INYON_DATA_DIR"
-git config --global init.defaultBranch main >/dev/null 2>&1 || true
-
-# The hub refuses any Host it wasn't told about (its DNS rebinding guard). The address the host
-# gave the service counts as its own; a custom domain goes in INYON_ALLOWED_HOSTS. The health
-# check is /healthz, which answers under any Host, but a Railway service set up for hmseeb's image
-# checks /api/session as healthcheck.railway.app, so that name stays allowed on Railway.
-railway_check=${RAILWAY_SERVICE_ID:+healthcheck.railway.app}
-for name in "${RAILWAY_PUBLIC_DOMAIN:-}" "${RENDER_EXTERNAL_HOSTNAME:-}" "$railway_check"; do
-  if [ -n "$name" ]; then INYON_ALLOWED_HOSTS="${INYON_ALLOWED_HOSTS:+$INYON_ALLOWED_HOSTS,}$name"; fi
-done
-export INYON_ALLOWED_HOSTS="${INYON_ALLOWED_HOSTS:-}"
-
-# Which address is the client, for the hub's per-address sign-in limit. Railway's edge sends
-# X-Forwarded-For as "<client>, <edge>" with an edge address that changes per request, and always
-# overwrites X-Real-IP with the client, whatever the client sent (measured on Railway). Elsewhere
-# (Render, plain Docker) Caddy reads X-Forwarded-For from the right past private addresses, which
-# a client can't fake (see the Caddyfile).
-if [ -n "${RAILWAY_SERVICE_ID:-}" ]; then
-  export INYON_CLIENT_IP='{http.request.header.X-Real-IP}'
-else
-  export INYON_CLIENT_IP='{client_ip}'
-fi
 
 # INYON_PASSWORD becomes the hub's password whenever the variable changes: applied before the hub
 # starts, with the hub's own reset-password (which signs everyone out). A change made in Settings
@@ -63,12 +47,41 @@ if [ -n "${INYON_PASSWORD:-}" ]; then
   fi
 fi
 
+# Then once more without it, so the hub, Caddy and everything the hub starts (tmux, agents) never
+# have the password in their environment, nor this process's /proc/1/environ
+if [ -n "${INYON_PASSWORD+set}" ]; then
+  exec env -u INYON_PASSWORD "$0" "$@"
+fi
+
+git config --global init.defaultBranch main >/dev/null 2>&1 || true
+
+# The hub refuses any Host it wasn't told about (its DNS rebinding guard). The address the host
+# gave the service counts as its own; a custom domain goes in INYON_ALLOWED_HOSTS. The health
+# check is /healthz, which answers under any Host, but a Railway service set up for hmseeb's image
+# checks /api/session as healthcheck.railway.app, so that name stays allowed on Railway.
+railway_check=${RAILWAY_SERVICE_ID:+healthcheck.railway.app}
+for name in "${RAILWAY_PUBLIC_DOMAIN:-}" "${RENDER_EXTERNAL_HOSTNAME:-}" "$railway_check"; do
+  if [ -n "$name" ]; then INYON_ALLOWED_HOSTS="${INYON_ALLOWED_HOSTS:+$INYON_ALLOWED_HOSTS,}$name"; fi
+done
+export INYON_ALLOWED_HOSTS="${INYON_ALLOWED_HOSTS:-}"
+
+# Which address is the client, for the hub's per-address sign-in limit. Railway's edge sends
+# X-Forwarded-For as "<client>, <edge>" with an edge address that changes per request, and always
+# overwrites X-Real-IP with the client, whatever the client sent (measured on Railway). Elsewhere
+# (Render, plain Docker) Caddy reads X-Forwarded-For from the right past private addresses, which
+# a client can't fake (see the Caddyfile).
+if [ -n "${RAILWAY_SERVICE_ID:-}" ]; then
+  export INYON_CLIENT_IP='{http.request.header.X-Real-IP}'
+else
+  export INYON_CLIENT_IP='{client_ip}'
+fi
+
 pids=()
 # a stop (a redeploy, docker stop) reaches both; the hub saves its records before it ends
 trap 'kill -TERM "${pids[@]}" 2>/dev/null || true' TERM INT
 
 # PORT and BIND are the hub's own names: scoped to the hub, so Caddy keeps the host's PORT.
-PORT=$HUB_PORT BIND=127.0.0.1 inyon hub &
+PORT=$HUB_PORT BIND=127.0.0.1 PATH=$INYON_USER_PATH /usr/local/bin/inyon hub &
 pids+=($!)
 
 session() { curl -fsS -m 3 "http://127.0.0.1:$HUB_PORT/api/session" 2>/dev/null; }

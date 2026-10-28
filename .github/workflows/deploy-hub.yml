@@ -38,13 +38,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # after a release, the tagged commit, whose Dockerfile names that release
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
       - name: Is its release out?
         id: release
+        env:
+          AFTER_RELEASE: ${{ github.event_name == 'workflow_run' }}
         run: |
           version=$(sed -n 's/^ARG INYON_VERSION=//p' deploy/hub/Dockerfile)
           if curl -fsIL -o /dev/null "https://github.com/Abhash-Chakraborty/inyon/releases/download/v$version/SHA256SUMS"; then
             echo out=true >> "$GITHUB_OUTPUT"
+          elif [ "$AFTER_RELEASE" = true ]; then
+            echo "::error::The release build finished, but v$version has no SHA256SUMS. Does the Dockerfile name this release?"
+            exit 1
           else
             echo "::notice::v$version isn't published yet, so there's nothing to build; the run after the release checks it."
             echo out=false >> "$GITHUB_OUTPUT"

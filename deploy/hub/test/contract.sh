@@ -101,6 +101,24 @@ docker run --rm $PLATFORM -v "$NAME:/data" --entrypoint test "$IMG" -s /data/hom
 docker start "$NAME" >/dev/null; wait_up "$URL" || exit 1
 [ "$(login "$PW" -H "Host: $HOST" -H "X-Real-IP: 203.0.113.2")" = 200 ] && ok "the password survives a restart (volume)" || no "after restart login failed"
 
+# Programs an agent drops in ~/.local/bin (first on the image's PATH) never run in the start
+# script, which runs as root and then handles the password. The hub still gets that PATH, so what
+# it runs itself (cat, head…) may come from there, as uid 1000
+docker exec -u inyon "$NAME" sh -c 'mkdir -p ~/.local/bin && for p in mkdir stat chown chmod setpriv env cut od sha256sum mv caddy; do
+  printf "#!/bin/sh\necho \"\$(id -u) \${0##*/}\" >> /tmp/hijacked 2>/dev/null\nPATH=/usr/local/bin:/usr/bin:/bin exec %s \"\$@\"\n" "$p" > ~/.local/bin/$p; chmod +x ~/.local/bin/$p; done'
+docker restart "$NAME" >/dev/null; wait_up "$URL" || exit 1
+ran=$(docker exec "$NAME" sh -c 'sort -u /tmp/hijacked 2>/dev/null' | grep -E '^0 | (stat|chown|setpriv|cut|od|sha256sum|caddy)$' | tr '\n' ' ')
+[ -z "$ran" ] && ok "the start script runs nothing from the user's PATH" || no "ran from ~/.local/bin: $ran"
+hub=$(docker exec "$NAME" pgrep -x inyon | head -1)
+hub_path=$(docker exec -u inyon "$NAME" sh -c "tr '\\0' '\\n' < /proc/$hub/environ" | sed -n 's/^PATH=//p')
+[[ $hub_path == /data/home/.local/bin:* ]] && ok "the hub keeps the image's PATH for what it starts" || no "hub PATH: $hub_path"
+docker exec "$NAME" sh -c 'rm -rf /data/home/.local/bin/* /tmp/hijacked'
+
+# INYON_PASSWORD is gone from the environment of the start script and the hub, which tmux and the
+# agents inherit. Caddy's comes from the start script too (its file capability keeps it unreadable)
+env_of=$(docker exec -u inyon "$NAME" sh -c 'for p in 1 $(pgrep -x inyon); do tr "\0" "\n" < /proc/$p/environ; done')
+[ -n "$env_of" ] && ! grep -q '^INYON_PASSWORD=' <<<"$env_of" && ok "neither the start script nor the hub has INYON_PASSWORD in its environment" || no "INYON_PASSWORD still in a process environment"
+
 # same volume, new container: what a redeploy (or a variable edit) does
 redeploy() { docker rm -f "$NAME" >/dev/null; start "$NAME" "$LOCAL" 9090 "${railway[@]}" -e INYON_PASSWORD="$1" || exit 1; }
 
