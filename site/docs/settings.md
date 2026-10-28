@@ -25,7 +25,7 @@ From 0.22, **Add an agent** below them saves a command of your own with the agen
 
 ## Companion
 
-From 0.22, on the hub's web app: start the [companion agent](companion-agent.md) with **Claude Code** or **Codex**, then **Open** its chat or **Stop** it. If its agent quits, **Start again** and **Turn off** take the place of the buttons. A hub on Bun says it has no companion.
+From 0.22, on the hub's web app: start the [companion agent](companion-agent.md) with **Claude Code** or **Codex**, then **Open** its chat or **Stop** it. If its agent quits, **Start again** and **Turn off** take the place of the buttons.
 
 ## Live numbers
 

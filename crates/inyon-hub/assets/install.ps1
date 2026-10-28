@@ -109,33 +109,22 @@ function Install-Program([string]$Name, [string]$Route, [string]$Want) {
 }
 function Hub-Sum([string]$Route) { ([string](Invoke-RestMethod -UseBasicParsing "$Hub/node/$Route.sha256?os=windows&arch=$arch")).Trim().ToLower() }
 
-# 1. inyon itself. From 0.13 the hub hands out two files: inyon.exe is the small command that
-#    services run, and the engine (Bun inside) comes apart as inyon-engine.exe. A hub from before
-#    lists one program, which is both. From 0.19 inyon.exe does the engine's work itself, and
-#    inyon-engine.exe is a copy of it marked as a windowed program, so no console opens when the
-#    task starts it. INYON_LEGACY_ENGINE=1 takes the Bun engine from the hub instead.
+# 1. inyon itself. From 0.19 inyon.exe does the engine's work too, and inyon-engine.exe is a copy
+#    of it marked as a windowed program, so no console opens when the task starts it. An inyon.exe
+#    with the engine built in carries a mark that says so; whether the hub also lists an engine
+#    file doesn't matter.
 $exe = Join-Path $Bin 'inyon.exe'
 $engine = Join-Path $Bin 'inyon-engine.exe'
-$engineSum = try { Hub-Sum 'inyon-engine' } catch { '' }
-$legacy = ($env:INYON_LEGACY_ENGINE, $env:TETHER_LEGACY_ENGINE | Where-Object { $_ } | Select-Object -First 1) -eq '1'
-if ($engineSum -match '^[0-9a-f]{64}$') {
-  Write-Host 'Downloading inyon...'
-  Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
-  if ($legacy) {
-    Write-Host 'Downloading the Inyon engine (about 40 MB)...'
-    Install-Program 'inyon-engine.exe' 'inyon-engine' $engineSum
-  } else {
-    # the subsystem field of the PE header: 2 is a windowed program, 3 a console one
-    $bytes = [IO.File]::ReadAllBytes($exe)
-    $at = [BitConverter]::ToInt32($bytes, 0x3c) + 4 + 20 + 68
-    $bytes[$at] = 2
-    $bytes[$at + 1] = 0
-    [IO.File]::WriteAllBytes("$engine.new", $bytes)
-    Move-Into "$engine.new" $engine
-  }
-} else {
-  Write-Host 'Downloading inyon (about 40 MB)...'
-  Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
+Write-Host 'Downloading inyon...'
+Install-Program 'inyon.exe' 'inyon' (Hub-Sum 'inyon')
+$bytes = [IO.File]::ReadAllBytes($exe)
+if ([Text.Encoding]::ASCII.GetString($bytes).Contains('inyon: the built-in engine, windowless copy')) {
+  # the subsystem field of the PE header: 2 is a windowed program, 3 a console one
+  $at = [BitConverter]::ToInt32($bytes, 0x3c) + 4 + 20 + 68
+  $bytes[$at] = 2
+  $bytes[$at + 1] = 0
+  [IO.File]::WriteAllBytes("$engine.new", $bytes)
+  Move-Into "$engine.new" $engine
 }
 
 # 2. A small POSIX shell (busybox-w32). The hub drives every machine with short sh scripts, and this

@@ -296,9 +296,16 @@ struct FakeHost {
     platform: Platform,
     arch: Arch,
     libc: Libc,
-    /// whether the machine needs the Bun engine (a hub, or the kill switch); the tests from before
-    /// 0.19 check that path, so it's on unless a test turns it off
-    engine: bool,
+}
+
+/// The system the tests act as: this one, except that Windows acts as Linux unless a test says
+/// Windows, since a Windows update makes the windowless copy from the program it fetched, and the
+/// programs here are made up.
+fn here() -> Platform {
+    match Platform::current() {
+        Platform::Windows => Platform::Linux,
+        p => p,
+    }
 }
 
 impl FakeHost {
@@ -313,10 +320,9 @@ impl FakeHost {
             old: Vec::new(),
             moved: RefCell::new(Vec::new()),
             order: RefCell::new(Vec::new()),
-            platform: Platform::current(),
+            platform: here(),
             arch: Arch::current(),
             libc: Libc::Glibc,
-            engine: true,
         }
     }
     fn restarted_roles(&self) -> Vec<Role> {
@@ -365,9 +371,6 @@ impl Host for FakeHost {
     fn libc(&self) -> Libc {
         self.libc
     }
-    fn wants_engine(&self) -> bool {
-        self.engine
-    }
 }
 
 struct Fixture {
@@ -382,7 +385,7 @@ impl Fixture {
         let home = Home::new(&[]);
         let server = Server::start();
         // the fake host says glibc whatever this machine runs, so the release carries those names
-        let names = release_names(Platform::current(), Arch::current(), Libc::Glibc).unwrap();
+        let names = release_names(here(), Arch::current(), Libc::Glibc).unwrap();
         fs::create_dir_all(home.dir.join(".inyon/bin")).unwrap();
         fs::write(home.dir.join(".inyon/bin/inyon"), "old build").unwrap();
         let (cli, engine) = (names.cli.clone(), names.engine.clone());
@@ -501,13 +504,12 @@ fn a_release_from_github_still_updates_through_its_redirect() {
     f.server.release(|r| r.listed = false);
     assert!(f.run(&host).unwrap().changed);
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.read(&f.engine()), "engine build");
     assert!(f.server.requests().iter().all(|r| !r.starts_with(SITE)), "{:?}", f.server.requests());
-    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.engine_name), format!("{}.gz", f.cli_name)]);
+    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.cli_name)]);
 }
 
 #[test]
-fn a_release_installs_the_engine_next_to_inyon_then_the_new_inyon_and_restarts_each_job() {
+fn a_release_installs_the_new_inyon_alone_and_restarts_each_job_on_it() {
     let _g = lock();
     let f = Fixture::new();
     let host = FakeHost::new(&f.server, &[Role::Link, Role::Hub]);
@@ -515,14 +517,14 @@ fn a_release_installs_the_engine_next_to_inyon_then_the_new_inyon_and_restarts_e
     assert!(r.changed);
     assert_eq!(r.version.as_deref(), Some("9.9.9"));
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.read(&f.engine()), "engine build");
     let cmd = vec![f.installed().to_string_lossy().into_owned()];
     assert_eq!(*host.restarts.borrow(), vec![(Role::Link, cmd.clone()), (Role::Hub, cmd)]);
     assert_eq!(*host.waited.borrow(), vec![Role::Link, Role::Hub]);
-    // the old copy is gone once the new one runs, and no download is left behind
-    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
-    // the gzipped copies, since the release lists them, the engine first
-    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.engine_name), format!("{}.gz", f.cli_name)]);
+    // the old copy is gone once the new one runs, and no download is left behind; the release's
+    // inyon-engine files are there for older versions, and a hub runs the one built in now
+    assert_eq!(f.bin_names(), vec!["inyon"]);
+    // the gzipped copy, since the release lists it
+    assert_eq!(f.server.downloads(), vec![format!("{}.gz", f.cli_name)]);
 }
 
 #[test]
@@ -571,25 +573,7 @@ fn a_release_without_gzipped_files_is_downloaded_plain() {
     let host = FakeHost::new(&f.server, &[Role::Link]);
     assert!(f.run(&host).unwrap().changed);
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.server.downloads(), vec![f.engine_name.clone(), f.cli_name.clone()]);
-}
-
-#[test]
-fn a_release_from_before_the_split_has_no_engine_so_nothing_is_changed_and_it_says_so() {
-    let _g = lock();
-    let f = Fixture::new();
-    let cli = f.cli_name.clone();
-    f.server.release(|r| {
-        r.files = [(cli, "new build".to_string())].into_iter().collect();
-    });
-    let host = FakeHost::new(&f.server, &[Role::Link]);
-    let r = f.run(&host).unwrap();
-    assert!(!r.changed);
-    assert!(r.message.contains(&f.engine_name), "{}", r.message);
-    assert!(r.message.contains("nothing was changed"));
-    assert_eq!(f.read(&f.installed()), "old build");
-    assert!(f.server.downloads().is_empty());
-    assert!(host.restarts.borrow().is_empty());
+    assert_eq!(f.server.downloads(), vec![f.cli_name.clone()]);
 }
 
 #[test]
@@ -599,7 +583,7 @@ fn a_download_that_does_not_match_sha256sums_changes_nothing() {
     let (cli, engine) = (f.cli_name.clone(), f.engine_name.clone());
     f.server.release(|r| {
         r.gz = false;
-        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"something else"), sha(b"cli build"));
+        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"engine build"), sha(b"something else"));
     });
     let host = FakeHost::new(&f.server, &[Role::Link]);
     let err = f.run(&host).unwrap_err().to_string();
@@ -613,22 +597,21 @@ fn a_download_that_does_not_match_sha256sums_changes_nothing() {
 fn the_gzipped_file_is_checked_before_it_is_unpacked_and_the_unpacked_file_after() {
     let _g = lock();
     let f = Fixture::new();
-    let (cli, engine) = (f.cli_name.clone(), f.engine_name.clone());
-    let plain = sha(b"engine build");
-    let gz = sha(&gzip(b"engine build"));
-    let cli_sums = format!("{}  {cli}\n{}  {cli}.gz\n", sha(b"cli build"), sha(&gzip(b"cli build")));
+    let cli = f.cli_name.clone();
+    let plain = sha(b"cli build");
+    let gz = sha(&gzip(b"cli build"));
     // a .gz that isn't the one listed
-    let s = format!("{plain}  {engine}\n{}  {engine}.gz\n{cli_sums}", sha(b"tampered"));
+    let s = format!("{plain}  {cli}\n{}  {cli}.gz\n", sha(b"tampered"));
     f.server.release(|r| r.sums = s);
     let host = FakeHost::new(&f.server, &[Role::Link]);
     assert!(f.run(&host).unwrap_err().to_string().contains("didn't match the release's checksum"));
     assert_eq!(f.read(&f.installed()), "old build");
     // the right .gz, but it unpacks to something other than the plain file listed
-    let s = format!("{}  {engine}\n{gz}  {engine}.gz\n{cli_sums}", sha(b"tampered"));
+    let s = format!("{}  {cli}\n{gz}  {cli}.gz\n", sha(b"tampered"));
     f.server.release(|r| r.sums = s);
     assert!(f.run(&host).unwrap_err().to_string().contains("didn't match the release's checksum"));
     assert_eq!(f.read(&f.installed()), "old build");
-    assert_eq!(f.server.downloads(), vec![format!("{engine}.gz"), format!("{engine}.gz")]);
+    assert_eq!(f.server.downloads(), vec![format!("{cli}.gz"), format!("{cli}.gz")]);
     assert_eq!(f.bin_names(), vec!["inyon"]);
 }
 
@@ -652,7 +635,7 @@ fn a_checksum_list_that_is_unsigned_signed_by_another_key_or_changed_after_signi
     let host = FakeHost::new(&f.server, &[Role::Link]);
     let refused = |err: String| {
         assert!(err.starts_with("The release's checksum list isn't signed by Inyon's key, so nothing was changed."), "{err}");
-        assert!(err.ends_with(&format!("\n  {}", reinstall_command(Platform::current()))), "{err}");
+        assert!(err.ends_with(&format!("\n  {}", reinstall_command(here()))), "{err}");
         assert_eq!(f.read(&f.installed()), "old build");
         assert_eq!(f.bin_names(), vec!["inyon"]);
         assert!(f.server.downloads().is_empty());
@@ -670,7 +653,7 @@ fn a_checksum_list_that_is_unsigned_signed_by_another_key_or_changed_after_signi
         r.signer = Some(test_key());
         let as_signed = r.sums();
         r.signed_text = Some(as_signed);
-        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"tampered"), sha(b"cli build"));
+        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"engine build"), sha(b"tampered"));
     });
     refused(f.run(&host).unwrap_err().to_string());
     // the list as signed: the update goes through
@@ -680,7 +663,6 @@ fn a_checksum_list_that_is_unsigned_signed_by_another_key_or_changed_after_signi
     });
     assert!(f.run(&host).unwrap().changed);
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.read(&f.engine()), "engine build");
 }
 
 #[test]
@@ -734,7 +716,7 @@ fn a_release_pinned_on_github_ignores_a_signing_key_from_the_environment() {
 }
 
 #[test]
-fn alpine_takes_the_musl_engine_and_the_same_command() {
+fn alpine_takes_the_same_command_and_no_engine() {
     let _g = lock();
     let f = Fixture::new();
     f.server.release(|r| {
@@ -746,61 +728,13 @@ fn alpine_takes_the_musl_engine_and_the_same_command() {
     alpine.arch = Arch::X64;
     alpine.libc = Libc::Musl;
     assert!(f.run(&alpine).unwrap().changed);
-    assert_eq!(f.read(&f.engine()), "musl engine");
+    assert!(!f.engine().exists());
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.server.downloads(), vec!["inyon-engine-linux-x64-musl.gz", "inyon-linux-x64.gz"]);
-}
-
-/// This machine's files, with Alpine's libstdc++ there or not as the test says.
-struct Libstdcpp(bool);
-
-impl Files for Libstdcpp {
-    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
-        RealFiles.rename(from, to)
-    }
-    fn remove(&self, f: &Path) -> std::io::Result<()> {
-        RealFiles.remove(f)
-    }
-    fn exists(&self, f: &Path) -> bool {
-        if f == Path::new("/usr/lib/libstdc++.so.6") {
-            return self.0;
-        }
-        f.exists()
-    }
-    fn list(&self, dir: &Path) -> std::io::Result<Vec<String>> {
-        RealFiles.list(dir)
-    }
+    assert_eq!(f.server.downloads(), vec!["inyon-linux-x64.gz"]);
 }
 
 #[test]
-fn on_alpine_without_libstdcpp_an_engine_that_does_not_start_says_what_to_install() {
-    let _g = lock();
-    let f = Fixture::new();
-    let musl = release_names(Platform::current(), Arch::current(), Libc::Musl).unwrap();
-    f.server.release(|r| {
-        r.files.insert(musl.engine.clone(), "engine build".into());
-    });
-    let mut alpine = FakeHost::new(&f.server, &[Role::Link]);
-    alpine.libc = Libc::Musl;
-    alpine.started_ok.set(false);
-    let install = find_install(&f.installed(), None);
-    let err = update::update(&install, &alpine, &Libstdcpp(false)).unwrap_err().to_string();
-    assert!(err.contains("the previous version is running again"), "{err}");
-    assert!(err.ends_with(" The engine needs libstdc++ and libgcc on Alpine: run `apk add libstdc++ libgcc` and try again."), "{err}");
-    // installing again wouldn't help, so that line isn't offered
-    assert!(!err.contains("Install the new version"), "{err}");
-    assert_eq!(f.read(&f.installed()), "old build");
-    // with the library there, it's whatever else went wrong
-    let err = update::update(&install, &alpine, &Libstdcpp(true)).unwrap_err().to_string();
-    assert!(!err.contains("libstdc++"), "{err}");
-    assert!(err.ends_with(&reinstall_command(Platform::current())), "{err}");
-    // and never on glibc
-    assert_eq!(update::alpine_hint(Libc::Glibc, &Libstdcpp(false)), None);
-    assert_eq!(update::alpine_hint(Libc::Musl, &Libstdcpp(false)), Some(update::ALPINE_HINT));
-}
-
-#[test]
-fn a_release_where_either_file_is_bad_changes_nothing_and_says_how_to_install_instead() {
+fn a_release_whose_inyon_is_bad_changes_nothing_and_says_how_to_install_instead() {
     let _g = lock();
     let f = Fixture::new();
     let cli_gz = format!("{}.gz", f.cli_name);
@@ -808,23 +742,11 @@ fn a_release_where_either_file_is_bad_changes_nothing_and_says_how_to_install_in
     let host = FakeHost::new(&f.server, &[Role::Link]);
     let err = f.run(&host).unwrap_err().to_string();
     // the line for this machine, whichever system the tests run on
-    assert!(err.ends_with(&format!("\n  {}", reinstall_command(Platform::current()))), "{err}");
+    assert!(err.ends_with(&format!("\n  {}", reinstall_command(here()))), "{err}");
     assert!(err.contains("Couldn't download"), "{err}");
     assert_eq!(f.read(&f.installed()), "old build");
     assert_eq!(f.bin_names(), vec!["inyon"]);
     assert!(host.restarts.borrow().is_empty());
-
-    // the engine doesn't match: nothing is downloaded after it
-    let (cli, engine) = (f.cli_name.clone(), f.engine_name.clone());
-    f.server.release(|r| {
-        r.missing.clear();
-        r.sums = format!("{}  {engine}\n{}  {cli}\n", sha(b"wrong"), sha(b"cli build"));
-    });
-    f.server.clear_requests();
-    let err = f.run(&host).unwrap_err().to_string();
-    assert!(err.contains("didn't match the release's checksum"), "{err}");
-    assert_eq!(f.server.downloads(), vec![engine.clone()]);
-    assert_eq!(f.bin_names(), vec!["inyon"]);
 
     // on Windows the line is the PowerShell one
     f.server.release(|r| {
@@ -848,7 +770,7 @@ fn a_release_that_does_not_start_goes_back_to_the_old_inyon_alone_and_says_how_t
     host.started_ok.set(false);
     let err = f.run(&host).unwrap_err().to_string();
     assert!(err.contains("the previous version is running again"), "{err}");
-    assert!(err.ends_with(&reinstall_command(Platform::current())), "{err}");
+    assert!(err.ends_with(&reinstall_command(here())), "{err}");
     assert_eq!(f.read(&f.installed()), "old build");
     assert_eq!(host.restarted_roles(), vec![Role::Link, Role::Link]);
     // the engine went too, since nothing of the old version starts it
@@ -889,7 +811,7 @@ fn nothing_running_in_the_background_the_new_file_is_in_place_for_the_next_start
     let r = f.run(&host).unwrap();
     assert!(r.message.contains("isn't running as a background service"), "{}", r.message);
     assert_eq!(f.read(&f.installed()), "cli build");
-    assert_eq!(f.read(&f.engine()), "engine build");
+    assert!(!f.engine().exists());
 }
 
 #[test]
@@ -901,13 +823,15 @@ fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_
     let mut linux = FakeHost::new(&f.server, &[Role::Node]);
     linux.platform = Platform::Linux;
     linux.arch = Arch::X64;
+    // a hub from 0.19 on hands out an inyon with the engine built in, and nothing else is fetched
+    let marked = |b: &str| format!("{b} {}", inyon_cli::engine::COPY_MARK);
+    f.server.hub.lock().unwrap().commands.insert("linux-x64".into(), marked("new linux cli"));
     assert!(update::update(&install, &linux, &RealFiles).unwrap().changed);
-    // the hub serves both files: the engine first, then this program
-    assert_eq!(f.read(&f.engine()), "new linux build");
-    assert_eq!(f.read(&f.installed()), "new linux cli");
+    assert_eq!(f.read(&f.installed()), marked("new linux cli"));
     assert_eq!(*linux.restarts.borrow(), vec![(Role::Node, vec![f.installed().to_string_lossy().into_owned()])]);
     let hub_downloads: Vec<String> = f.server.requests().into_iter().filter(|r| r.ends_with(".gz?os=linux&arch=x64")).collect();
-    assert_eq!(hub_downloads, vec!["/node/inyon-engine.gz?os=linux&arch=x64", "/node/inyon.gz?os=linux&arch=x64"]);
+    assert_eq!(hub_downloads, vec!["/node/inyon.gz?os=linux&arch=x64"]);
+    assert_eq!(f.bin_names(), vec!["inyon"]);
 
     // the same files as the hub's: nothing to do
     linux.restarts.borrow_mut().clear();
@@ -918,15 +842,14 @@ fn a_machine_added_to_a_hub_takes_the_hub_build_when_it_differs_checked_against_
     // still says what the release has, and the running copy is left alone
     {
         let mut hub = f.server.hub.lock().unwrap();
-        hub.engines.insert("linux-x64".into(), "newer linux build".into());
+        hub.commands.insert("linux-x64".into(), marked("newer linux cli"));
         hub.signed_list = Some(hub.release_sums());
-        hub.engines.insert("linux-x64".into(), "tampered".into());
-        hub.sum_override = sha(b"tampered");
+        hub.commands.insert("linux-x64".into(), marked("tampered"));
     }
     let err = update::update(&install, &linux, &RealFiles).unwrap_err().to_string();
     assert!(err.contains("didn't match its checksum"), "{err}");
-    assert_eq!(f.read(&f.engine()), "new linux build");
-    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
+    assert_eq!(f.read(&f.installed()), marked("new linux cli"));
+    assert_eq!(f.bin_names(), vec!["inyon"]);
 }
 
 #[test]
@@ -1034,60 +957,6 @@ fn a_windows_machine_asks_its_hub_for_its_own_command_and_the_x64_engine() {
     assert_eq!(f.read(&f.installed()), "new arm cli exe");
     assert!(f.server.requests().contains(&"/node/inyon-engine.gz?os=windows&arch=arm64".to_string()));
     assert!(f.server.requests().contains(&"/node/inyon.gz?os=windows&arch=arm64".to_string()));
-}
-
-#[test]
-fn the_engine_is_fetched_from_the_release_or_from_the_hub_this_machine_was_added_to() {
-    use inyon_cli::engine::{download_to, source, Source};
-    let _g = lock();
-    let f = Fixture::new();
-    let to = f.engine();
-    let said = RefCell::new(Vec::new());
-    let say = |l: &str| said.borrow_mut().push(l.to_string());
-
-    // nothing set: the newest release on the website
-    assert_eq!(source(), Source::Release(update::RELEASES.to_string()));
-
-    // a release (INYON_DOWNLOAD stands in for the website): checked against its signed
-    // SHA256SUMS, which the test key signs, so without INYON_SIGNING_KEY naming it the list is refused
-    std::env::set_var("INYON_DOWNLOAD", format!("{}{SITE}/", f.server.base));
-    assert_eq!(source(), Source::Release(format!("{}{SITE}", f.server.base)));
-    let err = download_to(&to, &say).unwrap_err();
-    assert!(err.starts_with(update::UNSIGNED), "{err}");
-    assert!(!to.exists());
-    std::env::set_var("INYON_SIGNING_KEY", include_str!("keys/test.pub"));
-    download_to(&to, &say).unwrap();
-    assert_eq!(f.read(&to), "engine build");
-    assert!(said.borrow()[0].starts_with("Getting the Inyon engine ("), "{:?}", said.borrow());
-    assert!(f.server.downloads().contains(&format!("{}.gz", f.engine_name)));
-
-    // added to a hub, with no mirror set: the hub's engine for this system, never the website
-    std::env::remove_var("INYON_DOWNLOAD");
-    std::env::set_var("INYON_HUB", &f.server.base);
-    assert_eq!(source(), Source::Hub(f.server.base.clone()));
-    let t = update::target(Platform::current(), Arch::current()).unwrap();
-    {
-        let mut hub = f.server.hub.lock().unwrap();
-        hub.engines.insert(format!("{}-{}", t.os, t.arch), "the hub's engine".into());
-    }
-    fs::remove_file(&to).unwrap();
-    f.server.clear_requests();
-    download_to(&to, &say).unwrap();
-    assert_eq!(f.read(&to), "the hub's engine");
-    assert!(f.server.requests().iter().all(|r| r.starts_with("/node/")), "{:?}", f.server.requests());
-    assert!(!f.bin_names().iter().any(|n| n.ends_with(".download")));
-
-    // a hub from before the split can't hand the engine out apart
-    {
-        let mut hub = f.server.hub.lock().unwrap();
-        hub.split = false;
-        hub.signed = false;
-    }
-    fs::remove_file(&to).unwrap();
-    let err = download_to(&to, &say).unwrap_err();
-    assert!(err.contains("Update the hub first"), "{err}");
-    std::env::remove_var("INYON_HUB");
-    std::env::remove_var("INYON_SIGNING_KEY");
 }
 
 #[test]
@@ -1236,8 +1105,7 @@ fn from_0_19_a_machine_without_a_hub_takes_inyon_alone_and_drops_the_bun_engine(
     f.server.release(move |r| {
         r.files.insert(cli, format!("cli build {}", inyon_cli::engine::COPY_MARK));
     });
-    let mut host = FakeHost::new(&f.server, &[Role::Link, Role::Node]);
-    host.engine = false;
+    let host = FakeHost::new(&f.server, &[Role::Link, Role::Node]);
     let r = f.run(&host).unwrap();
     assert!(r.changed, "{}", r.message);
     assert!(f.read(&f.installed()).starts_with("cli build"));
@@ -1250,21 +1118,18 @@ fn from_0_19_a_machine_without_a_hub_takes_inyon_alone_and_drops_the_bun_engine(
 // Linux and macOS; Windows swaps in the windowless copy instead (below)
 #[cfg(not(windows))]
 #[test]
-fn from_0_19_a_release_without_an_engine_still_updates_a_machine_that_needs_none() {
+fn a_release_without_the_engine_files_still_updates_a_hub() {
     let _g = lock();
     let f = Fixture::new();
     let engine = f.engine_name.clone();
     f.server.release(|r| {
         r.files.remove(&engine);
     });
-    let mut host = FakeHost::new(&f.server, &[Role::Link]);
-    host.engine = false;
-    assert!(f.run(&host).unwrap().changed);
+    // the hub runs the one built into inyon from 0.23, so the Bun engine is never asked for
+    let hub = FakeHost::new(&f.server, &[Role::Link, Role::Hub]);
+    assert!(f.run(&hub).unwrap().changed);
     assert_eq!(f.read(&f.installed()), "cli build");
-    // a hub still needs it, so nothing changes there
-    let hub = FakeHost::new(&f.server, &[Role::Hub]);
-    let r = f.run(&hub).unwrap();
-    assert!(!r.changed && r.message.contains("has no"), "{}", r.message);
+    assert!(!f.server.requests().iter().any(|r| r.contains(&engine)), "{:?}", f.server.requests());
 }
 
 #[test]
@@ -1280,7 +1145,6 @@ fn from_0_19_windows_gets_the_windowless_copy_of_the_new_inyon_in_place_of_the_b
     let mut win = FakeHost::new(&f.server, &[Role::Link]);
     win.platform = Platform::Windows;
     win.arch = Arch::X64;
-    win.engine = false;
     let r = f.run(&win).unwrap();
     assert!(r.changed, "{}", r.message);
     assert_eq!(f.server.downloads(), vec!["inyon-windows-x64.exe.gz".to_string()]);
@@ -1299,7 +1163,6 @@ fn from_0_19_windows_gets_the_windowless_copy_of_the_new_inyon_in_place_of_the_b
     let mut win = FakeHost::new(&f.server, &[Role::Link]);
     win.platform = Platform::Windows;
     win.arch = Arch::X64;
-    win.engine = false;
     win.started_ok.set(false);
     assert!(f.run(&win).is_err());
     assert_eq!(f.read(&f.installed()), "old build");
@@ -1320,7 +1183,6 @@ fn windows_makes_the_inyon_app_from_the_new_program_next_to_inyon() {
     let mut win = FakeHost::new(&f.server, &[Role::Link]);
     win.platform = Platform::Windows;
     win.arch = Arch::X64;
-    win.engine = false;
     let r = f.run(&win).unwrap();
     assert!(r.changed, "{}", r.message);
     assert_eq!(f.server.downloads(), vec!["inyon-windows-x64.exe.gz".to_string()]);
@@ -1328,24 +1190,6 @@ fn windows_makes_the_inyon_app_from_the_new_program_next_to_inyon() {
     assert_eq!(fs::read(inyon_cli::app::app_beside(&f.installed())).unwrap(), windowless);
     assert_eq!(fs::read(f.engine()).unwrap(), windowless);
     assert_eq!(f.bin_names(), vec!["inyon", "inyon-app", "inyon-engine"]);
-}
-
-// an inyon from before 0.19 (a kill switch's Bun engine still runs it) can't be the app: the
-// update puts the two files in place and makes no app, as before 0.20.3
-#[test]
-fn windows_makes_no_app_from_an_inyon_without_the_engine_built_in() {
-    let _g = lock();
-    let f = Fixture::new();
-    f.server.release(|r| {
-        r.files = [("inyon-windows-x64.exe", "cli"), ("inyon-engine-windows-x64.exe", "engine")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-    });
-    let mut win = FakeHost::new(&f.server, &[Role::Link]);
-    win.platform = Platform::Windows;
-    win.arch = Arch::X64;
-    win.engine = true;
-    let r = f.run(&win).unwrap();
-    assert!(r.changed, "{}", r.message);
-    assert_eq!(f.bin_names(), vec!["inyon", "inyon-engine"]);
 }
 
 /// A machine added to a hub that still hands out an inyon from before 0.19 (Windows x64 here),
@@ -1358,7 +1202,6 @@ fn older_hub(platform: Platform, program: &str) -> (Fixture, update::Install, Fa
     let mut host = FakeHost::new(&f.server, &[Role::Link]);
     host.platform = platform;
     host.arch = arch;
-    host.engine = false;
     (f, install, host)
 }
 

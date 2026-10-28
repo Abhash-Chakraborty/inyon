@@ -120,26 +120,17 @@ pub fn gather(sys: &Sys, with_agents: bool) -> Status {
     } else {
         "none"
     };
-    // from 0.19 the engine is built into this program, and from 0.21 the hub; only a hub on Bun (or the kill switch) needs the Bun one
-    let bun = crate::engine::needs_bun(role);
-    let engine = jobs.iter().find_map(|j| if j.running { j.version.clone() } else { None }).or_else(|| {
-        if bun {
-            crate::engine::find().map(|_| "installed".to_string())
-        } else {
-            Some(VERSION.to_string())
-        }
-    });
+    // the engine and the hub are built into this program
+    let engine = jobs.iter().find_map(|j| if j.running { j.version.clone() } else { None }).or_else(|| Some(VERSION.to_string()));
     let phones = state::phones()
         .into_iter()
         .map(|(key, p)| PairedPhone { key: key.chars().take(12).collect(), name: p.name, paired: state::format_date(p.paired_at), last_seen: p.last_seen.map(state::format_time) })
         .collect();
     let nodes = (role == "hub").then(hub_nodes).flatten();
     let agents = if with_agents { running_agents() } else { Vec::new() };
-    let note = (bun && crate::engine::find().is_none()).then(|| "The engine isn't installed yet: run `inyon setup`.".to_string()).or_else(|| {
-        // why the hub connection can't connect, or the plain http it warns about
-        let running = jobs.iter().any(|j| j.role == Role::Node.name() && j.running);
-        (role == "joined" && running).then(crate::commands::connection_note).flatten().map(|(_, s)| s)
-    });
+    // why the hub connection can't connect, or the plain http it warns about
+    let running = jobs.iter().any(|j| j.role == Role::Node.name() && j.running);
+    let note = (role == "joined" && running).then(crate::commands::connection_note).flatten().map(|(_, s)| s);
     let reach = (role == "node" || has(Role::Link)).then(|| tunnel_only(&state::link_config(), cfg!(windows))).flatten();
     let background = background_line(sys.platform, crate::app::running(sys.proc).as_ref(), &jobs);
     Status {

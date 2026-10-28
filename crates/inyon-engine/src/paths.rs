@@ -71,10 +71,12 @@ fn stem(p: &Path) -> String {
     name.strip_suffix(".exe").or_else(|| name.strip_suffix(".EXE")).unwrap_or(name).to_string()
 }
 
-/// Whether this process was started under the engine's name (`inyon-engine`): it then answers
-/// the engine's commands, for whatever still runs it that way.
+/// Whether this process was started under the engine's name (`inyon-engine`, or `tether-node`,
+/// which a hub hands Windows machines set up before the rename): it then answers the engine's
+/// commands, for whatever still runs it that way.
 pub fn started_as_engine(argv0: &str) -> bool {
-    stem(Path::new(argv0)).starts_with(ENGINE)
+    let stem = stem(Path::new(argv0));
+    stem.starts_with(ENGINE) || stem == "tether-node"
 }
 
 /// The inyon command this runs under: INYON_CLI (set by an inyon command that started this as a
@@ -340,5 +342,8 @@ mod tests {
         assert!(started_as_engine("inyon-engine-linux-arm64"));
         assert!(!started_as_engine("/usr/bin/inyon"));
         assert!(!started_as_engine("inyon.exe"));
+        // the name a hub hands it out under to a Windows machine from before the rename
+        assert!(started_as_engine("C:\\Users\\a\\.tether-node\\tether-node.exe"));
+        assert!(!started_as_engine("tether"));
     }
 }

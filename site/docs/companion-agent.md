@@ -19,7 +19,7 @@ inyon companion                      # whether it runs
 inyon companion stop
 ```
 
-The hub starts it in a tmux session called `companion` on its own computer, in the folder `~/.inyon/companion`. It needs the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) has no companion. If a tmux session called `companion` that Inyon didn't start is already open, Inyon leaves it alone and asks you to rename or close it first.
+The hub starts it in a tmux session called `companion` on its own computer, in the folder `~/.inyon/companion`. A hub on Bun (0.22 with `INYON_HUB_IMPL=bun`) has no companion. If a tmux session called `companion` that Inyon didn't start is already open, Inyon leaves it alone and asks you to rename or close it first.
 
 While it runs it shows as **Companion** in the sidebar under **Overview**, and at the top of the Overview with its state and what it needs. **Settings › Companion** has **Open** and **Stop**. If its agent quits, the same place offers **Start again**, which starts it in a fresh session.
 

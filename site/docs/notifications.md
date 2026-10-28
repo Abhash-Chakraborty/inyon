@@ -12,7 +12,7 @@ description: Hear about it when an agent needs you or finishes, when a machine d
 | **Stopped** | From 0.22, with the integration on: Claude Code ended its turn on an error instead of finishing, such as "Claude Code stopped: rate limit, resets in 2 h 10 min" or "stopped: signed out". It comes in place of Finished, on the same switch. A rate limit says when the full limit resets, from the session's and the account's [plan limits](overview.md#whats-on-it); the session and its overview card say the same with the time on your clock until you send the next prompt. Needs Claude Code 2.1.78 or later | Yes: *When an agent finishes* |
 | **Offline** | A machine has been unreachable for a minute | No |
 | **Back online** | A machine that was reported offline reconnected, and how long it was away | No |
-| **Page** | From 0.22.4: a task on a [page's](pages.md) progress board is done, such as "Robot: 3 of 12 done · Payment sheet", or "All 12 done" at the end. The hub looks at every page's `progress.json` once a minute; adding a page, or a board rewritten with fewer tasks done, says nothing. Tapping it opens the page. Not from the hub's fallback in Bun | Yes: *When a page moves on* |
+| **Page** | From 0.22.4: a task on a [page's](pages.md) progress board is done, such as "Robot: 3 of 12 done · Payment sheet", or "All 12 done" at the end. The hub looks at every page's `progress.json` once a minute; adding a page, or a board rewritten with fewer tasks done, says nothing. Tapping it opens the page. | Yes: *When a page moves on* |
 
 Every session and machine event also lands in **Recent activity** on the overview. A notification for the session you're already looking at isn't shown, and one you answered on another device is taken back.
 

@@ -189,10 +189,8 @@ pub fn run(start: Start) -> i32 {
         };
         APP.with(|a| *a.borrow_mut() = Some(app));
         // the engine is a windowless copy of inyon.exe: made again when inyon.exe changed
-        if !crate::engine::legacy() {
-            if let Err(e) = crate::engine::refresh_copy(&inyon_exe()) {
-                trace(&format!("! no engine copy: {e}"));
-            }
+        if let Err(e) = crate::engine::refresh_copy(&inyon_exe()) {
+            trace(&format!("! no engine copy: {e}"));
         }
         // an updater older than 0.20.4 writes its own version into Settings → Apps when it's
         // done, after this app has started, and restarting two jobs can take it past a minute:

@@ -9,13 +9,9 @@ Start with `inyon doctor` on the computer. It checks the engine, tmux, the agent
 
 The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
 
-## Something stopped working after updating to 0.19
+## Something stopped working after updating to 0.23
 
-From 0.19 the link and the hub connection run inside `inyon` rather than in the Bun engine. If a computer did something in 0.18 that it doesn't in 0.19, set `INYON_LEGACY_ENGINE=1` and run `inyon service install` to go back to the Bun engine while it gets fixed. On Linux and macOS that writes the variable into the service, and the Bun engine downloads when the service starts; on Windows `inyon service install` downloads it. [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) has the steps for each system, and `inyon doctor` shows which engine runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
-
-## Something stopped working on a hub after updating to 0.21
-
-From 0.21 the hub runs on the hub built into `inyon`, in Rust. If your hub did something in 0.20 that it doesn't now, add `INYON_HUB_IMPL=bun` to `~/.inyon/hub.env` and run `inyon hub restart` to put it back on the Bun hub, with the same password, phones and machines (see [The hub in Rust](hub.md#the-hub-in-rust)). `inyon doctor` says which hub runs. Please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke.
+0.23 removed the Bun engine and the Bun hub, so `INYON_LEGACY_ENGINE=1` and `INYON_HUB_IMPL=bun` no longer go back to them: `inyon` runs the link, the hub connection and the hub itself, and `inyon doctor` says when a switch is still set. If something worked on 0.22 and doesn't now, please [open an issue](https://github.com/Abhash-Chakraborty/inyon/issues) with what broke, and [pin 0.22.5](install.md#installing-from-somewhere-else) until it's fixed. [The Bun engine, removed in 0.23](install.md#the-bun-engine-removed-in-0-23) has the details.
 
 ## The phone reached the computer once, then couldn't
 

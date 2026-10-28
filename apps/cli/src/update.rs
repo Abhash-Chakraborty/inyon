@@ -6,9 +6,9 @@
 //! matches, and the old copies come back if the new version doesn't start. A machine added to a
 //! hub takes what that hub serves, checked against the sha256 the hub publishes.
 //!
-//! From 0.19 the engine is built into this program, so only a machine that runs a hub (or has
-//! INYON_LEGACY_ENGINE=1) takes the Bun engine too. Windows keeps a windowless copy of this
-//! program under the engine's name for its logon tasks, made here from the new download.
+//! From 0.19 the engine is built into this program, and from 0.23 the hub runs on it too, so an
+//! update takes this program alone. Windows keeps a windowless copy of this program under the
+//! engine's name for its logon tasks, made here from the new download.
 
 use std::fmt;
 use std::fs;
@@ -417,14 +417,6 @@ pub fn release_sums(base: &str, key: &str, platform: Platform) -> Result<String,
     Ok(sums.trim().to_string())
 }
 
-pub const ALPINE_HINT: &str = "The engine needs libstdc++ and libgcc on Alpine: run `apk add libstdc++ libgcc` and try again.";
-
-/// Why the engine won't start on Alpine: Bun's musl build loads libstdc++, which a fresh Alpine
-/// doesn't have.
-pub fn alpine_hint(libc: Libc, files: &dyn Files) -> Option<&'static str> {
-    (libc == Libc::Musl && !files.exists(Path::new("/usr/lib/libstdc++.so.6"))).then_some(ALPINE_HINT)
-}
-
 /// The file system calls the swap makes, so tests can act like Windows (a running .exe is locked).
 pub trait Files {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
@@ -582,10 +574,6 @@ pub trait Host {
     fn libc(&self) -> Libc {
         Libc::current()
     }
-    /// whether this machine needs the Bun engine: it runs a hub, or INYON_LEGACY_ENGINE is set
-    fn wants_engine(&self) -> bool {
-        true
-    }
 }
 
 /// What the windowless copy of the program is called in progress lines (Windows).
@@ -620,22 +608,21 @@ fn make_copy_swap(program: &Path, s: &Swap) -> Result<(), Error> {
 
 /// Updates the install this program belongs to. The error says what went wrong.
 pub fn update(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<Outcome, Error> {
-    let need_engine = host.wants_engine();
-    let r = update_files(install, host, files, need_engine)?;
-    // a Bun engine no hub needs any more goes (Windows keeps the windowless copy under its name),
+    let r = update_files(install, host, files)?;
+    // a Bun engine left from before 0.23 goes (Windows keeps the windowless copy under its name),
     // unless the inyon now in place is one from before 0.19 (an older hub's), which still runs it
     let engine = engine_beside(&install.file);
-    if r.changed && !need_engine && host.platform() != Platform::Windows && files.exists(&engine) && crate::engine::has_engine_built_in(&install.file) {
+    if r.changed && host.platform() != Platform::Windows && files.exists(&engine) && crate::engine::has_engine_built_in(&install.file) {
         let _ = files.remove(&engine);
     }
     Ok(r)
 }
 
-fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engine: bool) -> Result<Outcome, Error> {
+fn update_files(install: &Install, host: &dyn Host, files: &dyn Files) -> Result<Outcome, Error> {
     let platform = host.platform();
     let engine = engine_beside(&install.file);
-    // without the Bun engine, Windows still needs the windowless copy made from the new program
-    let copy = (!need_engine && platform == Platform::Windows).then(|| Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: COPY.into() });
+    // Windows needs the windowless copy made from the new program
+    let copy = (platform == Platform::Windows).then(|| Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: COPY.into() });
     // and the Inyon app (inyon-app.exe) next to inyon, made from the new program the same way
     let app = crate::app::app_beside(&install.file);
     let app_swap = |name: String| Swap { file: app.clone(), tmp: with_suffix(&app, ".download"), name };
@@ -654,20 +641,8 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
             if from_listing(&base) {
                 check_listed_version(&sums, &version)?;
             }
-            // a release from before 0.13 has no engine: there is nothing this program can install
-            if need_engine && sum_for(&sums, &names.engine).is_none() {
-                return Ok(Outcome {
-                    changed: false,
-                    message: format!("Release {version} has no {} in it (it's from before the engine and inyon were split), so nothing was changed.", names.engine),
-                    version: Some(mine),
-                });
-            }
             let program = Swap { file: install.file.clone(), tmp: with_suffix(&install.file, ".download"), name: names.cli.clone() };
-            let mut swaps = Vec::new();
-            if need_engine {
-                swaps.push(Swap { file: engine.clone(), tmp: with_suffix(&engine, ".download"), name: names.engine.clone() });
-            }
-            swaps.extend(copy);
+            let mut swaps: Vec<Swap> = copy.into_iter().collect();
             // the program last: it's the one the restarts run
             swaps.push(program);
             let fetched: Result<(), Error> = (|| {
@@ -699,15 +674,12 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                     let _ = files.remove(&s.tmp);
                 }
                 return Err(match e {
-                    Error::Update(m) if swaps.len() > 1 => {
-                        err(format!("{m} Inyon {version} comes as two files, and this copy couldn't put both in place. Install it with:\n  {}", reinstall_command(platform)))
-                    }
+                    Error::Update(m) => err(format!("{m} Install inyon {version} with:\n  {}", reinstall_command(platform))),
                     other => other,
                 });
             }
             put(install, host, files, &swaps, Some(&version)).map_err(|e| match e {
-                // when the engine wants a library Alpine doesn't have, installing again won't help
-                Error::Update(m) if m.contains("didn't start") && !m.contains(ALPINE_HINT) => err(format!("{m} Install the new version with:\n  {}", reinstall_command(platform))),
+                Error::Update(m) if m.contains("didn't start") => err(format!("{m} Install the new version with:\n  {}", reinstall_command(platform))),
                 other => other,
             })
         }
@@ -722,7 +694,6 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
                 hub_checksum(hub, signed.as_deref(), "inyon-engine", &hub_files(&t).engine, &q)?
                     .ok_or_else(|| err(format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first, then this machine.")))
             };
-            let wanted_engine = if need_engine { Some(engine_sum()?) } else { None };
             let cli_sum = hub_checksum(hub, signed.as_deref(), "inyon", &hub_files(&t).cli, &q)?
                 .ok_or_else(|| err(format!("{hub} didn't give a checksum for inyon. Update the hub first.")))?;
             let mine = host.version();
@@ -749,26 +720,21 @@ fn update_files(install: &Install, host: &dyn Host, files: &dyn Files, need_engi
             };
             let fetched = (|| -> Result<Vec<Swap>, Error> {
                 let mut swaps = Vec::new();
-                if let Some(want) = &wanted_engine {
-                    swaps.extend(hubs_engine(want)?);
-                }
                 if new_program {
                     fetch("inyon", &cli_sum, &program_tmp)?;
                 }
                 let program = if new_program { &program_tmp } else { &install.file };
-                if wanted_engine.is_none() {
-                    if crate::engine::has_engine_built_in(program) {
-                        // the copy follows the program; one that isn't there yet (a Bun engine in its place) is made now
-                        if platform == Platform::Windows && (new_program || !crate::engine::is_builtin_copy(&engine)) {
-                            let c = Swap { file: engine.clone(), tmp: engine_tmp.clone(), name: COPY.into() };
-                            make_copy_swap(program, &c)?;
-                            swaps.push(c);
-                        }
-                    } else {
-                        // an older hub's inyon, from before 0.19, still runs the Bun engine: the hub's
-                        // goes next to it, never a copy of a program that doesn't answer as the engine
-                        swaps.extend(hubs_engine(&engine_sum()?)?);
+                if crate::engine::has_engine_built_in(program) {
+                    // the copy follows the program; one that isn't there yet (a Bun engine in its place) is made now
+                    if platform == Platform::Windows && (new_program || !crate::engine::is_builtin_copy(&engine)) {
+                        let c = Swap { file: engine.clone(), tmp: engine_tmp.clone(), name: COPY.into() };
+                        make_copy_swap(program, &c)?;
+                        swaps.push(c);
                     }
+                } else {
+                    // an older hub's inyon, from before 0.19, still runs the Bun engine: the hub's
+                    // goes next to it, never a copy of a program that doesn't answer as the engine
+                    swaps.extend(hubs_engine(&engine_sum()?)?);
                 }
                 // the hub hands out no app: it's made from the hub's inyon, once that has the engine built in
                 let app_stale = || crate::app::build_of(&app).is_none() || crate::app::build_of(&app) != crate::app::build_of(program);
@@ -972,9 +938,8 @@ fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], ve
         }
         return Ok(Outcome { changed: true, version: version.map(String::from), message });
     }
-    let hint = alpine_hint(host.libc(), files).map(|h| format!(" {h}")).unwrap_or_default();
     if program_old.is_none() {
-        return Err(err(format!("{label} didn't start.{hint}")));
+        return Err(err(format!("{label} didn't start.")));
     }
     // the program first, so the restart runs the old one; a file that had no old copy just goes
     for (s, old) in done.iter().rev() {
@@ -990,7 +955,7 @@ fn put(install: &Install, host: &dyn Host, files: &dyn Files, swaps: &[Swap], ve
     for r in &restarted {
         host.restart(*r, &cmd);
     }
-    Err(err(format!("{label} didn't start, so the previous version is running again.{hint}")))
+    Err(err(format!("{label} didn't start, so the previous version is running again.")))
 }
 
 /// What a started copy writes with its pid and version: state.json (the link), node.json, hub.json.

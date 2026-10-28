@@ -3,7 +3,6 @@
 //! mouse both work; with no terminal, or --yes, the flags answer the same questions.
 
 use std::ops::Range;
-use std::sync::{Arc, Mutex};
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::text::{Line, Span};
@@ -251,7 +250,6 @@ pub struct Wizard {
     pub step: Step,
     pub cursor: usize,
     /// the engine download running behind the screens, as a line for the footer
-    pub progress: Arc<Mutex<Option<String>>>,
     /// where each item was drawn last, for the mouse
     hit: Vec<(u16, usize)>,
     /// the row and columns of "Enter next" and "← back" in the hint line
@@ -294,7 +292,7 @@ fn on(hit: &Option<(u16, Range<u16>)>, col: u16, row: u16) -> bool {
 
 impl Wizard {
     pub fn new(plan: Plan) -> Wizard {
-        Wizard { plan, step: Step::Role, cursor: 0, progress: Arc::new(Mutex::new(None)), hit: Vec::new(), next_hit: None, back_hit: None, problem: None }
+        Wizard { plan, step: Step::Role, cursor: 0, hit: Vec::new(), next_hit: None, back_hit: None, problem: None }
     }
 
     fn steps(&self) -> Vec<Step> {
@@ -710,7 +708,6 @@ impl Wizard {
         f.render_widget(Paragraph::new(lines), body);
 
         let foot = rows[2];
-        let progress = self.progress.lock().ok().and_then(|p| p.clone());
         let (keys, next) = match self.step {
             Step::Summary => ("Enter set up  ·  ← back  ·  Esc quit", "Enter set up"),
             Step::SignIn => ("Enter next  ·  ← back  ·  Esc quit", "Enter next"),
@@ -718,17 +715,15 @@ impl Wizard {
         };
         self.next_hit = columns(keys, next, foot.x).map(|c| (foot.y + 1, c));
         self.back_hit = columns(keys, "← back", foot.x).map(|c| (foot.y + 1, c));
-        let mut lines = vec![Line::from(Span::styled(fit(&progress.unwrap_or_default(), foot.width as usize), theme.faint()))];
-        lines.push(Line::from(Span::styled(fit(keys, foot.width as usize), theme.faint())));
+        let lines = vec![Line::default(), Line::from(Span::styled(fit(keys, foot.width as usize), theme.faint()))];
         f.render_widget(Paragraph::new(lines), Rect { x: foot.x, y: foot.y, width: foot.width, height: foot.height });
     }
 }
 
 /// Runs the screens in the terminal; Some(plan) when setup was confirmed.
-pub fn run_interactive(plan: Plan, theme: Theme, progress: Arc<Mutex<Option<String>>>) -> std::io::Result<Option<Plan>> {
+pub fn run_interactive(plan: Plan, theme: Theme) -> std::io::Result<Option<Plan>> {
     use crossterm::event::{self, Event, MouseButton, MouseEventKind};
     let mut w = Wizard::new(plan);
-    w.progress = progress;
     let mut terminal = ratatui::init();
     let _ = crossterm::execute!(std::io::stdout(), event::EnableMouseCapture);
     // a pasted Add a machine command arrives whole, not as keys (where the terminal can)

@@ -51,22 +51,5 @@ mv -f "$tmp" "$DIR/inyon"
 # Apple Silicon only runs signed programs; a local signature is enough
 [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$DIR/inyon" >/dev/null 2>&1 || true
 
-# from 0.13 the hub hands out two files: inyon is the command, and the engine comes apart (a hub
-# from before lists one program, which is both). From 0.19 the command does the engine's work
-# itself, so the engine is fetched only with INYON_LEGACY_ENGINE=1, from the hub, so the machine
-# never needs GitHub; `inyon join` would fetch it the same way if it were missing
-want_engine="$(awk -v f="inyon-engine-$os-$arch" '$2 == f || $2 == "*" f { print $1 }' "$tmp.sums")"
-if [ -n "$want_engine" ] && [ "${INYON_LEGACY_ENGINE:-${TETHER_LEGACY_ENGINE:-}}" = 1 ]; then
-  echo "Downloading the Inyon engine from the hub…"
-  curl -fL $k --progress-bar "$HUB/node/inyon-engine?os=$os&arch=$arch" -o "$tmp"
-  if [ "$(sum "$tmp")" != "$want_engine" ]; then
-    echo "The Inyon engine did not match its checksum. Get a new command from the hub and run it again." >&2
-    exit 1
-  fi
-  chmod +x "$tmp"
-  mv -f "$tmp" "$DIR/inyon-engine"
-  [ "$os" = darwin ] && command -v codesign >/dev/null 2>&1 && codesign --force --sign - "$DIR/inyon-engine" >/dev/null 2>&1 || true
-fi
-
 # saves the hub and token (readable only by you) and starts the connection in the background
 INYON_TOKEN="$TOKEN" "$DIR/inyon" join "$HUB"

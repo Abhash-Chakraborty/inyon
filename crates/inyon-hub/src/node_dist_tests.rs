@@ -54,6 +54,10 @@ fn tether_node_on_linux_is_told_to_run_add_a_machine_again() {
 fn the_installers_are_served_as_they_are_in_the_repository() {
     assert!(INSTALL_SH.starts_with("#!/bin/sh\n"));
     assert!(INSTALL_PS1.contains("$TaskName = 'Inyon node'"));
+    // the windowless copy follows from the inyon.exe it fetched, carrying the built-in engine's
+    // mark (apps/cli's engine::COPY_MARK), not from whether the hub lists an engine file
+    assert!(INSTALL_PS1.contains(".Contains('inyon: the built-in engine, windowless copy')"));
+    assert!(!INSTALL_PS1.contains("Hub-Sum 'inyon-engine'"));
 }
 
 #[test]
@@ -513,34 +517,15 @@ fn a_swapped_install_sh_checksum_list_or_program_is_refused_and_nothing_runs() {
 fn from_0_19_a_machine_joins_with_the_command_alone_though_the_hub_lists_the_engine() {
     let (hub, state) = pair_hub(true);
     let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums), None), &[]);
-    assert_eq!(r.code, 0, "{}", r.err);
-    assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
-    assert!(!r.bin.join("inyon-engine").exists());
-    assert_eq!(r.ran.as_deref(), Some(format!("join {hub}\ntok_789\n").as_str()));
-}
-
-#[cfg(unix)]
-#[test]
-fn with_inyon_legacy_engine_1_the_engine_comes_from_the_hub_too_checked_the_same_way_and_the_command_joins() {
-    let (hub, state) = pair_hub(true);
-    let legacy = [("INYON_LEGACY_ENGINE", "1")];
-    let sums = state.lock().unwrap().sums();
-    let r = run_pair(&unix_pair_command(&hub, "tok_456", &sha(INSTALL_SH), &sha(&sums), None), &legacy);
-    assert!(!r.err.contains("checksum"), "{}", r.err);
-    assert_eq!(r.code, 0, "{}", r.err);
-    assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
-    assert_eq!(std::fs::read_to_string(r.bin.join("inyon-engine")).unwrap(), ENGINE);
-    assert_eq!(r.ran.as_deref(), Some(format!("join {hub}\ntok_456\n").as_str()));
-    assert!(!r.bin.join("inyon.download").exists());
-
-    // an engine swapped on the way is refused before anything joins
-    let fixed = sums.replace(&sha(ENGINE), &sha("other engine"));
-    state.lock().unwrap().fixed_list = Some(fixed.clone());
-    let swapped = run_pair(&unix_pair_command(&hub, "tok", &sha(INSTALL_SH), &sha(&fixed), None), &legacy);
-    assert_ne!(swapped.code, 0);
-    assert!(swapped.err.contains("engine did not match its checksum"), "{}", swapped.err);
-    assert_eq!(swapped.ran, None);
+    // INYON_LEGACY_ENGINE=1 asked for the Bun engine before 0.23; it's no longer read
+    for env in [&[][..], &[("INYON_LEGACY_ENGINE", "1")][..]] {
+        let r = run_pair(&unix_pair_command(&hub, "tok_789", &sha(INSTALL_SH), &sha(&sums), None), env);
+        assert_eq!(r.code, 0, "{}", r.err);
+        assert_eq!(std::fs::read_to_string(r.bin.join("inyon")).unwrap(), PROGRAM);
+        assert!(!r.bin.join("inyon-engine").exists());
+        assert!(!r.err.contains("engine"), "{}", r.err);
+        assert_eq!(r.ran.as_deref(), Some(format!("join {hub}\ntok_789\n").as_str()));
+    }
 }
 
 // ---------- node-update-scripts.test.ts: the Windows script this hub still sends ----------
