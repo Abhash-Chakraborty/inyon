@@ -315,3 +315,16 @@ fn the_report_reads_opencodes_providers_from_a_listing_long_enough_for_base64_to
     let encoded = stdout.trim_end().strip_prefix("OCAUTH ").unwrap();
     assert_eq!(connected_providers(encoded), ["DeepSeek", "Anthropic", "Groq"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn qwen_code_counts_as_signed_in_once_auth_picked_a_method_not_when_it_only_saved_preferences() {
+    let home = TempDir::new("inyon-qwen-");
+    let signed_in = || std::process::Command::new("sh").arg("-c").arg(signed_in_test(AgentKind::Qwen)).env("HOME", &home.0).status().unwrap().success();
+    assert!(!signed_in());
+    std::fs::create_dir_all(home.path(".qwen")).unwrap();
+    std::fs::write(home.path(".qwen/settings.json"), r#"{ "ui": { "theme": "Default" } }"#).unwrap();
+    assert!(!signed_in());
+    std::fs::write(home.path(".qwen/settings.json"), r#"{ "security": { "auth": { "selectedType": "openai" } } }"#).unwrap();
+    assert!(signed_in());
+}

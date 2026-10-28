@@ -165,6 +165,8 @@ pub fn signed_in_test(kind: AgentKind) -> String {
         AgentKind::Gemini => {
             format!("{{ {} || grep -qs GEMINI_API_KEY \"$HOME/.gemini/.env\"; }}", def.auth_files.iter().map(|f| format!("[ -s {} ]", file(f))).collect::<Vec<_>>().join(" || "))
         }
+        // Qwen Code writes settings.json for any preference; /auth adds the method it signed in with
+        AgentKind::Qwen => format!("{{ grep -qs '\"selectedType\"' {}; }}", file(&def.auth_files[0])),
         // OpenCode's free Zen models need no sign-in: once it has run (its database exists) it can work
         AgentKind::Opencode => format!("{{ [ -e {} ] || [ -e \"$HOME/.local/share/opencode/opencode.db\" ]; }}", file(&def.auth_files[0])),
         _ => format!("{{ {}; }}", def.auth_files.iter().map(|f| format!("[ -e {} ]", file(f))).collect::<Vec<_>>().join(" || ")),

@@ -23,6 +23,8 @@ export function signedInTest(kind: AgentKind): string {
   // a saved Google sign-in, or API-key mode ("modelProvider": "gemini" plus GEMINI_API_KEY in its environment)
   if (kind === 'antigravity') return `{ [ -s ${file(AGENTS.antigravity.authFiles[0])} ] || grep -qs '"modelProvider"' "$HOME/.gemini/antigravity-cli/settings.json"; }`
   if (kind === 'gemini') return `{ ${AGENTS.gemini.authFiles.map((f) => `[ -s ${file(f)} ]`).join(' || ')} || grep -qs GEMINI_API_KEY "$HOME/.gemini/.env"; }`
+  // Qwen Code writes settings.json for any preference; /auth adds the method it signed in with
+  if (kind === 'qwen') return `{ grep -qs '"selectedType"' ${file(AGENTS.qwen.authFiles[0])}; }`
   // OpenCode's free Zen models need no sign-in: once it has run (its database exists) it can work
   if (kind === 'opencode') return `{ [ -e ${file(AGENTS.opencode.authFiles[0])} ] || [ -e "$HOME/.local/share/opencode/opencode.db" ]; }`
   return `{ ${AGENTS[kind].authFiles.map((f) => `[ -e ${file(f)} ]`).join(' || ')}; }`

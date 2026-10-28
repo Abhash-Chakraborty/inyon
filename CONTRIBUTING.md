@@ -83,8 +83,10 @@ reader that turns the agent's session files or API into chat items; see `apps/hu
 and its Rust twin `crates/inyon-core/src/agents/` for Codex, Gemini CLI, OpenCode, Copilot and
 Antigravity. Both hubs need the reader.
 
-An agent without a reader starts as a terminal-first one: `terminalAgent()` in the same file fills
-in everything but how to install, sign in, detect and colour it. Add it to the `AgentKind` enum in
+An agent without a reader starts as a terminal-first one. `terminalAgent()` in the same file fills in
+the empty model, mode and command lists; you give its kind, name, vendor, install, sign-in and
+version commands, auth files, process names and argv patterns, launch command and skin
+(`update` and `latest` are optional). Add it to the `AgentKind` enum in
 `crates/inyon-protocol/src/agents.rs`, run `bun packages/protocol/scripts/catalog.ts`, put its mark
 in `apps/web/public/agents/<kind>.svg`, and add a `detect_agent` case from a real `ps` line to
 `crates/inyon-protocol/tests/catalog.rs`. Apps before 0.23 crash on a kind they don't know, so the

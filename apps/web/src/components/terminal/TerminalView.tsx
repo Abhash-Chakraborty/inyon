@@ -17,6 +17,7 @@ import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { copyText } from '../../lib/clipboard.ts'
 import { readClipboard } from '../../lib/native.ts'
+import { startingNote } from '../../lib/starting.ts'
 import { touchScroll } from './touchScroll.ts'
 import { attachWebgl } from './webgl.ts'
 import { contextMenu } from '../ui/ContextMenu.tsx'
@@ -223,7 +224,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
   const start = async (kind: (typeof installed)[number]) => {
     try {
       await api.start(host, pane, kind)
-      toast({ title: `Starting ${agentDef(kind).name}…`, body: 'The chat view opens as soon as it is running.', tone: 'info', agent: kind })
+      toast({ title: `Starting ${agentDef(kind).name}…`, body: startingNote(kind), tone: 'info', agent: kind })
     } catch (e) {
       toast({ title: 'Could not start', body: (e as Error).message, tone: 'error' })
     }

@@ -6,6 +6,7 @@ import { AGENT_CATALOG, AGENTS, agentDef, knownAgent } from '@inyon/protocol'
 import { AgentLogo } from './skin.tsx'
 import { wsUrl } from './hub.ts'
 import { hubWsUrl } from './hubs.ts'
+import { startingNote } from './starting.ts'
 import { renderSettled as render } from '../test/render.tsx'
 
 test('an agent added after this app was built shows as a plain terminal agent under its own name', () => {
@@ -47,4 +48,10 @@ test('nothing looks an agent up in the catalog directly, so a newer kind never b
   }
   walk(join(import.meta.dir, '..'))
   expect(offenders).toEqual([])
+})
+
+test('starting an agent from its terminal says where it opens: the chat view, or this terminal for a terminal-first one', () => {
+  expect(startingNote('claude')).toContain('chat view')
+  expect(startingNote('pi')).toBe('It opens here in the terminal.')
+  expect(startingNote('newagent')).toBe('It opens here in the terminal.')
 })
