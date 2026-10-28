@@ -82,7 +82,7 @@ pub fn parse_list(value: &Value) -> Result<Vec<CustomAgent>, String> {
         if command.is_empty() || command.chars().count() > MAX_COMMAND || command.chars().any(char::is_control) {
             return Err(format!("{name}: the command must be one line of 1 to {MAX_COMMAND} characters"));
         }
-        let Some(like) = agent_kind(&like) else { return Err(format!("{name}: pick the agent it works like")) };
+        let Some(like) = agent_kind(&like).filter(|k| k.chat()) else { return Err(format!("{name}: pick the agent it works like")) };
         let id = slug(&name);
         if id.is_empty() {
             return Err(format!("{name}: use at least one letter or digit in the name"));

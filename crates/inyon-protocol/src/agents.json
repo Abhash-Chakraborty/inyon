@@ -2125,5 +2125,936 @@
       "clear": "/clear",
       "rc": "/remote-control"
     }
+  },
+  "cursor": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [
+      {
+        "path": "~/.cursor/cli-config.json",
+        "label": "Config",
+        "format": "json"
+      }
+    ],
+    "kind": "cursor",
+    "install": {
+      "cmd": "curl https://cursor.com/install -fsS | bash",
+      "docs": "https://cursor.com/docs/cli/overview"
+    },
+    "update": "cursor-agent update",
+    "login": "cursor-agent login",
+    "version": "cursor-agent --version",
+    "authFiles": [
+      "~/.config/cursor/auth.json"
+    ],
+    "name": "Cursor CLI",
+    "vendor": "Cursor",
+    "comm": [
+      "cursor-agent"
+    ],
+    "launch": "cursor-agent",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#1B1913",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#ECEBE7",
+        "accentText": "#1B1913"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#EDECEC",
+        "accentFg": "#14120B",
+        "accentSoft": "#2A2924",
+        "accentText": "#EDECEC"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?cursor-agent(?:\\s|$)",
+      "\\/cursor-agent\\/versions\\/[^/\\s]+\\/index\\.js"
+    ],
+    "set": {}
+  },
+  "grok": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [
+      {
+        "path": "~/.grok/config.toml",
+        "label": "Config",
+        "format": "toml"
+      }
+    ],
+    "kind": "grok",
+    "install": {
+      "cmd": "curl -fsSL https://x.ai/cli/install.sh | bash",
+      "docs": "https://docs.x.ai/build/overview"
+    },
+    "update": "grok update",
+    "login": "grok login --device-auth",
+    "version": "grok --version",
+    "authFiles": [
+      "~/.grok/auth.json"
+    ],
+    "name": "Grok Build",
+    "vendor": "xAI",
+    "comm": [
+      "grok"
+    ],
+    "launch": "grok",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#0A0A0A",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#EDEDED",
+        "accentText": "#0A0A0A"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#F5F5F5",
+        "accentFg": "#0A0A0A",
+        "accentSoft": "#262626",
+        "accentText": "#F5F5F5"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?grok(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "pi": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "pi",
+    "install": {
+      "cmd": "curl -fsSL https://pi.dev/install.sh | sh",
+      "npm": "@earendil-works/pi-coding-agent",
+      "docs": "https://pi.dev"
+    },
+    "latest": {
+      "npm": "@earendil-works/pi-coding-agent"
+    },
+    "update": "pi update",
+    "login": "pi",
+    "version": "pi --version",
+    "authFiles": [
+      "~/.pi/agent/auth.json"
+    ],
+    "name": "Pi",
+    "vendor": "Earendil",
+    "comm": [
+      "pi"
+    ],
+    "launch": "pi",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#B4483A",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#FBE6E2",
+        "accentText": "#A63F32"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#F09082",
+        "accentFg": "#1F1A19",
+        "accentSoft": "#33221F",
+        "accentText": "#F4A99D"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?pi(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "amp": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "amp",
+    "install": {
+      "cmd": "curl -fsSL https://ampcode.com/install.sh | bash",
+      "npm": "@ampcode/cli",
+      "docs": "https://ampcode.com/manual"
+    },
+    "latest": {
+      "npm": "@ampcode/cli"
+    },
+    "login": "amp login",
+    "version": "amp --version",
+    "authFiles": [
+      "~/.local/share/amp/secrets.json"
+    ],
+    "name": "Amp",
+    "vendor": "Amp",
+    "comm": [
+      "amp"
+    ],
+    "launch": "amp",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#C8352A",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#FDE5E2",
+        "accentText": "#B8301F"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#F36B5F",
+        "accentFg": "#1A0F0E",
+        "accentSoft": "#35201D",
+        "accentText": "#F68D83"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?amp(?:\\s|$)",
+      "@ampcode\\/cli\\/"
+    ],
+    "set": {}
+  },
+  "goose": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "goose",
+    "install": {
+      "cmd": "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash",
+      "docs": "https://goose-docs.ai/docs/getting-started/installation"
+    },
+    "update": "goose update",
+    "login": "goose configure",
+    "version": "goose --version",
+    "authFiles": [
+      "~/.config/goose/config.yaml"
+    ],
+    "name": "goose",
+    "vendor": "Agentic AI Foundation",
+    "comm": [
+      "goose"
+    ],
+    "launch": "goose",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#101010",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#ECECEC",
+        "accentText": "#101010"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#F2F2F2",
+        "accentFg": "#101010",
+        "accentSoft": "#262626",
+        "accentText": "#F2F2F2"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?goose(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "hermes": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "hermes",
+    "install": {
+      "cmd": "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash",
+      "docs": "https://hermes-agent.nousresearch.com/docs/getting-started/installation"
+    },
+    "update": "hermes update",
+    "login": "hermes setup",
+    "version": "hermes --version",
+    "authFiles": [
+      "~/.hermes/auth.json",
+      "~/.hermes/.env"
+    ],
+    "name": "Hermes Agent",
+    "vendor": "Nous Research",
+    "comm": [
+      "hermes"
+    ],
+    "launch": "hermes",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#8B6508",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#F7EFD6",
+        "accentText": "#7A5807"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#FFD700",
+        "accentFg": "#14120A",
+        "accentSoft": "#2F2A12",
+        "accentText": "#FFE14D"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?hermes(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "kimi": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [
+      {
+        "path": "~/.kimi-code/config.toml",
+        "label": "Config",
+        "format": "toml"
+      }
+    ],
+    "kind": "kimi",
+    "install": {
+      "cmd": "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+      "npm": "@moonshot-ai/kimi-code",
+      "docs": "https://moonshotai.github.io/kimi-code/en/guides/getting-started"
+    },
+    "latest": {
+      "npm": "@moonshot-ai/kimi-code"
+    },
+    "update": "kimi upgrade",
+    "login": "kimi login",
+    "version": "kimi --version",
+    "authFiles": [
+      "~/.kimi-code/credentials/kimi-code.json"
+    ],
+    "name": "Kimi Code",
+    "vendor": "Moonshot AI",
+    "comm": [
+      "kimi"
+    ],
+    "launch": "kimi",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#0F6FDB",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#E3F0FF",
+        "accentText": "#0B63C7"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#4DA3FF",
+        "accentFg": "#0A1220",
+        "accentSoft": "#14243A",
+        "accentText": "#7DBBFF"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?kimi(?:\\s|$)",
+      "@moonshot-ai\\/kimi-code\\/"
+    ],
+    "set": {}
+  },
+  "kiro": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "kiro",
+    "install": {
+      "cmd": "curl -fsSL https://cli.kiro.dev/install | bash",
+      "docs": "https://kiro.dev/docs/cli/"
+    },
+    "update": "kiro-cli update --non-interactive",
+    "login": "kiro-cli login --use-device-flow",
+    "version": "kiro-cli --version",
+    "authFiles": [
+      "~/.local/share/kiro-cli/data.sqlite3"
+    ],
+    "name": "Kiro CLI",
+    "vendor": "AWS",
+    "comm": [
+      "kiro-cli",
+      "kiro-cli-chat"
+    ],
+    "launch": "kiro-cli",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#8A3FF5",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#F0E7FF",
+        "accentText": "#7A30E6"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#B489FF",
+        "accentFg": "#160A2A",
+        "accentSoft": "#2A1C45",
+        "accentText": "#C6A6FF"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?kiro-cli(?:\\s|$)",
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?kiro-cli-chat(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "qwen": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [
+      {
+        "path": "~/.qwen/settings.json",
+        "label": "Settings",
+        "format": "json"
+      },
+      {
+        "path": "{cwd}/QWEN.md",
+        "label": "Project memory",
+        "format": "md"
+      }
+    ],
+    "kind": "qwen",
+    "install": {
+      "cmd": "curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash",
+      "npm": "@qwen-code/qwen-code",
+      "docs": "https://github.com/QwenLM/qwen-code#installation"
+    },
+    "latest": {
+      "npm": "@qwen-code/qwen-code"
+    },
+    "update": "qwen update",
+    "login": "qwen",
+    "version": "qwen --version",
+    "authFiles": [
+      "~/.qwen/settings.json"
+    ],
+    "name": "Qwen Code",
+    "vendor": "Alibaba",
+    "comm": [
+      "qwen"
+    ],
+    "launch": "qwen",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#615CED",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#ECEBFD",
+        "accentText": "#5550E0"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#9A97F5",
+        "accentFg": "#11103A",
+        "accentSoft": "#24234A",
+        "accentText": "#B3B1F8"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?qwen(?:\\s|$)",
+      "qwen-code\\/lib\\/cli-entry\\.js",
+      "@qwen-code\\/qwen-code\\/"
+    ],
+    "set": {}
+  },
+  "qoder": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [],
+    "kind": "qoder",
+    "install": {
+      "cmd": "curl -fsSL https://qoder.com/install | bash",
+      "npm": "@qoder-ai/qodercli",
+      "docs": "https://docs.qoder.com/cli/installation"
+    },
+    "latest": {
+      "npm": "@qoder-ai/qodercli"
+    },
+    "update": "qodercli update",
+    "login": "qodercli login",
+    "version": "qodercli --version",
+    "authFiles": [
+      "~/.qoder/.auth/user"
+    ],
+    "name": "Qoder CLI",
+    "vendor": "Qoder",
+    "comm": [
+      "qodercli",
+      "qoder"
+    ],
+    "launch": "qodercli",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#15803D",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#DFF7E7",
+        "accentText": "#13773A"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#2ADB5C",
+        "accentFg": "#0A1A0F",
+        "accentSoft": "#13301C",
+        "accentText": "#5EE585"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?qodercli(?:\\s|$)",
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?qoder(?:\\s|$)"
+    ],
+    "set": {}
+  },
+  "codebuddy": {
+    "replyFont": "sans",
+    "spinner": [
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏"
+    ],
+    "chat": false,
+    "models": [],
+    "efforts": [],
+    "modes": [],
+    "commands": [],
+    "configFiles": [
+      {
+        "path": "~/.codebuddy/settings.json",
+        "label": "Settings",
+        "format": "json"
+      },
+      {
+        "path": "{cwd}/CODEBUDDY.md",
+        "label": "Project memory",
+        "format": "md"
+      }
+    ],
+    "kind": "codebuddy",
+    "install": {
+      "npm": "@tencent-ai/codebuddy-code",
+      "docs": "https://www.codebuddy.ai/docs/cli/installation"
+    },
+    "latest": {
+      "npm": "@tencent-ai/codebuddy-code"
+    },
+    "update": "codebuddy update",
+    "login": "codebuddy",
+    "version": "codebuddy --version",
+    "authFiles": [
+      "~/.codebuddy/.credentials.json"
+    ],
+    "name": "CodeBuddy Code",
+    "vendor": "Tencent",
+    "comm": [
+      "codebuddy"
+    ],
+    "launch": "codebuddy",
+    "skin": {
+      "light": {
+        "bg": "#FAFAF9",
+        "panel": "#FFFFFF",
+        "raised": "#F3F3F1",
+        "hover": "#EDEDEA",
+        "line": "#E2E1DD",
+        "lineStrong": "#CFCEC8",
+        "fg": "#1A1A19",
+        "fg2": "#4A4945",
+        "fg3": "#5F5E59",
+        "bubble": "#EFEFEC",
+        "code": "#F3F3F1",
+        "accent": "#6C4DFF",
+        "accentFg": "#FFFFFF",
+        "accentSoft": "#EEEAFF",
+        "accentText": "#5B3BF0"
+      },
+      "dark": {
+        "bg": "#0F0F10",
+        "panel": "#18181A",
+        "raised": "#141416",
+        "hover": "#1E1E21",
+        "line": "#2A2A2E",
+        "lineStrong": "#38383D",
+        "fg": "#EDEDEE",
+        "fg2": "#BDBDC2",
+        "fg3": "#8F8F96",
+        "bubble": "#1F1F22",
+        "code": "#121214",
+        "accent": "#9C86FF",
+        "accentFg": "#140E33",
+        "accentSoft": "#251E4A",
+        "accentText": "#B4A3FF"
+      }
+    },
+    "args": [
+      "^(?:\\S*\\/)?(?:(?:node|bun|python3?)\\s+(?:\\S*\\/)?)?codebuddy(?:\\s|$)",
+      "@tencent-ai\\/codebuddy-code\\/"
+    ],
+    "set": {}
   }
 }

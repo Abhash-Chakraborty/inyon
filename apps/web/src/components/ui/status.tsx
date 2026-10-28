@@ -1,12 +1,12 @@
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type AgentState, type HostConfig, type HostStatus, type TurnFailure } from '@inyon/protocol'
+import { agentDef, type AgentKind, type AgentState, type HostConfig, type HostStatus, type TurnFailure } from '@inyon/protocol'
 
 /**
  * The agent's own spinner glyphs (Claude's ✻ cycle, Codex's braille dots, …). The frames sit in a
  * column that CSS steps through, so a screen full of working sessions costs no re-renders.
  */
 export function AgentSpinner({ kind = 'claude', active, className }: { kind?: AgentKind; active?: boolean; className?: string }) {
-  const frames = AGENTS[kind].spinner
+  const frames = agentDef(kind).spinner
   const ms = (kind === 'claude' ? 120 : 90) * frames.length
   return (
     <span aria-hidden className={clsx('inline-flex h-[1em] select-none items-start justify-center overflow-hidden font-mono leading-none text-accent', className)}>

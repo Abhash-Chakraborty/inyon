@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { AGENTS, chatKey, type AgentKind, type AgentStatus } from '@inyon/protocol'
+import { agentDef, AGENTS, chatKey, type AgentKind, type AgentStatus } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
 import { allPanes } from '../../lib/overview.ts'
@@ -16,7 +16,7 @@ export function useSession(host: string, pane: string) {
   const agent: AgentKind | undefined = ref?.pane.agent?.kind ?? chat?.info?.agent
   const catalog = useAgentCatalog(host, pane, agent)
   // the machine's own lists when the agent has them: OpenCode's models and agents (custom ones too)
-  const def = useMemo(() => agent ? { ...AGENTS[agent], models: catalog?.models ?? AGENTS[agent].models, modes: catalog?.modes ?? AGENTS[agent].modes } : undefined, [agent, catalog])
+  const def = useMemo(() => agent ? { ...agentDef(agent), models: catalog?.models ?? agentDef(agent).models, modes: catalog?.modes ?? agentDef(agent).modes } : undefined, [agent, catalog])
   const info = chat?.info
   const live = ref?.pane.agent?.status
   const reported: AgentStatus | undefined = agent === 'copilot'

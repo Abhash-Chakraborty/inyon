@@ -22,10 +22,43 @@ pub enum AgentKind {
     Copilot,
     Gemini,
     Antigravity,
+    Cursor,
+    Grok,
+    Pi,
+    Amp,
+    Goose,
+    Hermes,
+    Kimi,
+    Kiro,
+    Qwen,
+    Qoder,
+    Codebuddy,
 }
 
 /// Every agent, in the catalog's order (the order `detect_agent` tries them in).
-pub const AGENT_KINDS: [AgentKind; 6] = [AgentKind::Claude, AgentKind::Codex, AgentKind::Opencode, AgentKind::Copilot, AgentKind::Gemini, AgentKind::Antigravity];
+pub const AGENT_KINDS: [AgentKind; 17] = [
+    AgentKind::Claude,
+    AgentKind::Codex,
+    AgentKind::Opencode,
+    AgentKind::Copilot,
+    AgentKind::Gemini,
+    AgentKind::Antigravity,
+    AgentKind::Cursor,
+    AgentKind::Grok,
+    AgentKind::Pi,
+    AgentKind::Amp,
+    AgentKind::Goose,
+    AgentKind::Hermes,
+    AgentKind::Kimi,
+    AgentKind::Kiro,
+    AgentKind::Qwen,
+    AgentKind::Qoder,
+    AgentKind::Codebuddy,
+];
+
+/// The agents every app knows. Apps from before 0.23 crash on a kind they don't have, so the hub
+/// shows them the others as plain terminals (see `AgentKind::known_to`).
+pub const FIRST_KINDS: usize = 6;
 
 impl AgentKind {
     /// The name on the wire ("claude", "opencode").
@@ -37,7 +70,29 @@ impl AgentKind {
             AgentKind::Copilot => "copilot",
             AgentKind::Gemini => "gemini",
             AgentKind::Antigravity => "antigravity",
+            AgentKind::Cursor => "cursor",
+            AgentKind::Grok => "grok",
+            AgentKind::Pi => "pi",
+            AgentKind::Amp => "amp",
+            AgentKind::Goose => "goose",
+            AgentKind::Hermes => "hermes",
+            AgentKind::Kimi => "kimi",
+            AgentKind::Kiro => "kiro",
+            AgentKind::Qwen => "qwen",
+            AgentKind::Qoder => "qoder",
+            AgentKind::Codebuddy => "codebuddy",
         }
+    }
+
+    /// Whether an app that knows `catalog` agents can show this one: 1 for the first six, 2 for
+    /// all of them (from 0.23, when the app falls back on its own for a kind it doesn't have).
+    pub fn known_to(self, catalog: u32) -> bool {
+        catalog >= 2 || AGENT_KINDS[..FIRST_KINDS].contains(&self)
+    }
+
+    /// Whether Inyon reads its conversation as chat; the others stay in their terminal.
+    pub fn chat(self) -> bool {
+        self.def().chat
     }
 
     pub fn def(self) -> &'static AgentDef {

@@ -59,3 +59,40 @@ fn agents_are_spotted_by_process_name_or_command_line() {
     assert_eq!(detect_agent("zsh", "zsh -c claude"), None);
     assert_eq!(detect_agent("-bash", "codex"), None);
 }
+
+#[test]
+fn the_terminal_first_agents_are_spotted_as_their_installs_run_them() {
+    // `ps -o comm,args` from each one's own installer or npm package, in a container
+    let seen = [
+        ("MainThread", "/home/u/.local/bin/cursor-agent --use-system-ca /home/u/.local/share/cursor-agent/versions/2026.10.22-27dcf5f/index.js", AgentKind::Cursor),
+        ("MainThread", "/home/u/.local/bin/agent --use-system-ca /home/u/.local/share/cursor-agent/versions/2026.10.22-27dcf5f/index.js", AgentKind::Cursor),
+        ("grok", "grok", AgentKind::Grok),
+        ("pi", "pi", AgentKind::Pi),
+        ("amp", "amp", AgentKind::Amp),
+        ("goose", "goose", AgentKind::Goose),
+        ("goose", "/home/u/.local/bin/goose session", AgentKind::Goose),
+        ("hermes", "/home/u/.hermes/tools/python-3.14.9/bin/python3 -I -c import os, re, sys", AgentKind::Hermes),
+        ("kimi", "kimi", AgentKind::Kimi),
+        ("kiro-cli", "kiro-cli", AgentKind::Kiro),
+        ("node", "/home/u/.local/lib/qwen-code/node/bin/node /home/u/.local/lib/qwen-code/lib/cli-entry.js", AgentKind::Qwen),
+        ("node", "node /home/u/.npm-global/bin/qwen", AgentKind::Qwen),
+        ("node", "node /home/u/.npm-global/bin/qodercli", AgentKind::Qoder),
+        ("codebuddy", "codebuddy", AgentKind::Codebuddy),
+        ("node", "node /home/u/.npm-global/bin/codebuddy", AgentKind::Codebuddy),
+    ];
+    for (comm, args, kind) in seen {
+        assert_eq!(detect_agent(comm, args), Some(kind), "{comm} {args}");
+    }
+    // a file named after an agent isn't one
+    assert_eq!(detect_agent("less", "less /tmp/notes/grok"), None);
+    assert_eq!(detect_agent("node", "node /srv/app/pipeline.js"), None);
+    // what the app reads as chat, and what stays in the terminal
+    assert!(AgentKind::Claude.chat() && AgentKind::Gemini.chat());
+    assert!(AGENT_KINDS[FIRST_KINDS..].iter().all(|k| !k.chat()));
+}
+
+#[test]
+fn an_app_before_the_new_agents_knows_only_the_first_six() {
+    assert!(AGENT_KINDS[..FIRST_KINDS].iter().all(|k| k.known_to(1)));
+    assert!(AGENT_KINDS[FIRST_KINDS..].iter().all(|k| !k.known_to(1) && k.known_to(2)));
+}

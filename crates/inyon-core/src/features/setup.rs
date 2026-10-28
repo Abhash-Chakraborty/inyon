@@ -19,7 +19,7 @@ use crate::tmux::tmux::HIDDEN_PREFIXES;
 use inyon_protocol::{HostStatus, TmuxState};
 
 /// Puts the usual install folders on PATH, for commands run over a non-login shell.
-pub const PATHS: &str = r#"export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done"#;
+pub const PATHS: &str = r#"export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$HOME/.grok/bin:$HOME/.kimi-code/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done"#;
 
 /// A one-tap fix Inyon can run.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -165,6 +165,8 @@ pub fn signed_in_test(kind: AgentKind) -> String {
         AgentKind::Gemini => {
             format!("{{ {} || grep -qs GEMINI_API_KEY \"$HOME/.gemini/.env\"; }}", def.auth_files.iter().map(|f| format!("[ -s {} ]", file(f))).collect::<Vec<_>>().join(" || "))
         }
+        // Qwen Code writes settings.json for any preference; /auth adds the method it signed in with
+        AgentKind::Qwen => format!("{{ grep -qs '\"selectedType\"' {}; }}", file(&def.auth_files[0])),
         // OpenCode's free Zen models need no sign-in: once it has run (its database exists) it can work
         AgentKind::Opencode => format!("{{ [ -e {} ] || [ -e \"$HOME/.local/share/opencode/opencode.db\" ]; }}", file(&def.auth_files[0])),
         _ => format!("{{ {}; }}", def.auth_files.iter().map(|f| format!("[ -e {} ]", file(f))).collect::<Vec<_>>().join(" || ")),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowDown, History, Play, SquareTerminal } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type HeldPrompt, type HostStatus, type LiveItem } from '@inyon/protocol'
+import { agentDef, chatKey, type AgentKind, type HeldPrompt, type HostStatus, type LiveItem } from '@inyon/protocol'
 import { lastAsk } from '../../lib/lastAsk.ts'
 import { socket } from '../../lib/socket.ts'
 import { msgKey, notifyTag, patchChat, PENDING_MS, toast, useStore, type PendingMessage } from '../../lib/store.ts'
@@ -64,7 +64,10 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
 
   const rows = useMemo(() => buildRows(chat?.items ?? []), [chat?.items])
   const screen = chat?.screen
-  const running = chat?.info?.running ?? true
+  const chatCapable = agent ? agentDef(agent).chat : true
+  // a terminal-first agent's chat info says nothing until the hub looks: its pane says whether it runs
+  const paneAgent = machine?.sessions.flatMap((s) => s.windows).flatMap((w) => w.panes).find((p) => p.id === pane)?.agent
+  const running = chatCapable ? (chat?.info?.running ?? true) : !machine || !!paneAgent
   const working = !!screen?.working
   const prompt = screen?.prompt
   // a question asked before the connection dropped (opened from its alert, say) keeps its buttons,
@@ -92,7 +95,6 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   useEffect(() => {
     if (JSON.stringify(unconfirmed) !== JSON.stringify(stored)) patchChat(key, (c) => ({ pending: settleSends(c.pending, c.items, c.info?.sends) }))
   }, [key, stored, unconfirmed])
-  const chatCapable = agent ? AGENTS[agent].chat : true
   const tasks = chat?.info?.tasks
   const subagents = chat?.info?.subagents
   const jobs = useMemo(
@@ -327,14 +329,17 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
         <div className="flex min-h-0 flex-1 flex-col">
           <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain [overflow-anchor:none]">
             <div className="mx-auto w-full max-w-[760px] px-4 pt-5 pb-6 sm:px-6">
-              {!chat?.loaded ? (
+              {/* a terminal-first agent has no chat for the hub to load, so nothing waits on one */}
+              {!chatCapable && !running ? (
+                <NotRunning host={host} pane={pane} agent={agent} installed={installed} onTerminal={onTerminal} />
+              ) : !chatCapable ? (
+                <Empty icon={<AgentLogo kind={agent} size={28} />} title={`${agentDef(agent!).name} runs in the terminal`} action={<Button onClick={onTerminal}><SquareTerminal className="size-4" /> Open terminal</Button>}>
+                  Inyon doesn't read {agentDef(agent!).name}'s conversation files yet, so use the terminal view. Status and notifications still work.
+                </Empty>
+              ) : !chat?.loaded ? (
                 <Waiting shape="lines" className="pt-4" label={chat?.catchingUp !== undefined ? `Loading the conversation · ${Math.round(chat.catchingUp * 100)}%` : 'Loading the conversation'} />
               ) : !running && !rows.length ? (
                 <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
-              ) : !chatCapable ? (
-                <Empty icon={<AgentLogo kind={agent} size={28} />} title={`${AGENTS[agent!].name} runs in the terminal`} action={<Button onClick={onTerminal}><SquareTerminal className="size-4" /> Open terminal</Button>}>
-                  Inyon doesn't read {AGENTS[agent!].name}'s conversation files yet, so use the terminal view. Status and notifications still work.
-                </Empty>
               ) : (
                 <>
                   {chat.hasMore && (
@@ -372,7 +377,7 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     ))}
                     {held.map((p, i) => (
                       <div key={p.id} className="animate-slide-up">
-                        <HeldBubble host={host} pane={pane} p={p} index={i} count={held.length} agentName={agent ? AGENTS[agent].name : 'the agent'} />
+                        <HeldBubble host={host} pane={pane} p={p} index={i} count={held.length} agentName={agent ? agentDef(agent).name : 'the agent'} />
                       </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}
@@ -525,14 +530,14 @@ function NotRunning({
             <History className="size-4" /> Resume conversation
           </Button>
         )}
-        {!!agent && !!AGENTS[agent].conversations?.length && (
+        {!!agent && !!agentDef(agent).conversations?.length && (
           <Button variant="ghost" onClick={() => openMenu('conversations')}>
             <History className="size-4" /> Past conversations
           </Button>
         )}
         {kinds.map((k) => (
           <Button key={k} onClick={() => start(k)} loading={busy === k}>
-            <AgentLogo kind={k} size={16} /> Start {AGENTS[k].name}
+            <AgentLogo kind={k} size={16} /> Start {agentDef(k).name}
           </Button>
         ))}
         <Button variant="ghost" onClick={onTerminal}>

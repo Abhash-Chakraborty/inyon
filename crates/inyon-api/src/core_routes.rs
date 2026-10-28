@@ -268,13 +268,13 @@ async fn temp_delete(mut r: Req) -> HubResult<Resp> {
 
 /// The routes, each behind sign-in.
 /// What the overview shows, as the WebSocket's overview message carries it (a companion app reads this too).
-pub fn overview() -> Resp {
-    ok_json(&json!({ "hosts": registry().overview() }))
+pub fn overview(catalog: u32) -> Resp {
+    ok_json(&json!({ "hosts": inyon_protocol::compat::hosts_for(&registry().overview(), catalog) }))
 }
 
 pub fn add(routes: &mut Routes) {
     use Method as M;
-    guarded(routes, "/api/overview", vec![(M::GET, h(|_r| async move { Ok(overview()) }))]);
+    guarded(routes, "/api/overview", vec![(M::GET, h(|r| async move { Ok(overview(r.catalog())) }))]);
     // sends that failed, newest first, with the bottom of the screen each failed on (from 0.22)
     guarded(routes, "/api/send-failures", vec![(M::GET, h(|_r| async move { Ok(json_of(&inyon_core::claude::send_check::failures())) }))]);
     guarded(
@@ -410,6 +410,7 @@ pub fn add(routes: &mut Routes) {
                     mode: loose(b.get("mode")),
                     prompt: loose(b.get("prompt")),
                     custom: loose(b.get("custom")),
+                    sign_in: truthy(b.get("signIn")),
                     ..Default::default()
                 };
                 let pane = actions::launch(&id(&r), &opts).await?;
@@ -476,7 +477,14 @@ pub fn add(routes: &mut Routes) {
         routes,
         "/api/hosts/:id/setup",
         vec![
-            (M::GET, h(|r| async move { Ok(json_of(&setup::setup_report(&id(&r)).await?)) })),
+            (
+                M::GET,
+                h(|r| async move {
+                    let mut report = setup::setup_report(&id(&r)).await?;
+                    report.agents.retain(|a| a.kind.known_to(r.catalog()));
+                    Ok(json_of(&report))
+                }),
+            ),
             (
                 M::POST,
                 h(|mut r| async move {

@@ -100,6 +100,14 @@ test("another agent's hook line is left to the Rust hub, and Claude Code's is re
   expect(r.hookPanes.has('%5')).toBe(false)
 })
 
+test('the terminal-first agents are left to the Rust hub too: this one lists only the chat agents, which every app knows', async () => {
+  const out = ['@@AUTH claude pi cursor ', '@@BINS', 'claude', 'pi', 'cursor-agent', 'codex', '@@END'].join('\n')
+  const fake = { config: { id: 'm', name: 'm', kind: 'local' }, exec: async () => ({ stdout: out, stderr: '', code: 0 }) } as unknown as Host
+  const r = await probe(fake)
+  expect(r.installed).toEqual(['claude', 'codex'])
+  expect(r.signedIn).toEqual(['claude'])
+})
+
 describe('claudeStatus', () => {
   const base = (over: Partial<{ ts: number; account: string; accountNow: string; session: string }> = {}) => ({
     integration: 'installed' as const,

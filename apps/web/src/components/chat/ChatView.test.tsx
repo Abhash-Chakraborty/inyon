@@ -463,3 +463,23 @@ describe('opened while the machine reconnects', () => {
     expect(screen.getByRole('textbox', { name: /Message/ }).closest('.animate-fade-in')).not.toBeNull()
   })
 })
+
+describe('a terminal-first agent', () => {
+  const view = () => <ChatView host="box" pane="%1" agent="pi" onTerminal={() => {}} />
+
+  test('points to the terminal at once, without waiting on a conversation the hub never loads', async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'pi')] })] })
+    render(view())
+    expect(screen.getByText('Pi runs in the terminal')).toBeTruthy()
+    expect(screen.queryByText(/Loading the conversation/)).toBeNull()
+    // the hub's first word on a pane it has read nothing from says it isn't running; the pane knows better
+    act(() => emit({ t: 'chat.info', key: 'box:%1', info: chatInfo({ running: false }) }))
+    expect(screen.getByText('Pi runs in the terminal')).toBeTruthy()
+  })
+
+  test('once it has quit, the pane offers to start an agent again', async () => {
+    useStore.setState({ connected: true, hosts: [host('box', { panes: [agentPane('%1', 'pi', { agent: undefined })] })] })
+    render(view())
+    expect(screen.getByText('No agent is running in this pane')).toBeTruthy()
+  })
+})

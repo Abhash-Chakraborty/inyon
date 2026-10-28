@@ -3,7 +3,7 @@ import { LEAVE_MS } from '../components/ui/AnimatedList.tsx'
 import { socket } from '../lib/socket.ts'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
-import { AGENTS, chatKey, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
+import { agentDef, chatKey, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
 import { paneFromSlug } from '../lib/api.ts'
 import { hydrateChat, useStore } from '../lib/store.ts'
 import { paneTitle } from '../lib/overview.ts'
@@ -60,7 +60,9 @@ export function PanePage() {
     return socket.subscribeChat(host, pane)
   }, [host, pane])
   const { ref, info, agent } = s
-  const view = (search.get('view') as 'chat' | 'terminal' | null) ?? (agent ? 'chat' : 'terminal')
+  // a terminal-first agent opens on its terminal: its chat tab only points there
+  const home = agent && agentDef(agent).chat ? 'chat' : 'terminal'
+  const view = (search.get('view') as 'chat' | 'terminal' | null) ?? home
   const wide = useWide()
   const [tab, setTab] = useState<PanelTab>('changes')
   const [sheet, setSheet] = useState<'controls' | 'activity' | null>(null)
@@ -77,7 +79,7 @@ export function PanePage() {
     }
   }, [title])
 
-  const setView = (v: 'chat' | 'terminal') => setSearch(v === (agent ? 'chat' : 'terminal') ? {} : { view: v }, { replace: true })
+  const setView = (v: 'chat' | 'terminal') => setSearch(v === home ? {} : { view: v }, { replace: true })
   const actions = useMemo(
     () => ({
       openSubagent: (id: string) => {
@@ -120,10 +122,11 @@ export function PanePage() {
             else setSheet(which)
           }}
         />
-        {agent && ref?.host.signedIn && !ref.host.signedIn.includes(agent) && (
+        {/* an agent that stays in its terminal asks you to sign in there itself */}
+        {agent && agentDef(agent).chat && ref?.host.signedIn && !ref.host.signedIn.includes(agent) && (
           <div className="flex shrink-0 items-center gap-3 border-b border-line bg-warn-soft/60 px-4 py-2 text-[13px]">
             <LogIn className="size-4 shrink-0 text-warn" />
-            <span className="min-w-0 flex-1">{AGENTS[agent].name} isn't signed in on {ref.host.config.name}.</span>
+            <span className="min-w-0 flex-1">{agentDef(agent).name} isn't signed in on {ref.host.config.name}.</span>
             <Button size="xs" variant="primary" onClick={() => setSignIn(true)}>Sign in</Button>
           </div>
         )}

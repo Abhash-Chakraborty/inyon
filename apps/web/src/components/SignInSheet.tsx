@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Check, ChevronRight, Copy, ExternalLink, TriangleAlert } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@inyon/protocol'
+import { agentDef, type AgentKind } from '@inyon/protocol'
 import { api, type SignInScreen } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -27,7 +27,7 @@ export function SignInSheet({ hostId, hostName, agent, provider, onClose }: { ho
     <Sheet
       open={open}
       onClose={onClose}
-      title={agent ? (provider ? `Connect ${provider.name}` : `Sign in to ${AGENTS[agent].name}`) : ''}
+      title={agent ? (provider ? `Connect ${provider.name}` : `Sign in to ${agentDef(agent).name}`) : ''}
       icon={agent ? <AgentLogo kind={agent} size={24} /> : undefined}
       wide
     >
@@ -48,7 +48,7 @@ function SignInFlow({ hostId, hostName, agent, provider, onClose }: { hostId: st
   const out = useRef<HTMLPreElement>(null)
   const openLink = useRef<HTMLAnchorElement>(null)
   const codeInput = useRef<HTMLInputElement>(null)
-  const name = provider?.name ?? AGENTS[agent].name
+  const name = provider?.name ?? agentDef(agent).name
   const done = screen?.exit !== undefined
 
   // start the sign-in, and end it if the sheet closes first

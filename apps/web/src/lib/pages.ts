@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { AGENTS, type HostState, type PageEntry, type PageOpen } from '@inyon/protocol'
+import { agentDef, type HostState, type PageEntry, type PageOpen } from '@inyon/protocol'
 import { api, ApiError } from './api.ts'
 import { hubHostId, isHubHost, listHubs, splitHostId, type PairedHub } from './hubs.ts'
 import { isPhone } from './phone.ts'
@@ -51,7 +51,7 @@ export function runningNames(hosts: HostState[]): Map<string, string> {
     const a = r.pane.agent
     if (!a?.sessionId) continue
     const name = paneTitle(r)
-    if (name && name !== (a.custom ?? AGENTS[a.kind]?.name) && name !== r.pane.command) out.set(pageId(r.host.config.id, a.sessionId), name)
+    if (name && name !== (a.custom ?? agentDef(a.kind)?.name) && name !== r.pane.command) out.set(pageId(r.host.config.id, a.sessionId), name)
   }
   return out
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
-import { AGENTS, type AgentKind } from '@inyon/protocol'
+import { agentDef, AGENTS, type AgentKind } from '@inyon/protocol'
 import { api, type CustomAgent, type HubSettings } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { AgentLogo } from '../lib/skin.tsx'
@@ -53,7 +53,7 @@ export function CustomAgentRows({ hub, onSaved }: { hub: HubSettings; onSaved: (
           <AgentLogo kind={a.like} size={28} />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{a.name}</span>
-            <span className="block truncate text-[12px] text-fg-3">Works like {AGENTS[a.like].name}</span>
+            <span className="block truncate text-[12px] text-fg-3">Works like {agentDef(a.like).name}</span>
             {/* phones: under the name, as the built-in agents' chips wrap */}
             <code className="mt-2 inline-block max-w-full truncate rounded-full border border-line bg-code px-2 py-1 font-mono text-[12px] text-fg-2 sm:hidden" title={a.command}>{a.command}</code>
           </span>
@@ -84,14 +84,15 @@ export function CustomAgentRows({ hub, onSaved }: { hub: HubSettings; onSaved: (
         onSave={async (d) => {
           const old = editing === 'new' ? undefined : editing
           await save(old ? list.map((x) => (x.id === old.id ? d : x)) : [...list, d])
-          toast({ title: old ? `Saved ${d.name}` : `Added ${d.name}`, body: old ? undefined : `New sessions can start it, and Inyon reads it as ${AGENTS[d.like].name}.`, tone: 'success' })
+          toast({ title: old ? `Saved ${d.name}` : `Added ${d.name}`, body: old ? undefined : `New sessions can start it, and Inyon reads it as ${agentDef(d.like).name}.`, tone: 'success' })
         }}
       />
     </>
   )
 }
 
-const KINDS = Object.keys(AGENTS) as AgentKind[]
+// what a custom agent can work like: the agents whose conversation Inyon reads
+const KINDS = (Object.keys(AGENTS) as AgentKind[]).filter((k) => agentDef(k).chat)
 
 export function CustomAgentSheet({ open, agent, onClose, onSave }: { open: boolean; agent?: CustomAgent; onClose: () => void; onSave: (d: Draft) => Promise<void> }) {
   const [name, setName] = useState('')
@@ -147,7 +148,7 @@ export function CustomAgentSheet({ open, agent, onClose, onSave }: { open: boole
             aria-label="Works like"
             value={like}
             onChange={setLike}
-            options={KINDS.map((k) => ({ value: k, label: <span className="flex items-center gap-2"><AgentLogo kind={k} size={18} /> {AGENTS[k].name}</span> }))}
+            options={KINDS.map((k) => ({ value: k, label: <span className="flex items-center gap-2"><AgentLogo kind={k} size={18} /> {agentDef(k).name}</span> }))}
           />
           <span className="mt-1.5 block text-[12px] leading-relaxed text-fg-3">Its logo, chat view, prompts and hooks come from this agent.</span>
         </div>

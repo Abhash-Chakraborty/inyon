@@ -43,7 +43,7 @@ try {
       const ctx = await browser.newContext({ ...devices['iPhone 13'], viewport: { width, height: 760 }, colorScheme: scheme, reducedMotion: 'reduce' })
       await ctx.route(/\/api\//, (r) => r.fulfill({ json: {} }))
       await ctx.route('**/api/session', (r) => r.fulfill({ json: { authed: true } }))
-      await ctx.routeWebSocket(/\/ws$/, (ws) =>
+      await ctx.routeWebSocket(/\/ws(\?|$)/, (ws) =>
         ws.onMessage((m) => {
           const msg = JSON.parse(String(m))
           if (msg.t === 'sub.overview') ws.send(JSON.stringify({ t: 'overview', hosts: [host] }))

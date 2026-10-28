@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState, type FocusEvent, type PointerEvent }
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
-import { AGENTS, isBusy, type HostState, type RateWindow } from '@inyon/protocol'
+import { agentDef, AGENTS, isBusy, type HostState, type RateWindow } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
 import { api } from '../lib/api.ts'
@@ -113,7 +113,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
-        <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{a.custom ?? AGENTS[a.kind].name}</span>
+        <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{a.custom ?? agentDef(a.kind).name}</span>
         <StatePill state={shownState(a, r.host)} title={a.background} />
         <span className="pointer-events-auto relative -my-1 -mr-1.5">
           <Menu
@@ -237,7 +237,7 @@ export function AgentBadges({ host, size = 18 }: { host: HostState; size?: numbe
       {host.agents.map((k) => {
         const n = running.get(k) ?? 0
         return (
-          <span key={k} title={n ? `${AGENTS[k].name}: ${n} running` : `${AGENTS[k].name}: installed, not running`} className={clsx('flex items-center gap-1', !n && 'opacity-35 grayscale')}>
+          <span key={k} title={n ? `${agentDef(k).name}: ${n} running` : `${agentDef(k).name}: installed, not running`} className={clsx('flex items-center gap-1', !n && 'opacity-35 grayscale')}>
             <AgentLogo kind={k} size={size} />
             {n > 1 && <span className="tabular font-mono text-[12px] text-fg-3">{n}</span>}
           </span>

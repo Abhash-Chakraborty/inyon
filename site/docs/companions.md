@@ -142,7 +142,7 @@ A companion never sees how the hub reaches a machine, folders, transcript paths,
 
 | Field | Holds |
 |---|---|
-| `kind` | `claude`, `codex`, `opencode`, `copilot`, `gemini` or `antigravity` |
+| `kind` | `claude`, `codex`, `opencode`, `copilot`, `gemini` or `antigravity`; from 0.23, with `catalog=2` (see below), also `cursor`, `grok`, `pi`, `amp`, `goose`, `hermes`, `kimi`, `kiro`, `qwen`, `qoder` or `codebuddy` |
 | `custom` | from 0.22, the name of [your own agent](agents.md#your-own-agents) when the pane runs one; `kind` is then the agent it works like |
 | `state` | `idle`, `working`, `waiting` or `unknown` |
 | `waitingFor` | a short line about the question, while `state` is `waiting` |
@@ -151,6 +151,8 @@ A companion never sees how the hub reaches a machine, folders, transcript paths,
 | `mode` | the agent's mode, such as `manual` or `plan` |
 
 A pane is named by its machine's `config.id` and its tmux pane id, such as `box` and `%3`.
+
+From 0.23 the hub knows more agents than the first six. A companion that can show an agent kind it doesn't know (with a plain icon, say) adds `catalog=2` to the URL of each request and of the WebSocket, or sends the header `X-Inyon-Catalog: 2`. Without it, a pane running one of the newer agents comes without `agent`, as a plain terminal, and its notices without `agent` either, so a companion written for the six never meets a kind it can't handle.
 
 From 0.22 the pane running the [companion agent](companion-agent.md) has `"companion": true`. At most one pane has it, across all the hub's machines; send your user's words to that pane to talk to the companion.
 

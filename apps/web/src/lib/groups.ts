@@ -1,4 +1,4 @@
-import { AGENTS, type HostState, type SessionInfo } from '@inyon/protocol'
+import { agentDef, type HostState, type SessionInfo } from '@inyon/protocol'
 import { allPanes, paneTitle, terminalName, type PaneRef } from './overview.ts'
 
 /**
@@ -35,7 +35,7 @@ export function matchesQuery(text: string, query: string) {
 export function searchText(r: PaneRef) {
   return [
     r.pane.agent ? paneTitle(r) : (terminalName(r) ?? ''),
-    r.pane.agent ? AGENTS[r.pane.agent.kind]?.name : 'terminal',
+    r.pane.agent ? agentDef(r.pane.agent.kind)?.name : 'terminal',
     r.pane.command,
     r.host.config.name,
     r.host.hostname,

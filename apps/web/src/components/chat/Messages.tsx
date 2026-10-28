@@ -5,7 +5,7 @@ import {
   AlertTriangle, Check, ChevronRight, CircleAlert, CornerDownLeft, File as FileIcon, Image as ImageIcon, Info, Layers, Lightbulb,
   Code as CodeIcon, Loader2, MonitorX, RadioTower, RotateCcw, SquareTerminal, Target, CircleCheck, CircleX, X,
 } from 'lucide-react'
-import { AGENTS, type AgentKind, type LiveItem } from '@inyon/protocol'
+import { agentDef, type AgentKind, type LiveItem } from '@inyon/protocol'
 import type { Part, Row } from '../../lib/chat.ts'
 import type { PendingMessage } from '../../lib/store.ts'
 import { clock, duration } from '../../lib/format.ts'
@@ -162,7 +162,7 @@ export function QueuedBubble({ text, agent }: { text: string; agent?: AgentKind 
         <LinkedPaths text={text} />
       </div>
       <div className="mt-1 flex h-6 items-center gap-1.5 px-1 text-[12px] text-fg-3">
-        <Clock3 className="size-3" /> Queued · {agent ? AGENTS[agent].name : 'the agent'} reads it at its next step
+        <Clock3 className="size-3" /> Queued · {agent ? agentDef(agent).name : 'the agent'} reads it at its next step
       </div>
     </div>
   )

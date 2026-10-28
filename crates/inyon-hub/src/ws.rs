@@ -283,7 +283,9 @@ pub fn app_upgrade(mut req: Req) -> Resp {
     let (Some(res), Some(on)) = (handshake(&req), req.extensions.remove::<hyper::upgrade::OnUpgrade>()) else { return text(400, "Upgrade failed") };
     let (sock, ends) = Socket::new();
     let s = sock.clone();
-    let client = new_client(move |msg| s.send_text(wire(msg)));
+    // an app from before the newer agents gets them as plain terminals
+    let catalog = req.catalog();
+    let client = new_client(move |msg| s.send_text(wire(&inyon_protocol::compat::msg_for(msg, catalog))));
     let s = sock.clone();
     let closer: Closer = Rc::new(move |code, reason| s.close_with(code, reason));
     let release: Box<dyn Fn()> = match &phone {
@@ -314,8 +316,9 @@ fn companion_upgrade(mut req: Req, c: crate::companions::CompanionRecord) -> Res
     let (sock, ends) = Socket::new();
     let scopes = Rc::new(c.scopes.clone());
     let (s, sc) = (sock.clone(), scopes.clone());
+    let catalog = req.catalog();
     let client = new_client(move |msg| {
-        if let Some(v) = crate::companions::companion_frame(msg, &sc) {
+        if let Some(v) = crate::companions::companion_frame(&inyon_protocol::compat::msg_for(msg, catalog), &sc) {
             s.send_text(inyon_core::js::stringify(&v));
         }
     });

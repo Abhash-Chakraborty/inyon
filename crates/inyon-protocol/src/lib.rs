@@ -6,6 +6,7 @@
 //! a [`Num`], since the agent may send a fraction and JavaScript passes it through untouched.
 
 mod agents;
+pub mod compat;
 mod js;
 mod types;
 mod versions;

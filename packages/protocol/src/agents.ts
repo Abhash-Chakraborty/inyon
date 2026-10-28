@@ -1,6 +1,23 @@
 // Everything Inyon knows about each coding agent: how to spot it, how it looks, what it can do.
 
-export type AgentKind = 'claude' | 'codex' | 'opencode' | 'copilot' | 'gemini' | 'antigravity'
+export type AgentKind =
+  | 'claude'
+  | 'codex'
+  | 'opencode'
+  | 'copilot'
+  | 'gemini'
+  | 'antigravity'
+  | 'cursor'
+  | 'grok'
+  | 'pi'
+  | 'amp'
+  | 'goose'
+  | 'hermes'
+  | 'kimi'
+  | 'kiro'
+  | 'qwen'
+  | 'qoder'
+  | 'codebuddy'
 
 export interface SkinTokens {
   bg: string
@@ -310,6 +327,39 @@ const ANTIGRAVITY_COMMANDS: [string, string, boolean?][] = [
 
 const cmds = (list: [string, string, boolean?][]): SlashCommand[] =>
   list.map(([name, description, instant]) => ({ name, description, source: 'built-in', instant }))
+
+const NEUTRAL = {
+  light: { bg: '#FAFAF9', panel: '#FFFFFF', raised: '#F3F3F1', hover: '#EDEDEA', line: '#E2E1DD', lineStrong: '#CFCEC8', fg: '#1A1A19', fg2: '#4A4945', fg3: '#5F5E59', bubble: '#EFEFEC', code: '#F3F3F1' },
+  dark: { bg: '#0F0F10', panel: '#18181A', raised: '#141416', hover: '#1E1E21', line: '#2A2A2E', lineStrong: '#38383D', fg: '#EDEDEE', fg2: '#BDBDC2', fg3: '#8F8F96', bubble: '#1F1F22', code: '#121214' },
+}
+
+type Accent = Pick<SkinTokens, 'accent' | 'accentFg' | 'accentSoft' | 'accentText'>
+const accent = (a: string, fg: string, soft: string, text: string): Accent => ({ accent: a, accentFg: fg, accentSoft: soft, accentText: text })
+/** A quiet neutral skin with the agent's brand colour as its accent. */
+const accentSkin = (light: Accent, dark: Accent): AgentDef['skin'] => ({ light: { ...NEUTRAL.light, ...light }, dark: { ...NEUTRAL.dark, ...dark } })
+
+/** The program as its process names it, or as the script node, bun or python runs. */
+const program = (name: string) => new RegExp(`^(?:\\S*/)?(?:(?:node|bun|python3?)\\s+(?:\\S*/)?)?${name}(?:\\s|$)`)
+
+/**
+ * An agent whose conversation stays in its terminal: Inyon finds it in a pane, starts, installs
+ * and updates it, and tells from its screen when it's busy or asking something.
+ */
+const terminalAgent = (
+  d: Pick<AgentDef, 'kind' | 'install' | 'latest' | 'update' | 'login' | 'version' | 'authFiles' | 'name' | 'vendor' | 'comm' | 'args' | 'launch' | 'skin'> &
+    Partial<Pick<AgentDef, 'configFiles'>>,
+): AgentDef => ({
+  replyFont: 'sans',
+  spinner: ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
+  chat: false,
+  models: [],
+  efforts: [],
+  modes: [],
+  commands: [],
+  configFiles: [],
+  set: {},
+  ...d,
+})
 
 export const AGENTS: Record<AgentKind, AgentDef> = {
   claude: {
@@ -624,6 +674,191 @@ export const AGENTS: Record<AgentKind, AgentDef> = {
       rc: '/remote-control',
     },
   },
+  cursor: terminalAgent({
+    kind: 'cursor',
+    install: { cmd: 'curl https://cursor.com/install -fsS | bash', docs: 'https://cursor.com/docs/cli/overview' },
+    update: 'cursor-agent update',
+    login: 'cursor-agent login',
+    version: 'cursor-agent --version',
+    authFiles: ['~/.config/cursor/auth.json'],
+    name: 'Cursor CLI',
+    vendor: 'Cursor',
+    comm: ['cursor-agent'],
+    // its launcher runs Node under the name it was started by (agent or cursor-agent)
+    args: [program('cursor-agent'), /\/cursor-agent\/versions\/[^/\s]+\/index\.js/],
+    launch: 'cursor-agent',
+    skin: accentSkin(accent('#1B1913', '#FFFFFF', '#ECEBE7', '#1B1913'), accent('#EDECEC', '#14120B', '#2A2924', '#EDECEC')),
+    configFiles: [{ path: '~/.cursor/cli-config.json', label: 'Config', format: 'json' }],
+  }),
+  grok: terminalAgent({
+    kind: 'grok',
+    install: { cmd: 'curl -fsSL https://x.ai/cli/install.sh | bash', docs: 'https://docs.x.ai/build/overview' },
+    update: 'grok update',
+    login: 'grok login --device-auth',
+    version: 'grok --version',
+    authFiles: ['~/.grok/auth.json'],
+    name: 'Grok Build',
+    vendor: 'xAI',
+    comm: ['grok'],
+    args: [program('grok')],
+    launch: 'grok',
+    skin: accentSkin(accent('#0A0A0A', '#FFFFFF', '#EDEDED', '#0A0A0A'), accent('#F5F5F5', '#0A0A0A', '#262626', '#F5F5F5')),
+    configFiles: [{ path: '~/.grok/config.toml', label: 'Config', format: 'toml' }],
+  }),
+  pi: terminalAgent({
+    kind: 'pi',
+    install: { cmd: 'curl -fsSL https://pi.dev/install.sh | sh', npm: '@earendil-works/pi-coding-agent', docs: 'https://pi.dev' },
+    latest: { npm: '@earendil-works/pi-coding-agent' },
+    update: 'pi update',
+    // signs in from inside: /login
+    login: 'pi',
+    version: 'pi --version',
+    authFiles: ['~/.pi/agent/auth.json'],
+    name: 'Pi',
+    vendor: 'Earendil',
+    comm: ['pi'],
+    args: [program('pi')],
+    launch: 'pi',
+    skin: accentSkin(accent('#B4483A', '#FFFFFF', '#FBE6E2', '#A63F32'), accent('#F09082', '#1F1A19', '#33221F', '#F4A99D')),
+  }),
+  amp: terminalAgent({
+    kind: 'amp',
+    install: { cmd: 'curl -fsSL https://ampcode.com/install.sh | bash', npm: '@ampcode/cli', docs: 'https://ampcode.com/manual' },
+    // it updates itself; an npm install is updated with npm
+    latest: { npm: '@ampcode/cli' },
+    login: 'amp login',
+    version: 'amp --version',
+    authFiles: ['~/.local/share/amp/secrets.json'],
+    name: 'Amp',
+    vendor: 'Amp',
+    comm: ['amp'],
+    args: [program('amp'), /@ampcode\/cli\//],
+    launch: 'amp',
+    skin: accentSkin(accent('#C8352A', '#FFFFFF', '#FDE5E2', '#B8301F'), accent('#F36B5F', '#1A0F0E', '#35201D', '#F68D83')),
+  }),
+  goose: terminalAgent({
+    kind: 'goose',
+    install: {
+      cmd: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | CONFIGURE=false bash',
+      docs: 'https://goose-docs.ai/docs/getting-started/installation',
+    },
+    update: 'goose update',
+    // picks a provider and its key
+    login: 'goose configure',
+    version: 'goose --version',
+    authFiles: ['~/.config/goose/config.yaml'],
+    name: 'goose',
+    vendor: 'Agentic AI Foundation',
+    comm: ['goose'],
+    args: [program('goose')],
+    launch: 'goose',
+    skin: accentSkin(accent('#101010', '#FFFFFF', '#ECECEC', '#101010'), accent('#F2F2F2', '#101010', '#262626', '#F2F2F2')),
+  }),
+  hermes: terminalAgent({
+    kind: 'hermes',
+    install: { cmd: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash', docs: 'https://hermes-agent.nousresearch.com/docs/getting-started/installation' },
+    update: 'hermes update',
+    // its setup wizard: provider, sign-in or key, model
+    login: 'hermes setup',
+    version: 'hermes --version',
+    authFiles: ['~/.hermes/auth.json', '~/.hermes/.env'],
+    name: 'Hermes Agent',
+    vendor: 'Nous Research',
+    comm: ['hermes'],
+    args: [program('hermes')],
+    launch: 'hermes',
+    skin: accentSkin(accent('#8B6508', '#FFFFFF', '#F7EFD6', '#7A5807'), accent('#FFD700', '#14120A', '#2F2A12', '#FFE14D')),
+  }),
+  kimi: terminalAgent({
+    kind: 'kimi',
+    install: { cmd: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash', npm: '@moonshot-ai/kimi-code', docs: 'https://moonshotai.github.io/kimi-code/en/guides/getting-started' },
+    latest: { npm: '@moonshot-ai/kimi-code' },
+    update: 'kimi upgrade',
+    login: 'kimi login',
+    version: 'kimi --version',
+    authFiles: ['~/.kimi-code/credentials/kimi-code.json'],
+    name: 'Kimi Code',
+    vendor: 'Moonshot AI',
+    comm: ['kimi'],
+    args: [program('kimi'), /@moonshot-ai\/kimi-code\//],
+    launch: 'kimi',
+    skin: accentSkin(accent('#0F6FDB', '#FFFFFF', '#E3F0FF', '#0B63C7'), accent('#4DA3FF', '#0A1220', '#14243A', '#7DBBFF')),
+    configFiles: [{ path: '~/.kimi-code/config.toml', label: 'Config', format: 'toml' }],
+  }),
+  kiro: terminalAgent({
+    kind: 'kiro',
+    install: { cmd: 'curl -fsSL https://cli.kiro.dev/install | bash', docs: 'https://kiro.dev/docs/cli/' },
+    update: 'kiro-cli update --non-interactive',
+    login: 'kiro-cli login --use-device-flow',
+    version: 'kiro-cli --version',
+    authFiles: ['~/.local/share/kiro-cli/data.sqlite3'],
+    name: 'Kiro CLI',
+    vendor: 'AWS',
+    // its chat runs as a separate kiro-cli-chat process
+    comm: ['kiro-cli', 'kiro-cli-chat'],
+    args: [program('kiro-cli'), program('kiro-cli-chat')],
+    launch: 'kiro-cli',
+    skin: accentSkin(accent('#8A3FF5', '#FFFFFF', '#F0E7FF', '#7A30E6'), accent('#B489FF', '#160A2A', '#2A1C45', '#C6A6FF')),
+  }),
+  qwen: terminalAgent({
+    kind: 'qwen',
+    install: {
+      cmd: 'curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh | bash',
+      npm: '@qwen-code/qwen-code',
+      docs: 'https://github.com/QwenLM/qwen-code#installation',
+    },
+    latest: { npm: '@qwen-code/qwen-code' },
+    update: 'qwen update',
+    // signs in from inside: /auth
+    login: 'qwen',
+    version: 'qwen --version',
+    authFiles: ['~/.qwen/settings.json'],
+    name: 'Qwen Code',
+    vendor: 'Alibaba',
+    comm: ['qwen'],
+    args: [program('qwen'), /qwen-code\/lib\/cli-entry\.js/, /@qwen-code\/qwen-code\//],
+    launch: 'qwen',
+    skin: accentSkin(accent('#615CED', '#FFFFFF', '#ECEBFD', '#5550E0'), accent('#9A97F5', '#11103A', '#24234A', '#B3B1F8')),
+    configFiles: [
+      { path: '~/.qwen/settings.json', label: 'Settings', format: 'json' },
+      { path: '{cwd}/QWEN.md', label: 'Project memory', format: 'md' },
+    ],
+  }),
+  qoder: terminalAgent({
+    kind: 'qoder',
+    install: { cmd: 'curl -fsSL https://qoder.com/install | bash', npm: '@qoder-ai/qodercli', docs: 'https://docs.qoder.com/cli/installation' },
+    latest: { npm: '@qoder-ai/qodercli' },
+    update: 'qodercli update',
+    login: 'qodercli login',
+    version: 'qodercli --version',
+    authFiles: ['~/.qoder/.auth/user'],
+    name: 'Qoder CLI',
+    vendor: 'Qoder',
+    comm: ['qodercli', 'qoder'],
+    args: [program('qodercli'), program('qoder')],
+    launch: 'qodercli',
+    skin: accentSkin(accent('#15803D', '#FFFFFF', '#DFF7E7', '#13773A'), accent('#2ADB5C', '#0A1A0F', '#13301C', '#5EE585')),
+  }),
+  codebuddy: terminalAgent({
+    kind: 'codebuddy',
+    install: { npm: '@tencent-ai/codebuddy-code', docs: 'https://www.codebuddy.ai/docs/cli/installation' },
+    latest: { npm: '@tencent-ai/codebuddy-code' },
+    update: 'codebuddy update',
+    // signs in on first run
+    login: 'codebuddy',
+    version: 'codebuddy --version',
+    authFiles: ['~/.codebuddy/.credentials.json'],
+    name: 'CodeBuddy Code',
+    vendor: 'Tencent',
+    comm: ['codebuddy'],
+    args: [program('codebuddy'), /@tencent-ai\/codebuddy-code\//],
+    launch: 'codebuddy',
+    skin: accentSkin(accent('#6C4DFF', '#FFFFFF', '#EEEAFF', '#5B3BF0'), accent('#9C86FF', '#140E33', '#251E4A', '#B4A3FF')),
+    configFiles: [
+      { path: '~/.codebuddy/settings.json', label: 'Settings', format: 'json' },
+      { path: '{cwd}/CODEBUDDY.md', label: 'Project memory', format: 'md' },
+    ],
+  }),
 }
 
 /**
@@ -639,9 +874,52 @@ export const agyModelId = (id: string, effort?: string) => {
 
 export const AGENT_KINDS = Object.keys(AGENTS) as AgentKind[]
 
-/** Which agent (if any) a process is. `cmd` alone is too generic, so it needs a matching argv. */
+/**
+ * The agent catalog this app knows, sent to the hub as `?catalog=`: from 2 the app falls back on
+ * its own for a kind it doesn't have, so the hub shows it every agent (crates/inyon-protocol's
+ * compat.rs). Older apps send nothing and get the newer agents as plain terminals.
+ */
+export const AGENT_CATALOG = 2
+
+const unknown = new Map<string, AgentDef>()
+
+/**
+ * An agent's entry, or for a kind this build doesn't have (a newer hub's) a plain terminal agent
+ * under that name, so an app never breaks on an agent added after it was built.
+ */
+export function agentDef(kind: string): AgentDef {
+  const known = (AGENTS as Partial<Record<string, AgentDef>>)[kind]
+  if (known) return known
+  let def = unknown.get(kind)
+  if (!def) {
+    def = terminalAgent({
+      kind: kind as AgentKind,
+      install: { docs: '' },
+      login: kind,
+      version: `${kind} --version`,
+      authFiles: [],
+      name: kind.charAt(0).toUpperCase() + kind.slice(1),
+      vendor: '',
+      comm: [],
+      args: [],
+      launch: kind,
+      skin: accentSkin(accent('#1A1A19', '#FFFFFF', '#ECECE9', '#1A1A19'), accent('#EDEDEE', '#0F0F10', '#26262A', '#EDEDEE')),
+    })
+    unknown.set(kind, def)
+  }
+  return def
+}
+
+/** Whether this build knows the agent (has its mark, skin and controls). */
+export const knownAgent = (kind: string): kind is AgentKind => Object.hasOwn(AGENTS, kind)
+
+/**
+ * Which agent (if any) a process is. `cmd` alone is too generic, so it needs a matching argv. Only
+ * the agents read as chat: the terminal-first ones are found by the Rust hub alone, since this
+ * TypeScript core is on its way out.
+ */
 export function detectAgent(comm: string, args: string): AgentKind | undefined {
-  for (const a of Object.values(AGENTS)) {
+  for (const a of Object.values(AGENTS).filter((a) => a.chat)) {
     if (a.comm.includes(comm)) return a.kind
     if (/^(sh|bash|zsh|-?zsh|-?bash|fish|tmux)$/.test(comm)) continue
     if (a.args.some((r) => r.test(args))) return a.kind

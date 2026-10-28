@@ -1,4 +1,4 @@
-import { AGENTS } from '@inyon/protocol'
+import { agentDef } from '@inyon/protocol'
 import { api } from './api.ts'
 import { hidePane, toast } from './store.ts'
 import { haptic } from './haptics.ts'
@@ -8,7 +8,7 @@ import { confirmAction } from '../components/Confirm.tsx'
 
 /** What the confirm sheet says ending this pane will do. */
 export function endText(r: PaneRef) {
-  const agent = r.pane.agent && AGENTS[r.pane.agent.kind]?.name
+  const agent = r.pane.agent && agentDef(r.pane.agent.kind)?.name
   const also =
     r.window.panes.length > 1
       ? ''

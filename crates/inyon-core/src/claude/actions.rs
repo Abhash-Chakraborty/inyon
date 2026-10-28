@@ -1650,6 +1650,11 @@ pub fn resume_command(kind: AgentKind, session_id: Option<&str>, args: &str) -> 
 
 /// `resumeCommand` with the real argument list where the machine can give it.
 pub fn resume_command_argv(kind: AgentKind, session_id: Option<&str>, tokens: &[String]) -> String {
+    // a terminal-first agent's flags aren't known, so which word is a value or a first message
+    // isn't either: it starts again plain rather than repeat a task
+    if !kind.chat() {
+        return kind.def().launch.clone();
+    }
     // skip the interpreter and binary ("node /…/codex.js", "/…/claude")
     let name = if kind == AgentKind::Antigravity { "agy" } else { kind.as_str() };
     let bin_re = dynamic(&format!(r"(^|/){name}(\.js)?$"), "");
@@ -2039,6 +2044,9 @@ pub struct LaunchOpts {
     pub prompt: Option<String>,
     /// a custom agent's id (Settings › Agents), started in place of `agent`
     pub custom: Option<String>,
+    /// a terminal-first agent's sign-in (its `login` command) rather than the agent itself
+    #[serde(default)]
+    pub sign_in: bool,
     /// more flags for the agent's command, from the hub itself (the companion's)
     #[serde(skip)]
     pub extra: Vec<String>,
@@ -2100,6 +2108,10 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         (None, Some(a)) => Some(agent_kind(a).ok_or_else(|| http(400, "Unknown agent"))?),
         (None, None) => None,
     };
+    // a terminal-first agent has no way Inyon knows to hand it a first message
+    if let Some(a) = agent.filter(|a| !a.chat() && opts.prompt.as_deref().is_some_and(|p| !p.is_blank())) {
+        return Err(http(400, format!("{} starts without a first message. Type it in its terminal once it's open.", a.def().name)));
+    }
     let cwd = opts.cwd.as_deref().map(JsStr::jtrim).filter(|c| !c.is_empty()).unwrap_or("~");
     let home = cwd == "~" || cwd.starts_with("~/");
     let dir = if home { format!("\"$HOME\"{}", shq(&cwd[1..])) } else { shq(cwd) };
@@ -2125,7 +2137,8 @@ pub async fn launch(host_id: &str, opts: &LaunchOpts) -> HubResult<String> {
         return Err(http(400, if err.is_empty() { "Could not create window" } else { err }));
     }
     if let Some(agent) = agent {
-        let mut parts = vec![custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone())];
+        let sign_in = opts.sign_in && custom.is_none() && !agent.chat();
+        let mut parts = vec![if sign_in { agent.def().login.clone() } else { custom.as_ref().map_or_else(|| agent.def().launch.clone(), |c| c.command.clone()) }];
         // OpenCode names models "provider/model"
         if let Some(model) = opts.model.as_deref().filter(|m| if agent == AgentKind::Opencode { re!(r"^[\w.:-]+/[\w.:/-]+$").is_match(m) } else { re!(r"^[\w.:-]+$").is_match(m) })
         {

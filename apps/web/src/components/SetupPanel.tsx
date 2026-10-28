@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { Check, Copy, Download, ExternalLink, LogIn, Plug, RefreshCw, TriangleAlert } from 'lucide-react'
-import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
+import { agentDef, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type SetupReport } from '../lib/api.ts'
 import { toast } from '../lib/store.ts'
 import { paneHref } from '../lib/overview.ts'
@@ -70,6 +70,16 @@ export function SetupPanel({ host }: { host: HostState }) {
   const [providers, setProviders] = useState(false)
   const nav = useNavigate()
   const id = host.config.id
+
+  // an agent that stays in its terminal signs in there too: its own sign-in, in a new session
+  const signInTerminal = async (kind: AgentKind) => {
+    try {
+      const { pane } = await api.launch(id, { agent: kind, signIn: true, name: `${kind}-sign-in` })
+      nav(paneHref(id, pane, 'terminal'))
+    } catch (e) {
+      toast({ title: 'Could not start the sign-in', body: (e as Error).message, tone: 'error' })
+    }
+  }
 
   const load = () => api.setup(id).then(setReport).catch((e) => toast({ title: 'Could not check the machine', body: e.message, tone: 'error' }))
   useEffect(() => {
@@ -146,7 +156,7 @@ export function SetupPanel({ host }: { host: HostState }) {
         <h3 className="mb-2.5 text-[13px] font-semibold">Agents</h3>
         <div className="divide-y divide-line overflow-hidden rounded-3xl border border-line bg-elev shadow-card">
           {report.agents.map((a) => {
-            const def = AGENTS[a.kind]
+            const def = agentDef(a.kind)
             const install = `agent:${a.kind}`
             const update = `update:${a.kind}`
             const working = busy === install ? 'Installing…' : busy === update ? 'Updating…' : null
@@ -185,7 +195,7 @@ export function SetupPanel({ host }: { host: HostState }) {
                       </Button>
                     )}
                     {a.installed && a.kind !== 'opencode' && !a.signedIn && (
-                      <Button size="sm" variant="primary" onClick={() => setSignIn(a.kind)}>
+                      <Button size="sm" variant="primary" onClick={() => (def.chat ? setSignIn(a.kind) : signInTerminal(a.kind))}>
                         <LogIn className="size-3.5" /> Sign in
                       </Button>
                     )}
@@ -199,7 +209,7 @@ export function SetupPanel({ host }: { host: HostState }) {
             )
           })}
         </div>
-        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer; Update runs its own updater, or npm when it came from npm. Sign in runs the agent's sign-in on that machine and walks you through it here. Providers connects and disconnects OpenCode's model providers the same way.</p>
+        <p className="mt-2 text-[12px] text-fg-3">Install uses each agent's official installer; Update runs its own updater, or npm when it came from npm. Sign in runs the agent's sign-in on that machine and walks you through it here; for an agent that stays in its terminal, it opens the sign-in in a terminal session. Providers connects and disconnects OpenCode's model providers the same way.</p>
       </section>
 
       <SignInSheet hostId={id} hostName={host.config.name} agent={signIn} onClose={() => (setSignIn(null), load())} />

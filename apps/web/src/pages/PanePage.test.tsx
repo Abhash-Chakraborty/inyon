@@ -57,3 +57,11 @@ test('the companion goes by that name in its header, whatever its conversation i
   await waitFor(() => expect(screen.getAllByText('Companion').length).toBeGreaterThan(0))
   expect(screen.queryByText('Status check')).toBeNull()
 })
+
+test('a terminal-first agent opens on its terminal, and its chat tab is still there', async () => {
+  useStore.setState({ hosts: [host('box', { panes: [agentPane('%1', 'pi')] })], hostsLoaded: true, connected: true })
+  await page()
+  await waitFor(() => expect(screen.getByRole('radio', { name: 'Terminal' }).getAttribute('aria-checked')).toBe('true'))
+  expect(screen.getByRole('radio', { name: 'Chat' }).getAttribute('aria-checked')).toBe('false')
+  expect(screen.queryByText('Pi runs in the terminal')).toBeNull()
+})

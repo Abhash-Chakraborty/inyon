@@ -77,7 +77,10 @@ test('two callers at once share one request', async () => {
 test('looks every agent with a package up in parallel, and skips the ones without', async () => {
   const r = registry({ version: '9.9.9' })
   const all = await latestAgentVersions(r.get)
-  expect(all).toEqual({ claude: '9.9.9', codex: '9.9.9', opencode: '9.9.9', copilot: '9.9.9', gemini: '9.9.9' })
+  const kinds = ['claude', 'codex', 'opencode', 'copilot', 'gemini', 'pi', 'amp', 'kimi', 'qwen', 'qoder', 'codebuddy']
+  expect(all).toEqual(Object.fromEntries(kinds.map((k) => [k, '9.9.9'])))
   expect(r.calls).toContain('https://registry.npmjs.org/@anthropic-ai/claude-code/latest')
-  expect(r.calls.some((u) => u.includes('antigravity'))).toBe(false)
+  expect(r.calls).toContain('https://registry.npmjs.org/@ampcode/cli/latest')
+  // no npm package: Antigravity and the agents that only ship an installer
+  expect(r.calls.some((u) => ['antigravity', 'cursor', 'grok', 'kiro'].some((n) => u.includes(n)))).toBe(false)
 })
