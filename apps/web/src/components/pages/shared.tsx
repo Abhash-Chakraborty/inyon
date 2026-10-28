@@ -12,7 +12,7 @@ import { FrameRefused } from '../FrameRefused.tsx'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
   PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
-  RENEW_RETRY_MS, nextRetry, renewIn, shouldRenew, usePages, type Page, type PageLink, type Part,
+  RENEW_RETRY_MS, nextRetry, renewIn, runningNames, shouldRenew, usePages, type Page, type PageLink, type Part,
 } from '../../lib/pages.ts'
 import { Button, Field, SectionLabel, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
 import { contextMenu } from '../ui/ContextMenu.tsx'
@@ -46,6 +46,12 @@ export function machineOf(hosts: HostState[], host: string, unreachable: string[
   const reached = !hubUnreachable(host, unreachable)
   if (!h) return { name: hub ? (splitHostId(host).hub?.name ?? 'This hub') : host, online: reached, hub }
   return { name: h.config.name, online: reached && h.status === 'online', hub: h.config.kind === 'local' || hub, host: h }
+}
+
+/** The names running sessions have now, for naming page groups (see runningNames). */
+export function useRunningNames() {
+  const hosts = useStore((s) => s.hosts)
+  return useMemo(() => runningNames(hosts), [hosts])
 }
 
 /** A function from host id to its machine, for the current list of hosts. */

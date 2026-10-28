@@ -1,8 +1,9 @@
 import { create } from 'zustand'
-import type { PageEntry, PageOpen } from '@inyon/protocol'
+import { AGENTS, type HostState, type PageEntry, type PageOpen } from '@inyon/protocol'
 import { api, ApiError } from './api.ts'
 import { hubHostId, isHubHost, listHubs, splitHostId, type PairedHub } from './hubs.ts'
 import { isPhone } from './phone.ts'
+import { allPanes, paneTitle } from './overview.ts'
 
 /**
  * Pages: sites an agent made (plans, mockups) that the hub serves under a token link, shown in a
@@ -31,6 +32,30 @@ export function changedAt(p: PageEntry): number {
 /** A hub's own machine: "local" here, or "hub:<id>/local" for a paired hub's. */
 export const isHubMachine = (host: string) => (isHubHost(host) ? host.slice(host.indexOf('/') + 1) : host) === 'local'
 
+/**
+ * What a page's group is called: the name its session has in the app now (`running`, by
+ * `<host>/<session>`), else the name Inyon last gave that session, else its project's folder. So a
+ * session renamed after it added the page renames the group too.
+ */
+export function groupName(p: Page, running?: ReadonlyMap<string, string>) {
+  return (p.session && running?.get(pageId(p.host, p.session))) || p.sessionName || projectName(p.project)
+}
+
+/**
+ * The names running agent sessions have in the app, by `<host>/<conversation id>`, for groupName.
+ * An agent that shows no title of its own ("Claude Code") gives no name.
+ */
+export function runningNames(hosts: HostState[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const r of allPanes(hosts)) {
+    const a = r.pane.agent
+    if (!a?.sessionId) continue
+    const name = paneTitle(r)
+    if (name && name !== (a.custom ?? AGENTS[a.kind]?.name) && name !== r.pane.command) out.set(pageId(r.host.config.id, a.sessionId), name)
+  }
+  return out
+}
+
 /** A machine's projects and their pages, the newest change first. */
 export interface PageGroup {
   host: string
@@ -38,29 +63,30 @@ export interface PageGroup {
 }
 
 /**
- * Machine, then project, then page. The hub's own machine comes first, then the others by name;
- * projects by name; inside a project the page that changed last is on top.
+ * Machine, then session or project, then page. The hub's own machine comes first, then the others
+ * by name; groups by name (see groupName); inside a group the page that changed last is on top.
  */
-export function groupPages(pages: Page[], hostName: (host: string) => string): PageGroup[] {
-  const byHost = new Map<string, Map<string, Page[]>>()
+export function groupPages(pages: Page[], hostName: (host: string) => string, running?: ReadonlyMap<string, string>): PageGroup[] {
+  const byHost = new Map<string, Map<string, { name: string; list: Page[] }>>()
   for (const p of pages) {
-    const projects = byHost.get(p.host) ?? byHost.set(p.host, new Map()).get(p.host)!
-    const name = projectName(p.project)
-    ;(projects.get(name) ?? projects.set(name, []).get(name)!).push(p)
+    const groups = byHost.get(p.host) ?? byHost.set(p.host, new Map()).get(p.host)!
+    const name = groupName(p, running)
+    const key = p.session && name !== projectName(p.project) ? `s:${p.session}` : `p:${name}`
+    ;(groups.get(key) ?? groups.set(key, { name, list: [] }).get(key)!).list.push(p)
   }
   const hosts = [...byHost.keys()].sort((a, b) => Number(isHubMachine(b)) - Number(isHubMachine(a)) || hostName(a).localeCompare(hostName(b)))
   return hosts.map((host) => ({
     host,
     projects: [...byHost.get(host)!.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, list]) => ({ name, key: `${host}/${name}`, pages: [...list].sort((a, b) => changedAt(b) - changedAt(a)) })),
+      .sort(([, a], [, b]) => a.name.localeCompare(b.name))
+      .map(([key, { name, list }]) => ({ name, key: `${host}/${key}`, pages: [...list].sort((a, b) => changedAt(b) - changedAt(a)) })),
   }))
 }
 
-/** Whether a page matches what's typed in the filter: its name, project or machine. */
-export function matchesPage(p: Page, machine: string, q: string) {
+/** Whether a page matches what's typed in the filter: its name, group, project or machine. */
+export function matchesPage(p: Page, machine: string, q: string, running?: ReadonlyMap<string, string>) {
   const t = q.trim().toLowerCase()
-  return !t || [p.name, projectName(p.project), machine].some((s) => s.toLowerCase().includes(t))
+  return !t || [p.name, groupName(p, running), projectName(p.project), machine].some((s) => s.toLowerCase().includes(t))
 }
 
 // ---------- a session's pages ----------
@@ -75,16 +101,16 @@ const within = (child: string, parent: string) => child === parent || child.star
 
 /**
  * The pages a session running in `cwd` on `host` works on, the newest change first: on the same
- * machine, with the session inside the page's project, or the page's folder under the session's.
- * A session in a home folder or higher (two folders deep or less) only gets its project's pages,
- * or every page on the machine would be its own.
+ * machine, the ones its conversation (`session`) added, and those with the session inside the
+ * page's project or the page's folder under the session's. A session in a home folder or higher
+ * (two folders deep or less) gets no pages by folder below it, or every page on the machine would
+ * be its own.
  */
-export function sessionPages(pages: Page[], host: string, cwd: string | undefined): Page[] {
-  if (!cwd) return []
-  const at = folderKey(cwd)
-  const deep = at.replace(/^[a-z]:/, '').split('/').filter(Boolean).length > 2
+export function sessionPages(pages: Page[], host: string, cwd: string | undefined, session?: string): Page[] {
+  const at = cwd ? folderKey(cwd) : undefined
+  const deep = !!at && at.replace(/^[a-z]:/, '').split('/').filter(Boolean).length > 2
   return pages
-    .filter((p) => p.host === host && (within(at, folderKey(p.project)) || (deep && within(folderKey(p.folder), at))))
+    .filter((p) => p.host === host && ((!!session && p.session === session) || (!!at && (within(at, folderKey(p.project)) || (deep && within(folderKey(p.folder), at))))))
     .sort((a, b) => changedAt(b) - changedAt(a))
 }
 

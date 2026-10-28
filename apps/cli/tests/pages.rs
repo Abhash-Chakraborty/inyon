@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use inyon_cli::pages;
 use serde_json::Value;
 
-const AGENT_VARS: [&str; 7] = ["CLAUDECODE", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID", "GEMINI_CLI", "OPENCODE", "INYON_DATA_DIR"];
+const AGENT_VARS: [&str; 8] =
+    ["CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CODEX_THREAD_ID", "GEMINI_CLI", "OPENCODE", "INYON_DATA_DIR"];
 
 struct Home {
     dir: PathBuf,
@@ -281,6 +282,29 @@ fn the_agent_that_added_it_is_recorded() {
     let (code, stdout, _) = out(c);
     assert_eq!(code, 0, "{stdout}");
     assert_eq!(h.list()["pages"][0]["by"], "claude");
+}
+
+// the app shows the session's name over its page, and follows it when the session is renamed
+#[test]
+fn the_agents_conversation_is_recorded_and_the_latest_add_wins() {
+    let h = Home::new("session");
+    let site = h.site("s", "S");
+    let add = |vars: &[(&str, &str)]| {
+        let mut c = h.cmd(&["pages", "add", s(&site), "--json"]);
+        for (k, v) in vars {
+            c.env(k, v);
+        }
+        assert_eq!(out(c).0, 0);
+        h.list()["pages"][0].get("session").cloned()
+    };
+    // a plain add from a terminal has none
+    assert_eq!(add(&[]), None);
+    assert_eq!(add(&[("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", "7409eef9-d507-4808-a592-0bfabe896e3a")]), Some("7409eef9-d507-4808-a592-0bfabe896e3a".into()));
+    // another agent working on it later takes it over; a terminal add leaves it be
+    assert_eq!(add(&[("CODEX_THREAD_ID", "019a-thread")]), Some("019a-thread".into()));
+    assert_eq!(add(&[]), Some("019a-thread".into()));
+    // something that isn't an id is ignored
+    assert_eq!(add(&[("CLAUDE_CODE_SESSION_ID", "a b; rm -rf")]), Some("019a-thread".into()));
 }
 
 #[test]
@@ -736,6 +760,8 @@ fn find_adds_the_sites_under_an_agents_folder_once_and_never_one_taken_off() {
     let shop = h.dir.join("code").join("shop");
     let plan = blueprint(&h, "code/shop/private/plans/checkout", "Checkout rewrite");
     blueprint(&h, "code/shop/node_modules/pkg/docs", "Dependency docs");
+    // a site made for tests, as in Inyon's own repo
+    blueprint(&h, "code/shop/fixtures/pages/site", "Fixture site");
     blueprint(&h, "code/shop/a/b/c/d/e", "Too deep");
     h.site("code/shop/site", "No marker");
     let src = shop.join("src");
@@ -750,7 +776,7 @@ fn find_adds_the_sites_under_an_agents_folder_once_and_never_one_taken_off() {
     assert_eq!(find(&src), ["Checkout rewrite"]);
     assert_eq!(h.list()["pages"][0]["by"], "claude");
     assert_eq!(h.list()["pages"][0]["slug"], "checkout-rewrite");
-    // listed now; no marker, too deep or inside node_modules: nothing else
+    // listed now; no marker, too deep, inside node_modules or fixtures: nothing else
     assert!(find(&shop).is_empty());
     // taken off the list: it stays off
     assert_eq!(h.run(&["pages", "rm", "checkout-rewrite"]).0, 0);

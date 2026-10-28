@@ -690,6 +690,39 @@ fn the_list_has_a_progress_summary_and_is_read_again_when_the_file_changes() {
 }
 
 #[test]
+fn a_page_carries_its_session_and_the_name_the_session_has_now() {
+    let tmp = Tmp::new("session");
+    let home = tmp.join("home");
+    let a = site(&tmp, "a", false);
+    let b = site(&tmp, "b", false);
+    let c = site(&tmp, "c", false);
+    let file = pages_file(&home);
+    write_list(
+        &file,
+        json!([
+            { "slug": "a", "name": "a", "path": a, "project": "/p", "by": "claude", "added": 1, "session": "chat-1" },
+            { "slug": "b", "name": "b", "path": b, "project": "/p", "by": "claude", "added": 1, "session": "not a session!" },
+            record("c", &c),
+        ]),
+    );
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let sessions =
+            |got: Value| got["pages"].as_array().unwrap().iter().map(|p| (p["slug"].clone(), p.get("session").cloned(), p.get("sessionName").cloned())).collect::<Vec<_>>();
+        let got = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(sessions(got), vec![(json!("a"), Some(json!("chat-1")), None), (json!("b"), None, None), (json!("c"), None, None)]);
+        // renamed in Inyon: the list follows at once
+        inyon_core::hosts::names::set_session_name(LOCAL_HOST, "chat-1", "Shop checkout", None, None);
+        let got = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(sessions(got)[0], (json!("a"), Some(json!("chat-1")), Some(json!("Shop checkout"))));
+        // a page the hub found under a session's folder carries that session too
+        kv::set_value("page-sessions", &json!({ "local/c": "chat-2" })).unwrap();
+        let got = call(h_list, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(sessions(got)[2], (json!("c"), Some(json!("chat-2")), None));
+    });
+}
+
+#[test]
 fn progress_is_read_at_most_every_thirty_seconds() {
     let tmp = Tmp::new("progress");
     let home = tmp.join("home");
@@ -1848,7 +1881,7 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         laptop(machine.clone());
         let rt = inyon_core::hosts::registry::registry().get("laptop").unwrap();
         rt.borrow_mut().state.sessions = serde_json::from_value(json!([{ "id": "$1", "name": "s", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
-            { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "D:\\Dev\\shop", "title": "", "width": 80, "height": 24, "dead": false, "agent": { "kind": "claude", "pid": 1, "state": "idle" } }
+            { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "D:\\Dev\\shop", "title": "", "width": 80, "height": 24, "dead": false, "agent": { "kind": "claude", "pid": 1, "state": "idle", "sessionId": "chat-7" } }
         ] }] }]))
         .unwrap();
         let found = Rc::new(Cell::new(true));
@@ -1856,7 +1889,7 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         *machine.answer.borrow_mut() = Box::new(move |args| {
             if args.starts_with("find ") {
                 if f.get() {
-                    json!({ "v": 1, "found": [{ "slug": "plan" }], "message": "" })
+                    json!({ "v": 1, "found": [{ "slug": "plan", "path": "D:\\Dev\\shop\\private\\plans\\plan" }], "message": "" })
                 } else {
                     json!({ "v": 1, "ok": false, "error": "unrecognized subcommand 'find'" })
                 }
@@ -1873,6 +1906,8 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         machine.calls.borrow_mut().clear();
         crate::finding::find_all(&mut not_before, 1_000).await;
         assert_eq!(machine.calls.borrow().iter().filter(|c| c.starts_with("find ")).cloned().collect::<Vec<_>>(), ["find --json --by 'claude' -- 'D:\\Dev\\shop'"]);
+        // the hub keeps which conversation's folder the page was found under
+        assert_eq!(crate::finding::session_of("laptop", "plan").as_deref(), Some("chat-7"));
         // an inyon from before 0.22.4 is left alone for a while
         found.set(false);
         crate::finding::find_all(&mut not_before, 2_000).await;

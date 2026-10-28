@@ -312,7 +312,7 @@ inyon pages                  # the pages on this computer; the same as inyon pag
 inyon pages rm ghostex
 ```
 
-From 0.20. `add` lists a site's folder in `~/.inyon/pages.json`, so the app shows it under Pages. The folder needs an `index.html`. It can't be `/`, your home folder, or anything under `~/.ssh` or `~/.inyon`, judged by the path and by where its symlinks lead. On Windows a mapped network drive works like any other drive letter, and the share's top folder counts as too wide. No hub has to be running: the hub reads the file again when it changes.
+From 0.20. `add` lists a site's folder in `~/.inyon/pages.json`, so the app shows it under Pages. The folder needs an `index.html`. It can't be `/`, your home folder, or anything under `~/.ssh` or `~/.inyon`, judged by the path and by where its symlinks lead. On Windows a mapped network drive works like any other drive letter, and the share's top folder counts as too wide. No hub has to be running: the hub reads the file again when it changes. From 0.22.5, run inside a Claude Code or Codex session, `add` also records that session's conversation, so the app groups the page under the session's name.
 
 ```
 "Inyon plan" is in Inyon: Pages > abhash-arm > custom-tmux

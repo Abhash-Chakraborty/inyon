@@ -5,7 +5,7 @@
 // apps/hub/src/features/pages-core.ts. This skill ships on its own, so it imports nothing from Inyon;
 // tests/publish.test.mjs checks them against fixtures/pages/rules.json when run inside the Inyon repo.
 //
-//   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added"}]}
+//   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added","session"?}]}
 //   <site>/.inyon-page.json {"v":1,"slug","name","kind":"blueprint","created"}
 //
 // `added` and `created` are ms since 1970. pages.json is written to a temp file and renamed into place,
@@ -152,6 +152,12 @@ export function agentName(env = process.env) {
   if (env.GEMINI_CLI) return 'gemini';
   if (env.OPENCODE) return 'opencode';
   return 'agent';
+}
+
+// The conversation of the agent running this script, so Inyon can show the page under that session's
+// name: letters, digits and `._:-`, at most 128 of them, or nothing.
+export function agentSession(env = process.env) {
+  return [env.CLAUDE_CODE_SESSION_ID, env.CODEX_THREAD_ID].find((v) => typeof v === 'string' && /^[A-Za-z0-9._:-]{1,128}$/.test(v));
 }
 
 // A file's text, read without ever waiting on it: opened with O_NONBLOCK, and read only when the open
@@ -347,6 +353,9 @@ export function publish(dir, opts = {}) {
       by: old?.by || opts.by || agentName(),
       added: Number.isSafeInteger(old?.added) ? old.added : now,
     };
+    // the latest conversation to add it, as the inyon command does
+    const session = agentSession();
+    if (session) page.session = session;
     const changed = !old || JSON.stringify(old) !== JSON.stringify(page);
     if (changed) {
       if (at >= 0) pages[at] = page; else pages.push(page);

@@ -1037,6 +1037,12 @@ pub struct PageEntry {
     /// the Markdown notes in the site's `research/` folder, by file name (from 0.22.4); left out
     /// when there are none
     pub notes: Option<Vec<String>>,
+    /// the agent conversation that added or found it (Claude Code's session id, Codex's thread
+    /// id), from 0.22.5: the app shows that session's name over it
+    pub session: Option<String>,
+    /// the name Inyon last gave that session, for when it isn't running
+    #[serde(rename = "sessionName")]
+    pub session_name: Option<String>,
 }
 
 /// GET /api/pages
