@@ -3,8 +3,8 @@
 //! /api request, `connect` for what would be the hub's WebSocket.
 //!
 //! Servers are reached over SSH through the native plugin (`ssh`), computers paired with
-//! `inyon pair` over the encrypted link, and servers can be reached through one of those. Still to
-//! come over from the TS: push, and laptops' updates.
+//! `inyon pair` over the encrypted link, and servers can be reached through one of those. The
+//! computers send the phone's notifications, and update from the website's newest release.
 
 use std::rc::Rc;
 
@@ -14,13 +14,14 @@ use inyon_api::routes::{raw, Route, Routes};
 use inyon_core::claude::{drafts, watcher::watchers};
 use inyon_core::hosts::host::{set_host_backends, HostBackend};
 use inyon_core::hosts::node_backend::node_backend;
+use inyon_core::hosts::node_update::{latest_release_from, node_updates};
 use inyon_core::hosts::registry::{registry, RegistryEvent};
 use inyon_core::hosts::via_backend::via_backend;
-use inyon_core::platform::fetch::{use_fetcher, Fetcher};
+use inyon_core::platform::fetch::{fetch, use_fetcher, FetchRequest, Fetcher};
 use inyon_core::platform::store::{use_store, Store};
 use serde_json::json;
 
-use inyon_protocol::HostKind;
+use inyon_protocol::{HostKind, LATEST_URL};
 
 use crate::keys::PhoneKeys;
 use crate::link::{Links, Reach};
@@ -36,6 +37,8 @@ pub struct Options {
     pub reach: Reach,
     /// what paired computers list this phone as
     pub name: String,
+    /// a computer that had this browser's push keys was removed: the page makes new ones
+    pub rotate_push: Rc<dyn Fn()>,
 }
 
 pub struct Phone {
@@ -96,10 +99,27 @@ pub fn start(o: Options) -> Phone {
     let mut core = Routes::default();
     inyon_api::core_routes::add(&mut core);
     let mut own = phone_routes();
-    crate::servers::add(&mut own, o.ssh, keys, conn, links.clone());
+    crate::servers::add(&mut own, o.ssh, keys.clone(), conn, links.clone(), o.rotate_push);
     crate::computers::add(&mut own, o.reach, links.clone());
+    // notifications while the page is closed come from the computers
+    crate::push::add(&mut own);
     inyon_api::core_routes::start_core();
     ensure();
+    crate::push::start_node_push(Rc::new(move || {
+        let keys = keys.clone();
+        Box::pin(async move { Ok(keys.own().await?.noise.public) })
+    }));
+    // laptops paired with the phone update from the website's copy of the newest release; its
+    // latest.json answers the WebView (CORS)
+    node_updates().watch_releases(
+        || {
+            Box::pin(async {
+                let r = fetch(FetchRequest::get(LATEST_URL, 15_000)).await?;
+                latest_release_from(r.status, &r.text())
+            })
+        },
+        6 * 3_600_000,
+    );
     Phone { tables: Rc::new([own, core]), links }
 }
 

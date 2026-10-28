@@ -88,7 +88,7 @@ fn missing_secret(auth: Option<HostAuth>) -> HubError {
     http(400, if auth == Some(HostAuth::Password) { "Enter the password" } else { "Paste the private key" })
 }
 
-pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn: SshBackend, links: Links) {
+pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn: SshBackend, links: Links, rotate_push: Rc<dyn Fn()>) {
     use Method as M;
     let k = keys.clone();
     guarded(
@@ -205,7 +205,7 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
             (
                 M::DELETE,
                 h(move |req| {
-                    let (keys, conn, links) = (k2.clone(), c2.clone(), links.clone());
+                    let (keys, conn, links, rotate_push) = (k2.clone(), c2.clone(), links.clone(), rotate_push.clone());
                     async move {
                         let id = req.param("id");
                         let cur = registry().get(&id).map(|rt| rt.borrow().host.config());
@@ -232,6 +232,12 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
                         conn.forget(&id).await;
                         keys.drop_secret(&id).await;
                         registry().remove(&id, true)?;
+                        // it was handed this browser's push signing key and subscription, and may
+                        // keep them: the page makes new ones and hands them to the computers left
+                        // (apps/web/src/lib/push.ts)
+                        if !inyon_api::push::registrations().is_empty() {
+                            rotate_push();
+                        }
                         // a computer out of reach still trusts the phone until it hears; the app says so
                         Ok(ok_json(&match cur.filter(|_| !told) {
                             Some(c) => json!({ "ok": true, "untold": c.name }),

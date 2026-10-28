@@ -11,7 +11,7 @@ use crate::testing::{offline, on_core, FakeSsh};
 
 /// The phone started on a fresh core with `store`, as the app starts it.
 pub fn on_phone<F: std::future::Future<Output = ()>>(store: Rc<MemoryStore>, test: impl FnOnce(Phone) -> F) {
-    on_core(|| test(start(Options { store, fetcher: None, ssh: FakeSsh::new(), reach: offline(), name: "Test phone".into() })));
+    on_core(|| test(start(Options { store, fetcher: None, ssh: FakeSsh::new(), reach: offline(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) })));
 }
 
 pub async fn body(res: Resp) -> (u16, Value) {

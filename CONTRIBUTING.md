@@ -78,8 +78,8 @@ The phone core is moving to Rust. `bun scripts/phone-core.ts` in `apps/web` buil
 the version the crate pins), and a build with `VITE_INYON_PHONE_CORE=rust` runs it instead of the
 TypeScript core. `bun test crates/inyon-phone/js` then checks the module as the app calls it, and
 with `INYON_BIN` pointing at an `inyon` build it also pairs with that build's `inyon link`. It
-answers the core routes and sockets, SSHes into servers through the native plugin and keeps the
-link to paired computers; push and laptops' updates still come from the TypeScript core.
+does everything apps/hub/src/phone does: the core routes and sockets, SSH into servers through
+the native plugin, the link to paired computers, and push through those computers.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.

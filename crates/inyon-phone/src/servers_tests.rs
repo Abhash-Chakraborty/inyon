@@ -14,7 +14,10 @@ use crate::testing::{offline, on_core, FakeSsh, FINGERPRINT};
 fn on_phone<F: std::future::Future<Output = ()>>(test: impl FnOnce(Phone, Rc<FakeSsh>) -> F) {
     on_core(|| {
         let fake = FakeSsh::new();
-        test(start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone(), reach: offline(), name: "Test phone".into() }), fake)
+        test(
+            start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone(), reach: offline(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) }),
+            fake,
+        )
     });
 }
 
@@ -59,11 +62,14 @@ fn the_phones_key_is_one_openssh_ed25519_line_made_once() {
 
 #[test]
 fn a_key_saved_by_the_typescript_core_is_the_one_used() {
-    // the seed of fixtures/link's first identity vector would do as well; any 32 bytes are a key
+    // any 32 bytes are a key
     let seed = [7u8; 32];
     let me = inyon_link::Identity::from_seed(seed);
-    on_phone(|p, fake| async move {
+    on_core(|| async move {
+        // saved before the core starts, as on a phone that ran the TypeScript core
+        let fake = FakeSsh::new();
         fake.secrets.borrow_mut().insert("phone-key".into(), json!({ "seed": B64.encode(seed), "pub": B64.encode(me.public_key) }).to_string());
+        let p = start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone(), reach: offline(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) });
         assert_eq!(call(&p, "GET", "/api/phone/key", Value::Null).await.1["publicKey"], crate::keys::public_line(&me.public_key));
         assert!(fake.calls_of("setSecret").is_empty());
     });

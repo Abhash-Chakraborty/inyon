@@ -351,7 +351,16 @@ pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
     let ssh = Reflect::get(&o, &"ssh".into())?;
     let name = Reflect::get(&o, &"name".into())?.as_string().filter(|n| !n.is_empty()).unwrap_or_else(phone_name);
     let reach = Reach { dialer: Rc::new(WebDialer), resolve: pkarr_resolve(), plain_ws: plain_ws_allowed() };
-    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)), ssh: Rc::new(JsSsh(ssh)), reach, name });
+    // apps/web/src/lib/push.ts listens for it
+    let rotate_push = Rc::new(|| {
+        let g = js_sys::global();
+        let event = Reflect::get(&g, &"Event".into()).and_then(|e| e.dyn_into::<Function>()).and_then(|e| Reflect::construct(&e, &Array::of1(&"inyon:push-rotate".into())));
+        let dispatch = Reflect::get(&g, &"dispatchEvent".into()).and_then(|d| d.dyn_into::<Function>());
+        if let (Ok(event), Ok(dispatch)) = (event, dispatch) {
+            let _ = dispatch.call1(&g, &event);
+        }
+    });
+    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)), ssh: Rc::new(JsSsh(ssh)), reach, name, rotate_push });
     Ok(PhoneRuntime(Rc::new(phone)))
 }
 

@@ -182,6 +182,19 @@ test.skipIf(!BIN)('pairs with a computer running inyon link, sees it online and 
     expect(state().hostname).toBeTruthy()
     c.close()
 
+    // the computer sends this browser's notifications: it's handed the registration, and loses it
+    // when notifications are turned off
+    const pushes = async () => (await new Response(run('push', 'list').stdout).text()).trim()
+    const browser = {
+      subscription: { endpoint: 'https://push.example.net/phone', keys: { p256dh: 'p', auth: 'a' } },
+      vapid: { privateJwk: { kty: 'EC', crv: 'P-256', d: 'd', x: 'x', y: 'y' }, subject: 'https://inyon.tech' },
+      done: false,
+    }
+    expect((await call('POST', '/api/push', browser)).status).toBe(200)
+    expect(await until(async () => /Test phone\s+push\.example\.net \(needs-you only\)/.test(await pushes()))).toBe(true)
+    expect((await call('DELETE', '/api/push', { endpoint: browser.subscription.endpoint })).status).toBe(200)
+    expect(await until(async () => (await pushes()).startsWith('No browser gets notifications'))).toBe(true)
+
     // removed while it's connected: it's told to forget the phone at once
     expect((await call('DELETE', `/api/hosts/${id}`)).body).toEqual({ ok: true })
     const phones = async () => (await new Response(run('phones').stdout).text()).trim()
