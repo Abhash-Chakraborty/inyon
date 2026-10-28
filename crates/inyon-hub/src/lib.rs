@@ -6,21 +6,20 @@
 //! Everything the hub keeps lives on one thread with one current-thread tokio runtime, the
 //! listener included; see `server` for why.
 
+// the API itself, shared with the phone app
+pub use inyon_api::{clients, core_routes, http, multipart};
+
 pub mod auth;
 pub mod boards;
 pub mod cli;
-pub mod clients;
 pub mod companions;
-pub mod core_routes;
 pub mod finding;
 pub mod hostnames;
-pub mod http;
 pub mod hub_update;
 pub mod idle;
 pub mod index;
 pub mod limits;
 pub mod machines;
-pub mod multipart;
 pub mod node_dist;
 pub mod notes;
 pub mod pages;

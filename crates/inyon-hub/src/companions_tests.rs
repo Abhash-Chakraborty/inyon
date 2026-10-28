@@ -4,7 +4,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use http_body_util::BodyExt;
 use inyon_protocol::{NotifyKind, ScreenState};
 use serde_json::json;
 
@@ -15,7 +14,7 @@ const T0: u64 = 1_700_000_000_000;
 
 fn read(r: Resp) -> (u16, Value) {
     let status = r.status().as_u16();
-    let bytes = crate::test_util::block(async move { r.into_body().collect().await.unwrap().to_bytes() });
+    let bytes = crate::test_util::block(async move { r.into_body().bytes().await.unwrap() });
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
 }
 

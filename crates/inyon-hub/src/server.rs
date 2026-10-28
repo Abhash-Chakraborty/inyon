@@ -20,96 +20,20 @@ use std::rc::Rc;
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::Method;
-use futures_util::future::LocalBoxFuture;
 use inyon_backends::CoreHandle;
-use inyon_core::hosts::http_error::HubResult;
 use inyon_core::platform::console;
 
 use crate::auth::is_authed;
-use crate::http::{answer, json, set_header, text, Req, Resp};
+use crate::http::{answer, json, set_header, text, Body, Req, Resp};
 use crate::phones::has_bearer;
 
-pub type Handler = Rc<dyn Fn(Req) -> LocalBoxFuture<'static, Resp>>;
 type KnownHost = Box<dyn Fn(Option<&str>) -> bool>;
-pub type ApiHandler = Rc<dyn Fn(Req) -> LocalBoxFuture<'static, HubResult<Resp>>>;
 
-/// An async closure as an API handler.
-pub fn h<F, Fut>(f: F) -> ApiHandler
-where
-    F: Fn(Req) -> Fut + 'static,
-    Fut: std::future::Future<Output = HubResult<Resp>> + 'static,
-{
-    Rc::new(move |r| Box::pin(f(r)))
-}
+pub use inyon_api::routes::{guarded, guarded_raw, h, raw, ApiHandler, Handler, Route, Routes};
 
-/// An async closure as a plain handler (no checks, no error mapping).
-pub fn raw<F, Fut>(f: F) -> Handler
-where
-    F: Fn(Req) -> Fut + 'static,
-    Fut: std::future::Future<Output = Resp> + 'static,
-{
-    Rc::new(move |r| Box::pin(f(r)))
-}
-
-/// What one path answers: every method with one handler, or some methods each with its own.
-pub enum Route {
-    Any(Handler),
-    Methods(Vec<(Method, Handler)>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Seg {
-    Static(String),
-    Param(String),
-}
-
-fn segments(pattern: &str) -> Vec<Seg> {
-    pattern.split('/').skip(1).map(|s| s.strip_prefix(':').map_or_else(|| Seg::Static(s.to_owned()), |p| Seg::Param(p.to_owned()))).collect()
-}
-
-/// Bun's routes: a path matches a pattern segment for segment, a `:name` takes any one segment,
-/// and where two patterns match, the one with a fixed segment earlier wins.
-#[derive(Default)]
-pub struct Routes(Vec<(Vec<Seg>, Route)>);
-
-impl Routes {
-    pub fn add(&mut self, pattern: &str, r: Route) {
-        self.0.push((segments(pattern), r));
-    }
-
-    pub fn methods(&mut self, pattern: &str, list: Vec<(Method, Handler)>) {
-        self.add(pattern, Route::Methods(list));
-    }
-
-    pub fn find(&self, path: &str) -> Option<(&Route, Vec<(String, String)>)> {
-        let parts: Vec<&str> = path.split('/').skip(1).collect();
-        let mut best: Option<(&Vec<Seg>, &Route)> = None;
-        for (segs, route) in &self.0 {
-            if segs.len() != parts.len() || !segs.iter().zip(&parts).all(|(s, p)| matches!(s, Seg::Param(_)) && !p.is_empty() || matches!(s, Seg::Static(x) if x == p)) {
-                continue;
-            }
-            let better = match best {
-                None => true,
-                Some((b, _)) => {
-                    let first_diff = segs.iter().zip(b.iter()).find(|(x, y)| matches!(x, Seg::Static(_)) != matches!(y, Seg::Static(_)));
-                    matches!(first_diff, Some((Seg::Static(_), _)))
-                }
-            };
-            if better {
-                best = Some((segs, route));
-            }
-        }
-        let (segs, route) = best?;
-        let params = segs
-            .iter()
-            .zip(&parts)
-            .filter_map(|(s, p)| match s {
-                Seg::Param(name) => Some((name.clone(), crate::http::decode_uri_component(p).unwrap_or_else(|| (*p).to_owned()))),
-                Seg::Static(_) => None,
-            })
-            .collect();
-        Some((route, params))
-    }
+/// The hub's route table: every `guarded` route behind `api_for`, with what a companion may do there.
+pub fn hub_routes() -> Routes {
+    Routes::with_guard(Rc::new(|pattern, m, f| api_for(f, Opts::default(), crate::companions::route_for(pattern, m))))
 }
 
 // ---------- the hub's settings and state on the core thread ----------
@@ -365,49 +289,12 @@ pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::Comp
     })
 }
 
-/// The shared routes, each method behind sign-in (`guarded`).
-pub fn guarded(routes: &mut Routes, pattern: &str, list: Vec<(Method, ApiHandler)>) {
-    routes.methods(
-        pattern,
-        list.into_iter()
-            .map(|(m, f)| {
-                let c = crate::companions::route_for(pattern, &m);
-                (m, api_for(f, Opts::default(), c))
-            })
-            .collect(),
-    );
-}
-
-/// The same for handlers that make their own answers.
-pub fn guarded_raw(routes: &mut Routes, pattern: &str, list: Vec<(Method, Handler)>) {
-    let wrap = |f: Handler| -> ApiHandler {
-        Rc::new(move |r| {
-            let f = f.clone();
-            Box::pin(async move { Ok(f(r).await) })
-        })
-    };
-    routes.methods(
-        pattern,
-        list.into_iter()
-            .map(|(m, f)| {
-                let c = crate::companions::route_for(pattern, &m);
-                (m, api_for(wrap(f), Opts::default(), c))
-            })
-            .collect(),
-    );
-}
-
 // ---------- requests ----------
 
 /// Answers one request on the core thread: its route if one matches, else the fallback.
 pub async fn dispatch(mut req: Req) -> Resp {
     let routes = ROUTES.with(|r| r.borrow().clone()).expect("routes");
-    let handler = match routes.find(&req.path) {
-        Some((Route::Any(h), params)) => Some((h.clone(), params)),
-        Some((Route::Methods(list), params)) => list.iter().find(|(m, _)| *m == req.method || (req.method == Method::HEAD && *m == Method::GET)).map(|(_, h)| (h.clone(), params)),
-        None => None,
-    };
-    if let Some((h, params)) = handler {
+    if let Some((h, params)) = routes.handler(&req.path, &req.method) {
         req.params = params;
         return h(req).await;
     }
@@ -454,9 +341,9 @@ struct App {
 }
 
 /// The one axum handler: the request goes to the core thread whole, as a job of its own.
-async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Peer>, req: Request) -> Resp {
-    let (mut parts, body) = req.into_parts();
-    let upgrade = parts.extensions.remove::<hyper::upgrade::OnUpgrade>();
+async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Peer>, req: Request) -> axum::response::Response {
+    use futures_util::StreamExt;
+    let (parts, body) = req.into_parts();
     let r = Req {
         method: parts.method,
         path: parts.uri.path().to_owned(),
@@ -464,11 +351,12 @@ async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Pee
         headers: parts.headers,
         peer,
         https: app.https,
-        body: Some(body),
+        body: Some(Body::from_stream(body.into_data_stream().map(|c| c.map_err(std::io::Error::other)))),
         params: vec![],
-        upgrade,
+        // with hyper's OnUpgrade, for the WebSocket routes
+        extensions: parts.extensions,
     };
-    match app.core.call(move || dispatch(r)).await {
+    let res = match app.core.call(move || dispatch(r)).await {
         // a page's file is read here, off the core's job (pages::view only named it)
         Ok(mut res) => match res.extensions_mut().remove::<crate::pages::ViewFile>().and_then(|f| f.file.lock().ok()?.take().map(|file| (file, f.size))) {
             Some((file, size)) => {
@@ -479,6 +367,17 @@ async fn handle(State(app): State<App>, ConnectInfo(Peer(peer)): ConnectInfo<Pee
         },
         // the job panicked (and only it ended), or the hub is stopping
         Err(e) => json(500, &serde_json::json!({ "error": e.to_string() })),
+    };
+    let (parts, body) = res.into_parts();
+    axum::response::Response::from_parts(parts, axum_body(body))
+}
+
+/// An answer's body as axum sends it.
+fn axum_body(b: Body) -> axum::body::Body {
+    match b {
+        Body::Empty => axum::body::Body::empty(),
+        Body::Full(b) => axum::body::Body::from(b),
+        Body::Stream(s) => axum::body::Body::from_stream(s),
     }
 }
 
@@ -528,52 +427,4 @@ pub fn serve(listener: tokio::net::TcpListener, tls: Option<std::sync::Arc<rustl
     }
 }
 
-/// A request for the tests: method, path with query, headers.
-#[cfg(test)]
-pub fn test_req(method: &str, path_q: &str, headers: &[(&str, &str)], body: &str) -> Req {
-    let (path, query) = path_q.split_once('?').unwrap_or((path_q, ""));
-    let mut h = axum::http::HeaderMap::new();
-    for (k, v) in headers {
-        h.append(axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(), v.parse().unwrap());
-    }
-    Req {
-        method: method.parse().unwrap(),
-        path: path.to_owned(),
-        query: query.to_owned(),
-        headers: h,
-        peer: "127.0.0.1:50000".parse().unwrap(),
-        https: false,
-        body: Some(axum::body::Body::from(body.to_owned())),
-        params: vec![],
-        upgrade: None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn table() -> Routes {
-        let mut r = Routes::default();
-        let none: Handler = raw(|_| async { text(200, "") });
-        r.methods("/api/hosts/pair", vec![(Method::POST, none.clone())]);
-        r.methods("/api/hosts/:id", vec![(Method::PATCH, none.clone())]);
-        r.methods("/api/hosts/:id/panes/:pane/send", vec![(Method::POST, none.clone())]);
-        r.methods("/api/phones/claim", vec![(Method::POST, none.clone())]);
-        r.methods("/api/phones/:id", vec![(Method::DELETE, none)]);
-        r
-    }
-
-    #[test]
-    fn a_fixed_segment_beats_a_parameter_and_parameters_are_decoded() {
-        let t = table();
-        let (_, p) = t.find("/api/hosts/pair").unwrap();
-        assert!(p.is_empty());
-        let (_, p) = t.find("/api/hosts/my%20box/panes/12/send").unwrap();
-        assert_eq!(p, vec![("id".into(), "my box".into()), ("pane".into(), "12".into())]);
-        let (_, p) = t.find("/api/phones/claim").unwrap();
-        assert!(p.is_empty());
-        assert!(t.find("/api/hosts/").is_none());
-        assert!(t.find("/api/hosts/a/b").is_none());
-    }
-}
+pub use inyon_api::http::test_req;

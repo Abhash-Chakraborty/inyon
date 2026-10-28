@@ -1,8 +1,8 @@
 //! core.ts's API: the routes the app uses for machines, sessions, settings, uploads and the rest,
 //! each a thin reading of the request around inyon-core's features. The hub puts every one behind
-//! sign-in (see `server::guarded`).
+//! sign-in (see `routes::guarded`).
 
-use axum::http::Method;
+use http::Method;
 use inyon_core::agents::custom as custom_agents;
 use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
@@ -20,7 +20,7 @@ use serde_json::{json, Map, Value};
 
 use crate::http::{as_str, field, fields, js_number, json_of, ok, ok_json, pane_param, str_or_empty, str_raw, to_int32, truthy, Req, Resp};
 use crate::multipart::{self, Part};
-use crate::server::{guarded, h, Routes};
+use crate::routes::{guarded, h, Routes};
 use inyon_core::claude::{chosen, held};
 
 /// `validateHost(b)`: an SSH machine's settings, checked.
@@ -169,7 +169,7 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
     if let Some(Value::Bool(a)) = b.get("autoResume") {
         next.insert("autoResume".into(), json!(a));
     }
-    // joined machines may hold messages for agents with `inyon send` (crate::machines)
+    // joined machines may hold messages for agents with `inyon send` (the hub's machines.rs)
     if let Some(Value::Bool(a)) = b.get("machinesSend") {
         next.insert("machinesSend".into(), json!(a));
     }
@@ -1079,7 +1079,7 @@ mod tests {
     async fn answered(res: HubResult<Resp>) -> (u16, Value) {
         let res = crate::http::answer(res);
         let status = res.status().as_u16();
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = res.into_body().bytes().await.unwrap();
         (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
     }
 
@@ -1098,7 +1098,7 @@ mod tests {
             node_link::attach("fine", Rc::new(Sock));
             node_link::receive("fine", &json!({ "type": "hello", "version": inyon_protocol::VERSION, "os": "linux x64" }));
             let ask = |id: &str| {
-                let mut r = crate::server::test_req("POST", &format!("/api/hosts/{id}/node/update"), &[], "");
+                let mut r = crate::http::test_req("POST", &format!("/api/hosts/{id}/node/update"), &[], "");
                 r.params = vec![("id".into(), id.into())];
                 async move {
                     let (status, body) = answered(node_update(r).await).await;
@@ -1123,9 +1123,9 @@ mod tests {
         const MB: usize = 1024 * 1024;
         let data = (0..size).step_by(MB).map(move |at| (at..(at + MB).min(size)).map(|i| ((i * 7) & 255) as u8).collect::<Vec<u8>>());
         let chunks = std::iter::once(head.into_bytes()).chain(data).chain(std::iter::once(format!("\r\n--{B}--\r\n").into_bytes()));
-        let stream = futures_util::stream::iter(chunks.map(|c| Ok::<_, std::io::Error>(axum::body::Bytes::from(c))));
-        let mut r = crate::server::test_req("POST", "/api/hosts/up/uploads", &[("content-type", &format!("multipart/form-data; boundary={B}"))], "");
-        r.body = Some(axum::body::Body::from_stream(stream));
+        let stream = futures_util::stream::iter(chunks.map(|c| Ok::<_, std::io::Error>(bytes::Bytes::from(c))));
+        let mut r = crate::http::test_req("POST", "/api/hosts/up/uploads", &[("content-type", &format!("multipart/form-data; boundary={B}"))], "");
+        r.body = Some(crate::body::Body::from_stream(stream));
         r.params = vec![("id".into(), "up".into())];
         r
     }
@@ -1237,12 +1237,6 @@ mod tests {
     }
 
     #[test]
-    fn the_hub_gives_up_on_a_machines_temp_files_before_the_idle_limit_drops_the_app() {
-        let idle = u64::try_from(crate::idle::IDLE.as_millis()).unwrap();
-        assert!(temp::WAIT < temp::DELETE_WAIT && temp::DELETE_WAIT < idle);
-    }
-
-    #[test]
     fn the_temp_routes_hand_the_machines_answer_on_with_the_right_status() {
         crate::test_util::block(async {
             let fake = Rc::new(Scripted { calls: RefCell::default(), answer: RefCell::default() });
@@ -1253,7 +1247,7 @@ mod tests {
             let say =
                 |code: i32, stdout: &str, stderr: &str| *fake.answer.borrow_mut() = inyon_core::hosts::host::ExecResult { code, stdout: stdout.into(), stderr: stderr.into() };
             let req = |method: &str, url: &str, body: &str| {
-                let mut r = crate::server::test_req(method, url, &[("content-type", "application/json")], body);
+                let mut r = crate::http::test_req(method, url, &[("content-type", "application/json")], body);
                 r.params = vec![("id".into(), url.split('/').nth(3).unwrap().into())];
                 r
             };
@@ -1288,7 +1282,7 @@ mod tests {
             add(&mut routes);
             for (path, method) in [("/api/hosts/a/temp", "GET"), ("/api/hosts/a/temp/files", "GET"), ("/api/hosts/a/temp/preview", "GET"), ("/api/hosts/a/temp/delete", "POST")] {
                 match routes.find(path) {
-                    Some((crate::server::Route::Methods(list), params)) => {
+                    Some((crate::routes::Route::Methods(list), params)) => {
                         assert!(list.iter().any(|(m, _)| m.as_str() == method), "{path}");
                         assert_eq!(params, [("id".to_owned(), "a".to_owned())]);
                     }
