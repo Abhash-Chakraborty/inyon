@@ -78,10 +78,14 @@ jobs:
       - run: cargo install wasm-bindgen-cli --locked --version "$(sed -n 's/^wasm-bindgen = "=\(.*\)"/\1/p' crates/inyon-phone/Cargo.toml)"
         working-directory: .
       - run: cargo test -p inyon-phone
+      # the computer the wasm core pairs with in its tests
+      - run: cargo build -p inyon-cli
       - run: bun scripts/phone-core.ts
         working-directory: apps/web
       - run: bun test crates/inyon-phone/js
         working-directory: .
+        env:
+          INYON_BIN: ${{ github.workspace }}/target/debug/inyon
       - run: bunx tsc --noEmit
         working-directory: apps/web
       - run: bun --bun vite build --outDir dist-hosted

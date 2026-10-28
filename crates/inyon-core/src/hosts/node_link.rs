@@ -107,6 +107,20 @@ pub fn detach(host_id: &str, ws: &Socket) {
     end(host_id, ws, false);
 }
 
+/// The machine was removed while its connection was open, which the caller has already closed:
+/// everything still waiting on it ends, and it no longer counts as connected. Call it after the
+/// machine is out of the registry, which otherwise re-probes it on the change.
+pub fn removed(host_id: &str) {
+    let ws = with(|n| {
+        n.dropped.remove(host_id);
+        n.sockets.remove(host_id)
+    });
+    if let Some(ws) = ws {
+        fail_ops(host_id, &ws);
+        notify(host_id, false);
+    }
+}
+
 /// The connection broke without a goodbye (the network dropped it): the machine is most likely
 /// coming back, so for a while it still counts as there.
 pub fn lost(host_id: &str, ws: &Socket) {

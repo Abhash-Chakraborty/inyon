@@ -54,7 +54,8 @@ pub fn validate_host(b: &Map<String, Value>) -> HubResult<HostConfig> {
     Ok(HostConfig { name, kind: HostKind::Ssh, target: Some(target), port: port.map(|p| p as u16), identity_file, ..empty_config() })
 }
 
-fn empty_config() -> HostConfig {
+/// A machine with nothing set, to fill in.
+pub fn empty_config() -> HostConfig {
     HostConfig {
         id: String::new(),
         name: String::new(),

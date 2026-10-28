@@ -11,12 +11,16 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+base64 = "0.23"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 http = "1.5"
 inyon-api = { path = "../inyon-api" }
 inyon-core = { path = "../inyon-core" }
+inyon-link = { path = "../inyon-link" }
 inyon-protocol = { path = "../inyon-protocol" }
 js-sys = "0.3"
+regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-case", "unicode-gencat", "unicode-script"] }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 url = "2.5"
 # pinned exactly: the wasm-bindgen program that writes the JavaScript side (CI and

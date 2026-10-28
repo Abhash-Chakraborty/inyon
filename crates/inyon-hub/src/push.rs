@@ -1,93 +1,20 @@
-//! Port of push/registrations.ts, push/routes.ts and push/hub-push.ts. A hub is always on, so it
-//! sends the browsers' push notifications itself: every notice the open app would show, a machine
-//! going offline included, reaches a closed tab or installed app too. The encryption and signing
-//! are inyon-engine's (RFC 8291 and VAPID), shared with the engine's own pushes.
+//! Port of push/routes.ts and push/hub-push.ts. A hub is always on, so it sends the browsers' push
+//! notifications itself: every notice the open app would show, a machine going offline included,
+//! reaches a closed tab or installed app too. The registrations are inyon-api's (the phone app
+//! keeps them the same way); the encryption and signing are inyon-engine's (RFC 8291 and VAPID),
+//! shared with the engine's own pushes.
 
 use axum::http::Method;
 use futures_util::future::LocalBoxFuture;
-use inyon_core::clock::now_ms;
+pub use inyon_api::push::{add_registration, registrations, remove_registration, valid_registration, Registration, MAX_REGISTRATIONS};
 use inyon_core::hosts::http_error::{http, HubResult};
 use inyon_core::platform::console;
-use inyon_core::platform::store::kv;
-use inyon_engine::webpush::{send_push, EcJwk, Keys, Sent, Subscription, Vapid};
+use inyon_engine::webpush::{self, send_push, Sent};
 use inyon_protocol::ServerMsg;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::http::{ok, ok_json, Req};
 use crate::server::{guarded, h, Routes};
-
-/// A browser that asked for notifications while it's closed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Registration {
-    pub subscription: Subscription,
-    pub vapid: Vapid,
-    /// notices when an agent finishes too, not only when it needs you
-    pub done: bool,
-    /// notices when a page's board moves on (from 0.22.4; on for a registration from before)
-    #[serde(default = "yes")]
-    pub pages: bool,
-    pub at: u64,
-}
-
-fn yes() -> bool {
-    true
-}
-
-fn key(endpoint: &str) -> String {
-    format!("push/{}", &crate::http::sha256(endpoint)[..32])
-}
-
-pub fn registrations() -> Vec<Registration> {
-    kv::keys("push/").iter().filter_map(|k| kv::get::<Registration>(k)).filter(|r| !r.subscription.endpoint.is_empty()).collect()
-}
-
-/// Checks what a browser sent: an https endpoint, its two keys, and a P-256 private key.
-pub fn valid_registration(b: &Value) -> HubResult<Registration> {
-    let bad = |what: &str| http(400, format!("Bad push registration: {what}"));
-    let s = b.get("subscription");
-    let str_at = |v: Option<&Value>, k: &str| v.and_then(|v| v.get(k)).and_then(Value::as_str).map(str::to_owned);
-    let endpoint = str_at(s, "endpoint").filter(|e| e.starts_with("https://") && e.encode_utf16().count() <= 2048).ok_or_else(|| bad("endpoint"))?;
-    let keys = s.and_then(|s| s.get("keys"));
-    let (Some(p256dh), Some(auth)) = (str_at(keys, "p256dh"), str_at(keys, "auth")) else { return Err(bad("keys")) };
-    let jwk = b.get("vapid").and_then(|v| v.get("privateJwk"));
-    let jwk_ok = str_at(jwk, "kty").as_deref() == Some("EC") && str_at(jwk, "crv").as_deref() == Some("P-256");
-    let (Some(d), Some(x), Some(y)) = (str_at(jwk, "d"), str_at(jwk, "x"), str_at(jwk, "y")) else { return Err(bad("VAPID key")) };
-    if !jwk_ok {
-        return Err(bad("VAPID key"));
-    }
-    let subject = crate::http::str_or_empty(b.get("vapid").and_then(|v| v.get("subject")));
-    if !(subject.starts_with("mailto:") || subject.starts_with("https://")) {
-        return Err(bad("VAPID subject"));
-    }
-    Ok(Registration {
-        subscription: Subscription { endpoint, keys: Keys { p256dh, auth } },
-        vapid: Vapid { private_jwk: EcJwk { kty: "EC".into(), crv: "P-256".into(), d, x, y }, subject },
-        done: b.get("done") != Some(&Value::Bool(false)),
-        pages: b.get("pages") != Some(&Value::Bool(false)),
-        at: now_ms(),
-    })
-}
-
-/// How many browsers a hub sends to. Each one is a URL the hub POSTs to whenever an agent needs
-/// you, and only signed-in browsers and phones may add one, but there's no reason for the list to
-/// grow without end: past this, the oldest goes.
-pub const MAX_REGISTRATIONS: usize = 20;
-
-pub fn add_registration(r: &Registration) {
-    if let Err(e) = kv::set(&key(&r.subscription.endpoint), r) {
-        console::error(&format!("push: couldn't save a registration: {e}"));
-    }
-    let mut all = registrations();
-    all.sort_by_key(|r| r.at);
-    for old in all.iter().take(all.len().saturating_sub(MAX_REGISTRATIONS)) {
-        kv::del(&key(&old.subscription.endpoint));
-    }
-}
-
-pub fn remove_registration(endpoint: &str) {
-    kv::del(&key(endpoint));
-}
 
 /// The same tag and link the open app uses (apps/web/src/lib/store.ts), so one replaces the other.
 pub fn payload_for(host: &str, pane: &str, kind: &str, title: &str, body: &str) -> Value {
@@ -123,7 +50,18 @@ pub fn test_payload() -> Value {
 pub type Sender = std::rc::Rc<dyn Fn(Registration, Value) -> LocalBoxFuture<'static, Result<Sent, String>>>;
 
 fn web_push() -> Sender {
-    std::rc::Rc::new(|r: Registration, p: Value| Box::pin(async move { send_push(&r.subscription, &p, &r.vapid).await }))
+    std::rc::Rc::new(|r: Registration, p: Value| {
+        Box::pin(async move {
+            let s = &r.subscription;
+            let subscription = webpush::Subscription { endpoint: s.endpoint.clone(), keys: webpush::Keys { p256dh: s.keys.p256dh.clone(), auth: s.keys.auth.clone() } };
+            let j = &r.vapid.private_jwk;
+            let vapid = webpush::Vapid {
+                private_jwk: webpush::EcJwk { kty: j.kty.clone(), crv: j.crv.clone(), d: j.d.clone(), x: j.x.clone(), y: j.y.clone() },
+                subject: r.vapid.subject.clone(),
+            };
+            send_push(&subscription, &p, &vapid).await
+        })
+    })
 }
 
 /// Sends one notice to every browser that wants it; drops the ones their push service says are gone.

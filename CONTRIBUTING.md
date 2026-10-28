@@ -76,9 +76,10 @@ skills/            agent skills shipped with each release (Blueprint)
 The phone core is moving to Rust. `bun scripts/phone-core.ts` in `apps/web` builds
 `crates/inyon-phone` as wasm (it needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at
 the version the crate pins), and a build with `VITE_INYON_PHONE_CORE=rust` runs it instead of the
-TypeScript core. `bun test crates/inyon-phone/js` then checks the module as the app calls it. It
-answers the core routes and sockets so far; SSH, the link to paired computers and push still come
-from the TypeScript core.
+TypeScript core. `bun test crates/inyon-phone/js` then checks the module as the app calls it, and
+with `INYON_BIN` pointing at an `inyon` build it also pairs with that build's `inyon link`. It
+does everything apps/hub/src/phone does: the core routes and sockets, SSH into servers through
+the native plugin, the link to paired computers, and push through those computers.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.

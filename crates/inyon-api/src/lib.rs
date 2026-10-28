@@ -8,6 +8,7 @@ pub mod clients;
 pub mod core_routes;
 pub mod http;
 pub mod multipart;
+pub mod push;
 pub mod routes;
 #[cfg(test)]
 pub mod test_util;
