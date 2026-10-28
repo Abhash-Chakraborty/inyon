@@ -153,7 +153,8 @@ curl -fsSL https://inyon.tech/get.sh | sh -s -- --hub
 ```
 
 The hub listens only on localhost until you choose a network. [Running a hub](https://inyon.tech/docs/hub/) covers
-the rest, and [SECURITY.md](SECURITY.md) explains why it matters.
+the rest, and [SECURITY.md](SECURITY.md) explains why it matters. Without a machine that stays on,
+a hub can run [on Railway or Render](https://inyon.tech/docs/hub/#in-the-cloud).
 
 ## Docs
 
