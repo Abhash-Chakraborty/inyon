@@ -1,6 +1,6 @@
 //! The JavaScript side: what `startPhone` takes and gives back (apps/hub/src/phone/types.ts), the
-//! browser's event loop as the core's runtime, the app's store, `fetch`, and Request and Response
-//! in and out. Only globals every engine has (setTimeout, fetch, Request, Response), so the same
+//! browser's event loop as the core's runtime, the app's store, the native SSH plugin, `fetch`,
+//! and Request and Response in and out. Only globals every engine has (setTimeout, fetch, Request, Response), so the same
 //! module runs in the Android WebView, a browser tab and Bun's tests.
 
 use std::cell::Cell;
@@ -20,6 +20,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{future_to_promise, JsFuture};
 
 use crate::phone::{self, Options, Phone};
+use crate::ssh::{OnEvent, PluginError, PluginResult, SshPlugin};
 
 #[wasm_bindgen]
 extern "C" {
@@ -92,6 +93,44 @@ impl Store for JsStore {
     fn keys(&self, prefix: &str) -> Vec<String> {
         self.call("keys", &[&prefix.into()]).ok().map(|v| Array::from(&v).iter().filter_map(|k| k.as_string()).collect()).unwrap_or_default()
     }
+}
+
+// ---------- the SSH plugin ----------
+
+/// The native InyonSsh plugin (Capacitor's bridge): arguments and answers cross as JSON.
+struct JsSsh(JsValue);
+
+impl SshPlugin for JsSsh {
+    fn call(&self, method: &'static str, args: Value) -> PluginResult {
+        let started = (|| -> Result<Promise, JsValue> {
+            let f: Function = Reflect::get(&self.0, &method.into())?.dyn_into()?;
+            Ok(Promise::resolve(&f.call1(&self.0, &JSON::parse(&args.to_string())?)?))
+        })();
+        Box::pin(async move {
+            let v = JsFuture::from(started.map_err(plugin_error)?).await.map_err(plugin_error)?;
+            Ok(to_json(&v))
+        })
+    }
+
+    fn listen(&self, on: OnEvent) {
+        for event in ["streamLines", "streamExit", "ptyData", "ptyExit", "closed"] {
+            let on = on.clone();
+            // the plugin keeps it for the life of the page
+            let f = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| on(event, &to_json(&e))).into_js_value();
+            let _ = Reflect::get(&self.0, &"addListener".into()).and_then(|a| a.dyn_into::<Function>()).and_then(|a| a.call2(&self.0, &event.into(), &f));
+        }
+    }
+}
+
+fn plugin_error(e: JsValue) -> PluginError {
+    PluginError { code: Reflect::get(&e, &"code".into()).ok().and_then(|c| c.as_string()), message: describe(&e) }
+}
+
+fn to_json(v: &JsValue) -> Value {
+    if v.is_undefined() {
+        return Value::Null;
+    }
+    JSON::stringify(v).ok().and_then(|s| s.as_string()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null)
 }
 
 // ---------- fetch ----------
@@ -187,8 +226,8 @@ thread_local! {
     static STARTED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// `startPhone({ store, ssh, name })`: the core, started once per page. `ssh` and `name` are taken
-/// as the TS core takes them; the servers and computers they reach come over in later steps.
+/// `startPhone({ store, ssh, name })`: the core, started once per page. `name` is what paired
+/// computers will list the phone as, once the link to them comes over from the TS.
 #[wasm_bindgen(js_name = startPhone)]
 pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
     // a call that can't start it leaves the page free to try again
@@ -201,7 +240,8 @@ pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
     }
     install(Rc::new(BrowserRuntime));
     inyon_core::platform::console::set_sink(Some(Rc::new(|error, line| if error { console_error(line) } else { console_log(line) })));
-    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)) });
+    let ssh = Reflect::get(&o, &"ssh".into())?;
+    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)), ssh: Rc::new(JsSsh(ssh)) });
     Ok(PhoneRuntime(Rc::new(phone)))
 }
 

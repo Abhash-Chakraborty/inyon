@@ -25,7 +25,31 @@ function memoryStore(seed: Record<string, unknown> = {}) {
   return { store, data, writes }
 }
 
-const ssh = {} as never
+const FINGERPRINT = 'SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
+
+/** A stand-in for the native plugin: calls are recorded, every server refuses commands. */
+function fakeSsh() {
+  const secrets = new Map<string, string>()
+  const calls: { method: string; args: any }[] = []
+  const events: string[] = []
+  const answer = (method: string, value?: unknown) => async (args: any) => (calls.push({ method, args }), value)
+  const ssh = {
+    probe: answer('probe', { fingerprint: FINGERPRINT, keyType: 'ssh-ed25519' }),
+    connect: async (args: any) => {
+      calls.push({ method: 'connect', args })
+      if (args.host === 'locked') throw Object.assign(new Error('denied'), { code: 'AUTH_FAILED' })
+    },
+    disconnect: answer('disconnect'),
+    exec: answer('exec', { code: 1, stdout: '', stderr: 'not in this test' }),
+    setSecret: async ({ key, value }: any) => void secrets.set(key, value),
+    getSecret: async ({ key }: any) => ({ value: secrets.get(key) ?? null }),
+    deleteSecret: async ({ key }: any) => void secrets.delete(key),
+    addListener: (event: string) => (events.push(event), { remove() {} }),
+  }
+  return { ssh: ssh as never, secrets, calls, events }
+}
+
+const { ssh, secrets, calls, events } = fakeSsh()
 const home = memoryStore({ hosts: [{ id: 'box', name: 'box', kind: 'ssh', target: 'me@box', hostKey: 'SHA256:x' }] })
 let rt: PhoneRuntime
 
@@ -84,6 +108,45 @@ test('a screen hears the machines as messages, and its timers run on the page', 
   expect(heard.length).toBe(before)
   rt.background(true)
   rt.background(false)
+}, 15000)
+
+test("the plugin's events are listened to from the start", () => {
+  expect(events.sort()).toEqual(['closed', 'ptyData', 'ptyExit', 'streamExit', 'streamLines'])
+})
+
+test("the phone's key is one OpenSSH ed25519 line, made once and kept in the keystore", async () => {
+  const a = (await call('GET', '/api/phone/key')).body.publicKey
+  expect(a).toMatch(/^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[\w+/]+=* inyon-phone$/)
+  expect((await call('GET', '/api/phone/key')).body.publicKey).toBe(a)
+  const saved = JSON.parse(secrets.get('phone-key')!)
+  expect(Buffer.from(saved.seed, 'base64')).toHaveLength(32)
+})
+
+test('a server is probed, added with its password in the keystore, and dialed through the plugin', async () => {
+  expect((await call('POST', '/api/phone/probe', { target: 'me@10.0.0.5', port: 2222 })).body.fingerprint).toBe(FINGERPRINT)
+  expect(calls.findLast((c) => c.method === 'probe')!.args).toEqual({ host: '10.0.0.5', port: 2222 })
+  const add = await call('POST', '/api/hosts', { name: 'Laptop', target: 'me@10.0.0.5', port: 2222, hostKey: FINGERPRINT, auth: 'password', password: 'hunter22' })
+  expect(add.status).toBe(200)
+  expect(JSON.parse(secrets.get(`server:${add.body.id}`)!)).toEqual({ password: 'hunter22' })
+  const deadline = Date.now() + 5000
+  while (!calls.some((c) => c.method === 'exec' && c.args.id === add.body.id) && Date.now() < deadline) await Bun.sleep(20)
+  expect(calls.find((c) => c.method === 'connect' && c.args.id === add.body.id)!.args).toEqual({ id: add.body.id, host: '10.0.0.5', port: 2222, username: 'me', hostKey: FINGERPRINT, password: 'hunter22' })
+  expect(calls.find((c) => c.method === 'exec' && c.args.id === add.body.id)!.args.command).toStartWith("sh -c '")
+  expect((await call('DELETE', `/api/hosts/${add.body.id}`)).status).toBe(200)
+  expect(secrets.has(`server:${add.body.id}`)).toBe(false)
+})
+
+test("a plugin's error code reaches the screen as what to check", async () => {
+  const add = await call('POST', '/api/hosts', { name: 'Locked', target: 'me@locked', hostKey: FINGERPRINT, auth: 'none' })
+  const heard: any[] = []
+  const c = rt.connect((msg) => heard.push(msg))
+  c.message(JSON.stringify({ t: 'sub.overview' }))
+  const host = () => heard.findLast((m) => m.t === 'overview')?.hosts.find((h: any) => h.config.id === add.body.id)
+  const deadline = Date.now() + 8000
+  while (host()?.status !== 'error' && Date.now() < deadline) await Bun.sleep(50)
+  expect(host().error).toContain("The server didn't accept the sign-in. Check the user name and that this phone's key is in ~/.ssh/authorized_keys. (denied)")
+  c.close()
+  await call('DELETE', `/api/hosts/${add.body.id}`)
 }, 15000)
 
 test('a page runs one core', async () => {

@@ -1654,13 +1654,17 @@ dependencies = [
 name = "inyon-phone"
 version = "0.22.5"
 dependencies = [
+ "base64 0.23.1",
  "futures-util",
  "getrandom 0.3.4",
  "http",
  "inyon-api",
  "inyon-core",
+ "inyon-link",
  "inyon-protocol",
  "js-sys",
+ "regex",
+ "serde",
  "serde_json",
  "tokio",
  "url",

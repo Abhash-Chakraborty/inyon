@@ -2,9 +2,9 @@
 //! password. The web app hands it a store and calls it in-process: `answer` for what would be an
 //! /api request, `connect` for what would be the hub's WebSocket.
 //!
-//! Still to come over from the TS: SSH into servers through the native plugin, the link to paired
-//! computers and the phone's own routes for both (adding, pairing, editing and removing them),
-//! and push. Until then the phone's machine list is read and shown, but nothing reaches them.
+//! Servers are reached over SSH through the native plugin (`ssh`), or through a paired computer.
+//! Still to come over from the TS: the link to paired computers (pairing, and their commands), and
+//! push.
 
 use std::rc::Rc;
 
@@ -12,17 +12,25 @@ use inyon_api::clients::{self, ClientRef};
 use inyon_api::http::{json, ok, ok_json, Req, Resp};
 use inyon_api::routes::{raw, Route, Routes};
 use inyon_core::claude::{drafts, watcher::watchers};
+use inyon_core::hosts::host::{set_host_backends, HostBackend};
+use inyon_core::hosts::node_backend::node_backend;
 use inyon_core::hosts::registry::registry;
+use inyon_core::hosts::via_backend::via_backend;
 use inyon_core::platform::fetch::{use_fetcher, Fetcher};
 use inyon_core::platform::store::{use_store, Store};
 use serde_json::json;
 
+use inyon_protocol::HostKind;
+
+use crate::keys::PhoneKeys;
+use crate::ssh::{CredentialsFor, SshBackend, SshPlugin};
 use crate::tables::{find, Lookup};
 
 /// What the platform gives the core; its runtime has to be installed on this thread first.
 pub struct Options {
     pub store: Rc<dyn Store>,
     pub fetcher: Option<Rc<dyn Fetcher>>,
+    pub ssh: Rc<dyn SshPlugin>,
 }
 
 pub struct Phone {
@@ -37,10 +45,28 @@ pub fn start(o: Options) -> Phone {
     // the phone is no machine of its own: every machine on its list is reached from it
     inyon_core::config::set_local_host(None);
     use_fetcher(o.fetcher);
+    let keys = PhoneKeys::new(o.ssh.clone());
+    let k = keys.clone();
+    let credentials: CredentialsFor = Rc::new(move |config| {
+        let (keys, config) = (k.clone(), config.clone());
+        Box::pin(async move { keys.credentials(&config).await })
+    });
+    let conn = SshBackend::new(o.ssh.clone(), credentials);
+    // laptops paired with `inyon pair` take the same commands a hub sends to inyon, and a server
+    // reached through one of them goes as `ssh` commands run there
+    let (node, via, ssh): (Rc<dyn HostBackend>, Rc<dyn HostBackend>, Rc<dyn HostBackend>) =
+        (node_backend(), via_backend(|id| registry().get(id).map(|rt| rt.borrow().host.config())), Rc::new(conn.clone()));
+    set_host_backends(move |c| match c.kind {
+        HostKind::Link => node.clone(),
+        _ if c.via.as_deref().is_some_and(|v| !v.is_empty()) => via.clone(),
+        _ => ssh.clone(),
+    });
     let mut core = Routes::default();
     inyon_api::core_routes::add(&mut core);
     inyon_api::core_routes::start_core();
-    Phone { tables: Rc::new([phone_routes(), core]) }
+    let mut own = phone_routes();
+    crate::servers::add(&mut own, o.ssh, keys, conn);
+    Phone { tables: Rc::new([own, core]) }
 }
 
 /// The routes the phone answers itself, ahead of the core's.

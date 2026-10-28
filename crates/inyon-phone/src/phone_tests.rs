@@ -1,39 +1,20 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use futures_util::future::LocalBoxFuture;
 use inyon_api::http::test_req;
-use inyon_core::platform::rt::{install, Runtime};
 use inyon_core::platform::store::MemoryStore;
 use serde_json::Value;
 
 use super::*;
-
-struct TokioRuntime;
-
-impl Runtime for TokioRuntime {
-    fn spawn(&self, fut: LocalBoxFuture<'static, ()>) {
-        tokio::task::spawn_local(fut);
-    }
-    fn sleep(&self, ms: u64) -> LocalBoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(Duration::from_millis(ms)))
-    }
-    fn now_ms(&self) -> u64 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-    }
-}
+use crate::testing::{on_core, FakeSsh};
 
 /// The phone started on a fresh core with `store`, as the app starts it.
-fn on_phone<F: std::future::Future<Output = ()>>(store: Rc<MemoryStore>, test: impl FnOnce(Phone) -> F) {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_time().start_paused(true).build().unwrap();
-    tokio::task::LocalSet::new().block_on(&rt, async move {
-        install(Rc::new(TokioRuntime));
-        test(start(Options { store, fetcher: None })).await;
-    });
+pub fn on_phone<F: std::future::Future<Output = ()>>(store: Rc<MemoryStore>, test: impl FnOnce(Phone) -> F) {
+    on_core(|| test(start(Options { store, fetcher: None, ssh: FakeSsh::new() })));
 }
 
-async fn body(res: Resp) -> (u16, Value) {
+pub async fn body(res: Resp) -> (u16, Value) {
     let status = res.status().as_u16();
     let bytes = res.into_body().bytes().await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
