@@ -27,8 +27,8 @@ concurrency:
 
 jobs:
   contract:
-    # after node.yml, only for a release tag it built
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    # after node.yml, only for a release tag pushed (not a run started by hand on a v* branch)
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && startsWith(github.event.workflow_run.head_branch, 'v'))
     strategy:
       fail-fast: false
       matrix:
