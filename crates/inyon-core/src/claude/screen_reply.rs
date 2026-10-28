@@ -65,21 +65,27 @@ pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32
             start = r + 1;
         }
     }
-    let end = (start..box_top).find(|&i| is_status(kind, &lines[i])).unwrap_or(box_top);
-    let rows = &lines[start.min(end)..end];
+    let end = (start..box_top).find(|&i| is_status(kind, &lines[i], &captured[i])).unwrap_or(box_top);
+    let first = start.min(end);
+    let rows = &lines[first..end];
 
     // blocks, with what each is
     let mut blocks: Vec<(Block, Vec<&str>)> = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
-    for row in rows.iter().map(String::as_str).chain(std::iter::once("")) {
+    let mut cur_at = first;
+    for (i, row) in rows.iter().map(String::as_str).chain(std::iter::once("")).enumerate() {
         if !row.is_empty() {
+            if cur.is_empty() {
+                cur_at = first + i;
+            }
             cur.push(row);
             continue;
         }
         if cur.is_empty() {
             continue;
         }
-        let kind_of = classify(kind, cur[0], blocks.last().map(|b| b.0));
+        let alone = cur.len() == 1 && tool_name_alone(kind, cur[0], &captured[cur_at]);
+        let kind_of = if alone { Block::Other } else { classify(kind, cur[0], blocks.last().map(|b| b.0)) };
         blocks.push((kind_of, std::mem::take(&mut cur)));
     }
     let from = blocks.iter().rposition(|b| b.0 == Block::Other).map_or(0, |i| i + 1);
@@ -105,38 +111,74 @@ fn dot_back(kind: AgentKind, raw: &str) -> String {
     }
 }
 
+/// A tool's row before its arguments show: Claude Code draws `● Bash` for a moment, the name bold
+/// and nothing after it, then `● Bash(ls)`, the dot blinking as ever (`text` has it put back).
+/// A reply's own text isn't bold, so a one-word reply still reads as the reply; the caller only
+/// asks for a block of one row, as a reply can open with a bold word on its own row.
+fn tool_name_alone(kind: AgentKind, text: &str, raw: &str) -> bool {
+    matches!(kind, AgentKind::Claude | AgentKind::Copilot) && re!(r"^ ?● [A-Z][\w-]*\s*$").is_match(text) && starts_bold(&raw.replacen('●', " ", 1))
+}
+
 /// Whether the first character that isn't a space is drawn bold.
 fn starts_bold(raw: &str) -> bool {
-    let mut bold = false;
+    first_drawn(raw).0
+}
+
+/// How the first character that isn't a space is drawn: bold, and in a colour of its own.
+fn first_drawn(raw: &str) -> (bool, bool) {
+    let (mut bold, mut coloured) = (false, false);
     let mut i = 0;
     while i < raw.len() {
         let rest = &raw[i..];
         if let Some(sgr) = re!(r"^\x1b\[([\d;:]*)m").captures(rest) {
-            for c in sgr_codes(&sgr[1]) {
-                if c == 1.0 {
-                    bold = true;
-                } else if c == 0.0 || c == 22.0 {
-                    bold = false;
+            let codes = sgr_codes(&sgr[1]);
+            let mut k = 0;
+            while k < codes.len() {
+                match codes[k] as u32 {
+                    0 => (bold, coloured) = (false, false),
+                    1 => bold = true,
+                    22 => bold = false,
+                    30..=37 | 90..=97 => coloured = true,
+                    39 => coloured = false,
+                    // 38;5;n and 38;2;r;g;b: what follows is the colour, not more codes
+                    c @ (38 | 48) => {
+                        coloured |= c == 38;
+                        k += if codes.get(k + 1) == Some(&5.0) {
+                            2
+                        } else if codes.get(k + 1) == Some(&2.0) {
+                            4
+                        } else {
+                            0
+                        };
+                    }
+                    _ => {}
                 }
+                k += 1;
             }
             i += sgr[0].len();
             continue;
         }
         let ch = rest.chars().next().unwrap();
         if ch != ' ' {
-            return bold;
+            return (bold, coloured);
         }
         i += ch.len_utf8();
     }
-    false
+    (false, false)
 }
 
 /// A row between the reply and the box that isn't the reply: a spinner, a count on the right, a
 /// notice or a status line.
-fn is_status(kind: AgentKind, row: &str) -> bool {
+fn is_status(kind: AgentKind, row: &str, raw: &str) -> bool {
     match kind {
-        // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens"
-        AgentKind::Claude => re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
+        // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens";
+        // the spinner's sign turns, through `*` too, which a Markdown bullet starts with as well: the
+        // spinner draws it in its colour, a reply in the plain one
+        AgentKind::Claude => {
+            re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row)
+                || (re!(r"^\*\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row) && first_drawn(raw).1)
+                || re!(r"^\s{30,}\S").is_match(row)
+        }
         // "⣯  Generating..."
         AgentKind::Antigravity => re!(r"^[\u{2800}-\u{28ff}]\s").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
         // " /path/to/folder        Session: 0.42 AIC used"

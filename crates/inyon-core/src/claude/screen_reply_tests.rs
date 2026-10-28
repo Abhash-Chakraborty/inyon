@@ -137,3 +137,25 @@ fn a_running_commands_blinking_dot_doesnt_make_it_part_of_the_reply() {
     let bold = screen(&format!("{}\n\n● Done.\n\n  \x1b[1mTests:\x1b[0m all pass.\n\n{}\n❯ \n{}", "❯ check it", "─".repeat(40), "─".repeat(40)));
     assert_eq!(screen_reply(&bold, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Done.\n\nTests: all pass.".into()));
 }
+
+/// For a moment a command's row is only its name (`● Bash`), and the spinner's sign can be `*`:
+/// the chat showed "Bash", the spinner and a tip as the reply, then dropped them. Captured from
+/// Claude Code on Windows, two frames apart.
+#[test]
+fn a_tool_name_before_its_arguments_isnt_the_reply() {
+    assert_eq!(reply("claude", "tool-name-before-args", AgentKind::Claude), None);
+    assert_eq!(reply("claude", "tool-name-before-args-star-spinner", AgentKind::Claude), None);
+    // a one-word reply isn't bold, so it stays the reply
+    let rule = "─".repeat(40);
+    let word = screen(&format!("❯ ok?\n\n\x1b[0m●\x1b[0m Yes\n\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&word, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Yes".into()));
+    // nor a reply that opens with a bold word on a row of its own
+    let heading = screen(&format!("❯ sum up\n\n\x1b[0m●\x1b[0m \x1b[1mSummary\x1b[0m\n  All tests pass.\n\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&heading, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Summary\nAll tests pass.".into()));
+    // the name alone with its dot blinked off is still the tool's row
+    let off = screen(&format!("❯ run it\n\n\x1b[0m  \x1b[0;1mBash\x1b[0m\n\n\x1b[0;91m*\x1b[0m \x1b[0;91mHatching… \x1b[0;90m(1s)\x1b[0m\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&off, AgentKind::Claude, Some(100)), None);
+    // and a Markdown bullet with a time in it, drawn plain, isn't the spinner
+    let bullet = screen(&format!("❯ list\n\n● Next:\n\n\x1b[0m* Waiting… (10s)\n\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&bullet, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Next:\n\n* Waiting… (10s)".into()));
+}
