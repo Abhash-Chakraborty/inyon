@@ -149,7 +149,13 @@ fn a_tool_name_before_its_arguments_isnt_the_reply() {
     let rule = "─".repeat(40);
     let word = screen(&format!("❯ ok?\n\n\x1b[0m●\x1b[0m Yes\n\n{rule}\n❯ \n{rule}"));
     assert_eq!(screen_reply(&word, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Yes".into()));
-    // nor is a Markdown bullet that ends in an ellipsis a spinner
-    let bullet = screen(&format!("❯ list\n\n● Next:\n\n* Waiting… (on review)\n\n{rule}\n❯ \n{rule}"));
-    assert_eq!(screen_reply(&bullet, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Next:\n\n* Waiting… (on review)".into()));
+    // nor a reply that opens with a bold word on a row of its own
+    let heading = screen(&format!("❯ sum up\n\n\x1b[0m●\x1b[0m \x1b[1mSummary\x1b[0m\n  All tests pass.\n\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&heading, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Summary\nAll tests pass.".into()));
+    // the name alone with its dot blinked off is still the tool's row
+    let off = screen(&format!("❯ run it\n\n\x1b[0m  \x1b[0;1mBash\x1b[0m\n\n\x1b[0;91m*\x1b[0m \x1b[0;91mHatching… \x1b[0;90m(1s)\x1b[0m\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&off, AgentKind::Claude, Some(100)), None);
+    // and a Markdown bullet with a time in it, drawn plain, isn't the spinner
+    let bullet = screen(&format!("❯ list\n\n● Next:\n\n\x1b[0m* Waiting… (10s)\n\n{rule}\n❯ \n{rule}"));
+    assert_eq!(screen_reply(&bullet, AgentKind::Claude, Some(100)).map(|r| r.text), Some("Next:\n\n* Waiting… (10s)".into()));
 }
