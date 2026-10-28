@@ -52,6 +52,28 @@ fn ask_user_question_single_select() {
     assert!(tabs[0].current);
 }
 
+/// A question whose options carry previews draws the highlighted one's box beside the labels,
+/// and there a number only moves the highlight: the labels come without the box, and it's answered
+/// by moving the highlight and pressing Enter. Captured from Claude Code 2.1.312.
+#[test]
+fn ask_user_question_with_previews() {
+    let p = claude(&screen_fixture("claude", "question-preview-tabs"), None).prompt.unwrap();
+    assert_eq!(p.body, vec!["Where should the live name show?"]);
+    assert_eq!(labels(&p), vec!["Heading (Recommended)", "On each row", "Rename the page too"]);
+    assert!(p.options.iter().all(|o| o.detail.is_none()), "{:?}", p.options);
+    assert_eq!(p.navigate, Some(true));
+    assert!(p.tabs.unwrap()[0].current);
+    // the box shows the highlighted option's preview, but what's asked stays the same question
+    let first = claude(&screen_fixture("claude", "question-preview"), None).prompt.unwrap();
+    let second = claude(&screen_fixture("claude", "question-preview-second"), None).prompt.unwrap();
+    assert_eq!(labels(&first), vec!["Grid", "List", "Cards"]);
+    assert_eq!(second.options.iter().find(|o| o.selected).map(|o| o.n), Some(2));
+    assert_eq!(inyon_protocol::prompt_key(&first.body, &first.options), inyon_protocol::prompt_key(&second.body, &second.options));
+    // one question: its strip has no arrows, and it isn't part of the question
+    assert_eq!(first.body, vec!["Which layout?"]);
+    assert_eq!(first.tabs.unwrap().iter().map(|t| t.label.as_str()).collect::<Vec<_>>(), vec!["Layout"]);
+}
+
 /// ask user question, multi select
 #[test]
 fn ask_user_question_multi_select() {

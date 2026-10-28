@@ -39,6 +39,7 @@ When the agent asks something, the composer is replaced by the question:
 - **Links**, such as a sign-in page, get **Open** and **Copy link**.
 - **A pasted value**, such as a sign-in code, gets a box and **Submit**.
 - **Several questions** at once show a strip of tabs, marking which are done.
+- **Choices with previews.** When Claude Code's question gives each choice a description or a preview (a small mockup), the question's card in the chat shows all of them, and the buttons under it pick as usual. The terminal shows only the highlighted choice's preview. From 0.22.5.
 
 **Cancel** sends `Esc`, as you would at the keyboard. If Inyon can't read the options on a screen it doesn't recognise, it shows `↑`, `↓` and `Enter` buttons instead.
 

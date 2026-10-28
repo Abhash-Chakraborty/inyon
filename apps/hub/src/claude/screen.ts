@@ -287,7 +287,12 @@ function parsePrompt(lines: string[], rules: number[], width: number): ScreenPro
     if (first < 0) return undefined
     top = Math.max(-1, first - 12)
   }
-  const box = lines.slice(top + 1)
+  // A question whose options carry previews draws the one for the highlighted option in a box to
+  // the right of the labels, with "Notes: press n to add notes" under it. Only the labels are
+  // kept, and there a number only moves the highlight: picking takes Enter.
+  const at = lines.slice(top + 1).map((l) => l.match(/^\s*(❯\s*)?\d{1,2}\.\s.*?\S\s{3,}[┌│└├╭╰]/)).find(Boolean)
+  const previewAt = at ? at[0].length - 1 : undefined
+  const box = lines.slice(top + 1).map((l) => (previewAt !== undefined && l.length > previewAt && /^([┌│└├╭╰]|Notes:)/.test(l.slice(previewAt)) ? l.slice(0, previewAt).trimEnd() : l))
   const options: PromptOption[] = []
   const body: string[] = []
   let footer: string | undefined
@@ -302,9 +307,10 @@ function parsePrompt(lines: string[], rules: number[], width: number): ScreenPro
       current = null
       continue
     }
-    const tm = l.match(TABS)
+    // one question has no arrows around its strip: " ☐ Layout"
+    const tm = l.match(TABS)?.[1] ?? (/^\s*[☐☒✔]\s+\S/.test(l) ? l.trim() : undefined)
     if (tm && !options.length) {
-      tabs = [...tm[1].matchAll(/([☐☒✔])\s+([^☐☒✔]+)/g)].map((m) => ({
+      tabs = [...tm.matchAll(/([☐☒✔])\s+([^☐☒✔]+)/g)].map((m) => ({
         label: m[2].trim(),
         done: m[1] !== '☐',
         current: false,
@@ -380,6 +386,7 @@ function parsePrompt(lines: string[], rules: number[], width: number): ScreenPro
     footer,
     multi,
     freeTextOption: free?.n,
+    ...(previewAt !== undefined ? { navigate: true } : {}),
   }
 }
 

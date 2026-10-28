@@ -561,6 +561,27 @@ fn parse_prompt(lines: &[String], rules: &[usize], width: u32) -> Option<ScreenP
         top = (first as isize - 12).max(-1);
     }
     let bx = &lines[(top + 1) as usize..];
+    // A question whose options carry previews draws the one for the highlighted option in a box to
+    // the right of the labels, with "Notes: press n to add notes" under it. Only the labels are
+    // kept, and there a number only moves the highlight: picking takes Enter.
+    let preview_at = bx.iter().find_map(|l| re!(r"^\s*(❯\s*)?\d{1,2}\.\s.*?\S\s{3,}[┌│└├╭╰]").find(l).map(|m| l[..m.end()].len16() - 1));
+    let without_preview: Vec<String>;
+    let bx: &[String] = match preview_at {
+        Some(col) => {
+            without_preview = bx
+                .iter()
+                .map(|l| {
+                    if l.len16() > col && re!(r"^([┌│└├╭╰]|Notes:)").is_match(l.from16(col as isize)) {
+                        l.to16(col as isize).trim_end().to_owned()
+                    } else {
+                        l.clone()
+                    }
+                })
+                .collect();
+            &without_preview
+        }
+        None => bx,
+    };
     let mut options: Vec<PromptOption> = Vec::new();
     let mut body: Vec<String> = Vec::new();
     let mut footer: Option<String> = None;
@@ -576,11 +597,12 @@ fn parse_prompt(lines: &[String], rules: &[usize], width: u32) -> Option<ScreenP
             current = None;
             continue;
         }
-        if let Some(tm) = TABS!().captures(l) {
+        // one question has no arrows around its strip: " ☐ Layout"
+        let strip = TABS!().captures(l).map(|m| m[1].to_owned()).or_else(|| re!(r"^\s*[☐☒✔]\s+\S").is_match(l).then(|| l.jtrim().to_owned()));
+        if let Some(tm) = strip {
             if options.is_empty() {
-                tabs = Some(
-                    re!(r"([☐☒✔])\s+([^☐☒✔]+)", "g").captures_iter(&tm[1]).map(|m| PromptTab { label: m[2].jtrim().to_owned(), done: &m[1] != "☐", current: false }).collect(),
-                );
+                tabs =
+                    Some(re!(r"([☐☒✔])\s+([^☐☒✔]+)", "g").captures_iter(&tm).map(|m| PromptTab { label: m[2].jtrim().to_owned(), done: &m[1] != "☐", current: false }).collect());
                 continue;
             }
         }
@@ -684,6 +706,9 @@ fn parse_prompt(lines: &[String], rules: &[usize], width: u32) -> Option<ScreenP
     p.footer = footer;
     p.multi = multi;
     p.free_text_option = free;
+    if preview_at.is_some() {
+        p.navigate = Some(true);
+    }
     Some(p)
 }
 
