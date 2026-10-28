@@ -33,6 +33,8 @@ beforeAll(async () => {
   const glue = await import(join(dir, 'inyon_phone.js'))
   glue.initSync({ module: readFileSync(join(dir, 'inyon_phone_bg.wasm')) })
   startPhone = glue.startPhone
+  // a start that fails leaves the page free to start it properly
+  await expect(startPhone({ ssh } as never)).rejects.toThrow('needs a store')
   rt = await startPhone({ store: home.store, ssh, name: 'Test phone' })
 })
 
@@ -85,5 +87,5 @@ test('a screen hears the machines as messages, and its timers run on the page', 
 }, 15000)
 
 test('a page runs one core', async () => {
-  expect(startPhone({ store: memoryStore().store, ssh })).rejects.toThrow('already running')
+  await expect(startPhone({ store: memoryStore().store, ssh })).rejects.toThrow('already running')
 })

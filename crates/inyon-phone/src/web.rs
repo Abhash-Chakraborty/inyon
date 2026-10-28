@@ -191,15 +191,16 @@ thread_local! {
 /// as the TS core takes them; the servers and computers they reach come over in later steps.
 #[wasm_bindgen(js_name = startPhone)]
 pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
+    // a call that can't start it leaves the page free to try again
+    let store = Reflect::get(&o, &"store".into())?;
+    if store.is_undefined() {
+        return Err(JsValue::from_str("startPhone needs a store"));
+    }
     if STARTED.with(|s| s.replace(true)) {
         return Err(JsValue::from_str("The phone core is already running in this page"));
     }
     install(Rc::new(BrowserRuntime));
     inyon_core::platform::console::set_sink(Some(Rc::new(|error, line| if error { console_error(line) } else { console_log(line) })));
-    let store = Reflect::get(&o, &"store".into())?;
-    if store.is_undefined() {
-        return Err(JsValue::from_str("startPhone needs a store"));
-    }
     let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)) });
     Ok(PhoneRuntime(Rc::new(phone)))
 }
