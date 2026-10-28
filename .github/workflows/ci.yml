@@ -36,6 +36,9 @@ jobs:
       # the workflows' permissions, the Android job's re-signing, and the site's release mirror
       - run: bun test ./scripts ./site
       - run: bun run build
+        env:
+          # a hub's copy never runs the phone core (vite.config.ts)
+          VITE_INYON_PHONE_CORE: none
 
   # the hub's answers against the golden transcripts (conformance/README.md); on a pull request
   # only when it touches the hub, the shared packages, the Rust crates or the harness
@@ -94,6 +97,9 @@ jobs:
       - if: steps.paths.outputs.run == 'true'
         run: bun run build
         working-directory: apps/web
+        env:
+          # a hub's copy never runs the phone core (vite.config.ts)
+          VITE_INYON_PHONE_CORE: none
       - if: steps.paths.outputs.run == 'true'
         run: cargo build -p inyon-cli
       - if: steps.paths.outputs.run == 'true'
@@ -113,6 +119,9 @@ jobs:
         working-directory: apps/web
       - run: bun run build
         working-directory: apps/web
+        env:
+          # a hub's copy never runs the phone core (vite.config.ts)
+          VITE_INYON_PHONE_CORE: none
       - run: bun run e2e
         working-directory: apps/web
       # the skills each release ships: blueprint's template renders with no errors or dead buttons

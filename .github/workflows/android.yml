@@ -36,6 +36,8 @@ jobs:
           java-version: 21
           cache: gradle
       - run: bun install --frozen-lockfile
+      # the phone core goes into the app as wasm
+      - uses: ./.github/actions/phone-core
       - run: bun run build
       - run: bun x cap sync android
         working-directory: apps/mobile
@@ -188,6 +190,8 @@ jobs:
           cache: gradle
       # settings.gradle pulls the Capacitor modules from node_modules and the files `cap sync` writes
       - run: bun install --frozen-lockfile
+      # the phone core goes into the app as wasm
+      - uses: ./.github/actions/phone-core
       - run: bun run build
       - run: bun x cap sync android
         working-directory: apps/mobile

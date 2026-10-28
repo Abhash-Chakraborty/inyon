@@ -8,13 +8,15 @@ The core that runs inside the Android app also builds as a static web page. Serv
 
 ## Get it
 
-Each release includes `inyon-web.tar.gz`. Or build it from source:
+Each release includes `inyon-web.tar.gz`. Or build it from source. From 0.23 the core is Rust compiled to WebAssembly, so the build also needs Rust with the wasm target and `wasm-bindgen-cli` at the version `crates/inyon-phone/Cargo.toml` pins:
 
 ```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --locked --version <the pinned version>
 bun --filter @inyon/web build:hosted
 ```
 
-Unpack it on any static host. It has to be served over HTTPS.
+Unpack it on any static host. It has to be served over HTTPS. If your server adds its own `Content-Security-Policy` header, its `script-src` needs `'wasm-unsafe-eval'`, or the browser won't start the core. The page's own policy already allows it.
 
 ## Point your computers at it
 

@@ -37,18 +37,13 @@ const hubPort = 47000 + Math.floor(Math.random() * 900)
 const hub = Bun.spawn([bun, 'src/index.ts'], {
   cwd: path.resolve(root, '../hub'),
   env: { ...env, INYON_DATA_DIR: data, PORT: String(hubPort), BIND: '127.0.0.1', NODE_ENV: 'test' },
-  stdout: 'pipe',
-  stderr: 'pipe',
+  stdout: 'ignore',
+  stderr: 'inherit',
 })
 const hubUrl = `http://127.0.0.1:${hubPort}`
-let setupCode = ''
-;(async () => {
-  for await (const chunk of hub.stdout) {
-    const text = new TextDecoder().decode(chunk)
-    const m = text.match(/setup code:?\s*([0-9a-f]{8})/i)
-    if (m) setupCode = m[1]!
-  }
-})().catch(() => {})
+// the first-run code, which the hub keeps in its data folder (`inyon hub code`)
+const setupCodeFile = path.join(data, 'setup-code')
+const setupCode = () => (existsSync(setupCodeFile) ? readFileSync(setupCodeFile, 'utf8').trim() : '')
 
 // the hosted build from its own origin, as GitHub Pages or a phone would have it
 const dist = path.join(root, 'dist-hosted')
@@ -84,8 +79,8 @@ let code = 0
 let shot: Page | undefined
 try {
   // wait for the hub, then give it a password as the first visit would
-  await until('the hub printed no setup code', () => !!setupCode, 10000)
-  const setup = await fetch(`${hubUrl}/api/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'correct horse battery', code: setupCode }) })
+  await until('the hub wrote no setup code', () => /^[0-9a-f]{8}$/i.test(setupCode()), 10000)
+  const setup = await fetch(`${hubUrl}/api/setup`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'correct horse battery', code: setupCode() }) })
   if (!setup.ok) fail(`setup answered ${setup.status}`)
   const cookie = setup.headers.get('set-cookie')!.split(';')[0]!
   // the hub's web app asks for a code; a fresh sign-in is allowed to
@@ -100,7 +95,7 @@ try {
   const failed: string[] = []
   page.on('requestfailed', (r) => r.url().startsWith(hubUrl) && failed.push(`${r.method()} ${r.url().slice(hubUrl.length)}: ${r.failure()?.errorText}`))
   await page.goto(`${siteUrl}/machines`)
-  await page.getByRole('button', { name: 'Add' }).click()
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
   await page.getByRole('button', { name: /Connect to a hub/ }).click()
   await page.getByLabel('Hub address').fill(`127.0.0.1:${hubPort}`)
   await page.getByLabel('Hub code').fill(`${pairCode.id} ${pairCode.code}`)

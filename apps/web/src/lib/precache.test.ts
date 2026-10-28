@@ -23,3 +23,14 @@ test('the chunks a browser can reach are listed; the phone app\'s in-process hub
   }
   expect(browserFiles(bundle).sort()).toEqual(['assets/Messages-1.js', 'assets/core-1.js', 'assets/index-1.css', 'assets/index-1.js', 'assets/react-1.js', 'assets/rust-1.js', 'version.json'])
 })
+
+test('the Rust phone core and its wasm stay out of the list too', () => {
+  const chunk = (fileName: string, o: Partial<BuiltFile> = {}): BuiltFile => ({ type: 'chunk', fileName, imports: [], dynamicImports: [], ...o })
+  const bundle: Record<string, BuiltFile> = {
+    'assets/index-1.js': chunk('assets/index-1.js', { isEntry: true, dynamicImports: ['assets/phone-core-1.js'] }),
+    'assets/phone-core-1.js': chunk('assets/phone-core-1.js', { facadeModuleId: '/repo/apps/web/src/phone-core/index.ts' }),
+    'assets/inyon_phone_bg-BW5_vaB-.wasm': { type: 'asset', fileName: 'assets/inyon_phone_bg-BW5_vaB-.wasm' },
+    'assets/index-1.css': { type: 'asset', fileName: 'assets/index-1.css' },
+  }
+  expect(browserFiles(bundle).sort()).toEqual(['assets/index-1.css', 'assets/index-1.js'])
+})

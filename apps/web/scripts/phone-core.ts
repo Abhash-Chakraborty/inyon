@@ -1,10 +1,14 @@
 // bun scripts/phone-core.ts [--debug]: builds the Rust phone core (crates/inyon-phone) as wasm and
-// writes it with its JavaScript side to src/phone-core/, where a build with VITE_INYON_PHONE_CORE=rust
-// loads it in place of the TypeScript core. Needs the wasm32-unknown-unknown target and the
-// wasm-bindgen program at the version crates/inyon-phone pins (`cargo install wasm-bindgen-cli`).
+// writes it with its JavaScript side to src/phone-core/, where the app's build picks it up as
+// @inyon/phone (vite.config.ts). `bun run build` runs it first. Needs the wasm32-unknown-unknown
+// target and the wasm-bindgen program at the version crates/inyon-phone pins
+// (`cargo install wasm-bindgen-cli`).
 import { $ } from 'bun'
 import { gzipSync } from 'node:zlib'
 import { join } from 'node:path'
+
+// a build without the Rust core needs none of this (vite.config.ts)
+if ((process.env.VITE_INYON_PHONE_CORE ?? 'rust') !== 'rust') process.exit(0)
 
 const root = join(import.meta.dir, '../../..')
 const out = join(import.meta.dir, '../src/phone-core')

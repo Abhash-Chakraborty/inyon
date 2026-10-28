@@ -8,9 +8,12 @@ use rust_embed::RustEmbed;
 
 use crate::http::{set_header, text, Resp};
 
-/// Built with `bun run build` before the program; a build without it says so on every page.
+/// Built with `bun run build` before the program; a build without it says so on every page. The
+/// phone core's wasm stays out: only the phone app and the browser copy run it, from their own
+/// files, and a hub's page can't compile wasm under PAGE_CSP anyway.
 #[derive(RustEmbed)]
 #[folder = "../../apps/web/dist"]
+#[exclude = "assets/inyon_phone_bg-*.wasm"]
 #[allow_missing = true]
 struct Web;
 
@@ -133,6 +136,16 @@ mod tests {
         let index = include_str!("../../../apps/web/index.html");
         assert!(index.contains(r#"<script src="/theme.js">"#) && index.contains("script-src 'self'"));
         assert!(include_str!("../../../apps/web/src/main.tsx").contains("publicFile('sw.js')"));
+    }
+
+    #[test]
+    fn the_phone_cores_wasm_is_left_out_and_the_rest_is_in() {
+        let Ok(dir) = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/web/dist/assets")) else { return };
+        for e in dir.flatten() {
+            let name = format!("assets/{}", e.file_name().to_string_lossy());
+            let phone = name.starts_with("assets/inyon_phone_bg-") && name.ends_with(".wasm");
+            assert_eq!(Web::get(&name).is_some(), !phone, "{name}");
+        }
     }
 
     #[test]

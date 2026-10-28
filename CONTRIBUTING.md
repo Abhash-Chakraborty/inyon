@@ -26,7 +26,13 @@ bun dev:web      # Vite on :5173, proxies to the hub
 ```
 
 Requires [Bun](https://bun.sh) 1.3 or later and tmux. Bun is the package manager too: there's
-no npm or pnpm step.
+no npm or pnpm step. Building the web app also builds the phone core as wasm, so it needs Rust with
+the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version `crates/inyon-phone` pins:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --locked --version "$(sed -n 's/^wasm-bindgen = "=\(.*\)"/\1/p' crates/inyon-phone/Cargo.toml)"
+```
 
 ## Checks
 
@@ -73,13 +79,12 @@ npm/               the npm launcher and per-platform packages
 skills/            agent skills shipped with each release (Blueprint)
 ```
 
-The phone core is moving to Rust. `bun scripts/phone-core.ts` in `apps/web` builds
-`crates/inyon-phone` as wasm (it needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at
-the version the crate pins), and a build with `VITE_INYON_PHONE_CORE=rust` runs it instead of the
-TypeScript core. `bun test crates/inyon-phone/js` then checks the module as the app calls it, and
-with `INYON_BIN` pointing at an `inyon` build it also pairs with that build's `inyon link`. It
-does everything apps/hub/src/phone does: the core routes and sockets, SSH into servers through
-the native plugin, the link to paired computers, and push through those computers.
+The phone core is Rust (`crates/inyon-phone`), built as wasm by `bun scripts/phone-core.ts` in
+`apps/web`, which `bun run build` runs first. It does everything apps/hub/src/phone does: the core
+routes and sockets, SSH into servers through the native plugin, the link to paired computers, and
+push through those computers. `bun test crates/inyon-phone/js` checks the module as the app calls
+it, and with `INYON_BIN` pointing at an `inyon` build it also pairs with that build's `inyon link`.
+`VITE_INYON_PHONE_CORE=ts` builds with the TypeScript core instead, until apps/hub goes.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.

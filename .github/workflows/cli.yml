@@ -60,9 +60,8 @@ jobs:
       # tests had them
       - run: cargo test -p inyon-hub
 
-  # the phone core in Rust (from 0.23, in builds made with VITE_INYON_PHONE_CORE=rust): crates/inyon-phone
-  # as wasm with wasm-bindgen's JavaScript side, started and called the way the web app calls the
-  # TypeScript core, then the browser copy built on it
+  # the phone core in Rust (from 0.23): crates/inyon-phone as wasm with wasm-bindgen's JavaScript
+  # side, started and called the way the web app calls it, then the browser copy built on it
   phone:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -73,10 +72,7 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
         working-directory: .
-      - run: rustup target add wasm32-unknown-unknown
-      # the version the crate pins; scripts/phone-core.ts refuses any other
-      - run: cargo install wasm-bindgen-cli --locked --version "$(sed -n 's/^wasm-bindgen = "=\(.*\)"/\1/p' crates/inyon-phone/Cargo.toml)"
-        working-directory: .
+      - uses: ./.github/actions/phone-core
       - run: cargo test -p inyon-phone
       # the computer the wasm core pairs with in its tests
       - run: cargo build -p inyon-cli
@@ -92,7 +88,6 @@ jobs:
         working-directory: apps/web
         env:
           VITE_INYON_HOSTED: '1'
-          VITE_INYON_PHONE_CORE: rust
 
   # the Rust engine as old phones, hubs and scripts meet it: apps/node's tests that run the engine
   # as a program, pointed at this build under the name inyon-engine, against the real Bun hub
@@ -183,6 +178,9 @@ jobs:
         if: ${{ !startsWith(matrix.runner, 'windows') }}
         working-directory: .
         run: bun install --frozen-lockfile && bun run --cwd apps/web build
+        env:
+          # a hub's copy never runs the phone core (vite.config.ts)
+          VITE_INYON_PHONE_CORE: none
       - run: cargo build --release --target ${{ matrix.target }}
         env:
           INYON_BUILD_COMMIT: ${{ github.sha }}
