@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import PRELUDE from '../../../node/win-prelude.sh' with { type: 'text' }
+import PRELUDE from '../../../../crates/inyon-engine/src/win-prelude.sh' with { type: 'text' }
 
 // a stand-in for psmux's tmux.exe: logs its argv and answers like psmux would
 const bin = mkdtempSync(join(tmpdir(), 'psmux-'))

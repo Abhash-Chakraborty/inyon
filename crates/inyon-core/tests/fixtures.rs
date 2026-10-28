@@ -79,12 +79,19 @@ fn every_capture_reads_as_the_ts_readers_read_it() {
         for file in sorted(&dir) {
             let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
             let expected_path = fixtures().join(format!("expected/screens/{name}/{stem}.json"));
+            let got = expectation(kind, &read_lines(&file));
             let Ok(text) = std::fs::read_to_string(&expected_path) else {
-                failures.push(format!("{name}/{stem}: no fixtures/expected file (run `bun apps/hub/src/cli/expected.ts`)"));
+                // a new capture: INYON_BLESS=1 writes what the readers make of it, to look over and commit
+                if std::env::var_os("INYON_BLESS").is_some() {
+                    std::fs::create_dir_all(expected_path.parent().unwrap()).unwrap();
+                    std::fs::write(&expected_path, format!("{}\n", serde_json::to_string_pretty(&got).unwrap())).unwrap();
+                    checked += 1;
+                } else {
+                    failures.push(format!("{name}/{stem}: no fixtures/expected file (INYON_BLESS=1 cargo test -p inyon-core --test fixtures writes it)"));
+                }
                 continue;
             };
             let want: Value = serde_json::from_str(&text).unwrap();
-            let got = expectation(kind, &read_lines(&file));
             checked += 1;
             if let Some(d) = first_difference("", &got, &want) {
                 failures.push(format!("{name}/{stem}{d}"));

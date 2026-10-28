@@ -4,9 +4,9 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
 import { compressed, RELEASES_REPO, VERSION } from '@inyon/protocol'
-import INSTALL_SH from '../../../node/install.sh' with { type: 'text' }
-import INSTALL_PS1 from '../../../node/install.ps1' with { type: 'text' }
-import HUB_UPDATE_PS1 from '../../../node/hub-update.ps1' with { type: 'text' }
+import INSTALL_SH from '../../../../crates/inyon-hub/assets/install.sh' with { type: 'text' }
+import INSTALL_PS1 from '../../../../crates/inyon-hub/assets/install.ps1' with { type: 'text' }
+import HUB_UPDATE_PS1 from '../../../../crates/inyon-hub/assets/hub-update.ps1' with { type: 'text' }
 import { CLI_TARGETS, cliFile, engineFile, HUB_TARGETS, type CliTarget, type HubTarget, type Target } from '../../../node/targets.ts'
 import { DATA_DIR, TLS } from '../env.ts'
 import { HttpError, registry, tokenExpired } from '../hosts/registry.ts'

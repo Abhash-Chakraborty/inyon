@@ -8,7 +8,7 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { type Installer, isInstaller, stampInstaller } from "../apps/node/installers.ts";
+import { type Installer, isInstaller, stampInstaller } from "../installers/installers.ts";
 
 const ROOT = dirname(import.meta.dir);
 const SITE = import.meta.dir;
@@ -411,7 +411,10 @@ export function parseSums(sums: string): Map<string, string> {
   return expected;
 }
 
-/** An installer as the commit tagged `tag` has it (apps/node/<name>), from this checkout's git. */
+/**
+ * An installer as the commit tagged `tag` has it, from this checkout's git. Only releases before
+ * 0.20 need this, and they kept the installers in apps/node (since 0.23 they're in installers/).
+ */
 function taggedInstaller(tag: string, name: Installer): Buffer | undefined {
   const p = Bun.spawnSync(["git", "show", `${tag}:apps/node/${name}`], { cwd: ROOT, stdout: "pipe", stderr: "ignore" });
   return p.exitCode === 0 ? Buffer.from(p.stdout) : undefined;

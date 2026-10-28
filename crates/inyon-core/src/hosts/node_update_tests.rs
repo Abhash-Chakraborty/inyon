@@ -301,7 +301,7 @@ fn a_hub_on_a_test_build_offers_it_to_machines_on_the_release_before_and_only_to
 /// From node-update-scripts.test.ts: the parts that don't need PowerShell.
 #[test]
 fn only_a_plain_checksum_version_and_architecture_go_into_the_script() {
-    let ps1 = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/node/hub-update.ps1")).unwrap();
+    let ps1 = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../inyon-hub/assets/hub-update.ps1")).unwrap();
     let sha = "a".repeat(64);
     assert!(fill_update_script(&ps1, &sha, "0.6.3", "x64").unwrap().contains(&format!("$Want = '{sha}'")));
     assert!(fill_update_script(&ps1, &sha, "0.6.3", "arm64").unwrap().contains("$Arch = 'arm64'"));

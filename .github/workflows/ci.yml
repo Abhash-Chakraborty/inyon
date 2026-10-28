@@ -33,8 +33,9 @@ jobs:
         working-directory: packages/protocol
       - run: bun test
         working-directory: apps/node
-      # the workflows' permissions, the Android job's re-signing, and the site's release mirror
-      - run: bun test ./scripts ./site
+      # the one-line installers, the workflows' permissions, the Android job's re-signing, and the
+      # site's release mirror
+      - run: bun test ./installers ./scripts ./site
       - run: bun run build
         env:
           # a hub's copy never runs the phone core (vite.config.ts)

@@ -11,8 +11,7 @@ import { fillUpdateScript, WINDOWS_LAUNCHER } from './node-update.ts'
 // installed (pwsh, or PWSH=<path>), with the Windows-only cmdlets replaced by stubs, a throwaway
 // home, and a local server standing in for the hub. Nothing touches a real service.
 
-const NODE = path.resolve(import.meta.dir, '../../../node')
-const PS1 = readFileSync(path.join(NODE, 'hub-update.ps1'), 'utf8')
+const PS1 = readFileSync(path.resolve(import.meta.dir, '../../../../crates/inyon-hub/assets/hub-update.ps1'), 'utf8')
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex')
 
 const server = Bun.serve({

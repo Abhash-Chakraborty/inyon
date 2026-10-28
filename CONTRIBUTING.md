@@ -42,6 +42,7 @@ bun run typecheck
 (cd apps/web && bun test)
 (cd apps/node && bun test)
 (cd packages/link && bun test)
+bun test ./installers             # get.sh and get.ps1 against a mock release (signed when minisign is installed)
 (cd apps/web && bun run build && bun run e2e)   # layout at phone widths, needs Playwright's Chromium
 cargo test --workspace            # the inyon command and the Rust crates (or bun run cli:test)
 bun conformance/run.ts            # both hubs against the recorded scenarios
@@ -66,6 +67,8 @@ apps/hub           the Bun hub: machines, tmux, agent readers, API, WebSocket
                    (src/phone runs the same core inside the Android app)
 apps/node          inyon-engine, the Bun program a hub runs on (and INYON_LEGACY_ENGINE=1)
 apps/web           React + Vite app, also served by the hub
+installers/        get.sh and get.ps1, the one-line installers (the hub's install.sh and install.ps1
+                   are in crates/inyon-hub/assets)
 apps/mobile        Capacitor shell for Android (and an unshipped iOS project); scripts/icons.ts renders every icon
 crates/            the Rust side: inyon-core (readers, machines), inyon-api (the routes and app
                    sockets, no server), inyon-hub (the hub), inyon-engine and inyon-link (the

@@ -766,10 +766,10 @@ fn what_closing_a_pane_takes_with_it() {
 }
 
 // ---------- hosts/win-prelude.test.ts: psmux ----------
-// The first four check apps/node/win-prelude.sh on its own, with no hub code: they are in
+// The first four check crates/inyon-engine/src/win-prelude.sh on its own, with no hub code: they are in
 // inyon-engine's ops.rs, which runs the prelude. The sign-in one is in signin_tests.rs.
 
-const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
+const PRELUDE: &str = include_str!("../../../inyon-engine/src/win-prelude.sh");
 
 #[test]
 fn an_agent_that_exits_on_windows_leaves_powershell_behind_and_remain_on_exit_is_set_on_the_window() {
