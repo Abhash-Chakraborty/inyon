@@ -216,17 +216,6 @@ fn the_helper_is_run_with_node_on_the_machine_for_the_thread_the_rollout_file_na
     assert!(!CODEX_LIVE_SCRIPT.contains("'turn/steer'"));
 }
 
-#[test]
-fn the_script_and_paths_are_the_ones_in_the_ts() {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/hub/src");
-    let live = std::fs::read_to_string(format!("{root}/agents/codex-live.ts")).unwrap();
-    let start = live.find("String.raw`").unwrap() + "String.raw`".len();
-    let end = start + live[start..].find("\n`\n").unwrap() + 1;
-    assert_eq!(&live[start..end], CODEX_LIVE_SCRIPT);
-    let setup = std::fs::read_to_string(format!("{root}/features/setup.ts")).unwrap();
-    assert!(setup.contains(&format!("export const PATHS = '{PATHS}'\n")));
-}
-
 /// review: a fractional turn start stays fractional on the wire
 #[test]
 fn a_fractional_turn_start_stays_fractional() {

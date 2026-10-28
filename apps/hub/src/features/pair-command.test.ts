@@ -7,7 +7,7 @@ import { unixPairCommand } from './pair-command.ts'
 
 // A hub serving the real install.sh and a stand-in inyon program: a script that writes down how it
 // was run. Nothing real gets installed or started.
-const installSh = readFileSync(resolve(import.meta.dir, '../../../node/install.sh'))
+const installSh = readFileSync(resolve(import.meta.dir, '../../../../crates/inyon-hub/assets/install.sh'))
 const os = process.platform === 'darwin' ? 'darwin' : 'linux'
 const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
 let program = '#!/bin/sh\nprintf "%s\\n" "$*" "$INYON_TOKEN" > "$HOME/ran"\n'

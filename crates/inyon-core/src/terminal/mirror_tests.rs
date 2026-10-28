@@ -70,7 +70,7 @@ fn only_the_rows_that_changed_are_drawn_again() {
     assert_eq!(draw_screen(Some(&b), &hidden), "\x1b[2;4H\x1b[?25l");
 }
 
-const PRELUDE: &str = include_str!("../../../../apps/node/win-prelude.sh");
+const PRELUDE: &str = include_str!("../../../inyon-engine/src/win-prelude.sh");
 
 #[test]
 fn the_terminals_commands_reach_the_right_psmux_pane() {

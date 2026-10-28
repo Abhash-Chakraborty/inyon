@@ -2,7 +2,7 @@ import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import WIN_PRELUDE from './win-prelude.sh' with { type: 'text' }
+import WIN_PRELUDE from '../../crates/inyon-engine/src/win-prelude.sh' with { type: 'text' }
 // before the commands' environment is made, so TETHER_* variables count as their INYON_* names
 import { binDir, inyonCommand, nodeDir } from './paths.ts'
 

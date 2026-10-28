@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stampInstaller } from "../apps/node/installers.ts";
+import { stampInstaller } from "../installers/installers.ts";
 import { CSP, checkReleaseFile, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
@@ -16,7 +16,7 @@ test("sizes read as a browser shows them", () => {
 
 
 const sha = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
-const node = (f: string) => readFileSync(join(import.meta.dir, "../apps/node", f), "utf8");
+const node = (f: string) => readFileSync(join(import.meta.dir, "../installers", f), "utf8");
 
 // the site publishes a release file only when the signed SHA256SUMS lists it with that checksum
 test("a release file is published only as the signed list has it", () => {

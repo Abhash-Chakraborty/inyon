@@ -12,7 +12,7 @@ import { nodeLinks } from './node-link.ts'
  *
  * Before the rename to Inyon the program was tether-node. A laptop paired with the phone ran
  * `tether-node update` the same way. A Windows machine added to a hub gets a script instead
- * (apps/node/hub-update.ps1), through the plain exec command every tether-node understands; once
+ * (crates/inyon-hub/assets/hub-update.ps1), through the plain exec command every tether-node understands; once
  * the new version runs, it moves its services to inyon's own names.
  */
 

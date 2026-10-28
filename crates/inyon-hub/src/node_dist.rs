@@ -25,9 +25,9 @@ use sha2::{Digest, Sha256};
 use crate::http::{hex, Req, Resp};
 use crate::server::{raw, Route, Routes};
 
-pub const INSTALL_SH: &str = include_str!("../../../apps/node/install.sh");
-pub const INSTALL_PS1: &str = include_str!("../../../apps/node/install.ps1");
-pub const HUB_UPDATE_PS1: &str = include_str!("../../../apps/node/hub-update.ps1");
+pub const INSTALL_SH: &str = include_str!("../assets/install.sh");
+pub const INSTALL_PS1: &str = include_str!("../assets/install.ps1");
+pub const HUB_UPDATE_PS1: &str = include_str!("../assets/hub-update.ps1");
 
 /// The systems a hub hands an engine to: Linux against glibc, macOS and Windows x64.
 pub const HUB_TARGETS: [&str; 5] = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "windows-x64"];

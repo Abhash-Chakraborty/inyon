@@ -23,7 +23,7 @@ use crate::paths::{self, bin_dir, env_var, node_dir};
 use crate::WIN;
 
 /// Sourced before every command on Windows (busybox-w32 sh): psmux ids and what busybox lacks.
-pub const WIN_PRELUDE: &str = include_str!("../../../apps/node/win-prelude.sh");
+pub const WIN_PRELUDE: &str = include_str!("win-prelude.sh");
 
 /// How long output may stay open after the shell exited (a child that escaped its group can hold it).
 const OUTPUT_GRACE: Duration = Duration::from_millis(1000);

@@ -71,7 +71,7 @@ else
   cp "$work/engine/$engine" "$work/engine/$engine_musl" "$dist/"
 fi
 chmod +x "$dist/$cli" "$dist/$engine" "$dist/$engine_musl"
-cp "$root/apps/node/get.sh" "$dist/"
+cp "$root/installers/get.sh" "$dist/"
 # a release lists its APK, whose name carries the version: `inyon update` checks the signed list
 # against the version latest.json names that way, and get.sh finds the release's tag by it
 apk="inyon-$version.apk"
@@ -80,7 +80,7 @@ printf 'not an app\n' > "$dist/$apk"
 # signed as a release is, with the test key (no password; minisign still reads one from stdin)
 minisign -S -s "$keys/test.key" -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" < /dev/null
 minisign -V -q -m "$dist/SHA256SUMS" -x "$dist/SHA256SUMS.minisig" -P "$pubkey"
-# the website serves get.sh with the sha256 of the list it checked filled in (apps/node/installers.ts),
+# the website serves get.sh with the sha256 of the list it checked filled in (installers/installers.ts),
 # so the containers, which have no minisign, install as they would from the website
 list_sha=$(sha256sum "$dist/SHA256SUMS" | cut -d' ' -f1)
 sed -i "s/^LIST_SHA256=\$/LIST_SHA256=$list_sha/" "$dist/get.sh"

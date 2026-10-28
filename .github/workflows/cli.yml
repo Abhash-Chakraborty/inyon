@@ -11,7 +11,7 @@ on:
     # the protocol crate's tests also read packages/protocol and fixtures/
     # and the interop job runs apps/node's tests, the hub and packages/link against the Rust engine;
     # `inyon docs` carries site/docs inside the binary
-    paths: ['apps/cli/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'fixtures/**', 'apps/web/scripts/phone-core.ts', 'apps/web/vite.config.ts', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    paths: ['apps/cli/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'packages/link/**', 'apps/node/**', 'apps/hub/**', 'installers/**', 'fixtures/**', 'apps/web/scripts/phone-core.ts', 'apps/web/vite.config.ts', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 

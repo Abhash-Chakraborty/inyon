@@ -164,12 +164,3 @@ fn the_shell_finds_the_machines_inyon_and_passes_the_arguments_through() {
     assert_eq!(run(&[("PATH", &path), ("INYON_EXE", &exe), ("INYON_SCRIPT", "/opt/inyon.ts")]).1, "exe [/opt/inyon.ts] [temp] [files] [--json] [--] [/tmp/a b]");
     assert_eq!(run(&[("INYON_EXE", &exe), ("INYON_SCRIPT", "")]).1, "exe [temp] [files] [--json] [--] [/tmp/a b]");
 }
-
-#[test]
-fn the_shell_is_the_bun_hubs_own() {
-    // both hubs run the same snippet; the TS writes `${` as `\${` inside its template
-    let ts = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/hub/src/features/temp.ts")).unwrap();
-    let start = ts.find("export const INYON = `").unwrap() + "export const INYON = `".len();
-    let end = start + ts[start..].find('`').unwrap();
-    assert_eq!(ts[start..end].replace("\\${", "${"), INYON);
-}

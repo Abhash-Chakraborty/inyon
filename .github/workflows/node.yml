@@ -13,7 +13,7 @@ on:
   push:
     branches: [main]
     tags: ['v*']
-    paths: ['apps/cli/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'apps/node/**', 'apps/hub/**', 'apps/web/**', 'packages/**', 'scripts/**', 'skills/**', '.github/workflows/node.yml', '.github/workflows/cli.yml']
+    paths: ['apps/cli/**', 'crates/**', 'Cargo.toml', 'Cargo.lock', 'apps/node/**', 'apps/hub/**', 'apps/web/**', 'installers/**', 'packages/**', 'scripts/**', 'skills/**', '.github/workflows/node.yml', '.github/workflows/cli.yml']
   workflow_dispatch:
 
 # read-only unless a job says otherwise: only publish can change the releases, and it runs no
@@ -46,6 +46,7 @@ jobs:
       - run: sudo apt-get update -q > /dev/null && sudo apt-get install -y -q minisign > /dev/null
       - run: bun test
         working-directory: apps/node
+      - run: bun test ./installers
 
       # the engine's hub serves the app without the phone core; the browser copy below has it
       - run: bun run build
@@ -105,7 +106,7 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/dist"
           # the one-line installers: curl …/get.sh | sh, or irm …/get.ps1 | iex
-          cp "$GITHUB_WORKSPACE/apps/node/get.sh" "$GITHUB_WORKSPACE/apps/node/get.ps1" .
+          cp "$GITHUB_WORKSPACE/installers/get.sh" "$GITHUB_WORKSPACE/installers/get.ps1" .
           # one list for every file, the installers too (from 0.20: the website serves only copies
           # that match it), the list and its own signature left out of it
           ls | grep -v -e '^SHA256SUMS' | xargs sha256sum > SHA256SUMS

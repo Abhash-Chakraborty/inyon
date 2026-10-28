@@ -102,11 +102,10 @@ fn slugs_and_folders_follow_the_shared_rules() {
     for c in r["sitePath"].as_array().unwrap() {
         assert_eq!(pages::site_path_problem(c["path"].as_str().unwrap(), c["home"].as_str().unwrap()), c["problem"].as_str(), "sitePath {c}");
     }
-    // and the messages are the hubs' own
-    let core = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/hub/src/features/pages-core.ts")).unwrap();
+    // and the messages are the hub's own
+    let core = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/inyon-core/src/features/pages_core.rs")).unwrap();
     for m in [pages::BAD_SLUG, pages::NOT_ABSOLUTE, pages::TOO_WIDE, pages::PRIVATE_FOLDER, pages::NO_INDEX] {
-        let quoted = if m.contains('\'') { format!("\"{m}\"") } else { format!("'{m}'") };
-        assert!(core.contains(&quoted), "{m} isn't in pages-core.ts");
+        assert!(core.contains(&format!("{m:?}")), "{m} isn't in pages_core.rs");
     }
 }
 
