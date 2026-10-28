@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import clsx from 'clsx'
 import { AlertCircle, ChevronLeft, ChevronRight, FileCode2, HardDrive, Pencil, Plug, Plus, RotateCcw, Save, Smartphone, SquareTerminal, Trash2 } from 'lucide-react'
-import { AGENTS, type AgentKind, type HostState } from '@inyon/protocol'
+import { agentDef, type AgentKind, type HostState } from '@inyon/protocol'
 import { api, type ConfigFile, type UploadUsage } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { paneHref, paneTitle } from '../lib/overview.ts'
@@ -391,7 +391,7 @@ function ConfigTab({ host }: { host: HostState }) {
         {groups.map((g) => (
           <div key={g}>
             <div className="mb-1 flex items-center gap-2 px-1.5 text-[12px] font-semibold">
-              <AgentLogo kind={g} size={16} /> {AGENTS[g].name}
+              <AgentLogo kind={g} size={16} /> {agentDef(g).name}
             </div>
             {files.filter((f) => f.agent === g).map((f) => (
               <button
@@ -519,7 +519,7 @@ function IntegrationCard({ host }: { host: HostState }) {
           const signedIn = host.signedIn?.includes(k)
           return (
             <span key={k} className="flex items-center gap-2 rounded-full border border-line bg-elev py-1 pr-1 pl-3 font-mono text-[12px]">
-              <AgentLogo kind={k} size={18} /> {AGENTS[k].name}
+              <AgentLogo kind={k} size={18} /> {agentDef(k).name}
               {host.signedIn && (signedIn ? (
                 <span className="pr-1.5 text-[12px] text-fg-3">· signed in</span>
               ) : (

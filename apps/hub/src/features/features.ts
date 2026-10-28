@@ -235,7 +235,8 @@ export async function listCommands(hostId: string, paneId: string): Promise<Slas
   // the agents read project skills and commands from the folder and each one above it up to the repo root
   const up = `d=${cwd}; top=$(git -C "$d" rev-parse --show-toplevel 2>/dev/null || echo "$d"); dirs="$d"; while [ "$d" != "$top" ] && [ "$d" != / ] && [ -n "$d" ]; do d=$(dirname "$d"); dirs="$dirs
 $d"; done`
-  const scans: Record<AgentKind, string> = {
+  // the terminal-first agents have no commands Inyon lists
+  const scans: Partial<Record<AgentKind, string>> = {
     claude: `${up}
 for f in "$HOME"/.claude/skills/*/SKILL.md; do [ -f "$f" ] && printf 'skill\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done
 echo "$dirs" | while read -r p; do for f in "$p"/.claude/skills/*/SKILL.md; do [ -f "$f" ] && printf 'project\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done; done
@@ -258,7 +259,7 @@ for f in ${cwd}/.agents/skills/*/SKILL.md ${cwd}/.agent/skills/*/SKILL.md; do [ 
 for f in "$HOME"/.gemini/config/skills/*/SKILL.md; do [ -f "$f" ] && printf 'skill\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done
 find "$HOME/.gemini/antigravity-cli/plugins" -maxdepth 4 -path '*/skills/*/SKILL.md' 2>/dev/null | head -200 | while read -r f; do printf 'plugin\\t%s\\t%s\\n' "$(basename "$(dirname "$f")")" "$(${desc})"; done`,
   }
-  const r = await host.exec(scans[kind])
+  const r = await host.exec(scans[kind] ?? 'true')
   const seen = new Set<string>()
   const found: SlashCommand[] = []
   for (const line of r.stdout.split('\n')) {

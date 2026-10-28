@@ -7,7 +7,7 @@ import { signedInTest } from '../agents/auth-sh.ts'
 import { compareVersions, latestAgentVersions } from './agent-latest.ts'
 import { parseAuthList } from './providers.ts'
 
-export const PATHS = 'export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done'
+export const PATHS = 'export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$HOME/.grok/bin:$HOME/.kimi-code/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done'
 
 export interface SetupCheck {
   id: string
@@ -137,7 +137,8 @@ ${authTests}
     },
   ]
   const npmGlobals = get('NPMLS')
-  const agents = AGENT_KINDS.map((k): SetupAgent => {
+  // the chat agents only: this hub doesn't find the terminal-first ones in panes (see tmux.ts)
+  const agents = AGENT_KINDS.filter((k) => AGENTS[k].chat).map((k): SetupAgent => {
     const version = get(`VER ${k}`)
     const auth = r.stdout.split('\n').find((l) => l.startsWith(`AUTH ${k} `))?.endsWith('1') ?? false
     const a: SetupAgent = { kind: k, installed: !!version, version: version || undefined, signedIn: auth }

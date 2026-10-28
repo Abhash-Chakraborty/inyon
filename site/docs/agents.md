@@ -87,6 +87,35 @@ Found through its process locks and event log. Its models come from the CLI's ow
 
 Google's `agy`. Read from its transcripts, with plan quotas from its own status line. From 0.22 the integration also adds an entry named `inyon` to its hooks in `~/.gemini/config/hooks.json`. Models, effort, modes, goals (set, but not cleared yet), Remote Control and `/rewind` work.
 
+## Terminal-first agents
+
+From 0.23 Inyon knows eleven more agent CLIs. Their conversations stay in their terminal: Inyon doesn't read their session files yet, so their sessions open on the terminal and there is no chat view for them.
+
+| Agent | Command | Signs in with |
+|---|---|---|
+| Cursor CLI | `cursor-agent` | `cursor-agent login` |
+| Grok Build | `grok` | `grok login --device-auth` |
+| Pi | `pi` | `/login` inside Pi |
+| Amp | `amp` | `amp login` |
+| goose | `goose` | `goose configure` |
+| Hermes Agent | `hermes` | `hermes setup` |
+| Kimi Code | `kimi` | `kimi login` |
+| Kiro CLI | `kiro-cli` | `kiro-cli login --use-device-flow` |
+| Qwen Code | `qwen` | `/auth` inside Qwen Code |
+| Qoder CLI | `qodercli` | `qodercli login` |
+| CodeBuddy Code | `codebuddy` | its own first run |
+
+What works with them:
+
+- A pane running one shows its logo and colours, found by its process the way the others are.
+- Its screen says when it's working (a line such as *esc to interrupt*) and when it asks something, so the session's state and its notifications work.
+- **New session** starts it. It starts without a first message; type that in its terminal.
+- A machine's **Setup** tab installs it with its official installer or npm, updates it, and **Sign in** opens a terminal session running its sign-in.
+
+Not yet: the chat view, model, effort and mode controls, past conversations, and [your own agents](#your-own-agents) that work like one of them. Only the Rust hub finds them for now. The Bun hub (`INYON_HUB_IMPL=bun`) and the [Android app](android.md) on its own, for a computer it pairs with directly or a server over SSH, show their panes as plain terminals and leave them out of the Setup tab; through a hub the phone shows them in full.
+
+An app from before 0.23 doesn't know these agents either, so a hub shows it their sessions as plain terminals. Update the Android app to see them.
+
 ## Your own agents
 
 From 0.22, **Settings › Agents › Add an agent** saves any command under a name of your own, with the agent it works like. Use it for an agent started with flags you always want (`claude --dangerously-skip-permissions`), for a build of an agent under another name (`openclaude`), or for a wrapper of your own.
@@ -109,7 +138,7 @@ From 0.20 any of them can put a site it built, such as a plan or mockups, in the
 
 ## Installing and signing in
 
-A machine's **Setup** tab installs any of them, with the official installer or npm (Codex, Gemini CLI and Copilot need Node.js, which it can install too), and runs each one's sign-in as steps in the app. From 0.17.4 it also shows which of the six has a newer version and updates it with one button, from the browser or the phone. See [Adding machines](machines.md#the-setup-tab).
+A machine's **Setup** tab installs any of them, with the official installer or npm (Codex, Gemini CLI and Copilot need Node.js, which it can install too), and runs each one's sign-in as steps in the app. From 0.17.4 it also shows which agent has a newer version and updates it with one button, from the browser or the phone. See [Adding machines](machines.md#the-setup-tab).
 
 ## Adding support for an agent
 

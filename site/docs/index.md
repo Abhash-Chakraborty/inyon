@@ -3,7 +3,7 @@ title: Introduction
 description: Inyon lets you watch, answer and steer the coding agents running in tmux on your computers, from your phone or any browser.
 ---
 
-You start an agent on a computer: Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot or Antigravity CLI, running in tmux. Inyon shows that session on your phone as a chat. When the agent asks something, the question arrives as buttons. You tap one and the agent carries on, exactly as if you'd typed the answer at the keyboard.
+You start an agent on a computer: Claude Code, Codex, Gemini CLI, OpenCode, GitHub Copilot or Antigravity CLI, running in tmux. Inyon shows that session on your phone as a chat. Eleven more, such as Cursor, Grok, Pi and Amp, show as [terminal sessions](agents.md#terminal-first-agents). When the agent asks something, the question arrives as buttons. You tap one and the agent carries on, exactly as if you'd typed the answer at the keyboard.
 
 ![Inyon on a desktop, a tablet and a phone: the overview of every agent session across four machines, a Claude Code session read as a chat, and Codex asking to run the tests](../../docs/hero-light.webp)
 

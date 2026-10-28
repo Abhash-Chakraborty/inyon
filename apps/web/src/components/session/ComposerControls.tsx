@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import clsx from 'clsx'
 import { AlertCircle, ChevronDown, Clock3, Gauge, Plug, Shield, Target } from 'lucide-react'
-import { AGENTS, type AgentKind, type AgentDef, type ChosenControls } from '@inyon/protocol'
+import { agentDef, type AgentKind, type AgentDef, type ChosenControls } from '@inyon/protocol'
 import type { SessionModel } from './useSession.ts'
 import { currentModelId } from './useSession.ts'
 import { modelName } from '../../lib/format.ts'
@@ -88,7 +88,7 @@ export function ComposerControls({ s }: { s: SessionModel }) {
   const mode = s.screen?.mode ?? s.ref?.pane.agent?.mode ?? info?.mode
   // picks waiting for the agent to be free, or that didn't take
   const chosen = info?.chosen
-  const name = AGENTS[agent].name
+  const name = agentDef(agent).name
   const effortLabel = status?.effort ? EFFORT_LABEL[status.effort] ?? status.effort : 'Default'
   const pickedModel = chosen?.model !== undefined ? chosenModel(def, chosen.model, status?.effort) : undefined
   const wModel = waiting(chosen, chosen?.model, pickedModel?.label.split(' · ').pop() ?? chosen?.model, name, modelLabel, actions.dropChosen)
@@ -223,7 +223,7 @@ const OWN_MODES = new Set(['codex', 'copilot', 'opencode'])
 /** `modes` is the agent's own list when the machine gave one (OpenCode's agents, custom ones too). */
 export function modeLabel(mode?: string, agent?: AgentKind, modes?: { id: string; label: string }[]) {
   if (agent && OWN_MODES.has(agent)) {
-    const list = modes ?? AGENTS[agent].modes
+    const list = modes ?? agentDef(agent).modes
     const id = mode || 'default'
     return list.find((m) => m.id === id)?.label ?? (agent === 'opencode' && mode ? mode.charAt(0).toUpperCase() + mode.slice(1) : mode ?? 'Default')
   }

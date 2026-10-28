@@ -101,10 +101,14 @@ elif ! grep -q 'inyon/statusline.sh' "$s" 2>/dev/null || ! grep -q 'inyon/hook.s
 elif current "$t/hook.sh" && current "$t/statusline.sh"; then echo installed
 else echo outdated; fi`
 
+// This hub finds only the chat agents in panes, so it lists only them: an app before 0.23 doesn't
+// know the terminal-first ones (the Rust hub asks the app which it knows). The probe itself still
+// looks for every agent, the same script as the Rust hub's.
+const CHAT_KINDS = AGENT_KINDS.filter((k) => AGENTS[k].chat)
 const BINS = [...new Set(AGENT_KINDS.flatMap((k) => AGENTS[k].comm))]
 
 export const PROBE = `
-export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.opencode/bin:$HOME/.grok/bin:$HOME/.kimi-code/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 for d in "$HOME"/.nvm/versions/node/*/bin "$HOME"/.local/share/pnpm; do [ -d "$d" ] && PATH="$PATH:$d"; done
 echo "@@HOST $(hostname)"
 echo "@@HOME $HOME"
@@ -236,7 +240,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
     else if (line.startsWith('@@OS ')) res.os = line.slice(5).trim().replace(/^Windows_NT$/, 'Windows')
     else if (line.startsWith('@@NOW ')) res.now = Number(line.slice(6))
     else if (line.startsWith('@@KIND ')) res.machineKind = machineKind(line.slice(7))
-    else if (line.startsWith('@@AUTH')) res.signedIn = AGENT_KINDS.filter((k) => line.slice(6).trim().split(/\s+/).includes(k))
+    else if (line.startsWith('@@AUTH')) res.signedIn = CHAT_KINDS.filter((k) => line.slice(6).trim().split(/\s+/).includes(k))
     else if (line.startsWith('@@ACCOUNT ')) res.account = line.slice(10).trim() === '-' ? undefined : line.slice(10).trim()
     else if (line.startsWith('@@AGYINT ')) res.agyIntegration = line.slice(9).trim() === 'installed' ? 'installed' : 'missing'
     else if (line === '@@NOSERVER') res.tmux = 'no-server'
@@ -273,7 +277,7 @@ export async function probe(host: Host): Promise<ProbeResult> {
   }
 
   const bins = new Set((sections.get('BINS') ?? []).map((l) => l.trim()).filter(Boolean))
-  res.installed = AGENT_KINDS.filter((k) => AGENTS[k].comm.some((c) => bins.has(c)))
+  res.installed = CHAT_KINDS.filter((k) => AGENTS[k].comm.some((c) => bins.has(c)))
   for (const line of sections.get('STATUS') ?? []) {
     const m = line.match(/^(\d+(?:\.\d+)?) (\d+) (\S+) (\S+) (.*)$/)
     if (!m) continue

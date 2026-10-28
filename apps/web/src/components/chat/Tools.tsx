@@ -2,7 +2,7 @@ import { createContext, useContext, useState } from 'react'
 import { ChatActionsContext } from '../../lib/chatActions.ts'
 import clsx from 'clsx'
 import { AlertCircle, Check, ChevronRight, CircleDashed, ClipboardList, ExternalLink, ListTodo, Loader2, MessageCircleQuestion } from 'lucide-react'
-import { AGENTS, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
+import { agentDef, type BackgroundTask, type SubagentInfo } from '@inyon/protocol'
 import type { ToolCall } from '../../lib/chat.ts'
 import { describeStep, summarize, type ScriptStep } from '../../lib/tools.ts'
 import { ChatAgent } from './agent.ts'
@@ -337,7 +337,7 @@ export function SpecialTool({ call, live }: { call: ToolCall; live: boolean }) {
     const answers = call.result?.meta?.answers ?? {}
     const qs: any[] = i.questions ?? []
     return (
-      <Card icon={<MessageCircleQuestion className="size-4 text-accent" />} title={call.result ? (qs.length === 1 ? 'Question answered' : 'Questions answered') : `${agent ? AGENTS[agent].name : 'The agent'} is asking`}>
+      <Card icon={<MessageCircleQuestion className="size-4 text-accent" />} title={call.result ? (qs.length === 1 ? 'Question answered' : 'Questions answered') : `${agent ? agentDef(agent).name : 'The agent'} is asking`}>
         <div className="space-y-3">
           {qs.map((q, n) => (
             <div key={n}>

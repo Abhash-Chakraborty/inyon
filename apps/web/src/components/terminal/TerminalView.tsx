@@ -11,7 +11,7 @@ import type { AgentKind } from '@inyon/protocol'
 import { socket } from '../../lib/socket.ts'
 import { useStore } from '../../lib/store.ts'
 import { Button } from '../ui/primitives.tsx'
-import { AGENTS } from '@inyon/protocol'
+import { agentDef } from '@inyon/protocol'
 import { AgentLogo } from '../../lib/skin.tsx'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
@@ -223,7 +223,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
   const start = async (kind: (typeof installed)[number]) => {
     try {
       await api.start(host, pane, kind)
-      toast({ title: `Starting ${AGENTS[kind].name}…`, body: 'The chat view opens as soon as it is running.', tone: 'info', agent: kind })
+      toast({ title: `Starting ${agentDef(kind).name}…`, body: 'The chat view opens as soon as it is running.', tone: 'info', agent: kind })
     } catch (e) {
       toast({ title: 'Could not start', body: (e as Error).message, tone: 'error' })
     }
@@ -236,7 +236,7 @@ export function TerminalView({ host, pane, agent }: { host: string; pane: string
           <span className="shrink-0 pr-1 text-[12px] text-fg-3">Start here:</span>
           {installed.map((k) => (
             <button key={k} type="button" onClick={() => start(k)} className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-line px-2 text-[12px] font-medium hover:bg-hover">
-              <AgentLogo kind={k} size={15} /> {AGENTS[k].name}
+              <AgentLogo kind={k} size={15} /> {agentDef(k).name}
             </button>
           ))}
         </div>

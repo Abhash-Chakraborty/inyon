@@ -19,7 +19,7 @@ use crate::tmux::tmux::HIDDEN_PREFIXES;
 use inyon_protocol::{HostStatus, TmuxState};
 
 /// Puts the usual install folders on PATH, for commands run over a non-login shell.
-pub const PATHS: &str = r#"export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done"#;
+pub const PATHS: &str = r#"export PATH="$HOME/.local/bin:$HOME/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$HOME/.opencode/bin:$HOME/.grok/bin:$HOME/.kimi-code/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && PATH="$PATH:$d"; done"#;
 
 /// A one-tap fix Inyon can run.
 #[derive(Debug, Clone, PartialEq, Serialize)]

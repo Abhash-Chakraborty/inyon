@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import clsx from 'clsx'
 import { ArrowRight, History } from 'lucide-react'
-import { AGENTS, type AgentKind, type PastConversation } from '@inyon/protocol'
+import { agentDef, type AgentKind, type PastConversation } from '@inyon/protocol'
 import { api } from '../../lib/api.ts'
 import { toast } from '../../lib/store.ts'
 import { shortPath, timeAgo } from '../../lib/format.ts'
@@ -21,7 +21,7 @@ export function ConversationsSheet({ host, pane, agent, working, open, onClose }
   const [loaded, setLoaded] = useState<Loaded>({ state: 'loading' })
   const [switching, setSwitching] = useState<string | null>(null)
   const list = useRef<HTMLDivElement>(null)
-  const name = AGENTS[agent].name
+  const name = agentDef(agent).name
 
   const load = async () => {
     setLoaded({ state: 'loading' })

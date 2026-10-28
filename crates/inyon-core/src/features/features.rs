@@ -433,6 +433,8 @@ pub fn scan_script(kind: AgentKind, cwd: &str) -> String {
         AgentKind::Gemini => SCAN_GEMINI,
         AgentKind::Copilot => "true",
         AgentKind::Antigravity => SCAN_ANTIGRAVITY,
+        // the terminal-first agents have no commands Inyon lists
+        _ => "true",
     };
     // the placeholders go in as text, never through a format string: awk's braces would read as one
     script.replace("@UP@", &UP.replace("@CWD@", cwd)).replace("@DESC@", DESC).replace("@CWD@", cwd)

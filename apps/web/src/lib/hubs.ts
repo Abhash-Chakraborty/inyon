@@ -1,4 +1,4 @@
-import type { PhoneClaimResult } from '@inyon/protocol'
+import { AGENT_CATALOG, type PhoneClaimResult } from '@inyon/protocol'
 import { isNative, plugin } from './native.ts'
 import { secretStore } from './secrets.ts'
 
@@ -411,4 +411,4 @@ export class HubRevoked extends Error {
   }
 }
 
-export const hubWsUrl = (hub: PairedHub, ticket: string) => `${hub.url.replace(/^http/, 'ws')}/ws?ticket=${encodeURIComponent(ticket)}`
+export const hubWsUrl = (hub: PairedHub, ticket: string) => `${hub.url.replace(/^http/, 'ws')}/ws?ticket=${encodeURIComponent(ticket)}&catalog=${AGENT_CATALOG}`

@@ -1,4 +1,4 @@
-import type { AgentCatalog, AgentKind, ChatItem, CompanionPairCode, HeldPrompt, PairedCompanion, PageEntry, PageList, PageOpen, PageRegister, PastConversation, ProvidersReport, SlashCommand, ToolResultMeta } from '@inyon/protocol'
+import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -353,7 +353,8 @@ export const api = {
   integration: (id: string, enable: boolean) => request('POST', `${h(id)}/integration`, { enable }),
   /** brings the machine's inyon up to date (it restarts and reconnects by itself) */
   nodeUpdate: (id: string) => request('POST', `${h(id)}/node/update`),
-  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string }) =>
+  /** `signIn`: a terminal-first agent's sign-in command instead of the agent, in a terminal to sign in from */
+  launch: (id: string, b: { session?: string; name?: string; cwd?: string; agent: AgentKind | 'shell'; custom?: string; model?: string; mode?: string; prompt?: string; signIn?: boolean }) =>
     request<{ pane: string }>('POST', `${h(id)}/launch`, b),
   /** `steer`: while Codex works, hand it the message now (Enter) instead of queueing it for after the turn (Tab) */
   send: (host: string, pane: string, text: string, requestId?: string, steer?: boolean) => request('POST', `${panePath(host, pane)}/send`, { text, requestId, ...(steer && { steer }) }, 310_000),
@@ -415,7 +416,8 @@ export const api = {
   /** runs `opencode auth login` for that provider on the machine; the sign-in sheet drives the pane it returns */
   connectProvider: (id: string, provider: string) => request<{ pane: string }>('POST', `${h(id)}/providers/${encodeURIComponent(provider)}`),
   disconnectProvider: (id: string, provider: string) => request('DELETE', `${h(id)}/providers/${encodeURIComponent(provider)}`, undefined, 60_000),
-  setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup`),
+  // the agent catalog this app knows: a query value, since a header would need every paired hub to allow it
+  setup: (id: string) => request<SetupReport>('GET', `${h(id)}/setup?catalog=${AGENT_CATALOG}`),
   runSetup: (id: string, action: string) => request<SetupResult>('POST', `${h(id)}/setup`, { action }),
   keepSession: (id: string, keepSession: boolean) => request('POST', `${h(id)}/setup`, { keepSession }),
   hubUpdate: (refresh = false) => request<HubUpdate>('GET', `/api/hub/update${refresh ? '?refresh=1' : ''}`, undefined, 60_000),

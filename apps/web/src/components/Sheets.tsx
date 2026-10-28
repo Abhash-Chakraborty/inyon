@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { AGENTS, type AgentKind, type HostConfig } from '@inyon/protocol'
+import { agentDef, AGENTS, type AgentKind, type HostConfig } from '@inyon/protocol'
 import { api, type CustomAgent } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref } from '../lib/overview.ts'
@@ -242,7 +242,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
     setKind(inst.includes('claude') ? 'claude' : inst[0] ?? 'shell')
   }, [open, host, firstHost])
 
-  const def = kind !== 'shell' ? AGENTS[kind] : undefined
+  const def = kind !== 'shell' ? agentDef(kind) : undefined
   const mine = customs.find((c) => c.id === custom)
 
   const submit = async (e: React.FormEvent) => {
@@ -257,7 +257,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
         name: name || undefined,
         model: model || undefined,
         mode: (kind === 'claude' || kind === 'antigravity') && mode ? mode : undefined,
-        prompt: prompt || undefined,
+        prompt: (def?.chat && prompt) || undefined,
       })
       onClose()
       nav(paneHref(host, pane, kind === 'shell' ? 'terminal' : undefined))
@@ -299,8 +299,8 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
               >
                 {k === 'shell' ? <AgentLogo size={26} /> : <AgentLogo kind={k} size={26} />}
                 <span className="min-w-0">
-                  <span className="block truncate text-[13.5px] font-semibold">{k === 'shell' ? 'Terminal' : AGENTS[k].name}</span>
-                  <span className="block truncate text-[12px] text-fg-3">{k === 'shell' ? 'Plain shell' : AGENTS[k].vendor}</span>
+                  <span className="block truncate text-[13.5px] font-semibold">{k === 'shell' ? 'Terminal' : agentDef(k).name}</span>
+                  <span className="block truncate text-[12px] text-fg-3">{k === 'shell' ? 'Plain shell' : agentDef(k).vendor}</span>
                 </span>
               </button>
             ))}
@@ -315,7 +315,7 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
                 <AgentLogo kind={c.like} size={26} />
                 <span className="min-w-0">
                   <span className="block truncate text-[13.5px] font-semibold">{c.name}</span>
-                  <span className="block truncate text-[12px] text-fg-3">Like {AGENTS[c.like].name}</span>
+                  <span className="block truncate text-[12px] text-fg-3">Like {agentDef(c.like).name}</span>
                 </span>
               </button>
             ))}
@@ -357,7 +357,8 @@ export function NewSessionSheet({ open, onClose, hostId }: { open: boolean; onCl
           </div>
         )}
 
-        {def && (
+        {/* a terminal-first agent starts without one; you type it in its terminal */}
+        {def?.chat && (
           <Field label="First message (optional)">
             <textarea rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="What should it work on?" className={clsx(inputClass, 'h-auto resize-none py-2.5 leading-relaxed')} />
           </Field>

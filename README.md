@@ -102,6 +102,7 @@ encrypted with Noise, so nothing needs an open port or an account.
 | OpenCode | Beta | Context, cost | Through its API |
 | GitHub Copilot | Beta | Context and activity | Native CLI prompts |
 | Antigravity CLI | Yes | Plan quotas | Yes |
+| Cursor, Grok, Pi, Amp, goose, Hermes, Kimi, Kiro, Qwen, Qoder, CodeBuddy | Terminal only | Working or waiting, from the screen | In the terminal |
 
 [Agents](https://inyon.tech/docs/agents/) in the docs has the details for each.
 
@@ -117,7 +118,7 @@ including the one you started an hour ago over SSH, and you can still start new 
 | An agent already running in tmux | Any pane | No | No | Only by typing `/remote-control` in it |
 | Needs on a server | tmux and your agents, over SSH | Its daemon | The `happy` CLI or app | Claude Code |
 | Phone to computer | Encrypted end to end over a free tunnel or your VPN, or your own hub | Encrypted relay, or direct | Encrypted relay, or one you host | Anthropic's servers |
-| Agents | Six, from Claude Code to Antigravity | Seven | Several | Claude Code |
+| Agents | Six as a chat, eleven more in the terminal | Seven | Several | Claude Code |
 | Account | None | None | A Happy key pair | A Claude plan, no API keys |
 
 What you give up: Paseo and Happy have iPhone apps and Inyon doesn't yet. Inyon also reads each

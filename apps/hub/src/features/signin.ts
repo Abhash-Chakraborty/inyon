@@ -1,4 +1,4 @@
-import { AGENT_KINDS, type AgentKind, type PromptOption, type ScreenState } from '@inyon/protocol'
+import { AGENTS, AGENT_KINDS, type AgentKind, type PromptOption, type ScreenState } from '@inyon/protocol'
 import { parseScreen } from '../claude/screen.ts'
 import { shq } from '../hosts/host.ts'
 import { HttpError, registry } from '../hosts/registry.ts'
@@ -10,7 +10,7 @@ import { shellReady } from '../claude/actions.ts'
  * Sign-in commands that work without a browser on the machine: a device code (Codex) or a link
  * whose page hands back a code to paste (Claude Code, OpenCode, Gemini CLI).
  */
-const SIGN_IN: Record<AgentKind, string> = {
+const SIGN_IN: Partial<Record<AgentKind, string>> = {
   claude: 'claude auth login',
   codex: 'codex login --device-auth',
   opencode: 'opencode auth login',
@@ -25,7 +25,7 @@ const SIGN_IN: Record<AgentKind, string> = {
  * The same on Windows, typed into PowerShell: psmux panes run PowerShell, and there's no sh to
  * hand a script to. Antigravity stays open after signing in there; closing the sign-in ends it.
  */
-const SIGN_IN_WINDOWS: Record<AgentKind, string> = {
+const SIGN_IN_WINDOWS: Partial<Record<AgentKind, string>> = {
   ...SIGN_IN,
   gemini: "$env:NO_BROWSER='true'; gemini",
   antigravity: 'agy',
@@ -65,7 +65,7 @@ const seen = (hostId: string, pane: string) => watched.set(`${hostId} ${pane}`, 
 
 /** The sign-in command; for OpenCode, `provider` skips its provider menu and goes straight to that one's. */
 const signInCommand = (kind: AgentKind, provider?: string, windows = false) =>
-  kind === 'opencode' && provider ? `opencode auth login -p ${shq(provider)}` : (windows ? SIGN_IN_WINDOWS : SIGN_IN)[kind]
+  kind === 'opencode' && provider ? `opencode auth login -p ${shq(provider)}` : ((windows ? SIGN_IN_WINDOWS : SIGN_IN)[kind] ?? AGENTS[kind].login)
 
 export async function startSignIn(hostId: string, kind: AgentKind, opts: { provider?: string } = {}) {
   if (!AGENT_KINDS.includes(kind)) throw new HttpError(400, 'Unknown agent')

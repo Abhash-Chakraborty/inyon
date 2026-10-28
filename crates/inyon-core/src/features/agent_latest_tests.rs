@@ -134,9 +134,18 @@ fn looks_every_agent_with_a_package_up_in_parallel_and_skips_the_ones_without() 
         let r = registry(Some("9.9.9"), None, false);
         let all = latest_agent_versions().await;
         let got: Vec<(&str, &str)> = all.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        assert_eq!(got, vec![("claude", "9.9.9"), ("codex", "9.9.9"), ("opencode", "9.9.9"), ("copilot", "9.9.9"), ("gemini", "9.9.9")]);
+        let kinds: Vec<&str> = got
+            .iter()
+            .map(|(k, v)| {
+                assert_eq!(*v, "9.9.9");
+                *k
+            })
+            .collect();
+        assert_eq!(kinds, ["claude", "codex", "opencode", "copilot", "gemini", "pi", "amp", "kimi", "qwen", "qoder", "codebuddy"]);
         assert!(r.calls.borrow().contains(&"https://registry.npmjs.org/@anthropic-ai/claude-code/latest".to_owned()));
-        assert!(!r.calls.borrow().iter().any(|u| u.contains("antigravity")));
+        assert!(r.calls.borrow().contains(&"https://registry.npmjs.org/@ampcode/cli/latest".to_owned()));
+        // no npm package: Antigravity and the agents that only ship an installer
+        assert!(!r.calls.borrow().iter().any(|u| ["antigravity", "cursor", "grok", "kiro"].iter().any(|n| u.contains(n))));
     });
 }
 

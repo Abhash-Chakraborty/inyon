@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
 import { ArrowUp, Camera, Clock3, FileText, Folder, Hourglass, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
-import { AGENTS, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
+import { agentDef, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
 import { patchChat, toast, useStore } from '../../lib/store.ts'
@@ -21,7 +21,7 @@ function menuFor(command: string, agent?: AgentKind) {
   const c = command.toLowerCase()
   const menu = MENU_COMMANDS[c]
   if (menu) return (menu !== 'mode' && menu !== 'providers') || agent === 'opencode' ? menu : undefined
-  return agent && AGENTS[agent].conversations?.includes(c) ? 'conversations' : undefined
+  return agent && agentDef(agent).conversations?.includes(c) ? 'conversations' : undefined
 }
 
 interface Attachment {
@@ -123,7 +123,7 @@ export function Composer({
   const key = chatKey(host, pane)
   const serverDraft = useStore((s) => s.chats[key]?.draft)
   const [text, setTextState] = useState(() => DRAFTS.get(key) ?? serverDraft?.text ?? '')
-  const shellMode = !!agent && AGENTS[agent].shell && text.trimStart().startsWith('!')
+  const shellMode = !!agent && agentDef(agent).shell && text.trimStart().startsWith('!')
   // Codex takes a message two ways while it works: queued for after this turn (its default), or
   // steered into the turn under way. The choice sits by the send button only then.
   const [steer, setSteer] = useState(false)
@@ -206,7 +206,7 @@ export function Composer({
   const ta = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const cameraInput = useRef<HTMLInputElement>(null)
-  const agentName = agent ? AGENTS[agent].name : 'the agent'
+  const agentName = agent ? agentDef(agent).name : 'the agent'
 
   useEffect(() => {
     DRAFTS.set(key, text)
@@ -234,7 +234,7 @@ export function Composer({
   const suggestions = useMemo(() => {
     if (!pop) return []
     if (pop.kind === 'slash' || pop.kind === 'skill') {
-      const list = (commands ?? AGENTS[agent ?? 'claude'].commands).filter((c) => c.name.startsWith(pop.kind === 'skill' ? '$' : '/'))
+      const list = (commands ?? agentDef(agent ?? 'claude').commands).filter((c) => c.name.startsWith(pop.kind === 'skill' ? '$' : '/'))
       return list
         .map((c) => ({ c, s: fuzzy(pop.query, c.name.slice(1)) }))
         .filter((x) => x.s >= 0)

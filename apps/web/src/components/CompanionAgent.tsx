@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowRight, MessageCircle } from 'lucide-react'
-import { AGENTS, isBusy, type HostState } from '@inyon/protocol'
+import { agentDef, isBusy, type HostState } from '@inyon/protocol'
 import { ApiError, api, type CompanionStatus } from '../lib/api.ts'
 import { toast, useStore } from '../lib/store.ts'
 import { allPanes, paneHref, type PaneRef } from '../lib/overview.ts'
@@ -59,7 +59,7 @@ export function CompanionRows() {
     try {
       const s = await api.startCompanion(kind)
       setStatus(s)
-      toast({ title: 'Companion started', body: `${AGENTS[kind].name} in the tmux session companion.`, tone: 'success', href: s.pane ? paneHref(s.host, s.pane) : undefined })
+      toast({ title: 'Companion started', body: `${agentDef(kind).name} in the tmux session companion.`, tone: 'success', href: s.pane ? paneHref(s.host, s.pane) : undefined })
     } catch (e) {
       toast({ title: 'Could not start the companion', body: (e as Error).message, tone: 'error' })
     } finally {
@@ -108,7 +108,7 @@ export function CompanionRows() {
         <span className="flex min-w-0 flex-[1_1_220px] items-center gap-3">
           <AgentLogo kind={kind} size={28} />
           <span className="min-w-0">
-            <span className="block text-[14px] font-medium">{AGENTS[kind].name}</span>
+            <span className="block text-[14px] font-medium">{agentDef(kind).name}</span>
             <span className="block truncate text-[12px] text-fg-3">On {running.host.config.name}, in the tmux session companion</span>
           </span>
         </span>
@@ -129,7 +129,7 @@ export function CompanionRows() {
     return (
       <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5">
         <div className="min-w-0 flex-[1_1_220px]">
-          <div className="text-[14px]">{AGENTS[status.agent].name} isn&rsquo;t running</div>
+          <div className="text-[14px]">{agentDef(status.agent).name} isn&rsquo;t running</div>
           <div className="mt-0.5 text-[12.5px] leading-snug text-fg-3">It quit, or its session was closed.</div>
         </div>
         <div className="flex gap-2">

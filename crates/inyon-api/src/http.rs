@@ -56,6 +56,12 @@ impl Req {
         self.query_get(name).unwrap_or_default()
     }
 
+    /// The agent catalog the client knows (see `inyon_protocol::compat`): its `x-inyon-catalog`
+    /// header or, where it can't set one (a WebSocket, a page on another origin), `?catalog=`.
+    pub fn catalog(&self) -> u32 {
+        inyon_protocol::compat::catalog_of(self.header("x-inyon-catalog").or_else(|| self.query_get("catalog")).as_deref())
+    }
+
     /// `searchParams.has(name)`
     pub fn query_has(&self, name: &str) -> bool {
         url::form_urlencoded::parse(self.query.as_bytes()).any(|(k, _)| k == name)

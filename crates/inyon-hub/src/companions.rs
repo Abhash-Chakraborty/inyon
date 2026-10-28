@@ -432,8 +432,8 @@ async fn companion_send(mut req: Req, c: CompanionRecord) -> HubResult<Resp> {
 /// The companion handler for a route of the shared table, by its path and method.
 pub fn route_for(pattern: &str, method: &Method) -> Option<CompanionRoute> {
     match (pattern, method.as_str()) {
-        ("/api/overview", "GET") => Some(route(Some(CompanionScope::Overview), |_r, _c| async move {
-            let mut hosts = serde_json::to_value(registry().overview()).unwrap_or_default();
+        ("/api/overview", "GET") => Some(route(Some(CompanionScope::Overview), |r, _c| async move {
+            let mut hosts = serde_json::to_value(inyon_protocol::compat::hosts_for(&registry().overview(), r.catalog())).unwrap_or_default();
             companion_hosts(&mut hosts);
             Ok(ok_json(&json!({ "hosts": hosts })))
         })),

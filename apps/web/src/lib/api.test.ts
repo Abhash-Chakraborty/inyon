@@ -35,6 +35,11 @@ describe('requests', () => {
     expect(req.headers.get('content-type')).toBeNull()
   })
 
+  test("a machine's setup report names the agent catalog this app knows, so a hub leaves out newer agents", async () => {
+    await api.setup('m1')
+    expect(new URL(sent().url).searchParams.get('catalog')).toBe('2')
+  })
+
   test('a body goes as JSON', async () => {
     await api.login('hunter22')
     expect(sent().method).toBe('POST')

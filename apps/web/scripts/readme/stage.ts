@@ -156,7 +156,7 @@ export async function open(browser: Browser, base: string, device: Device, schem
     } catch {}
     return r.fulfill({ json: method === 'GET' ? {} : await world.act(method, url, body) })
   })
-  await ctx.routeWebSocket(/\/ws$/, (ws) => {
+  await ctx.routeWebSocket(/\/ws(\?|$)/, (ws) => {
     world.sockets.add(ws)
     ws.onClose(() => world.sockets.delete(ws))
     ws.onMessage((raw) => {

@@ -1191,7 +1191,8 @@ impl Registry {
                 info.session_id = Some(id);
                 info.mapped_by = Some(MappedBy::Process);
             }
-        } else if let Some(home) = home.as_deref() {
+        } else if let Some(home) = home.as_deref().filter(|_| proc.kind.chat()) {
+            // a terminal-first agent has no transcript Inyon reads, so none is looked for
             let cached = rt.borrow().cwd_map.get(&pid).cloned();
             // re-check often until the session's first transcript appears, then occasionally (for /clear)
             // an OpenCode TUI that hasn't started a conversation yet ("opencode-db:") is checked often too

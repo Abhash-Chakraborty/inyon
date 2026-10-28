@@ -37,6 +37,8 @@ fn sign_in(kind: AgentKind) -> &'static str {
         AgentKind::Antigravity => {
             r#"F="$HOME/.gemini/antigravity-cli/antigravity-oauth-token"; d=$(mktemp -d); cd "$d"; ( while [ ! -s "$F" ]; do sleep 1; done; sleep 2; pkill -P $$ -x agy ) & agy; cd /; rmdir "$d" 2>/dev/null; test -s "$F""#
         }
+        // the others: their own sign-in command from the catalog (a device code where they have one)
+        _ => &kind.def().login,
     }
 }
 
