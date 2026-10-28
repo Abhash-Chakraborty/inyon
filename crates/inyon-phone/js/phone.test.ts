@@ -1,8 +1,10 @@
 // The Rust phone core as the web app meets it: the wasm module that apps/web/scripts/phone-core.ts
 // writes, started and called the way apps/web/src/lib/phone.ts calls the TypeScript one.
-// Run it after that script: bun test crates/inyon-phone/js
+// Run it after that script: bun test crates/inyon-phone/js. With INYON_BIN set to an inyon
+// program, it also pairs with that program's `inyon link`.
 import { beforeAll, expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { PhoneRuntime, PhoneStore, StartPhone } from '../../../apps/hub/src/phone/types.ts'
 
@@ -148,6 +150,51 @@ test("a plugin's error code reaches the screen as what to check", async () => {
   c.close()
   await call('DELETE', `/api/hosts/${add.body.id}`)
 }, 15000)
+
+const BIN = process.env.INYON_BIN
+
+test.skipIf(!BIN)('pairs with a computer running inyon link, sees it online and removes it', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'inyon-phone-wasm-'))
+  const port = 4990 + Math.floor(Math.random() * 100)
+  // TMUX empty: in tmux, `pair` leaves the link out
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TMUX: '' }
+  const run = (...args: string[]) => Bun.spawn([BIN!, ...args], { env, stdout: 'pipe', stderr: 'pipe' })
+  const service = run('link', '--no-tunnel', '--lan', '--port', String(port))
+  const until = async (ok: () => boolean | Promise<boolean>, ms = 15_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(100)) if (await ok()) return true
+    return false
+  }
+  try {
+    expect(await until(() => fetch(`http://127.0.0.1:${port}/`).then((r) => r.ok, () => false))).toBe(true)
+    const link = (await new Response(run('pair').stdout).text()).match(/inyon:\/\/pair\?\S+/)![0]
+    const paired = await call('POST', '/api/phone/pair', { link, name: 'Laptop' })
+    expect(paired.status).toBe(200)
+    const { id, machineId } = paired.body
+    expect(machineId).toHaveLength(52)
+    expect((await call('GET', '/api/hosts')).body.find((h: any) => h.id === id)).toMatchObject({ kind: 'link', name: 'Laptop', machineId })
+
+    // the core keeps a channel open to it and polls it through that channel
+    const heard: any[] = []
+    const c = rt.connect((msg) => heard.push(msg))
+    c.message(JSON.stringify({ t: 'sub.overview' }))
+    const state = () => heard.findLast((m) => m.t === 'overview')?.hosts.find((h: any) => h.config.id === id)
+    expect(await until(() => state()?.status === 'online')).toBe(true)
+    expect(state().hostname).toBeTruthy()
+    c.close()
+
+    // removed while it's connected: it's told to forget the phone at once
+    expect((await call('DELETE', `/api/hosts/${id}`)).body).toEqual({ ok: true })
+    const phones = async () => (await new Response(run('phones').stdout).text()).trim()
+    expect(await until(async () => !(await phones()).includes('Test phone'))).toBe(true)
+  } finally {
+    service.kill()
+    rmSync(home, { recursive: true, force: true })
+  }
+}, 60_000)
+
+test('a code that is neither a pairing link nor a short code is refused', async () => {
+  expect(await call('POST', '/api/phone/pair', { link: 'hello' })).toMatchObject({ status: 400, body: { error: "That isn't an Inyon pairing code. Run `inyon pair` on the computer and scan the code it shows." } })
+})
 
 test('a page runs one core', async () => {
   await expect(startPhone({ store: memoryStore().store, ssh })).rejects.toThrow('already running')

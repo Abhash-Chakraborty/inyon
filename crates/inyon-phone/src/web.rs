@@ -1,7 +1,8 @@
 //! The JavaScript side: what `startPhone` takes and gives back (apps/hub/src/phone/types.ts), the
-//! browser's event loop as the core's runtime, the app's store, the native SSH plugin, `fetch`,
-//! and Request and Response in and out. Only globals every engine has (setTimeout, fetch, Request, Response), so the same
-//! module runs in the Android WebView, a browser tab and Bun's tests.
+//! browser's event loop as the core's runtime, the app's store, the native SSH plugin, WebSockets
+//! for the link, `fetch`, and Request and Response in and out. Only globals every engine has
+//! (setTimeout, fetch, WebSocket, Request, Response), so the same module runs in the Android
+//! WebView, a browser tab and Bun's tests.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -19,6 +20,7 @@ use serde_json::Value;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{future_to_promise, JsFuture};
 
+use crate::link::{pkarr_resolve, Dialer, OnWire, Reach, Wire, WireEvent};
 use crate::phone::{self, Options, Phone};
 use crate::ssh::{OnEvent, PluginError, PluginResult, SshPlugin};
 
@@ -39,6 +41,27 @@ extern "C" {
     type JsResponse;
     #[wasm_bindgen(constructor, js_class = "Response")]
     fn new(body: &JsValue, init: &Object) -> JsResponse;
+
+    #[wasm_bindgen(js_name = WebSocket)]
+    type JsWebSocket;
+    #[wasm_bindgen(constructor, js_class = "WebSocket", catch)]
+    fn new(url: &str) -> Result<JsWebSocket, JsValue>;
+    #[wasm_bindgen(method, setter = binaryType)]
+    fn set_binary_type(this: &JsWebSocket, t: &str);
+    #[wasm_bindgen(method, getter = readyState)]
+    fn ready_state(this: &JsWebSocket) -> u16;
+    #[wasm_bindgen(method, catch, js_name = send)]
+    fn send_bytes(this: &JsWebSocket, data: &Uint8Array) -> Result<(), JsValue>;
+    #[wasm_bindgen(method, catch, js_name = close)]
+    fn close_with(this: &JsWebSocket, code: u16, reason: &str) -> Result<(), JsValue>;
+    #[wasm_bindgen(method, catch, js_name = close)]
+    fn close_plain(this: &JsWebSocket) -> Result<(), JsValue>;
+    #[wasm_bindgen(method, setter = onopen)]
+    fn set_onopen(this: &JsWebSocket, f: &JsValue);
+    #[wasm_bindgen(method, setter = onmessage)]
+    fn set_onmessage(this: &JsWebSocket, f: &JsValue);
+    #[wasm_bindgen(method, setter = onclose)]
+    fn set_onclose(this: &JsWebSocket, f: &JsValue);
 }
 
 // ---------- the runtime ----------
@@ -131,6 +154,91 @@ fn to_json(v: &JsValue) -> Value {
         return Value::Null;
     }
     JSON::stringify(v).ok().and_then(|s| s.as_string()).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null)
+}
+
+// ---------- sockets, for the link ----------
+
+/// The page's WebSocket. The handshake starts before it has opened: what's sent waits until it does.
+struct WebWire {
+    ws: JsWebSocket,
+    early: Rc<std::cell::RefCell<Option<Vec<Vec<u8>>>>>,
+}
+
+impl Wire for WebWire {
+    fn send(&self, data: &[u8]) {
+        if let Some(early) = self.early.borrow_mut().as_mut() {
+            return early.push(data.to_vec());
+        }
+        if self.ws.ready_state() == 1 {
+            let _ = self.ws.send_bytes(&Uint8Array::from(data));
+        }
+    }
+    fn close(&self, code: u16, reason: &str) {
+        if self.ws.close_with(code, reason).is_err() {
+            let _ = self.ws.close_plain();
+        }
+    }
+}
+
+struct WebDialer;
+
+impl Dialer for WebDialer {
+    fn dial(&self, url: &str, on: OnWire) -> Result<Rc<dyn Wire>, String> {
+        let ws = JsWebSocket::new(url).map_err(|e| describe(&e))?;
+        ws.set_binary_type("arraybuffer");
+        let early: Rc<std::cell::RefCell<Option<Vec<Vec<u8>>>>> = Rc::new(std::cell::RefCell::new((ws.ready_state() == 0).then(Vec::new)));
+        let e = early.clone();
+        let w: JsWebSocket = JsValue::clone(&ws).unchecked_into();
+        ws.set_onopen(
+            &Closure::<dyn Fn()>::new(move || {
+                for d in e.borrow_mut().take().unwrap_or_default() {
+                    let _ = w.send_bytes(&Uint8Array::from(&d[..]));
+                }
+            })
+            .into_js_value(),
+        );
+        let o = on.clone();
+        ws.set_onmessage(
+            &Closure::<dyn Fn(JsValue)>::new(move |m: JsValue| {
+                // text frames aren't the link's
+                if let Ok(buf) = Reflect::get(&m, &"data".into()).and_then(|d| d.dyn_into::<js_sys::ArrayBuffer>()) {
+                    o(WireEvent::Message(Uint8Array::new(&buf).to_vec()));
+                }
+            })
+            .into_js_value(),
+        );
+        ws.set_onclose(
+            &Closure::<dyn Fn(JsValue)>::new(move |c: JsValue| {
+                let code = Reflect::get(&c, &"code".into()).ok().and_then(|v| v.as_f64()).unwrap_or(1006.0) as u16;
+                let reason = Reflect::get(&c, &"reason".into()).ok().and_then(|v| v.as_string()).unwrap_or_default();
+                on(WireEvent::Close(code, reason));
+            })
+            .into_js_value(),
+        );
+        Ok(Rc::new(WebWire { ws, early }))
+    }
+}
+
+/// A page served over https may open only wss://, unless it's the Android app.
+fn plain_ws_allowed() -> bool {
+    let g = js_sys::global();
+    let protocol = Reflect::get(&g, &"location".into()).and_then(|l| Reflect::get(&l, &"protocol".into())).ok().and_then(|p| p.as_string());
+    let native = Reflect::get(&g, &"Capacitor".into())
+        .and_then(|c| Reflect::get(&c, &"isNativePlatform".into()).and_then(|f| f.dyn_into::<Function>()).and_then(|f| f.call0(&c)))
+        .is_ok_and(|v| v.is_truthy());
+    protocol.as_deref() != Some("https:") || native
+}
+
+/// What a laptop lists this phone as when the app didn't name it: its model when the WebView says
+/// it, without the build ("A142", not "A142 Build/BP2A.250605.031").
+fn phone_name() -> String {
+    let ua = Reflect::get(&js_sys::global(), &"navigator".into()).and_then(|n| Reflect::get(&n, &"userAgent".into())).ok().and_then(|u| u.as_string()).unwrap_or_default();
+    let model =
+        inyon_core::re!(r"Android [\d.]+; ([^;)]+)").captures(&ua).and_then(|c| c.get(1)).map(|m| inyon_core::re!(r"\s+Build/.*$").replace(m.as_str(), "").trim().to_owned());
+    match model {
+        Some(m) if !m.is_empty() && m != "K" && m != "wv" => m,
+        _ => "Phone".into(),
+    }
 }
 
 // ---------- fetch ----------
@@ -227,7 +335,7 @@ thread_local! {
 }
 
 /// `startPhone({ store, ssh, name })`: the core, started once per page. `name` is what paired
-/// computers will list the phone as, once the link to them comes over from the TS.
+/// computers list the phone as.
 #[wasm_bindgen(js_name = startPhone)]
 pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
     // a call that can't start it leaves the page free to try again
@@ -241,7 +349,9 @@ pub async fn start_phone(o: JsValue) -> Result<PhoneRuntime, JsValue> {
     install(Rc::new(BrowserRuntime));
     inyon_core::platform::console::set_sink(Some(Rc::new(|error, line| if error { console_error(line) } else { console_log(line) })));
     let ssh = Reflect::get(&o, &"ssh".into())?;
-    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)), ssh: Rc::new(JsSsh(ssh)) });
+    let name = Reflect::get(&o, &"name".into())?.as_string().filter(|n| !n.is_empty()).unwrap_or_else(phone_name);
+    let reach = Reach { dialer: Rc::new(WebDialer), resolve: pkarr_resolve(), plain_ws: plain_ws_allowed() };
+    let phone = phone::start(Options { store: Rc::new(JsStore(store)), fetcher: Some(Rc::new(WebFetcher)), ssh: Rc::new(JsSsh(ssh)), reach, name });
     Ok(PhoneRuntime(Rc::new(phone)))
 }
 

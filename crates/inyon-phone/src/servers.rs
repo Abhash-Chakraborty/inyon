@@ -15,6 +15,7 @@ use inyon_protocol::{HostAuth, HostConfig, HostKind};
 use serde_json::{json, Map, Value};
 
 use crate::keys::PhoneKeys;
+use crate::link::Links;
 use crate::ssh::{split_target, Credentials, SshBackend, SshPlugin};
 
 /// `String(b.key ?? current ?? '')`
@@ -87,7 +88,7 @@ fn missing_secret(auth: Option<HostAuth>) -> HubError {
     http(400, if auth == Some(HostAuth::Password) { "Enter the password" } else { "Paste the private key" })
 }
 
-pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn: SshBackend) {
+pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn: SshBackend, links: Links) {
     use Method as M;
     let k = keys.clone();
     guarded(
@@ -204,9 +205,10 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
             (
                 M::DELETE,
                 h(move |req| {
-                    let (keys, conn) = (k2.clone(), c2.clone());
+                    let (keys, conn, links) = (k2.clone(), c2.clone(), links.clone());
                     async move {
                         let id = req.param("id");
+                        let cur = registry().get(&id).map(|rt| rt.borrow().host.config());
                         // while it still answers: Inyon's hooks and uploads come off it, and so does the phone's key
                         if let Some(rt) = registry().get(&id) {
                             let (host, state) = {
@@ -220,10 +222,21 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
                             };
                             tidy_machine(&host, Some(state), &also).await;
                         }
+                        let told = match cur.as_ref().filter(|c| c.kind == HostKind::Link) {
+                            Some(c) => links.forget(&id, Some(c)),
+                            None => {
+                                links.forget(&id, None);
+                                true
+                            }
+                        };
                         conn.forget(&id).await;
                         keys.drop_secret(&id).await;
                         registry().remove(&id, true)?;
-                        Ok(ok_json(&json!({ "ok": true })))
+                        // a computer out of reach still trusts the phone until it hears; the app says so
+                        Ok(ok_json(&match cur.filter(|_| !told) {
+                            Some(c) => json!({ "ok": true, "untold": c.name }),
+                            None => json!({ "ok": true }),
+                        }))
                     }
                 }),
             ),

@@ -2,9 +2,9 @@
 //! password. The web app hands it a store and calls it in-process: `answer` for what would be an
 //! /api request, `connect` for what would be the hub's WebSocket.
 //!
-//! Servers are reached over SSH through the native plugin (`ssh`), or through a paired computer.
-//! Still to come over from the TS: the link to paired computers (pairing, and their commands), and
-//! push.
+//! Servers are reached over SSH through the native plugin (`ssh`), computers paired with
+//! `inyon pair` over the encrypted link, and servers can be reached through one of those. Still to
+//! come over from the TS: push, and laptops' updates.
 
 use std::rc::Rc;
 
@@ -14,7 +14,7 @@ use inyon_api::routes::{raw, Route, Routes};
 use inyon_core::claude::{drafts, watcher::watchers};
 use inyon_core::hosts::host::{set_host_backends, HostBackend};
 use inyon_core::hosts::node_backend::node_backend;
-use inyon_core::hosts::registry::registry;
+use inyon_core::hosts::registry::{registry, RegistryEvent};
 use inyon_core::hosts::via_backend::via_backend;
 use inyon_core::platform::fetch::{use_fetcher, Fetcher};
 use inyon_core::platform::store::{use_store, Store};
@@ -23,6 +23,7 @@ use serde_json::json;
 use inyon_protocol::HostKind;
 
 use crate::keys::PhoneKeys;
+use crate::link::{Links, Reach};
 use crate::ssh::{CredentialsFor, SshBackend, SshPlugin};
 use crate::tables::{find, Lookup};
 
@@ -31,10 +32,15 @@ pub struct Options {
     pub store: Rc<dyn Store>,
     pub fetcher: Option<Rc<dyn Fetcher>>,
     pub ssh: Rc<dyn SshPlugin>,
+    /// how the link reaches paired computers
+    pub reach: Reach,
+    /// what paired computers list this phone as
+    pub name: String,
 }
 
 pub struct Phone {
     tables: Rc<[Routes; 2]>,
+    links: Links,
 }
 
 /// Starts the core: the records come from `store`, then the machines are watched and the
@@ -61,12 +67,40 @@ pub fn start(o: Options) -> Phone {
         _ if c.via.as_deref().is_some_and(|v| !v.is_empty()) => via.clone(),
         _ => ssh.clone(),
     });
+    let k = keys.clone();
+    let noise: crate::link::Noise = Rc::new(move || {
+        let keys = k.clone();
+        Box::pin(async move { Ok(keys.own().await?.noise) })
+    });
+    let save = Rc::new(|id: &str, urls: Vec<String>, relays: Vec<String>| {
+        let _ = registry().note(id, |c| {
+            c.urls = Some(urls);
+            c.relays = Some(relays);
+        });
+    });
+    let links = Links::new(o.reach.clone(), noise, o.name, save);
+    let ensure = {
+        let links = links.clone();
+        move || {
+            for c in registry().configs().into_iter().filter(|c| c.kind == HostKind::Link) {
+                links.ensure(&c);
+            }
+        }
+    };
+    let on_change = ensure.clone();
+    let _ = registry().on(move |e| {
+        if matches!(e, RegistryEvent::Overview) {
+            on_change();
+        }
+    });
     let mut core = Routes::default();
     inyon_api::core_routes::add(&mut core);
-    inyon_api::core_routes::start_core();
     let mut own = phone_routes();
-    crate::servers::add(&mut own, o.ssh, keys, conn);
-    Phone { tables: Rc::new([own, core]) }
+    crate::servers::add(&mut own, o.ssh, keys, conn, links.clone());
+    crate::computers::add(&mut own, o.reach, links.clone());
+    inyon_api::core_routes::start_core();
+    ensure();
+    Phone { tables: Rc::new([own, core]), links }
 }
 
 /// The routes the phone answers itself, ahead of the core's.
@@ -116,6 +150,7 @@ impl Phone {
         registry().quiet(false);
         watchers().quiet(false);
         registry().hold_alerts(false);
+        self.links.resume();
         // connections that died in the background fail their next command; probe now, not at the
         // next poll
         for c in registry().configs() {

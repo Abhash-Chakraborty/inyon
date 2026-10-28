@@ -7,11 +7,11 @@ use inyon_core::platform::store::MemoryStore;
 use serde_json::Value;
 
 use super::*;
-use crate::testing::{on_core, FakeSsh};
+use crate::testing::{offline, on_core, FakeSsh};
 
 /// The phone started on a fresh core with `store`, as the app starts it.
 pub fn on_phone<F: std::future::Future<Output = ()>>(store: Rc<MemoryStore>, test: impl FnOnce(Phone) -> F) {
-    on_core(|| test(start(Options { store, fetcher: None, ssh: FakeSsh::new() })));
+    on_core(|| test(start(Options { store, fetcher: None, ssh: FakeSsh::new(), reach: offline(), name: "Test phone".into() })));
 }
 
 pub async fn body(res: Resp) -> (u16, Value) {

@@ -9,12 +9,12 @@ use serde_json::Value;
 use super::*;
 use crate::phone::{start, Options, Phone};
 use crate::ssh::B64;
-use crate::testing::{on_core, FakeSsh, FINGERPRINT};
+use crate::testing::{offline, on_core, FakeSsh, FINGERPRINT};
 
 fn on_phone<F: std::future::Future<Output = ()>>(test: impl FnOnce(Phone, Rc<FakeSsh>) -> F) {
     on_core(|| {
         let fake = FakeSsh::new();
-        test(start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone() }), fake)
+        test(start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake.clone(), reach: offline(), name: "Test phone".into() }), fake)
     });
 }
 
