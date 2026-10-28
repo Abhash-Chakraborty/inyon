@@ -392,8 +392,7 @@ enum ServiceAction {
     Status,
 }
 
-/// What goes straight to the engine, before the arguments are read here: built in, or the Bun
-/// engine with INYON_LEGACY_ENGINE=1.
+/// What goes straight to the engine built into this program, before the arguments are read here.
 const FORWARDED: [&str; 2] = ["link", "connect"];
 const HUB_OWN: [&str; 10] = ["start", "stop", "restart", "install", "uninstall", "code", "companion-code", "reset-password", "machines", "ls"];
 
@@ -458,11 +457,9 @@ pub fn main() {
                 eprintln!("{why}");
                 std::process::exit(1);
             }
-            if !engine::legacy() {
-                if let Some(stale) = engine::stale_engine() {
-                    // the Bun engine an update to 0.19 left here: nothing runs it any more
-                    let _ = std::fs::remove_file(stale);
-                }
+            if let Some(stale) = engine::stale_engine() {
+                // the Bun engine an update to 0.19 left here: nothing runs it any more
+                let _ = std::fs::remove_file(stale);
             }
             engine::forward(&argv[1..]);
         }

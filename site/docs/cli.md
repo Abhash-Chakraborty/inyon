@@ -4,7 +4,7 @@ nav: inyon command
 description: Every command and flag, the setup screens, the status dashboard and JSON output.
 ---
 
-`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. From 0.19 it also runs the link to your phone and the connection to a hub itself, and from 0.21 the hub too. Only a hub you put back on Bun runs on `inyon-engine`, which `inyon` downloads, starts and talks to for you. Before 0.19 all of the work happened in `inyon-engine`.
+`inyon` is the command you run on each computer. It sets the computer up, shows what it's doing, pairs phones, manages the background service and updates itself. From 0.19 it also runs the link to your phone and the connection to a hub itself, and from 0.21 the hub too. Before 0.19 all of the work happened in `inyon-engine`, a separate program built with Bun, which 0.23 removed.
 
 If `inyon` isn't found, open a new terminal: the installers put `~/.inyon/bin` on your `PATH` from 0.17.1. Before that, or with `INYON_NO_MODIFY_PATH=1`, see [Put inyon on your PATH](install.md#put-inyon-on-your-path).
 
@@ -95,7 +95,7 @@ Setup asks a few questions in full-screen steps, applies the answers, and ends b
 4. **Sign in** (hub only). How you'll create the hub's password from the browser.
 5. **Summary.** What will happen, with every network it will answer on. Press Enter to set it up.
 
-For a hub on Bun (`INYON_HUB_IMPL=bun`), setup downloads and checks `inyon-engine` before it starts the hub; in 0.19 and 0.20 it did so for every hub. Before 0.19 every computer needed it, and setup downloaded it in the background while you answered, with the progress in the footer.
+Setup no longer downloads an engine. Before 0.19 every computer needed `inyon-engine`, and setup downloaded it in the background while you answered, with the progress in the footer; in 0.19 and 0.20 every hub did, and up to 0.22 a hub on Bun.
 
 After the screens, from 0.17.2, setup installs tmux (psmux on Windows) if it's missing: it asks first, then runs winget (or cargo) on Windows, Homebrew on macOS, or your package manager with `sudo` on Linux. With `--yes` it doesn't ask; without a terminal on Linux it prints the command to run instead, since `sudo` needs one. On Windows it also lists Inyon under Settings → Apps.
 
@@ -193,7 +193,7 @@ inyon send laptop/experiment "The report is in ~/inyon-reports"
 inyon send abhash-arm/main:1.0 - < notes.md
 ```
 
-From 0.22, on the hub's computer or one joined to it, with no sign-in. On the hub's computer they use the token the hub writes for the `inyon` command as it starts; on a joined computer, the token that computer keeps for its link to the hub. Both need hub 0.22 or later, running the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) refuses them.
+From 0.22, on the hub's computer or one joined to it, with no sign-in. On the hub's computer they use the token the hub writes for the `inyon` command as it starts; on a joined computer, the token that computer keeps for its link to the hub. Both need hub 0.22 or later; a hub on Bun (up to 0.22, with `INYON_HUB_IMPL=bun`) refuses them.
 
 ```
 abhash-arm/main    claude  working  /home/abhash/development/custom-tmux
@@ -407,11 +407,9 @@ inyon pair --json | jq -r 'select(.waiting == null and .ok) | .link'
 |---|---|
 | `INYON_TOKEN` | The machine's token when joining a hub |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.tech/download`) |
-| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
-| `INYON_LEGACY_ENGINE` | `1` runs everything on the Bun engine, as 0.18 does (from 0.19). See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_DATA_DIR` | Where a hub keeps its records (default `~/.inyon`) |
 | `INYON_WEB_URL` | The web page pairing QR codes point to, for your own [browser copy](browser-copy.md) |
 | `INYON_THEME` | `light` or `dark`: the terminal's background, instead of asking the terminal (from 0.20.2) |
 | `NO_COLOR` | Turn colour off |
 
-Every `TETHER_*` name from before the rename is still read. [Configuration](configuration.md) lists every variable, for computers and hubs, including `INYON_ALLOW_INSECURE`, `INYON_HUB_CERT` and `INYON_HUB_IMPL`.
+Every `TETHER_*` name from before the rename is still read. [Configuration](configuration.md) lists every variable, for computers and hubs, including `INYON_ALLOW_INSECURE` and `INYON_HUB_CERT`. `INYON_ENGINE`, `INYON_LEGACY_ENGINE` and `INYON_HUB_IMPL` are no longer read from 0.23 ([why](install.md#the-bun-engine-removed-in-0-23)).

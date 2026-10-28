@@ -20,7 +20,6 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 | `INYON_DATA_DIR` | `~/.inyon` | Where the hub keeps its records |
 | `INYON_HUB_NAME` | the machine's name | The name phones show for this hub |
 | `INYON_DOWNLOAD` | this version's release | Where the hub fetches the files it hands to joining machines. A mirror needs `SHA256SUMS.minisig` beside `SHA256SUMS`: from 0.20 the hub checks it with the release key first |
-| `INYON_HUB_IMPL` | `rust` | `bun` runs the Bun engine's hub instead of the one built into `inyon`, and the Bun engine is downloaded for it. `rust` is the default from 0.21 (in 0.20 it was an opt-in test, and `bun` the default). `INYON_LEGACY_ENGINE=1` puts the hub on Bun too. See [The hub in Rust](hub.md#the-hub-in-rust) |
 | `INYON_DEBUG` | | Any value turns on extra log lines from the chat watcher, for a bug report |
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.
@@ -37,15 +36,13 @@ These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
 | `INYON_HUB` | The hub to connect to (saved by `join`) |
 | `INYON_JOINED` | Written by `inyon join` into `~/.inyon/node/env` with the version that joined (from 0.20). A machine whose file lacks it was added before 0.20, and keeps connecting to a hub on plain http, with a warning. See [Plain http](machines.md#plain-http) |
 | `INYON_DOWNLOAD` | Where to fetch releases from, instead of this site's copy of the newest one (`https://inyon.tech/download`) |
-| `INYON_ENGINE` | Use this `inyon-engine` instead of the installed one (for the hub, or with `INYON_LEGACY_ENGINE`). It has to be the Bun engine: `inyon` itself is refused |
-| `INYON_LEGACY_ENGINE` | `1` runs the link and the hub connection on the Bun engine `inyon-engine`, as 0.18 does, instead of inside `inyon` (from 0.19). `inyon service install` writes it into the service and remembers it for commands started without it. See [Going back to the Bun engine](install.md#going-back-to-the-bun-engine) |
 | `INYON_NO_SIGNATURE_CHECK` | Set to `1` before running `get.sh` or `get.ps1` to let them install without checking the checksum list's signature when minisign isn't installed (from 0.20; `get.sh` also takes `--no-signature-check`). See [Without minisign](install.md#without-minisign) |
 | `INYON_NO_MODIFY_PATH` | Set to `1` before running `get.sh` or `get.ps1` to keep them from putting `inyon` on your `PATH` (from 0.17.1). See [Put inyon on your PATH](install.md#put-inyon-on-your-path) |
 | `INYON_WEB_URL` | The page pairing QR codes open, for your own [browser copy](browser-copy.md) |
 | `INYON_ALLOW_INSECURE` | Allow sending the machine's token to a hub over plain http on an address that isn't this machine's or a Tailscale or NetBird one, such as a LAN or ZeroTier address. From 0.20 it also lets `inyon update` take a hub's own checksums when the hub has no signed list, and `inyon join` writes it into `~/.inyon/node/env` when the address needed it, so the background connection keeps the choice. Avoid it |
 | `INYON_HUB_CERT` | The SHA-256 of a hub's own certificate, which its **Add a machine** command sets (from 0.20). `inyon join` saves that certificate as `~/.inyon/node/hub.crt`, and from then on the connections to that hub accept that exact certificate. It's never trusted as an authority, for the hub or anything else |
-| `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust as well as the usual ones, for a hub on a certificate from your organisation's own authority. The Bun engine always read it; from 0.19 `inyon` does too |
-| `NODE_TLS_REJECT_UNAUTHORIZED` | `0` turns off the check of the hub's certificate. From 0.20.3 it applies only to the hub this machine joined, never to relays, push services or downloads, and the connection's log says so each time it starts. With the Bun engine (`INYON_LEGACY_ENGINE=1`) it still turns off every check, and the log warns about that. Prefer setup's [LAN](hub.md#the-lan) choice on the hub, whose certificate the **Add a machine** command pins |
+| `NODE_EXTRA_CA_CERTS` | A PEM file of certificate authorities to trust as well as the usual ones, for a hub on a certificate from your organisation's own authority. `inyon` reads it from 0.19, as the Bun engine did |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | `0` turns off the check of the hub's certificate. From 0.20.3 it applies only to the hub this machine joined, never to relays, push services or downloads, and the connection's log says so each time it starts. Prefer setup's [LAN](hub.md#the-lan) choice on the hub, whose certificate the **Add a machine** command pins |
 | `INYON_THEME` | `light` or `dark`: the terminal's background, so the dashboard picks greys that read on it, instead of asking the terminal (from 0.20.2) |
 | `NO_COLOR` | Turn colour off in the terminal |
 
@@ -63,8 +60,8 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 
 | Path | What's there |
 |---|---|
-| `~/.inyon/bin/` | `inyon`, `cloudflared`, and `inyon-engine` on a hub on Bun. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which runs the link and the hub connection; from 0.20.3 `inyon-app.exe` is another such copy, the Inyon app, which the Start menu and the logon task open, and `inyon.ico` is its icon |
-| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, `hub-impl` when the hub service was set up with `INYON_HUB_IMPL=bun` set in the shell (from 0.21; in 0.20 it noted `rust`), from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256, and on Windows from 0.20.3 the Inyon app's `app.json` (what it runs), `app.log` and `app-requests/`, and from 0.21 the window's `desktop.json` (its settings and the hubs it shows), `window.log` and `webview/` (WebView2's data, with the hubs' sign-in cookies) |
+| `~/.inyon/bin/` | `inyon` and `cloudflared`. On Windows from 0.19 `inyon-engine.exe` is a copy of `inyon.exe` without a console, which runs the link and the hub connection; from 0.20.3 `inyon-app.exe` is another such copy, the Inyon app, which the Start menu and the logon task open, and `inyon.ico` is its icon |
+| `~/.inyon/node/` | A computer's key, paired phones, link options, hub connection, logs, update status, from 0.20 `hub.crt`, the certificate of a hub joined by its SHA-256, and on Windows from 0.20.3 the Inyon app's `app.json` (what it runs), `app.log` and `app-requests/`, and from 0.21 the window's `desktop.json` (its settings and the hubs it shows), `window.log` and `webview/` (WebView2's data, with the hubs' sign-in cookies) |
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots, and from 0.22 `send-failures.json`, the last 20 sends that failed with the screen each failed on, and `held-prompts.json`, the messages held until an agent is free |

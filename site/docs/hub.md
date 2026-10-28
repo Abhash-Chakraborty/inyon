@@ -38,7 +38,7 @@ bun start
 
 A source install builds the engine it hands to machines from the checkout. For the `inyon` command it serves what `cargo` built into `apps/cli/dist`, if anything. Without that, Windows machines get the release's command from GitHub (from 0.17.1), and Linux and macOS machines get the engine, which also works as the command.
 
-From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. The hub still lists its engine for them, and a machine fetches it only with `INYON_LEGACY_ENGINE=1` set (see [Going back to the Bun engine](install.md#going-back-to-the-bun-engine)). From 0.21 the hub runs on the [hub in Rust](#the-hub-in-rust) built into `inyon` too.
+From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. From 0.21 the hub runs on the [hub in Rust](#the-hub-in-rust) built into `inyon` too.
 
 ### In the cloud
 
@@ -174,19 +174,6 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 ## The hub in Rust
 
-From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. `inyon` no longer downloads the Bun engine (`inyon-engine`) for a hub. Updating from 0.20 still fetches it once, because the 0.20 updater decides that; the next update tidies the copy away. It runs on Linux and macOS.
+From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. It runs on Linux and macOS.
 
-A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. `inyon doctor` says which hub runs:
-
-```sh
-inyon doctor                 # hub engine   the Rust hub, built in
-```
-
-To go back to the Bun hub, put the switch in the hub's settings file and restart. The restart fetches the Bun engine first, so a failed download shows up in your terminal, not inside the service:
-
-```sh
-echo INYON_HUB_IMPL=bun >> ~/.inyon/hub.env
-inyon hub restart
-```
-
-Delete the line and restart again to return to the Rust hub. `INYON_HUB_IMPL=bun inyon hub start` from the shell works too, and the service remembers that choice even when you set up the link or a node later; `INYON_HUB_IMPL=rust inyon hub start` forgets it. A line in `hub.env` comes first, so while it says otherwise `inyon hub start` refuses and asks you to change it. `INYON_LEGACY_ENGINE=1` also puts the hub on Bun, whatever `INYON_HUB_IMPL` says, and `inyon doctor` tells you so. A hub run from source with `bun hub` isn't affected.
+A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. Up to 0.22, `INYON_HUB_IMPL=bun` put a hub back on the Bun hub; 0.23 removed it, so the line in `hub.env` is no longer read and `inyon` says so (see [The Bun engine, removed in 0.23](install.md#the-bun-engine-removed-in-0-23)). A hub run from source with `bun hub` isn't affected.

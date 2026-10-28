@@ -51,8 +51,8 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   *) echo "There's no inyon build for $(uname -m) yet." >&2; exit 1 ;;
 esac
-# Alpine and other musl systems run the Bun engine built against musl; the command is static and
-# the same everywhere
+# the command is static and the same everywhere; releases name their engine for musl systems apart
+# (Alpine and others), which tells a release from before 0.13 below
 libc=""
 if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -qi musl; then libc=-musl; fi
 
@@ -174,17 +174,8 @@ if [ -z "${INYON_NO_MODIFY_PATH:-}" ] && [ -z "$on_path" ]; then
   fi
 fi
 
-# the musl engine is linked against libstdc++ and libgcc, which Alpine doesn't ship by default.
-# From 0.21 only a hub on Bun (INYON_HUB_IMPL=bun) or INYON_LEGACY_ENGINE=1 runs that engine; the
-# inyon command needs neither
-if [ -n "$libc" ] && { { [ "$ROLE" = hub ] && [ "${INYON_HUB_IMPL:-}" = bun ]; } || [ "${INYON_LEGACY_ENGINE:-}" = 1 ]; } && [ ! -e /usr/lib/libstdc++.so.6 ]; then
-  if [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add -q libstdc++ libgcc >/dev/null 2>&1; then :
-  else echo "The engine needs libstdc++ and libgcc on Alpine: apk add libstdc++ libgcc" >&2
-  fi
-fi
-
-# from 0.13 a release is two files: this one is the inyon command, and the engine ($engine),
-# which from 0.21 only a hub on Bun needs. Before 0.13, this one file was the whole program
+# from 0.13 a release lists the inyon command and the engine ($engine), which older versions
+# of inyon fetch; this one runs its own. Before 0.13, this one file was the whole program
 if [ -n "$(sum_for "$engine")" ]; then
   if [ "$ROLE" = hub ]; then exec "$dir/inyon" setup --role hub; fi
   exec "$dir/inyon" setup

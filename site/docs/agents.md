@@ -112,7 +112,7 @@ What works with them:
 - **New session** starts it. It starts without a first message; type that in its terminal.
 - A machine's **Setup** tab installs it with its official installer or npm, updates it, and **Sign in** opens a terminal session running its sign-in.
 
-Not yet: the chat view, model, effort and mode controls, past conversations, and [your own agents](#your-own-agents) that work like one of them. Only the Rust hub finds them for now. The Bun hub (`INYON_HUB_IMPL=bun`) and the [Android app](android.md) on its own, for a computer it pairs with directly or a server over SSH, show their panes as plain terminals and leave them out of the Setup tab; through a hub the phone shows them in full.
+Not yet: the chat view, model, effort and mode controls, past conversations, and [your own agents](#your-own-agents) that work like one of them. The [Android app](android.md) on its own, for a computer it pairs with directly or a server over SSH, shows their panes as plain terminals and leaves them out of the Setup tab; through a hub the phone shows them in full.
 
 An app from before 0.23 doesn't know these agents either, so a hub shows it their sessions as plain terminals. Update the Android app to see them.
 
@@ -128,7 +128,7 @@ From 0.22, **Settings › Agents › Add an agent** saves any command under a na
 
 Inyon spots one already running in any pane, too: a process whose program is the command's first word (by name, by path, or as the script `node`, `bun`, `deno`, `python` or `uv` runs) and whose command line holds every other word of it. Yours are tried before the built-in agents, so plain `claude` stays Claude Code while `claude --dangerously-skip-permissions --model opus` is the agent saved with that flag. When the command you saved is a script that starts the agent without `exec`, Inyon follows it to the agent and keeps your name.
 
-The list is the hub's, for every machine, with at most 24 agents. Custom agents need the Rust hub, the default since 0.21; the Bun hub (`INYON_HUB_IMPL=bun`) says so when you try to save one.
+The list is the hub's, for every machine, with at most 24 agents. A hub on Bun (up to 0.22, with `INYON_HUB_IMPL=bun`) can't save them.
 
 Hooks come with it when it reads the same settings files as the agent it works like. One with hooks of its own can tell Inyon when a turn starts and ends the same way the integration does: from inside tmux, pipe the event's JSON to `~/.inyon/hook.sh <agent> <event>`, where `<agent>` is the agent it works like (`copilot`, `gemini` or `antigravity`) and `<event>` that agent's event name. For one that works like Claude Code, run `~/.inyon/hook.sh` with no arguments and Claude Code's hook JSON.
 

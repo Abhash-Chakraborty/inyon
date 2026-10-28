@@ -2,7 +2,7 @@
 //! `--json` (`{"v":1,…}`), so scripts and the app can read it.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
@@ -461,9 +461,6 @@ pub fn join(sys: &Sys, hub: &str, token: &str, cert: Option<&str>, autostart: bo
             service::move_old_service(sys, role);
         }
     }
-    // with the kill switch the engine comes from the hub just saved, so a machine that can only
-    // reach its hub still works; otherwise the connection is built in
-    engine::ready("connect", &|l| eprintln!("{l}"))?;
     let mut notes = Vec::new();
     if let Some(m) = service::missing_mux(sys.platform) {
         notes.push(format!("Note: {m}"));
@@ -557,21 +554,7 @@ pub fn role_arg(sys: &Sys, arg: Option<&str>, installing: bool) -> Result<Role, 
 
 pub fn service_install(sys: &Sys, role: Option<&str>) -> Outcome {
     let role = role_arg(sys, role, true)?;
-    if hub_impl_follows(role) {
-        if let Some(e) = engine::hub_impl_clash() {
-            return Err(e);
-        }
-    }
-    // run without INYON_LEGACY_ENGINE, this is how the machine goes back to the built-in engine
-    engine::remember_legacy(true);
-    if hub_impl_follows(role) {
-        engine::remember_hub_impl(true);
-        // back on the Bun hub: its engine is fetched here, where a failure shows, not by the
-        // service, which would only try again every few seconds
-        if sys.platform != Platform::Windows {
-            engine::ready("hub", &|l| eprintln!("{l}"))?;
-        }
-    }
+    say_retired();
     let r = service::install_service(sys, role, true);
     if !r.ok {
         return Err(format!("Couldn't install the service: {}", r.how));
@@ -604,10 +587,12 @@ pub fn fetch_tunnel() -> Option<String> {
     })
 }
 
-/// Which service's setup decides the hub's INYON_HUB_IMPL note: the hub's only, so putting the
-/// link back in place never undoes how the hub was set up.
-fn hub_impl_follows(role: Role) -> bool {
-    role == Role::Hub
+/// Says once that INYON_LEGACY_ENGINE, INYON_HUB_IMPL=bun or INYON_ENGINE asks for what 0.23
+/// removed, and clears the notes older versions left (see engine::retired).
+pub fn say_retired() {
+    if let Some(line) = engine::retired() {
+        eprintln!("Note: {line}");
+    }
 }
 
 pub fn service_uninstall(sys: &Sys, role: Option<&str>) -> Outcome {
@@ -697,13 +682,7 @@ pub fn hub_start(sys: &Sys) -> Outcome {
     if sys.platform == Platform::Windows {
         return Err("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.".into());
     }
-    if let Some(e) = engine::hub_impl_clash() {
-        return Err(e);
-    }
-    // the Rust hub is built in; only the Bun one is downloaded
-    if engine::needs_bun("hub") {
-        engine::ensure(&|l| eprintln!("{l}"))?;
-    }
+    say_retired();
     let env = hub_env();
     let r = service::install_service(sys, Role::Hub, true);
     if !r.ok {
@@ -752,15 +731,10 @@ pub fn hub_stop(sys: &Sys) -> Outcome {
 }
 
 pub fn hub_restart(sys: &Sys) -> Outcome {
-    // nothing to restart: say so before fetching anything
     if !service::can_restart(sys, Role::Hub) {
         return Err("Couldn't restart the hub: no background service or process found.".into());
     }
-    // back on the Bun hub (INYON_HUB_IMPL=bun), its engine may have been tidied away meanwhile:
-    // fetch it here, where a failure shows, not inside the service
-    if sys.platform != Platform::Windows && engine::needs_bun("hub") {
-        engine::ensure(&|l| eprintln!("{l}"))?;
-    }
+    say_retired();
     let r = service::restart_service(sys, Role::Hub, &[paths::installed_binary().to_string_lossy().into_owned()]);
     if !r.ok {
         return Err(format!("Couldn't restart the hub: {}.", r.how));
@@ -849,55 +823,11 @@ fn link_reach(platform: Platform, cfg: &state::LinkConfig, answers: &dyn Fn(u16)
     out
 }
 
-/// What doctor's "hub engine" line has to go on.
-struct HubEngine {
-    legacy: bool,
-    asked: Option<bool>,
-    rust: bool,
-    here: bool,
-}
-
-impl HubEngine {
-    /// Which hub runs, when there's one to say: the Rust hub, else the Bun hub and why. `bun` is
-    /// the Bun engine's line when it's here.
-    fn line(&self, bun: impl FnOnce() -> Option<String>) -> Option<(bool, String)> {
-        if self.legacy {
-            if self.asked == Some(true) {
-                return Some((false, "the Bun hub: INYON_HUB_IMPL=rust doesn't count while INYON_LEGACY_ENGINE is set".into()));
-            }
-            return self.here.then(|| (true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into()));
-        }
-        if self.rust {
-            return Some((true, "the Rust hub, built in".into()));
-        }
-        if !self.here {
-            return None;
-        }
-        Some(match bun() {
-            Some(line) => (true, format!("{line}, the Bun hub (INYON_HUB_IMPL=bun)")),
-            None => (false, "not here yet; `inyon hub start` downloads it".into()),
-        })
-    }
-}
-
 pub fn doctor(sys: &Sys) -> Outcome {
     let mut checks: Vec<(bool, String, String)> = Vec::new();
-    // the Bun engine, for a hub or with the kill switch; everything else is built in
-    let bun = engine::find();
-    let bun_line = |p: &Path| {
-        format!("{} ({})", p.display(), engine::capture(&["version"]).ok().filter(|(s, _)| s.success()).map(|(_, v)| v.trim().to_string()).unwrap_or_else(|| "no version".into()))
-    };
-    if engine::legacy() {
-        match &bun {
-            Some(p) => checks.push((true, "engine".into(), format!("{}, the Bun engine (INYON_LEGACY_ENGINE is set)", bun_line(p)))),
-            None => checks.push((false, "engine".into(), "INYON_LEGACY_ENGINE is set but the Bun engine isn't here; run `inyon service install`".into())),
-        }
-    } else {
-        checks.push((true, "engine".into(), format!("built in ({VERSION})")));
-    }
-    let hub = HubEngine { legacy: engine::legacy(), asked: engine::hub_impl_asked(), rust: engine::rust_hub(), here: service::has_service(sys, Role::Hub) || engine::hub_here() };
-    if let Some((ok, line)) = hub.line(|| bun.as_deref().map(bun_line)) {
-        checks.push((ok, "hub engine".into(), line));
+    checks.push((true, "engine".into(), format!("built in ({VERSION})")));
+    if let Some(line) = engine::retired() {
+        checks.push((false, "bun".into(), line));
     }
     checks.push((true, "inyon".into(), format!("{VERSION} at {}", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default())));
     match service::missing_mux(sys.platform) {
@@ -978,9 +908,6 @@ impl update::Host for RealHost<'_> {
     }
     fn roles(&self) -> Vec<Role> {
         service::active_roles(self.sys)
-    }
-    fn wants_engine(&self) -> bool {
-        engine::legacy() || ((self.roles().contains(&Role::Hub) || engine::hub_here()) && !engine::rust_hub())
     }
     fn restart(&self, role: Role, cmd: &[String]) -> Installed {
         service::restart_service(self.sys, role, cmd)
@@ -1085,12 +1012,9 @@ pub fn migrate(sys: &Sys, background: bool) -> Outcome {
     Ok(json!({ "message": lines.join("\n") }))
 }
 
-/// Moves what still runs on the Bun engine to the engine built into this program, unless
-/// INYON_LEGACY_ENGINE asks for the Bun engine. What it did, a line each.
+/// Moves what still runs on the Bun engine to the engine built into this program. What it did,
+/// a line each.
 fn to_builtin_engine(sys: &Sys) -> Vec<String> {
-    if engine::legacy() {
-        return Vec::new();
-    }
     let mut lines = Vec::new();
     if sys.platform == Platform::Windows {
         let installed = paths::installed_engine();
@@ -1154,7 +1078,7 @@ fn updates_settled(sys: &Sys, tries: u32, every_ms: u64) -> bool {
 /// at most after a move that ran, in case it fails, and not twice at once (the link's and the hub
 /// connection's icons start together).
 pub fn wants_hand_over(sys: &Sys) -> bool {
-    if sys.platform != Platform::Windows || engine::legacy() {
+    if sys.platform != Platform::Windows {
         return false;
     }
     let installed = paths::installed_engine();
@@ -1331,39 +1255,8 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
         None => Plan::new(sys.platform, nets),
     };
     let ask = interactive && !flags.is_some_and(|f| f.yes);
-    let progress = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
-    // the engine comes down behind the screens (or with a progress line, when there are none),
-    // so it's here by the time the pairing code is wanted
-    let fetch = {
-        let progress = progress.clone();
-        std::thread::spawn(move || {
-            // built in from 0.19: only the kill switch wants the Bun engine now (a hub gets it as it starts)
-            if !engine::legacy() || engine::find().is_some() {
-                return Ok(());
-            }
-            let say = |l: &str| {
-                if ask {
-                    if let Ok(mut p) = progress.lock() {
-                        *p = Some(l.to_string());
-                    }
-                } else {
-                    ui::progress_line(l);
-                }
-            };
-            let r = engine::download_to(&paths::installed_engine(), &say);
-            let last = match &r {
-                Ok(()) => "The engine is here.".to_string(),
-                Err(e) => format!("! {e}"),
-            };
-            say(&last);
-            if !ask {
-                eprintln!();
-            }
-            r
-        })
-    };
     let plan = if ask {
-        match ui::setup::run_interactive(plan, theme, progress.clone()).map_err(|e| e.to_string())? {
+        match ui::setup::run_interactive(plan, theme).map_err(|e| e.to_string())? {
             Some(p) => p,
             None => return Ok(json!({ "message": "Nothing changed." })),
         }
@@ -1374,10 +1267,6 @@ pub fn setup(sys: &Sys, theme: Theme, flags: Option<&SetupFlags>, interactive: b
         for (k, v) in plan.summary() {
             println!("{k:<12}{v}");
         }
-    }
-    if fetch.join().map_err(|_| "the engine download stopped".to_string())?.is_err() {
-        // the first command that needs it says so in full
-        eprintln!("! The engine couldn't be downloaded yet; it's fetched again on the next command that needs it.");
     }
     apply(sys, &plan, ask, interactive, !flags.is_some_and(|f| f.no_code))
 }
@@ -1437,7 +1326,6 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool, code: bool) -
                 cfg.urls = Some(if plan.own_url.is_empty() { Vec::new() } else { vec![plan.own_url.clone()] });
                 cfg.port = Some(plan.port_number());
             })?;
-            engine::ready("link", &|l| eprintln!("{l}"))?;
             if plan.tunnel {
                 lines.extend(fetch_tunnel());
             }
@@ -1450,7 +1338,7 @@ pub fn apply(sys: &Sys, plan: &Plan, ask: bool, interactive: bool, code: bool) -
                     // set up before the rename to Inyon: the link moves to inyon's own service
                     (service::move_old_service(sys, Role::Link), format!("✓ Restarted with version {VERSION}."))
                 } else {
-                    let stale = running && update::stale_link(state::link_state().as_ref(), &engine::version().unwrap_or_default());
+                    let stale = running && update::stale_link(state::link_state().as_ref(), &engine::version());
                     // the link reads its settings as it starts, so new ones need a restart
                     let changed = running && before != cfg;
                     if running && !stale && !changed {
@@ -1657,23 +1545,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn doctor_says_which_hub_runs_and_why() {
-        let hub = |legacy, asked, rust, here| HubEngine { legacy, asked, rust, here };
-        let bun = || Some("~/.inyon/bin/inyon-engine (0.21.0)".to_string());
-        // the default from 0.21, whether or not a hub was set up yet
-        assert_eq!(hub(false, None, true, true).line(bun), Some((true, "the Rust hub, built in".into())));
-        // INYON_HUB_IMPL=bun, with the engine and without it
-        assert_eq!(hub(false, Some(false), false, true).line(bun), Some((true, "~/.inyon/bin/inyon-engine (0.21.0), the Bun hub (INYON_HUB_IMPL=bun)".into())));
-        assert!(!hub(false, Some(false), false, true).line(|| None).unwrap().0);
-        // on a machine with no hub there's nothing to say about the Bun one
-        assert_eq!(hub(false, Some(false), false, false).line(bun), None);
-        // the kill switch puts the hub on Bun: said when a hub is here, a warning when rust was asked for
-        assert_eq!(hub(true, None, false, true).line(bun), Some((true, "the Bun hub (INYON_LEGACY_ENGINE is set)".into())));
-        assert_eq!(hub(true, None, false, false).line(bun), None);
-        assert!(!hub(true, Some(true), false, false).line(bun).unwrap().0);
-    }
-
-    #[test]
     fn a_hub_certificate_covers_the_address_it_was_told_to_listen_on() {
         let nets = ["192.168.1.20", "100.70.1.2"];
         let ips = |bind: &Bind| cert_ips(nets.iter().copied(), bind).iter().map(|i| i.to_string()).collect::<Vec<_>>();
@@ -1682,13 +1553,6 @@ mod tests {
         assert_eq!(ips(&Bind::Vpn("10.147.17.5".into())), ["192.168.1.20", "100.70.1.2", "10.147.17.5"]);
         assert_eq!(ips(&Bind::Own("192.168.1.20".into())), ["192.168.1.20", "100.70.1.2"]);
         assert_eq!(ips(&Bind::Own("0.0.0.0".into())), ["192.168.1.20", "100.70.1.2"]);
-    }
-
-    #[test]
-    fn only_setting_up_the_hub_touches_its_inyon_hub_impl_note() {
-        assert!(hub_impl_follows(Role::Hub));
-        assert!(!hub_impl_follows(Role::Link));
-        assert!(!hub_impl_follows(Role::Node));
     }
 
     #[cfg(unix)]

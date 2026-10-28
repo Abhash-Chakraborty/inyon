@@ -1,9 +1,10 @@
 //! The engine: what runs the link, the hub connection and the hub, and writes pairings and keys.
-//! From 0.19 all of it but the hub is built into this program (the inyon-engine crate): `link`,
-//! `connect` and the old `https://…` form run here, and `pair`, `forget` and `push` run this
-//! program as `inyon engine … --json` and draw its answer. The hub still comes from the Bun
-//! engine, `inyon-engine` next to this one, downloaded the first time a hub needs it.
-//! INYON_LEGACY_ENGINE=1 sends everything to the Bun engine, as 0.18 did.
+//! All of it is built into this program (the inyon-engine and inyon-hub crates): `link`,
+//! `connect`, `hub` and the old `https://…` form run here, and `pair`, `forget` and `push` run
+//! this program as `inyon engine … --json` and draw its answer. The Bun engine (`inyon-engine`
+//! from a release) ran the hub until 0.22 and everything with INYON_LEGACY_ENGINE=1; both were
+//! removed in 0.23, and releases since carry `inyon-engine-*` files only as copies of this program
+//! for older inyon commands.
 
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -11,160 +12,42 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use serde_json::Value;
 
-use crate::paths::{env_var, installed_engine, saved_hub, ENGINE};
-use crate::signing;
-use crate::sys::{quiet, Libc, Platform};
-use crate::update::{self, Arch};
+use crate::paths::{env_var, installed_engine, ENGINE};
+use crate::sys::quiet;
+use crate::update;
 
-/// The kill switch: INYON_LEGACY_ENGINE=1 runs everything through the downloaded Bun engine, as
-/// 0.18 did, in case the built-in engine misbehaves somewhere. Without the variable, the note
-/// `inyon service install` left when it set the machine up that way still counts: a link started
-/// from a terminal or an update started on its own keeps to the Bun engine the services run.
-pub fn legacy() -> bool {
-    legacy_asked().unwrap_or_else(|| legacy_note().exists())
+/// The notes older versions left when a machine's services were set up on the Bun engine or the
+/// Bun hub (INYON_LEGACY_ENGINE=1, INYON_HUB_IMPL=bun).
+fn retired_notes() -> [PathBuf; 2] {
+    [crate::paths::node_dir().join("legacy-engine"), crate::paths::node_dir().join("hub-impl")]
 }
 
-/// What INYON_LEGACY_ENGINE says when it's set: the Bun engine, or (0, false) the built-in one.
-pub fn legacy_asked() -> Option<bool> {
-    env_var("INYON_LEGACY_ENGINE").map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
-}
-
-/// The note that this machine's services run on the Bun engine.
-pub fn legacy_note() -> PathBuf {
-    crate::paths::node_dir().join("legacy-engine")
-}
-
-/// Writes or removes the note as INYON_LEGACY_ENGINE says. With `unset_forgets` (`inyon service
-/// install`, how you go back) the variable not being set removes it too; otherwise that leaves it.
-pub fn remember_legacy(unset_forgets: bool) {
-    match legacy_asked() {
-        Some(true) => {
-            let _ = crate::paths::ensure_node_dir();
-            let _ = std::fs::write(legacy_note(), "INYON_LEGACY_ENGINE=1 when the services were set up\n");
-        }
-        Some(false) => {
-            let _ = std::fs::remove_file(legacy_note());
-        }
-        None if unset_forgets => {
-            let _ = std::fs::remove_file(legacy_note());
-        }
-        None => {}
+/// What still asks for the Bun engine or hub, which 0.23 removed: the variables when they ask for
+/// it (here or, for INYON_HUB_IMPL, in hub.env) and the notes older versions left. One line
+/// saying they're no longer read, or None. The notes are removed as it's said.
+pub fn retired() -> Option<String> {
+    let hub_env = crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env")).remove("INYON_HUB_IMPL");
+    let mut names = vec![];
+    if env_var("INYON_LEGACY_ENGINE").is_some_and(|v| v != "0" && !v.eq_ignore_ascii_case("false")) {
+        names.push("INYON_LEGACY_ENGINE");
     }
-}
-
-/// The hub built into this program, in Rust: the default from 0.21 (an opt-in test in 0.20).
-/// INYON_HUB_IMPL=bun runs the Bun engine's hub instead, set in the environment or in hub.env;
-/// without either, the note `INYON_HUB_IMPL=bun inyon hub start` left still counts, so the
-/// service keeps to the hub it was set up with. Linux and macOS only, as the hub is. The kill
-/// switch (INYON_LEGACY_ENGINE) puts everything back on the Bun engine, the hub included.
-pub fn rust_hub() -> bool {
-    picks_rust_hub(cfg!(unix), legacy(), hub_impl_wanted())
-}
-
-fn picks_rust_hub(unix: bool, legacy: bool, wanted: bool) -> bool {
-    unix && !legacy && wanted
-}
-
-/// Whether the hub is the Rust one, the kill switch aside: what INYON_HUB_IMPL says, else the
-/// note, else yes.
-pub fn hub_impl_wanted() -> bool {
-    wanted_from(hub_impl_asked(), hub_impl_noted)
-}
-
-fn wanted_from(asked: Option<bool>, noted: impl FnOnce() -> Option<bool>) -> bool {
-    asked.or_else(noted).unwrap_or(true)
-}
-
-/// What the note says: false when the hub was set up with INYON_HUB_IMPL=bun. A note from 0.20
-/// says rust.
-fn hub_impl_noted() -> Option<bool> {
-    std::fs::read_to_string(hub_impl_note()).ok().map(|t| note_says_rust(&t))
-}
-
-fn note_says_rust(text: &str) -> bool {
-    !text.to_ascii_lowercase().contains("bun")
-}
-
-/// INYON_HUB_IMPL in hub.env, when it's there.
-fn hub_impl_in_file() -> Option<bool> {
-    crate::paths::read_env_file(&crate::paths::data_dir().join("hub.env")).remove("INYON_HUB_IMPL").filter(|v| !v.is_empty()).map(|v| says_rust(&v))
-}
-
-/// What INYON_HUB_IMPL says when it's set, here or in hub.env: the Rust hub, or (bun) the Bun one.
-pub fn hub_impl_asked() -> Option<bool> {
-    env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)).or_else(hub_impl_in_file)
-}
-
-/// When this shell's INYON_HUB_IMPL and hub.env's line disagree, what to tell the user. The
-/// hub's service reads hub.env and never this shell's variable, so setting the hub up from here
-/// would leave it running the other one.
-pub fn hub_impl_clash() -> Option<String> {
-    let shell = env_var("INYON_HUB_IMPL").map(|v| says_rust(&v))?;
-    let file = hub_impl_in_file()?;
-    let name = |rust: bool| if rust { "rust" } else { "bun" };
-    (shell != file).then(|| {
-        format!(
-            "{} says INYON_HUB_IMPL={}, and the hub's service goes by that, not by INYON_HUB_IMPL={} here. Change the line there (or delete it) and run `inyon hub restart`.",
-            crate::paths::data_dir().join("hub.env").display(),
-            name(file),
-            name(shell)
-        )
-    })
-}
-
-/// `rust` (any case) is the Rust hub; `bun`, and anything else, the Bun one.
-fn says_rust(value: &str) -> bool {
-    value.trim().eq_ignore_ascii_case("rust")
-}
-
-/// The note of the hub the service was set up with, when INYON_HUB_IMPL chose it.
-pub fn hub_impl_note() -> PathBuf {
-    crate::paths::node_dir().join("hub-impl")
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum NoteChange {
-    /// the Bun hub was asked for in the shell
-    WriteBun,
-    Remove,
-    Keep,
-}
-
-/// What setting up the hub does to the note. Only the shell's variable is written down: a line in
-/// hub.env is read by the service itself, so deleting it later works as anyone would expect. The
-/// Rust hub is the default, so asking for it needs no note.
-fn note_change(from_env: Option<bool>, from_file: Option<bool>, unset_forgets: bool) -> NoteChange {
-    match (from_env, from_file) {
-        (Some(false), _) => NoteChange::WriteBun,
-        (Some(true), _) | (None, Some(true)) => NoteChange::Remove,
-        (None, None) if unset_forgets => NoteChange::Remove,
-        _ => NoteChange::Keep,
+    if env_var("INYON_HUB_IMPL").or(hub_env).is_some_and(|v| !v.trim().is_empty() && !v.trim().eq_ignore_ascii_case("rust")) {
+        names.push("INYON_HUB_IMPL=bun");
     }
-}
-
-/// Writes or removes the note as INYON_HUB_IMPL says, as `remember_legacy` does for the kill
-/// switch. Called when the hub's service is set up.
-pub fn remember_hub_impl(unset_forgets: bool) {
-    match note_change(env_var("INYON_HUB_IMPL").map(|v| says_rust(&v)), hub_impl_in_file(), unset_forgets) {
-        NoteChange::WriteBun => {
-            let _ = crate::paths::ensure_node_dir();
-            let _ = std::fs::write(hub_impl_note(), "INYON_HUB_IMPL=bun when the hub was set up\n");
-        }
-        NoteChange::Remove => {
-            let _ = std::fs::remove_file(hub_impl_note());
-        }
-        NoteChange::Keep => {}
+    if env_var("INYON_ENGINE").is_some() {
+        names.push("INYON_ENGINE");
     }
-}
-
-/// Whether an engine command needs the Bun engine: the hub unless it's the Rust one, everything
-/// with the kill switch.
-pub fn needs_bun(first: &str) -> bool {
-    legacy() || (first == "hub" && !rust_hub())
+    let mut noted = false;
+    for note in retired_notes() {
+        noted |= std::fs::remove_file(note).is_ok();
+    }
+    if names.is_empty() {
+        return noted.then(|| "This machine was set up on the Bun engine or hub, which were removed in 0.23: it runs on the ones built into inyon now.".to_string());
+    }
+    Some(format!("{} {} no longer read: the Bun engine and hub were removed in 0.23, and inyon runs its own.", names.join(" and "), if names.len() == 1 { "is" } else { "are" }))
 }
 
 /// Answers an engine command with the engine built into this program, as `inyon-engine` would.
-/// `hub` runs the Rust hub, or goes on to the Bun engine with INYON_HUB_IMPL=bun.
 pub fn run_builtin(args: &[String]) -> i32 {
     // a link or hub connection the Inyon app started: a new version of the app replaces an old one
     // an older updater left running (see app::relaunch_if_older)
@@ -183,17 +66,14 @@ pub fn run_builtin(args: &[String]) -> i32 {
         });
     }
     inyon_engine::cli::run(args, |rest| {
-        if cfg!(windows) {
-            eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
-            return 2;
-        }
         #[cfg(unix)]
-        if rust_hub() {
-            return inyon_hub::run(rest);
+        return inyon_hub::run(rest);
+        #[cfg(not(unix))]
+        {
+            let _ = rest;
+            eprintln!("The Inyon hub runs on Linux and macOS. On Windows, install it inside WSL.");
+            2
         }
-        let mut all = vec!["hub".to_string()];
-        all.extend(rest.iter().cloned());
-        forward_bun(&all)
     })
 }
 
@@ -255,59 +135,12 @@ pub fn refresh_copy(program: &Path) -> Result<PathBuf, String> {
     Ok(to)
 }
 
-/// Where the Bun engine is: INYON_ENGINE, next to this program, or in ~/.inyon/bin. The
-/// windowless copy of this program that Windows keeps under the same name doesn't count.
-/// INYON_ENGINE on its own counts too, but never inyon itself.
-pub fn find() -> Option<PathBuf> {
-    match named_engine() {
-        Ok(Some(p)) => return Some(p),
-        Err(_) => return None,
-        Ok(None) => {}
-    }
-    let bun = |p: &Path| p.is_file() && !is_builtin_copy(p);
-    if let Ok(me) = std::env::current_exe() {
-        let beside = update::engine_beside(&me);
-        if bun(&beside) {
-            return Some(beside);
-        }
-    }
-    let installed = installed_engine();
-    bun(&installed).then_some(installed)
-}
-
-/// The engine INYON_ENGINE names, when it names a file. inyon itself (0.19 or later, or its
-/// windowless copy) is refused: asked for the hub, it would hand over to itself forever.
-fn named_engine() -> Result<Option<PathBuf>, String> {
-    let Some(p) = env_var("INYON_ENGINE").map(PathBuf::from).filter(|p| p.is_file()) else {
-        return Ok(None);
-    };
-    if has_engine_built_in(&p) {
-        return Err(format!(
-            "INYON_ENGINE points at {}, which is inyon itself: the engine is built into inyon from 0.19. Point INYON_ENGINE at the Bun engine (inyon-engine from a release), or unset it.",
-            p.display()
-        ));
-    }
-    Ok(Some(p))
-}
-
-/// Makes sure what `first` needs is here: the Bun engine (downloaded when missing) for the hub
-/// or with the kill switch, nothing otherwise.
-pub fn ready(first: &str, say: &dyn Fn(&str)) -> Result<(), String> {
-    if needs_bun(first) {
-        ensure(say)?;
-    }
-    Ok(())
-}
-
-/// The Bun engine on a machine that doesn't need it any more: neither a hub nor the kill switch
-/// asks for it. Linux and macOS only; on Windows the file under that name is the windowless copy.
+/// What's left of the engine file on Linux and macOS, which nothing runs: the Bun engine an update
+/// to 0.19 left, or a copy of inyon a hub on the Bun hub fetched. On Windows the file under that
+/// name is the windowless copy the logon tasks start.
 pub fn stale_engine() -> Option<PathBuf> {
     let file = installed_engine();
-    if cfg!(windows) || legacy() || !file.is_file() || is_builtin_copy(&file) {
-        return None;
-    }
-    // a hub on the Rust hub doesn't run it either
-    (!hub_here() || rust_hub()).then_some(file)
+    (!cfg!(windows) && file.is_file()).then_some(file)
 }
 
 /// Whether this machine runs a hub, or did: set up as a service, started by hand, or configured.
@@ -315,80 +148,8 @@ pub fn hub_here() -> bool {
     crate::paths::data_dir().join("hub.env").exists() || crate::paths::node_dir().join("hub.json").exists() || crate::service::hub_set_up()
 }
 
-/// The engine, downloaded when it isn't here yet. `say` gets the lines about that.
-pub fn ensure(say: &dyn Fn(&str)) -> Result<PathBuf, String> {
-    named_engine()?;
-    if let Some(p) = find() {
-        return Ok(p);
-    }
-    let to = installed_engine();
-    download_to(&to, say)?;
-    Ok(to)
-}
-
-/// Where the engine comes from: INYON_DOWNLOAD (a mirror of the releases), the hub this machine
-/// was added to (so a machine that can only reach its hub still works), or the newest release on
-/// the website.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    Release(String),
-    Hub(String),
-}
-
-pub fn source() -> Source {
-    if let Some(base) = env_var("INYON_DOWNLOAD") {
-        return Source::Release(base.trim_end_matches('/').to_string());
-    }
-    if let Some(hub) = saved_hub() {
-        return Source::Hub(hub);
-    }
-    Source::Release(update::RELEASES.to_string())
-}
-
-/// Fetches the engine for this platform into `to`, checked like an update is (gz first, both
-/// checksums from a release's signed list; the hub's own checksum from a hub), with a progress
-/// line through `say`.
-pub fn download_to(to: &Path, say: &dyn Fn(&str)) -> Result<(), String> {
-    let names = update::release_names(Platform::current(), Arch::current(), Libc::current()).map_err(|e| e.to_string())?;
-    if let Some(dir) = to.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let tmp = PathBuf::from(format!("{}.download", to.to_string_lossy()));
-    let _ = std::fs::remove_file(&tmp);
-    let progress = |l: &str| say(l.trim_start_matches('\r').trim());
-    match source() {
-        Source::Release(base) => {
-            let sums = update::release_sums(&base, &signing::signing_key(&base), Platform::current()).map_err(|e| e.to_string())?;
-            if update::sum_for(&sums, &names.engine).is_none() {
-                return Err(format!("The newest release has no {} in it. Install with:\n  {}", names.engine, update::reinstall_command(Platform::current())));
-            }
-            say(&format!("Getting the Inyon engine ({})…", names.engine));
-            update::fetch_release(&base, &names.engine, &sums, &tmp, &progress).map_err(|e| e.to_string())?;
-        }
-        Source::Hub(hub) => {
-            let t = update::target(Platform::current(), Arch::current()).map_err(|e| e.to_string())?;
-            let q = format!("?os={}&arch={}", t.os, t.arch);
-            let signed = update::hub_signed_sums(&hub, &signing::signing_key(&format!("{hub}/node/release"))).map_err(|e| e.to_string())?;
-            let want = update::hub_checksum(&hub, signed.as_deref(), "inyon-engine", &update::hub_files(&t).engine, &q)
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("{hub} hands out one program, from before the engine and inyon were split. Update the hub first."))?;
-            say(&format!("Getting the Inyon engine from {}…", crate::http::host_of(&hub)));
-            update::fetch_hub_file(&hub, "inyon-engine", &q, &want, &tmp, &progress).map_err(|e| e.to_string())?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
-    }
-    if Platform::current() == Platform::Darwin {
-        crate::sys::run(&["codesign", "--force", "--sign", "-", &tmp.to_string_lossy()]);
-    }
-    std::fs::rename(&tmp, to).map_err(|e| e.to_string())
-}
-
-/// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by whichever engine
-/// connects (crates/inyon-engine/src/hub_tls.rs, apps/node/pin.ts), never made an authority here.
+/// The engine at `engine`. A hub joined by its certificate's sha256 is pinned by the engine that
+/// connects (crates/inyon-engine/src/hub_tls.rs), never made an authority here.
 fn command(engine: &Path) -> Command {
     // hidden by the caller: quiet for what's read back, console_child for a terminal
     let mut c = Command::new(engine);
@@ -412,82 +173,36 @@ fn windows_copy(first: &str) -> Option<PathBuf> {
     [update::engine_beside(&me), installed_engine()].into_iter().find(|p| is_builtin_copy(p))
 }
 
-/// The program that answers engine command `first`: this one as `inyon engine` (the windowless
-/// copy for the link on Windows), or the Bun engine (downloaded when missing) for the hub and
-/// with the kill switch.
-fn engine_command(first: &str, download: bool) -> Result<(Command, PathBuf), String> {
-    if let Some(copy) = windows_copy(first).filter(|_| !needs_bun(first)) {
+/// The program that answers engine command `first`: this one as `inyon engine`, or on Windows
+/// the windowless copy for the link.
+fn engine_command(first: &str) -> Result<(Command, PathBuf), String> {
+    if let Some(copy) = windows_copy(first) {
         return Ok((command(&copy), copy));
     }
-    if !needs_bun(first) {
-        let me = std::env::current_exe().map_err(|e| e.to_string())?;
-        // hidden by the caller, as above
-        let mut c = Command::new(&me);
-        c.arg("engine");
-        return Ok((c, me));
-    }
-    let engine = if download {
-        ensure(&|l| eprintln!("{l}"))?
-    } else {
-        find().ok_or_else(|| named_engine().err().unwrap_or_else(|| format!("{ENGINE} isn't installed yet. Run `inyon setup`.")))?
-    };
-    Ok((command(&engine), engine))
+    let me = std::env::current_exe().map_err(|e| e.to_string())?;
+    // hidden by the caller: quiet for what's read back, console_child for a terminal
+    let mut c = Command::new(&me);
+    c.arg("engine");
+    Ok((c, me))
 }
 
-/// Runs engine command `args` in this process (built in) or hands the process over to the Bun
-/// engine (the hub, the kill switch).
+/// Runs engine command `args` in this process, or for the link on Windows in the windowless copy.
 pub fn forward(args: &[String]) -> ! {
     let first = args.first().map(String::as_str).unwrap_or("");
-    if !needs_bun(first) {
-        if let Some(copy) = windows_copy(first) {
-            let mut c = command(&copy);
-            c.args(args);
-            match relayed(c) {
-                Ok(s) => std::process::exit(s.code().unwrap_or(1)),
-                Err(err) => eprintln!("Couldn't start {} ({err}); running the link here.", copy.display()),
-            }
-        }
-        std::process::exit(run_builtin(args));
-    }
-    forward_bun(args)
-}
-
-/// Hands the process over to the Bun engine with `args`. On Unix this process becomes the engine
-/// (same pid, same signals, which the service managers count on); on Windows it waits for it
-/// and passes the exit code on.
-pub fn forward_bun(args: &[String]) -> ! {
-    let say = |l: &str| eprintln!("{l}");
-    let engine = match ensure(&say) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(1);
-        }
-    };
-    let mut c = command(&engine);
-    c.args(args);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        let err = c.exec();
-        eprintln!("Couldn't start {} ({err}).", engine.display());
-        std::process::exit(1);
-    }
-    #[cfg(not(unix))]
-    {
+    if let Some(copy) = windows_copy(first) {
+        let mut c = command(&copy);
+        c.args(args);
         match relayed(c) {
             Ok(s) => std::process::exit(s.code().unwrap_or(1)),
-            Err(err) => {
-                eprintln!("Couldn't start {} ({err}).", engine.display());
-                std::process::exit(1);
-            }
+            Err(err) => eprintln!("Couldn't start {} ({err}); running the link here.", copy.display()),
         }
     }
+    std::process::exit(run_builtin(args))
 }
 
 /// Runs the engine with `args`, its output going to this terminal, and returns how it ended.
 pub fn run_through(args: &[String]) -> Result<ExitStatus, String> {
-    let (mut c, engine) = engine_command(args.first().map(String::as_str).unwrap_or(""), true)?;
+    let (mut c, engine) = engine_command(args.first().map(String::as_str).unwrap_or(""))?;
     c.args(args);
     relayed(c).map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))
 }
@@ -516,20 +231,16 @@ fn relayed(mut c: Command) -> std::io::Result<ExitStatus> {
 
 /// Runs the engine and collects what it printed.
 pub fn capture(args: &[&str]) -> Result<(ExitStatus, String), String> {
-    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""), false)?;
+    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""))?;
     c.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     quiet(&mut c);
     let out = c.output().map_err(|e| format!("Couldn't start {} ({e}).", engine.display()))?;
     Ok((out.status, format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
 
-/// The engine's version, if it's here and answers: this program's own when it's built in.
-pub fn version() -> Option<String> {
-    if !legacy() {
-        return Some(inyon_engine::VERSION.to_string());
-    }
-    let (status, out) = capture(&["version"]).ok()?;
-    status.success().then(|| out.trim().to_string()).filter(|v| !v.is_empty())
+/// The engine's version: this program's own, as it's built in.
+pub fn version() -> String {
+    inyon_engine::VERSION.to_string()
 }
 
 /// The last line of JSON in what a command printed (`{"v":1,…}`).
@@ -543,7 +254,7 @@ fn last_json(text: &str) -> Option<Value> {
 /// Runs an engine command with `--json` (and `envs` in its environment) and returns its answer;
 /// an answer with `ok: false`, or none at all, is the error it gave.
 pub fn ask(args: &[&str], envs: &[(&str, &str)]) -> Result<Value, String> {
-    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""), true)?;
+    let (mut c, engine) = engine_command(args.first().copied().unwrap_or(""))?;
     c.args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (k, v) in envs {
         c.env(k, v);
@@ -561,12 +272,7 @@ fn answer(v: Option<Value>, status: ExitStatus, stderr: &str, what: &str) -> Res
         Some(v) => Ok(v),
         None => {
             let said = stderr.trim();
-            let mut m = if said.is_empty() { format!("{ENGINE} {what} ended with {} and said nothing.", status.code().unwrap_or(1)) } else { said.to_string() };
-            // on a fresh Alpine the engine stops before it says anything: its loader wants libstdc++
-            if let Some(hint) = update::alpine_hint(Libc::current(), &update::RealFiles) {
-                m = format!("{m} {hint}");
-            }
-            Err(m)
+            Err(if said.is_empty() { format!("{ENGINE} {what} ended with {} and said nothing.", status.code().unwrap_or(1)) } else { said.to_string() })
         }
     }
 }
@@ -582,7 +288,7 @@ fn expired(v: &Value) -> bool {
 /// link itself, so this waits for it to end afterwards; Ctrl-C reaches both. Nothing shown means
 /// the engine failed, and this says why.
 pub fn pair(args: &[String], show: &mut dyn FnMut(&Value)) -> Result<(), String> {
-    let (mut c, engine) = engine_command("pair", true)?;
+    let (mut c, engine) = engine_command("pair")?;
     c.arg("pair").args(args).arg("--json").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     // asked from the Inyon window, which has no console, the engine mustn't open one of its own
     quiet(&mut c);
@@ -641,6 +347,14 @@ mod tests {
         assert!(make_copy(format!("#!/bin/sh\n{COPY_MARK}").as_bytes()).is_err());
     }
 
+    // the hub, and so its scripts, are built into inyon on Linux and macOS only
+    #[cfg(unix)]
+    #[test]
+    fn the_hubs_windows_installer_looks_for_this_mark() {
+        // install.ps1 makes inyon-engine.exe only from an inyon.exe that carries it
+        assert!(inyon_hub::node_dist::INSTALL_PS1.contains(&format!("'{COPY_MARK}'")));
+    }
+
     #[test]
     fn an_inyon_from_before_0_19_is_never_made_the_copy() {
         // it doesn't know the engine's name, so as the engine it would start itself again and again
@@ -660,21 +374,6 @@ mod tests {
         let mut exe = fake_exe(subsystem);
         exe.extend_from_slice(COPY_MARK.as_bytes());
         exe
-    }
-
-    #[test]
-    fn inyon_engine_naming_inyon_itself_is_refused_rather_than_run_forever() {
-        let dir = std::env::temp_dir().join(format!("inyon-named-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let me = dir.join("inyon");
-        std::fs::write(&me, fake_inyon(3)).unwrap();
-        std::env::set_var("INYON_ENGINE", &me);
-        let found = find();
-        let err = ensure(&|_| {}).unwrap_err();
-        std::env::remove_var("INYON_ENGINE");
-        let _ = std::fs::remove_dir_all(&dir);
-        assert_eq!(found, None);
-        assert!(err.contains("INYON_ENGINE points at") && err.contains("inyon itself"), "{err}");
     }
 
     #[test]
@@ -698,50 +397,6 @@ mod tests {
         assert!(may_run_link("pair"));
         assert!(!may_run_link("forget"));
         assert!(!may_run_link("push"));
-    }
-
-    #[test]
-    fn only_the_shells_bun_is_written_down_and_rust_anywhere_forgets_it() {
-        use NoteChange::*;
-        assert_eq!(note_change(Some(false), None, false), WriteBun);
-        assert_eq!(note_change(Some(false), Some(true), true), WriteBun);
-        // a hub.env line stays where the service reads it: deleting it later switches back
-        assert_eq!(note_change(None, Some(false), false), Keep);
-        assert_eq!(note_change(None, Some(false), true), Keep);
-        assert_eq!(note_change(None, Some(true), false), Remove);
-        assert_eq!(note_change(Some(true), Some(false), false), Remove);
-        assert_eq!(note_change(None, None, true), Remove);
-        assert_eq!(note_change(None, None, false), Keep);
-    }
-
-    #[test]
-    fn a_note_says_bun_only_when_bun_was_asked_for() {
-        assert!(!note_says_rust("INYON_HUB_IMPL=bun when the hub was set up\n"));
-        // what 0.20 wrote for the opt-in
-        assert!(note_says_rust("INYON_HUB_IMPL=rust when the hub was set up\n"));
-        assert!(note_says_rust(""));
-    }
-
-    #[test]
-    fn the_rust_hub_is_the_default() {
-        assert!(wanted_from(None, || None), "no variable, no hub.env line, no note");
-        assert!(!wanted_from(None, || Some(false)), "set up on the Bun hub, it stays there");
-        assert!(wanted_from(Some(true), || Some(false)), "INYON_HUB_IMPL comes first");
-        assert!(!wanted_from(Some(false), || None));
-    }
-
-    #[test]
-    fn the_kill_switch_puts_the_hub_back_on_bun_too() {
-        assert!(picks_rust_hub(true, false, true));
-        assert!(!picks_rust_hub(true, true, true));
-        assert!(!picks_rust_hub(false, false, true));
-        assert!(!picks_rust_hub(true, false, false));
-    }
-
-    #[test]
-    fn only_rust_picks_the_rust_hub() {
-        assert!(says_rust("rust") && says_rust(" Rust\n"));
-        assert!(!says_rust("bun") && !says_rust("rs") && !says_rust(""));
     }
 
     #[test]
