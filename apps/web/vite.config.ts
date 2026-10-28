@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath } from 'node:url'
 import { execSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { VERSION } from '@inyon/protocol'
 import { browserFiles, withPrecacheList } from './src/lib/precache.ts'
 
@@ -17,6 +17,21 @@ const commit = () => {
   } catch {
     return ''
   }
+}
+
+/**
+ * VITE_INYON_PHONE_CORE=rust builds the app with the Rust phone core (crates/inyon-phone, written to
+ * src/phone-core by scripts/phone-core.ts) in place of the TypeScript one. Only the Android app and
+ * the browser copy load it.
+ */
+const rustCore = process.env.VITE_INYON_PHONE_CORE === 'rust'
+const phoneCore = fileURLToPath(new URL(rustCore ? './src/phone-core/index.ts' : '../hub/src/phone/index.ts', import.meta.url))
+if (rustCore && !existsSync(phoneCore)) throw new Error('VITE_INYON_PHONE_CORE=rust: run `bun scripts/phone-core.ts` first')
+
+/** A page compiles wasm only when its CSP allows it: the Rust core's builds add that to script-src. */
+const wasmCsp: Plugin = {
+  name: 'inyon-wasm-csp',
+  transformIndexHtml: (html) => (rustCore ? html.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'") : html),
 }
 
 /** The dev server's hot reload needs an inline script, which index.html's CSP refuses: drop it there. */
@@ -46,10 +61,10 @@ const precache: Plugin = {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), devWithoutCsp, versionFile, precache],
+  plugins: [react(), tailwindcss(), devWithoutCsp, wasmCsp, versionFile, precache],
   define: { __INYON_COMMIT__: JSON.stringify(commit()) },
   // the phone app runs the hub's core in-process (loaded only inside the app, see lib/phone.ts)
-  resolve: { alias: { '@inyon/phone': fileURLToPath(new URL('../hub/src/phone/index.ts', import.meta.url)) } },
+  resolve: { alias: { '@inyon/phone': phoneCore } },
   server: {
     port: 5173,
     host: '127.0.0.1',

@@ -63,7 +63,8 @@ apps/web           React + Vite app, also served by the hub
 apps/mobile        Capacitor shell for Android (and an unshipped iOS project); scripts/icons.ts renders every icon
 crates/            the Rust side: inyon-core (readers, machines), inyon-api (the routes and app
                    sockets, no server), inyon-hub (the hub), inyon-engine and inyon-link (the
-                   phone link), inyon-backends, inyon-protocol
+                   phone link), inyon-backends, inyon-protocol, inyon-phone (the phone core as
+                   wasm, replacing apps/hub/src/phone)
 packages/protocol  types and the agent registry shared by hub and app
 packages/link      the phone link in TypeScript (Noise, pkarr, relay)
 conformance/       recorded scenarios both hubs must answer the same way
@@ -71,6 +72,13 @@ site/              the website and docs at inyon.tech
 npm/               the npm launcher and per-platform packages
 skills/            agent skills shipped with each release (Blueprint)
 ```
+
+The phone core is moving to Rust. `bun scripts/phone-core.ts` in `apps/web` builds
+`crates/inyon-phone` as wasm (it needs the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at
+the version the crate pins), and a build with `VITE_INYON_PHONE_CORE=rust` runs it instead of the
+TypeScript core. `bun test crates/inyon-phone/js` then checks the module as the app calls it. It
+answers the core routes and sockets so far; SSH, the link to paired computers and push still come
+from the TypeScript core.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.
