@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stampInstaller } from "../installers/installers.ts";
-import { CSP, checkReleaseFile, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
+import { CSP, checkReleaseFile, downloadTable, mb, oldSiteLinks, parseSums, securityTxt } from "./build.ts";
 
 // /download said the APK was 2.7 MB while Chrome said 2.88 MB: sizes are decimal, as browsers count
 test("sizes read as a browser shows them", () => {
@@ -111,4 +111,26 @@ test("security.txt names a contact and the policy, and expires a year after the 
   expect(txt).toContain("Expires: 2027-10-23T12:00:00Z\n");
   expect(txt).toContain("Policy: https://inyon.tech/docs/security/#reporting-a-vulnerability\n");
   expect(txt).toContain("Canonical: https://inyon.tech/.well-known/security.txt\n");
+});
+
+test("each system's row offers inyon alone, and the engine files for older versions sit with the rest", () => {
+  const programs = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "windows-x64.exe", "windows-arm64.exe"].map((s) => `inyon-${s}`);
+  const engines = ["linux-x64", "linux-x64-musl", "linux-arm64", "linux-arm64-musl", "darwin-x64", "darwin-arm64", "windows-x64.exe"].map((s) => `inyon-engine-${s}`);
+  const assets = [...programs, ...engines]
+    .flatMap((n) => [n, `${n}.gz`])
+    .concat(["SHA256SUMS", "inyon-0.23.0.apk", "inyon-web.tar.gz"])
+    .map((name) => ({ name, size: 15e6 }));
+  const html = downloadTable({ version: "0.23.0", tag: "v0.23.0", date: "2026-11-01", assets });
+  const [systems, rest] = html.split('id="everything-else"');
+  for (const p of programs) expect(systems).toContain(`<code>${p}.gz</code>`);
+  expect(systems).not.toContain("inyon-engine-");
+  // Windows on ARM gets its own build, not the x64 engine
+  expect(systems).toMatch(/Windows<span>arm64<\/span><\/th><td><a [^>]+><code>inyon-windows-arm64\.exe\.gz<\/code><\/a><span class="size">[^<]+<\/span><\/td>/);
+  // each engine file once, as its .gz
+  for (const e of engines) {
+    expect(rest).toContain(`<code>${e}.gz</code>`);
+    expect(rest).not.toContain(`<code>${e}</code>`);
+  }
+  for (const n of ["SHA256SUMS", "inyon-0.23.0.apk", "inyon-web.tar.gz"]) expect(rest).toContain(`<code>${n}</code>`);
+  expect(rest).not.toContain("<code>inyon-linux-x64</code>");
 });

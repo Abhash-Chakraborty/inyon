@@ -119,6 +119,18 @@ describe('the release list', () => {
     expect(script).toMatch(/want="get\.sh get\.ps1 /)
   })
 
+  test('node.yml makes the inyon-engine copies for older versions before it lists the release', () => {
+    const script = run('node.yml', 'publish')
+    const copies = script.indexOf('scripts/engine-copies.sh')
+    expect(copies).toBeGreaterThan(-1)
+    expect(copies).toBeLessThan(script.indexOf('xargs sha256sum > SHA256SUMS'))
+    // every name inyon 0.12 to 0.22 asks for is required, with its .gz
+    expect(script).toContain('for e in linux-x64 linux-x64-musl linux-arm64 linux-arm64-musl darwin-x64 darwin-arm64 windows-x64.exe; do')
+    expect(script).toContain('want="$want inyon-engine-$e inyon-engine-$e.gz"')
+    // no Bun build is left to make them
+    expect(Object.keys(workflows['node.yml']!.jobs)).not.toContain('engine')
+  })
+
   test("the Android job re-signs only through list-apk.sh, after the APK it uploaded", () => {
     const script = run('android.yml', 'publish')
     const check = script.indexOf('.github/scripts/list-apk.sh')

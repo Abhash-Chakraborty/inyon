@@ -28,7 +28,7 @@ The [image for Railway and Render](hub.md#in-the-cloud) also reads `INYON_PASSWO
 
 ## Computer settings
 
-These are read by `inyon` on any computer, and by `inyon-engine` where it runs.
+These are read by `inyon` on any computer.
 
 | Variable | What it does |
 |---|---|

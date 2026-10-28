@@ -1095,19 +1095,20 @@ function writeLlms(order: string[]) {
 
 // ---------- download table ----------
 
-// the .gz files each system needs; Alpine shares Linux's static inyon command and has its own engine
+// the .gz file each system needs: inyon alone, Alpine sharing Linux's static build. The
+// inyon-engine-* files are for older versions of inyon (from 0.23 copies of it), listed with the rest
 const PLATFORMS: { os: string; arch: string; match: RegExp }[] = [
-  { os: "Linux", arch: "x64", match: /-linux-x64\.gz$/ },
-  { os: "Linux", arch: "arm64", match: /-linux-arm64\.gz$/ },
-  { os: "Alpine (musl)", arch: "x64", match: /^inyon-linux-x64\.gz$|-linux-x64-musl\.gz$/ },
-  { os: "Alpine (musl)", arch: "arm64", match: /^inyon-linux-arm64\.gz$|-linux-arm64-musl\.gz$/ },
-  { os: "macOS", arch: "Apple silicon", match: /-darwin-arm64\.gz$/ },
-  { os: "macOS", arch: "Intel", match: /-darwin-x64\.gz$/ },
-  { os: "Windows", arch: "x64", match: /-windows-x64\.exe\.gz$/ },
-  { os: "Windows", arch: "arm64", match: /-windows-arm64\.exe\.gz$|-engine-windows-x64\.exe\.gz$/ },
+  { os: "Linux", arch: "x64", match: /^inyon-linux-x64\.gz$/ },
+  { os: "Linux", arch: "arm64", match: /^inyon-linux-arm64\.gz$/ },
+  { os: "Alpine (musl)", arch: "x64", match: /^inyon-linux-x64\.gz$/ },
+  { os: "Alpine (musl)", arch: "arm64", match: /^inyon-linux-arm64\.gz$/ },
+  { os: "macOS", arch: "Apple silicon", match: /^inyon-darwin-arm64\.gz$/ },
+  { os: "macOS", arch: "Intel", match: /^inyon-darwin-x64\.gz$/ },
+  { os: "Windows", arch: "x64", match: /^inyon-windows-x64\.exe\.gz$/ },
+  { os: "Windows", arch: "arm64", match: /^inyon-windows-arm64\.exe\.gz$/ },
 ];
 
-function downloadTable(r?: Release): string {
+export function downloadTable(r?: Release): string {
   if (!r) return `<p>The files are on <a class="ext" href="${GITHUB}/releases/latest">the latest release</a>.</p>`;
   const link = (a: Asset) =>
     `<a href="/download/${encodeURIComponent(a.name)}" download><code>${esc(a.name)}</code></a><span class="size">${mb(a.size)}</span>`;
@@ -1116,10 +1117,12 @@ function downloadTable(r?: Release): string {
     if (!files.length) return "";
     return `<tr><th scope="row">${p.os}<span>${p.arch}</span></th><td>${files.map(link).join("<br>")}</td></tr>`;
   }).join("");
-  // the rest: anything that isn't one of those programs, compressed or not (the web app's tarball,
-  // the APK, the checksums and their signature, the installers)
+  // the rest: anything that isn't one of those programs, compressed or not (the engine files for
+  // older versions, the web app's tarball, the APK, the checksums and their signature, the
+  // installers), a file with a .gz beside it once
   const programs = new Set(r.assets.filter((a) => PLATFORMS.some((p) => p.match.test(a.name))).map((a) => a.name));
-  const extra = r.assets.filter((a) => !programs.has(a.name) && !programs.has(`${a.name}.gz`));
+  const names = new Set(r.assets.map((a) => a.name));
+  const extra = r.assets.filter((a) => !programs.has(a.name) && !programs.has(`${a.name}.gz`) && !names.has(`${a.name}.gz`));
   return `<div class="table"><table class="files"><thead><tr><th>System</th><th>Files (gzip)</th></tr></thead><tbody>${rows}</tbody></table></div>
 <p class="note">${r.gzOnly ? `The uncompressed copies of this release are on <a class="ext" href="${GITHUB}/releases/tag/${esc(r.tag)}">GitHub</a>.` : "Each file is also served uncompressed, without the <code>.gz</code>."} The installers pick the right ones for you.</p>
 <h2 id="everything-else">Everything else</h2>
