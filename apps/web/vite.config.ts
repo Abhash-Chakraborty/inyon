@@ -20,13 +20,17 @@ const commit = () => {
 }
 
 /**
- * VITE_INYON_PHONE_CORE=rust builds the app with the Rust phone core (crates/inyon-phone, written to
- * src/phone-core by scripts/phone-core.ts) in place of the TypeScript one. Only the Android app and
- * the browser copy load it.
+ * The app carries the Rust phone core (crates/inyon-phone, written to src/phone-core by
+ * scripts/phone-core.ts, which `bun run build` runs first). Only the Android app and the browser
+ * copy load it. VITE_INYON_PHONE_CORE=none leaves it out, for the copy a hub serves (it never
+ * loads it); =ts builds with the TypeScript core instead, until that's removed.
  */
-const rustCore = process.env.VITE_INYON_PHONE_CORE === 'rust'
-const phoneCore = fileURLToPath(new URL(rustCore ? './src/phone-core/index.ts' : '../hub/src/phone/index.ts', import.meta.url))
-if (rustCore && !existsSync(phoneCore)) throw new Error('VITE_INYON_PHONE_CORE=rust: run `bun scripts/phone-core.ts` first')
+const cores: Record<string, string> = { rust: './src/phone-core/index.ts', none: './src/lib/no-phone-core.ts', ts: '../hub/src/phone/index.ts' }
+const coreKind = process.env.VITE_INYON_PHONE_CORE ?? 'rust'
+if (!cores[coreKind]) throw new Error(`VITE_INYON_PHONE_CORE is rust, none or ts, not ${coreKind}`)
+const rustCore = coreKind === 'rust'
+const phoneCore = fileURLToPath(new URL(cores[coreKind], import.meta.url))
+if (rustCore && !existsSync(phoneCore)) throw new Error('The phone core is missing: run `bun scripts/phone-core.ts` (or `bun run build`) first')
 
 /** A page compiles wasm only when its CSP allows it: the Rust core's builds add that to script-src. */
 const wasmCsp: Plugin = {

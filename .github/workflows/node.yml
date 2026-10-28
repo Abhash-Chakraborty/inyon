@@ -47,7 +47,12 @@ jobs:
       - run: bun test
         working-directory: apps/node
 
+      # the engine's hub serves the app without the phone core; the browser copy below has it
       - run: bun run build
+        env:
+          # a hub's copy never runs the phone core (vite.config.ts)
+          VITE_INYON_PHONE_CORE: none
+      - uses: ./.github/actions/phone-core
 
       - name: Build
         run: |

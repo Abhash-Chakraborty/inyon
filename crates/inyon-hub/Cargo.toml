@@ -27,7 +27,7 @@ inyon-protocol = { path = "../inyon-protocol" }
 # the release's SHA256SUMS.minisig, checked before any file it lists is handed to a machine
 minisign-verify = "0.3"
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
-rust-embed = { version = "8.7", default-features = false }
+rust-embed = { version = "8.7", default-features = false, features = ["include-exclude"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 # the password hash: Node's crypto.scrypt with its defaults (N 16384, r 8, p 1), as the Bun hub wrote it
 scrypt = { version = "0.11", default-features = false }
