@@ -209,6 +209,48 @@ test('a code that is neither a pairing link nor a short code is refused', async 
   expect(await call('POST', '/api/phone/pair', { link: 'hello' })).toMatchObject({ status: 400, body: { error: "That isn't an Inyon pairing code. Run `inyon pair` on the computer and scan the code it shows." } })
 })
 
+test("a socket that closed lets go of its handlers, and frames sent before it opened go out once it does", async () => {
+  const sockets: any[] = []
+  class FakeSocket {
+    readyState = 0
+    binaryType = ''
+    sent: number[] = []
+    onopen: any = null
+    onmessage: any = null
+    onclose: any = null
+    constructor(public url: string) {
+      sockets.push(this)
+      setTimeout(() => {
+        this.readyState = 1
+        this.onopen?.({ target: this })
+      }, 5)
+    }
+    // the computer isn't there after all: the handshake's first message goes, then it closes
+    send(data: Uint8Array) {
+      this.sent.push(data.length)
+      setTimeout(() => {
+        this.readyState = 3
+        this.onclose?.({ code: 1006, reason: '', target: this })
+      }, 5)
+    }
+    close() {}
+  }
+  const real = { ws: globalThis.WebSocket, fetch: globalThis.fetch }
+  // no pkarr lookup leaves the machine
+  Object.assign(globalThis, { WebSocket: FakeSocket, fetch: async () => Promise.reject(new TypeError('offline')) })
+  try {
+    const link = `inyon://pair?m=${'y'.repeat(52)}&s=0123456789abcdef&n=laptop&u=${encodeURIComponent('ws://10.0.0.5:4890')}`
+    expect((await call('POST', '/api/phone/pair', { link })).status).toBe(502)
+    expect(sockets.length).toBeGreaterThan(0)
+    for (const s of sockets) {
+      expect(s.sent.length).toBe(1)
+      expect([s.onopen, s.onmessage, s.onclose]).toEqual([null, null, null])
+    }
+  } finally {
+    Object.assign(globalThis, { WebSocket: real.ws, fetch: real.fetch })
+  }
+}, 30_000)
+
 test('a page runs one core', async () => {
   await expect(startPhone({ store: memoryStore().store, ssh })).rejects.toThrow('already running')
 })

@@ -9,6 +9,7 @@ use inyon_api::core_routes::{empty_config, new_host_id};
 use inyon_api::http::{fields, js_number, js_string, ok, ok_json, truthy};
 use inyon_api::routes::{guarded, h, Routes};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
+use inyon_core::hosts::node_link;
 use inyon_core::hosts::registry::registry;
 use inyon_core::hosts::tidy::{drop_authorized_key, tidy_machine, TidyState};
 use inyon_protocol::{HostAuth, HostConfig, HostKind};
@@ -232,6 +233,9 @@ pub fn add(r: &mut Routes, plugin: Rc<dyn SshPlugin>, keys: Rc<PhoneKeys>, conn:
                         conn.forget(&id).await;
                         keys.drop_secret(&id).await;
                         registry().remove(&id, true)?;
+                        // only now: dropped any earlier, the registry would re-probe it and the
+                        // phone connect again; what still waits on its link ends here
+                        node_link::removed(&id);
                         // it was handed this browser's push signing key and subscription, and may
                         // keep them: the page makes new ones and hands them to the computers left
                         // (apps/web/src/lib/push.ts)

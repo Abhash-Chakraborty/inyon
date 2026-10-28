@@ -171,10 +171,12 @@ impl Inner {
                 }
                 Err(err) => {
                     let error = describe(&err, Some(&config));
+                    // an attempt forget() dropped (the settings changed meanwhile) says nothing
+                    // about the next one
                     if me.conns.borrow().get(&config.id).is_some_and(|c| c.same(&out)) {
                         me.conns.borrow_mut().remove(&config.id);
+                        me.failed.borrow_mut().insert(config.id.clone(), (now_ms(), error.clone()));
                     }
-                    me.failed.borrow_mut().insert(config.id.clone(), (now_ms(), error.clone()));
                     out.resolve(Err(error));
                 }
             }

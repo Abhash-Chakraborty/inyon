@@ -192,3 +192,28 @@ fn each_refusal_says_what_to_check() {
     assert_eq!(split_target("a@b@c"), ("a@b".to_owned(), "c".to_owned()));
     assert_eq!(split_target("@c"), (String::new(), "@c".to_owned()));
 }
+
+#[test]
+fn a_sign_in_that_fails_after_the_server_was_edited_doesnt_hold_up_the_new_settings() {
+    on_core(|| async {
+        let fake = FakeSsh::new();
+        fake.fail.borrow_mut().insert("connect", PluginError { code: Some("AUTH_FAILED".into()), message: "denied".into() });
+        let dialing = Deferred::new();
+        *fake.dialing.borrow_mut() = Some(dialing.clone());
+        let b = backend(&fake);
+        let first = b.exec(&server(HostAuth::Password), "true", ExecOptions::default());
+        inyon_core::platform::rt::spawn(async move {
+            let _ = first.await;
+        });
+        settle().await;
+        // edited while it was still signing in; the old attempt fails afterwards
+        b.forget("box").await;
+        fake.fail.borrow_mut().clear();
+        *fake.dialing.borrow_mut() = None;
+        dialing.resolve(());
+        settle().await;
+        let r = b.exec(&server(HostAuth::Password), "true", ExecOptions::default()).await.unwrap();
+        assert_eq!(fake.calls_of("connect").len(), 2);
+        assert_ne!(r.code, 255, "{}", r.stderr);
+    });
+}

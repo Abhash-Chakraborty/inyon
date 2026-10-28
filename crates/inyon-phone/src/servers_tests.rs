@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::*;
 use crate::phone::{start, Options, Phone};
 use crate::ssh::B64;
-use crate::testing::{offline, on_core, FakeSsh, FINGERPRINT};
+use crate::testing::{net, offline, on_core, Answer, FakeMachine, FakeSsh, FINGERPRINT};
 
 fn on_phone<F: std::future::Future<Output = ()>>(test: impl FnOnce(Phone, Rc<FakeSsh>) -> F) {
     on_core(|| {
@@ -212,5 +212,42 @@ fn a_server_can_be_reached_through_a_paired_computer_instead_of_the_phone() {
         assert_eq!(call(&p, "PATCH", "/api/hosts/jump", json!({ "name": " " })).await, (400, json!({ "error": "Give the computer a name" })));
         assert_eq!(call(&p, "PATCH", "/api/hosts/jump", json!({ "name": "Desk" })).await.0, 200);
         assert_eq!(registry().get("jump").unwrap().borrow().host.config().name, "Desk");
+    });
+}
+
+#[test]
+fn removing_a_connected_computer_ends_what_waits_on_it_and_it_stays_removed() {
+    let seed = [7u8; 32];
+    let me = inyon_link::Identity::from_seed(seed);
+    on_core(|| async move {
+        let net = net();
+        let m = FakeMachine::new(9);
+        m.paired.borrow_mut().push(me.noise.public);
+        net.put("ws://10.0.0.5:4890", Answer::Machine(m.clone()));
+        let fake = FakeSsh::new();
+        fake.secrets.borrow_mut().insert("phone-key".into(), json!({ "seed": B64.encode(seed), "pub": B64.encode(me.public_key) }).to_string());
+        let p = start(Options { store: Rc::new(MemoryStore::new()), fetcher: None, ssh: fake, reach: net.reach(), name: "Test phone".into(), rotate_push: Rc::new(|| {}) });
+        let laptop = HostConfig {
+            id: "laptop".into(),
+            name: "Laptop".into(),
+            kind: HostKind::Link,
+            machine_id: Some(m.id.id.clone()),
+            urls: Some(vec!["ws://10.0.0.5:4890".into()]),
+            relays: Some(vec![]),
+            ..empty_config()
+        };
+        registry().add(laptop, true).unwrap();
+        until(|| node_link::is_up("laptop")).await;
+        // a stream the computer is still sending
+        let ended = Rc::new(std::cell::RefCell::new(None));
+        let e = ended.clone();
+        let _tail = node_link::start("laptop", json!({ "op": "stream", "cmd": "tail -f log" }), move |m| *e.borrow_mut() = Some(m.clone())).unwrap();
+
+        assert_eq!(call(&p, "DELETE", "/api/hosts/laptop", Value::Null).await, (200, json!({ "ok": true })));
+        assert_eq!(ended.borrow().clone(), Some(json!({ "type": "error", "error": "The machine disconnected" })));
+        assert!(!node_link::is_up("laptop"));
+        // nothing connects it again
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        assert!(!node_link::is_up("laptop") && registry().get("laptop").is_none());
     });
 }

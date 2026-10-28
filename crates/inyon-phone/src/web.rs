@@ -188,9 +188,11 @@ impl Dialer for WebDialer {
         ws.set_binary_type("arraybuffer");
         let early: Rc<std::cell::RefCell<Option<Vec<Vec<u8>>>>> = Rc::new(std::cell::RefCell::new((ws.ready_state() == 0).then(Vec::new)));
         let e = early.clone();
-        let w: JsWebSocket = JsValue::clone(&ws).unchecked_into();
+        // the handlers take the socket from their event: one they held themselves would keep it,
+        // and them, alive after it closed
         ws.set_onopen(
-            &Closure::<dyn Fn()>::new(move || {
+            &Closure::<dyn Fn(JsValue)>::new(move |ev: JsValue| {
+                let Ok(w) = Reflect::get(&ev, &"target".into()).map(|t| t.unchecked_into::<JsWebSocket>()) else { return };
                 for d in e.borrow_mut().take().unwrap_or_default() {
                     let _ = w.send_bytes(&Uint8Array::from(&d[..]));
                 }
@@ -211,6 +213,12 @@ impl Dialer for WebDialer {
             &Closure::<dyn Fn(JsValue)>::new(move |c: JsValue| {
                 let code = Reflect::get(&c, &"code".into()).ok().and_then(|v| v.as_f64()).unwrap_or(1006.0) as u16;
                 let reason = Reflect::get(&c, &"reason".into()).ok().and_then(|v| v.as_string()).unwrap_or_default();
+                // closed for good: the handlers let go of the link, so both can be collected
+                if let Ok(w) = Reflect::get(&c, &"target".into()) {
+                    for h in ["onopen", "onmessage", "onclose"] {
+                        let _ = Reflect::set(&w, &h.into(), &JsValue::NULL);
+                    }
+                }
                 on(WireEvent::Close(code, reason));
             })
             .into_js_value(),
