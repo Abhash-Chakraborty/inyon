@@ -25,6 +25,8 @@ An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon
 
 The host check guards against DNS rebinding: a web page on another site can't reach the hub by pointing a name at its address.
 
+The [image for Railway and Render](hub.md#in-the-cloud) also reads `INYON_PASSWORD`, which becomes the hub's password whenever it changes, and adds the address the host gave the service to `INYON_ALLOWED_HOSTS`.
+
 ## Computer settings
 
 These are read by `inyon` on any computer, and by `inyon-engine` where it runs.

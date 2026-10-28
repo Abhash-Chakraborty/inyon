@@ -40,19 +40,43 @@ A source install builds the engine it hands to machines from the checkout. For t
 
 From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. The hub still lists its engine for them, and a machine fetches it only with `INYON_LEGACY_ENGINE=1` set (see [Going back to the Bun engine](install.md#going-back-to-the-bun-engine)). From 0.21 the hub runs on the [hub in Rust](#the-hub-in-rust) built into `inyon` too.
 
+### In the cloud
+
+Without a machine that stays on, a hub can run on Railway or Render. Both build the image in this repo's [`deploy/hub`](https://github.com/Abhash-Chakraborty/inyon/tree/main/deploy/hub) folder. It downloads the release's `inyon` for amd64 or arm64, checks it against the release's signed `SHA256SUMS` the way the installer does, and runs the [hub in Rust](#the-hub-in-rust) behind Caddy on the HTTPS address the host gives it, the way [a reverse proxy](#https) is set up below. The container has tmux, git and ssh. The home folder is on a volume, so agents you install there and their sign-ins survive a redeploy. Sessions running in tmux don't, the same as after a reboot.
+
+- **`INYON_PASSWORD` is the password.** The hub uses it from the first boot. To change it, or if you lose it, edit the variable and redeploy. Before the hub starts, the container applies a new value with `inyon hub reset-password`, which signs everyone out. A password changed in **Settings → Account** stays until the variable is edited again, and a value under 8 characters is skipped with a warning in the logs.
+- **The host's address works as it is.** The container adds the `up.railway.app` or `onrender.com` name the service gets to `INYON_ALLOWED_HOSTS`. For a custom domain, add its name there yourself.
+- **Machines join it** with **Add machine**, as with any hub.
+- **Updating means redeploying.** The image carries the release named in `deploy/hub/Dockerfile` when it was built, and `main` moves to each new release. Settings still shows **Update available**, but the program is part of the image and can't be replaced from inside it (it stops with *Permission denied*), so redeploy instead.
+- The host's health check is `/healthz`, which answers only once the hub itself does.
+
 ### On Railway
 
-Without a machine that stays on, a hub can run on [Railway](https://railway.com/deploy/inyon). The template runs the release's engine behind Caddy on the HTTPS address Railway gives it, the way [a reverse proxy](#https) is set up below. Its container has tmux, git and ssh, and the home folder is on a volume, so agents you install there and their sign-ins survive a redeploy. Sessions running in tmux don't, the same as after a reboot.
+Until there's a template from this repo, deploy it from a fork:
+
+1. Fork `Abhash-Chakraborty/inyon` on GitHub. In a Railway project, choose **New → GitHub Repo** and pick your fork.
+2. In the service's **Settings**, set **Root Directory** to `deploy/hub`, and the **Healthcheck Path** to `/healthz`.
+3. Right-click the service and attach a **Volume** mounted at `/data`.
+4. Under **Variables**, add `INYON_PASSWORD` with a long password.
+5. Under **Settings → Networking**, generate a domain, then deploy. If the hub's page says *This hub doesn't answer to that address*, redeploy once so the container sees the new domain.
+
+To update, sync your fork on GitHub; Railway deploys the new commit.
+
+There's also a one-click template by [hmseeb](https://github.com/hmseeb/inyon-railway), which this image is based on. It runs its own image, with Inyon 0.20.2 on the older Bun hub. Railway generates its `INYON_PASSWORD`; copy it from the service's **Variables** to sign in.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/inyon)
 
-- There's nothing to fill in. Railway generates `INYON_PASSWORD`, and the hub uses it from the first boot. Copy it from the service's **Variables** to sign in.
-- To change the password, or if you lose it, edit the variable and redeploy. Before the hub starts, the container applies a new value with `inyon-engine hub reset-password`, which signs everyone out. A password changed in **Settings → Account** stays until the variable is edited again, and a value under 8 characters is skipped with a warning in the logs.
-- On a custom domain, add the name to `INYON_ALLOWED_HOSTS`.
-- Machines join it with **Add machine**, as with any hub.
-- The version is pinned by the template's image; a newer Inyon comes with a new image.
+A service made from that template can move to this image by connecting its source to your fork, with the root directory and health check above. It keeps its volume, with the password and records on it.
 
-The template and its image live outside this repo, at [hmseeb/inyon-railway](https://github.com/hmseeb/inyon-railway).
+### On Render
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Abhash-Chakraborty/inyon)
+
+The button reads [`render.yaml`](https://github.com/Abhash-Chakraborty/inyon/blob/main/render.yaml) from this repo: a web service built from `deploy/hub`, with a 5 GB disk at `/data` for the home folder and the health check on `/healthz`. Render generates `INYON_PASSWORD`; copy it from the service's **Environment** to sign in.
+
+- A disk needs a paid instance. Render's free instances can't keep files and stop after 15 minutes without traffic, so the Blueprint picks `0.5c-512mb` (512 MB). That holds the hub; to run agents in the container too, choose `1c-2g` or more.
+- A service with a disk stops before the new one starts, so a redeploy takes the hub away for a moment.
+- Pushes to this repo don't redeploy your hub. To update, choose **Manual Deploy → Deploy latest commit**.
 
 ## First sign-in
 
