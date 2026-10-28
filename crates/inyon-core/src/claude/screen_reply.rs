@@ -66,20 +66,25 @@ pub fn screen_reply(captured: &[String], kind: AgentKind, pane_width: Option<u32
         }
     }
     let end = (start..box_top).find(|&i| is_status(kind, &lines[i])).unwrap_or(box_top);
-    let rows = &lines[start.min(end)..end];
+    let first = start.min(end);
+    let rows = &lines[first..end];
 
     // blocks, with what each is
     let mut blocks: Vec<(Block, Vec<&str>)> = Vec::new();
     let mut cur: Vec<&str> = Vec::new();
-    for row in rows.iter().map(String::as_str).chain(std::iter::once("")) {
+    let mut cur_at = first;
+    for (i, row) in rows.iter().map(String::as_str).chain(std::iter::once("")).enumerate() {
         if !row.is_empty() {
+            if cur.is_empty() {
+                cur_at = first + i;
+            }
             cur.push(row);
             continue;
         }
         if cur.is_empty() {
             continue;
         }
-        let kind_of = classify(kind, cur[0], blocks.last().map(|b| b.0));
+        let kind_of = if tool_name_alone(kind, &captured[cur_at]) { Block::Other } else { classify(kind, cur[0], blocks.last().map(|b| b.0)) };
         blocks.push((kind_of, std::mem::take(&mut cur)));
     }
     let from = blocks.iter().rposition(|b| b.0 == Block::Other).map_or(0, |i| i + 1);
@@ -103,6 +108,14 @@ fn dot_back(kind: AgentKind, raw: &str) -> String {
     } else {
         text
     }
+}
+
+/// A tool's row before its arguments show: Claude Code draws `● Bash` for a moment, the name bold
+/// and nothing after it, then `● Bash(ls)`. A reply's own text isn't bold, so a one-word reply
+/// still reads as the reply.
+fn tool_name_alone(kind: AgentKind, raw: &str) -> bool {
+    let text = unstyle(raw).text;
+    matches!(kind, AgentKind::Claude | AgentKind::Copilot) && re!(r"^ ?● [A-Z][\w-]*\s*$").is_match(&text) && starts_bold(&raw.replacen('●', " ", 1))
 }
 
 /// Whether the first character that isn't a space is drawn bold.
@@ -135,8 +148,14 @@ fn starts_bold(raw: &str) -> bool {
 /// notice or a status line.
 fn is_status(kind: AgentKind, row: &str) -> bool {
     match kind {
-        // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens"
-        AgentKind::Claude => re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
+        // "✻ Julienning… (7s · ↓ 690 tokens)", "✻ Brewed for 10s · done 8:23 AM", "      45294 tokens";
+        // the spinner's sign turns, through `*` too, which only counts with its time in brackets after
+        // it, as a Markdown bullet starts with it as well
+        AgentKind::Claude => {
+            re!(r"^[^\s\w●⎿•\-–*#>|`]\s+[A-Z][\p{L}'’ -]*(…|\sfor\s\d)", "u").is_match(row)
+                || re!(r"^\*\s+[A-Z][\p{L}'’ -]*…\s*\((?:[^)]*\b\d+[hms]\b|esc to)", "u").is_match(row)
+                || re!(r"^\s{30,}\S").is_match(row)
+        }
         // "⣯  Generating..."
         AgentKind::Antigravity => re!(r"^[\u{2800}-\u{28ff}]\s").is_match(row) || re!(r"^\s{30,}\S").is_match(row),
         // " /path/to/folder        Session: 0.42 AIC used"
