@@ -6,7 +6,7 @@ import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readd
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BAD_SLUG, GIT_TIMEOUT_MS, LIST_MAX, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, hubHere, isSlug, joinedHere, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
+import { BAD_SLUG, GIT_TIMEOUT_MS, LIST_MAX, NO_INDEX, PRIVATE_FOLDER, TOO_WIDE, agentName, agentSession, hubHere, isSlug, joinedHere, mainTree, removeJudged, sitePathProblem, slugify, uniqueSlug, withLock } from '../scripts/pages.mjs';
 
 const scripts = fileURLToPath(new URL('../scripts/', import.meta.url));
 const tmp = mkdtempSync(join(tmpdir(), 'bp-publish-'));
@@ -388,6 +388,19 @@ describe('publish.mjs', () => {
     expect(pub([site('b')], { CLAUDECODE: '1', GEMINI_CLI: '1' }).status).toBe(0);
     expect(pub([site('c'), '--by', 'opencode'], { CLAUDECODE: '1' }).status).toBe(0);
     expect(list().pages.map((p) => p.by)).toEqual(['claude', 'claude', 'opencode']);
+  });
+
+  test("the agent's conversation is kept, and the latest one to add the page wins", () => {
+    expect(agentSession({ CLAUDE_CODE_SESSION_ID: 'f941de55-2d8f' })).toBe('f941de55-2d8f');
+    expect(agentSession({ CODEX_THREAD_ID: '019a-thread' })).toBe('019a-thread');
+    expect(agentSession({ CLAUDE_CODE_SESSION_ID: 'not one!' })).toBeUndefined();
+    const dir = site('s');
+    expect(pub([dir], { CLAUDECODE: '1', CLAUDE_CODE_SESSION_ID: 'chat-1' }).status).toBe(0);
+    expect(list().pages[0].session).toBe('chat-1');
+    expect(pub([dir]).status).toBe(0);
+    expect(list().pages[0].session).toBe('chat-1');
+    expect(pub([dir], { CODEX_THREAD_ID: 'chat-2' }).status).toBe(0);
+    expect(list().pages[0].session).toBe('chat-2');
   });
 
   test('usage errors exit 2', () => {

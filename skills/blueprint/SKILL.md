@@ -58,7 +58,8 @@ root names the site for Inyon. It's a dot file, so no server shows it.
    (`FULL=1` takes the whole page; lazy images load first). Fix what you see, then check once more.
 8. **Publish it** where the reader can open it. Take the first of these that works:
    - **Inyon's command.** If `command -v inyon` finds it, run `inyon pages add <dir> --name "Product plan"`.
-     It prints where the page sits in the app (`Pages > <machine> > <project>`) and its app link
+     It prints where the page sits in the app (`Pages > <machine> > <project>`; from Inyon 0.22.5 the app
+     files it under your session's name instead) and its app link
      (`/pages/<host>/<slug>`). Hand over both.
    - **The script.** Without the command, run `node <skill>/scripts/publish.mjs <dir> --name "Product plan"
      --by <claude|codex|gemini|opencode>`. It adds the site to `~/.inyon/pages.json` itself, and the hub

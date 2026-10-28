@@ -371,13 +371,13 @@ pub async fn add(id: &str, folder: &str, name: Option<&str>, slug: Option<&str>)
 /// Adds the Blueprint sites under `dirs` on a machine (the hub's own too) that aren't listed there
 /// yet, with its own `inyon pages find`, as added by agent `by`. How many it added; an error when
 /// it couldn't be asked or its inyon is from before 0.22.4.
-pub async fn find(id: &str, by: &str, dirs: &[String]) -> HubResult<usize> {
+pub async fn find(id: &str, by: &str, dirs: &[String]) -> HubResult<Vec<Value>> {
     let mut args = format!("find --json --by {} --", shq(by));
     for d in dirs {
         args.push_str(&format!(" {}", shq(d)));
     }
     let m = run(id, &args, LIST_WAIT).await?;
-    m.get("found").and_then(Value::as_array).map(Vec::len).ok_or_else(|| http(501, "This machine's inyon can't find pages"))
+    m.get("found").and_then(Value::as_array).cloned().ok_or_else(|| http(501, "This machine's inyon can't find pages"))
 }
 
 /// Takes a page off another machine's list, with its own `inyon pages rm`.

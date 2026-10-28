@@ -70,6 +70,8 @@ pub struct Record {
     pub by: String,
     /// unix ms, kept as the file wrote it
     pub added: Number,
+    /// the agent conversation that added it, when the file says (from 0.22.5)
+    pub session: Option<String>,
 }
 
 pub(crate) fn as_record(v: &Value) -> Option<Record> {
@@ -80,11 +82,33 @@ pub(crate) fn as_record(v: &Value) -> Option<Record> {
         Some(Value::Number(n)) if n.as_f64().is_some_and(f64::is_finite) => n.clone(),
         _ => return None,
     };
-    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added })
+    let session = s("session").filter(|x| is_session(x));
+    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added, session })
 }
 
 fn record_json(r: &Record) -> Value {
-    json!({ "slug": r.slug, "name": r.name, "path": r.path, "project": r.project, "by": r.by, "added": Value::Number(r.added.clone()) })
+    let mut v = json!({ "slug": r.slug, "name": r.name, "path": r.path, "project": r.project, "by": r.by, "added": Value::Number(r.added.clone()) });
+    if let Some(s) = &r.session {
+        v["session"] = json!(s);
+    }
+    v
+}
+
+/// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
+pub fn is_session(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+/// The session a page belongs to: the one that added it, or the one it was found under (kept by
+/// the hub, since a machine's older inyon can't write it). With the name Inyon last gave it.
+fn with_session(v: &mut Value, host: &str, r: &Record) {
+    let session = r.session.clone().or_else(|| crate::finding::session_of(host, &r.slug));
+    if let Some(s) = session {
+        if let Some(name) = inyon_core::hosts::names::last_name(host, &s) {
+            v["sessionName"] = json!(name);
+        }
+        v["session"] = json!(s);
+    }
 }
 
 fn real_or(p: &str) -> String {
@@ -761,6 +785,7 @@ impl Pages {
         if !notes.is_empty() {
             v["notes"] = json!(notes);
         }
+        with_session(&mut v, LOCAL_HOST, r);
         v
     }
 
@@ -774,6 +799,7 @@ impl Pages {
         if !p.notes.is_empty() {
             v["notes"] = json!(p.notes);
         }
+        with_session(&mut v, host, r);
         v
     }
 
@@ -912,7 +938,7 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
                 Some(s) => s.clone(),
                 None => unique_slug(&marker_slug.clone().unwrap_or_else(|| slugify(&basename)), taken),
             };
-            let added = Record { slug, name: name.clone(), path: folder.clone(), project: project.clone(), by: "app".into(), added: Number::from(now) };
+            let added = Record { slug, name: name.clone(), path: folder.clone(), project: project.clone(), by: "app".into(), added: Number::from(now), session: None };
             let mut next = pages.to_vec();
             next.push(record_json(&added));
             Ok((Some(next), added))

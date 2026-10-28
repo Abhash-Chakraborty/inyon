@@ -375,12 +375,13 @@ export type PanelTab = 'changes' | 'files' | 'activity' | 'preview' | 'pages' | 
 
 // ---------- pages ----------
 
-/** The pages this session works on (see sessionPages): its project's, and those in folders under it. */
+/** The pages this session works on (see sessionPages): the ones it added, its project's, and those in folders under it. */
 export function useSessionPages(s: SessionModel): Page[] {
   const all = usePages((x) => x.pages)
   const host = s.ref?.host.config.id
   const cwd = s.ref?.pane.cwd
-  return useMemo(() => (host ? sessionPages(all ?? [], host, cwd) : []), [all, host, cwd])
+  const session = s.ref?.pane.agent?.sessionId
+  return useMemo(() => (host ? sessionPages(all ?? [], host, cwd, session) : []), [all, host, cwd, session])
 }
 
 export function PagesTab({ pages }: { pages: Page[] }) {

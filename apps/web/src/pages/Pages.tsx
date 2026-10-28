@@ -12,7 +12,7 @@ import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
 import { listHubs } from '../lib/hubs.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId, projectName,
+  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupName, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId,
   usePages, type Device, type Page, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
@@ -24,7 +24,7 @@ import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 import { MachineSheet } from '../components/Sheets.tsx'
 import {
   ADD_COMMAND, BROWSER_HINT, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, SANDBOX_NOTE, copyFolder, openInBrowser, openPageSheet, pageLabel, pageMenu, removePage, renewLink,
-  revokeLinks, updatedLine, useMachines, usePageLink, useSiteParts, type PageMachine,
+  revokeLinks, updatedLine, useMachines, usePageLink, useRunningNames, useSiteParts, type PageMachine,
 } from '../components/pages/shared.tsx'
 
 /** Two panes from this width up; below it, the list and a full-screen viewer. */
@@ -244,7 +244,8 @@ function PhoneList() {
   const machine = useMachines()
   const [filtering, setFiltering] = useState(false)
   const [q, setQ] = useState('')
-  const groups = useMemo(() => groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q)), (h) => machine(h).name), [pages, q, machine])
+  const names = useRunningNames()
+  const groups = useMemo(() => groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q, names)), (h) => machine(h).name, names), [pages, q, machine, names])
   return (
     <PullRefresh onRefresh={loadPages} className="min-h-0 flex-1 overflow-y-auto">
       <ListHeader
@@ -459,8 +460,9 @@ function PagesDesktop({ selected }: { selected?: string }) {
   const [shut, setShut] = useState<ReadonlySet<string>>(() => new Set())
   const filter = useRef<HTMLDivElement>(null)
   const page = pages?.find((p) => p.id === selected)
-  const all = useMemo(() => groupPages(pages ?? [], (h) => machine(h).name), [pages, machine])
-  const groups = useMemo(() => (q ? groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q)), (h) => machine(h).name) : all), [all, pages, q, machine])
+  const names = useRunningNames()
+  const all = useMemo(() => groupPages(pages ?? [], (h) => machine(h).name, names), [pages, machine, names])
+  const groups = useMemo(() => (q ? groupPages((pages ?? []).filter((p) => matchesPage(p, machine(p.host).name, q, names)), (h) => machine(h).name, names) : all), [all, pages, q, machine, names])
 
   // nothing picked: open the page that changed last (or the first) instead of an empty pane
   useEffect(() => {
@@ -591,6 +593,7 @@ const DEVICE_OPTIONS: { v: Device; label: React.ReactNode; name: string }[] = [
 ]
 
 function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
+  const names = useRunningNames()
   const nav = useNavigate()
   const v = useViewer(page)
   const [device, setDevice] = useState<Device>('fit')
@@ -627,7 +630,7 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
             {m.name}
           </span>
           <span className="text-fg-3">/</span>
-          <span className="truncate">{projectName(page.project)}</span>
+          <span className="truncate">{groupName(page, names)}</span>
           <span className="text-fg-3">/</span>
           <b className="truncate font-semibold text-fg">{page.name}</b>
         </nav>

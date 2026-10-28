@@ -655,6 +655,10 @@ export interface PageEntry {
   progress?: PageProgress
   /** the Markdown notes in the site's `research/` folder, by file name (from 0.22.4); left out when there are none */
   notes?: string[]
+  /** the agent conversation that added or found it (Claude Code's session id, Codex's thread id), from 0.22.5: the app shows that session's name over it */
+  session?: string
+  /** the name Inyon last gave that session, for when it isn't running */
+  sessionName?: string
 }
 
 /** GET /api/pages */

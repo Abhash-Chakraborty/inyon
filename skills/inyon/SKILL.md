@@ -57,8 +57,9 @@ Give the user the page's inyon.tech address when they'd rather read it themselve
 inyon pages add <folder> --name "Readable name"
 ```
 
-It answers with where the page sits in the app (Pages, then machine, then project). Hand that over,
-not a URL: a link that opens a page is made by the app and lasts 12 hours. On a joined machine `add`
+It answers with where the page sits in the app (Pages, then machine, then project). From 0.22.5 the
+app files a page you add from inside a Claude Code or Codex session under that session's name, and
+follows when the user renames it. Hand that line over, not a URL: a link that opens a page is made by the app and lasts 12 hours. On a joined machine `add`
 also says the hub it's joined to shows its pages: that needs the hub and this machine on 0.22 or
 later. With an older hub, tell the user to update it, or put the folder on the hub's computer. Don't
 serve the folder on a public address. The `blueprint` skill builds and publishes plan sites this way.

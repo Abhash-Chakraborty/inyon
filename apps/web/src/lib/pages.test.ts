@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupPages, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
-  pageHosts, pageId, previewRefusal, projectName, renewIn, sessionPages, shouldRenew, usePages, type Page,
+  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
+  pageHosts, pageId, previewRefusal, projectName, renewIn, runningNames, sessionPages, shouldRenew, usePages, type Page,
 } from './pages.ts'
 import { api } from '../test/fakes.ts'
 import { ApiError } from './api.ts'
@@ -50,6 +50,30 @@ describe('grouping', () => {
     expect(matchesPage(p, 'studio', '  ')).toBe(true)
     expect(projectName('/a/b/c/')).toBe('c')
   })
+
+  test("a session's pages are grouped under the name the session has now", () => {
+    const pages = [entry('plan', { session: 'chat-1', sessionName: 'Handy redesign' }), entry('mock', { session: 'chat-1' }), entry('other'), entry('gone', { session: 'chat-9' })]
+    // renamed while it runs: the group follows the running session's name
+    const running = new Map([[pageId('local', 'chat-1'), 'Legato development']])
+    const groups = groupPages(pages, nameOf, running)
+    expect(groups[0]!.projects.map((p) => [p.name, p.pages.map((x) => x.slug).sort()])).toEqual([
+      ['app', ['gone', 'other']],
+      ['Legato development', ['mock', 'plan']],
+    ])
+    // not running: the name Inyon last gave it, else the project folder
+    expect(groupName(pages[0]!)).toBe('Handy redesign')
+    expect(groupName(pages[1]!)).toBe('app')
+    expect(matchesPage(pages[1]!, 'studio', 'legato', running)).toBe(true)
+    expect(matchesPage(pages[2]!, 'studio', 'legato', running)).toBe(false)
+  })
+
+  test("running sessions name their pages by the title they show, not the agent's own name", () => {
+    const pane = (id: string, title: string, sessionId?: string) => ({
+      id, index: 0, active: true, command: 'claude', cwd: '/x', title, width: 80, height: 24, dead: false, agent: { kind: 'claude' as const, pid: 1, state: 'idle' as const, sessionId },
+    })
+    const host = { config: { id: 'local', name: 'studio', kind: 'local' }, hostname: 'studio', status: 'online', sessions: [{ id: '$1', name: 's', attached: 0, windows: [{ id: '@1', index: 0, name: 'claude', active: true, activity: 0, panes: [pane('%1', '✳ Legato development', 'chat-1'), pane('%2', 'Claude Code', 'chat-2'), pane('%3', '✳ No id')] }] }] }
+    expect([...runningNames([host as never])]).toEqual([['local/chat-1', 'Legato development']])
+  })
 })
 
 describe("a session's pages", () => {
@@ -75,6 +99,12 @@ describe("a session's pages", () => {
     expect(sessionPages(all, 'local', undefined)).toEqual([])
     expect(folderKey('C:\\Dev\\')).toBe('c:/dev')
     expect(folderKey('/')).toBe('/')
+  })
+  test('the pages its conversation added, wherever they are', () => {
+    const mine = entry('mine', { project: '/srv/elsewhere', folder: '/srv/elsewhere/plan', session: 'chat-1' })
+    expect(sessionPages([...all, mine], 'local', '/home/me/code/app', 'chat-1').map((p) => p.slug)).toEqual(['mine', 'plan'])
+    expect(sessionPages([...all, mine], 'local', undefined, 'chat-1').map((p) => p.slug)).toEqual(['mine'])
+    expect(sessionPages([...all, mine], 'laptop', 'c:/dev/robot', 'chat-1').map((p) => p.slug)).toEqual(['win'])
   })
 })
 

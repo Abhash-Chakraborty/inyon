@@ -3,7 +3,7 @@
 //! hub all write, and which the hub reads again whenever it changes, so adding a page needs no hub
 //! running. Each site also gets `.inyon-page.json` in its own folder, so it keeps its slug and name.
 //!
-//!   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added"}]}
+//!   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added","session"?}]}
 //!   <site>/.inyon-page.json {"v":1,"slug","name","kind":"blueprint","created"}
 //!
 //! The rules (slugs, which folders may be pages, the messages) are the hubs' own, from
@@ -249,6 +249,17 @@ pub fn agent(env: impl Fn(&str) -> Option<String>) -> &'static str {
     } else {
         "cli"
     }
+}
+
+/// The conversation the agent adding a page is in, so the app can show that session's name over
+/// the page and follow it when the session is renamed: Claude Code's session id, Codex's thread id.
+pub fn agent_session(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    ["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"].iter().filter_map(|k| env(k)).find(|v| is_session(v))
+}
+
+/// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
+pub fn is_session(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 
 /// The text of the first `<title>` in an HTML page, entities decoded and spaces collapsed.
@@ -689,8 +700,10 @@ pub struct Added {
 }
 
 /// Adds a site's folder to `file`, or updates its entry when the folder is there already, so
-/// adding again is safe. `home` is the user's home folder; `by` who is adding it; `now` ms since 1970.
-pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Option<&str>, by: &str, now: u64) -> Result<Added, String> {
+/// adding again is safe. `home` is the user's home folder; `by` who is adding it; `session` the
+/// agent's conversation, which the latest add sets; `now` ms since 1970.
+#[allow(clippy::too_many_arguments)]
+pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Option<&str>, by: &str, session: Option<&str>, now: u64) -> Result<Added, String> {
     let folder = absolute(dir)?;
     let path = text_of(&folder)?;
     let home_text = text_of(home)?;
@@ -762,6 +775,9 @@ pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Optio
         if !entry.get("added").is_some_and(Value::is_number) {
             entry.insert("added".into(), json!(now));
         }
+        if let Some(s) = session.filter(|s| is_session(s)) {
+            entry.insert("session".into(), json!(s));
+        }
         let page = Value::Object(entry);
         let changed = old.as_ref() != Some(&page);
         if changed {
@@ -812,7 +828,8 @@ pub const REMOVED_MAX: usize = 200;
 const FIND_DEPTH: usize = 4;
 const FIND_FOLDERS: usize = 4000;
 /// Folders `pages find` doesn't look inside: dependencies and build output.
-const FIND_SKIP: [&str; 6] = ["node_modules", "target", "dist", "build", "vendor", "__pycache__"];
+// test data holds sites made for tests (Inyon's own fixtures/pages/site was found this way)
+const FIND_SKIP: [&str; 11] = ["node_modules", "target", "dist", "build", "vendor", "__pycache__", "fixtures", "__fixtures__", "testdata", "test", "tests"];
 
 /// The folders taken off the list, which `pages find` leaves alone (the hub keeps the same list).
 fn removed_of(list: &Map<String, Value>) -> Vec<String> {
@@ -909,7 +926,7 @@ pub fn find(file: &Path, home: &Path, dirs: &[PathBuf], by: &str, now: u64) -> R
         }
         known.insert(path);
         // one that can't be added (a broken list, a site out of a private folder) is skipped
-        if let Ok(a) = add(file, home, &site, None, None, by, now) {
+        if let Ok(a) = add(file, home, &site, None, None, by, None, now) {
             added.push(a.page);
         }
     }
@@ -975,8 +992,9 @@ fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bo
 
 pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcome {
     let by = agent(|k| std::env::var(k).ok());
+    let session = agent_session(|k| std::env::var(k).ok());
     let now = crate::state::now_ms() as u64;
-    let a = add(&pages_file(), &paths::home(), dir, name, slug, by, now)?;
+    let a = add(&pages_file(), &paths::home(), dir, name, slug, by, session.as_deref(), now)?;
     let machine = inyon_engine::hostname();
     let slug = field(&a.page, "slug").to_string();
     let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
@@ -1454,7 +1472,7 @@ mod tests {
             // the marker: the slug comes from the folder, the name from the title
             let _w = Fifo::at(&site.join(".inyon-page.json"));
             let at = Instant::now();
-            let added = add(&file, &home, &site, None, None, "cli", 1).unwrap();
+            let added = add(&file, &home, &site, None, None, "cli", None, 1).unwrap();
             quick(at);
             assert_eq!((field(&added.page, "slug"), field(&added.page, "name")), ("piped", "Piped plan"));
         }
@@ -1471,7 +1489,7 @@ mod tests {
             fs::remove_file(site.join("index.html")).unwrap();
             fs::write(site.join("index.html"), "<title>Piped plan</title>").unwrap();
             let at = Instant::now();
-            assert_eq!(add(&file, &home, &site, None, None, "cli", 1).err().as_deref(), Some(BROKEN_FILE));
+            assert_eq!(add(&file, &home, &site, None, None, "cli", None, 1).err().as_deref(), Some(BROKEN_FILE));
             quick(at);
         }
         let _ = fs::remove_dir_all(&dir);

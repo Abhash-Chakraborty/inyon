@@ -72,6 +72,11 @@ pub fn session_name(host: &str, session: Option<&str>, kind: Option<AgentKind>) 
     (!owns_title(kind) || e.pending == Some(true)).then_some(e.name)
 }
 
+/// The name Inyon last gave a session, taken by the agent or not: what to call it while it isn't running.
+pub fn last_name(host: &str, session: &str) -> Option<String> {
+    with(|n| n.get(&k(host, session)).map(|e| e.name.clone())).filter(|n| !n.is_empty())
+}
+
 /// The agent's own title from before Inyon renamed it, if Inyon did.
 pub fn original_title(host: &str, session: &str) -> Option<String> {
     with(|n| n.get(&k(host, session)).and_then(|e| e.was.clone()))
