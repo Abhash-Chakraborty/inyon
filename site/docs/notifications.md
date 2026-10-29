@@ -30,7 +30,7 @@ How an alert travels depends on how you use Inyon.
 
 The app watches your machines itself and posts the notifications. Each kind has its own Android channel (*Needs you*, *Finished*, *Machines* and the connection notice), so you can set their sound and importance in Android's settings. *Needs you* alerts have **Open** and **Mark read** buttons.
 
-Android pauses background apps, which would drop the connection. **Stay connected**, on by default, keeps a small ongoing notification (*Inyon is connected*) so alerts arrive right away. The first time a machine appears, the app asks once to be allowed to run without battery limits. Some Android versions still limit how long this can run each day; the app tells you when it was stopped.
+Android pauses background apps, which would drop the connection. **Stay connected**, on by default, keeps a small ongoing notification (*Inyon is connected*) so alerts arrive right away. The first time a machine appears, the app asks once to be allowed to run without battery limits. Some Android versions still limit how long this can run each day; the app tells you when it was stopped. Before 0.23.1, alerts stopped coming about a minute after you left the app on phones with Android System WebView 156 or later, because the WebView froze the hidden page; update the app if that's what you see.
 
 A fully closed app gets no alerts yet. That needs a push server, which Inyon doesn't run.
 

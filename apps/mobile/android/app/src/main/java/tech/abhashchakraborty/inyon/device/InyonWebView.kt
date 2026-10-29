@@ -3,6 +3,7 @@ package tech.abhashchakraborty.inyon.device
 import android.content.Context
 import android.text.InputType
 import android.util.AttributeSet
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.view.inputmethod.EditorInfoCompat
@@ -24,6 +25,16 @@ class InyonWebView(context: Context, attrs: AttributeSet?) : CapacitorWebView(co
 
     @Volatile
     var contentListener: ContentListener? = null
+
+    /**
+     * The page is always told its window is visible. Chromium freezes a hidden page a minute after
+     * it's hidden (WebView 156 does), and a frozen page posts no alerts and answers nothing, Stay
+     * connected or not. The web app learns whether Inyon is on screen from the plugin's
+     * appVisibility event instead (native.ts).
+     */
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        super.onWindowVisibilityChanged(View.VISIBLE)
+    }
 
     // the View-based wrapper routes through performReceiveContent on the IME thread
     @Suppress("DEPRECATION")

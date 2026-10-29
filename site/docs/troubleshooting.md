@@ -105,7 +105,7 @@ For Claude Code, the numbers come from the integration. Turn it on, or **Update*
 
 ## Notifications don't arrive
 
-- **Android:** keep **Stay connected** on and allow the app to run without battery limits. A fully closed app gets no alerts yet.
+- **Android:** keep **Stay connected** on and allow the app to run without battery limits. A fully closed app gets no alerts yet. If alerts stop about a minute after you leave the app, update it to 0.23.1 or later.
 - **Browser:** the hub must be on HTTPS, and on iPhone the page must be on the Home Screen. Use **Send a test** in Settings.
 
 ## Updates
