@@ -48,6 +48,23 @@ R6 (Dioxus first start):
   a reason, logged and shown as a one-line notice.
 - A file this build can't read (an unknown format, a missing key) is kept, so a later build may.
 
+## What 0.23 shipped
+
+The file and the seal are as above (`MigrationSeal.kt`, `MigrationExport.kt` and
+`InyonMigratePlugin.kt` under `apps/mobile/android/app/src/main/java/.../migrate/`). The payload
+differs from `import.rs`, because hub tokens moved to the secret store in 0.20.2 and the core's
+records are written by the Rust core now. The web app (`apps/web/src/lib/upgradeExport.ts`) sends
+everything rather than picking fields:
+
+- `v` (1), `exportedAt`, `appVersion`
+- `records`: every record in IndexedDB `inyon` / `kv` (key to JSON text, as the store keeps it),
+  apart from the chat caches under `chats/`
+- `local`: every `inyon.*` localStorage key, apart from the first-frame snapshots
+  (`inyon.overview.`, `inyon.chat.`, `inyon.chats.`)
+
+Kotlin adds `secrets`: everything in `inyon_secrets` (`phone-key`, `hub-token:<id>`,
+`server:<hostId>`). The R6 import reads these maps back into its own store.
+
 ## Why not read the old storage directly
 
 The WebView's IndexedDB is a leveldb in the app's data folder, in Chromium's own format, which

@@ -81,6 +81,10 @@ Nothing is asked before you've added a computer or server. Once the first one ap
 
 A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-android-app).
 
+## Moving to the next app
+
+From 0.23 the app keeps a sealed copy of its key, pairings, hubs and settings each time it starts or goes to the background. The next Inyon app for Android installs over this one and picks that copy up, so your computers, servers and hubs stay paired. Open the app once on 0.23 or later before you install it. [Security](security.md#the-android-app) says how the copy is kept.
+
 ## Phone conveniences
 
 - From 0.15, a phone stays upright. A tablet, or a foldable when it's open, turns with the device and gets the wide layout: a sidebar with every session, and on a large tablet in landscape a side panel next to the chat.
