@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/phone/ssh-backend.ts: machines reached straight from the phone over SSH,
+//! Port of the TypeScript phone core's ssh-backend.ts (removed in 0.23): machines reached straight from the phone over SSH,
 //! through the native InyonSsh plugin. A connection opens on first use and again after it drops;
 //! the plugin pools connections per server.
 
@@ -36,7 +36,7 @@ pub type PluginResult = LocalBoxFuture<'static, Result<Value, PluginError>>;
 /// Called with each event's name and what it carries.
 pub type OnEvent = Rc<dyn Fn(&str, &Value)>;
 
-/// The native InyonSsh plugin (SshPlugin in apps/hub/src/phone/types.ts): each method takes and
+/// The native InyonSsh plugin (SshPlugin in apps/web/src/lib/phone-types.ts): each method takes and
 /// gives the same JSON the plugin does.
 pub trait SshPlugin {
     fn call(&self, method: &'static str, args: Value) -> PluginResult;

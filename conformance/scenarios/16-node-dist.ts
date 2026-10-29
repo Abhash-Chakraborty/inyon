@@ -2,9 +2,8 @@ import { type Scenario } from '../lib/scenario.ts'
 
 /**
  * What machines download from the hub. Downloads are written down as size and checksum; the
- * harness seeds the engine files (see seedEngines in lib/hub.ts), so nothing is built or fetched.
- * Windows' inyon command comes from the release on GitHub when the hub runs from a checkout, so
- * it is left out to keep the run offline.
+ * harness puts placeholder builds where a checkout's cargo builds go (see seedCommands in
+ * lib/hub.ts), so nothing is built or fetched.
  */
 export default {
   name: 'node-dist',
@@ -27,7 +26,9 @@ export default {
     await ctx.rest('GET', '/node/inyon-engine?os=linux&arch=x64', undefined, { as: 'anon', binary: true })
     await ctx.rest('GET', '/node/inyon-engine.gz?os=darwin&arch=x64', undefined, { as: 'anon', binary: true })
 
-    await ctx.step('Windows: the engine, busybox checksums, the names from before the rename')
+    await ctx.step('Windows: the inyon command, the engine, busybox checksums, the names from before the rename')
+    await ctx.rest('GET', '/node/inyon.sha256?os=windows&arch=x64', undefined, { as: 'anon' })
+    await ctx.rest('GET', '/node/inyon.sha256?os=windows&arch=arm64', undefined, { as: 'anon' })
     await ctx.rest('GET', '/node/inyon-engine.sha256?os=windows', undefined, { as: 'anon' })
     await ctx.rest('GET', '/node/busybox.exe.sha256', undefined, { as: 'anon' })
     await ctx.rest('GET', '/node/busybox.exe.sha256?arch=arm64', undefined, { as: 'anon' })

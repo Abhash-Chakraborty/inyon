@@ -7,7 +7,7 @@ import fs from 'node:fs'
 const [name = '', ...args] = process.argv.slice(2)
 
 if (name === 'sqlite3') {
-  // sqlite3 -readonly -noheader -list <db> <query>, the way apps/hub/src/agents/opencode-db.ts asks
+  // sqlite3 -readonly -noheader -list <db> <query>, the way crates/inyon-core/src/agents/opencode_db.rs asks
   const rest = args.filter((a) => !a.startsWith('-'))
   const [file, query] = rest
   try {

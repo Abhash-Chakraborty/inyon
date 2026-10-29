@@ -7,7 +7,7 @@
 //!   <site>/.inyon-page.json {"v":1,"slug","name","kind":"blueprint","created"}
 //!
 //! The rules (slugs, which folders may be pages, the messages) are the hubs' own, from
-//! apps/hub/src/features/pages-core.ts; tests/pages.rs checks them against fixtures/pages/rules.json.
+//! crates/inyon-core/src/features/pages_core.rs; tests/pages.rs checks them against fixtures/pages/rules.json.
 //! pages.json is changed while holding `pages.json.lock` (created exclusively, taken over once it is
 //! 10 s old), by writing a temp file and renaming it over the old one. Entries this program can't
 //! read are kept as they are.

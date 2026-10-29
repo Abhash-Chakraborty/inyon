@@ -1,7 +1,8 @@
 //! Inyon's hub core: the readers that turn what an agent shows and writes into Inyon's wire
 //! types, and the hub's stateful core on top of them (its machines, the chat watchers, the actions
-//! on a pane, the phone's terminal). A port of `apps/hub/src`, file for file and with the same
-//! names, so each Rust module reads next to the TypeScript it came from:
+//! on a pane, the phone's terminal). A port of the Bun hub's source (removed in 0.23; v0.22.5
+//! has it), file for file and with the same names, so each Rust module reads next to the
+//! TypeScript it came from:
 //!
 //! | TypeScript | Rust |
 //! |---|---|

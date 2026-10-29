@@ -17,7 +17,7 @@ export const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart
 /** Records are dated 15 January 2026, well outside the window the normalizer treats as "now". */
 export const at = (sec: number) => new Date(Date.UTC(2026, 0, 15, 9, 0, sec)).toISOString()
 
-/** Where Claude keeps a folder's transcripts (apps/hub/src/tmux/tmux.ts claudeSlug). */
+/** Where Claude keeps a folder's transcripts (claude_slug in crates/inyon-core/src/tmux/tmux.rs). */
 export const claudeSlug = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, '-')
 
 export const jsonl = (records: unknown[]) => records.map((r) => `${JSON.stringify(r)}\n`).join('')
@@ -199,7 +199,7 @@ export class Codex {
 
 /**
  * An OpenCode TUI without --port: what it does lands in its SQLite database, which the hub reads
- * through sqlite3 (the stub reads this file with bun:sqlite). Layout as in apps/hub's opencode-db tests.
+ * through sqlite3 (the stub reads this file with bun:sqlite). Layout as in crates/inyon-core's opencode_db tests.
  */
 export function opencode(m: Machine, o: { id: string; cwd: string; pid: number; session?: { id: string; name: string } }) {
   const dir = path.join(m.home, '.local/share/opencode')

@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/agents: what each agent's screen and transcript say.
+//! Port of the Bun hub's agents folder (removed in 0.23): what each agent's screen and transcript say.
 
 pub mod antigravity;
 pub mod antigravity_models;

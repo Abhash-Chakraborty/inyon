@@ -1,7 +1,7 @@
 //! The phone link: how a phone and a machine find each other and talk, end to end encrypted.
-//! A port of packages/link that must stay byte for byte compatible with it (fixtures/link holds the
-//! vectors both test against), so a Rust machine and a Bun phone, or the other way round, still
-//! talk. No runtime in here: sockets, timers and HTTP belong to the caller, and the crate builds for
+//! A port of packages/link (removed in 0.23) that must stay byte for byte compatible with it
+//! (fixtures/link holds the vectors it wrote), so an older phone or machine on the TypeScript link
+//! still talks to this one. No runtime in here: sockets, timers and HTTP belong to the caller, and the crate builds for
 //! wasm32 as well as native.
 
 pub mod channel;

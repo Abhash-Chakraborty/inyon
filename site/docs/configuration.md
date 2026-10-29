@@ -7,7 +7,7 @@ Most people never set anything by hand: `inyon setup` writes what it needs. This
 
 ## Hub settings
 
-An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon setup` writes it for you. Variables set in the environment win over the file. A hub run from source reads only the environment.
+An installed hub reads `~/.inyon/hub.env`, one `NAME=value` per line, and `inyon setup` writes it for you. Variables set in the environment win over the file.
 
 | Variable | Default | What it does |
 |---|---|---|

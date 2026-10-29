@@ -1,5 +1,5 @@
-//! The Rust link against the bytes the TS link produces (fixtures/link, written by
-//! packages/link/src/vectors.ts). Every vector in every file is checked.
+//! The Rust link against the bytes the TS link produced (fixtures/link, written by
+//! packages/link's vectors.ts before it was removed in 0.23). Every vector in every file is checked.
 
 use std::fs;
 

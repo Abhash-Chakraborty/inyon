@@ -55,7 +55,7 @@ export const sharp = () => req('sharp');
 // serve() answers the way Inyon's hub answers /v/<token>/ for a page, so a site that works here works in
 // Inyon: the same headers in the same order, the same sandbox, a 301 that adds a folder's slash, ETags,
 // no folder listings and no dot files. The header list and the rules are copied from Inyon's
-// apps/hub/src/features/pages-core.ts (viewHeaders, viewCsp, decideView); fixtures/pages/responses.json
+// crates/inyon-core/src/features/pages_core.rs (view_headers, view_csp, decide_view); fixtures/pages/responses.json
 // in the Inyon repo pins them, and tests/serve.test.mjs replays those cases against this server. Change
 // them together. The one difference: there is no token here, so the site's root is the folder.
 const TYPES = {

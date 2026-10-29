@@ -1,7 +1,7 @@
 [package]
 name = "inyon-link"
 version.workspace = true
-description = "The phone link: identities, the Noise channel, pairing codes and pkarr records (port of packages/link)"
+description = "The phone link: identities, the Noise channel, pairing codes and pkarr records (ported from packages/link, removed in 0.23)"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

@@ -5,19 +5,6 @@
     "": {
       "name": "inyon",
     },
-    "apps/hub": {
-      "name": "@inyon/hub",
-      "dependencies": {
-        "@inyon/link": "workspace:*",
-        "@inyon/protocol": "workspace:*",
-        "@noble/curves": "^2.4.0",
-        "@noble/hashes": "^2.4.0",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.4.2",
-        "typescript": "^7.0.2",
-      },
-    },
     "apps/mobile": {
       "name": "@inyon/mobile",
       "dependencies": {
@@ -31,18 +18,6 @@
       "devDependencies": {
         "@capacitor/cli": "^8.5.3",
         "sharp": "^0.35.5",
-      },
-    },
-    "apps/node": {
-      "name": "@inyon/node",
-      "dependencies": {
-        "@inyon/link": "workspace:*",
-        "@inyon/protocol": "workspace:*",
-        "uqr": "^0.1.3",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.4.2",
-        "typescript": "^7.0.2",
       },
     },
     "apps/web": {
@@ -90,18 +65,6 @@
       "name": "@inyon/conformance",
       "dependencies": {
         "@inyon/protocol": "workspace:*",
-      },
-      "devDependencies": {
-        "@types/bun": "^1.4.2",
-        "typescript": "^7.0.2",
-      },
-    },
-    "packages/link": {
-      "name": "@inyon/link",
-      "dependencies": {
-        "@noble/ciphers": "^2.4.0",
-        "@noble/curves": "^2.4.0",
-        "@noble/hashes": "^2.4.0",
       },
       "devDependencies": {
         "@types/bun": "^1.4.2",
@@ -203,13 +166,7 @@
 
     "@inyon/conformance": ["@inyon/conformance@workspace:conformance"],
 
-    "@inyon/hub": ["@inyon/hub@workspace:apps/hub"],
-
-    "@inyon/link": ["@inyon/link@workspace:packages/link"],
-
     "@inyon/mobile": ["@inyon/mobile@workspace:apps/mobile"],
-
-    "@inyon/node": ["@inyon/node@workspace:apps/node"],
 
     "@inyon/protocol": ["@inyon/protocol@workspace:packages/protocol"],
 
@@ -242,12 +199,6 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.6.0", "", {}, "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "3.1.2", "@jridgewell/sourcemap-codec": "1.6.0" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
-
-    "@noble/ciphers": ["@noble/ciphers@2.4.0", "", {}, "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw=="],
-
-    "@noble/curves": ["@noble/curves@2.4.0", "", { "dependencies": { "@noble/hashes": "2.4.0" } }, "sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew=="],
-
-    "@noble/hashes": ["@noble/hashes@2.4.0", "", {}, "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.153.0", "", {}, "sha512-jSNrRIyvPVLL5E1z/tS5zLAprosGz/FuI1PWwEOz59j3E4TTTzSpqKb/RDGqJhhW0QHYISGXxq582wGx6T11Tw=="],
 

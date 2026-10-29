@@ -23,11 +23,11 @@ const commit = () => {
  * The app carries the Rust phone core (crates/inyon-phone, written to src/phone-core by
  * scripts/phone-core.ts, which `bun run build` runs first). Only the Android app and the browser
  * copy load it. VITE_INYON_PHONE_CORE=none leaves it out, for the copy a hub serves (it never
- * loads it); =ts builds with the TypeScript core instead, until that's removed.
+ * loads it).
  */
-const cores: Record<string, string> = { rust: './src/phone-core/index.ts', none: './src/lib/no-phone-core.ts', ts: '../hub/src/phone/index.ts' }
+const cores: Record<string, string> = { rust: './src/phone-core/index.ts', none: './src/lib/no-phone-core.ts' }
 const coreKind = process.env.VITE_INYON_PHONE_CORE ?? 'rust'
-if (!cores[coreKind]) throw new Error(`VITE_INYON_PHONE_CORE is rust, none or ts, not ${coreKind}`)
+if (!cores[coreKind]) throw new Error(`VITE_INYON_PHONE_CORE is rust or none, not ${coreKind}`)
 const rustCore = coreKind === 'rust'
 const phoneCore = fileURLToPath(new URL(cores[coreKind], import.meta.url))
 if (rustCore && !existsSync(phoneCore)) throw new Error('The phone core is missing: run `bun scripts/phone-core.ts` (or `bun run build`) first')

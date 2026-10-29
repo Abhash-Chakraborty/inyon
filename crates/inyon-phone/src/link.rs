@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/phone/link.ts: the phone's side of `inyon link`. One end-to-end encrypted
+//! Port of the TypeScript phone core's link.ts (removed in 0.23): the phone's side of `inyon link`. One end-to-end encrypted
 //! channel per paired laptop, carrying the same commands a hub sends to inyon. It tries the
 //! addresses the laptop gave last (its LAN address first, then its tunnel), looks up its current
 //! ones by its id when those fail (a tunnel's address changes every time it restarts), then its

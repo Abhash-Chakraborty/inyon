@@ -1,11 +1,13 @@
 # Hub conformance
 
-Golden transcripts of what the hub answers, and a harness that checks a hub against them. Today's
-Bun hub (`apps/hub`) wrote the goldens; the Rust hub planned for 0.20 has to produce the same
-transcripts, line for line, before it replaces the Bun one.
+Golden transcripts of what the hub answers, and a harness that checks a hub against them. The Bun
+hub wrote the first goldens; the hub in Rust (`crates/inyon-hub`) had to produce the same
+transcripts, line for line, before it replaced it, and the Bun hub was removed in 0.23. Now the
+goldens hold the Rust hub to what it answers.
 
 ```sh
-bun conformance/run.ts                          # the Bun hub from this checkout
+bun run --cwd apps/web build && cargo build -p inyon-cli   # the hub serves the app built here
+bun conformance/run.ts                          # the hub cargo built in this checkout
 bun conformance/run.ts --hub '<command>'        # any other hub
 bun conformance/run.ts --update                 # rewrite the goldens from this run
 bun conformance/run.ts --only phones,push       # some scenarios
@@ -18,9 +20,8 @@ A full run takes about 2.5 minutes on two ARM cores and needs no network, tmux o
 ## Why it lives at the repo root
 
 It tests a contract between programs, not one package. It starts the hub as a separate process by
-its command line, so it can test the Bun hub in `apps/hub` and a Rust hub from `crates/` alike.
-Inside `apps/hub` it would look like a hub test, and the Rust hub would have to reach into the old
-hub's folder for its own acceptance test. It is a Bun workspace (`@inyon/conformance`) so
+its command line, so any hub can be checked against the same goldens (it held the Bun hub and the
+Rust one to the same answers while both existed). It is a Bun workspace (`@inyon/conformance`) so
 `bun --filter '*' typecheck` covers it.
 
 ## How a run works
@@ -68,7 +69,7 @@ exactly. Each rule says why it exists:
 | view-name | the random name of a terminal's view session |
 | iso-time | ISO timestamps from this run (fixtures are dated January 2026 and stay) |
 | epoch | clock readings in ms or s from two days before the run to 40 days after |
-| key-order | the order of an object's fields (sorted by name); arrays keep theirs. The Bun hub writes fields in the order its code adds them, a Rust struct in the order it declares them, and every client reads them with `JSON.parse`. Keys that are ids not seen before (a map keyed by session ids) are numbered in the order of what they hold, so two such maps alike but for order still match |
+| key-order | the order of an object's fields (sorted by name); arrays keep theirs. The Bun hub wrote fields in the order its code added them, a Rust struct in the order it declares them, and every client reads them with `JSON.parse`. Keys that are ids not seen before (a map keyed by session ids) are numbered in the order of what they hold, so two such maps alike but for order still match |
 | latency | `latencyMs` |
 
 `test/normalize.test.ts` has a test for each rule and fails when a rule has none.
@@ -92,19 +93,14 @@ with it. The diff of the golden file is the review.
 
 `--hub '<command>'` runs the command with `/bin/sh -c` in the temp folder, with this environment:
 `PORT`, `BIND=127.0.0.1`, `INYON_DATA_DIR`, `HOME`, `PATH`, `NODE_ENV=test`,
-`INYON_HUB_NAME="Conformance hub"`, `INYON_CLI_DIST` (an empty folder), `TMUX_TMPDIR`,
-`LANG=C.UTF-8` and `TZ=UTC`. The hub must read the same data files (`hosts.json`, `hub.json`,
-`setup-code`, `local-token`) and answer on `/api/session` within 30 s. The harness also seeds
-placeholder engine files in `INYON_DATA_DIR/node-dist`, named with the build tag a hub run from this
-checkout uses, so nothing is built. A hub that names its build some other way needs its own offline
-files for the `node-dist` scenario.
+`INYON_HUB_NAME="Conformance hub"`, `INYON_CLI_DIST`, `TMUX_TMPDIR`, `LANG=C.UTF-8` and `TZ=UTC`
+(and `CARGO_TARGET_DIR` when it's set). The hub must read the same data files (`hosts.json`,
+`hub.json`, `setup-code`, `local-token`) and answer on `/api/session` within 30 s.
+`INYON_CLI_DIST` holds a small placeholder `inyon` for each system (the Windows ones with just
+enough of a PE header to be made windowless), standing in for what cargo builds into
+`apps/cli/dist`, so the `node-dist` scenario builds and fetches nothing.
 
-The Rust hub (`crates/inyon-hub`) is the `inyon` command from this checkout with the switch on:
-
-```sh
-bun run --cwd apps/web build && cargo build -p inyon-cli
-bun conformance/run.ts --hub "env INYON_HUB_IMPL=rust $PWD/target/debug/inyon engine hub"
-```
+The default hub is `$CARGO_TARGET_DIR/debug/inyon engine hub` (or `target/debug` without it).
 
 ## What is covered
 
@@ -137,7 +133,7 @@ bun conformance/run.ts --hub "env INYON_HUB_IMPL=rust $PWD/target/debug/inyon en
 - Offline and back-online notices: they come after a machine has been gone for 60 s.
 - Delivering a Web Push message (the push service needs TLS); only the routes are covered.
 - SSH machines: adding one starts a real `ssh`.
-- Downloads that come from GitHub: the Windows `inyon` command, busybox, release checksums.
+- Downloads that come from GitHub: busybox, release checksums.
 - Uploads, git routes, file editing, rewind, fork, launch and restart, provider sign-in, the
   integration hooks, Antigravity, Gemini and Copilot sessions. They need more of a machine than
   the fake one models, and are next.

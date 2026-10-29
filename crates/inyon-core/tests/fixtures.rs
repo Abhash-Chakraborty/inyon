@@ -1,6 +1,6 @@
-//! Every shared capture through the Rust readers, compared with what the TS readers made of it
-//! (fixtures/expected, written by `bun apps/hub/src/cli/expected.ts` and checked by the hub's
-//! expected.test.ts). Also the chat.screen wire samples, rebuilt from the captures they came from.
+//! Every shared capture through the Rust readers, compared with fixtures/expected: what the TS
+//! readers made of them while the Bun hub existed (until 0.23), and what INYON_BLESS=1 writes for
+//! a capture added since. Also the chat.screen wire samples, rebuilt from the captures they came from.
 
 use std::path::{Path, PathBuf};
 
@@ -8,7 +8,7 @@ use inyon_core::claude::screen::{codex_browsing, parse_screen, prompt_summary};
 use inyon_protocol::AgentKind;
 use serde_json::{json, Value};
 
-/// Date.now() while the readers run (EXPECTED_NOW in apps/hub/src/expected.ts)
+/// Date.now() while the readers run (EXPECTED_NOW in the Bun hub's expected.ts)
 const EXPECTED_NOW: u64 = 1_792_320_000_000;
 
 fn fixtures() -> PathBuf {

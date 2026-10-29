@@ -192,59 +192,40 @@ fn a_hub_on_its_own_certificate_hands_its_sha256_to_join_and_every_download_is_s
     assert_eq!(unchecked.ran, None);
 }
 
-#[test]
-fn the_build_tag_is_the_bun_hubs() {
-    let Some(repo) = crate::hub_update::checkout() else { return };
-    let out = std::process::Command::new("bun")
-        .args(["-e", "import { tag } from './apps/hub/src/features/node-dist.ts'; console.log(tag())"])
-        .current_dir(&repo)
-        .env("NODE_ENV", "test")
-        .output();
-    let Some(out) = out.ok().filter(|o| o.status.success()) else { return };
-    let line = String::from_utf8_lossy(&out.stdout).trim().lines().last().unwrap_or("").to_owned();
-    assert_eq!(source_hash(&repo), line);
+/// A Windows console program, as small as one gets: the DOS header pointing at a PE header.
+fn exe() -> Vec<u8> {
+    let mut b = vec![0u8; 0x200];
+    b[..2].copy_from_slice(b"MZ");
+    b[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+    b[0x80..0x84].copy_from_slice(b"PE\0\0");
+    b[0x80 + 92..0x80 + 94].copy_from_slice(&3u16.to_le_bytes());
+    b
 }
 
-#[cfg(unix)]
 #[test]
-fn a_checkouts_windows_engine_is_served_though_bun_adds_exe_to_its_name() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("inyon-node-dist-{}", crate::http::random_hex(6)));
-    let repo = dir.join("repo");
-    std::fs::create_dir_all(repo.join("apps/node")).unwrap();
-    // Bun.build with a windows target: the outfile gets .exe on the end
-    let bun = dir.join("bun");
-    std::fs::write(
-        &bun,
-        "#!/bin/sh\nout=$(printf '%s' \"$2\" | sed -n 's/.*outfile: \"\\([^\"]*\\)\".*/\\1/p')\ncase \"$out\" in *windows*) out=\"$out.exe\";; esac\nprintf 'engine' > \"$out\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&bun, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let d = Dist::with_bun(Some(repo), &dir.join("data"), bun);
-    let (win, linux) = block(async { (d.engine("windows-x64").await, d.engine("linux-x64").await) });
-    let _ = std::fs::remove_dir_all(&dir);
-    let win = win.unwrap();
-    assert!(win.to_string_lossy().ends_with("-inyon-engine-windows-x64.exe"), "{}", win.display());
-    assert!(linux.unwrap().to_string_lossy().ends_with("-inyon-engine-linux-x64"));
+fn the_windowless_copy_changes_only_the_subsystem_and_anything_else_is_refused() {
+    let from = exe();
+    let copy = windowless(from.clone()).unwrap();
+    let changed: Vec<usize> = (0..from.len()).filter(|&i| from[i] != copy[i]).collect();
+    assert_eq!(changed, [0x80 + 92]);
+    assert_eq!(u16::from_le_bytes([copy[0x80 + 92], copy[0x80 + 93]]), 2);
+    assert!(windowless(b"#!/bin/sh\n".to_vec()).is_err());
+    let mut cut = exe();
+    cut.truncate(0x90);
+    assert!(windowless(cut).is_err());
 }
 
-/// A hub built in a throwaway checkout whose engines a fake bun builds, with nothing in its
-/// apps/cli/dist.
-#[cfg(unix)]
-fn checkout_dist() -> (std::path::PathBuf, Rc<Dist>) {
-    use std::os::unix::fs::PermissionsExt;
+/// A hub built in a throwaway checkout, cargo's builds in its own cli-dist folder.
+fn checkout_dist(built: &[(&str, Vec<u8>)]) -> (std::path::PathBuf, Rc<Dist>) {
     let dir = std::env::temp_dir().join(format!("inyon-node-dist-{}", crate::http::random_hex(6)));
-    let repo = dir.join("repo");
-    std::fs::create_dir_all(repo.join("apps/node")).unwrap();
-    let bun = dir.join("bun");
-    std::fs::write(
-        &bun,
-        "#!/bin/sh\nout=$(printf '%s' \"$2\" | sed -n 's/.*outfile: \"\\([^\"]*\\)\".*/\\1/p')\ncase \"$out\" in *windows*) out=\"$out.exe\";; esac\nprintf 'engine' > \"$out\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&bun, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let d = Rc::into_inner(Dist::with_bun(Some(repo), &dir.join("data"), bun)).unwrap();
-    (dir.clone(), Rc::new(Dist { cli_dist: dir.join("cli-dist"), ..d }))
+    let cli_dist = dir.join("cli-dist");
+    std::fs::create_dir_all(&cli_dist).unwrap();
+    for (t, data) in built {
+        std::fs::write(cli_dist.join(cli_file(t)), data).unwrap();
+    }
+    let d = Rc::into_inner(Dist::new(Some(dir.join("repo")), &dir.join("data"))).unwrap();
+    let tag = built_tag(&cli_dist);
+    (dir.clone(), Rc::new(Dist { cli_dist, tag, ..d }))
 }
 
 /// The release's checksums, as a release that can't be had answers.
@@ -253,63 +234,61 @@ fn sums_fail(d: &Dist) {
     *d.sums.borrow_mut() = Some(f.shared());
 }
 
-#[cfg(unix)]
 #[test]
-fn a_checkout_without_a_built_command_hands_windows_the_release_command_and_the_engine_only_when_that_fails() {
-    let (dir, d) = checkout_dist();
+fn a_checkout_hands_out_what_cargo_built_and_the_release_for_a_system_it_didnt_build() {
+    let (dir, d) = checkout_dist(&[("linux-x64", b"linux build".to_vec()), ("windows-x64", exe())]);
+    assert!(d.tag().starts_with("checkout-"), "{}", d.tag());
     std::fs::create_dir_all(&d.out).unwrap();
-    let release = d.out.join(format!("v{VERSION}-{}", cli_file("windows-x64")));
+    let release = d.out.join(format!("v{VERSION}-{}", cli_file("darwin-arm64")));
     std::fs::write(&release, "release").unwrap();
-    // anything that asks the release for its checksums trips this
-    let asked = Rc::new(std::cell::Cell::new(false));
-    let a = asked.clone();
-    let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async move {
-        a.set(true);
-        Err(http(502, "the release was asked"))
+    sums_fail(&d);
+    let (linux, linux_engine, win_engine, darwin, arm, darwin_engine) = block(async {
+        let linux = d.command("linux-x64").await;
+        let linux_engine = d.engine("linux-x64").await;
+        let win_engine = d.engine("windows-x64").await;
+        let darwin = d.command("darwin-arm64").await;
+        sums_fail(&d);
+        let arm = d.command("windows-arm64").await;
+        sums_fail(&d);
+        let darwin_engine = d.engine("darwin-x64").await;
+        (linux, linux_engine, win_engine, darwin, arm, darwin_engine)
     });
-    *d.sums.borrow_mut() = Some(f.shared());
-    let (win, linux) = block(async { (d.source_command("windows-x64").await, d.source_command("linux-x64").await) });
-    assert!(!asked.get(), "Linux, or Windows with the release's command already here, asked the release");
-    assert_eq!(win.unwrap(), release);
-    // Linux and macOS keep the engine standing in for both (install.sh reads that from SHA256SUMS)
-    assert_eq!(linux.unwrap(), d.out.join(format!("{}-{}", d.tag(), engine_file("linux-x64"))));
-    let built: Vec<String> = std::fs::read_dir(&d.out).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
-    assert!(!built.iter().any(|f| f.contains("engine-windows")), "{built:?}");
-    std::fs::create_dir_all(&d.cli_dist).unwrap();
-    std::fs::write(d.cli_dist.join(cli_file("windows-x64")), "built").unwrap();
-    assert_eq!(block(d.source_command("windows-x64")).unwrap(), d.cli_dist.join(cli_file("windows-x64")));
-
-    let (dir2, offline) = checkout_dist();
-    let warned = Rc::new(RefCell::new(vec![]));
-    let w = warned.clone();
-    let (win, arm) = block(async {
-        let sink: inyon_core::platform::console::Sink = Rc::new(move |_, l: &str| w.borrow_mut().push(l.to_owned()));
-        inyon_core::platform::console::set_sink(Some(sink));
-        sums_fail(&offline);
-        let win = offline.source_command("windows-x64").await;
-        sums_fail(&offline);
-        let arm = offline.source_command("windows-arm64").await;
-        inyon_core::platform::console::set_sink(None);
-        (win, arm)
-    });
-    let _ = (std::fs::remove_dir_all(&dir), std::fs::remove_dir_all(&dir2));
-    assert_eq!(win.unwrap(), offline.out.join(format!("{}-{}", offline.tag(), engine_file("windows-x64"))));
-    assert!(warned.borrow()[0].contains("handing out the engine instead"), "{:?}", warned.borrow());
+    let read = |p: &std::path::Path| std::fs::read(p).unwrap();
+    assert_eq!(linux.unwrap(), d.cli_dist.join(cli_file("linux-x64")));
+    // an older inyon's engine is a copy of the command, the Windows one without its console
+    let linux_engine = linux_engine.unwrap();
+    assert_eq!(linux_engine, d.out.join(format!("{}-{}", d.tag(), engine_file("linux-x64"))));
+    assert_eq!(read(&linux_engine), b"linux build");
+    assert_eq!(read(&win_engine.unwrap()), windowless(exe()).unwrap());
+    // a system cargo didn't build gets the release's file, here already
+    assert_eq!(darwin.unwrap(), release);
     let e = arm.unwrap_err();
     assert_eq!(e.status, Some(503));
     assert!(e.message.contains("has no inyon command for windows-arm64"), "{}", e.message);
+    assert_eq!(darwin_engine.unwrap_err().status, Some(502));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_cargo_build_is_a_new_tag() {
+    let dir = std::env::temp_dir().join(format!("inyon-node-dist-{}", crate::http::random_hex(6)));
+    std::fs::create_dir_all(&dir).unwrap();
+    let none = built_tag(&dir);
+    std::fs::write(dir.join(cli_file("linux-arm64")), "one").unwrap();
+    let one = built_tag(&dir);
+    std::fs::write(dir.join(cli_file("linux-arm64")), "two!").unwrap();
+    let two = built_tag(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(none != one && one != two, "{none} {one} {two}");
 }
 
 #[test]
 fn a_checkouts_build_and_this_release_both_stay_when_their_tags_differ() {
     let dir = std::env::temp_dir().join(format!("inyon-node-dist-{}", crate::http::random_hex(6)));
-    let repo = dir.join("repo");
-    std::fs::create_dir_all(repo.join("apps/node")).unwrap();
-    std::fs::write(repo.join("apps/node/main.ts"), "the engine").unwrap();
     let out = dir.join("out");
     std::fs::create_dir_all(&out).unwrap();
-    let d = Dist::new(Some(repo), &dir);
-    // a hub run from a checkout: its tag is the source's hash, not the release
+    let d = Dist::new(Some(dir.join("repo")), &dir);
+    // a hub run from a checkout: its tag is its builds', not the release
     let tag = d.tag().to_owned();
     assert_ne!(tag, format!("v{VERSION}"));
     let stale = [
@@ -318,6 +297,8 @@ fn a_checkouts_build_and_this_release_both_stay_when_their_tags_differ() {
         "v0.12.0-inyon-engine-linux-x64.sha256",
         "v0.12.0-inyon-windows-x64.exe",
         "0123456789abcdef-inyon-engine-darwin-arm64",
+        // an earlier cargo build
+        "checkout-0123456789ab-inyon-engine-linux-x64",
         "inyon-0123456789abcdef-inyon-engine-linux-x64",
         "tether-node-0123456789abcdef.js",
     ];
@@ -788,10 +769,9 @@ fn a_new_system_is_prepared_while_an_add_a_machine_command_waits_or_for_a_paired
     assert!(may_prepare("windows", &paired, os(&[]), now));
 }
 
-#[cfg(unix)]
 #[test]
 fn nobody_signed_in_can_make_the_hub_build_or_download_inyon_for_a_system_no_machine_needs() {
-    let (dir, d) = checkout_dist();
+    let (dir, d) = checkout_dist(&[]);
     let asked = Rc::new(std::cell::Cell::new(false));
     let a = asked.clone();
     let f: LocalBoxFuture<'static, Result<Signed, HubError>> = Box::pin(async move {

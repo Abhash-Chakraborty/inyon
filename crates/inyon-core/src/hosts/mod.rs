@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/hosts: the machines, how commands reach them, and what's known of each.
+//! Port of the Bun hub's hosts folder (removed in 0.23): the machines, how commands reach them, and what's known of each.
 
 pub mod coalesce;
 pub mod failure;

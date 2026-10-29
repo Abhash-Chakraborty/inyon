@@ -1,4 +1,4 @@
-//! Port of `phoneKeys` in apps/hub/src/phone/index.ts: the phone's own SSH key (made on first use,
+//! `phoneKeys` from the TypeScript phone core (removed in 0.23): the phone's own SSH key (made on first use,
 //! one for every server, so you add one line to authorized_keys) and each server's password or
 //! pasted key, all in the Android keystore through the plugin.
 

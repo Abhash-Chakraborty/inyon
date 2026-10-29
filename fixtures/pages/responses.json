@@ -1,5 +1,5 @@
 {
- "about": "What a hub answers to each request against fixtures/pages/site. Lay the site out as `setup` says (bun: layOutFixtureSite in apps/hub/src/cli/pages-vectors.ts), serve it as the page context.site with the context below (key, now, epochs, phones from tokens.json), accept the Host context.host over plain http and refuse context.wrongHost, and send each request as raw bytes (a client would resolve the dot segments itself). The response must have exactly this status and these headers, apart from ignoredHeaders. body: null is empty, {file} is that file under fixtures/pages, {page} is errorPages[status].",
+ "about": "What a hub answers to each request against fixtures/pages/site. Lay the site out as `setup` says (lay_out in crates/inyon-core/src/features/pages_core_tests.rs), serve it as the page context.site with the context below (key, now, epochs, phones from tokens.json), accept the Host context.host over plain http and refuse context.wrongHost, and send each request as raw bytes (a client would resolve the dot segments itself). The response must have exactly this status and these headers, apart from ignoredHeaders. body: null is empty, {file} is that file under fixtures/pages, {page} is errorPages[status].",
  "setup": {
   "copy": "site",
   "to": "<dir>/site",

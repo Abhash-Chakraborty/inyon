@@ -29,7 +29,7 @@ await Bun.write(
   join(out, 'index.ts'),
   `// Written by scripts/phone-core.ts: the Rust phone core as @inyon/phone (see vite.config.ts).
 import init, { startPhone as start } from './inyon_phone.js'
-import type { StartPhone } from '../../../hub/src/phone/types.ts'
+import type { StartPhone } from '../lib/phone-types.ts'
 
 export const startPhone: StartPhone = async (o) => {
   await init()

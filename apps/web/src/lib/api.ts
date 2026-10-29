@@ -264,7 +264,7 @@ export interface CustomAgent {
   like: AgentKind
 }
 
-/** The hub's own update (hub mode only; see apps/hub/src/features/hub-update.ts). */
+/** The hub's own update (hub mode only; see crates/inyon-hub/src/hub_update.rs). */
 export interface HubUpdate {
   current: string
   latest?: string

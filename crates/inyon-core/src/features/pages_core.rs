@@ -1,8 +1,8 @@
-//! Port of features/pages-core.ts: the rules both hubs share for serving an agent's site under
+//! Port of features/pages-core.ts (the Bun hub's, removed in 0.23): the rules for serving an agent's site under
 //! `/v/<token>/<path>`. Tokens, slugs, the path rules and the headers on every `/v/` answer live
 //! here, with no I/O of their own: the key, the clock and the file system come in as arguments.
-//! fixtures/pages (written by `bun apps/hub/src/cli/pages-vectors.ts`) holds what this must
-//! produce, byte for byte, so a token one hub mints opens in the other and both answer alike.
+//! fixtures/pages (written by the Bun hub while it existed) holds what this must produce, byte for
+//! byte, so a token an older hub minted still opens and every hub answers alike.
 //!
 //! The threat is the site itself: an agent wrote its HTML and JS and may have been talked into
 //! something. So `/v/` never reads a cookie or an Authorization header, never sets a cookie, and

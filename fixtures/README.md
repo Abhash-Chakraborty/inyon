@@ -1,8 +1,9 @@
 # Test fixtures
 
-Captured agent screens and records that the parser tests read. The hub's tests (`bun test` in
-`apps/hub`) and the Rust tests (`cargo test`) read the same files, so a parser ported to Rust is
-checked against exactly what the Bun one was.
+Captured agent screens and records that the parser tests read. Until 0.23 the Bun hub's tests
+and the Rust tests read the same files, so each parser ported to Rust was checked against exactly
+what the Bun one made of them. The Bun hub is gone now, and these files hold the Rust side to
+those answers.
 
 ## Layout
 
@@ -11,30 +12,31 @@ fixtures/
   screens/<agent>/<name>.txt         one terminal capture each
   transcripts/<agent>/<name>.jsonl   an agent's own records, one JSON value per line
   protocol/<Type>/<name>.json        messages the hub and the app send each other
-  link/<part>.json                   the phone link's bytes, from packages/link/src/vectors.ts
-  pages/                             a small site and what both hubs answer for it under /v/
-  expected/                          what the TS readers make of the captures, for the Rust ones
+  link/<part>.json                   the phone link's bytes, as the TypeScript link wrote them
+  pages/                             a small site and what a hub answers for it under /v/
+  expected/                          what the readers make of the captures
   old-git/                           a git that prints rev-parse options it doesn't know back
 ```
 
 `<agent>` is the agent's id from `packages/protocol/src/agents.ts`: `claude`, `codex`, `opencode`,
 `copilot`, `gemini` or `antigravity`. The screen and transcript parsers are tested from here.
 
-`protocol/` holds wire samples, made with the hub's own parsers and readers. `<Type>` is the name
+`protocol/` holds wire samples, made with the Bun hub's parsers and readers. `<Type>` is the name
 of a type in `packages/protocol` (`ServerMsg`, `ClientMsg`, `AgentCatalog`…), and a file holds one
 message or an array of them. Each must read into the Rust type and write back as the same JSON.
 
 `link/` holds the phone link's test vectors (identity, Noise, channel, codes, pairing links, pkarr,
-relay). `bun packages/link/src/vectors.ts` writes them, and both `packages/link` and `crates/inyon-link`
-check their output against them.
+relay), written by the TypeScript link (`packages/link`, removed in 0.23). `crates/inyon-link`
+checks its output against them. They don't change: phones and computers on older versions still
+send those bytes.
 
-`expected/` holds what the hub's TS readers make of the shared captures:
+`expected/` holds what the readers make of the shared captures:
 `expected/screens/<agent>/<name>.json` for each screen (read at its own width, at 80 and at 120
-columns), and `expected/chat-screen.json`, which ties each `chat.screen` sample in `protocol/` to
-the capture it came from. `bun apps/hub/src/cli/expected.ts` writes them; the hub's
-`expected.test.ts` fails when they no longer match the TS readers, and `crates/inyon-core` checks
-the Rust readers against them. Write them again after a reader changes on purpose or a capture is
-added, and commit them with the change.
+columns), `expected/chat-screen.json`, which ties each `chat.screen` sample in `protocol/` to the
+capture it came from, and `expected/scripts.json`, the shell the hub sends to machines. The Bun
+hub's readers wrote them; `crates/inyon-core` checks the Rust readers against them.
+`INYON_BLESS=1 cargo test -p inyon-core --test fixtures` writes the file for a capture added since.
+When a reader changes on purpose, change its file in the same commit.
 
 `pages/` is the contract for Pages, the agent-made sites the hub serves under `/v/<token>/`:
 
@@ -44,22 +46,21 @@ added, and commit them with the change.
 - `tokens.json` holds the token key made from a fixed session secret, tokens minted at a fixed
   time, and tokens to verify with the verdict each must get: valid, expired, revoked, a phone that
   was unpaired, a changed payload or mac, and a list of malformed ones.
-- `rules.json` holds the rules the hubs and the `inyon` command share: slugs made from names, which
+- `rules.json` holds the rules the hub and the `inyon` command share: slugs made from names, which
   folders may be pages, and how a `progress.json` is counted for the list.
 - `responses.json` lists requests against `site/` (traversal, encoded dot segments, dot files, a
   folder without its slash, symlinks out of the site, HEAD, If-None-Match, bad tokens, other
   methods, a wrong Host) and the exact status, headers and body each one gets. Its `setup` says
   how to lay the site out first: copied to a temp folder, with symlinks added and every mtime set.
 
-`bun apps/hub/src/cli/pages-vectors.ts` writes the three JSON files from
-`apps/hub/src/features/pages-core.ts`; `pages-core.test.ts` fails when they no longer match it.
-Both hubs send each request in `responses.json` to a real server and compare, so a change to
-the rules means writing the files again and changing the Rust hub in the same commit.
+The Bun hub wrote the three JSON files from its pages rules. The Rust hub sends each request in
+`responses.json` to a real server and compares, and `crates/inyon-core` checks the tokens and
+rules, so a change to the rules means changing the files and the code in the same commit.
 
 `old-git/git` stands in for git before 2.31, which prints an option it doesn't know
 (`--path-format=absolute`) back on stdout and still exits 0; `old-git/git-2.4` doesn't know
 `--git-common-dir` either. Everything else goes to the real git. The tests for the project a page
-belongs to (the hubs, the `inyon` command and the Blueprint skill) run against both and the real one.
+belongs to (the hub, the `inyon` command and the Blueprint skill) run against both and the real one.
 
 There are no transcript captures yet. The reader tests build their records in code, one at a time,
 next to what each one should produce.
@@ -86,8 +87,6 @@ Shorten home paths and anything private before you commit it.
 
 ## Reading them
 
-- Bun: `fixture('screens/codex/queued.txt')` and `screenFixture('codex', 'queued')` from
-  `apps/hub/src/fixtures.ts`.
-- Rust: `cargo test -p inyon-protocol --test fixtures` (`crates/inyon-protocol/tests/fixtures.rs`)
-  loads every file and fails on one that is out of place or doesn't parse, so the layout is checked
-  from both sides.
+- Rust tests: `screen_fixture("codex", "queued")` from `crates/inyon-core/src/test_support.rs`.
+- The layout: `cargo test -p inyon-protocol --test fixtures` (`crates/inyon-protocol/tests/fixtures.rs`)
+  loads every file and fails on one that is out of place or doesn't parse.

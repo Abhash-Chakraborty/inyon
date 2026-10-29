@@ -207,7 +207,7 @@ export class Machine {
   async start() {
     fs.mkdirSync(this.bin, { recursive: true })
     fs.mkdirSync(path.join(this.home, '.inyon'), { recursive: true })
-    // what MACHINE_KIND_SH (apps/hub/src/tmux/machine-kind.ts) caches: a server, read once a day
+    // what MACHINE_KIND_SH (crates/inyon-core/src/tmux/machine_kind.rs) caches: a server, read once a day
     fs.writeFileSync(path.join(this.home, '.inyon', 'machine-kind'), 'Linux|1||kvm|0|0|Conformance VM|\n')
     const stub = path.join(import.meta.dir, 'stub.ts')
     const write = (name: string, body: string) => fs.writeFileSync(path.join(this.bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
@@ -218,7 +218,7 @@ export class Machine {
     write('curl', 'echo "curl: (7) Failed to connect (conformance machine has no network)" >&2; exit 7')
     // agent programs exist (command -v finds them) but are never started for real
     for (const name of ['claude', 'codex']) write(name, `echo "${name} (conformance stub)"; exit 0`)
-    // OpenCode answers the two listings the hub asks it for (apps/hub/src/agents/opencode-models.ts)
+    // OpenCode answers the two listings the hub asks it for (crates/inyon-core/src/agents/opencode_models.rs)
     write('opencode', OPENCODE)
     // the probe's Copilot sign-in check starts node; there is no Copilot here
     write('node', 'exit 1')

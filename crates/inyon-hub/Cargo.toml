@@ -1,7 +1,7 @@
 [package]
 name = "inyon-hub"
 version.workspace = true
-description = "The hub: Inyon's API, live updates and web app over HTTP and WebSockets, on the hub core (port of apps/hub/src/index.ts and its routes)"
+description = "The hub: Inyon's API, live updates and web app over HTTP and WebSockets, on the hub core (ported from the Bun hub, removed in 0.23)"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

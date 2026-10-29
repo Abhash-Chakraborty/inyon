@@ -1,12 +1,12 @@
 // The Rust phone core as the web app meets it: the wasm module that apps/web/scripts/phone-core.ts
-// writes, started and called the way apps/web/src/lib/phone.ts calls the TypeScript one.
+// writes, started and called the way apps/web/src/lib/phone.ts calls it.
 // Run it after that script: bun test crates/inyon-phone/js. With INYON_BIN set to an inyon
 // program, it also pairs with that program's `inyon link`.
 import { beforeAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PhoneRuntime, PhoneStore, StartPhone } from '../../../apps/hub/src/phone/types.ts'
+import type { PhoneRuntime, PhoneStore, StartPhone } from '../../../apps/web/src/lib/phone-types.ts'
 
 const dir = join(import.meta.dir, '../../../apps/web/src/phone-core')
 let startPhone: StartPhone

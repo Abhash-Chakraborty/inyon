@@ -3,12 +3,11 @@
  * that drops the question mark from "Which endpoint?". Started like any hub under test (PORT,
  * BIND and the rest from the environment); the real one listens on a port of its own.
  */
-import path from 'node:path'
-import { freePort, REPO } from '../lib/hub.ts'
+import { freePort, INYON } from '../lib/hub.ts'
 
 const port = Number(process.env.PORT)
 const inner = await freePort()
-const hub = Bun.spawn([process.execPath, path.join(REPO, 'apps/hub/src/index.ts')], { env: { ...process.env, PORT: String(inner) }, stdout: 'inherit', stderr: 'inherit' })
+const hub = Bun.spawn([INYON, 'engine', 'hub'], { env: { ...process.env, PORT: String(inner) }, stdout: 'inherit', stderr: 'inherit' })
 process.on('SIGTERM', () => {
   hub.kill()
   process.exit(0)

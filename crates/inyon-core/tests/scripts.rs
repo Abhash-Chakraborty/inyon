@@ -1,5 +1,6 @@
-//! The shell the hub sends to machines, byte for byte the TS's: fixtures/expected/scripts.json is
-//! `scripts()` in apps/hub/src/expected.ts, and this builds the same object from the Rust port.
+//! The shell the hub sends to machines, byte for byte the Bun hub's: fixtures/expected/scripts.json
+//! is what its `scripts()` wrote before it was removed in 0.23, and this builds the same object from
+//! the Rust port. A script changed on purpose means changing the file in the same commit.
 
 use std::path::Path;
 

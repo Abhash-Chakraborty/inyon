@@ -21,12 +21,13 @@ Thanks for helping. A few notes before you open a pull request.
 
 ```sh
 bun install
-bun dev:hub      # hub on :4777 with reload
+bun dev:hub      # the hub on :4777, a development build (cargo run -p inyon-cli -- engine hub)
 bun dev:web      # Vite on :5173, proxies to the hub
 ```
 
-Requires [Bun](https://bun.sh) 1.3 or later and tmux. Bun is the package manager too: there's
-no npm or pnpm step. Building the web app also builds the phone core as wasm, so it needs Rust with
+Requires [Rust](https://rustup.rs), [Bun](https://bun.sh) 1.3 or later and tmux. The hub, the
+`inyon` command and the phone core are Rust; Bun builds and tests the web app and is the package
+manager too: there's no npm or pnpm step. Building the web app also builds the phone core as wasm, so it needs Rust with
 the `wasm32-unknown-unknown` target and `wasm-bindgen-cli` at the version `crates/inyon-phone` pins:
 
 ```sh
@@ -38,19 +39,19 @@ cargo install wasm-bindgen-cli --locked --version "$(sed -n 's/^wasm-bindgen = "
 
 ```sh
 bun run typecheck
-(cd apps/hub && bun test)
 (cd apps/web && bun test)
-(cd apps/node && bun test)
-(cd packages/link && bun test)
-bun test ./installers             # get.sh and get.ps1 against a mock release (signed when minisign is installed)
+(cd packages/protocol && bun test)
+bun test ./installers ./scripts ./site   # get.sh and get.ps1 against a mock release, the release pipeline, the site
 (cd apps/web && bun run build && bun run e2e)   # layout at phone widths, needs Playwright's Chromium
 cargo test --workspace            # the inyon command and the Rust crates (or bun run cli:test)
-bun conformance/run.ts            # both hubs against the recorded scenarios
+cargo build -p inyon-cli && bun conformance/run.ts   # the hub against the recorded scenarios
 bun site/build.ts --offline       # the website and docs; fails on a broken link
 ```
 
-The screen parser (`apps/hub/src/claude/screen.ts`) is tested against real captures from the
-agents' terminal apps. If you change it, add a capture to `screen.test.ts` that shows the case.
+The screen parser (`crates/inyon-core/src/claude/screen.rs`) is tested against real captures from
+the agents' terminal apps in `fixtures/screens`. If you change it, add a capture that shows the
+case; `INYON_BLESS=1 cargo test -p inyon-core --test fixtures` writes what the parser makes of a
+new one to `fixtures/expected`, to look over and commit with it.
 
 The Inyon window on Windows (`apps/cli/src/window/`) places every control from the display scale
 and the work area alone, in `layout.rs`, and `model.rs` works out what each place says.
@@ -63,9 +64,6 @@ logs its size after each one to `window.log`, the only file it writes.
 
 ```
 apps/cli           the inyon command (Rust): setup, status, pairing, services, updates, the Windows window
-apps/hub           the Bun hub: machines, tmux, agent readers, API, WebSocket
-                   (src/phone runs the same core inside the Android app)
-apps/node          inyon-engine, the Bun program a hub runs on (and INYON_LEGACY_ENGINE=1)
 apps/web           React + Vite app, also served by the hub
 installers/        get.sh and get.ps1, the one-line installers (the hub's install.sh and install.ps1
                    are in crates/inyon-hub/assets)
@@ -73,21 +71,21 @@ apps/mobile        Capacitor shell for Android (and an unshipped iOS project); s
 crates/            the Rust side: inyon-core (readers, machines), inyon-api (the routes and app
                    sockets, no server), inyon-hub (the hub), inyon-engine and inyon-link (the
                    phone link), inyon-backends, inyon-protocol, inyon-phone (the phone core as
-                   wasm, replacing apps/hub/src/phone)
+                   wasm, for the Android app and the browser copy)
 packages/protocol  types and the agent registry shared by hub and app
-packages/link      the phone link in TypeScript (Noise, pkarr, relay)
-conformance/       recorded scenarios both hubs must answer the same way
+conformance/       recorded scenarios the hub must keep answering the same way
 site/              the website and docs at inyon.tech
 npm/               the npm launcher and per-platform packages
 skills/            agent skills shipped with each release (Blueprint)
 ```
 
 The phone core is Rust (`crates/inyon-phone`), built as wasm by `bun scripts/phone-core.ts` in
-`apps/web`, which `bun run build` runs first. It does everything apps/hub/src/phone does: the core
-routes and sockets, SSH into servers through the native plugin, the link to paired computers, and
-push through those computers. `bun test crates/inyon-phone/js` checks the module as the app calls
-it, and with `INYON_BIN` pointing at an `inyon` build it also pairs with that build's `inyon link`.
-`VITE_INYON_PHONE_CORE=ts` builds with the TypeScript core instead, until apps/hub goes.
+`apps/web`, which `bun run build` runs first: the core routes and sockets, SSH into servers through
+the native plugin, the link to paired computers, and push through those computers. What the app
+hands it and gets back is typed in `apps/web/src/lib/phone-types.ts`. `bun test crates/inyon-phone/js`
+checks the module as the app calls it, and with `INYON_BIN` pointing at an `inyon` build it also
+pairs with that build's `inyon link`. `VITE_INYON_PHONE_CORE=none` leaves it out, for the copy a
+hub serves.
 
 The pictures in the README are the real app fed a made-up set of machines: `bun run build` in
 `apps/web`, then `bun scripts/readme/shots.ts` makes them again.
@@ -96,9 +94,8 @@ The pictures in the README are the real app fed a made-up set of machines: `bun 
 
 Most of what Inyon knows about an agent lives in one place: `packages/protocol/src/agents.ts`
 (how to detect it, its colours, commands, models and config files). A chat view also needs a
-reader that turns the agent's session files or API into chat items; see `apps/hub/src/agents/`
-and its Rust twin `crates/inyon-core/src/agents/` for Codex, Gemini CLI, OpenCode, Copilot and
-Antigravity. Both hubs need the reader.
+reader that turns the agent's session files or API into chat items; see
+`crates/inyon-core/src/agents/` for Codex, Gemini CLI, OpenCode, Copilot and Antigravity.
 
 An agent without a reader starts as a terminal-first one. `terminalAgent()` in the same file fills in
 the empty model, mode and command lists; you give its kind, name, vendor, install, sign-in and

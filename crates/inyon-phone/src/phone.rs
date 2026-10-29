@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/phone/index.ts: the phone app runs Inyon's core itself, with no hub and no
+//! Port of the TypeScript phone core (removed in 0.23): the phone app runs Inyon's core itself, with no hub and no
 //! password. The web app hands it a store and calls it in-process: `answer` for what would be an
 //! /api request, `connect` for what would be the hub's WebSocket.
 //!
