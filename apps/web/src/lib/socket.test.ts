@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from 'bun:test'
 import type { ServerMsg } from '@inyon/protocol'
 import type { PairedHub } from './hubs.ts'
 import type { Tagged } from './socket.ts'
@@ -112,4 +112,75 @@ test('messages for the hub name its machines as the hub does', async () => {
   ws.open()
   conn.send({ t: 'draft', host: 'hub:h1/local', pane: '%3', text: 'hi' })
   expect(JSON.parse(ws.sent.at(-1)!)).toEqual({ t: 'draft', host: 'local', pane: '%3', text: 'hi' })
+})
+
+test('a hub reached while the app is in the background hears it is quiet and gets no chats', async () => {
+  const quiet = new HubConn(hub, (m) => heard.push(m), () => true, () => [{ host: 'hub:h1/local', pane: '%3' }], () => true)
+  await quiet.connect()
+  FakeWS.all[0]!.open()
+  quiet.stop()
+  expect(FakeWS.all[0]!.sent.map((s) => JSON.parse(s))).toEqual([{ t: 'sub.overview' }, { t: 'quiet', on: true }, { t: 'sub.chat', host: 'local', pane: '%3' }])
+})
+
+describe('in the background', () => {
+  const { Socket, QUIET_AFTER_MS } = realSocketModule
+  let hidden = false
+  beforeEach(() => {
+    hidden = false
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (hidden ? 'hidden' : 'visible') })
+  })
+  afterEach(() => {
+    delete (document as any).visibilityState
+    jest.useRealTimers()
+  })
+  const hubSocket = async () => {
+    // the ticket comes first
+    for (let i = 0; i < 100 && !FakeWS.all.some((w) => w.url.includes('box:4777')); i++) await Promise.resolve()
+    return FakeWS.all.find((w) => w.url.includes('box:4777'))!
+  }
+  // coming back also checks the connection with a ping
+  const sent = (ws: FakeWS) => ws.sent.map((s) => JSON.parse(s)).filter((m) => m.t !== 'ping')
+  const flip = (h: boolean) => {
+    hidden = h
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+
+  test('the app stops following chats after a while, and follows them again on return', async () => {
+    jest.useFakeTimers()
+    const s = new Socket()
+    s.start()
+    const ws = await hubSocket()
+    ws.open()
+    s.subscribeOverview()
+    s.subscribeChat('hub:h1/local', '%3')
+    ws.sent = []
+    flip(true)
+    jest.advanceTimersByTime(QUIET_AFTER_MS - 1000)
+    // a glance at another app changes nothing
+    expect(sent(ws)).toEqual([])
+    jest.advanceTimersByTime(1000)
+    expect(sent(ws)).toEqual([{ t: 'quiet', on: true }, { t: 'unsub.chat', host: 'local', pane: '%3' }])
+    // a chat opened meanwhile waits for the return
+    s.subscribeChat('hub:h1/local', '%5')
+    ws.sent = []
+    flip(false)
+    expect(sent(ws)).toEqual([{ t: 'quiet', on: false }, { t: 'sub.chat', host: 'local', pane: '%3' }, { t: 'sub.chat', host: 'local', pane: '%5' }])
+    s.stop()
+  })
+
+  test('back before the wait is over, nothing was sent', async () => {
+    jest.useFakeTimers()
+    const s = new Socket()
+    s.start()
+    const ws = await hubSocket()
+    ws.open()
+    s.subscribeChat('hub:h1/local', '%3')
+    ws.sent = []
+    flip(true)
+    jest.advanceTimersByTime(5000)
+    flip(false)
+    jest.advanceTimersByTime(QUIET_AFTER_MS)
+    expect(sent(ws)).toEqual([])
+    s.stop()
+  })
 })

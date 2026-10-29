@@ -1305,8 +1305,21 @@ fn get_answer(slug: &str, segments: &[String], slash: bool, max: u64, etag: Opti
 
 // ---------- telling a hub when pages change ----------
 
-/// How often `pages watch` looks, in ms.
+/// How often `pages watch` looks, in ms, right after something changed.
 pub const WATCH_EVERY_MS: u64 = 2000;
+/// While nothing changes it looks less and less often, down to once in this many times `every_ms`:
+/// walking every site's files every 2 s kept a laptop busy for pages nobody was editing.
+const WATCH_SLOWEST: u64 = 5;
+
+/// How long `pages watch` waits before its next look.
+pub fn watch_wait(prev: u64, changed: bool, every_ms: u64) -> u64 {
+    let every = every_ms.max(200);
+    if changed {
+        every
+    } else {
+        (prev.max(every) * 3 / 2).min(every * WATCH_SLOWEST)
+    }
+}
 /// How long `pages watch` goes without printing: an empty line then, so it finds out when nobody
 /// reads it any more, even if what stopped the hub's end never reached it.
 pub const WATCH_ALIVE_MS: u64 = 30_000;
@@ -1364,6 +1377,7 @@ pub fn watch_command(every_ms: u64, alive_ms: u64) -> Outcome {
     use std::io::Write;
     let mut last = String::new();
     let mut printed = std::time::Instant::now();
+    let mut wait = every_ms;
     loop {
         let mut v = list_command()?;
         if let Some(pages) = v.get_mut("pages").and_then(Value::as_array_mut) {
@@ -1383,14 +1397,29 @@ pub fn watch_command(every_ms: u64, alive_ms: u64) -> Outcome {
             }
             printed = std::time::Instant::now();
         }
+        wait = watch_wait(wait, text != last, every_ms);
         last = text;
-        std::thread::sleep(std::time::Duration::from_millis(every_ms.max(200)));
+        std::thread::sleep(std::time::Duration::from_millis(wait));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pages_watch_looks_less_often_while_nothing_changes() {
+        let mut wait = WATCH_EVERY_MS;
+        let mut waits = vec![];
+        for _ in 0..6 {
+            wait = watch_wait(wait, false, WATCH_EVERY_MS);
+            waits.push(wait);
+        }
+        assert_eq!(waits, [3000, 4500, 6750, 10_000, 10_000, 10_000]);
+        // a board moved on: back to every 2 s
+        assert_eq!(watch_wait(10_000, true, WATCH_EVERY_MS), 2000);
+        assert_eq!(watch_wait(0, false, 50), 300);
+    }
 
     #[test]
     fn titles() {

@@ -927,7 +927,7 @@ v: number, slug: string, name: string, kind: PageKind,
  */
 created: number, };
 
-export type ClientMsg = { "t": "sub.overview" } | { "t": "sub.chat", host: string, pane: string, } | { "t": "unsub.chat", host: string, pane: string, } | { "t": "chat.more", host: string, pane: string, before: number, } | { "t": "draft", host: string, pane: string, text: string, } | { "t": "term.open", id: string, host: string, pane: string, cols: number, rows: number, } | { "t": "term.in", id: string, d: string, } | { "t": "term.resize", id: string, cols: number, rows: number, } | { "t": "term.close", id: string, } | { "t": "ping" };
+export type ClientMsg = { "t": "sub.overview" } | { "t": "sub.chat", host: string, pane: string, } | { "t": "unsub.chat", host: string, pane: string, } | { "t": "chat.more", host: string, pane: string, before: number, } | { "t": "draft", host: string, pane: string, text: string, } | { "t": "term.open", id: string, host: string, pane: string, cols: number, rows: number, } | { "t": "term.in", id: string, d: string, } | { "t": "term.resize", id: string, cols: number, rows: number, } | { "t": "term.close", id: string, } | { "t": "ping" } | { "t": "quiet", on: boolean, };
 
 export type DraftSource = "app" | "terminal";
 

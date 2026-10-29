@@ -8,11 +8,14 @@ import { loadOverview } from './snapshot.ts'
 export type Tagged = ServerMsg & { source?: string }
 type Listener = (msg: Tagged) => void
 
+/** How long the app stays in the background before it stops following chats and most overviews. */
+export const QUIET_AFTER_MS = 15_000
+
 /**
  * One WebSocket to the hub, shared by the whole app. Reconnects with backoff and replays
  * subscriptions, so views only declare what they want to watch.
  */
-class Socket {
+export class Socket {
   private ws?: WebSocket | PhoneSocket
   private listeners = new Set<Listener>()
   private statusListeners = new Set<(up: boolean) => void>()
@@ -26,6 +29,9 @@ class Socket {
   private started = false
   /** when the hub last said anything; a socket that went quiet is dead even if it looks open */
   private heard = 0
+  /** in the background: no chats, and the hub sends the overview only when an agent's state changes */
+  private quiet = false
+  private quietTimer?: ReturnType<typeof setTimeout>
   up = false
 
   start() {
@@ -33,9 +39,13 @@ class Socket {
     this.started = true
     this.connect()
     this.startHubs()
+    // the phone app can start behind the lock screen
+    this.followVisibility()
     // once, however often it's stopped and started again
     if (this.listening) return
     this.listening = true
+    // first, so a reconnect on return already follows everything again
+    document.addEventListener('visibilitychange', this.followVisibility)
     document.addEventListener('visibilitychange', this.revive)
     window.addEventListener('online', this.revive)
   }
@@ -55,6 +65,23 @@ class Socket {
     this.connect()
   }
 
+  // Every chat streams its screen every few seconds and the overview changes with each line an
+  // agent writes, which kept a phone in a pocket busy. After a while in the background the app
+  // stops following chats and asks for the overview only when an agent's state changes, which is
+  // all an alert needs; coming back follows everything again and the hub sends what changed.
+  private followVisibility = () => {
+    clearTimeout(this.quietTimer)
+    if (document.visibilityState === 'hidden') this.quietTimer = setTimeout(() => this.setQuiet(true), QUIET_AFTER_MS)
+    else this.setQuiet(false)
+  }
+
+  private setQuiet(on: boolean) {
+    if (this.quiet === on || !this.started) return
+    this.quiet = on
+    this.raw({ t: 'quiet', on })
+    for (const c of this.chats.values()) this.raw(on ? { t: 'unsub.chat', host: c.host, pane: c.pane } : { t: 'sub.chat', host: c.host, pane: c.pane })
+  }
+
   /** Connects again now instead of waiting for the backoff. */
   reconnect() {
     if (!this.started || this.ws?.readyState === WebSocket.CONNECTING) return
@@ -65,6 +92,8 @@ class Socket {
 
   stop() {
     this.started = false
+    this.quiet = false
+    clearTimeout(this.quietTimer)
     clearTimeout(this.timer)
     this.ws?.close()
     for (const h of this.hubs.values()) h.stop()
@@ -86,7 +115,7 @@ class Socket {
         for (const l of this.listeners) l({ t: 'overview', hosts: [], source: `hub:${id}` })
       }
       for (const hub of hubs) if (!this.hubs.has(hub.id)) {
-        const conn = new HubConn(hub, (m) => { for (const l of this.listeners) l(m) }, () => this.overview, () => [...this.chats.values()])
+        const conn = new HubConn(hub, (m) => { for (const l of this.listeners) l(m) }, () => this.overview, () => (this.quiet ? [] : [...this.chats.values()]), () => this.quiet)
         this.hubs.set(hub.id, conn)
         conn.connect()
       }
@@ -125,7 +154,8 @@ class Socket {
       this.openedAt = Date.now()
       this.setUp(true)
       if (this.overview) this.raw({ t: 'sub.overview' })
-      for (const c of this.chats.values()) this.raw({ t: 'sub.chat', host: c.host, pane: c.pane })
+      if (this.quiet) this.raw({ t: 'quiet', on: true })
+      else for (const c of this.chats.values()) this.raw({ t: 'sub.chat', host: c.host, pane: c.pane })
       this.heard = Date.now()
       clearInterval(this.pingTimer)
       this.pingTimer = setInterval(() => {
@@ -169,7 +199,7 @@ class Socket {
   private raw(msg: ClientMsg) {
     const hub = this.hubFor(msg)
     if (hub) return hub.send(msg)
-    if (msg.t === 'sub.overview') for (const h of this.hubs.values()) h.send(msg)
+    if (msg.t === 'sub.overview' || msg.t === 'quiet') for (const h of this.hubs.values()) h.send(msg)
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
   }
 
@@ -210,7 +240,8 @@ class Socket {
     if (cur) cur.refs++
     else {
       this.chats.set(key, { host, pane, refs: 1 })
-      this.raw({ t: 'sub.chat', host, pane })
+      // in the background it's followed once the app is back
+      if (!this.quiet) this.raw({ t: 'sub.chat', host, pane })
     }
     return () => {
       const c = this.chats.get(key)
@@ -249,6 +280,7 @@ export class HubConn {
     private emit: (m: Tagged) => void,
     private wantOverview: () => boolean,
     private chats: () => { host: string; pane: string }[],
+    private quiet: () => boolean = () => false,
   ) {
     // the app may open while the hub is out of reach (the phone off its VPN, say): its machines
     // still have to show, as connecting, so they start from what this device remembers of them
@@ -288,6 +320,7 @@ export class HubConn {
       this.openedAt = Date.now()
       this.heard = Date.now()
       if (this.wantOverview()) this.sendRaw({ t: 'sub.overview' })
+      if (this.quiet()) this.sendRaw({ t: 'quiet', on: true })
       for (const c of this.chats()) {
         const { hub, id } = splitHostId(c.host)
         if (hub?.id === this.hub.id) this.sendRaw({ t: 'sub.chat', host: id, pane: c.pane })

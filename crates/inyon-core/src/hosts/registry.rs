@@ -794,6 +794,11 @@ impl Registry {
         POLL.with(|p| p.set(if on { QUIET_POLL_MS } else { POLL_MS }));
     }
 
+    /// Whether machines are polled every 20 s (no one looking) rather than every 4.
+    pub fn is_quiet(&self) -> bool {
+        POLL.with(Cell::get) == QUIET_POLL_MS
+    }
+
     /// The phone app went to the background (true) or came back with a network (false).
     pub fn hold_alerts(&self, on: bool) {
         self.alerts_held.set(on);

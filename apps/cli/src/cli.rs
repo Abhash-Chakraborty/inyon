@@ -333,7 +333,7 @@ enum PagesAction {
     /// The pages, again whenever they change, for the hub this machine is joined to (with --json)
     #[command(hide = true)]
     Watch {
-        /// How often to look, in ms
+        /// How often to look after a change, in ms (up to five times slower while nothing changes)
         #[arg(long, default_value_t = pages::WATCH_EVERY_MS)]
         every: u64,
         /// How long to go without printing before an empty line, in ms

@@ -79,6 +79,8 @@ Android pauses apps in the background, which drops their connections. **Settings
 
 Nothing is asked before you've added a computer or server. Once the first one appears, the app says why it wants notifications (so it can tell you when a session asks something or finishes), asks for them, then asks once to run without battery limits; **Battery limits** in Settings asks again. If Android stops the service, the app says why when you come back.
 
+From 0.23.1 the app does less while it's in the background. After 15 seconds away it stops following open chats, and a hub sends it the session list only when an agent starts, finishes or asks something, or a machine goes offline or comes back, not with every line an agent writes. Everything catches up when you open the app again.
+
 A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-android-app).
 
 ## Moving to the next app
