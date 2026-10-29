@@ -36,7 +36,7 @@ A fully closed app gets no alerts yet. That needs a push server, which Inyon doe
 
 ### Answering from the notification
 
-From 0.23.1, a question with one to three answers (an approval like *Yes* / *Yes, and don't ask again* / *No*, or a short choice) shows them as the notification's buttons instead, and tapping the notification still opens the session. A button that approves something asks for your fingerprint or PIN first when the phone is locked; one that turns it down (*No*, *Deny*, *Cancel*…) doesn't. Questions with more answers keep **Open** and **Mark read**.
+From 0.23.1, a question with one to three answers (an approval like *Yes* / *Yes, and don't ask again* / *No*, or a short choice) shows them as the notification's buttons instead, and tapping the notification still opens the session. A button that approves something asks for your fingerprint or PIN first when the phone is locked; one that turns it down (*No*, *Deny*, *Cancel*…) doesn't. If your lock screen hides notification content, Android shows no buttons there, so unlock first. Questions with more answers keep **Open** and **Mark read**.
 
 The answer goes only if the session still asks that question: a tap that comes after it was answered elsewhere, or after the next question came up, sends nothing and says so. While it's on the way, a quiet *Answering “Yes”…* notice keeps the app awake, also when **Stay connected** is off. If the answer can't go within 15 seconds, or the app wasn't running, the notification asks you to open Inyon instead, and that tap is never sent later.
 
