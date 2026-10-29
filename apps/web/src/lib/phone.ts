@@ -41,28 +41,45 @@ export function phone(): Promise<PhoneRuntime> {
   })())
 }
 
-/**
- * The core's records (server list, settings, chat caches) in IndexedDB. The core reads them
- * synchronously, so they're all loaded into memory first and written back as they change.
- */
-async function idbStore(): Promise<PhoneStore> {
-  const db = await new Promise<IDBDatabase>((resolve, reject) => {
+const openKv = () =>
+  new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open('inyon', 1)
     req.onupgradeneeded = () => req.result.createObjectStore('kv')
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
   })
-  const data = new Map<string, string>()
-  await new Promise<void>((resolve, reject) => {
+
+/** Every record as the store keeps it: key to JSON text. */
+const readKv = (db: IDBDatabase) =>
+  new Promise<Map<string, string>>((resolve, reject) => {
+    const data = new Map<string, string>()
     const req = db.transaction('kv').objectStore('kv').openCursor()
     req.onsuccess = () => {
       const cur = req.result
-      if (!cur) return resolve()
+      if (!cur) return resolve(data)
       data.set(String(cur.key), cur.value as string)
       cur.continue()
     }
     req.onerror = () => reject(req.error)
   })
+
+/** The core's records as they are on disk now, for the upgrade export (upgradeExport.ts). */
+export async function kvRecords() {
+  const db = await openKv()
+  try {
+    return await readKv(db)
+  } finally {
+    db.close()
+  }
+}
+
+/**
+ * The core's records (server list, settings, chat caches) in IndexedDB. The core reads them
+ * synchronously, so they're all loaded into memory first and written back as they change.
+ */
+async function idbStore(): Promise<PhoneStore> {
+  const db = await openKv()
+  const data = await readKv(db)
   // writes queue in order on their own transactions; a failed one only loses that record
   const write = (fn: (s: IDBObjectStore) => void) => {
     try {

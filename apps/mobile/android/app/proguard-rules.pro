@@ -15,6 +15,9 @@
 # our plugins: every @PluginMethod and @PermissionCallback is called by name from the bridge
 -keep class tech.abhashchakraborty.inyon.device.InyonDevicePlugin { *; }
 -keep class tech.abhashchakraborty.inyon.ssh.InyonSshPlugin { *; }
+-keep class tech.abhashchakraborty.inyon.migrate.InyonMigratePlugin { *; }
+# the app that installs over this one reads and discards the upgrade file through it, by name
+-keep class tech.abhashchakraborty.inyon.migrate.MigrationExport { *; }
 
 # instantiated by Android from the manifest and the bridge layout
 -keep class tech.abhashchakraborty.inyon.MainActivity { <init>(); }

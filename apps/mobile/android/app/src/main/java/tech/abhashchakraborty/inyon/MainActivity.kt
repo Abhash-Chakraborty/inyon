@@ -8,6 +8,7 @@ import com.getcapacitor.BridgeActivity
 import tech.abhashchakraborty.inyon.device.InyonChromeClient
 import tech.abhashchakraborty.inyon.device.InyonDevicePlugin
 import tech.abhashchakraborty.inyon.device.Orientation
+import tech.abhashchakraborty.inyon.migrate.InyonMigratePlugin
 import tech.abhashchakraborty.inyon.ssh.InyonSshPlugin
 
 class MainActivity : BridgeActivity() {
@@ -15,6 +16,7 @@ class MainActivity : BridgeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         registerPlugin(InyonSshPlugin::class.java)
         registerPlugin(InyonDevicePlugin::class.java)
+        registerPlugin(InyonMigratePlugin::class.java)
         super.onCreate(savedInstanceState)
         Orientation.apply(this)
         // the page's ground in the system's scheme, so nothing white shows between the splash and the first paint

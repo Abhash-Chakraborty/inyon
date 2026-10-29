@@ -117,6 +117,8 @@ setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pag
 installKeepAlive()
 // the Android app looks for a newer APK once a day; it never installs one by itself
 if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m.startAppUpdateCheck()), 4000)
+// it also keeps a sealed copy of its keys and pairings for the next Inyon app, which installs over it
+if (isNative()) setTimeout(() => void import('./lib/upgradeExport.ts').then((m) => m.startUpgradeExport()), 3000)
 
 // before the router reads the address: a pairing code in it is taken out first
 takePairFragment()
