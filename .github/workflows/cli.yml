@@ -83,6 +83,7 @@ jobs:
           INYON_BIN: ${{ github.workspace }}/target/debug/inyon
       # the same under the name an inyon from 0.12 to 0.22 starts it by, which runs the engine
       - name: The phone against the program named inyon-engine
+        working-directory: .
         run: |
           ln -s "$GITHUB_WORKSPACE/target/debug/inyon" "$RUNNER_TEMP/inyon-engine"
           INYON_BIN="$RUNNER_TEMP/inyon-engine" bun test crates/inyon-phone/js
