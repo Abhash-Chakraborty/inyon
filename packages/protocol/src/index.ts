@@ -731,6 +731,8 @@ export type ClientMsg =
   | { t: 'term.resize'; id: string; cols: number; rows: number }
   | { t: 'term.close'; id: string }
   | { t: 'ping' }
+  /** the app went to the background (true) or came back: overviews only when an agent's state changes while it's quiet */
+  | { t: 'quiet'; on: boolean }
 
 export type ServerMsg =
   | { t: 'overview'; hosts: HostState[] }

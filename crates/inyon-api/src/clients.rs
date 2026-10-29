@@ -19,6 +19,10 @@ use serde_json::Value;
 /// One connected app; it hears updates once it's in the list (see `add`).
 pub struct Client {
     overview: Cell<bool>,
+    /// in the background: overviews only when a machine or an agent's state changes (see `quiet_key`)
+    quiet: Cell<bool>,
+    /// `quiet_key` of the last overview a quiet app was sent
+    sent_key: RefCell<String>,
     chats: RefCell<IndexSet<String>>,
     terms: RefCell<HashMap<String, Rc<PtyHandle>>>,
     out: Box<dyn Fn(&ServerMsg)>,
@@ -45,11 +49,12 @@ pub fn wire(msg: &ServerMsg) -> String {
 }
 
 pub fn new_client(out: impl Fn(&ServerMsg) + 'static) -> ClientRef {
-    Rc::new(Client { overview: Cell::new(false), chats: RefCell::new(IndexSet::new()), terms: RefCell::new(HashMap::new()), out: Box::new(out) })
+    Rc::new(Client { overview: Cell::new(false), quiet: Cell::new(false), sent_key: RefCell::new(String::new()), chats: RefCell::new(IndexSet::new()), terms: RefCell::new(HashMap::new()), out: Box::new(out) })
 }
 
 pub fn add(c: &ClientRef) {
     CLIENTS.with(|l| l.borrow_mut().push(c.clone()));
+    watched_changed();
 }
 
 fn listed(c: &ClientRef) -> bool {
@@ -84,15 +89,74 @@ pub fn any() -> bool {
     CLIENTS.with(|l| !l.borrow().is_empty())
 }
 
+/// Whether an app on screen follows the overview (one in the background has said it's quiet).
+pub fn watched() -> bool {
+    CLIENTS.with(|l| l.borrow().iter().any(|c| c.overview.get() && !c.quiet.get()))
+}
+
+thread_local! {
+    static FOLLOW: Cell<bool> = const { Cell::new(false) };
+    static WAS_WATCHED: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// The hub polls its machines every 20 s instead of every 4 while no app on screen follows the
+/// overview, and reads them all again as soon as one does. Hooks and tmux still report at once.
+/// The phone app sets this itself (`Phone::background`), so only the hub calls it.
+pub fn poll_less_when_unwatched() {
+    FOLLOW.with(|f| f.set(true));
+    watched_changed();
+}
+
+fn watched_changed() {
+    if !FOLLOW.with(Cell::get) {
+        return;
+    }
+    let now = watched();
+    if WAS_WATCHED.with(|w| w.replace(Some(now))) == Some(now) {
+        return;
+    }
+    registry().quiet(!now);
+    if now {
+        for c in registry().configs() {
+            registry().refresh(&c.id, 0);
+        }
+    }
+}
+
+/// What a quiet app is sent an overview for: machines coming and going or going offline, and each
+/// agent's state (an alert answered elsewhere is cleared from it). Not the spinner text, times or
+/// numbers, which change every few seconds while an agent works.
+pub fn quiet_key(hosts: &[inyon_protocol::HostState]) -> String {
+    let mut k = String::new();
+    for h in hosts {
+        k += &format!("{}={:?};", h.config.id, h.status);
+        for p in h.sessions.iter().flat_map(|s| s.windows.iter()).flat_map(|w| w.panes.iter()) {
+            if let Some(a) = &p.agent {
+                k += &format!("{}:{:?}:{:?},", p.id, a.kind, a.state);
+            }
+        }
+    }
+    k
+}
+
 /// Sends the registry's overview and notifications on to the apps (core.ts's `registry.on`).
 pub fn listen() {
     let _ = registry().on(|e| match e {
         RegistryEvent::Overview => {
-            let msg = ServerMsg::Overview { hosts: registry().overview() };
+            let hosts = registry().overview();
+            let key = quiet_key(&hosts);
+            let msg = ServerMsg::Overview { hosts };
             for c in all() {
-                if c.overview.get() {
-                    c.send(&msg);
+                if !c.overview.get() {
+                    continue;
                 }
+                if c.quiet.get() && *c.sent_key.borrow() == key {
+                    continue;
+                }
+                if *c.sent_key.borrow() != key {
+                    *c.sent_key.borrow_mut() = key.clone();
+                }
+                c.send(&msg);
             }
         }
         RegistryEvent::Notify { host, pane, kind, title, body, agent } => {
@@ -206,7 +270,24 @@ pub fn client_message(c: &ClientRef, text: &str) {
         "ping" => c.send(&ServerMsg::Pong),
         "sub.overview" => {
             c.overview.set(true);
-            c.send(&ServerMsg::Overview { hosts: registry().overview() });
+            let hosts = registry().overview();
+            *c.sent_key.borrow_mut() = quiet_key(&hosts);
+            c.send(&ServerMsg::Overview { hosts });
+            watched_changed();
+        }
+        // the app went to the background (on: true) or came back
+        "quiet" => {
+            let on = m.get("on").and_then(Value::as_bool).unwrap_or(false);
+            if c.quiet.replace(on) == on {
+                return;
+            }
+            // what changed while it was away
+            if !on && c.overview.get() {
+                let hosts = registry().overview();
+                *c.sent_key.borrow_mut() = quiet_key(&hosts);
+                c.send(&ServerMsg::Overview { hosts });
+            }
+            watched_changed();
         }
         "sub.chat" => {
             let key = format!("{}:{}", raw(&m, "host"), raw(&m, "pane"));
@@ -311,6 +392,7 @@ pub fn client_message(c: &ClientRef, text: &str) {
 /// The app went away: stop everything it was watching.
 pub fn close_client(c: &ClientRef) {
     CLIENTS.with(|l| l.borrow_mut().retain(|x| !Rc::ptr_eq(x, c)));
+    watched_changed();
     let chats: Vec<String> = c.chats.borrow().iter().cloned().collect();
     for key in chats {
         let (host, pane) = key.split_once(':').unwrap_or((&key, ""));
@@ -406,6 +488,89 @@ mod tests {
             inyon_core::platform::rt::sleep(300).await;
             assert_eq!(watchers().peek("h", "%7").expect("a watcher for h/%7").subscribers(), 1);
             close_client(&c);
+        });
+    }
+
+    fn machine(state: &str, activity: &str) -> inyon_protocol::HostState {
+        serde_json::from_value(serde_json::json!({
+            "config": { "id": "h", "name": "h", "kind": "ssh" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "updatedAt": 0,
+            "sessions": [{ "id": "$1", "name": "work", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+                { "id": "%7", "index": 0, "active": true, "command": "claude", "cwd": "/w", "title": "claude", "width": 100, "height": 30, "dead": false,
+                  "agent": { "kind": "claude", "pid": 1, "state": state, "activity": activity } }
+            ] }] }],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_quiet_app_hears_of_state_changes_not_of_spinner_text() {
+        assert_eq!(quiet_key(&[machine("working", "Reading")]), quiet_key(&[machine("working", "Thinking")]));
+        assert_ne!(quiet_key(&[machine("working", "Reading")]), quiet_key(&[machine("waiting", "Reading")]));
+        let mut off = machine("working", "Reading");
+        off.status = inyon_protocol::HostStatus::Error;
+        assert_ne!(quiet_key(&[machine("working", "Reading")]), quiet_key(&[off]));
+        assert_ne!(quiet_key(&[machine("working", "Reading")]), quiet_key(&[]));
+    }
+
+    #[test]
+    fn an_app_in_the_background_gets_the_overview_only_when_an_agent_changes_state() {
+        crate::test_util::block(async {
+            listen();
+            let state = machine("working", "Reading");
+            let rt = Rc::new(RefCell::new(inyon_core::hosts::registry::HostRuntime::new(inyon_core::hosts::host::Host::new(state.config.clone()), state)));
+            rt.borrow_mut().hold_polls();
+            registry().insert_runtime("h", rt.clone());
+            let got = Rc::new(RefCell::new(Vec::<String>::new()));
+            let g = got.clone();
+            let c = new_client(move |m| g.borrow_mut().push(wire(m)));
+            add(&c);
+            let overviews = || got.borrow().iter().filter(|m| m.starts_with(r#"{"t":"overview""#)).count();
+            let changed = |state: &str, activity: &str| {
+                rt.borrow_mut().state = machine(state, activity);
+                registry().emit_for_test(RegistryEvent::Overview);
+            };
+            client_message(&c, r#"{"t":"sub.overview"}"#);
+            assert_eq!(overviews(), 1);
+            changed("working", "Thinking");
+            inyon_core::platform::rt::sleep(400).await;
+            assert_eq!(overviews(), 2, "on screen, every change");
+
+            client_message(&c, r#"{"t":"quiet","on":true}"#);
+            changed("working", "Editing");
+            inyon_core::platform::rt::sleep(400).await;
+            assert_eq!(overviews(), 2, "the spinner moved: nothing to send");
+            changed("waiting", "Editing");
+            inyon_core::platform::rt::sleep(400).await;
+            assert_eq!(overviews(), 3, "the agent asks something: sent");
+            changed("waiting", "Editing");
+            inyon_core::platform::rt::sleep(400).await;
+            assert_eq!(overviews(), 3);
+
+            changed("working", "Running");
+            inyon_core::platform::rt::sleep(400).await;
+            client_message(&c, r#"{"t":"quiet","on":false}"#);
+            assert_eq!(overviews(), 5, "back on screen: what changed meanwhile");
+            assert!(got.borrow().last().unwrap().contains("Running"));
+            close_client(&c);
+        });
+    }
+
+    #[test]
+    fn the_hub_polls_less_while_no_app_on_screen_follows_the_overview() {
+        crate::test_util::block(async {
+            poll_less_when_unwatched();
+            assert!(registry().is_quiet(), "no app at all");
+            let c = new_client(|_| {});
+            add(&c);
+            assert!(registry().is_quiet(), "connected, but not following the overview");
+            client_message(&c, r#"{"t":"sub.overview"}"#);
+            assert!(!registry().is_quiet());
+            client_message(&c, r#"{"t":"quiet","on":true}"#);
+            assert!(registry().is_quiet(), "in the background");
+            client_message(&c, r#"{"t":"quiet","on":false}"#);
+            assert!(!registry().is_quiet());
+            close_client(&c);
+            assert!(registry().is_quiet(), "gone");
         });
     }
 

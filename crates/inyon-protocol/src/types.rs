@@ -1137,6 +1137,10 @@ pub enum ClientMsg {
     TermClose { id: String },
     #[serde(rename = "ping")]
     Ping,
+    /// the app went to the background (true) or came back: overviews only when an agent's state
+    /// changes while it's quiet. A hub before 0.23.1 ignores it.
+    #[serde(rename = "quiet")]
+    Quiet { on: bool },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]

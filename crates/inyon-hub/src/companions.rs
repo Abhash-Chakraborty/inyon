@@ -474,7 +474,7 @@ pub fn me_route() -> CompanionRoute {
 pub fn inbound_refusal(raw: &str, scopes: &[CompanionScope]) -> Option<String> {
     let t = inyon_core::js::json::parse(raw).and_then(|m| m.get("t").and_then(Value::as_str).map(str::to_owned)).unwrap_or_default();
     let need = match t.as_str() {
-        "ping" => Some(None),
+        "ping" | "quiet" => Some(None),
         "sub.overview" => Some(Some(CompanionScope::Overview)),
         "sub.chat" | "unsub.chat" => Some(Some(CompanionScope::Chat)),
         _ => None,

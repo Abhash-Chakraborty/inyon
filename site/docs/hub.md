@@ -167,6 +167,8 @@ inyon hub stop               # stops it and removes the service; its records sta
 inyon logs --role hub -f
 ```
 
+From 0.23.1, while no app on screen has the hub open, it checks its machines every 20 seconds instead of every 4, which also spares the computers it reaches. Agent hooks and tmux still report changes at once, and the hub reads every machine again as soon as an app opens. A browser tab or phone app left in the background counts as not looking after 15 seconds.
+
 The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash, machines, paired phones, settings, drafts, and the last state of each offline machine. [Configuration](configuration.md) lists every setting.
 
 ## Pages

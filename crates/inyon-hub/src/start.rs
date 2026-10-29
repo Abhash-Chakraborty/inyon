@@ -129,6 +129,7 @@ pub fn serve() -> i32 {
             crate::index::routes(updater),
         );
         crate::core_routes::start_core();
+        crate::clients::poll_less_when_unwatched();
         crate::push::start_hub_push();
         crate::boards::start();
         crate::finding::start();
