@@ -1503,7 +1503,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-api"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -1524,7 +1524,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-backends"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "futures-util",
  "indexmap",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-cli"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -1574,7 +1574,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-core"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "futures-util",
@@ -1590,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-engine"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-hub"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
@@ -1657,7 +1657,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-link"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1675,7 +1675,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-phone"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "base64 0.23.1",
  "futures-util",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "inyon-protocol"
-version = "0.22.5"
+version = "0.23.0"
 dependencies = [
  "indexmap",
  "regex",
