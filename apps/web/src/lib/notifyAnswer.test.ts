@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { answerFromNotification } from './notifyAnswer.ts'
+import { ANSWER_TTL_MS, answerFromNotification } from './notifyAnswer.ts'
 import { useStore } from './store.ts'
 import { api } from '../test/fakes.ts'
 import { agentPane, host } from '../test/fixtures.ts'
@@ -39,6 +39,19 @@ test('a late tap never lands on the next question', async () => {
   expect(api.answer.mock.calls.length).toBe(calls)
   expect(posted.map((p) => p.title)).toEqual(['That question changed', 'That question changed'])
   expect(posted[0]).toMatchObject({ href: '/m/box/p/3', tag: 'box:%3' })
+})
+
+test('a tap that waited too long for a frozen app is dropped, not sent late', async () => {
+  const calls = api.answer.mock.calls.length
+  const at = 1_000_000
+  await answerFromNotification({ host: 'box', pane: '%3', option: 1, label: 'Yes', tag: 'box:%3', at }, at + ANSWER_TTL_MS + 1)
+  expect(api.answer.mock.calls.length).toBe(calls)
+  // the phone has said it wasn't sent: nothing posted or cleared over that
+  expect(posted).toEqual([])
+  expect(cleared).toEqual([])
+  // one in time goes
+  await answerFromNotification({ host: 'box', pane: '%3', option: 1, label: 'Yes', tag: 'box:%3', at }, at + 2000)
+  expect(api.answer).toHaveBeenLastCalledWith('box', '%3', 1)
 })
 
 test("an answer the hub refuses says why, on the same notification", async () => {

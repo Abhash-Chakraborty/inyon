@@ -244,10 +244,15 @@ class InyonDevicePlugin : Plugin() {
     }
 
     /** An answer tapped on a notification, for the web app to send; false when nothing is listening. */
-    private fun deliverAnswer(host: String, pane: String, option: Int, label: String, tag: String): Boolean {
+    private fun deliverAnswer(host: String, pane: String, option: Int, label: String, tag: String, at: Long): Boolean {
         if (!hasListeners("notificationAnswer")) return false
-        notifyListeners("notificationAnswer", JSObject().put("host", host).put("pane", pane).put("option", option).put("label", label).put("tag", tag))
+        notifyListeners("notificationAnswer", JSObject().put("host", host).put("pane", pane).put("option", option).put("label", label).put("tag", tag).put("at", at))
         return true
+    }
+
+    private fun onAnswerAwake(on: Boolean) {
+        // with Stay connected on, the renderer stays important after the answer too
+        bridge.executeOnMainThread { if (on || !KeepAliveService.running) rendererImportant(on) }
     }
 
     private fun onKeepAliveEnded(reason: String) {
@@ -358,6 +363,7 @@ class InyonDevicePlugin : Plugin() {
     /** An agent or machine event, with the app's logo and buttons; the same tag replaces the last one. */
     @PluginMethod
     fun postNotification(call: PluginCall) {
+        call.getString("tag")?.let(AnswerService::settled)
         val choices = mutableListOf<Choice>()
         val options = call.getArray("options")
         if (options != null) {
@@ -383,7 +389,10 @@ class InyonDevicePlugin : Plugin() {
 
     @PluginMethod
     fun clearNotification(call: PluginCall) {
-        call.getString("tag")?.let { Notifications.clear(context, it) }
+        call.getString("tag")?.let {
+            Notifications.clear(context, it)
+            AnswerService.settled(it)
+        }
         call.resolve(ok())
     }
 
@@ -443,8 +452,13 @@ class InyonDevicePlugin : Plugin() {
             live?.onKeepAliveEnded(reason)
         }
 
-        fun answerFromNotification(host: String, pane: String, option: Int, label: String, tag: String): Boolean =
-            live?.deliverAnswer(host, pane, option, label, tag) ?: false
+        fun answerFromNotification(host: String, pane: String, option: Int, label: String, tag: String, at: Long): Boolean =
+            live?.deliverAnswer(host, pane, option, label, tag, at) ?: false
+
+        /** While an answer is sent, the renderer counts as much as the app, as with Stay connected. */
+        fun answerAwake(on: Boolean) {
+            live?.onAnswerAwake(on)
+        }
 
         private fun ok(): JSObject = JSObject().put("ok", true)
 

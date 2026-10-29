@@ -42,6 +42,9 @@ internal object Notifications {
     const val CHANNEL_MACHINES = "machines"
     const val KEEP_ALIVE_ID = 7001
 
+    /** the quiet notice [AnswerService] shows while it sends an answer */
+    const val ANSWERING_ID = 7004
+
     private const val EVENT_ID = 7002
     private const val SUMMARY_ID = 7003
     private const val GROUP = "tech.abhashchakraborty.inyon.EVENTS"
@@ -274,6 +277,22 @@ internal object Notifications {
         }
     }
 
+    /** The quiet notice while an answer tapped on a notification is sent (the [AnswerService]'s own). */
+    fun answeringNotice(ctx: Context, label: String, href: String, tag: String): Notification {
+        ensureChannels(ctx)
+        return NotificationCompat.Builder(ctx, CHANNEL_CONNECTION)
+            .setSmallIcon(R.drawable.ic_stat_inyon)
+            .setColor(ACCENT)
+            .setContentTitle("Answering “$label”…")
+            .setContentText("Inyon is sending your answer.")
+            .setContentIntent(openApp(ctx, href, tag.hashCode() * 4, tag))
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
     /** Takes a session's notification away (you opened it, or marked it read). */
     fun clear(ctx: Context, tag: String) {
         NotificationManagerCompat.from(ctx).cancel(tag, EVENT_ID)
@@ -328,9 +347,15 @@ class NotificationActions : BroadcastReceiver() {
                 val label = intent.getStringExtra(EXTRA_LABEL) ?: return
                 val option = intent.getIntExtra(EXTRA_OPTION, -1)
                 val href = Notifications.sessionHref(host, pane)
-                // the web app sends it, and takes the notification away once the agent has it
-                if (InyonDevicePlugin.answerFromNotification(host, pane, option, label, tag)) {
-                    Notifications.answering(context, tag, "Answering “$label”…", "Inyon is sending your answer.", href)
+                val at = System.currentTimeMillis()
+                // the web app sends it and then clears the session's notification, or posts why not;
+                // AnswerService keeps the app awake for that, since Android may have frozen it
+                if (InyonDevicePlugin.answerFromNotification(host, pane, option, label, tag, at)) {
+                    if (AnswerService.start(context, tag, label, href, at)) {
+                        Notifications.clear(context, tag)
+                    } else {
+                        Notifications.answering(context, tag, "Answering “$label”…", "Inyon is sending your answer.", href)
+                    }
                 } else {
                     Notifications.answering(context, tag, "Open Inyon to answer", "Inyon wasn't running, so “$label” wasn't sent.", href)
                 }

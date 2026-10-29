@@ -22,6 +22,7 @@
 # instantiated by Android from the manifest and the bridge layout
 -keep class tech.abhashchakraborty.inyon.MainActivity { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.KeepAliveService { <init>(); }
+-keep class tech.abhashchakraborty.inyon.device.AnswerService { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.InyonWebView { <init>(android.content.Context, android.util.AttributeSet); }
 -keep class tech.abhashchakraborty.inyon.device.ScannerActivity { <init>(); }
 -keep class tech.abhashchakraborty.inyon.device.ScannerOverlay { <init>(android.content.Context, android.util.AttributeSet); }

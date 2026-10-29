@@ -30,15 +30,15 @@ How an alert travels depends on how you use Inyon.
 
 The app watches your machines itself and posts the notifications. Each kind has its own Android channel (*Needs you*, *Finished*, *Machines* and the connection notice), so you can set their sound and importance in Android's settings. *Needs you* alerts have **Open** and **Mark read** buttons.
 
-### Answering from the notification
-
-From 0.21.1, a question with one to three answers (an approval like *Yes* / *Yes, and don't ask again* / *No*, or a short choice) shows them as the notification's buttons instead, and tapping the notification still opens the session. A button that approves something asks for your fingerprint or PIN first when the phone is locked; one that turns it down (*No*, *Deny*, *Cancel*…) doesn't. Questions with more answers keep **Open** and **Mark read**.
-
-The answer goes only if the session still asks that question: a tap that comes after it was answered elsewhere, or after the next question came up, sends nothing and says so. If the app wasn't running, the notification asks you to open Inyon instead.
-
 Android pauses background apps, which would drop the connection. **Stay connected**, on by default, keeps a small ongoing notification (*Inyon is connected*) so alerts arrive right away. The first time a machine appears, the app asks once to be allowed to run without battery limits. Some Android versions still limit how long this can run each day; the app tells you when it was stopped. Before 0.23.1, alerts stopped coming about a minute after you left the app on phones with Android System WebView 156 or later, because the WebView froze the hidden page; update the app if that's what you see.
 
 A fully closed app gets no alerts yet. That needs a push server, which Inyon doesn't run.
+
+### Answering from the notification
+
+From 0.23.1, a question with one to three answers (an approval like *Yes* / *Yes, and don't ask again* / *No*, or a short choice) shows them as the notification's buttons instead, and tapping the notification still opens the session. A button that approves something asks for your fingerprint or PIN first when the phone is locked; one that turns it down (*No*, *Deny*, *Cancel*…) doesn't. Questions with more answers keep **Open** and **Mark read**.
+
+The answer goes only if the session still asks that question: a tap that comes after it was answered elsewhere, or after the next question came up, sends nothing and says so. While it's on the way, a quiet *Answering “Yes”…* notice keeps the app awake, also when **Stay connected** is off. If the answer can't go within 15 seconds, or the app wasn't running, the notification asks you to open Inyon instead, and that tap is never sent later.
 
 ### A hub in a browser
 

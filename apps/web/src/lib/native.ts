@@ -146,6 +146,8 @@ export interface NotificationAnswer {
   option: number
   label: string
   tag: string
+  /** when it was tapped (ms); the app may have been frozen since */
+  at?: number
 }
 
 /** A question's answers, offered as the notification's buttons (one to three). */

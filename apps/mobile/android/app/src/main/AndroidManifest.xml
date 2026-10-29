@@ -56,6 +56,12 @@
             android:name=".device.NotificationActions"
             android:exported="false" />
 
+        <!-- wakes the app for a few seconds to send an answer tapped on a notification -->
+        <service
+            android:name=".device.AnswerService"
+            android:exported="false"
+            android:foregroundServiceType="shortService|dataSync" />
+
         <!-- keeps the app (and the web app's sockets) alive in the background while it's on.
              specialUse from Android 14: dataSync stops after 6 hours a day from Android 15 -->
         <service
