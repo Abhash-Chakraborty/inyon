@@ -49,7 +49,14 @@ pub fn wire(msg: &ServerMsg) -> String {
 }
 
 pub fn new_client(out: impl Fn(&ServerMsg) + 'static) -> ClientRef {
-    Rc::new(Client { overview: Cell::new(false), quiet: Cell::new(false), sent_key: RefCell::new(String::new()), chats: RefCell::new(IndexSet::new()), terms: RefCell::new(HashMap::new()), out: Box::new(out) })
+    Rc::new(Client {
+        overview: Cell::new(false),
+        quiet: Cell::new(false),
+        sent_key: RefCell::new(String::new()),
+        chats: RefCell::new(IndexSet::new()),
+        terms: RefCell::new(HashMap::new()),
+        out: Box::new(out),
+    })
 }
 
 pub fn add(c: &ClientRef) {
