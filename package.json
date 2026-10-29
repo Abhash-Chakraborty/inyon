@@ -10,11 +10,9 @@
     "conformance"
   ],
   "scripts": {
-    "dev:hub": "bun run --cwd apps/hub dev",
+    "dev:hub": "cargo run -p inyon-cli -- engine hub",
     "dev:web": "bun run --cwd apps/web dev",
     "build": "bun run --cwd apps/web build",
-    "start": "bun run --cwd apps/hub start",
-    "hub:update": "bun apps/hub/src/cli/update.ts",
     "typecheck": "bun --filter \"*\" typecheck",
     "cli:test": "cargo test --workspace"
   },

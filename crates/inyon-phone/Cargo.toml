@@ -1,7 +1,7 @@
 [package]
 name = "inyon-phone"
 version.workspace = true
-description = "Inyon's core in the phone app and the browser copy: inyon-api's routes and sockets on the browser's event loop, storage and fetch (port of apps/hub/src/phone)"
+description = "Inyon's core in the phone app and the browser copy: inyon-api's routes and sockets on the browser's event loop, storage and fetch"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true

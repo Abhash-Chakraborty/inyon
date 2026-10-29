@@ -1,4 +1,4 @@
-//! The JavaScript side: what `startPhone` takes and gives back (apps/hub/src/phone/types.ts), the
+//! The JavaScript side: what `startPhone` takes and gives back (apps/web/src/lib/phone-types.ts), the
 //! browser's event loop as the core's runtime, the app's store, the native SSH plugin, WebSockets
 //! for the link, `fetch`, and Request and Response in and out. Only globals every engine has
 //! (setTimeout, fetch, WebSocket, Request, Response), so the same module runs in the Android

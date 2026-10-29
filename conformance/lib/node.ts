@@ -2,8 +2,8 @@ import type { Machine } from './machine.ts'
 
 /**
  * A machine running inyon, as the hub sees it on /node: one WebSocket with the pairing token as a
- * bearer, a hello frame, then the hub's operations (see apps/hub/src/hosts/node-link.ts and
- * apps/node/ops.ts, crates/inyon-engine/src/ops.rs):
+ * bearer, a hello frame, then the hub's operations (see crates/inyon-core/src/hosts/node_link.rs and
+ * crates/inyon-engine/src/ops.rs):
  *
  *   hub → node   { id, op: 'exec' | 'stream' | 'pty' | 'write' | 'resize' | 'kill', ... }
  *   node → hub   { id, type: 'exit' | 'line' | 'data' | 'error', ... }

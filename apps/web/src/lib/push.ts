@@ -115,7 +115,7 @@ export function watchPush() {
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
   let { notifyDone: done, notifyPages: pages } = useStore.getState().settings
-  // a computer was removed (apps/hub/src/phone/index.ts)
+  // a computer was removed (crates/inyon-phone/src/web.rs)
   window.addEventListener('inyon:push-rotate', () => void rotatePush(done))
   void enablePush(done, pages)
   useStore.subscribe((s) => {

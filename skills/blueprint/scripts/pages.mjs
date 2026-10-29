@@ -2,7 +2,7 @@
 // once its folder is in ~/.inyon/pages.json; the hub reads that file and serves the folder from disk.
 //
 // The rules here (slugs, which folders may be pages, the file formats) copy Inyon's own in
-// apps/hub/src/features/pages-core.ts. This skill ships on its own, so it imports nothing from Inyon;
+// crates/inyon-core/src/features/pages_core.rs. This skill ships on its own, so it imports nothing from Inyon;
 // tests/publish.test.mjs checks them against fixtures/pages/rules.json when run inside the Inyon repo.
 //
 //   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added","session"?}]}

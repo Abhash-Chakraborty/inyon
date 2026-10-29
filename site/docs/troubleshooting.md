@@ -115,7 +115,7 @@ For Claude Code, the numbers come from the integration. Turn it on, or **Update*
 - **"The website's checksum list isn't the one this installer was published with"**: the site was changing over to a new release while you ran `get.sh` or `get.ps1`. Nothing was installed; run the command again in a few minutes.
 - **"Couldn't check the signature of the release's checksum list, because minisign isn't installed"**: the installer was pointed somewhere other than this site's copy of the newest release. Install minisign, or see [Without minisign](install.md#without-minisign).
 - A machine joined to a hub updates to the hub's version, so update the hub first.
-- A hub run from source says **Building the web app failed**, and `~/.inyon/hub-update.log` ends in `Unknown file extension ".ts"`: that hub is from before 16 October 2026 and built the app with whatever Node.js its service found. Run `git pull` and then `bun hub:update` in the checkout once; from then on the build runs on Bun alone.
+- A hub run from source on Bun stops working after `git pull`: 0.23 removed the Bun hub. Build `inyon` in the checkout and run the hub with it, as [From source](hub.md#from-source) shows.
 - `cat ~/.inyon/node/update-status` shows the last background update's result, and `~/.inyon/node/update.log` its log.
 
 ## Still stuck

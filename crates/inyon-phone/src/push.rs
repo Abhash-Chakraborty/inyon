@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/push/node-push.ts and the phone's push routes. The web app has no server to
+//! Port of the Bun hub's node-push.ts (removed in 0.23) and the phone's push routes. The web app has no server to
 //! send its notifications, so each paired computer sends them: the page hands every computer this
 //! browser's push registration (`inyon push set`), and the computer sends when an agent's hook says
 //! it needs you or finished. The computer keys them by this phone's link key, the one it paired

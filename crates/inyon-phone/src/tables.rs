@@ -1,4 +1,4 @@
-//! The phone's route tables, looked up as apps/hub/src/phone/index.ts's `makeRouter` does: the
+//! The phone's route tables, looked up as the TypeScript phone core's `makeRouter` did: the
 //! phone's own routes first, then the core's. A table that has the path but not the method passes
 //! the request on (the phone overrides only some methods of a path), and a path no table answers
 //! for that method is 405.

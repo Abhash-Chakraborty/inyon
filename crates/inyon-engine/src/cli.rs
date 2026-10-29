@@ -1,7 +1,7 @@
 //! The engine's commands, as inyon-engine answered them (inyon.ts). The `inyon` command runs them
 //! in-process; a program started under the engine's name (`inyon-engine`, which old commands,
 //! services and the Windows sign-in task run) answers them the same way. Only `hub` isn't here:
-//! the caller hands it to the Bun engine.
+//! the caller hands it to the hub (crates/inyon-hub).
 //!
 //!   pair [options]      make a pairing code (starts the link here if none runs)
 //!   link [options]      run the phone link
@@ -369,7 +369,7 @@ fn runtime() -> tokio::runtime::Runtime {
 }
 
 /// Answers one engine command. `args` come without the program's name; `--json` may be anywhere.
-/// `hub` goes to `hub`, which runs the Bun engine. Returns the exit code for commands that end.
+/// `hub` goes to `hub`, which runs the hub. Returns the exit code for commands that end.
 pub fn run(args: &[String], hub: impl FnOnce(&[String]) -> i32) -> i32 {
     let argv = crate::output::take_json(args);
     let cmd = argv.first().map(String::as_str);

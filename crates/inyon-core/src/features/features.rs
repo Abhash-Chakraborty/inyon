@@ -251,7 +251,7 @@ pub fn clean_script(dir: &str, days: f64, max_total_mb: f64) -> String {
     } else {
         String::new()
     };
-    // the machine's own inyon tidies by the same rules while no hub is connected (apps/node/tidy.ts)
+    // the machine's own inyon tidies by the same rules while no hub is connected (crates/inyon-engine)
     let policy = if days >= 0.0 {
         let policy_file = re!(r"/uploads$").replace(dir, "/upload-policy");
         format!("printf '%s %s\\n' {fdays} {} > {} 2>/dev/null;", fmt_number(max_total_mb.floor()), shq(&policy_file))

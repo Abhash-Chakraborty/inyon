@@ -1,10 +1,9 @@
-//! The machine side of Inyon, which the Bun engine (`apps/node`) ran until 0.19: the phone link,
-//! the connection to a hub, the commands either of them asks this machine to run, and the
-//! notifications it sends to paired browsers. The `inyon` command runs all of it in-process; only
-//! the hub itself still comes from the Bun engine.
+//! The machine side of Inyon, which the Bun engine ran until 0.19 (it was removed in 0.23): the
+//! phone link, the connection to a hub, the commands either of them asks this machine to run, and
+//! the notifications it sends to paired browsers. The `inyon` command runs all of it in-process.
 //!
-//! Each module is the port of one file in `apps/node`, keeping its structure so the two can be read
-//! side by side: `ops` (ops.ts), `connect` (inyon.ts's connection to a hub), `link` (link.ts),
+//! Each module is the port of one file of the Bun engine (`apps/node` until 0.23), keeping its
+//! structure: `ops` (ops.ts), `connect` (inyon.ts's connection to a hub), `link` (link.ts),
 //! `push` (push.ts), `tidy`, `paths` and `output`. Everything a phone, a hub or an older `inyon`
 //! command sees stays as the Bun engine had it: the `/node` frames, the link's bytes, the `--json`
 //! answers and the files under `~/.inyon`.

@@ -1,4 +1,4 @@
-//! Port of apps/hub/src/claude: the screen reader, transcripts, drafts and delivery, the
+//! Port of the Bun hub's claude folder (removed in 0.23): the screen reader, transcripts, drafts and delivery, the
 //! integration scripts, and the actions and watchers that drive an agent.
 
 pub mod actions;

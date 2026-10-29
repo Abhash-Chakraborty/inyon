@@ -9,12 +9,14 @@ import path from 'node:path'
  * the same on every computer and nothing reaches the network or your tmux.
  *
  * Any hub can be dropped in with --hub '<command line>': it gets the same environment variables
- * (INYON_DATA_DIR, PORT, BIND, HOME, PATH, NODE_ENV, INYON_HUB_NAME), and has to write the
- * setup code to $INYON_DATA_DIR/setup-code on a first run, as the Bun hub does.
+ * (INYON_DATA_DIR, PORT, BIND, HOME, PATH, NODE_ENV, INYON_HUB_NAME, INYON_CLI_DIST), and has to
+ * write the setup code to $INYON_DATA_DIR/setup-code on a first run, as Inyon's hub does.
  */
 
 export const REPO = path.resolve(import.meta.dir, '../..')
-export const DEFAULT_HUB = `'${process.execPath}' '${path.join(REPO, 'apps/hub/src/index.ts')}'`
+/** the inyon program cargo built in this checkout (`cargo build -p inyon-cli`) */
+export const INYON = path.join(process.env.CARGO_TARGET_DIR || path.join(REPO, 'target'), 'debug', 'inyon')
+export const DEFAULT_HUB = `'${INYON}' engine hub`
 
 export const freePort = () =>
   new Promise<number>((resolve, reject) => {
@@ -33,7 +35,7 @@ function hubStubs(bin: string) {
   fs.mkdirSync(bin, { recursive: true })
   const write = (name: string, body: string) => fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
   write('tmux', 'echo "no server running on /tmp/tmux-conformance/default" >&2; exit 1')
-  // the hub's update check runs git in its checkout: here it isn't one, so the check is offline
+  // nothing the hub runs finds a git checkout
   write('git', 'echo "fatal: not a git repository (or any of the parent directories): .git" >&2; exit 128')
   write('hostname', 'echo conformance-hub')
   write('uname', 'case "$1" in -m) echo x86_64;; *) echo Linux;; esac')
@@ -44,7 +46,7 @@ function hubStubs(bin: string) {
 }
 
 export interface HubOptions {
-  /** the command line that starts the hub (default: the Bun hub from this checkout) */
+  /** the command line that starts the hub (default: the one cargo built in this checkout) */
   command?: string
   /** writes records into the data folder before the hub starts (machines, settings) */
   seed?: (dataDir: string) => void
@@ -83,10 +85,9 @@ export class Hub {
     // the same line the probe would work out from /sys, so "local" is a server everywhere
     fs.mkdirSync(path.join(this.home, '.inyon'), { recursive: true })
     fs.writeFileSync(path.join(this.home, '.inyon', 'machine-kind'), 'Linux|1||kvm|0|0|Conformance VM|\n')
-    const noCli = path.join(this.root, 'no-cli-dist')
-    fs.mkdirSync(noCli, { recursive: true })
+    const cliDist = path.join(this.root, 'cli-dist')
+    seedCommands(cliDist)
     this.o.seed?.(this.dataDir)
-    seedEngines(this.dataDir)
     this.port = await freePort()
     this.base = `http://127.0.0.1:${this.port}`
     const env: Record<string, string> = {
@@ -97,12 +98,14 @@ export class Hub {
       BIND: '127.0.0.1',
       NODE_ENV: 'test',
       INYON_HUB_NAME: 'Conformance hub',
-      // a checkout's apps/cli/dist would change what node-dist hands out
-      INYON_CLI_DIST: noCli,
+      // what a hub built in a checkout hands out, in place of apps/cli/dist
+      INYON_CLI_DIST: cliDist,
       // anything that still reaches a real tmux finds a private, empty server folder
       TMUX_TMPDIR: path.join(this.root, 'tmux'),
       LANG: 'C.UTF-8',
       TZ: 'UTC',
+      // where test/altered-hub.ts finds the inyon program
+      ...(process.env.CARGO_TARGET_DIR ? { CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR } : {}),
     }
     fs.mkdirSync(env.TMUX_TMPDIR!, { recursive: true, mode: 0o700 })
     this.proc = Bun.spawn(['/bin/sh', '-c', `exec ${this.command}`], { cwd: this.root, env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', detached: true })
@@ -166,23 +169,21 @@ export class Hub {
 }
 
 /**
- * A hub run from a checkout builds the machine programs it hands out on the first "Add a machine"
- * (Bun's runtime for five systems, about 20 s and a download). The harness puts small placeholder
- * files where that build lands, named the way the hub names its build (features/node-dist.ts; the
- * Rust hub from this checkout works out the same name), so pairing answers at once and offline.
+ * A hub built in a checkout hands machines the inyon commands cargo built (INYON_CLI_DIST), and an
+ * older inyon's engine as a copy of one, Windows' made windowless. The harness puts a small
+ * placeholder there for each system, so pairing answers at once and offline; the Windows ones
+ * have just enough of a PE header for that copy.
  */
-function seedEngines(dataDir: string) {
-  const script = "import { tag } from './apps/hub/src/features/node-dist.ts'; import { HUB_TARGETS, engineFile } from './apps/node/targets.ts'; console.log(JSON.stringify({ tag: tag(), files: HUB_TARGETS.map(engineFile) }))"
-  const r = Bun.spawnSync([process.execPath, '-e', script], {
-    cwd: REPO,
-    env: { ...process.env, INYON_DATA_DIR: dataDir, NODE_ENV: 'test' },
-    stdout: 'pipe',
-    stderr: 'pipe',
-  })
-  const line = r.stdout.toString().trim().split('\n').at(-1)
-  if (r.exitCode !== 0 || !line) throw new Error(`could not read the hub's build tag: ${r.stderr.toString()}`)
-  const { tag, files } = JSON.parse(line) as { tag: string; files: string[] }
-  const out = path.join(dataDir, 'node-dist')
-  fs.mkdirSync(out, { recursive: true })
-  for (const name of files) fs.writeFileSync(path.join(out, `${tag}-${name}`), `placeholder ${name} for the conformance harness\n`)
+function seedCommands(dir: string) {
+  fs.mkdirSync(dir, { recursive: true })
+  for (const t of ['linux-x64', 'linux-arm64', 'darwin-x64', 'darwin-arm64']) fs.writeFileSync(path.join(dir, `inyon-${t}`), `placeholder inyon for ${t}\n`, { mode: 0o755 })
+  for (const t of ['windows-x64', 'windows-arm64']) {
+    const exe = Buffer.alloc(0x100)
+    exe.write('MZ', 0)
+    exe.writeUInt32LE(0x80, 0x3c)
+    exe.write('PE\0\0', 0x80, 'latin1')
+    exe.writeUInt16LE(3, 0x80 + 4 + 20 + 68)
+    exe.write(`placeholder inyon for ${t}`, 0x40)
+    fs.writeFileSync(path.join(dir, `inyon-${t}.exe`), exe)
+  }
 }

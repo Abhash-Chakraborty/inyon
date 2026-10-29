@@ -1,4 +1,4 @@
-//! The phone's route for pairing with a computer (`/api/phone/pair` in apps/hub/src/phone/index.ts):
+//! The phone's route for pairing with a computer (`/api/phone/pair`):
 //! from the code `inyon pair` shows, or the short ID and code typed in, to a computer on the list.
 
 use http::Method;

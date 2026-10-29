@@ -1,8 +1,8 @@
 import type { ServerMsg } from '@inyon/protocol'
 
 /**
- * What the phone app gives the core, and what it gets back. Kept free of hub-only types so the
- * web app can typecheck against it without pulling in the hub.
+ * What the phone app gives the core (crates/inyon-phone, @inyon/phone in vite.config.ts), and
+ * what it gets back.
  */
 
 export interface PhoneStore {

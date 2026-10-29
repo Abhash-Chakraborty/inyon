@@ -1,5 +1,4 @@
-//! `inyon-engine hub` as apps/node/hub.ts answers it, run by the inyon command unless
-//! INYON_HUB_IMPL=bun. Its settings (PORT, BIND, TLS_CERT and TLS_KEY, INYON_ALLOW_HTTP…) can go
+//! `inyon-engine hub`, as the Bun engine's hub.ts answered it, run by the inyon command. Its settings (PORT, BIND, TLS_CERT and TLS_KEY, INYON_ALLOW_HTTP…) can go
 //! in ~/.inyon/hub.env, one NAME=value a line, so the background service picks them up too.
 //!
 //!   hub                 run it here

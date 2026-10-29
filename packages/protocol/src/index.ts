@@ -1,4 +1,4 @@
-// Types shared by the hub (apps/hub) and the client (apps/web).
+// Types shared by the hub (crates/inyon-protocol is their Rust copy) and the client (apps/web).
 import type { AgentKind } from './agents.ts'
 
 export * from './agents.ts'
@@ -536,7 +536,7 @@ export interface ProvidersReport {
 
 /** A one-time code the hub's web app shows (as a QR, and as text to type) for a phone to pair with. */
 export interface PhonePairCode {
-  /** 8 characters of Crockford base32, shown as "K7Q4-MX2T" (formatShortId in @inyon/link) */
+  /** 8 characters of Crockford base32, shown as "K7Q4-MX2T" (format_short_id in crates/inyon-link) */
   id: string
   /** 6 digits */
   code: string

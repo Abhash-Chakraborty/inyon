@@ -16,7 +16,7 @@ test('the chunks a browser can reach are listed; the phone app\'s in-process hub
     'assets/core-1.js': chunk('assets/core-1.js'),
     'assets/Messages-1.js': chunk('assets/Messages-1.js', { dynamicImports: ['assets/rust-1.js'] }),
     'assets/rust-1.js': chunk('assets/rust-1.js'),
-    'assets/phone-1.js': chunk('assets/phone-1.js', { facadeModuleId: '/repo/apps/hub/src/phone/index.ts', imports: ['assets/registry-1.js', 'assets/core-1.js'] }),
+    'assets/phone-1.js': chunk('assets/phone-1.js', { facadeModuleId: '/repo/apps/web/src/phone-core/index.ts', imports: ['assets/registry-1.js', 'assets/core-1.js'] }),
     'assets/registry-1.js': chunk('assets/registry-1.js'),
     'assets/index-1.css': { type: 'asset', fileName: 'assets/index-1.css' },
     'version.json': { type: 'asset', fileName: 'version.json' },

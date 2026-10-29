@@ -19,9 +19,9 @@ export interface Rule {
 const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi
 const SHA256 = /\b[0-9a-f]{64}\b/g
 const ISO_TIME = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b/g
-/** Terminal views are named inyon-view-<6 random characters> (apps/hub/src/terminal/terminal.ts). */
+/** Terminal views are named inyon-view-<6 random characters> (crates/inyon-core/src/terminal/terminal.rs). */
 const VIEW = /\binyon-view-[a-z0-9]{1,8}\b/g
-/** Paste buffers are named inyon-<uuid> (apps/hub/src/tmux/tmux.ts typeText); the uuid rule numbers them. */
+/** Paste buffers are named inyon-<uuid> (type_text in crates/inyon-core/src/tmux/tmux.rs); the uuid rule numbers them. */
 
 /**
  * A clock reading from this run: from two days before it started to 40 days after (a session

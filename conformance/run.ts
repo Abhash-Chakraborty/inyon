@@ -3,7 +3,7 @@
  * Hub conformance: runs every scenario against a hub and compares what it answered with the
  * golden transcripts in conformance/golden.
  *
- *   bun conformance/run.ts                    the Bun hub from this checkout
+ *   bun conformance/run.ts                    the hub cargo built in this checkout
  *   bun conformance/run.ts --hub '<command>'  any hub started with the same environment
  *   bun conformance/run.ts --update           rewrite the goldens from this run
  *   bun conformance/run.ts --only claude-send,phones   some scenarios

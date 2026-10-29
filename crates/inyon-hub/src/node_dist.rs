@@ -1,13 +1,13 @@
-//! Port of features/node-dist.ts and pair-command.ts: what a machine downloads from its hub to run
-//! Inyon. The inyon command for its system (/node/inyon), the engine it runs (/node/inyon-engine),
-//! and on Windows busybox-w32, the small sh the hub's commands run with.
+//! What a machine downloads from its hub to run Inyon (node-dist.ts and pair-command.ts, removed
+//! in 0.23): the inyon command for its system (/node/inyon), the engine an inyon from 0.12 to 0.22
+//! asks for (/node/inyon-engine, a copy of the command since 0.23), and on Windows busybox-w32,
+//! the small sh the hub's commands run with.
 //!
 //! The hub in the inyon program hands out the release of its own version from GitHub, checked
 //! against that release's SHA256SUMS, so a machine never needs GitHub itself. A hub built in a
-//! checkout (see hub_update::checkout) does what the Bun hub does from a checkout: it builds the
-//! engine from the checkout's source with Bun, and serves a command built with cargo when one is
-//! in apps/cli/dist (INYON_CLI_DIST). Either way files are kept under ~/.inyon/node-dist, named
-//! the way the Bun hub names them, so the two hubs share them.
+//! checkout (see hub_update::checkout) hands out the commands cargo built into apps/cli/dist
+//! (INYON_CLI_DIST), and the release's files for a system with none there. Files are kept under
+//! ~/.inyon/node-dist.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -94,23 +94,33 @@ pub fn cli_target_of(q: &Query) -> HubResult<String> {
     Ok(t)
 }
 
-/// hash of what goes into a machine's engine (the node and the packages it uses), so any change gets
-/// rebuilt: node-dist.ts's `sourceHash`, byte for byte, so both hubs name a build alike.
-pub fn source_hash(repo: &Path) -> String {
+/// A checkout's tag: the commands cargo built, by name, size and time, so a new build gets new
+/// copies once the hub restarts.
+pub fn built_tag(cli_dist: &Path) -> String {
     let mut h = Sha256::new();
-    for dir in [repo.join("apps/node"), repo.join("packages/link/src"), repo.join("packages/protocol/src")] {
-        let base = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let mut files: Vec<String> =
-            std::fs::read_dir(&dir).map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
-        files.retain(|f| (f.ends_with(".ts") || f.ends_with(".sh")) && !f.ends_with(".test.ts") && !f.ends_with(".d.ts"));
-        // JavaScript's default sort: by UTF-16 code units
-        files.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-        for f in files {
-            h.update(format!("{base}/{f}").as_bytes());
-            h.update(std::fs::read(dir.join(&f)).unwrap_or_default());
+    for t in CLI_TARGETS {
+        let name = cli_file(t);
+        if let Ok(m) = std::fs::metadata(cli_dist.join(&name)) {
+            let at = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+            h.update(format!("{name} {} {at}\n", m.len()).as_bytes());
         }
     }
-    hex(&h.finalize())[..16].to_owned()
+    format!("checkout-{}", &hex(&h.finalize())[..12])
+}
+
+/// Where a Windows program says which subsystem it runs in: the PE header (at the offset in its DOS
+/// header), its signature and file header, then 68 bytes into the optional header.
+fn subsystem_at(exe: &[u8]) -> Option<usize> {
+    let pe = u32::from_le_bytes(exe.get(0x3c..0x40)?.try_into().ok()?) as usize;
+    (exe.get(..2)? == b"MZ" && exe.get(pe..pe + 4)? == b"PE\0\0").then_some(pe + 4 + 20 + 68).filter(|at| at + 2 <= exe.len())
+}
+
+/// The windowless copy of a Windows program, the way the release makes inyon-engine-windows-x64.exe
+/// (scripts/engine-copies.sh): the subsystem goes from console (3) to windows (2), nothing else changes.
+pub fn windowless(mut exe: Vec<u8>) -> Result<Vec<u8>, String> {
+    let at = subsystem_at(&exe).ok_or("it isn't a Windows program")?;
+    exe[at..at + 2].copy_from_slice(&2u16.to_le_bytes());
+    Ok(exe)
 }
 
 type Building = Shared<LocalBoxFuture<'static, Result<PathBuf, HubError>>>;
@@ -132,8 +142,6 @@ pub struct Dist {
     tag: String,
     building: RefCell<HashMap<PathBuf, Building>>,
     sums: RefCell<Option<Sums>>,
-    /// the program that builds a checkout's engines
-    bun: PathBuf,
 }
 
 thread_local! {
@@ -285,14 +293,8 @@ fn write(p: &Path, data: &[u8]) -> HubResult<()> {
 impl Dist {
     pub fn new(repo: Option<PathBuf>, data_dir: &Path) -> Rc<Self> {
         let cli_dist = std::env::var("INYON_CLI_DIST").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| repo.clone().unwrap_or_default().join("apps/cli/dist"));
-        let tag = repo.as_deref().map(source_hash).unwrap_or_else(|| format!("v{VERSION}"));
-        Rc::new(Dist { repo, out: data_dir.join("node-dist"), cli_dist, tag, building: RefCell::default(), sums: RefCell::default(), bun: PathBuf::from("bun") })
-    }
-
-    #[cfg(test)]
-    pub fn with_bun(repo: Option<PathBuf>, data_dir: &Path, bun: PathBuf) -> Rc<Self> {
-        let d = Rc::into_inner(Self::new(repo, data_dir)).expect("a new Dist");
-        Rc::new(Dist { bun, ..d })
+        let tag = if repo.is_some() { built_tag(&cli_dist) } else { format!("v{VERSION}") };
+        Rc::new(Dist { repo, out: data_dir.join("node-dist"), cli_dist, tag, building: RefCell::default(), sums: RefCell::default() })
     }
 
     pub fn install(self: &Rc<Self>) {
@@ -372,7 +374,7 @@ impl Dist {
         r
     }
 
-    /// The engine for `t`, built or downloaded once.
+    /// The engine for `t`: a copy of a checkout's command, or the release's file, made once.
     pub async fn engine(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
         let file = self.out.join(format!("{}-{}", self.tag, engine_file(t)));
         if file.exists() {
@@ -383,46 +385,24 @@ impl Dist {
             Box::pin(async move {
                 std::fs::create_dir_all(&me.out).map_err(|e| HubError::plain(e.to_string()))?;
                 let tmp = PathBuf::from(format!("{}.tmp", f.display()));
-                let made = if let Some(repo) = &me.repo {
-                    me.build_engine(repo, &t, &tmp).await.map_err(|e| http(500, format!("Could not build the Inyon engine for {t}: {e}")))?
-                } else {
-                    let sums = me.release_sums().await?;
-                    write(&tmp, &release_file(&engine_file(&t), &sums, &Self::release_base(), net()).await?)?;
-                    tmp
+                let data = match me.built_command(&t).filter(|_| me.runs_from_source()) {
+                    Some(built) => {
+                        let data = std::fs::read(&built).map_err(|e| HubError::plain(e.to_string()))?;
+                        if t.starts_with("windows") {
+                            windowless(data).map_err(|e| http(500, format!("Could not make the engine for {t} from {}: {e}", built.display())))?
+                        } else {
+                            data
+                        }
+                    }
+                    None => release_file(&engine_file(&t), &me.release_sums().await?, &Self::release_base(), net()).await?,
                 };
-                rename(&made, &f)?;
+                write(&tmp, &data)?;
+                rename(&tmp, &f)?;
                 me.prune_old(&me.out);
                 Ok(f)
             })
         })
         .await
-    }
-
-    /// A checkout's engine for `t`, built by the checkout's own build script (Bun's runtime for
-    /// that system inside, downloaded on the first build for it).
-    /// Returns the file it wrote: Bun adds `.exe` to a Windows build's name (build.ts's buildInyon
-    /// says so too).
-    async fn build_engine(&self, repo: &Path, t: &str, out: &Path) -> Result<PathBuf, String> {
-        let script = format!(
-            "const {{ buildInyon }} = await import({}); await buildInyon({{ target: {}, outfile: {}, hub: false, hideConsole: true }})",
-            serde_json::Value::String(repo.join("apps/node/build.ts").to_string_lossy().into_owned()),
-            serde_json::Value::String(t.to_owned()),
-            serde_json::Value::String(out.to_string_lossy().into_owned()),
-        );
-        let o = tokio::process::Command::new(&self.bun)
-            .args(["-e", &script])
-            .current_dir(repo)
-            .env("PATH", crate::hub_update::tool_path())
-            .stdin(std::process::Stdio::null())
-            .output()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !o.status.success() {
-            let err = String::from_utf8_lossy(&o.stderr).trim().to_owned();
-            return Err(if err.is_empty() { format!("bun exited with {}", o.status) } else { err });
-        }
-        let exe = PathBuf::from(format!("{}.exe", out.display()));
-        Ok(if !out.exists() && exe.exists() { exe } else { out.to_owned() })
     }
 
     /// The cargo-built command for `t` next to a checkout, if there is one.
@@ -460,32 +440,14 @@ impl Dist {
         .await
     }
 
-    /// A checkout's command for `t`: what cargo built into apps/cli/dist. Without that, Windows gets
-    /// the release's command, and the engine only when the release can't be had. Linux and macOS
-    /// get the engine, which is a whole program too.
+    /// A checkout's command for `t`: what cargo built into apps/cli/dist, or else the release's.
     async fn source_command(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
         if let Some(built) = self.built_command(t) {
             return Ok(built);
         }
-        if !t.starts_with("windows") {
-            return self.engine(t).await;
-        }
-        match self.release_command(t).await {
-            Ok(f) => Ok(f),
-            Err(e) => {
-                let dist = self.cli_dist.display();
-                if t == "windows-arm64" {
-                    return Err(http(503, format!("This hub runs from a checkout and has no inyon command for {t}: none in {dist}, and the release's failed ({}).", e.message)));
-                }
-                console::error(&format!("inyon command for {t}: none in {dist} and the release's failed ({}); handing out the engine instead", e.message));
-                self.engine(t).await
-            }
-        }
-    }
-
-    /// Whether this hub hands out the engine as a file of its own (a checkout without a built command doesn't).
-    fn split_release(&self, t: &str) -> bool {
-        !self.runs_from_source() || self.built_command(t).is_some()
+        self.release_command(t).await.map_err(|e| {
+            http(503, format!("This hub runs from a checkout and has no inyon command for {t}: none in {}, and the release's failed ({}).", self.cli_dist.display(), e.message))
+        })
     }
 
     /// The checksums of the Linux and macOS files, which install.sh checks its downloads against.
@@ -493,8 +455,7 @@ impl Dist {
         let sums = if self.runs_from_source() { None } else { Some(self.release_sums().await?) };
         let mut lines = vec![];
         for t in unix() {
-            let names = if self.split_release(t) { vec![cli_file(t), engine_file(t)] } else { vec![cli_file(t)] };
-            for name in names {
+            for name in [cli_file(t), engine_file(t)] {
                 let sum = match &sums {
                     Some(s) => sum_for(s, &name),
                     None => {
@@ -609,7 +570,7 @@ impl Dist {
                     me.release_sums().await?;
                     return Ok(());
                 }
-                for t in unix().chain(["windows-x64"]) {
+                for t in unix().chain(["windows-x64"]).filter(|t| me.built_command(t).is_some()) {
                     let f = me.engine(t).await?;
                     me.sha256(&f).await?;
                     me.gzipped(&f).await?;
@@ -627,7 +588,7 @@ impl Dist {
 /// Whether a request nobody signed may make this hub build or download Inyon for `os` (mayPrepare
 /// in node-dist.ts). The /node routes are open (install.sh, install.ps1 and `inyon update` on
 /// older machines send no token), so without this anyone who reaches the hub could make it fetch
-/// about 100 MB per system from GitHub, or build every engine on a checkout. What's already here
+/// Inyon for every system from GitHub. What's already here
 /// is always handed out; a new system is prepared only while an "Add a machine" command is waiting
 /// to be used, or when a machine of that system is paired (an update), or one whose system isn't
 /// known yet.
@@ -680,12 +641,12 @@ fn gate(t: &str, ready: bool) -> HubResult<()> {
 }
 
 impl Dist {
+    /// here already, or quickly copied from what cargo built
     fn engine_ready(&self, t: &str) -> bool {
-        self.out.join(format!("{}-{}", self.tag, engine_file(t))).exists()
+        self.out.join(format!("{}-{}", self.tag, engine_file(t))).exists() || (self.runs_from_source() && self.built_command(t).is_some())
     }
     fn command_ready(&self, t: &str) -> bool {
-        self.out.join(format!("v{VERSION}-{}", cli_file(t))).exists()
-            || (self.runs_from_source() && (self.built_command(t).is_some() || (!t.starts_with("windows") && self.engine_ready(t))))
+        self.out.join(format!("v{VERSION}-{}", cli_file(t))).exists() || (self.runs_from_source() && self.built_command(t).is_some())
     }
     /// The engine a request asks for, once gate() lets it through.
     async fn engine_for(self: &Rc<Self>, t: &str) -> HubResult<PathBuf> {
@@ -704,7 +665,7 @@ impl Dist {
         gate(&format!("windows-{arch}"), self.out.join(busybox_pin(arch).0).exists())?;
         self.busybox(arch).await
     }
-    /// a checkout works the list out by building every Unix engine, so it waits for a machine to be added
+    /// a checkout works the list out from every Unix file, some from the release, so it waits for a machine to be added
     async fn unix_sums_for(self: &Rc<Self>) -> HubResult<String> {
         if self.runs_from_source() {
             let reg = inyon_core::hosts::registry::registry();

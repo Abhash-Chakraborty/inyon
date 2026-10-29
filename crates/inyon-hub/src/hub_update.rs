@@ -1,10 +1,9 @@
 //! The hub's side of features/hub-update.ts: is there an update, and start one from Settings.
 //!
 //! Run as the inyon program, the hub looks for a new release on the website and `inyon update
-//! --background` swaps it in and restarts the hub. Built in a checkout (a hub you run with `cargo
-//! run`), it pulls with the same script the Bun hub starts (apps/hub/src/cli/update.ts, run by
-//! Bun). Nothing here runs by itself: the hub only looks for a new release, at most every half
-//! hour, when the app asks.
+//! --background` swaps it in and restarts the hub. A development build (`cargo run` in a checkout)
+//! doesn't update itself: Settings says how to update the checkout instead. Nothing here runs by
+//! itself: the hub only looks for a new release, at most every half hour, when the app asks.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -12,7 +11,7 @@ use std::rc::Rc;
 
 use futures_util::future::{FutureExt, LocalBoxFuture, Shared};
 use inyon_core::clock::now_ms;
-use inyon_protocol::{newer_release, newest_release, LATEST_URL, VERSION};
+use inyon_protocol::{newer_release, LATEST_URL, VERSION};
 use serde_json::{json, Map, Value};
 
 use crate::http::{json as answer_json, Req, Resp};
@@ -21,16 +20,13 @@ use crate::server::{raw, Routes};
 /// at most this often the hub asks for new tags, unless Settings asks for a check
 pub const CHECK_EVERY: u64 = 30 * 60_000;
 
-/// the systemd user unit, under its name from before the rename to Inyon too
 pub type Exec = Rc<dyn Fn(Vec<String>, PathBuf) -> LocalBoxFuture<'static, (i32, String)>>;
-pub type Spawn = Rc<dyn Fn(Vec<String>, &Path, &Path) -> Option<u32>>;
 pub type Get = Rc<dyn Fn(&str) -> LocalBoxFuture<'static, Result<(u16, String), String>>>;
 
 /// The checkout this program was built in, when it's a development build (`cargo run`) and the
-/// checkout is still there: then the hub runs "from source", as the Bun hub does from a checkout
-/// (its build tag, engines built with Bun, its update by git pull). A release build is always the
-/// program, as a compiled Bun hub always was, even when the folder it was built in is still on
-/// disk: git pull wouldn't rebuild it.
+/// checkout is still there: then the hub runs "from source" (it hands out what cargo built, and
+/// git and cargo update it). A release build is always the program, even when the folder it was
+/// built in is still on disk.
 pub fn checkout() -> Option<PathBuf> {
     checkout_at(Path::new(env!("CARGO_MANIFEST_DIR")), cfg!(debug_assertions))
 }
@@ -41,17 +37,16 @@ fn checkout_at(manifest_dir: &Path, development: bool) -> Option<PathBuf> {
     }
     let repo = manifest_dir.join("../..");
     let repo = std::fs::canonicalize(&repo).unwrap_or(repo);
-    repo.join("apps/node/targets.ts").is_file().then_some(repo)
+    repo.join("apps/cli/Cargo.toml").is_file().then_some(repo)
 }
 
-/// PATH with the places Bun installs itself. A systemd user unit starts with a short PATH that
-/// often doesn't have it.
+/// PATH with ~/.local/bin and /usr/local/bin, which a systemd user unit's short PATH often lacks.
 pub fn tool_path() -> String {
     let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).unwrap_or_else(|| inyon_engine::paths::home().to_string_lossy().into_owned());
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_string_lossy().into_owned())).unwrap_or_default();
     let mut seen: Vec<String> = vec![];
     let path = std::env::var("PATH").unwrap_or_default();
-    for p in path.split(':').map(str::to_owned).chain([exe_dir, format!("{home}/.bun/bin"), format!("{home}/.local/bin"), "/usr/local/bin".to_owned()]) {
+    for p in path.split(':').map(str::to_owned).chain([exe_dir, format!("{home}/.local/bin"), "/usr/local/bin".to_owned()]) {
         if !p.is_empty() && !seen.contains(&p) {
             seen.push(p);
         }
@@ -77,44 +72,9 @@ pub fn exec() -> Exec {
     })
 }
 
-fn real(p: &Path) -> PathBuf {
-    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned())
-}
-
-fn v(cmd: &[&str]) -> Vec<String> {
-    cmd.iter().map(|s| (*s).to_owned()).collect()
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Checkout {
-    pub git: bool,
-    pub branch: Option<String>,
-    pub reason: Option<String>,
-}
-
-/// Whether `repo` can be updated with a fast-forward pull, and the branch it's on.
-pub async fn check_checkout(repo: &Path, run: &Exec) -> Checkout {
-    let top = run(v(&["git", "rev-parse", "--show-toplevel"]), repo.to_owned()).await;
-    if top.0 != 0 || real(Path::new(&top.1)) != real(repo) {
-        return Checkout {
-            git: false,
-            branch: None,
-            reason: Some(format!("{} isn't a git checkout, so it can't update itself. Install Inyon with git clone to get updates.", repo.display())),
-        };
-    }
-    let branch = run(v(&["git", "symbolic-ref", "--short", "-q", "HEAD"]), repo.to_owned()).await.1;
-    if branch.is_empty() {
-        return Checkout { git: true, branch: None, reason: Some("The checkout is on a tag or commit, not a branch. Run git checkout main in it first.".into()) };
-    }
-    let status = run(v(&["git", "status", "--porcelain", "--untracked-files=no"]), repo.to_owned()).await;
-    if status.0 != 0 || !status.1.is_empty() {
-        return Checkout { git: true, branch: Some(branch), reason: Some("The checkout has local changes. Commit or stash them first.".into()) };
-    }
-    if run(v(&["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]), repo.to_owned()).await.0 != 0 {
-        let reason = format!("The {branch} branch doesn't follow a remote branch, so there's nothing to pull.");
-        return Checkout { git: true, branch: Some(branch), reason: Some(reason) };
-    }
-    Checkout { git: true, branch: Some(branch), reason: None }
+/// What Settings says on a hub built in a checkout, which updates with git and cargo.
+pub fn from_source(repo: &Path) -> String {
+    format!("This hub is a development build from {}. To update it, run git pull and cargo build there, then restart the hub.", repo.display())
 }
 
 /// The commit the hub runs: built from (the inyon program), or checked out (a checkout's build).
@@ -142,9 +102,7 @@ pub struct Options {
     pub version: String,
     pub commit: String,
     pub run: Exec,
-    pub spawn: Spawn,
     pub now: Rc<dyn Fn() -> u64>,
-    pub alive: Rc<dyn Fn(u32) -> bool>,
     /// the inyon program's update status file (see apps/cli/src/update.rs)
     pub status_file: PathBuf,
     /// the program whose `update --background` is run
@@ -160,9 +118,7 @@ impl Options {
             version: VERSION.to_owned(),
             commit,
             run: exec(),
-            spawn: Rc::new(spawn_detached),
             now: Rc::new(now_ms),
-            alive: Rc::new(pid_alive),
             status_file: inyon_engine::paths::node_dir().join("update-status"),
             // the inyon command owns updates
             program: inyon_engine::paths::inyon_command().or_else(|| std::env::current_exe().ok()).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "inyon".into()),
@@ -177,45 +133,12 @@ impl Options {
     }
 }
 
-/// Starts the update script on its own, in a session of its own, so it outlives the hub.
-fn spawn_detached(cmd: Vec<String>, cwd: &Path, log: &Path) -> Option<u32> {
-    use std::os::unix::fs::OpenOptionsExt;
-    use std::os::unix::process::CommandExt;
-    let out = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(log).ok()?;
-    let err = out.try_clone().ok()?;
-    let (prog, args) = cmd.split_first()?;
-    let mut c = std::process::Command::new(prog);
-    c.args(args).current_dir(cwd).env("PATH", tool_path()).stdin(std::process::Stdio::null()).stdout(out).stderr(err);
-    // SAFETY: setsid and setrlimit are async-signal-safe and touch nothing of this process
-    unsafe {
-        c.pre_exec(|| {
-            libc::setsid();
-            inyon_backends::limits::restore_in_child();
-            Ok(())
-        });
-    }
-    let mut child = c.spawn().ok()?;
-    let pid = child.id();
-    // it's still this process's child: waited for when it ends, so it doesn't stay behind as a
-    // zombie that pid_alive would count as a running update
-    let _ = std::thread::Builder::new().name("inyon-update-wait".into()).spawn(move || child.wait());
-    Some(pid)
-}
-
-fn pid_alive(pid: u32) -> bool {
-    // SAFETY: signal 0 only asks whether the process exists
-    let r = unsafe { libc::kill(pid as i32, 0) };
-    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Check {
     latest: Option<String>,
-    behind: Option<u64>,
     can_update: bool,
     reason: Option<String>,
     checked_at: u64,
-    binary: bool,
 }
 
 /// What `start` refused, with the status the route answers with.
@@ -241,8 +164,8 @@ fn write_private(p: &Path, text: &str) -> std::io::Result<()> {
     f.write_all(text.as_bytes())
 }
 
-/// Updates the update script's progress in the job file (`writeJob`).
-pub fn write_job(file: &Path, patch: Value) {
+/// Adds to what the job file says about the update started from Settings.
+fn write_job(file: &Path, patch: Value) {
     let mut job = read_json(file).unwrap_or_else(|| {
         let mut m = Map::new();
         m.insert("started".into(), json!(now_ms()));
@@ -259,12 +182,8 @@ pub fn write_job(file: &Path, patch: Value) {
 impl HubUpdater {
     pub fn new(o: Options) -> Rc<Self> {
         let job_file = o.data_dir.join("hub-update.json");
-        let log_file = if o.repo.is_none() { o.status_file.parent().unwrap_or(Path::new(".")).join("update.log") } else { o.data_dir.join("hub-update.log") };
+        let log_file = o.status_file.parent().unwrap_or(Path::new(".")).join("update.log");
         Rc::new(HubUpdater { o, job_file, log_file, cache: RefCell::new(None), checking: RefCell::new(None) })
-    }
-
-    fn binary(&self) -> bool {
-        self.o.repo.is_none()
     }
 
     fn read_job(&self) -> Option<Map<String, Value>> {
@@ -278,7 +197,7 @@ impl HubUpdater {
             Ok((status, body)) => inyon_core::hosts::node_update::latest_release_from(status, &body).ok().filter(|n| newer_release(n, &version)),
             Err(_) => None,
         };
-        Check { latest, behind: None, can_update: true, reason: None, checked_at: now, binary: true }
+        Check { latest, can_update: true, reason: None, checked_at: now }
     }
 
     fn check(self: &Rc<Self>) -> LocalBoxFuture<'static, Check> {
@@ -286,19 +205,7 @@ impl HubUpdater {
         Box::pin(async move {
             let now = (me.o.now)();
             let Some(repo) = me.o.repo.clone() else { return Self::check_release((me.o.get.clone(), me.o.version.clone(), now)).await };
-            let run = me.o.run.clone();
-            let co = check_checkout(&repo, &run).await;
-            let (mut latest, mut behind) = (None, None);
-            if co.git {
-                run(v(&["git", "fetch", "--tags", "--force", "--quiet"]), repo.clone()).await;
-                let tags = run(v(&["git", "tag", "--list", "v*"]), repo.clone()).await.1;
-                latest = newest_release(tags.split('\n'), &me.o.version);
-                let count = run(v(&["git", "rev-list", "--count", "HEAD..@{u}"]), repo.clone()).await;
-                if count.0 == 0 && !count.1.is_empty() && count.1.bytes().all(|b| b.is_ascii_digit()) {
-                    behind = count.1.parse().ok();
-                }
-            }
-            Check { latest, behind, can_update: co.reason.is_none(), reason: co.reason, checked_at: (me.o.now)(), binary: false }
+            Check { latest: None, can_update: false, reason: Some(from_source(&repo)), checked_at: now }
         })
     }
 
@@ -309,48 +216,21 @@ impl HubUpdater {
         let started = |j: &Map<String, Value>| j.get("started").and_then(Value::as_f64).unwrap_or(f64::NAN);
         let s = |j: &Map<String, Value>, k: &str| j.get(k).filter(|v| crate::http::truthy(Some(v))).map(crate::http::js_string);
         let log = Value::String(self.log_file.to_string_lossy().into_owned());
-        if self.binary() {
-            let job = self.read_job();
-            let line = std::fs::read_to_string(&self.o.status_file).map(|t| t.trim().to_owned()).unwrap_or_default();
-            let Some(job) = job.filter(|j| !crate::http::truthy(j.get("done"))) else { return out };
-            if let Some(e) = s(&job, "error") {
-                out.insert("error".into(), json!(e));
-                out.insert("log".into(), log);
-            } else if let Some(why) = line.strip_prefix("failed:") {
-                out.insert("error".into(), json!(why.trim()));
-                out.insert("log".into(), log);
-            } else if line == "running" || (now as f64 - started(&job)) < 10_000.0 {
-                // `inyon update` restarts this hub when it's done; until then it says running
-                out.insert("running".into(), json!(true));
-            }
+        if self.o.repo.is_some() {
             return out;
         }
-        let Some(job) = self.read_job() else { return out };
+        let job = self.read_job();
+        let line = std::fs::read_to_string(&self.o.status_file).map(|t| t.trim().to_owned()).unwrap_or_default();
+        let Some(job) = job.filter(|j| !crate::http::truthy(j.get("done"))) else { return out };
         if let Some(e) = s(&job, "error") {
             out.insert("error".into(), json!(e));
             out.insert("log".into(), log);
-            return out;
-        }
-        if crate::http::truthy(job.get("done")) {
-            // updated without a unit to restart: the hub still runs the code it started with
-            let repo = self.o.repo.clone().unwrap_or_default();
-            let head = (self.o.run)(v(&["git", "rev-parse", "--short", "HEAD"]), repo).await.1;
-            if !crate::http::truthy(job.get("restarted")) && !self.o.commit.is_empty() && !head.is_empty() && head != self.o.commit {
-                out.insert("restartNeeded".into(), json!(true));
-            }
-            return out;
-        }
-        let pid = job.get("pid").and_then(Value::as_f64).filter(|p| *p > 0.0);
-        let running = match pid {
-            Some(p) => (self.o.alive)(p as u32),
-            None => (now as f64 - started(&job)) < 10_000.0,
-        };
-        if running {
-            out.insert("running".into(), json!(true));
-        } else if job.get("step").and_then(Value::as_str) != Some("restart") {
-            // the restart stops the script along with the old hub; earlier than that it was cut short
-            out.insert("error".into(), json!("The last update stopped before it finished."));
+        } else if let Some(why) = line.strip_prefix("failed:") {
+            out.insert("error".into(), json!(why.trim()));
             out.insert("log".into(), log);
+        } else if line == "running" || (now as f64 - started(&job)) < 10_000.0 {
+            // `inyon update` restarts this hub when it's done; until then it says running
+            out.insert("running".into(), json!(true));
         }
         out
     }
@@ -372,9 +252,6 @@ impl HubUpdater {
         if let Some(l) = &c.latest {
             m.insert("latest".into(), json!(l));
         }
-        if let Some(b) = c.behind {
-            m.insert("behind".into(), json!(b));
-        }
         m.insert("canUpdate".into(), json!(c.can_update));
         if let Some(r) = &c.reason {
             m.insert("reason".into(), json!(r));
@@ -386,45 +263,29 @@ impl HubUpdater {
         Value::Object(m)
     }
 
-    pub async fn start(self: &Rc<Self>) -> Result<Option<u32>, Refused> {
+    pub async fn start(self: &Rc<Self>) -> Result<(), Refused> {
         if self.job_state().await.contains_key("running") {
             return Err(Refused(409, "An update is already running.".into()));
         }
-        let fresh = || inyon_core::js::stringify(&json!({ "started": (self.o.now)(), "step": "start" }));
-        let Some(repo) = self.o.repo.clone() else {
-            let _ = std::fs::create_dir_all(&self.o.data_dir);
-            let _ = write_private(&self.job_file, &fresh());
-            // runs on its own (see detach in apps/cli/src/service.rs), since it restarts this hub
-            let r = (self.o.run)(vec![self.o.program.clone(), "update".into(), "--background".into()], self.o.data_dir.clone()).await;
-            if r.0 != 0 {
-                let why = if r.1.is_empty() { "Couldn't start the update.".to_owned() } else { r.1 };
-                write_job(&self.job_file, json!({ "error": why }));
-                return Err(Refused(500, why));
-            }
-            *self.cache.borrow_mut() = None;
-            return Ok(None);
-        };
-        let co = check_checkout(&repo, &self.o.run).await;
-        if let Some(why) = co.reason {
-            return Err(Refused(409, why));
+        if let Some(repo) = &self.o.repo {
+            return Err(Refused(409, from_source(repo)));
         }
         let _ = std::fs::create_dir_all(&self.o.data_dir);
-        // written before the script starts, which then adds its progress
-        let _ = write_private(&self.job_file, &fresh());
-        let script = repo.join("apps/hub/src/cli/update.ts").to_string_lossy().into_owned();
-        let cmd = vec!["bun".to_owned(), script, "--repo".into(), repo.to_string_lossy().into_owned(), "--job".into(), self.job_file.to_string_lossy().into_owned()];
-        let Some(pid) = (self.o.spawn)(cmd, &repo, &self.log_file) else {
-            write_job(&self.job_file, json!({ "error": "Couldn't start the update." }));
-            return Err(Refused(500, "Couldn't start the update.".into()));
-        };
-        write_job(&self.job_file, json!({ "pid": pid }));
+        let _ = write_private(&self.job_file, &inyon_core::js::stringify(&json!({ "started": (self.o.now)(), "step": "start" })));
+        // runs on its own (see detach in apps/cli/src/service.rs), since it restarts this hub
+        let r = (self.o.run)(vec![self.o.program.clone(), "update".into(), "--background".into()], self.o.data_dir.clone()).await;
+        if r.0 != 0 {
+            let why = if r.1.is_empty() { "Couldn't start the update.".to_owned() } else { r.1 };
+            write_job(&self.job_file, json!({ "error": why }));
+            return Err(Refused(500, why));
+        }
         *self.cache.borrow_mut() = None;
-        Ok(Some(pid))
+        Ok(())
     }
 
     pub async fn post(self: &Rc<Self>) -> Resp {
         match self.start().await {
-            Ok(_) => answer_json(202, &json!({ "started": true })),
+            Ok(()) => answer_json(202, &json!({ "started": true })),
             Err(Refused(status, why)) => answer_json(status, &json!({ "error": why })),
         }
     }

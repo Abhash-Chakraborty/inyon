@@ -24,19 +24,20 @@ inyon hub start
 
 ### From source
 
-You need [Bun](https://bun.sh) 1.3 or later, and tmux:
+You need [Rust](https://rustup.rs), [Bun](https://bun.sh) 1.3 or later (it builds the web app) and tmux:
 
 ```sh
 git clone https://github.com/Abhash-Chakraborty/inyon.git
 cd inyon
 bun install
-bun run build
-bun start
+VITE_INYON_PHONE_CORE=none bun run build   # the web app, which the hub carries inside it
+cargo build --release -p inyon-cli
+./target/release/inyon hub start
 ```
 
-`deploy/inyon-hub.service` is a systemd user unit for a source install. A source install takes its settings from the environment; it doesn't read `~/.inyon/hub.env`.
+That builds the same `inyon` a release ships and starts the hub as a user service running it, with its settings in `~/.inyon/hub.env` as on an installed hub. It hands machines the release of its version from GitHub.
 
-A source install builds the engine it hands to machines from the checkout. For the `inyon` command it serves what `cargo` built into `apps/cli/dist`, if anything. Without that, Windows machines get the release's command from GitHub (from 0.17.1), and Linux and macOS machines get the engine, which also works as the command.
+To work on Inyon itself, `bun run dev:hub` (`cargo run -p inyon-cli -- engine hub`) runs a development build in the terminal. It hands machines the `inyon` that `cargo` built into `apps/cli/dist` (or the folder in `INYON_CLI_DIST`), and the release's file for a system with nothing there. Up to 0.22 a hub could run from source on Bun (`bun start`); 0.23 removed the Bun hub, and with it `deploy/inyon-hub.service`.
 
 From 0.19 machines that join a hub take only the `inyon` command, which connects to the hub by itself. From 0.21 the hub runs on the [hub in Rust](#the-hub-in-rust) built into `inyon` too.
 
@@ -154,7 +155,7 @@ The hub reaches its own machine directly. Add the others from **Machines → Add
 Nothing updates by itself. When a release is out, Settings shows **Update available**.
 
 - **An installed hub** updates with **Update** in Settings, or `inyon update` on its machine. It downloads the release, checks it against the signed `SHA256SUMS`, swaps it in and restarts. If the new version doesn't start, it goes back to the old one.
-- **A hub run from source** updates with **Update**, or `bun hub:update` in the checkout. It refuses local changes or a branch that can't fast-forward; otherwise it pulls, installs, builds and restarts the `inyon-hub` user unit. There's no automatic rollback.
+- **A hub built from source** updates in its checkout: `git pull`, build again, then `inyon hub restart`. A development build (`bun run dev:hub`) says so in Settings in place of **Update**.
 
 After an update, browsers that have the app open offer **Reload**. Machines that joined the hub update from their pages under Machines.
 
@@ -176,4 +177,4 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. It runs on Linux and macOS.
 
-A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. Up to 0.22, `INYON_HUB_IMPL=bun` put a hub back on the Bun hub; 0.23 removed it, so the line in `hub.env` is no longer read and `inyon` says so (see [The Bun engine, removed in 0.23](install.md#the-bun-engine-removed-in-0-23)). A hub run from source with `bun hub` isn't affected.
+A hub set up by 0.20 or earlier moves to it with its next `inyon update` or `inyon hub restart`. Up to 0.22, `INYON_HUB_IMPL=bun` put a hub back on the Bun hub; 0.23 removed it, so the line in `hub.env` is no longer read and `inyon` says so (see [The Bun engine, removed in 0.23](install.md#the-bun-engine-removed-in-0-23)). A hub can't run from source on Bun either from 0.23; build `inyon` instead (see [From source](#from-source)).

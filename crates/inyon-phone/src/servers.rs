@@ -1,4 +1,4 @@
-//! The phone's own routes for the servers it SSHes into (apps/hub/src/phone/index.ts): its key,
+//! The phone's own routes for the servers it SSHes into: its key,
 //! reading a server's fingerprint, and adding, editing and removing servers. The password or
 //! pasted key goes to the keystore, the rest to the machine list.
 

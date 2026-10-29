@@ -1,6 +1,6 @@
 //! Pairing by typing instead of scanning: a one-time ID and a 6-digit code, like "K7Q4-MX2T" and
 //! "493812". Run through scrypt, the two give a throwaway identity, and the machine publishes a
-//! pkarr record under it naming its real id and addresses. See packages/link/src/code.ts for why.
+//! pkarr record under it naming its real id and addresses.
 
 use serde::{Deserialize, Serialize};
 
