@@ -25,5 +25,8 @@ class PageVisibilityTest {
         val stop = plugin.substringAfter("override fun handleOnStop()").substringBefore("override fun")
         assertTrue(start, start.contains("""notifyListeners("appVisibility", JSObject().put("visible", true))"""))
         assertTrue(stop, stop.contains("""notifyListeners("appVisibility", JSObject().put("visible", false))"""))
+        // and the page can ask, for when it missed them
+        assertTrue(start.contains("onScreen = true") && stop.contains("onScreen = false"))
+        assertTrue(plugin.contains("fun appVisibility(call: PluginCall)"))
     }
 }

@@ -76,13 +76,23 @@ export const forgetPairFragment = () => void (fragmentLink = undefined)
 function followAppVisibility(device: ReturnType<typeof plugin>) {
   if (typeof device?.addListener !== 'function') return
   let visible = true
+  let heard = false
+  const set = (v: unknown) => {
+    if (typeof v !== 'boolean' || v === visible) return
+    visible = v
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
   Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (visible ? 'visible' : 'hidden') })
   Object.defineProperty(document, 'hidden', { configurable: true, get: () => !visible })
   device.addListener('appVisibility', (e: { visible?: boolean }) => {
-    if (typeof e?.visible !== 'boolean' || e.visible === visible) return
-    visible = e.visible
-    document.dispatchEvent(new Event('visibilitychange'))
+    heard = true
+    set(e?.visible)
   })
+  // started behind the lock screen, say, the app went on and off screen before this page listened;
+  // an event that comes before the answer is newer than it
+  Promise.resolve(device.appVisibility?.())
+    .then((r: { visible?: boolean } | undefined) => heard || set(r?.visible))
+    .catch(() => {})
 }
 
 /** Native behaviour for the phone apps: back button, notification taps, deep links, status bar. */

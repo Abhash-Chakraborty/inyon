@@ -96,6 +96,23 @@ describe('installNative', () => {
     }
   })
 
+  test('a page that starts while the app is off screen asks, and is hidden', async () => {
+    app({ InyonDevice: { appVisibility: async () => ({ visible: false }) }, App: { getLaunchUrl: async () => undefined } })
+    installNative()
+    await flush()
+    expect(document.visibilityState).toBe('hidden')
+  })
+
+  test('an event that comes before the answer wins over it', async () => {
+    let answer: (r: { visible: boolean }) => void = () => {}
+    const emit = app({ InyonDevice: { appVisibility: () => new Promise((r) => (answer = r)) }, App: { getLaunchUrl: async () => undefined } })
+    installNative()
+    emit('InyonDevice.appVisibility', { visible: false })
+    answer({ visible: true })
+    await flush()
+    expect(document.visibilityState).toBe('hidden')
+  })
+
   test('back closes an open sheet before leaving the screen', async () => {
     const exitApp = mock(() => {})
     const back = mock(() => {})
