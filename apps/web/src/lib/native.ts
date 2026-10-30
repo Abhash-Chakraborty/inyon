@@ -68,10 +68,38 @@ export function takePairFragment() {
 export const pairFragment = () => fragmentLink
 export const forgetPairFragment = () => void (fragmentLink = undefined)
 
+/**
+ * The Android app tells Chromium its page is always on screen, so the page isn't frozen a minute
+ * into the background (InyonWebView). The page's own visibility then always says visible, so it
+ * follows the app's instead: hidden while Inyon is off screen, with a visibilitychange each time.
+ */
+function followAppVisibility(device: ReturnType<typeof plugin>) {
+  if (typeof device?.addListener !== 'function') return
+  let visible = true
+  let heard = false
+  const set = (v: unknown) => {
+    if (typeof v !== 'boolean' || v === visible) return
+    visible = v
+    document.dispatchEvent(new Event('visibilitychange'))
+  }
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (visible ? 'visible' : 'hidden') })
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => !visible })
+  device.addListener('appVisibility', (e: { visible?: boolean }) => {
+    heard = true
+    set(e?.visible)
+  })
+  // started behind the lock screen, say, the app went on and off screen before this page listened;
+  // an event that comes before the answer is newer than it
+  Promise.resolve(device.appVisibility?.())
+    .then((r: { visible?: boolean } | undefined) => heard || set(r?.visible))
+    .catch(() => {})
+}
+
 /** Native behaviour for the phone apps: back button, notification taps, deep links, status bar. */
 export function installNative() {
   if (!isNative()) return
   document.documentElement.dataset.native = platform()
+  if (platform() === 'android') followAppVisibility(plugin('InyonDevice'))
   // Android's back button closes whatever is open on top first, then walks back through the app,
   // and leaves it from the first screen
   plugin('App')?.addListener('backButton', ({ canGoBack }: { canGoBack: boolean }) => {

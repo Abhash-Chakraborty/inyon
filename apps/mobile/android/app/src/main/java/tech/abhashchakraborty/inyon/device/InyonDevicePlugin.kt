@@ -75,7 +75,18 @@ class InyonDevicePlugin : Plugin() {
         return HrefGate.accept(intent.action, href, nonce, HrefGate.nonce(context))
     }
 
+    /** Whether Inyon is on screen; the page asks as it starts, since it may have missed the events. */
+    @Volatile private var onScreen = false
+
+    override fun handleOnStart() {
+        onScreen = true
+        notifyListeners("appVisibility", JSObject().put("visible", true))
+    }
+
     override fun handleOnStop() {
+        // the page always thinks it's on screen (InyonWebView), so say when Inyon isn't
+        onScreen = false
+        notifyListeners("appVisibility", JSObject().put("visible", false))
         // Capacitor only pauses the WebView when KeepRunning is false (it isn't here), but undo any
         // pause anyway while the user asked to stay connected
         if (KeepAliveService.running) {
@@ -355,6 +366,11 @@ class InyonDevicePlugin : Plugin() {
     fun clearNotification(call: PluginCall) {
         call.getString("tag")?.let { Notifications.clear(context, it) }
         call.resolve(ok())
+    }
+
+    @PluginMethod
+    fun appVisibility(call: PluginCall) {
+        call.resolve(JSObject().put("visible", onScreen))
     }
 
     @PluginMethod

@@ -53,6 +53,12 @@ describe('notifications', () => {
 })
 
 describe('installNative', () => {
+  // installNative makes the page follow the app's visibility; later tests get the browser's again
+  afterEach(() => {
+    delete (document as any).visibilityState
+    delete (document as any).hidden
+  })
+
   test('a tapped notification opens its link, while running and from a cold start', async () => {
     const emit = app({ InyonDevice: { takeLaunchHref: async () => ({ href: '/m/box/p/1' }) }, App: { getLaunchUrl: async () => undefined } })
     installNative()
@@ -67,6 +73,44 @@ describe('installNative', () => {
     installNative()
     await flush()
     expect(location.pathname + location.search).toBe(`/machines?pair=${encodeURIComponent('inyon://pair?c=abc')}`)
+  })
+
+  test("the page follows the app's visibility, which Chromium no longer reports", () => {
+    const emit = app({ InyonDevice: {}, App: { getLaunchUrl: async () => undefined } })
+    installNative()
+    const changes: string[] = []
+    const seen = () => changes.push(document.visibilityState)
+    document.addEventListener('visibilitychange', seen)
+    try {
+      expect(document.visibilityState).toBe('visible')
+      emit('InyonDevice.appVisibility', { visible: false })
+      expect([document.visibilityState, document.hidden]).toEqual(['hidden', true])
+      // the same state again is no change
+      emit('InyonDevice.appVisibility', { visible: false })
+      emit('InyonDevice.appVisibility', {})
+      emit('InyonDevice.appVisibility', { visible: true })
+      expect([document.visibilityState, document.hidden]).toEqual(['visible', false])
+      expect(changes).toEqual(['hidden', 'visible'])
+    } finally {
+      document.removeEventListener('visibilitychange', seen)
+    }
+  })
+
+  test('a page that starts while the app is off screen asks, and is hidden', async () => {
+    app({ InyonDevice: { appVisibility: async () => ({ visible: false }) }, App: { getLaunchUrl: async () => undefined } })
+    installNative()
+    await flush()
+    expect(document.visibilityState).toBe('hidden')
+  })
+
+  test('an event that comes before the answer wins over it', async () => {
+    let answer: (r: { visible: boolean }) => void = () => {}
+    const emit = app({ InyonDevice: { appVisibility: () => new Promise((r) => (answer = r)) }, App: { getLaunchUrl: async () => undefined } })
+    installNative()
+    emit('InyonDevice.appVisibility', { visible: false })
+    answer({ visible: true })
+    await flush()
+    expect(document.visibilityState).toBe('hidden')
   })
 
   test('back closes an open sheet before leaving the screen', async () => {
