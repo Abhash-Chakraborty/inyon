@@ -12,7 +12,7 @@ FROM caddy:2.10 AS caddy
 # new release needs only the version below (scripts/deploy-hub.test.ts fails until it matches).
 FROM debian:bookworm-slim AS fetch
 ARG TARGETARCH
-ARG INYON_VERSION=0.23.0
+ARG INYON_VERSION=0.23.1
 ARG RELEASE_PUBLIC_KEY=RWRTvQv/ifQnD3jarY1oarS0AKdhogH+mdgn/o0NzT/Ro8L43nFqqfp6
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates minisign \
     && rm -rf /var/lib/apt/lists/*
