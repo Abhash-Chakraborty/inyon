@@ -65,7 +65,7 @@ Display settings (theme, reply font, haptics…) are saved per device. Upload li
 | `~/.inyon/hub.env` | An installed hub's settings |
 | `~/.inyon/tls/` | From 0.20, the certificate and key setup makes for a hub on the LAN (`hub.crt`, `hub.key`) |
 | `~/.inyon/` | A hub's records: password hash, machines, phones, settings, drafts, saved chats, offline snapshots, and from 0.22 `send-failures.json`, the last 20 sends that failed with the screen each failed on, and `held-prompts.json`, the messages held until an agent is free |
-| `~/.inyon/uploads/` | Files you attached, per day and session |
+| `~/.inyon/uploads/` | Files you attached, per day and session. A file still arriving ends in `.part` (from 0.24 with a `.part.chunk` beside it while a chunk is written) |
 | `~/.inyon/companion/` | From 0.22, the [companion agent](companion-agent.md)'s folder on the hub's computer: `AGENTS.md` and `CLAUDE.md`, its instructions, and `.claude/settings.json`, the commands it may run without asking, and for Codex `.codex/rules/companion.rules`, the commands that ask first |
 | `~/.inyon/upload-policy` | From 0.17, the upload rules the hub last used on this machine, so it can tidy by itself |
 | `~/.inyon/setup-code` | A new hub's setup code, until the password is set |

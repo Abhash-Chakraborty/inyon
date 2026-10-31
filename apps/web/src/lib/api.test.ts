@@ -197,21 +197,40 @@ describe('upload', () => {
   afterEach(() => void (globalThis.XMLHttpRequest = realXHR))
   const file = () => new File(['hi'], 'a.txt', { type: 'text/plain' })
 
-  test('reports progress and resolves to the saved file', async () => {
-    const saved = { name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' }
+  const saved = { name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' }
+  /** A hub from 0.24: starts, takes the chunk, finishes. */
+  const chunked = (req: Request) => {
+    const path = new URL(req.url).pathname
+    if (path.endsWith('/start')) return Response.json({ id: 'u1', received: 0, chunk: 1048576, size: 2 })
+    if (req.method === 'PUT') return Response.json({ id: 'u1', received: 2, chunk: 1048576, size: 2 })
+    return Response.json(saved)
+  }
+
+  test('goes a chunk at a time to a hub from 0.24, with progress, and resolves to the saved file', async () => {
+    fetchMock.mockImplementation(async (req: Request) => chunked(req))
+    const progress: number[] = []
+    expect(await api.upload('box', '%4', file(), (f) => progress.push(f))).toEqual(saved)
+    const reqs = fetchMock.mock.calls.map((c) => c[0] as Request)
+    expect(reqs.map((r) => `${r.method} ${new URL(r.url).pathname}`)).toEqual(['POST /api/hosts/box/uploads/start', 'PUT /api/hosts/box/uploads/u1/0', 'POST /api/hosts/box/uploads/u1/finish'])
+    expect(await reqs[0]!.json()).toEqual({ name: 'a.txt', size: 2, type: 'text/plain', pane: '4' })
+    expect((await reqs[2]!.json()).sha256).toBe('8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4')
+    expect(progress.at(-1)).toBe(1)
+    fetchMock.mockImplementation(async (_req: Request) => reply())
+  })
+
+  test("fails with the hub's message", async () => {
+    reply = () => Response.json({ error: 'Too large' }, { status: 413 })
+    expect(await api.upload('box', undefined, file()).catch((e) => [e.status, e.message])).toEqual([413, 'Too large'])
+  })
+
+  test('goes the old way to a hub from before 0.24', async () => {
+    reply = () => Response.json({ error: 'Not found' }, { status: 404 })
     FakeXHR.answer = { status: 200, body: JSON.stringify({ files: [saved] }) }
     const progress: number[] = []
     expect(await api.upload('box', '%4', file(), (f) => progress.push(f))).toEqual(saved)
     expect(progress).toEqual([0.5])
     expect(FakeXHR.last.url).toBe('/api/hosts/box/uploads')
     expect(FakeXHR.last.form!.get('pane')).toBe('4')
-  })
-
-  test('fails with the hub message, or a network error', async () => {
-    FakeXHR.answer = { status: 413, body: JSON.stringify({ error: 'Too large' }) }
-    expect(await api.upload('box', undefined, file()).catch((e) => [e.status, e.message])).toEqual([413, 'Too large'])
-    FakeXHR.answer = { status: 200, body: '{"files":[]}' }
-    expect(await api.upload('box', undefined, file()).catch((e) => e.message)).toBe('Upload failed (200)')
     FakeXHR.answer = { status: 0, body: '' }
     expect(await api.upload('box', undefined, file()).catch((e) => e.message)).toBe('Network error during upload')
   })
@@ -276,12 +295,29 @@ describe("a paired hub's machines", () => {
     }
   })
 
-  test('an attachment goes to the hub in pieces, with the token', async () => {
-    reply = () => new Response(JSON.stringify({ files: [{ name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' }] }))
+  test('an attachment goes to the hub a chunk at a time, with the token', async () => {
+    reply = () => {
+      const c = calls.at(-1)!
+      if (c.url.endsWith('/start')) return Response.json({ id: 'u1', received: 0, chunk: 1048576, size: 2 })
+      if (c.method === 'PUT') return Response.json({ id: 'u1', received: 2, chunk: 1048576, size: 2 })
+      return Response.json({ name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' })
+    }
     expect((await api.upload(machine, '%4', new File(['hi'], 'a.txt', { type: 'text/plain' }))).path).toBe('/up/a.txt')
-    expect([calls[0]!.method, calls[0]!.url, calls[0]!.headers.get('authorization')]).toEqual(['POST', 'http://box:4777/api/hosts/local/uploads', 'Bearer tok'])
-    expect(calls[0]!.headers.get('content-type')).toStartWith('multipart/form-data; boundary=')
-    expect(calls[0]!.body).toContain('hi')
+    expect(calls.map((c) => `${c.method} ${c.url} ${c.headers.get('authorization')}`)).toEqual([
+      'POST http://box:4777/api/hosts/local/uploads/start Bearer tok',
+      'PUT http://box:4777/api/hosts/local/uploads/u1/0 Bearer tok',
+      'POST http://box:4777/api/hosts/local/uploads/u1/finish Bearer tok',
+    ])
+    expect(calls[1]!.headers.get('content-type')).toBe('application/octet-stream')
+    expect(calls[1]!.body).toBe('hi')
+  })
+
+  test('an older hub takes the attachment in pieces, the way it knows', async () => {
+    reply = () => (calls.at(-1)!.url.endsWith('/start') ? Response.json({ error: 'Not found' }, { status: 404 }) : new Response(JSON.stringify({ files: [{ name: 'a.txt', path: '/up/a.txt', size: 2, type: 'text/plain' }] })))
+    expect((await api.upload(machine, '%4', new File(['hi'], 'a.txt', { type: 'text/plain' }))).path).toBe('/up/a.txt')
+    expect([calls[1]!.method, calls[1]!.url, calls[1]!.headers.get('authorization')]).toEqual(['POST', 'http://box:4777/api/hosts/local/uploads', 'Bearer tok'])
+    expect(calls[1]!.headers.get('content-type')).toStartWith('multipart/form-data; boundary=')
+    expect(calls[1]!.body).toContain('hi')
   })
 
   test("its pages: the list, links, revoking, adding and removing reach that hub with the token, under the hub's own name for the machine", async () => {

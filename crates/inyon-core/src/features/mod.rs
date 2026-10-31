@@ -23,4 +23,6 @@ pub mod setup;
 pub mod signin;
 // agent temp files, through the machine's own `inyon temp`
 pub mod temp;
+// uploads sent a chunk at a time, resumable (from 0.24)
+pub mod uploads;
 pub mod workspace;

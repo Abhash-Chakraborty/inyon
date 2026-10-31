@@ -2,7 +2,7 @@
 //! don't pile up when no hub is around to clean them: a computer paired only with a phone, or one
 //! whose hub is gone. It follows the rules the hub last used here (~/.inyon/upload-policy, written
 //! by the hub's cleanup), and otherwise deletes uploads after 7 days and keeps at most 1 GB. Files
-//! an upload left half written (*.part) go after an hour. (tidy.ts)
+//! an upload left half written (*.part, and a chunked upload's *.part.chunk) go after an hour. (tidy.ts)
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -87,7 +87,10 @@ pub fn tidy_uploads(home: &Path, p: Policy, now: u64) -> usize {
     };
     let mut all = Vec::new();
     files(&dir, &mut all);
-    let part = |e: &Entry| e.path.to_string_lossy().ends_with(".part");
+    let part = |e: &Entry| {
+        let p = e.path.to_string_lossy();
+        p.ends_with(".part") || p.ends_with(".part.chunk")
+    };
     let mut all: Vec<Entry> = all
         .into_iter()
         .filter(|e| {
@@ -156,9 +159,10 @@ mod tests {
         let old = file(&h, "a/old.png", 1, 8 * DAY);
         let cut = file(&h, "b/cut.mp4.part", 1, 2 * 3_600_000);
         let going = file(&h, "b/going.mp4.part", 1, 60_000);
+        let chunk = file(&h, "b/cut.mp4.part.chunk", 1, 2 * 3_600_000);
         let keep = file(&h, "b/new.png", 1, DAY);
-        assert_eq!(tidy_uploads(&h, policy(&h), now()), 2);
-        assert_eq!([&old, &cut, &going, &keep].map(|p| p.exists()), [false, false, true, true]);
+        assert_eq!(tidy_uploads(&h, policy(&h), now()), 3);
+        assert_eq!([&old, &cut, &going, &chunk, &keep].map(|p| p.exists()), [false, false, true, false, true]);
         assert!(!h.join(".inyon/uploads/a").exists());
         fs::remove_dir_all(&h).unwrap();
     }

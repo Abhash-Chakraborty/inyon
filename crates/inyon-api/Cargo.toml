@@ -30,6 +30,7 @@ url = "2.5"
 # the app's side of /ws2, to check the hub's frames end in the rows v1 gives
 inyon-chat-core = { path = "../inyon-chat-core" }
 inyon-backends = { path = "../inyon-backends", features = ["testing"] }
+sha2 = "0.11"
 inyon-core = { path = "../inyon-core", features = ["testing"] }
 tokio = { version = "1.47", features = ["rt", "time", "macros"] }
 

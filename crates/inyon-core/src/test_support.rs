@@ -359,3 +359,12 @@ pub fn machine(id: &str, kind: &str, panes: serde_json::Value) -> crate::hosts::
     registry().insert_runtime(id, rt.clone());
     rt
 }
+
+/// A machine in the registry whose last probe found `home`; nothing polls it.
+pub fn connected(id: &str, home: &str, panes: serde_json::Value) -> crate::hosts::registry::Rt {
+    let rt = machine(id, "local", panes);
+    rt.borrow_mut().hold_polls();
+    let probe = crate::tmux::tmux::ProbeResult::at_home(home);
+    rt.borrow_mut().probe = Some(std::rc::Rc::new(std::cell::RefCell::new(probe)));
+    rt
+}

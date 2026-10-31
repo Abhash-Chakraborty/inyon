@@ -119,6 +119,15 @@ The app explains what it found:
 - The agent may be showing a prompt. While a question is open, answer it first.
 - Open the terminal view to see what the agent is doing.
 
+## An attachment won't upload
+
+From 0.24 an attachment that says *Reconnecting…* is waiting for the connection to come back and carries on by itself. If it fails, tap it to try again: it picks up where it stopped, unless the hub restarted or an hour went by, when it starts over.
+
+- **"… is larger than 100 MB"**: raise **Largest file** in Settings → [Uploads and clipboard](settings.md#uploads-and-clipboard), or send a smaller file.
+- **"The file arrived damaged"**: the bytes that reached the machine didn't match the file's SHA-256. Nothing was kept. Send it again.
+- **"Too many uploads at once"**: the hub takes 32 at a time. Wait for some to finish.
+- **"Could not save …"** or a message from the machine's shell: the machine's disk may be full, or `~/.inyon/uploads` isn't writable.
+
 ## Live numbers stopped updating
 
 For Claude Code, the numbers come from the integration. Turn it on, or **Update** it, from the machine's **Integration** tab. A session that stops reporting offers **Reconnect** or **Restart**; Settings → **Restart sessions that stop reporting** does it by itself.

@@ -2,6 +2,7 @@ import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type C
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
+import { NoChunkedUploads, retryable, uploadChunked, UploadError, type Uploaded } from './upload.ts'
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -92,12 +93,7 @@ const pg = (host: string, slug?: string) => `/api/pages/${encodeURIComponent(hos
 const panePath = (host: string, pane: string) => `${h(host)}/panes/${paneSlug(pane)}`
 const qs = (o: Record<string, string>) => `?${new URLSearchParams(o)}`
 
-export interface Uploaded {
-  name: string
-  path: string
-  size: number
-  type: string
-}
+export type { Uploaded } from './upload.ts'
 
 export interface UploadUsage {
   bytes: number
@@ -475,31 +471,47 @@ export const api = {
   companions: () => request<PairedCompanion[]>('GET', '/api/companions'),
   forgetCompanion: (id: string) => request<unknown>('DELETE', `/api/companions/${encodeURIComponent(id)}`),
 
-  /** Uploads with progress (fetch can't report upload progress). */
-  upload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {
-    const form = new FormData()
-    form.append('files', file, file.name)
-    if (pane) form.append('pane', paneSlug(pane))
-    // in the phone app the file goes over SSH from here, a piece at a time: a whole video at once
-    // runs the app out of memory. A big file goes to the hub in pieces too, so it never holds it whole,
-    // and so does any file for a paired hub's machine, since only a request through send() finds that hub.
-    if (isPhone() || file.size > UPLOAD_PIECE || isHubHost(host)) return uploadInPieces(host, pane, file, onProgress)
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', `${h(host)}/uploads`)
-      xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
-      xhr.onload = () => {
-        let data: any = {}
-        try {
-          data = JSON.parse(xhr.responseText)
-        } catch {}
-        if (xhr.status >= 200 && xhr.status < 300 && data.files?.[0]) resolve(data.files[0])
-        else reject(new ApiError(xhr.status, data.error ?? `Upload failed (${xhr.status})`))
-      }
-      xhr.onerror = () => reject(new ApiError(0, 'Network error during upload'))
-      xhr.send(form)
+  /**
+   * Sends a file to a machine a chunk at a time, resuming after a dropped connection (hubs from
+   * 0.24), or the old way to an older paired hub. `onProgress` hears the share the machine has, and
+   * `waiting` while the connection is down. Aborting `signal` stops it and deletes what arrived.
+   */
+  upload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number, waiting?: boolean) => void, signal?: AbortSignal): Promise<Uploaded> {
+    const base = new URL(`${h(host)}/uploads`, location.href).toString()
+    return uploadChunked(send, base, pane ? paneSlug(pane) : undefined, file, { onProgress, signal }).catch((err) => {
+      if (err instanceof NoChunkedUploads) return legacyUpload(host, pane, file, onProgress)
+      if (err instanceof UploadError) throw new ApiError(err.status, err.message)
+      if (err instanceof ApiError || signal?.aborted) throw err
+      // fetch's own words ("Failed to fetch", "Load failed") differ by browser and say little
+      throw new ApiError(0, retryable(err) ? 'The connection dropped' : (err as Error).message)
     })
   },
+}
+
+/** Uploads to a hub from before 0.24: whole in one request with progress, or in pieces. */
+function legacyUpload(host: string, pane: string | undefined, file: File, onProgress?: (fraction: number) => void): Promise<Uploaded> {
+  const form = new FormData()
+  form.append('files', file, file.name)
+  if (pane) form.append('pane', paneSlug(pane))
+  // in the phone app the file goes over SSH from here, a piece at a time: a whole video at once
+  // runs the app out of memory. A big file goes to the hub in pieces too, so it never holds it whole,
+  // and so does any file for a paired hub's machine, since only a request through send() finds that hub.
+  if (isPhone() || file.size > UPLOAD_PIECE || isHubHost(host)) return uploadInPieces(host, pane, file, onProgress)
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${h(host)}/uploads`)
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(e.loaded / e.total)
+    xhr.onload = () => {
+      let data: any = {}
+      try {
+        data = JSON.parse(xhr.responseText)
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300 && data.files?.[0]) resolve(data.files[0])
+      else reject(new ApiError(xhr.status, data.error ?? `Upload failed (${xhr.status})`))
+    }
+    xhr.onerror = () => reject(new ApiError(0, 'Network error during upload'))
+    xhr.send(form)
+  })
 }
 
 export const UPLOAD_PIECE = 2 * 1024 * 1024
