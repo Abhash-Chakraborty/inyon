@@ -16,6 +16,9 @@
     "typecheck": "bun --filter \"*\" typecheck",
     "cli:test": "cargo test --workspace"
   },
+  "overrides": {
+    "glob": "^14.0.3"
+  },
   "license": "MIT",
   "author": "Abhash Chakraborty",
   "keywords": [
