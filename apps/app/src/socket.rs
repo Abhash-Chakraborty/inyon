@@ -1,23 +1,53 @@
-//! The one WebSocket to the hub (`/ws`, protocol v1), as apps/web/src/lib/socket.ts runs it for
-//! the overview: subscribe on open, a ping every 25 s, a socket that went quiet for 55 s is dead,
-//! reconnect with backoff, and come back at once when the page is shown again or the network
-//! returns. After 15 s in the background it asks for overviews only when an agent's state changes.
+//! The one WebSocket to the hub (`/ws2`, protocol v2), run as apps/web/src/lib/socket.ts runs
+//! `/ws`: `hello` on open (the app then follows its streams from where it left them), a ping every
+//! 25 s, a socket that went quiet for 55 s is dead, reconnect with backoff, and come back at once
+//! when the page is shown again or the network returns. After 15 s in the background it asks for
+//! no frames but an overview catch-up when an agent's state changes; streams stay followed.
 
 /// What the socket tells the app.
 #[derive(Debug)]
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub enum Event {
+    /// connected (`hello` is sent): follow the streams again
     Up,
     /// the connection closed; the app checks whether the session ended with it
     Down,
-    Frame(String),
+    /// a message: text, or a compressed frame
+    Message { text: Option<String>, binary: Option<Vec<u8>> },
+}
+
+/// Where the app's messages to the hub go. While the socket is down they are dropped: what
+/// matters is sent again on the next `Up` (the streams), or by the person (a draft, keys).
+#[derive(Clone)]
+pub struct Outbox(#[cfg(target_arch = "wasm32")] futures_channel::mpsc::UnboundedSender<imp::Raw>);
+
+impl Outbox {
+    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    pub fn send(&self, json: String) {
+        #[cfg(target_arch = "wasm32")]
+        let _ = self.0.unbounded_send(imp::Raw::Send(json));
+    }
+}
+
+/// The outbox, and the socket's end of it for [`run`].
+pub fn channel() -> (Outbox, Inbox) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let (tx, rx) = futures_channel::mpsc::unbounded();
+        (Outbox(tx.clone()), Inbox { tx, rx })
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    (Outbox(), Inbox)
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use imp::run;
+pub use imp::{run, Inbox};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn run(_on: impl FnMut(Event)) {
+pub struct Inbox;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn run(_inbox: Inbox, _on: impl FnMut(Event)) {
     // only the browser build has a hub to reach so far
     std::future::pending::<()>().await
 }
@@ -26,8 +56,8 @@ pub async fn run(_on: impl FnMut(Event)) {
 mod imp {
     use super::Event;
     use crate::platform::{now, random};
-    use crate::state::{attempt_after, backoff, wire};
-    use futures_channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+    use crate::state::{attempt_after, backoff, hello, wire};
+    use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
     use futures_util::future::{select, Either};
     use futures_util::StreamExt;
     use gloo_timers::future::TimeoutFuture;
@@ -38,13 +68,21 @@ mod imp {
     const DEAD_MS: f64 = 55_000.0;
     const QUIET_AFTER_MS: f64 = 15_000.0;
 
-    enum Raw {
+    pub enum Raw {
         Open(u32),
-        Message(u32, String),
+        Message(u32, Option<String>, Option<Vec<u8>>),
         Close(u32),
         /// the page was shown (true) or hidden
         Visible(bool),
         Online,
+        /// a message from the app for the hub
+        Send(String),
+    }
+
+    /// The socket's end of the outbox, and a way to post its own events into the same queue.
+    pub struct Inbox {
+        pub(super) tx: UnboundedSender<Raw>,
+        pub(super) rx: UnboundedReceiver<Raw>,
     }
 
     /// The open socket and its handlers; dropping it closes the socket without hearing back.
@@ -66,18 +104,22 @@ mod imp {
         let loc = web_sys::window().map(|w| w.location());
         let https = loc.as_ref().and_then(|l| l.protocol().ok()).is_some_and(|p| p == "https:");
         let host = loc.and_then(|l| l.host().ok()).unwrap_or_default();
-        format!("{}://{host}/ws?catalog={CATALOG}", if https { "wss" } else { "ws" })
+        format!("{}://{host}/ws2?catalog={CATALOG}", if https { "wss" } else { "ws" })
     }
 
     fn open(id: u32, tx: &UnboundedSender<Raw>) -> Option<Conn> {
         let ws = web_sys::WebSocket::new(&url()).ok()?;
+        ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
         let on = |f: Box<dyn FnMut(web_sys::Event)>| Closure::wrap(f);
         let t = tx.clone();
         let opened = on(Box::new(move |_| drop(t.unbounded_send(Raw::Open(id)))));
         let t = tx.clone();
         let message = on(Box::new(move |e: web_sys::Event| {
-            if let Some(text) = e.dyn_ref::<web_sys::MessageEvent>().and_then(|m| m.data().as_string()) {
-                let _ = t.unbounded_send(Raw::Message(id, text));
+            let Some(data) = e.dyn_ref::<web_sys::MessageEvent>().map(|m| m.data()) else { return };
+            if let Some(text) = data.as_string() {
+                let _ = t.unbounded_send(Raw::Message(id, Some(text), None));
+            } else if let Some(buf) = data.dyn_ref::<js_sys::ArrayBuffer>() {
+                let _ = t.unbounded_send(Raw::Message(id, None, Some(js_sys::Uint8Array::new(buf).to_vec())));
             }
         }));
         let t = tx.clone();
@@ -127,8 +169,12 @@ mod imp {
     }
 
     fn send(conn: &Conn, msg: &ClientMsg) {
+        send_raw(conn, &wire(msg));
+    }
+
+    fn send_raw(conn: &Conn, text: &str) {
         if conn.ws.ready_state() == web_sys::WebSocket::OPEN {
-            let _ = conn.ws.send_with_str(&wire(msg));
+            let _ = conn.ws.send_with_str(text);
         }
     }
 
@@ -142,8 +188,8 @@ mod imp {
     }
 
     /// Runs until the task is dropped (the app signs out or closes).
-    pub async fn run(mut on: impl FnMut(Event)) {
-        let (tx, mut rx) = unbounded::<Raw>();
+    pub async fn run(inbox: Inbox, mut on: impl FnMut(Event)) {
+        let Inbox { tx, mut rx } = inbox;
         let _listeners = Listeners::new(&tx);
         let mut id = 0u32;
         let mut retry = 0u32;
@@ -164,15 +210,20 @@ mod imp {
                         opened_at = Some(now());
                         heard = now();
                         next_ping = now() + PING_MS;
+                        send_raw(conn, &hello());
                         on(Event::Up);
-                        send(conn, &ClientMsg::SubOverview);
                         if quiet {
                             send(conn, &ClientMsg::Quiet { on: true });
                         }
                     }
-                    Some(Raw::Message(i, text)) if i == id => {
+                    Some(Raw::Message(i, text, binary)) if i == id => {
                         heard = now();
-                        on(Event::Frame(text));
+                        on(Event::Message { text, binary });
+                    }
+                    Some(Raw::Send(text)) => {
+                        if opened_at.is_some() {
+                            send_raw(conn, &text);
+                        }
                     }
                     Some(Raw::Close(i)) if i == id => break,
                     Some(Raw::Visible(true)) | Some(Raw::Online) => {

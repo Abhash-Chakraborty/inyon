@@ -11,6 +11,8 @@ dioxus = { version = "=0.7.10", default-features = false, features = ["launch", 
 # the view model the React app keeps in apps/web/src/lib, shared by every screen
 inyon-chat-core = { path = "../../crates/inyon-chat-core" }
 inyon-protocol = { path = "../../crates/inyon-protocol" }
+# replies are Markdown; only the parser, the chat draws the tree itself
+pulldown-cmark = { version = "0.13", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
@@ -21,7 +23,11 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["CloseEvent", "CssStyleDeclaration", "Document", "Element", "Event", "EventTarget", "Headers", "HtmlElement", "Location", "MediaQueryList", "MessageEvent", "Request", "RequestCredentials", "RequestInit", "Response", "Storage", "VisibilityState", "WebSocket", "Window"] }
+web-sys = { version = "0.3", features = ["BinaryType", "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "Element", "Event", "EventTarget", "Headers", "History", "HtmlElement", "HtmlScriptElement", "HtmlTextAreaElement", "Location", "MediaQueryList", "MessageEvent", "MouseEvent", "Navigator", "Request", "RequestCredentials", "RequestInit", "Response", "Storage", "VisibilityState", "WebSocket", "Window"] }
+
+[dev-dependencies]
+# compressed /ws2 frames in the tests, as the hub sends them
+miniz_oxide = "0.9"
 
 [features]
 default = []

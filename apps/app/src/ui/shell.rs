@@ -1,29 +1,46 @@
 //! The frame around the pages: a sidebar from tablet width up, a tab bar on phones
-//! (components/AppShell.tsx). Only the Overview is in this app so far; the other items open the
-//! web app's pages, so nothing here is a dead end.
+//! (components/AppShell.tsx). This app has the Overview and the session screen so far; the other
+//! items open the web app's pages, so nothing here is a dead end.
 
 use dioxus::prelude::*;
 
 use super::icons::{Glyph, Icon, Logo};
+use super::menu::MenuLayer;
 use super::overview::Overview;
+use super::session::Session;
 use crate::model::{self, AgentPane};
+use crate::route::Route;
 use crate::state::Hub;
+
+/// The Overview page's key, beside the sessions' `host:pane` ones.
+const OVERVIEW_KEY: &str = "overview";
 
 #[component]
 pub fn Shell() -> Element {
+    let here = use_context::<Signal<Route>>();
+    let route = here();
     rsx! {
         div { class: "shell",
-            Sidebar {}
+            Sidebar { overview: route == Route::Overview }
             main { class: "main",
-                div { class: "page", Overview {} }
-                TabBar {}
+                match route {
+                    Route::Overview => rsx! {
+                        div { key: "{OVERVIEW_KEY}", class: "page", Overview {} }
+                        TabBar {}
+                    },
+                    // a session has the screen to itself on a phone, as in the web app
+                    Route::Session { host, pane, terminal } => rsx! {
+                        div { key: "{host}:{pane}", class: "page", Session { host, pane, terminal } }
+                    },
+                }
             }
+            MenuLayer {}
         }
     }
 }
 
 #[component]
-fn Sidebar() -> Element {
+fn Sidebar(overview: bool) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let h = hub.read();
     let online = h.hosts.iter().filter(|x| x.status == inyon_protocol::HostStatus::Online).count();
@@ -40,7 +57,7 @@ fn Sidebar() -> Element {
                 }
             }
             nav { class: "sidebar-nav",
-                a { class: "nav-item nav-active", href: "/next/", "aria-current": "page",
+                a { class: if overview { "nav-item nav-active" } else { "nav-item" }, href: "/next/", "aria-current": overview.then_some("page"),
                     Glyph { icon: Icon::LayoutGrid, size: 16 }
                     "Overview"
                 }

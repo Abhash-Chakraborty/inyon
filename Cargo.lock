@@ -3387,6 +3387,8 @@ dependencies = [
  "inyon-chat-core",
  "inyon-protocol",
  "js-sys",
+ "miniz_oxide 0.9.1",
+ "pulldown-cmark",
  "serde",
  "serde_json",
  "wasm-bindgen",

@@ -1,15 +1,16 @@
 // bun apps/app/e2e/overview.ts — the built app (apps/app/dist, from build.sh) in Chromium behind a
-// stand-in hub: the page under the hub's own CSP for /next, the sign-in endpoints and the /ws
-// overview, fed made-up data (demo.ts). Signs in, checks the Overview at phone and desktop sizes in
-// light and dark, answers a waiting agent, folds a machine, rides out a dropped socket, and saves a
-// screenshot of each size and theme to $SHOTS (default: a temp folder).
+// stand-in hub: the page under the hub's own CSP for /next, the sign-in endpoints, the pane actions
+// and the /ws2 streams (protocol v2), fed made-up data (demo.ts). Signs in, checks the Overview and
+// a session's screen at phone and desktop sizes in light and dark, answers a waiting agent from a
+// card and from the chat, sends a message, loads older messages, folds a machine, rides out a
+// dropped socket, and saves a screenshot of each size and theme to $SHOTS (default: a temp folder).
 // CHROME=/path/to/chrome uses a browser other than Playwright's own.
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { chromium, devices, type Page } from 'playwright'
 import type { ServerWebSocket } from 'bun'
-import { overview } from './demo.ts'
+import { accounts, overview, storefront, twoQuestions } from './demo.ts'
 
 const root = path.join(import.meta.dir, '../../..')
 const dist = path.join(import.meta.dir, '../dist')
@@ -22,8 +23,42 @@ const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs'
 const NEXT_CSP = /pub const NEXT_CSP: &str = "([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
-const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[] }
-const sockets = new Set<ServerWebSocket<unknown>>()
+const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[] }
+type Socket = ServerWebSocket<{ subs: Set<string> }>
+const sockets = new Set<Socket>()
+
+// the chats the stand-in hub has, as /ws2 streams: rows, single values and a seq per change
+type Stream = { seq: number; items: Record<string, unknown>[]; state: Record<string, unknown>; older?: Record<string, unknown>[] }
+const streams = new Map<string, Stream>()
+function resetChats() {
+  streams.clear()
+  const s = storefront()
+  streams.set('local:%11', { seq: 1, items: s.items, state: s.state, older: s.older })
+  const a = accounts()
+  streams.set('local:%12', { seq: 1, items: a.items, state: a.state })
+}
+resetChats()
+const EPOCH = 1
+
+function snapshot(stream: string) {
+  if (stream === 'overview') return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { hosts: overview().hosts } }
+  const c = streams.get(stream)
+  if (!c) return { t: 'snapshot', stream, epoch: EPOCH, seq: 1, rows: { items: [] }, state: { loaded: true, hasMore: false } }
+  return { t: 'snapshot', stream, epoch: EPOCH, seq: c.seq, rows: { items: c.items, live: [], queue: [] }, state: c.state }
+}
+
+/** A change to a chat, sent to every socket that follows it. */
+function change(stream: string, parts: { append?: Record<string, unknown>[]; state?: Record<string, unknown> }) {
+  const c = streams.get(stream)!
+  const from = c.seq++
+  if (parts.append) c.items.push(...parts.append)
+  if (parts.state) Object.assign(c.state, parts.state)
+  const frame = JSON.stringify({ t: 'delta', stream, epoch: EPOCH, from, seq: c.seq, ...(parts.append ? { append: { items: parts.append } } : {}), ...(parts.state ? { state: parts.state } : {}) })
+  for (const ws of sockets) if (ws.data.subs.has(stream)) ws.send(frame)
+}
+
+/** The key an answer names its question by (inyon-protocol's prompt_key). */
+const promptKey = (p: { body: string[]; options: { n: number; label: string }[] }) => [...p.body, ...p.options.map((o) => `${o.n}.${o.label}`)].join('\n').replace(/\s+/g, '')
 
 const server = Bun.serve({
   port: 0,
@@ -31,9 +66,9 @@ const server = Bun.serve({
     const url = new URL(req.url)
     const p = url.pathname
     const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers })
-    if (p === '/ws') {
+    if (p === '/ws2') {
       if (!state.authed || state.refuse) return new Response('Not signed in', { status: 401 })
-      return srv.upgrade(req) ? undefined : new Response('no upgrade', { status: 400 })
+      return srv.upgrade(req, { data: { subs: new Set<string>() } }) ? undefined : new Response('no upgrade', { status: 400 })
     }
     if (p === '/api/session') return json({ authed: state.authed, setup: state.setup, setupCode: state.setupCode })
     if (p === '/api/login' && req.method === 'POST') {
@@ -50,9 +85,28 @@ const server = Bun.serve({
       state.authed = true
       return json({ ok: true })
     }
-    const answer = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/answer$/.exec(p)
-    if (answer && req.method === 'POST') {
-      state.answers.push({ host: decodeURIComponent(answer[1]!), pane: answer[2], ...(await req.json()) })
+    const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(answer|send)$/.exec(p)
+    if (action && req.method === 'POST') {
+      const host = decodeURIComponent(action[1]!)
+      const pane = action[2]!
+      const body = await req.json()
+      const stream = `${host}:%${pane}`
+      if (action[3] === 'send') {
+        state.sends.push({ host, pane, ...body })
+        // the agent's record picks the message up a moment later
+        setTimeout(() => change(stream, { append: [{ kind: 'user', seq: 1000 + state.sends.length, uuid: `sent${state.sends.length}`, ts: new Date().toISOString(), text: body.text, images: 0 }] }), 400)
+        return json({ ok: true })
+      }
+      state.answers.push({ host, pane, ...body })
+      const c = streams.get(stream)
+      const asked = (c?.state.screen as { prompt?: { body: string[]; options: { n: number; label: string }[] } } | undefined)?.prompt
+      if (c && asked) {
+        // the hub presses keys only for the question on screen
+        if (body.question !== undefined && body.question !== promptKey(asked)) return json({ error: 'That question is no longer on screen' }, 409)
+        // the first answer brings the next question; the second lets the agent go on
+        const next = asked.body[0] === twoQuestions.body[0] ? { working: true, activity: 'Writing the migration…', model: 'GPT-6-Astra', effort: 'medium', width: 120 } : { working: false, model: 'GPT-6-Astra', effort: 'medium', width: 120, prompt: twoQuestions }
+        setTimeout(() => change(stream, { state: { screen: next } }), 300)
+      }
       return json({ ok: true })
     }
     if (p === '/theme.js' || p.startsWith('/agents/') || p === '/icon.svg') return new Response(Bun.file(path.join(web, p)))
@@ -73,7 +127,23 @@ const server = Bun.serve({
     },
     message(ws, m) {
       const msg = JSON.parse(String(m))
-      if (msg.t === 'sub.overview') ws.send(JSON.stringify(overview()))
+      state.frames.push(msg)
+      if (msg.t === 'hello') ws.send(JSON.stringify({ t: 'hello', v: 2 }))
+      if (msg.t === 'sub') {
+        ws.data.subs.add(msg.stream)
+        // the overview and a chat that hasn't changed since `at`: up to date already
+        const c = streams.get(msg.stream)
+        const seq = msg.stream === 'overview' ? 1 : (c?.seq ?? 1)
+        if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
+        else ws.send(JSON.stringify(snapshot(msg.stream)))
+      }
+      if (msg.t === 'unsub') ws.data.subs.delete(msg.stream)
+      if (msg.t === 'more') {
+        const c = streams.get(msg.stream)
+        ws.send(JSON.stringify({ t: 'more', stream: msg.stream, items: c?.older ?? [], hasMore: false }))
+        if (c) c.state.hasMore = false
+      }
+      if (msg.t === 'draft') state.drafts.push(msg)
       if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong' }))
     },
   },
@@ -170,7 +240,7 @@ try {
       check(await page.getByText('Plan limits').isVisible(), `${label}: the plan limits`)
       check(await page.locator(phone ? '.machine-list' : '.machine-table').isVisible(), `${label}: the machines as a ${phone ? 'list' : 'table'}`)
       check(await page.locator(phone ? '.tabbar' : '.sidebar').isVisible(), `${label}: the ${phone ? 'tab bar' : 'sidebar'}`)
-      check((await page.locator('a[href="/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in the web app`)
+      check((await page.locator('a[href="/next/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in this app`)
       await layout(page, label)
       await page.screenshot({ path: path.join(shots, `overview-${w}-${scheme}.png`) })
       // the page scrolls inside the shell, so the lower half is a second picture
@@ -179,7 +249,138 @@ try {
       await ctx.close()
     }
 
+  // ---- a session: the chat at both sizes, light and dark ----
+  resetChats()
+  for (const [w, h] of [[390, 844], [1440, 900]] as const)
+    for (const scheme of ['light', 'dark'] as const) {
+      const label = `session ${w}x${h} ${scheme}`
+      const phone = w < 600
+      const ctx = await browser.newContext({ ...(phone ? devices['iPhone 13'] : {}), viewport: { width: w, height: h }, colorScheme: scheme, reducedMotion: 'reduce' })
+      const page = await ctx.newPage()
+      watch(page)
+      await page.goto(`${base}/next/m/local/p/11`)
+      await page.getByRole('heading', { name: 'Fix flaky checkout test' }).waitFor()
+      await page.getByText('All 20 runs pass now.').waitFor()
+      check(await page.getByText('Claude Code · studio · storefront:1').isVisible(), `${label}: where the pane is`)
+      check(await page.locator('.working-verb').filter({ hasText: 'Running the whole suite…' }).isVisible(), `${label}: the working line`)
+      check(await page.getByRole('button', { name: 'Queue follow-up' }).count() + (await page.getByRole('button', { name: 'Stop' }).count()) === 1, `${label}: one send/stop button`)
+      check(await page.locator('.composer-controls').filter({ hasText: 'Sonnet 5.5 · medium' }).isVisible(), `${label}: the model and effort under the box`)
+      check(phone === (await page.getByRole('link', { name: 'Back' }).isVisible()), `${label}: a back link on phones only`)
+      check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/m/local/p/11?view=terminal', `${label}: the terminal opens in the web app`)
+      // only the rows near the screen are in the page
+      const drawn = await page.locator('.vrow').count()
+      check(drawn > 3 && drawn < 40, `${label}: ${drawn} of 64 rows drawn`)
+      await layout(page, label)
+      await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}.png`) })
+      // the reply's code block, open tool details and the indented message, from closer up
+      await page.getByRole('button', { name: /Edited|Edit/ }).last().click()
+      await page.getByText('expect(total).toBe(4200)').scrollIntoViewIfNeeded()
+      await page.waitForTimeout(400)
+      await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-history.png`) })
+
+      await page.goto(`${base}/next/m/local/p/12`)
+      await page.getByText('Would you like to run the following command?').waitFor()
+      check(!(await page.locator('.composer').count()), `${label}: the question takes the box's place`)
+      check(await page.locator('.prompt-why').isVisible(), `${label}: one line says where the model controls went`)
+      const likely = await page.waitForFunction(() => document.activeElement?.textContent === '1Yes, proceed', null, { timeout: 3000 }).then(() => true, () => false)
+      check(likely, `${label}: focus on the likely answer`)
+      await layout(page, `${label} question`)
+      await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-question.png`) })
+      await ctx.close()
+    }
+
+  // ---- a session: send, load older messages, answer two questions ----
+  {
+    resetChats()
+    state.answers = []
+    const ctx = await browser.newContext({ ...devices['iPhone 13'], colorScheme: 'light', reducedMotion: 'reduce' })
+    const page = await ctx.newPage()
+    watch(page)
+    // from the Overview's card, without loading the page again
+    await page.goto(`${base}/next/`)
+    await page.locator('a[href="/next/m/local/p/11"]').click()
+    await page.getByRole('heading', { name: 'Fix flaky checkout test' }).waitFor()
+    check(await page.evaluate(() => performance.getEntriesByType('navigation').length === 1 && location.pathname === '/next/m/local/p/11'), 'route: the card opens the session in place')
+
+    // a message's own indentation and the code block's survive (Ghostex #252)
+    const bubble = await page.locator('.bubble').filter({ hasText: 'expect(total)' }).evaluate((el) => ({ text: el.textContent, ws: getComputedStyle(el).whiteSpace }))
+    check(bubble.text?.includes('\n    expect(total).toBe(4200)\n      at checkout.test.ts:88') && bubble.ws === 'pre-wrap', `indent: the message keeps its spaces (${JSON.stringify(bubble)})`)
+    const code = await page.locator('.code-body').first().textContent()
+    check(code?.includes('\n  const discounted = await applyDiscount(cart)\n  return discounted.items.reduce(\n    (sum, item)'), `indent: the code block keeps its spaces (${JSON.stringify(code)})`)
+
+    // older messages: reading back to the top fetches them (a wheel, as a reader's own scroll)
+    await page.mouse.move(195, 400)
+    for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -1500)
+    // reaching the top fetches them by itself; the button is there for a reader who stops short
+    const earlier = page.getByRole('button', { name: 'Earlier messages' })
+    if (await earlier.isVisible()) await earlier.click()
+    // they come in above the row being read, which stays put: scroll up to them
+    await page.waitForTimeout(500)
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -1500)
+    await page.getByText('Start the cart refactor: one map for the items').waitFor()
+    check(state.frames.some((f) => JSON.stringify(f) === JSON.stringify({ t: 'more', stream: 'local:%11', before: 1 })), 'more: asks for what came before the first message')
+
+    // typing is the draft, sending posts the message and it lands in the conversation
+    const box = page.getByRole('textbox', { name: 'Message Claude Code' })
+    await box.fill('Commit it as "Wait for the discount before totalling"')
+    await page.waitForTimeout(700)
+    check(state.drafts.some((d) => JSON.stringify(d) === JSON.stringify({ t: 'draft', host: 'local', pane: '%11', text: 'Commit it as "Wait for the discount before totalling"' })), `draft: sent to the hub (${JSON.stringify(state.drafts)})`)
+    await page.getByRole('button', { name: 'Queue follow-up' }).click()
+    await page.locator('.bubble').filter({ hasText: 'Commit it as' }).first().waitFor()
+    const sent = state.sends[0] as { text?: string; requestId?: string } | undefined
+    check(sent?.text === 'Commit it as "Wait for the discount before totalling"' && !!sent.requestId, `send: posted ${JSON.stringify(state.sends)}`)
+    check((await box.inputValue()) === '', 'send: the box empties')
+    await page.waitForTimeout(1200)
+    check((await page.locator('.bubble').filter({ hasText: 'Commit it as' }).count()) === 1, 'send: the message shows once after it lands')
+    check(!(await page.locator('.bubble-pending').count()), 'send: no longer pending once the record has it')
+    await page.screenshot({ path: path.join(shots, 'session-390-light-sent.png') })
+
+    // the agent asks: keys pick, and the answer names its question (Ghostex #251). The keys go
+    // in as soon as the card shows: the card holds focus from its first frame, before its likely
+    // choice can take it (that gap lost the keys on slow CI runners)
+    await page.goto(`${base}/next/m/local/p/12`)
+    await page.getByText('Would you like to run the following command?').waitFor()
+    check(await page.evaluate(() => !!document.activeElement?.closest('.prompt')), 'questions: the card has focus as soon as it shows')
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await page.getByText('Which store should the passkeys live in?').waitFor()
+    const first = state.answers[0] as Record<string, unknown> | undefined
+    check(first?.option === 2 && first.question === promptKey(accounts().state.screen.prompt), `answer: ${JSON.stringify(first)}`)
+    check((await page.getByRole('tab').count()) === 3, 'questions: one tab each')
+    const moved = await page.waitForFunction(() => (document.activeElement?.textContent ?? '').startsWith('1In the accounts table'), null, { timeout: 3000 }).then(() => true, () => false)
+    check(moved, 'questions: focus moves to the new question')
+    await page.screenshot({ path: path.join(shots, 'session-390-light-questions.png') })
+    // the free-text choice opens a box for the answer
+    await page.keyboard.press('3')
+    const free = page.getByRole('textbox', { name: 'Your answer' })
+    await free.waitFor()
+    await page.getByRole('button', { name: 'Back' }).click()
+    await page.keyboard.press('2')
+    await page.locator('.composer').waitFor()
+    const second = state.answers[1] as Record<string, unknown> | undefined
+    check(second?.option === 2 && second.question === promptKey(twoQuestions), `answer: ${JSON.stringify(second)}`)
+    check(await page.locator('.composer-controls').filter({ hasText: 'GPT-6-Astra · medium' }).isVisible(), 'answer: the model controls are back')
+    await ctx.close()
+  }
+
+  // ---- the questions on a desktop, dark ----
+  {
+    resetChats()
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/m/local/p/12`)
+    await page.getByText('Would you like to run the following command?').waitFor()
+    await page.getByRole('option', { name: /Yes, proceed/ }).click()
+    await page.getByText('Which store should the passkeys live in?').waitFor()
+    await layout(page, 'questions 1440 dark')
+    await page.screenshot({ path: path.join(shots, 'session-1440-dark-questions.png') })
+    await ctx.close()
+  }
+
   // ---- answering, folding, a dropped socket ----
+  resetChats()
+  state.answers = []
   {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
     const page = await ctx.newPage()
@@ -229,4 +430,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: sign-in, setup, the overview at 390x844 and 1440x900 in light and dark, answering, filtering, folding, reconnecting; screenshots in ${shots}`)
+console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, filtering, folding, reconnecting; screenshots in ${shots}`)
