@@ -166,8 +166,8 @@ pub fn Overview() -> Element {
     }
 }
 
-/// An agent session as a card. The whole card opens the session (in the web app for now); one that
-/// asks something shows its answers in place and keeps its size, so nothing around it moves.
+/// An agent session as a card. The whole card opens the session; one that asks something shows its
+/// answers in place and keeps its size, so nothing around it moves.
 fn card(r: &PaneRef, show_host: bool, clock: Clock) -> Element {
     let a = r.agent();
     let shown = Shown::of(a, r.host);
@@ -257,7 +257,7 @@ fn Answers(host: String, pane: String, href: String, options: Vec<(u32, String)>
                                 let (host, pane) = (host.clone(), pane.clone());
                                 spawn(async move {
                                     busy.set(Some(n));
-                                    match api::answer(&host, &pane, n).await {
+                                    match api::answer(&host, &pane, &api::Answer { option: n, text: None, question: None }).await {
                                         Ok(()) => {
                                             sent.set(true);
                                             // still asking after a moment: the choices again
