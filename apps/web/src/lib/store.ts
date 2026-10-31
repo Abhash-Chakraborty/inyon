@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { ChatInfo, ChatItem, HostState, LiveItem, ScreenState, ServerMsg } from '@inyon/protocol'
+import type { ChatInfo, ChatItem, HostState, LiveItem, Organize, ScreenState, ServerMsg } from '@inyon/protocol'
 import { socket, type Tagged } from './socket.ts'
 import { splitHostId, tellApart } from './hubs.ts'
 import { haptic } from './haptics.ts'
@@ -9,7 +9,8 @@ import { appHref, publicFile, routeOf } from './base.ts'
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
 import { reuse } from './reuse.ts'
 import { allPanes } from './overview.ts'
-import { clearSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
+import { clearSnapshots, loadChat, loadOrganize, loadOverview, saveChat, saveOrganize, saveOverview } from './snapshot.ts'
+import { mergeOrganize, NO_ORGANIZE } from './organize.ts'
 export { norm, msgKey, PENDING_MS, type PendingMessage } from './pending.ts'
 
 export interface ChatState {
@@ -99,6 +100,8 @@ interface Store {
   hostsLoaded: boolean
   /** the overview is the copy kept on this device, not yet confirmed by the hub */
   hostsStale: boolean
+  /** pins, parking, snoozes, tags and notes, every hub's as one (from 0.24; empty from an older hub) */
+  organize: Organize
   chats: Record<string, ChatState>
   toasts: Toast[]
   settings: Settings
@@ -113,6 +116,15 @@ let toastId = 0
 
 // the last overview this device saw paints first; the hub's replaces it in place
 const remembered = loadOverview()
+// each hub's organize by where it came from, as the machines are
+const organizeBy = new Map<string, Organize>(Object.entries((remembered && loadOrganize()) ?? {}))
+let organizeWire = ''
+const allOrganize = () => (organizeBy.size ? mergeOrganize([...organizeBy.values()]) : NO_ORGANIZE)
+/** Whether the hub a machine is on keeps how sessions are organised (an older one doesn't). */
+export function canOrganize(hostId: string) {
+  const hub = splitHostId(hostId).hub
+  return organizeBy.has(hub ? `hub:${hub.id}` : 'main')
+}
 
 export const useStore = create<Store>((set, get) => ({
   activity: [],
@@ -123,6 +135,7 @@ export const useStore = create<Store>((set, get) => ({
   hosts: remembered ?? [],
   hostsLoaded: !!remembered,
   hostsStale: !!remembered,
+  organize: allOrganize(),
   chats: {},
   toasts: [],
   settings: loadSettings(),
@@ -235,10 +248,19 @@ if (remembered) rememberSources(remembered)
 function onMessage(m: Tagged) {
   switch (m.t) {
     case 'overview': {
-      sources.set(m.source ?? 'main', m.hosts)
+      const source = m.source ?? 'main'
+      sources.set(source, m.hosts)
+      if (m.organize) organizeBy.set(source, m.organize)
+      else organizeBy.delete(source)
       const hosts = allHosts()
+      // the organize stays the same object until it changes, so a card that reads its mark renders
+      // again only then
+      const wire = JSON.stringify([...organizeBy])
+      const organize = wire === organizeWire ? {} : { organize: allOrganize() }
+      if (wire !== organizeWire) saveOrganize(Object.fromEntries(organizeBy))
+      organizeWire = wire
       // a card whose pane didn't change keeps its objects, so only the changed ones render again
-      useStore.setState((s) => ({ hosts: reuse(s.hosts, withoutEnded(hosts)), hostsLoaded: true, hostsStale: false }))
+      useStore.setState((s) => ({ hosts: reuse(s.hosts, withoutEnded(hosts)), hostsLoaded: true, hostsStale: false, ...organize }))
       saveOverview(hosts)
       clearAnswered(hosts)
       break
@@ -490,7 +512,9 @@ socket.onStatus((connected) => useStore.setState({ connected }))
 window.addEventListener('inyon:signed-out', () => {
   clearSnapshots()
   sources.clear()
-  useStore.setState({ hosts: [], hostsLoaded: false, hostsStale: false, chats: {} })
+  organizeBy.clear()
+  organizeWire = ''
+  useStore.setState({ hosts: [], hostsLoaded: false, hostsStale: false, organize: NO_ORGANIZE, chats: {} })
 })
 // a hub that forgot this phone: its machines are gone from the lists, and the person should know
 window.addEventListener('inyon:hub-forgot', (e) => {

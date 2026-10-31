@@ -14,7 +14,7 @@ fn snap(epoch: u64, seq: u64, items: Vec<ChatItem>, live: Vec<LiveItem>, queue: 
         stream: K.into(),
         epoch,
         seq,
-        rows: Rows { items: Some(items), live: Some(live), queue: Some(queue), hosts: None },
+        rows: Rows { items: Some(items), live: Some(live), queue: Some(queue), ..Rows::default() },
         state: Some(ChatState { info: Some(Box::new(info)), has_more: Some(false), loaded: Some(loaded), ..ChatState::default() }),
     })
 }
@@ -235,4 +235,31 @@ fn the_overview_stream_hands_over_the_machines_when_they_change() {
     assert_eq!(o.apply(&changed), (None, None), "a duplicate");
     let gone = d(2, 3, json!({ "stream": "overview", "epoch": 3, "from": 0, "seq": 0, "remove": { "hosts": ["box"] } }));
     assert_eq!(o.apply(&gone).0, Some(vec![lap]));
+}
+
+#[test]
+fn the_organize_stream_hands_over_the_marks_when_they_change() {
+    let mark = |id: &str, pinned: u32| -> inyon_protocol::SessionMark {
+        serde_json::from_value(json!({ "id": id, "host": "box", "pane": "%1", "live": true, "pinned": pinned })).unwrap()
+    };
+    let mut o = Organize2::default();
+    let snapshot =
+        ServerMsg2::Snapshot(Snapshot { stream: "organize".into(), epoch: 5, seq: 1, rows: Rows { sessions: Some(vec![mark("s-a", 0)]), ..Rows::default() }, state: None });
+    let (org, resync) = o.apply(&snapshot);
+    assert_eq!((org.unwrap().sessions, resync), (vec![mark("s-a", 0)], None));
+    let d = |from: u64, seq: u64, v: Value| -> ServerMsg2 {
+        let mut d: Delta = serde_json::from_value(v).unwrap();
+        (d.from, d.seq) = (from, seq);
+        ServerMsg2::Delta(d)
+    };
+    let pinned = d(
+        1,
+        2,
+        json!({ "stream": "organize", "epoch": 5, "from": 0, "seq": 0, "replace": { "sessions": [mark("s-a", 1)] }, "append": { "sessions": [mark("s-b", 0)], "projects": [{ "id": "p-1", "name": "Inyon" }] } }),
+    );
+    let org = o.apply(&pinned).0.unwrap();
+    assert_eq!((org.sessions, org.projects.len()), (vec![mark("s-a", 1), mark("s-b", 0)], 1));
+    // a delta from a later epoch: ask again from where it is
+    let other = d(2, 3, json!({ "stream": "organize", "epoch": 6, "from": 0, "seq": 0, "remove": { "sessions": ["s-a"] } }));
+    assert_eq!(o.apply(&other), (None, Some(ClientMsg2::Sub { stream: "organize".into(), at: Some(StreamPos { epoch: 5, seq: 2 }) })));
 }

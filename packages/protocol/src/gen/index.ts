@@ -933,7 +933,136 @@ export type DraftSource = "app" | "terminal";
 
 export type NotifyKind = "waiting" | "done" | "offline" | "online";
 
-export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "page.notify", host: string, slug: string, title: string, body: string, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };
+/**
+ * A project's or a group's colour: the neutral ones, and a few muted ones. The app draws it on the
+ * project's mark and nowhere else.
+ */
+export type ProjectColor = "silver" | "ink" | "sage" | "teal" | "blue" | "violet" | "rose";
+
+/**
+ * What the hub keeps about one session, and how it finds the session again. A session is matched
+ * by its agent's conversation id when one is known (that follows a conversation resumed in another
+ * pane), else by its tmux pane id together with its tmux session, so a pane id that tmux handed
+ * out again after a restart of its server isn't taken for the old pane, else by its place (tmux
+ * session name, window and pane numbers, folder) for a session put back after such a restart.
+ */
+export type SessionMark = { 
+/**
+ * the hub's id for it: "s-" and 12 hex digits
+ */
+id: string, 
+/**
+ * the machine
+ */
+host: string, 
+/**
+ * the tmux pane it was last matched to ("%12")
+ */
+pane: string, 
+/**
+ * matched to a pane on its machine now; the apps join a mark to a pane only while this is set
+ */
+live: boolean, 
+/**
+ * the agent's conversation (Claude Code's session id, Codex's thread id), when known
+ */
+conv?: string, 
+/**
+ * the tmux session's id ("$3") and name where it was last seen
+ */
+tmuxId?: string, tmuxName?: string, 
+/**
+ * tmux's window and pane numbers there, "2.0"
+ */
+tmuxPlace?: string, 
+/**
+ * its folder when last seen
+ */
+cwd?: string, 
+/**
+ * when it was last seen on its machine, unix ms
+ */
+seen: number, 
+/**
+ * pinned, at this place among the pinned (0 first)
+ */
+pinned?: number, parked?: boolean, 
+/**
+ * hidden until then, unix ms; the hub clears it once it's past
+ */
+snoozedUntil?: number, 
+/**
+ * raise a notice when the snooze ends
+ */
+snoozeNotice?: boolean, 
+/**
+ * normalised (see [`normalize_tag`]), at most [`MAX_TAGS`]
+ */
+tags?: Array<string>, note?: string, 
+/**
+ * shown in place of the session's own name
+ */
+title?: string, 
+/**
+ * a section of its own within its project ("Move to group")
+ */
+section?: string, 
+/**
+ * the project it belongs to, whatever its folder; else it falls into one by its folder
+ */
+project?: string, };
+
+/**
+ * A folder on one machine whose sessions belong to a project.
+ */
+export type ProjectRoot = { host: string, 
+/**
+ * absolute; a session in it or any folder under it belongs to the project
+ */
+path: string, };
+
+/**
+ * A project: a name, a colour and the folders its sessions live in, on any machine.
+ */
+export type Project = { 
+/**
+ * "p-" and 12 hex digits
+ */
+id: string, name: string, color: ProjectColor, icon?: string, roots: Array<ProjectRoot>, 
+/**
+ * the group it's in
+ */
+group?: string, };
+
+/**
+ * Projects shown together under one heading.
+ */
+export type ProjectGroup = { 
+/**
+ * "g-" and 12 hex digits
+ */
+id: string, name: string, color: ProjectColor, };
+
+/**
+ * A named set of projects to look at on their own (all the "inyon" work, on every machine).
+ */
+export type Space = { 
+/**
+ * "w-" and 12 hex digits
+ */
+id: string, name: string, icon?: string, projects: Array<string>, };
+
+/**
+ * GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview. Lists are
+ * in the order the apps show them.
+ */
+export type Organize = { 
+/**
+ * [`ORGANIZE_VERSION`] when the hub wrote it
+ */
+v: number, sessions: Array<SessionMark>, projects: Array<Project>, groups: Array<ProjectGroup>, spaces: Array<Space>, };
+
+export type ServerMsg = { "t": "overview", hosts: Array<HostState>, organize?: Organize, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "page.notify", host: string, slug: string, title: string, body: string, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };
 
 /**
  * How a large frame is compressed: raw DEFLATE (RFC 1951), sent as a binary WebSocket message.
@@ -989,14 +1118,15 @@ export type QueueKind = "held" | "send" | "agent";
 
 /**
  * Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
- * (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]).
+ * (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
+ * stream has `sessions`, `projects`, `groups` and `spaces` (each keyed by `id`).
  */
-export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, };
+export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, sessions?: Array<SessionMark>, projects?: Array<Project>, groups?: Array<ProjectGroup>, spaces?: Array<Space>, };
 
 /**
  * Row keys, by collection, for `remove`.
  */
-export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, };
+export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, sessions?: Array<string>, projects?: Array<string>, groups?: Array<string>, spaces?: Array<string>, };
 
 /**
  * The unsent message for a pane, shared by every device and the terminal's input box.

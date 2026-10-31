@@ -571,6 +571,10 @@ pub fn companion_frame(msg: &ServerMsg, scopes: &[CompanionScope]) -> Option<Val
         ServerMsg::Overview { .. } if can(CompanionScope::Overview) => {
             let mut v = whole()?;
             companion_hosts(&mut v["hosts"]);
+            // pins, tags and notes are the app's own
+            if let Some(o) = v.as_object_mut() {
+                o.remove("organize");
+            }
             Some(v)
         }
         ServerMsg::Notify { .. } if can(CompanionScope::Overview) => whole(),

@@ -1,4 +1,4 @@
-import type { ChatInfo, ChatItem, HostState } from '@inyon/protocol'
+import type { ChatInfo, ChatItem, HostState, Organize } from '@inyon/protocol'
 
 /**
  * The last overview and the last few chats, kept on the device so the app paints real content
@@ -6,6 +6,7 @@ import type { ChatInfo, ChatItem, HostState } from '@inyon/protocol'
  * beyond drawing: every action still goes to the hub, and the next message from it wins.
  */
 const OVERVIEW_KEY = 'inyon.overview.v1'
+const ORGANIZE_KEY = 'inyon.organize.v1'
 const CHAT_PREFIX = 'inyon.chat.v1.'
 const CHAT_INDEX = 'inyon.chats.v1'
 /** older than this and the picture is more misleading than helpful */
@@ -56,6 +57,10 @@ function later(key: string, ms: number, fn: () => void) {
 export const loadOverview = () => read<HostState[]>(OVERVIEW_KEY)
 export const saveOverview = (hosts: HostState[]) => later(OVERVIEW_KEY, 1000, () => write(OVERVIEW_KEY, hosts))
 
+/** each hub's pins and parked sessions, so the first frame already has them in their places */
+export const loadOrganize = () => read<Record<string, Organize>>(ORGANIZE_KEY)
+export const saveOrganize = (by: Record<string, Organize>) => later(ORGANIZE_KEY, 1000, () => write(ORGANIZE_KEY, by))
+
 export const loadChat = (key: string) => read<ChatSnapshot>(CHAT_PREFIX + key)
 
 export function saveChat(key: string, chat: ChatSnapshot) {
@@ -88,6 +93,7 @@ export function clearSnapshots() {
     for (const k of chatIndex()) localStorage.removeItem(CHAT_PREFIX + k)
     localStorage.removeItem(CHAT_INDEX)
     localStorage.removeItem(OVERVIEW_KEY)
+    localStorage.removeItem(ORGANIZE_KEY)
   } catch {}
 }
 

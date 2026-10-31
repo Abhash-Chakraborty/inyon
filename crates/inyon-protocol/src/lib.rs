@@ -8,12 +8,14 @@
 mod agents;
 pub mod compat;
 mod js;
+mod organize;
 mod types;
 pub mod v2;
 mod versions;
 
 pub use agents::*;
 pub use js::{Num, True};
+pub use organize::*;
 pub use types::*;
 pub use v2::{ChatState, ClientMsg2, Delta, DraftState, Keys, Progress, QueueKind, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos, Zip};
 pub use versions::*;
@@ -125,6 +127,14 @@ macro_rules! with_types {
             ClientMsg,
             DraftSource,
             NotifyKind,
+            // organize.rs
+            ProjectColor,
+            SessionMark,
+            ProjectRoot,
+            Project,
+            ProjectGroup,
+            Space,
+            Organize,
             ServerMsg,
             // v2.rs (/ws2)
             Zip,

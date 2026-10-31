@@ -58,8 +58,8 @@ pub fn msg_for(msg: &ServerMsg, catalog: u32) -> Cow<'_, ServerMsg> {
         return Cow::Borrowed(msg);
     }
     match msg {
-        ServerMsg::Overview { hosts } => match hosts_for(hosts, catalog) {
-            Cow::Owned(hosts) => Cow::Owned(ServerMsg::Overview { hosts }),
+        ServerMsg::Overview { hosts, organize } => match hosts_for(hosts, catalog) {
+            Cow::Owned(hosts) => Cow::Owned(ServerMsg::Overview { hosts, organize: organize.clone() }),
             Cow::Borrowed(_) => Cow::Borrowed(msg),
         },
         ServerMsg::ChatReset { key, info, items, has_more } => match chat_for(info, catalog) {
@@ -127,8 +127,8 @@ mod tests {
         assert!(matches!(&*msg_for(&n, 2), ServerMsg::Notify { agent: Some(AgentKind::Pi), .. }));
         let c = ServerMsg::Notify { host: "h".into(), pane: "%1".into(), kind: NotifyKind::Done, title: "x".into(), body: "y".into(), agent: Some(AgentKind::Claude) };
         assert!(matches!(msg_for(&c, 1), Cow::Borrowed(_)));
-        let o = ServerMsg::Overview { hosts: vec![host()] };
-        let ServerMsg::Overview { hosts } = &*msg_for(&o, 1) else { panic!("an overview") };
+        let o = ServerMsg::Overview { hosts: vec![host()], organize: None };
+        let ServerMsg::Overview { hosts, .. } = &*msg_for(&o, 1) else { panic!("an overview") };
         assert_eq!(kinds(&hosts[0]), [Some("claude"), None]);
     }
 
