@@ -3,7 +3,7 @@ import type { ChatInfo, ChatItem, HostState, LiveItem, ScreenState, ServerMsg } 
 import { socket, type Tagged } from './socket.ts'
 import { splitHostId, tellApart } from './hubs.ts'
 import { haptic } from './haptics.ts'
-import { clearNativeNotification, isNative, nativeNotify } from './native.ts'
+import { clearNativeNotification, isNative, nativeNotify, type NotifyAnswers } from './native.ts'
 import { appHref, publicFile, routeOf } from './base.ts'
 
 import { settle, PENDING_MS, type PendingMessage } from './pending.ts'
@@ -344,6 +344,21 @@ export function withoutScreenRead(live: LiveItem[] | undefined, fresh: ChatItem[
   return live.filter((l) => !l.id.startsWith('screen:'))
 }
 
+/** How long a "needs you" notification waits for the overview that carries the answers. */
+export const ANSWERS_WAIT_MS = 400
+
+/** The pane a session is in, from the overview. */
+export function findPane(hosts: HostState[], host: string, pane: string) {
+  return hosts.find((x) => x.config.id === host)?.sessions.flatMap((s) => s.windows.flatMap((w) => w.panes)).find((x) => x.id === pane)
+}
+
+/** The answers a notification can offer as buttons: one to three, while the session still asks. */
+function choicesFor(host: string, pane: string): NotifyAnswers | undefined {
+  const a = findPane(useStore.getState().hosts, host, pane)?.agent
+  if (a?.state !== 'waiting' || !a.options?.length || a.options.length > 3) return undefined
+  return { host, pane, options: a.options.map(({ n, label }) => ({ n, label })) }
+}
+
 /** Sessions with a "needs you" notification up, by tag. */
 const asking = new Map<string, { host: string; pane: string }>()
 /** The browser's notifications (outside the phone app), by the same tags, so they can be taken back. */
@@ -404,9 +419,17 @@ function notify(m: Extract<ServerMsg, { t: 'notify' }>) {
     else if (m.kind === 'offline' && !here) haptic('warning')
   }
   if (document.visibilityState === 'hidden' && isNative()) {
-    if (m.kind === 'waiting') asking.set(tag, { host: m.host, pane: m.pane })
-    else asking.delete(tag)
-    void nativeNotify(m.title, m.body, href, tag, m.kind)
+    if (m.kind !== 'waiting') {
+      asking.delete(tag)
+      void nativeNotify(m.title, m.body, href, tag, m.kind)
+      return
+    }
+    asking.set(tag, { host: m.host, pane: m.pane })
+    // the overview with the question's answers comes a moment after the notice; a question
+    // answered meanwhile gets no notification
+    setTimeout(() => {
+      if (asking.has(tag)) void nativeNotify(m.title, m.body, href, tag, m.kind, choicesFor(m.host, m.pane))
+    }, ANSWERS_WAIT_MS)
     return
   }
   if (document.visibilityState === 'hidden' && 'Notification' in window && Notification.permission === 'granted') {
