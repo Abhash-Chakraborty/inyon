@@ -75,7 +75,7 @@ Passwords and keys stay in Android's encrypted storage, and the app's data is ex
 
 ## Pages
 
-The **Pages** tab shows the plans and mockups your agents build, from every hub you paired and, from 0.23.3, from the computers paired with the phone directly. A computer's pages come over the same encrypted link as its sessions, with no hub needed; it needs `inyon` 0.22 or later. [Pages](pages.md#pages-on-the-phones-own-computers) has the details.
+The **Pages** tab shows the plans and mockups your agents build, from every hub you paired and, from 0.24, from the computers paired with the phone directly. A computer's pages come over the same encrypted link as its sessions, with no hub needed; it needs `inyon` 0.22 or later. [Pages](pages.md#pages-on-the-phones-own-computers) has the details.
 
 ## Staying connected
 

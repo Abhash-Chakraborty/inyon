@@ -55,7 +55,7 @@ If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub 
 
 Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
 
-The Android app lists the pages of every hub you paired, all together, and from 0.23.3 also those on the computers paired with the phone directly.
+The Android app lists the pages of every hub you paired, all together, and from 0.24 also those on the computers paired with the phone directly.
 
 ### Pages on the phone's own computers
 
