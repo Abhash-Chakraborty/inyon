@@ -246,7 +246,7 @@ pub struct Session {
 }
 
 /// A computer running `inyon link`: it lets in phones it paired with, pairs with the right secret,
-/// answers pings and runs `exec` as "ran <cmd>".
+/// answers pings and runs `exec` as "ran <cmd>", or for real in `sh` when it has a `home`.
 pub struct FakeMachine {
     pub id: Identity,
     pub secret: String,
@@ -259,6 +259,8 @@ pub struct FakeMachine {
     pub ignores_unpair: Cell<bool>,
     /// the addresses it lists in its welcome
     pub urls: RefCell<Vec<String>>,
+    /// set: `exec` runs in `sh` with this HOME, its input handed on stdin
+    pub home: RefCell<Option<String>>,
 }
 
 impl FakeMachine {
@@ -273,6 +275,7 @@ impl FakeMachine {
             answers_pings: Cell::new(true),
             ignores_unpair: Cell::new(false),
             urls: RefCell::default(),
+            home: RefCell::default(),
         })
     }
 
@@ -299,11 +302,22 @@ impl FakeMachine {
 
     fn frame(&self, s: &Rc<Session>, data: &[u8]) {
         let Ok(Some(body)) = s.channel.borrow_mut().open(data) else { return };
-        let Ok(msg) = serde_json::from_slice::<Value>(&body) else { return };
+        let Ok(mut msg) = serde_json::from_slice::<Value>(&body) else { return };
+        // what came on stdin is kept as its size: an upload's chunks would be megabytes each
+        let input = msg.as_object_mut().and_then(|m| m.remove("input"));
+        if let Some(i) = &input {
+            msg["inputLength"] = json!(i.as_str().map_or(0, str::len));
+        }
         self.heard.borrow_mut().push(msg.clone());
         match msg["op"].as_str() {
             Some("ping") if self.answers_pings.get() => self.send(s, &json!({ "type": "pong", "t": msg["t"] })),
             Some("unpair") if !self.ignores_unpair.get() => self.paired.borrow_mut().retain(|k| *k != s.phone_key),
+            Some("exec") if self.home.borrow().is_some() => {
+                use base64::Engine;
+                let stdin = input.and_then(|i| base64::engine::general_purpose::STANDARD.decode(i.as_str()?).ok());
+                let (code, stdout, stderr) = run_sh(msg["cmd"].as_str().unwrap_or_default(), stdin, self.home.borrow().as_deref().unwrap_or_default());
+                self.send(s, &json!({ "id": msg["id"], "type": "exit", "code": code, "stdout": stdout, "stderr": stderr }))
+            }
             Some("exec") => {
                 self.send(s, &json!({ "id": msg["id"], "type": "exit", "code": 0, "stdout": format!("ran {}", msg["cmd"].as_str().unwrap_or_default()), "stderr": "" }))
             }
@@ -323,4 +337,27 @@ impl FakeMachine {
             later(&s.to_phone, WireEvent::Close(1006, String::new()));
         }
     }
+}
+
+/// `sh -c cmd` with only `home` as HOME, so nothing a test runs can reach the real one.
+fn run_sh(cmd: &str, stdin: Option<Vec<u8>>, home: &str) -> (i32, String, String) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("sh")
+        .args(["-c", cmd])
+        .env_clear()
+        .env("HOME", home)
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut pipe = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || {
+        let _ = pipe.write_all(&stdin.unwrap_or_default());
+    });
+    let out = child.wait_with_output().unwrap();
+    let _ = writer.join();
+    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
 }

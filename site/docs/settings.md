@@ -43,7 +43,9 @@ Uploads are stored on each machine in `~/.inyon/uploads`. The machine's page sho
 
 From 0.21, **Agent temp files** below the machines opens [Temp files](temp-files.md): the pasted images, screenshots and scratch folders agents leave on each machine.
 
-From 0.17 the hub tidies every machine by itself about every six hours, and again when a machine comes back online: it deletes uploads past their age, then the oldest ones while the folder is over **Keep at most**. A file whose upload broke off keeps a `.part` ending and is deleted after an hour, so a half-sent file never looks finished. Computers paired only with a phone tidy their own uploads the same way, with the rules the hub last used there (7 days and 1 GB if there never was one).
+**Largest file** applies to each file, whatever its type. From 0.24 files go up a megabyte at a time, so the hub never holds more than that of a file however large it is.
+
+From 0.17 the hub tidies every machine by itself about every six hours, and again when a machine comes back online: it deletes uploads past their age, then the oldest ones while the folder is over **Keep at most**. A file whose upload broke off keeps a `.part` ending and is deleted after an hour, so a half-sent file never looks finished. From 0.24 the hub also forgets an upload that got nothing for an hour, and deletes its `.part` file then; sending the file again starts it over. Computers paired only with a phone tidy their own uploads the same way, with the rules the hub last used there (7 days and 1 GB if there never was one).
 
 ## Notifications
 

@@ -79,6 +79,8 @@ Start a message with `!` to run a shell command in the session's folder, through
 
 Attach with the paperclip, take a photo on a phone, paste a screenshot, or drag files onto the chat. Files upload to the machine (into `~/.inyon/uploads`) with progress, and the message lists their paths for the agent. A failed upload can be retried, and you can't send until it's either done or removed.
 
+From 0.24 a file goes up a megabyte at a time, from a browser and from the phone app, to any machine. If the connection drops, the attachment says *Reconnecting…* and carries on from the last megabyte that arrived once it's back, for up to about ten minutes. After that it shows as failed, and tapping it to try again still picks up where it stopped. Inyon checks the file's size and SHA-256 before it takes its name, so an agent never gets a file that is cut short or damaged. Removing an attachment while it uploads stops it and deletes what arrived. A hub older than 0.24 still takes files the old way.
+
 Pasting more than 40 lines of text attaches it as a file instead (*Pasted text · 120 lines*), so long logs don't flood the box. On a computer, typing anywhere on the page goes into the box, and pasting anywhere attaches.
 
 Settings → **Uploads and clipboard** sets how long uploads are kept (1, 7 or 30 days, or forever), the largest file allowed and, from 0.17, how much space they may take on each machine. See [Settings](settings.md#uploads-and-clipboard).

@@ -24,7 +24,7 @@ use crate::js::{fmt_number, to_number};
 use crate::platform::rt;
 use crate::re;
 
-fn host_and_home(host_id: &str) -> HubResult<(Host, String)> {
+pub(super) fn host_and_home(host_id: &str) -> HubResult<(Host, String)> {
     let rt = registry().get(host_id).ok_or_else(|| http(404, "Unknown machine"))?;
     let r = rt.borrow();
     let home = r.probe.as_ref().map(|p| p.borrow().home.clone()).filter(|h| !h.is_empty()).ok_or_else(|| http(503, "Machine is not connected yet"))?;
@@ -93,7 +93,7 @@ pub struct Uploaded {
 
 /// Where a new upload goes: ~/.inyon/uploads/<date>/<session>/<time>-<id>-<name> on the pane's
 /// machine. The short random id keeps two files of the same name sent in the same second apart.
-fn upload_path(home: &str, host_id: &str, pane_id: Option<&str>, name: &str) -> String {
+pub(super) fn upload_path(home: &str, host_id: &str, pane_id: Option<&str>, name: &str) -> String {
     let pane = pane_id.and_then(|p| registry().find_pane(host_id, p)).map(|f| f.pane);
     let bucket = pane.and_then(|p| p.agent.and_then(|a| a.session_id)).or_else(|| pane_id.map(|p| p.replacen('%', "pane-", 1))).unwrap_or_else(|| "misc".into());
     let bucket = bucket.slice16(0, Some(12));
@@ -144,7 +144,7 @@ async fn write_upload(host: &Host, path: &str, data: &[u8], from: f64, total: f6
     Ok(())
 }
 
-fn max_mb() -> f64 {
+pub(super) fn max_mb() -> f64 {
     load_settings().uploads().map_or(100.0, |u| u.max_mb)
 }
 
@@ -230,7 +230,7 @@ pub async fn upload_usage(host_id: &str) -> HubResult<UploadUsage> {
 }
 
 /// The shell that tidies a machine's uploads: files older than `days` (none when 0, all when -1),
-/// .part files an upload left behind over an hour ago, then the oldest days first while the folder
+/// .part (and .part.chunk) files an upload left behind over an hour ago, then the oldest days first while the folder
 /// is over `max_total_mb` (0: no limit). Only find, du and rm, so it runs on macOS, Linux and busybox.
 pub fn clean_script(dir: &str, days: f64, max_total_mb: f64) -> String {
     let d = shq(dir);
@@ -259,7 +259,7 @@ pub fn clean_script(dir: &str, days: f64, max_total_mb: f64) -> String {
         String::new()
     };
     format!(
-        "{policy} [ -d {d} ] || exit 0; {age} find {d} -type f -name '*.part' -mmin +60 -exec rm -f {{}} +; {cap} find {d} -mindepth 1 -type d -empty -delete 2>/dev/null; true"
+        "{policy} [ -d {d} ] || exit 0; {age} find {d} -type f \\( -name '*.part' -o -name '*.part.chunk' \\) -mmin +60 -exec rm -f {{}} +; {cap} find {d} -mindepth 1 -type d -empty -delete 2>/dev/null; true"
     )
 }
 
@@ -337,9 +337,10 @@ pub mod janitor {
     }
 }
 
-/// Applies the retention setting on every connected machine.
+/// Applies the retention setting on every connected machine, and drops chunked uploads left alone.
 pub fn start_upload_janitor() {
-    janitor::start()
+    janitor::start();
+    super::uploads::start_sweeping();
 }
 
 /// A small cache: entries go after `ttl` ms, and past `max` entries the least recently used go first.

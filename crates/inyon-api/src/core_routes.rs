@@ -8,6 +8,7 @@ use inyon_core::claude::actions::{self, LaunchOpts};
 use inyon_core::claude::integration::{install_integration, uninstall_integration};
 use inyon_core::claude::send_receipts::send_once;
 use inyon_core::config::{load_settings, save_settings, HubSettings};
+use inyon_core::features::uploads::{self as chunked, ChunkResult, StartUpload};
 use inyon_core::features::{companion, conversations, features as feat, models, providers, setup, signin, temp, workspace};
 use inyon_core::hosts::http_error::{http, HubError, HubResult};
 use inyon_core::hosts::node_link;
@@ -234,6 +235,65 @@ async fn upload(mut r: Req) -> HubResult<Resp> {
     Ok(json_of(&json!({ "files": all })))
 }
 
+// ---------- uploads a chunk at a time (from 0.24; see inyon_core::features::uploads) ----------
+
+/// `POST /api/hosts/:id/uploads/start` `{ name, size, type?, pane?, sha256? }`: the upload's id,
+/// the chunk size to send and where it goes.
+async fn upload_start(mut r: Req) -> HubResult<Resp> {
+    let b = r.json_body(16 * 1024).await?;
+    let name = str_or_empty(field(&b, "name")?).trim().to_owned();
+    if name.is_empty() {
+        return Err(http(400, "An upload needs the file's name"));
+    }
+    let size = js_number(field(&b, "size")?);
+    if !(size >= 0.0 && size.fract() == 0.0 && size <= 9e15) {
+        return Err(http(400, "An upload needs the file's size"));
+    }
+    let sha256 = match as_str(field(&b, "sha256")?).filter(|s| !s.is_empty()) {
+        Some(s) => Some(chunked::parse_sha256(&s).ok_or_else(|| http(400, "A SHA-256 is 64 hex digits"))?),
+        None => None,
+    };
+    let pane = as_str(field(&b, "pane")?).filter(|p| !p.is_empty()).map(|p| pane_param(&p));
+    let mime = as_str(field(&b, "type")?).unwrap_or_default().to_ascii_lowercase();
+    let start = StartUpload { name, mime, size: size as u64, sha256, pane };
+    Ok(json_of(&chunked::start_upload(&id(&r), &start).await?))
+}
+
+/// `PUT /api/hosts/:id/uploads/:upload/:offset` with the chunk's bytes as the body. A chunk that
+/// doesn't follow on from what arrived gets 409 with the upload's state, to carry on from `received`.
+async fn upload_chunk(mut r: Req) -> HubResult<Resp> {
+    let offset = r.param("offset");
+    if offset.is_empty() || offset.len() > 15 || !offset.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(http(400, "Bad upload offset"));
+    }
+    let message = format!("Upload chunks are limited to {} MB", chunked::MAX_CHUNK / 1024 / 1024);
+    let data = match r.read_limited(chunked::MAX_CHUNK, &message).await {
+        Ok(b) => b,
+        Err(e) if e.status == Some(413) => return Err(e),
+        // the connection dropped while the chunk was arriving: the app sends it again
+        Err(_) => return Err(http(400, "The chunk didn't arrive whole")),
+    };
+    match chunked::put_chunk(&id(&r), &r.param("upload"), offset.parse().unwrap_or(0), &data).await? {
+        ChunkResult::Took(s) => Ok(json_of(&s)),
+        ChunkResult::Elsewhere(s) => {
+            let mut body = serde_json::to_value(&s).map_err(|e| HubError::plain(e.to_string()))?;
+            body["error"] = json!(format!("The upload carries on from byte {}", s.received));
+            Ok(crate::http::json(409, &body))
+        }
+    }
+}
+
+/// `POST /api/hosts/:id/uploads/:upload/finish` `{ sha256 }`: the file as the old route answers
+/// for one (`{ name, path, size, type }`), once its size and hash are right.
+async fn upload_finish(mut r: Req) -> HubResult<Resp> {
+    let b = r.json_body(16 * 1024).await?;
+    let sha256 = match as_str(field(&b, "sha256")?).filter(|s| !s.is_empty()) {
+        Some(s) => Some(chunked::parse_sha256(&s).ok_or_else(|| http(400, "A SHA-256 is 64 hex digits"))?),
+        None => None,
+    };
+    Ok(json_of(&chunked::finish_upload(&id(&r), &r.param("upload"), sha256).await?))
+}
+
 async fn node_update(r: Req) -> HubResult<Resp> {
     let rt = registry().get(&id(&r)).ok_or_else(|| http(404, "Unknown machine"))?;
     let refused = {
@@ -457,6 +517,24 @@ pub fn add(routes: &mut Routes) {
         ],
     );
     guarded(routes, "/api/hosts/:id/uploads", vec![(M::GET, h(|r| async move { Ok(json_of(&feat::upload_usage(&id(&r)).await?)) })), (M::POST, h(upload))]);
+    // a chunk at a time, resumable (from 0.24); the route above stays for apps from before
+    guarded(routes, "/api/hosts/:id/uploads/start", vec![(M::POST, h(upload_start))]);
+    guarded(
+        routes,
+        "/api/hosts/:id/uploads/:upload",
+        vec![
+            (M::GET, h(|r| async move { Ok(json_of(&chunked::upload_status(&id(&r), &r.param("upload"))?)) })),
+            (
+                M::DELETE,
+                h(|r| async move {
+                    chunked::cancel_upload(&id(&r), &r.param("upload")).await?;
+                    Ok(ok())
+                }),
+            ),
+        ],
+    );
+    guarded(routes, "/api/hosts/:id/uploads/:upload/finish", vec![(M::POST, h(upload_finish))]);
+    guarded(routes, "/api/hosts/:id/uploads/:upload/:offset", vec![(M::PUT, h(upload_chunk))]);
     guarded(
         routes,
         "/api/hosts/:id/uploads/clean",
@@ -1139,40 +1217,21 @@ mod tests {
         r
     }
 
+    /// This machine, as a local machine "up" in the registry whose home is `home`, its commands run
+    /// for real.
+    fn local_machine(home: &std::path::Path) {
+        let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = inyon_backends::process::ProcessBackend::new(home.join("cm"), vec![]);
+        inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
+        let rt = put(host_state("up", "local", json!({})));
+        rt.borrow_mut().probe = Some(Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult::at_home(&home.to_string_lossy()))));
+    }
+
     #[test]
     fn the_upload_route_takes_a_chunked_piece_and_counts_what_it_reads() {
         let home = std::env::temp_dir().join(format!("inyon-up-{}", crate::http::random_hex(6)));
         std::fs::create_dir_all(&home).unwrap();
         let (ok, refused) = crate::test_util::block(async {
-            let backend: Rc<dyn inyon_core::hosts::host::HostBackend> = inyon_backends::process::ProcessBackend::new(home.join("cm"), vec![]);
-            inyon_core::hosts::host::set_host_backends(move |_| backend.clone());
-            let rt = put(host_state("up", "local", json!({})));
-            rt.borrow_mut().probe = Some(Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult {
-                hostname: "box".into(),
-                home: home.to_string_lossy().into_owned(),
-                os: "Linux".into(),
-                now: 0.0,
-                latency_ms: 0.0,
-                tmux: inyon_core::tmux::tmux::TmuxProbe::Ok,
-                integration: inyon_protocol::IntegrationState::Missing,
-                sessions: vec![],
-                agent_procs: Default::default(),
-                hook_panes: Default::default(),
-                status_panes: Default::default(),
-                account: None,
-                compact_panes: Default::default(),
-                installed: vec![],
-                signed_in: vec![],
-                agy_conversations: Default::default(),
-                agy_status: Default::default(),
-                agy_titles: Default::default(),
-                agy_integration: None,
-                hooked: vec![],
-                machine_kind: None,
-                keys_at: Default::default(),
-                unwatched: Default::default(),
-                claude_parked: Default::default(),
-            })));
+            local_machine(&home);
             let ok = answered(upload(chunked_upload(&[("total", "1000"), ("offset", "0")], "small.bin", 1000)).await).await;
             // Ghostex #253: uploads over 1 MiB failed there
             let three = answered(upload(chunked_upload(&[], "photo.jpg", 3 * 1024 * 1024)).await).await;
@@ -1186,6 +1245,94 @@ mod tests {
         assert_eq!(ok.0, 200, "{}", ok.1);
         assert_eq!(ok.1["files"][0]["size"], json!(1000));
         assert_eq!(refused, (413, json!({ "error": "Uploads are limited to 100 MB" })));
+    }
+
+    /// A request to the chunked upload routes for machine "up".
+    fn up_req(method: &str, path: &str, params: &[(&str, &str)], body: Vec<u8>) -> Req {
+        let mut r = crate::http::test_req(method, &format!("/api/hosts/up/uploads{path}"), &[("content-type", "application/json")], "");
+        r.body = Some(crate::body::Body::from(body));
+        r.params = std::iter::once(("id".to_owned(), "up".to_owned())).chain(params.iter().map(|(k, v)| (k.to_string(), v.to_string()))).collect();
+        r
+    }
+
+    fn sha(b: &[u8]) -> String {
+        use sha2::Digest;
+        crate::http::hex(&sha2::Sha256::digest(b))
+    }
+
+    #[test]
+    fn a_file_goes_up_a_chunk_at_a_time_through_the_routes_and_resumes_where_it_stopped() {
+        let home = std::env::temp_dir().join(format!("inyon-up-{}", crate::http::random_hex(6)));
+        std::fs::create_dir_all(&home).unwrap();
+        crate::test_util::block(async {
+            local_machine(&home);
+            for size in [5 * 1024 * 1024 + 17, 50 * 1024 * 1024] {
+                let data: Vec<u8> = (0..size).map(|i: usize| ((i * 31) ^ (i >> 9)) as u8).collect();
+                let start = json!({ "name": "screen recording.mp4", "size": size, "type": "video/MP4", "pane": "4" });
+                let (status, s) = answered(upload_start(up_req("POST", "/start", &[], start.to_string().into_bytes())).await).await;
+                assert_eq!(status, 200, "{s}");
+                let (up, chunk) = (s["id"].as_str().unwrap().to_owned(), s["chunk"].as_u64().unwrap() as usize);
+                assert_eq!((s["received"].clone(), chunk), (json!(0), 1024 * 1024));
+                let put_at = |at: usize| {
+                    let r = up_req("PUT", &format!("/{up}/{at}"), &[("upload", &up), ("offset", &at.to_string())], data[at..(at + chunk).min(size)].to_vec());
+                    async move { answered(upload_chunk(r).await).await }
+                };
+                let mut at = 0;
+                while at < size {
+                    if at == 3 * chunk {
+                        // the connection drops: the app asks how much arrived and carries on from there
+                        let (status, st) = answered(upload_status_route(&up).await).await;
+                        assert_eq!((status, st["received"].as_u64()), (200, Some(at as u64)));
+                        // a chunk sent too far ahead is refused with where to carry on from
+                        let (status, ahead) = put_at(at + chunk).await;
+                        assert_eq!((status, ahead["received"].as_u64()), (409, Some(at as u64)), "{ahead}");
+                    }
+                    let (status, st) = put_at(at).await;
+                    assert_eq!(status, 200, "{st}");
+                    at = st["received"].as_u64().unwrap() as usize;
+                }
+                let finish = json!({ "sha256": sha(&data) }).to_string().into_bytes();
+                let (status, u) = answered(upload_finish(up_req("POST", &format!("/{up}/finish"), &[("upload", &up)], finish)).await).await;
+                assert_eq!(status, 200, "{u}");
+                assert_eq!((u["name"].clone(), u["size"].clone(), u["type"].clone()), (json!("screen recording.mp4"), json!(size), json!("video/mp4")));
+                let path = u["path"].as_str().unwrap();
+                assert!(path.contains("/.inyon/uploads/") && path.contains("/pane-4/") && path.ends_with("-screen_recording.mp4"), "{path}");
+                assert!(std::fs::read(path).unwrap() == data);
+            }
+            // refusals: too large, a bad hash, a chunk over the limit, a bad offset, an unknown upload
+            let (status, e) = answered(upload_start(up_req("POST", "/start", &[], json!({ "name": "a", "size": 200 * 1024 * 1024 }).to_string().into_bytes())).await).await;
+            assert_eq!((status, e["error"].clone()), (413, json!("a is larger than 100 MB")));
+            let (status, _) = answered(upload_start(up_req("POST", "/start", &[], json!({ "name": "a", "size": 1, "sha256": "nope" }).to_string().into_bytes())).await).await;
+            assert_eq!(status, 400);
+            let (_, s) = answered(upload_start(up_req("POST", "/start", &[], json!({ "name": "a", "size": 10 }).to_string().into_bytes())).await).await;
+            let up = s["id"].as_str().unwrap().to_owned();
+            let (status, e) = answered(upload_chunk(up_req("PUT", "", &[("upload", &up), ("offset", "0")], vec![0; 4 * 1024 * 1024 + 1])).await).await;
+            assert_eq!((status, e["error"].clone()), (413, json!("Upload chunks are limited to 4 MB")));
+            let (status, _) = answered(upload_chunk(up_req("PUT", "", &[("upload", &up), ("offset", "-1")], vec![0; 3])).await).await;
+            assert_eq!(status, 400);
+            let (status, _) = answered(upload_chunk(up_req("PUT", "", &[("upload", "0123abcd"), ("offset", "0")], vec![0; 3])).await).await;
+            assert_eq!(status, 404);
+        });
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_upload_routes_dont_shadow_each_other() {
+        let mut routes = Routes::default();
+        add(&mut routes);
+        let at = |m: &str, path: &str| routes.handler(path, &m.parse().unwrap()).map(|(_, p)| p);
+        let p = |kv: &[(&str, &str)]| Some(kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>());
+        assert_eq!(at("POST", "/api/hosts/box/uploads"), p(&[("id", "box")]));
+        assert_eq!(at("POST", "/api/hosts/box/uploads/clean"), p(&[("id", "box")]));
+        assert_eq!(at("POST", "/api/hosts/box/uploads/start"), p(&[("id", "box")]));
+        assert_eq!(at("GET", "/api/hosts/box/uploads/ab12"), p(&[("id", "box"), ("upload", "ab12")]));
+        assert_eq!(at("DELETE", "/api/hosts/box/uploads/ab12"), p(&[("id", "box"), ("upload", "ab12")]));
+        assert_eq!(at("PUT", "/api/hosts/box/uploads/ab12/1048576"), p(&[("id", "box"), ("upload", "ab12"), ("offset", "1048576")]));
+        assert_eq!(at("POST", "/api/hosts/box/uploads/ab12/finish"), p(&[("id", "box"), ("upload", "ab12")]));
+    }
+
+    async fn upload_status_route(up: &str) -> HubResult<Resp> {
+        Ok(json_of(&chunked::upload_status("up", up)?))
     }
 
     // features/temp.test.ts: the routes hand the machine's `inyon temp` answer on

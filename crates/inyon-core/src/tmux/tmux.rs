@@ -221,6 +221,40 @@ pub struct ProbeResult {
     pub machine_kind: Option<MachineKind>,
 }
 
+#[cfg(any(test, feature = "testing"))]
+impl ProbeResult {
+    /// A Linux machine named "box" with tmux and nothing else, whose home is `home`: for tests that
+    /// need a connected machine without probing one.
+    pub fn at_home(home: &str) -> Self {
+        ProbeResult {
+            hostname: "box".into(),
+            home: home.into(),
+            os: "Linux".into(),
+            now: 0.0,
+            latency_ms: 0.0,
+            tmux: TmuxProbe::Ok,
+            integration: IntegrationState::Missing,
+            sessions: vec![],
+            agent_procs: IndexMap::new(),
+            hook_panes: IndexMap::new(),
+            status_panes: IndexMap::new(),
+            account: None,
+            compact_panes: IndexMap::new(),
+            installed: vec![],
+            signed_in: vec![],
+            agy_conversations: IndexMap::new(),
+            agy_status: IndexMap::new(),
+            agy_titles: IndexMap::new(),
+            agy_integration: None,
+            hooked: vec![],
+            machine_kind: None,
+            keys_at: IndexMap::new(),
+            unwatched: Default::default(),
+            claude_parked: Default::default(),
+        }
+    }
+}
+
 /// `<pid> <folder>` lines → folder per process. Linux adds " (deleted)" once the folder is
 /// removed (a worktree cleaned up while the agent runs); the agent's transcripts still name the
 /// folder as it was, so drop the mark or the agent can't be matched to its chat.

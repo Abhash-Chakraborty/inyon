@@ -32,6 +32,8 @@ interface Attachment {
   preview?: string
   progress: number
   status: 'uploading' | 'done' | 'error'
+  /** the connection dropped mid-upload: it carries on by itself once it's back */
+  waiting?: boolean
   path?: string
   error?: string
   pastedLines?: number
@@ -48,6 +50,8 @@ const SYNCED = new Map<string, string>()
  * upload finishing while you're elsewhere) must not drop a file you meant to send.
  */
 const ATTACH = new Map<string, Attachment[]>()
+/** uploads in progress by attachment id, so removing one stops it */
+const UPLOADS = new Map<string, AbortController>()
 const attachSubs = new Set<() => void>()
 const NO_FILES: Attachment[] = []
 function updateFiles(key: string, fn: (f: Attachment[]) => Attachment[]) {
@@ -305,10 +309,13 @@ export function Composer({
   const upload = useCallback(
     (id: string, file: File) => {
       const set = (fn: (a: Attachment) => Attachment) => updateFiles(key, (f) => f.map((a) => (a.id === id ? fn(a) : a)))
+      const stop = new AbortController()
+      UPLOADS.set(id, stop)
       api
-        .upload(host, pane, file, (progress) => set((a) => ({ ...a, progress })))
-        .then((u: Uploaded) => set((a) => ({ ...a, status: 'done', progress: 1, path: u.path, file: undefined })))
-        .catch((e) => set((a) => ({ ...a, status: 'error', error: e.message })))
+        .upload(host, pane, file, (progress, waiting) => set((a) => ({ ...a, progress, waiting })), stop.signal)
+        .then((u: Uploaded) => set((a) => ({ ...a, status: 'done', progress: 1, waiting: false, path: u.path, file: undefined })))
+        .catch((e) => !stop.signal.aborted && set((a) => ({ ...a, status: 'error', waiting: false, error: e.message })))
+        .finally(() => UPLOADS.get(id) === stop && UPLOADS.delete(id))
     },
     [host, pane, key],
   )
@@ -327,16 +334,21 @@ export function Composer({
 
   const retryFile = (a: Attachment) => {
     if (!a.file) return
-    setFiles((f) => f.map((x) => (x.id === a.id ? { ...x, status: 'uploading', progress: 0, error: undefined } : x)))
+    // it picks up where it stopped, so the bar stays where it was
+    setFiles((f) => f.map((x) => (x.id === a.id ? { ...x, status: 'uploading', error: undefined } : x)))
     upload(a.id, a.file)
   }
 
-  const removeFile = (id: string) =>
+  const removeFile = (id: string) => {
+    // one still going stops, and what reached the machine is deleted
+    UPLOADS.get(id)?.abort()
+    UPLOADS.delete(id)
     setFiles((f) => {
       const a = f.find((x) => x.id === id)
       if (a?.preview) URL.revokeObjectURL(a.preview)
       return f.filter((x) => x.id !== id)
     })
+  }
 
   /**
    * Handles a paste from the text box or from anywhere on the page. Returns true when it took
@@ -593,7 +605,7 @@ export function Composer({
                     <div className="min-w-0">
                       <div className="truncate text-[12.5px] font-medium">{f.pastedLines ? 'Pasted text' : f.name}</div>
                       <div className="truncate text-[12px] text-fg-3">
-                        {f.status === 'uploading' ? `${Math.round(f.progress * 100)}%` : f.status === 'error' ? f.error : f.pastedLines ? `${f.pastedLines} lines` : bytes(f.size)}
+                        {f.status === 'uploading' ? (f.waiting ? 'Reconnecting…' : `${Math.round(f.progress * 100)}%`) : f.status === 'error' ? f.error : f.pastedLines ? `${f.pastedLines} lines` : bytes(f.size)}
                       </div>
                     </div>
                   </div>

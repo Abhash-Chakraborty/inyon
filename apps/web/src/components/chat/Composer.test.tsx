@@ -300,6 +300,36 @@ describe('a file that failed to upload', () => {
   })
 })
 
+describe('a file on its way', () => {
+  const attach = (container: HTMLElement, name: string) =>
+    act(() => void fireEvent.change(container.querySelector('input[type=file]')!, { target: { files: [new File([name], name, { type: 'text/plain' })] } }))
+
+  test('shows how far it got, says when it is reconnecting, and stops when removed', async () => {
+    const user = userEvent.setup()
+    let report: (f: number, waiting?: boolean) => void = () => {}
+    let signal: AbortSignal | undefined
+    api.upload.mockImplementation((_h: string, _p: string | undefined, _f: File, onProgress?: typeof report, s?: AbortSignal) => {
+      report = onProgress!
+      signal = s
+      return new Promise(() => {})
+    })
+    const { container } = await render(<Composer host="box" pane={nextPane()} agent="claude" working={false} />)
+    attach(container, 'video.txt')
+    await flush()
+    act(() => report(0.4, false))
+    expect(screen.getByText('40%')).toBeTruthy()
+    act(() => report(0.4, true))
+    expect(screen.getByText('Reconnecting…')).toBeTruthy()
+    expect(screen.queryByText('40%')).toBeNull()
+    act(() => report(0.6, false))
+    expect(screen.getByText('60%')).toBeTruthy()
+    expect(signal!.aborted).toBe(false)
+    await user.click(screen.getByLabelText('Remove video.txt'))
+    expect(signal!.aborted).toBe(true)
+    expect(screen.queryByText('60%')).toBeNull()
+  })
+})
+
 describe('the model menu', () => {
   test('Enter picks a model and leaves the unfinished message in the box', async () => {
     const user = userEvent.setup()

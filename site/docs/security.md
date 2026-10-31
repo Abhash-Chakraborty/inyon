@@ -126,7 +126,7 @@ On Windows, ticking *LAN* or *VPN* in setup adds one firewall rule, "Inyon link"
 
 Switching a Claude Code session's model or effort from Inyon touches `settings.json` too, with or without the integration: Claude Code saves the pick there as your default, and from 0.17.1 Inyon puts the old `model`, `effortLevel` and `modelSettings` values back (see [Controls](controls.md#model-effort-and-mode)). It only replaces the file if it hasn't changed since Inyon read it, and leaves every other byte as it was.
 
-Uploads go to `~/.inyon/uploads` and are deleted after the period you choose. From 0.17 a computer also deletes them by itself when no hub does, and an upload that broke off halfway is deleted after an hour. Files with secrets (the integration's settings, a pasted prompt, a token file) are written readable only by you from the first byte, and a temporary file is removed even when the write is interrupted.
+Uploads go to `~/.inyon/uploads` and are deleted after the period you choose. From 0.17 a computer also deletes them by itself when no hub does, and an upload that broke off halfway is deleted after an hour. The hub picks each file's path: the name you gave it is cut down to letters, digits and `.@+-_`, so it can't reach outside that folder. From 0.24 a file is checked against the SHA-256 the app worked out before it takes its name, and the routes that take it in chunks need the same sign-in as the rest of the app. Files with secrets (the integration's settings, a pasted prompt, a token file) are written readable only by you from the first byte, and a temporary file is removed even when the write is interrupted.
 
 ## Removing a machine cleans it up
 

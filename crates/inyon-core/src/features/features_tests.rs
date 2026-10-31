@@ -5,8 +5,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use futures_util::future::LocalBoxFuture;
-use indexmap::IndexMap;
-use inyon_protocol::{AgentKind, HostConfig, IntegrationState};
+use inyon_protocol::{AgentKind, HostConfig};
 use serde_json::json;
 
 use super::*;
@@ -14,42 +13,7 @@ use crate::hosts::host::{set_host_backends, ExecResult, HostBackend, OnData, OnL
 use crate::platform::rt::Deferred;
 use crate::test_support::rt::{run, wait};
 use crate::test_support::sandbox::Sandbox;
-use crate::test_support::{machine, sh, TempDir};
-use crate::tmux::tmux::{ProbeResult, TmuxProbe};
-
-/// A machine in the registry whose last probe found `home`; nothing polls it.
-fn connected(id: &str, home: &str, panes: serde_json::Value) -> crate::hosts::registry::Rt {
-    let rt = machine(id, "local", panes);
-    rt.borrow_mut().hold_polls();
-    let probe = ProbeResult {
-        hostname: "box".into(),
-        home: home.into(),
-        os: "Linux".into(),
-        now: 0.0,
-        latency_ms: 0.0,
-        tmux: TmuxProbe::Ok,
-        integration: IntegrationState::Missing,
-        sessions: vec![],
-        agent_procs: IndexMap::new(),
-        hook_panes: IndexMap::new(),
-        status_panes: IndexMap::new(),
-        account: None,
-        compact_panes: IndexMap::new(),
-        installed: vec![],
-        signed_in: vec![],
-        agy_conversations: IndexMap::new(),
-        agy_status: IndexMap::new(),
-        agy_titles: IndexMap::new(),
-        agy_integration: None,
-        hooked: vec![],
-        machine_kind: None,
-        keys_at: Default::default(),
-        unwatched: Default::default(),
-        claude_parked: Default::default(),
-    };
-    rt.borrow_mut().probe = Some(Rc::new(RefCell::new(probe)));
-    rt
-}
+use crate::test_support::{connected, machine, sh, TempDir};
 
 /// The machine's shell, run for real, with the size of what each command was handed on stdin noted.
 #[derive(Default)]
@@ -208,12 +172,13 @@ fn the_janitor_deletes_old_uploads_leftover_part_files_and_the_oldest_past_the_s
     let ancient = file("2026-09-01/a/old.png", 10, 40, 0);
     let stale = file("2026-10-14/b/cut.mp4.part", 10, 0, 90);
     let fresh = file("2026-10-14/b/going.mp4.part", 10, 0, 5);
+    let chunk = file("2026-10-14/b/cut.mp4.part.chunk", 10, 0, 90);
     let big1 = file("2026-10-10/c/one.bin", 600, 4, 0);
     let big2 = file("2026-10-13/c/two.bin", 600, 1, 0);
     let today = file("2026-10-14/c/three.bin", 600, 0, 0);
     let (code, _, err) = sh(&clean_script(&dir.s(), 30.0, 1.0), None, &[]);
     assert_eq!(code, 0, "{err}");
-    assert_eq!([&ancient, &stale, &big1, &big2].map(|p| p.exists()), [false; 4]);
+    assert_eq!([&ancient, &stale, &chunk, &big1, &big2].map(|p| p.exists()), [false; 5]);
     // still being written, and today's file under the 1 MB cap, both stay
     assert_eq!([&fresh, &today].map(|p| p.exists()), [true; 2]);
     assert!(!dir.exists("2026-09-01"));

@@ -250,3 +250,95 @@ fn addresses_keep_a_direct_one_that_worked_first() {
         assert!(backoff(attempt, 1000, 30_000) < 30_000);
     }
 }
+
+// ---------- uploads from the phone to a computer over the link ----------
+
+/// A request to the core's routes, as the app sends it.
+fn req(method: &str, path: &str, ctype: &str, body: Vec<u8>) -> inyon_api::http::Req {
+    let mut r = inyon_api::http::test_req(method, path, &[("content-type", ctype)], "");
+    r.body = Some(inyon_api::body::Body::from(body));
+    r
+}
+
+async fn answered(routes: &inyon_api::routes::Routes, r: inyon_api::http::Req) -> (u16, Value) {
+    let res = inyon_api::routes::dispatch(routes, r).await.expect("a route");
+    let status = res.status().as_u16();
+    let bytes = res.into_body().bytes().await.unwrap();
+    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+}
+
+fn sha(b: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(b).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[test]
+fn files_reach_a_paired_computer_over_the_link_a_chunk_at_a_time_and_the_old_way() {
+    let home = std::env::temp_dir().join(format!("inyon-phone-up-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+    let h = home.to_string_lossy().into_owned();
+    on_core(|| async move {
+        let net = net();
+        let m = FakeMachine::new(9);
+        *m.home.borrow_mut() = Some(h.clone());
+        net.put(LAN, Answer::Machine(m.clone()));
+        let (links, _) = phone(&net);
+        links.pair(&code(&m, &[LAN])).await.unwrap();
+        let config = laptop(&m, "laptop", &[LAN]);
+        links.ensure(&config);
+        until("connected", || node_link::is_up("laptop")).await;
+        // the phone's core, with the computer on its list as it was last seen
+        inyon_core::hosts::host::set_host_backends(|_| node_backend());
+        let state: inyon_protocol::HostState =
+            serde_json::from_value(json!({ "config": config, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "sessions": [], "updatedAt": 0 })).unwrap();
+        let rt = Rc::new(RefCell::new(inyon_core::hosts::registry::HostRuntime::new(inyon_core::hosts::host::Host::new(config.clone()), state)));
+        rt.borrow_mut().hold_polls();
+        rt.borrow_mut().probe = Some(Rc::new(RefCell::new(inyon_core::tmux::tmux::ProbeResult::at_home(&h))));
+        inyon_core::hosts::registry::registry().insert_runtime("laptop", rt);
+        let mut routes = inyon_api::routes::Routes::default();
+        inyon_api::core_routes::add(&mut routes);
+
+        for size in [5 * 1024 * 1024 + 9, 50 * 1024 * 1024] {
+            let data: Vec<u8> = (0..size).map(|i: usize| ((i * 13) ^ (i >> 10)) as u8).collect();
+            let start = json!({ "name": "clip.mp4", "size": size, "type": "video/mp4" }).to_string().into_bytes();
+            let (status, s) = answered(&routes, req("POST", "/api/hosts/laptop/uploads/start", "application/json", start)).await;
+            assert_eq!(status, 200, "{s}");
+            let (id, chunk) = (s["id"].as_str().unwrap().to_owned(), s["chunk"].as_u64().unwrap() as usize);
+            for at in (0..size).step_by(chunk) {
+                let r = req("PUT", &format!("/api/hosts/laptop/uploads/{id}/{at}"), "application/octet-stream", data[at..(at + chunk).min(size)].to_vec());
+                let (status, st) = answered(&routes, r).await;
+                assert_eq!(status, 200, "{st}");
+            }
+            let finish = json!({ "sha256": sha(&data) }).to_string().into_bytes();
+            let (status, u) = answered(&routes, req("POST", &format!("/api/hosts/laptop/uploads/{id}/finish"), "application/json", finish)).await;
+            assert_eq!(status, 200, "{u}");
+            assert!(std::fs::read(u["path"].as_str().unwrap()).unwrap() == data);
+        }
+        // no message over the link carried more than a chunk (base64 makes 4 bytes of 3)
+        let most = m.heard.borrow().iter().filter_map(|v| v["inputLength"].as_u64()).max().unwrap();
+        assert!(most <= (1024 * 1024 * 4 / 3 + 4) as u64, "{most}");
+
+        // the app before 0.24 sends 2 MB pieces as multipart forms: still taken
+        let data: Vec<u8> = (0..5 * 1024 * 1024).map(|i: usize| (i % 251) as u8).collect();
+        let mut path = String::new();
+        for at in (0..data.len()).step_by(2 * 1024 * 1024) {
+            let piece = &data[at..(at + 2 * 1024 * 1024).min(data.len())];
+            let mut body = Vec::new();
+            let field = |k: &str, v: &str| format!("--B\r\nContent-Disposition: form-data; name=\"{k}\"\r\n\r\n{v}\r\n");
+            body.extend(field("total", &data.len().to_string()).into_bytes());
+            body.extend(field("offset", &at.to_string()).into_bytes());
+            if !path.is_empty() {
+                body.extend(field("path", &path).into_bytes());
+            }
+            body.extend(b"--B\r\nContent-Disposition: form-data; name=\"files\"; filename=\"old.bin\"\r\n\r\n");
+            body.extend(piece);
+            body.extend(b"\r\n--B--\r\n");
+            let (status, r) = answered(&routes, req("POST", "/api/hosts/laptop/uploads", "multipart/form-data; boundary=B", body)).await;
+            assert_eq!(status, 200, "{r}");
+            path = r["files"][0]["path"].as_str().unwrap().to_owned();
+        }
+        assert!(std::fs::read(&path).unwrap() == data);
+    });
+    let _ = std::fs::remove_dir_all(&home);
+}
