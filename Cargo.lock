@@ -1539,6 +1539,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "inyon-chat-core"
+version = "0.23.1"
+dependencies = [
+ "indexmap",
+ "inyon-protocol",
+ "regex",
+ "serde",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "inyon-cli"
 version = "0.23.2"
 dependencies = [
