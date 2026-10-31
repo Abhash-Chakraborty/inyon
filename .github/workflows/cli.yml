@@ -55,6 +55,10 @@ jobs:
       # WebSocket clients, which the phone app will run as wasm, so it builds as wasm too
       - run: cargo test -p inyon-api
       - run: cargo check --target wasm32-unknown-unknown -p inyon-api
+      # the app's view model (from 1.0): the web app's chat, overview and notice logic with its
+      # tests ported, and the splices the chat list updates by; the app runs it as wasm too
+      - run: cargo test -p inyon-chat-core
+      - run: cargo check --target wasm32-unknown-unknown -p inyon-chat-core
       # the hub in Rust (from 0.20): its routes, sockets, sign-in and updates, as the Bun hub's
       # tests had them
       - run: cargo test -p inyon-hub

@@ -1,0 +1,23 @@
+[package]
+name = "inyon-chat-core"
+version.workspace = true
+description = "The app's view model: chat rows and the splices a virtualized list applies, the overview, pending sends and notices (ported from apps/web/src/lib)"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+indexmap = "2.10"
+inyon-protocol = { path = "../inyon-protocol" }
+regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-gencat"] }
+serde = { version = "1.0", features = ["derive"] }
+# tool inputs keep the order their keys came in, as JavaScript objects do (a tool's fallback
+# summary is its first short string)
+serde_json = { version = "1.0", features = ["preserve_order"] }
+# the WHATWG URL parser, for a fetched page's host and path as `new URL()` reads them
+url = "2.5"
+
+# the lazy DFA, literal prefilters and the one-pass engine on native builds; the wasm build leaves
+# them out to stay small
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+regex = { version = "1.12", default-features = false, features = ["perf"] }
