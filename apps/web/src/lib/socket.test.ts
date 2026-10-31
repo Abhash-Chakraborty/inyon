@@ -122,6 +122,33 @@ test('a hub reached while the app is in the background hears it is quiet and get
   expect(FakeWS.all[0]!.sent.map((s) => JSON.parse(s))).toEqual([{ t: 'sub.overview' }, { t: 'quiet', on: true }, { t: 'sub.chat', host: 'local', pane: '%3' }])
 })
 
+test('the connection log hears when a hub connects, drops and why', async () => {
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  await conn.connect()
+  const ws = FakeWS.all[0]!
+  ws.open()
+  expect(connLog.get('hub:h1')).toMatchObject({ kind: 'hub', name: 'studio', up: true })
+  ws.onclose?.({ code: 1006 })
+  expect(connLog.lastDrop('hub:h1')).toMatchObject({ cause: 'closed', code: 1006 })
+  // the next try can't even get a ticket: one more failed try on the same drop
+  globalThis.fetch = mock(async () => { throw new TypeError('Failed to fetch') }) as any
+  await conn.connect()
+  expect(connLog.get('hub:h1')!.drops).toHaveLength(1)
+  expect(connLog.lastDrop('hub:h1')).toMatchObject({ tries: 1, last: 'Failed to fetch' })
+  connLog.forget('hub:h1')
+})
+
+test('a hub that forgot the phone is logged as signed out', async () => {
+  const { connLog, why } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  await conn.connect()
+  FakeWS.all[0]!.open()
+  FakeWS.all[0]!.onclose?.({ code: 4001 })
+  expect(why(connLog.lastDrop('hub:h1')!)).toBe('studio no longer knows this phone')
+  connLog.forget('hub:h1')
+})
+
 describe('in the background', () => {
   const { Socket, QUIET_AFTER_MS } = realSocketModule
   let hidden = false

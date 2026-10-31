@@ -53,6 +53,8 @@ From 0.17 the hub tidies every machine by itself about every six hours, and agai
 
 A shortcut to the list. The app calls them *Computers*; a hub calls them *Machines*.
 
+From 0.24 each one shows its last drop, such as *Last drop 2h ago, the network went away (down 3m)*, and a hub's page adds **This page's connection** once its own connection to the hub has dropped, with **Can't connect?**. See [Can't connect?](troubleshooting.md#cant-connect).
+
 From 0.22 a hub adds **Machines can message agents** below the list. With it on, an agent on a joined machine can use [`inyon send`](cli.md#sessions-and-messages) to give agents on your other machines a message, which goes in once each is free. It's off until you turn it on. Listing machines, sessions and pages from a joined machine needs no switch.
 
 ## On a hub
@@ -63,7 +65,7 @@ From 0.22 a hub adds **Machines can message agents** below the list. With it on,
 
 ## On the Android app
 
-- **Hubs.** The hubs this phone is paired with, each with **Forget**.
+- **Hubs.** The hubs this phone is paired with, each with **Forget**. From 0.24 each shows its last drop, and **Can't connect?** while it's out of reach. [Why a link dropped](android.md#why-a-link-dropped) explains the reasons.
 - **This phone's key.** The phone's SSH public key, and the command that adds it to a server's `~/.ssh/authorized_keys`. See [A server over SSH](android.md#a-server-over-ssh).
 
 ## Updates

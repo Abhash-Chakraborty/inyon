@@ -6,6 +6,7 @@
 import { backHandled } from './back.ts'
 import { appHref } from './base.ts'
 import { useSyncExternalStore } from 'react'
+import type { Power } from './connlog.ts'
 
 type Plugin = Record<string, (...args: any[]) => Promise<any>>
 
@@ -228,4 +229,18 @@ export const nativeFile = (f: NativeFile) => new File([Uint8Array.from(atob(f.da
 export function onNative<T>(name: string, event: string, fn: (e: T) => void) {
   const handle = plugin(name)?.addListener(event, fn) as Promise<{ remove(): void }> | { remove(): void } | undefined
   return () => void Promise.resolve(handle).then((h) => h?.remove())
+}
+
+/**
+ * Android's Doze, battery limits and Stay connected (InyonDevice.powerState), for the connection
+ * log and "Can't connect?". Undefined outside the Android app or on an app without it.
+ */
+export async function nativePower(): Promise<Power | undefined> {
+  const device = plugin('InyonDevice')
+  if (typeof device?.powerState !== 'function') return undefined
+  try {
+    return ((await device.powerState()) as Power | undefined) ?? undefined
+  } catch {
+    return undefined
+  }
 }

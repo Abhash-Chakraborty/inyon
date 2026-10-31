@@ -21,6 +21,8 @@ import { FailedScreen } from './FailedScreen.tsx'
 import { HeldBubble } from './HeldBubble.tsx'
 import { backgroundText, failureText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
+import { HelpLink } from '../ConnectSheet.tsx'
+import { isPhone } from '../../lib/phone.ts'
 
 const NO_AGENTS: AgentKind[] = []
 /** away longer than this, coming back jumps to the latest message */
@@ -438,11 +440,11 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
             {running && chatCapable && (
               <div className="pb-safe-2 mx-auto flex min-h-0 w-full max-w-[760px] flex-col px-3 pt-1 sm:px-6 sm:pb-4">
                 {!hubUp ? (
-                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting…</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting…{!isPhone() && <HelpLink id="self" />}</div>
                 ) : machineDown && reconnecting ? (
-                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3" role="status">Reconnecting to {machine!.config.name}…<HelpLink id={host} /></div>
                 ) : machineDown ? (
-                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.</div>
+                  <div className="animate-fade-in mb-2 text-center text-[12px] text-fg-3">{machine!.config.name} is offline. This is the conversation as last seen; you can send again once it reconnects.<HelpLink id={host} /></div>
                 ) : null}
                 {shownPrompt ? <PromptCard prompt={shownPrompt} host={host} pane={pane} disabled={!connected} /> : <Composer host={host} pane={pane} agent={agent} working={working} disabled={!connected} controls={controls} ultracode={ultracode} />}
               </div>

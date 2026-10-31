@@ -3,6 +3,11 @@ import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
 import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, PlainRefused, splitHostId, type PairedHub } from './hubs.ts'
 import { loadOverview } from './snapshot.ts'
+import { connLog, dropped } from './connlog.ts'
+
+/** The hub this page is served from, as the connection log keeps it. */
+const SELF = 'self'
+const self = () => ({ kind: 'hub' as const, name: location.host })
 
 /** A hub message as this app sees it: the hub's machines carry the hub's id, and the message says where it came from. */
 export type Tagged = ServerMsg & { source?: string }
@@ -152,6 +157,8 @@ export class Socket {
     ws.onopen = () => {
       if (this.ws !== ws) return
       this.openedAt = Date.now()
+      // the phone's core runs in this page: its own computers and hubs are logged one by one
+      if (!isPhone()) connLog.up(SELF, self())
       this.setUp(true)
       if (this.overview) this.raw({ t: 'sub.overview' })
       if (this.quiet) this.raw({ t: 'quiet', on: true })
@@ -160,7 +167,10 @@ export class Socket {
       clearInterval(this.pingTimer)
       this.pingTimer = setInterval(() => {
         // two pings without an answer: the connection is gone
-        if (Date.now() - this.heard > 55000) return this.connect()
+        if (Date.now() - this.heard > 55000) {
+          if (!isPhone()) dropped(SELF, self(), 'timeout')
+          return this.connect()
+        }
         this.raw({ t: 'ping' })
       }, 25000)
     }
@@ -175,9 +185,10 @@ export class Socket {
       }
       for (const l of this.listeners) l(msg)
     }
-    ws.onclose = () => {
+    ws.onclose = (e?: { code?: number; reason?: string }) => {
       if (this.ws !== ws) return
       clearInterval(this.pingTimer)
+      if (!isPhone()) dropped(SELF, self(), 'closed', { code: e?.code, detail: e?.reason })
       this.setUp(false)
       this.retry = attemptAfter(this.retry, this.openedAt)
       this.openedAt = undefined
@@ -186,7 +197,9 @@ export class Socket {
       // the hub rejects the upgrade when the session expired
       if (isPhone()) return
       fetch('/api/session').then((r) => r.json()).then((s) => {
-        if (!s.authed) window.dispatchEvent(new Event('inyon:signed-out'))
+        if (s.authed) return
+        connLog.explain(SELF, 'signed-out', 'your sign-in ended')
+        window.dispatchEvent(new Event('inyon:signed-out'))
       }).catch(() => {})
     }
   }
@@ -290,6 +303,9 @@ export class HubConn {
   get source() {
     return `hub:${this.hub.id}`
   }
+  private get about() {
+    return { kind: 'hub' as const, name: this.hub.name }
+  }
   owns(termId: string) {
     return this.terms.has(termId)
   }
@@ -305,6 +321,8 @@ export class HubConn {
     } catch (err) {
       if (attempt !== this.attempts) return
       if (err instanceof HubRevoked) return this.revoked()
+      const e = err as Error
+      dropped(this.source, this.about, err instanceof PlainRefused ? 'refused' : 'unreachable', { detail: e?.name === 'TimeoutError' ? "it didn't answer in 10 seconds" : e?.message })
       // a hub that can't be reached at all is as gone as one whose connection dropped; one the
       // app won't use plain http with says why on its machines
       this.offline(err instanceof PlainRefused ? err.message : undefined)
@@ -319,6 +337,7 @@ export class HubConn {
       if (this.ws !== ws) return
       this.openedAt = Date.now()
       this.heard = Date.now()
+      connLog.up(this.source, this.about)
       if (this.wantOverview()) this.sendRaw({ t: 'sub.overview' })
       if (this.quiet()) this.sendRaw({ t: 'quiet', on: true })
       for (const c of this.chats()) {
@@ -327,7 +346,10 @@ export class HubConn {
       }
       clearInterval(this.pingTimer)
       this.pingTimer = setInterval(() => {
-        if (Date.now() - this.heard > 55000) return this.connect()
+        if (Date.now() - this.heard > 55000) {
+          dropped(this.source, this.about, 'timeout')
+          return this.connect()
+        }
         this.sendRaw({ t: 'ping' })
       }, 25000)
     }
@@ -346,6 +368,7 @@ export class HubConn {
       if (this.ws !== ws) return
       clearInterval(this.pingTimer)
       if (e.code === 4001) return this.revoked()
+      dropped(this.source, this.about, 'closed', { code: e.code, detail: e.reason })
       this.retry = attemptAfter(this.retry, this.openedAt)
       this.openedAt = undefined
       this.offline()
@@ -376,6 +399,7 @@ export class HubConn {
   }
 
   private revoked() {
+    dropped(this.source, this.about, 'signed-out', { detail: `${this.hub.name} no longer knows this phone` })
     this.stop()
     this.emit({ t: 'overview', hosts: [], source: this.source })
     forgetHub(this.hub.id)

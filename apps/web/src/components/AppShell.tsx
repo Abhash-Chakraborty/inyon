@@ -18,6 +18,7 @@ import { LEAVE_MS } from './ui/AnimatedList.tsx'
 import { isChanged, loadPages, usePages } from '../lib/pages.ts'
 import { onHubs } from '../lib/hubs.ts'
 import { PageSheets } from './pages/shared.tsx'
+import { ConnectHelpHost, openConnectHelp } from './ConnectSheet.tsx'
 
 // the phone app connects to servers itself; the hub talks about its machines
 const machinesLabel = isPhone() ? 'Computers' : 'Machines'
@@ -137,7 +138,11 @@ function Sidebar({ onNew, onSearch }: { onNew: () => void; onSearch: () => void 
       <div className="flex h-[60px] items-center gap-2.5 px-5">
         <Logo target />
         <span className="text-[17px] font-semibold tracking-[-0.04em]">Inyon</span>
-        {!connected && <WifiOff className="ml-auto size-4 text-warn" aria-label="Reconnecting" />}
+        {!connected && (
+          <button type="button" onClick={() => !isPhone() && openConnectHelp('self')} className="relative ml-auto flex size-8 items-center justify-center rounded-full text-warn hover:bg-hover" aria-label="Reconnecting" title={isPhone() ? 'Reconnecting' : "Reconnecting. Can't connect?"}>
+            <WifiOff className="size-4" />
+          </button>
+        )}
       </div>
       <div className="space-y-1 px-3">
         <button type="button" onClick={onSearch} className="mb-2 flex h-9 w-full items-center gap-2 rounded-full border border-line bg-elev px-3 text-[13px] text-fg-3 shadow-card hover:border-line-strong">
@@ -296,6 +301,7 @@ export function AppShell() {
       <QuickSwitch open={search} onClose={() => setSearch(false)} />
       <ActionSheets />
       <PageSheets />
+      <ConnectHelpHost />
     </div>
   )
 }
