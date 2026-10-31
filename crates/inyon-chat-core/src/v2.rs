@@ -7,7 +7,7 @@
 //! compressed as binary messages; [`decode`] reads either kind.
 
 use inyon_protocol::v2::join_queue;
-use inyon_protocol::{ChatItem, ChatState, ClientMsg2, Delta, HostState, Keys, LiveItem, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos};
+use inyon_protocol::{ChatItem, ChatState, ClientMsg2, Delta, HostState, Keys, LiveItem, Organize, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos};
 
 use crate::chat_list::{sends, without_recorded, Chat, ChatData, Draft, Splice};
 use crate::pending::settle;
@@ -279,6 +279,48 @@ impl Overview2 {
         });
         let resync = resync.then(|| ClientMsg2::Sub { stream: inyon_protocol::v2::OVERVIEW.to_owned(), at: self.cursor.at() });
         (changed.then(|| self.hosts.clone()), resync)
+    }
+}
+
+/// The organize stream (from 0.24): how the hub organises sessions, the same [`Organize`] a v1
+/// overview carries.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Organize2 {
+    pub cursor: Cursor,
+    pub org: Organize,
+}
+
+impl Organize2 {
+    /// Applies an organize frame. Returns all of it when it changed, and a message for the hub when
+    /// the stream needs bringing up to date.
+    pub fn apply(&mut self, msg: &ServerMsg2) -> (Option<Organize>, Option<ClientMsg2>) {
+        let mut changed = false;
+        let org = &mut self.org;
+        let resync = self.cursor.take(msg, |m| match m {
+            ServerMsg2::Snapshot(s) => {
+                let r = &s.rows;
+                *org = Organize {
+                    v: inyon_protocol::ORGANIZE_VERSION,
+                    sessions: r.sessions.clone().unwrap_or_default(),
+                    projects: r.projects.clone().unwrap_or_default(),
+                    groups: r.groups.clone().unwrap_or_default(),
+                    spaces: r.spaces.clone().unwrap_or_default(),
+                };
+                changed = true;
+            }
+            ServerMsg2::Delta(d) => {
+                let none = Keys::default();
+                let empty = Rows::default();
+                let (rm, rp, ap) = (d.remove.as_ref().unwrap_or(&none), d.replace.as_ref().unwrap_or(&empty), d.append.as_ref().unwrap_or(&empty));
+                changed |= patch_rows(&mut org.sessions, |m| m.id.clone(), rm.sessions.as_deref(), rp.sessions.as_deref(), ap.sessions.as_deref());
+                changed |= patch_rows(&mut org.projects, |p| p.id.clone(), rm.projects.as_deref(), rp.projects.as_deref(), ap.projects.as_deref());
+                changed |= patch_rows(&mut org.groups, |g| g.id.clone(), rm.groups.as_deref(), rp.groups.as_deref(), ap.groups.as_deref());
+                changed |= patch_rows(&mut org.spaces, |s| s.id.clone(), rm.spaces.as_deref(), rp.spaces.as_deref(), ap.spaces.as_deref());
+            }
+            _ => {}
+        });
+        let resync = resync.then(|| ClientMsg2::Sub { stream: inyon_protocol::v2::ORGANIZE.to_owned(), at: self.cursor.at() });
+        (changed.then(|| self.org.clone()), resync)
     }
 }
 

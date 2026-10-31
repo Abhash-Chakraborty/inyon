@@ -15,6 +15,7 @@
 //! | `store.ts` (overview, notices, toasts, activity, settings), `tellApart` in `hubs.ts` | [`store`] |
 //! | (new) protocol v2 frames from `/ws2` into the same rows and overview | [`v2`] |
 //! | `upload.ts` (chunked uploads: routes, the next chunk, what an answer means) | [`upload`] |
+//! | (new) pinned, parked and snoozed sessions, projects and tags, as the hub keeps them | [`organize`] |
 //!
 //! Nothing here touches the network, storage, the clock or the screen. Time comes in as `now`
 //! (unix ms), and what the TS did to the page comes back as [`store::Effect`]s. It builds for
@@ -25,6 +26,7 @@ pub mod chat_list;
 pub mod format;
 pub mod groups;
 pub mod js;
+pub mod organize;
 pub mod overview;
 pub mod pending;
 pub mod store;
