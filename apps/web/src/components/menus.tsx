@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { ArrowRight, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Plus, Server, SquareTerminal, Trash2 } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowRight, CircleCheck, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Pin, PinOff, Plus, Server, SquareTerminal, StickyNote, Tag, Trash2 } from 'lucide-react'
 import { agentDef, isBusy, type HostState } from '@inyon/protocol'
 import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
 import { RenameSheet } from './session/RenameSheet.tsx'
 import { ConversationsSheet } from './session/ConversationsSheet.tsx'
+import { currentMark, NoteSheet, organizePane, SnoozeSheet, TagsSheet } from './session/OrganizeSheets.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { confirmAction } from './Confirm.tsx'
 import { paneHref, paneTitle, terminalName, type PaneRef } from '../lib/overview.ts'
+import { isSnoozed } from '../lib/organize.ts'
 import { endSession } from '../lib/end.ts'
 import { appHref } from '../lib/base.ts'
 import { isPhone } from '../lib/phone.ts'
 import { api } from '../lib/api.ts'
-import { toast } from '../lib/store.ts'
+import { canOrganize, toast } from '../lib/store.ts'
 
 /**
  * What can be done to a session or a machine from wherever it's listed: the ⋯ menus and the
@@ -32,16 +34,43 @@ export function paneMenu(r: PaneRef, nav: NavigateFunction): MenuItem[] {
   const a = r.pane.agent
   const host = r.host.config.id
   const href = paneHref(host, r.pane.id)
+  const m = currentMark(r)
+  const org = canOrganize(host)
   return clean([
     { key: 'open', label: 'Open', icon: <ArrowRight className="size-4" />, onSelect: () => nav(href) },
     a && { key: 'terminal', label: 'Open terminal', icon: <SquareTerminal className="size-4" />, onSelect: () => nav(paneHref(host, r.pane.id, 'terminal')) },
     newTab(href),
+    // kept by the hub, so every device shows the same (from 0.24)
+    org && (m?.pinned !== undefined
+      ? { key: 'unpin', label: 'Unpin', icon: <PinOff className="size-4" />, separated: true, onSelect: () => void organizePane(r, { pinned: false }) }
+      : { key: 'pin', label: 'Pin', icon: <Pin className="size-4" />, separated: true, onSelect: () => void organizePane(r, { pinned: true }) }),
+    org && (m?.parked
+      ? { key: 'unpark', label: 'Unpark', icon: <ArchiveRestore className="size-4" />, onSelect: () => void organizePane(r, { parked: null }) }
+      : { key: 'park', label: 'Park', icon: <Archive className="size-4" />, onSelect: () => void park(r) }),
+    org && (isSnoozed(m)
+      ? { key: 'unsnooze', label: 'Unsnooze', icon: <AlarmClockOff className="size-4" />, onSelect: () => void organizePane(r, { snoozedUntil: null }) }
+      : { key: 'snooze', label: 'Snooze…', icon: <AlarmClock className="size-4" />, onSelect: () => openActionSheet({ kind: 'snooze', r }) }),
+    org && { key: 'tags', label: m?.tags?.length ? 'Edit tags…' : 'Tags…', icon: <Tag className="size-4" />, onSelect: () => openActionSheet({ kind: 'tags', r }) },
+    org && { key: 'note', label: m?.note ? 'Edit note…' : 'Note…', icon: <StickyNote className="size-4" />, onSelect: () => openActionSheet({ kind: 'note', r }) },
+    org && a && { key: 'close-done', label: m?.closeWhenDone ? 'Keep open when done' : 'Close when done', icon: <CircleCheck className="size-4" />, onSelect: () => void closeWhenDone(r, !m?.closeWhenDone) },
     { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, separated: true, onSelect: () => openActionSheet({ kind: 'rename', r }) },
     { key: 'rename-session', label: 'Rename tmux session…', icon: <Pencil className="size-4" />, onSelect: () => openActionSheet({ kind: 'tmux-session', r }) },
     a && !!agentDef(a.kind)?.conversations?.length && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => openActionSheet({ kind: 'conversations', r }) },
     !!a?.sessionId && copyItem('copy', 'Copy session ID', a.sessionId!, 'Session ID'),
     { key: 'end', label: 'End session…', icon: <CircleX className="size-4" />, danger: true, separated: true, onSelect: () => void endSession(r) },
   ])
+}
+
+/** Out of the way on every device until unparked, with a moment to take it back. */
+async function park(r: PaneRef) {
+  if (!(await organizePane(r, { parked: true }, 'Could not park'))) return
+  toast({ title: `Parked ${paneName(r)}`, body: 'It waits under Parked and snoozed on the overview.', tone: 'info', action: { label: 'Undo', onSelect: () => void organizePane(r, { parked: null }, 'Could not undo') } })
+}
+
+/** Ends the session (as End session does) once its agent finishes its next piece of work. */
+async function closeWhenDone(r: PaneRef, on: boolean) {
+  if (!(await organizePane(r, { closeWhenDone: on }))) return
+  if (on) toast({ title: 'Closes when done', body: `Inyon ends ${paneName(r)} once its agent finishes its next piece of work.`, tone: 'info' })
 }
 
 /** A tmux session heading: `r` is any pane in it. */
@@ -90,7 +119,7 @@ export async function removeMachine(h: HostState, after?: () => void) {
 
 // ---------- the sheets these menus open ----------
 
-type Sheet = { kind: 'rename' | 'tmux-session' | 'conversations'; r: PaneRef } | { kind: 'new'; hostId: string } | { kind: 'edit'; host: HostState }
+type Sheet = { kind: 'rename' | 'tmux-session' | 'conversations' | 'snooze' | 'tags' | 'note'; r: PaneRef } | { kind: 'new'; hostId: string } | { kind: 'edit'; host: HostState }
 
 let request: ((s: Sheet) => void) | undefined
 export const openActionSheet = (s: Sheet) => request?.(s)
@@ -115,6 +144,9 @@ export function ActionSheets() {
     return <RenameSheet host={sheet.r.host.config.id} pane={sheet.r.session.id} session={sheet.r.session.id} current={sheet.r.session.name} agent={false} open={open} onClose={close} />
   if (sheet.kind === 'conversations' && sheet.r.pane.agent)
     return <ConversationsSheet host={sheet.r.host.config.id} pane={sheet.r.pane.id} agent={sheet.r.pane.agent.kind} working={isBusy(sheet.r.pane.agent)} open={open} onClose={close} />
+  if (sheet.kind === 'snooze') return <SnoozeSheet r={sheet.r} open={open} onClose={close} />
+  if (sheet.kind === 'tags') return <TagsSheet r={sheet.r} open={open} onClose={close} />
+  if (sheet.kind === 'note') return <NoteSheet r={sheet.r} open={open} onClose={close} />
   if (sheet.kind === 'new') return <NewSessionSheet open={open} hostId={sheet.hostId} onClose={close} />
   if (sheet.kind === 'edit') return <MachineSheet open={open} edit={sheet.host.config} onClose={close} />
   return null

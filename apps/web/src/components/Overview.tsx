@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type FocusEvent, type PointerEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, SquareTerminal } from 'lucide-react'
+import { AlarmClock, ChevronRight, ArrowRight, Check, Gauge, MoreHorizontal, Pin, SquareTerminal, StickyNote } from 'lucide-react'
 import { agentDef, AGENTS, isBusy, type HostState, type RateWindow } from '@inyon/protocol'
 import { type PaneRef, paneHref, paneTitle } from '../lib/overview.ts'
 import { RESPONSE_TITLE, liveWindow, money, resetsIn, responseTime, shortPath, timeAgo, tokens } from '../lib/format.ts'
@@ -15,6 +15,7 @@ import { useLongPress } from '../lib/longPress.ts'
 import { contextMenu } from './ui/ContextMenu.tsx'
 import { machineMenu, paneMenu } from './menus.tsx'
 import { tmuxTarget } from '../lib/groups.ts'
+import { isSnoozed, markFor, wakeText } from '../lib/organize.ts'
 
 /** The parts of a pane ref a card draws; the rest of the machine changing shouldn't redraw it. */
 const samePane = (a: { r: PaneRef; showHost?: boolean }, b: { r: PaneRef; showHost?: boolean }) =>
@@ -97,6 +98,9 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
   const menu = `card:${r.host.config.id}:${r.pane.id}`
   const press = useLongPress(() => openMenu(menu))
   const context = contextMenu(() => paneMenu(r, nav))
+  // pinned, parked or snoozed, tags and a note: the hub's, the same on every device
+  const mark = useStore((s) => markFor(s.organize, r.host.config.id, r.pane.id))
+  const snoozed = isSnoozed(mark) ? mark!.snoozedUntil! : undefined
   return (
     <div
       {...press}
@@ -114,6 +118,20 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{a.custom ?? agentDef(a.kind).name}</span>
+        {(mark?.pinned !== undefined || mark?.note || snoozed) && (
+          <span className="pointer-events-auto flex shrink-0 items-center gap-1.5 text-fg-3">
+            {snoozed ? (
+              <span className="flex items-center gap-1 font-mono text-[12px]" title="Snoozed">
+                <AlarmClock className="size-3.5" aria-label="Snoozed" /> {wakeText(snoozed)}
+              </span>
+            ) : mark?.parked ? (
+              <span className="text-[12px]">Parked</span>
+            ) : (
+              mark?.pinned !== undefined && <Pin className="size-3.5" aria-label="Pinned" />
+            )}
+            {mark?.note && <StickyNote className="size-3.5" aria-label={`Note: ${mark.note}`}><title>{mark.note}</title></StickyNote>}
+          </span>
+        )}
         <StatePill state={shownState(a, r.host)} title={a.background} />
         <span className="pointer-events-auto relative -my-1 -mr-1.5">
           <Menu
@@ -141,7 +159,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
       <div className="pointer-events-none min-w-0">
         <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{paneTitle(r)}</div>
         <div className="mt-1 truncate font-mono text-[12px] text-fg-3">
-          {[showHost && r.host.config.name, tmuxTarget(r), shortPath(r.pane.cwd, 34)].filter(Boolean).join(' · ')}
+          {[showHost && r.host.config.name, tmuxTarget(r), shortPath(r.pane.cwd, 34), mark?.tags?.map((t) => `#${t}`).join(' ')].filter(Boolean).join(' · ')}
         </div>
       </div>
       <div className="pointer-events-none truncate text-[13.5px] text-fg-2">

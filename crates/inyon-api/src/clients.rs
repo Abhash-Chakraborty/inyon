@@ -8,7 +8,7 @@ use std::rc::Rc;
 use indexmap::IndexSet;
 use inyon_core::claude::last_reply::last_reply;
 use inyon_core::claude::watcher::{watchers, Sub, Subscriber};
-use inyon_core::features::companion;
+use inyon_core::features::{companion, organize};
 use inyon_core::hosts::host::PtyHandle;
 use inyon_core::hosts::registry::{registry, NotifyKind as Kind, RegistryEvent};
 use inyon_core::platform::rt::{set_timeout, spawn};
@@ -177,13 +177,43 @@ pub fn quiet_key(hosts: &[inyon_protocol::HostState]) -> String {
     k
 }
 
+/// The v1 overview: the machines, and how the sessions are organised (matched to them first).
+pub fn overview_msg(hosts: Vec<inyon_protocol::HostState>) -> ServerMsg {
+    organize::reconcile(&hosts);
+    ServerMsg::Overview { hosts, organize: Some(Box::new(organize::for_overview())) }
+}
+
+/// What a v1 app on screen is sent when only the organising changed: the overview again.
+fn organize_changed() {
+    let hosts = registry().overview();
+    let key = quiet_key(&hosts);
+    let msg = overview_msg(hosts);
+    for c in all() {
+        if !c.overview.get() || c.quiet.get() {
+            continue;
+        }
+        *c.sent_key.borrow_mut() = key.clone();
+        c.send(&msg);
+    }
+    crate::streams::organize_changed();
+}
+
 /// Sends the registry's overview and notifications on to the apps (core.ts's `registry.on`).
 pub fn listen() {
+    organize::on_event(|e| match e {
+        organize::Event::Changed => organize_changed(),
+        // a snooze that asked for a notice is over
+        organize::Event::Notice { host, pane, title, body } => {
+            let agent = registry().pane_agent(host, pane).map(|a| a.kind);
+            announce(&ServerMsg::Notify { host: host.clone(), pane: pane.clone(), kind: NotifyKind::Done, title: title.clone(), body: body.clone(), agent });
+        }
+    });
     let _ = registry().on(|e| match e {
         RegistryEvent::Overview => {
             let hosts = registry().overview();
             let key = quiet_key(&hosts);
-            let msg = ServerMsg::Overview { hosts };
+            let moved = organize::reconcile(&hosts);
+            let msg = ServerMsg::Overview { hosts, organize: Some(Box::new(organize::for_overview())) };
             for c in all() {
                 if !c.overview.get() {
                     continue;
@@ -197,6 +227,9 @@ pub fn listen() {
                 c.send(&msg);
             }
             crate::streams::overview_changed();
+            if moved {
+                crate::streams::organize_changed();
+            }
         }
         RegistryEvent::Notify { host, pane, kind, title, body, agent } => {
             let sent = Rc::new(Cell::new(false));
@@ -311,7 +344,7 @@ pub fn client_message(c: &ClientRef, text: &str) {
             c.overview.set(true);
             let hosts = registry().overview();
             *c.sent_key.borrow_mut() = quiet_key(&hosts);
-            c.send(&ServerMsg::Overview { hosts });
+            c.send(&overview_msg(hosts));
             watched_changed();
         }
         // the app went to the background (on: true) or came back
@@ -424,7 +457,7 @@ pub(crate) fn set_quiet(c: &ClientRef, on: bool) {
     if !on && c.overview.get() {
         let hosts = registry().overview();
         *c.sent_key.borrow_mut() = quiet_key(&hosts);
-        c.send(&ServerMsg::Overview { hosts });
+        c.send(&overview_msg(hosts));
     }
     if !on {
         crate::streams::caught_up(c);

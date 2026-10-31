@@ -1,4 +1,4 @@
-import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
+import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -94,6 +94,17 @@ const panePath = (host: string, pane: string) => `${h(host)}/panes/${paneSlug(pa
 const qs = (o: Record<string, string>) => `?${new URLSearchParams(o)}`
 
 export type { Uploaded } from './upload.ts'
+
+/** What PATCH …/organize changes on a session; a field left out stays as it is. */
+export interface SessionPatch {
+  pinned?: boolean
+  parked?: boolean | null
+  snoozedUntil?: number | null
+  snoozeNotice?: boolean | null
+  tags?: string[] | null
+  note?: string | null
+  closeWhenDone?: boolean
+}
 
 export interface UploadUsage {
   bytes: number
@@ -367,6 +378,13 @@ export const api = {
   dropChosen: (host: string, pane: string) => request('DELETE', `${panePath(host, pane)}/chosen`),
   sendHeld: (host: string, pane: string, id: string) => request('POST', `${panePath(host, pane)}/held/${encodeURIComponent(id)}/send`, undefined, 310_000),
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
+  /** pins, parks, snoozes, tags or notes a session (from 0.24); null clears a field, and the answer is the mark after it */
+  organize: (host: string, pane: string, patch: SessionPatch) => request<{ session: SessionMark | null }>('PATCH', `${panePath(host, pane)}/organize`, patch),
+  /** a message the hub sends at `at` (unix ms), once the agent is free then */
+  sendLater: (host: string, pane: string, text: string, at: number) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, { text, at }),
+  cancelSend: (host: string, id: string) => request('DELETE', `${h(host)}/sends/${encodeURIComponent(id)}`),
+  /** puts this hub's idle agents to sleep after `minutes`; null turns it off */
+  setSleep: (minutes: number | null, scope = 'all') => request<SleepRule[]>('PUT', '/api/organize/sleep', { scope, minutes }),
   /** renames the tmux session itself (`session` is tmux's id, `$52`); answers the name tmux took (from 0.22) */
   renameTmuxSession: (host: string, session: string, name: string) =>
     request<{ name: string }>('PUT', `${h(host)}/sessions/${encodeURIComponent(session.replace(/^\$/, ''))}/name`, { name }),

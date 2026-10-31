@@ -1,8 +1,9 @@
-import { attemptAfter, backoff, type ClientMsg, type HostState, type ServerMsg } from '@inyon/protocol'
+import { attemptAfter, backoff, type ClientMsg, type HostState, type Organize, type ServerMsg } from '@inyon/protocol'
 import { wsUrl } from './hub.ts'
 import { isPhone, PhoneSocket } from './phone.ts'
 import { forgetHub, hubHostId, HubRevoked, hubTicket, hubWsUrl, isHubHost, listHubs, onHubs, PlainRefused, splitHostId, type PairedHub } from './hubs.ts'
-import { loadOverview } from './snapshot.ts'
+import { loadOrganize, loadOverview } from './snapshot.ts'
+import { renameOrganize } from './organize.ts'
 import { connLog, dropped } from './connlog.ts'
 
 /** The hub this page is served from, as the connection log keeps it. */
@@ -284,6 +285,8 @@ export class HubConn {
   private stopped = false
   /** the hub's machines as last heard, starting from the copy this device kept of them */
   private last: HostState[]
+  /** and how it organises its sessions, so they keep their places while it's out of reach */
+  private lastOrganize?: Organize
   private terms = new Set<string>()
   private heard = 0
   private pingTimer?: ReturnType<typeof setInterval>
@@ -299,6 +302,7 @@ export class HubConn {
     // the app may open while the hub is out of reach (the phone off its VPN, say): its machines
     // still have to show, as connecting, so they start from what this device remembers of them
     this.last = (loadOverview() ?? []).filter((h) => splitHostId(h.config.id).hub?.id === hub.id)
+    this.lastOrganize = loadOrganize()?.[`hub:${hub.id}`]
   }
 
   get source() {
@@ -397,7 +401,7 @@ export class HubConn {
   private offline(why?: string) {
     if (!this.last.length) return
     const error = why ?? (this.heard ? `Reconnecting to ${this.hub.name}` : `Connecting to ${this.hub.name}…`)
-    this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error })), source: this.source })
+    this.emit({ t: 'overview', hosts: this.last.map((h) => ({ ...h, status: 'connecting', error })), ...(this.lastOrganize && { organize: this.lastOrganize }), source: this.source })
   }
 
   private revoked() {
@@ -449,7 +453,8 @@ export class HubConn {
         // a server reached through one of the hub's computers names that computer
         const hosts = m.hosts.map((h) => ({ ...h, config: { ...h.config, id: name(h.config.id), ...(h.config.via ? { via: name(h.config.via) } : {}) } }))
         this.last = hosts
-        return { ...m, hosts, source: this.source }
+        this.lastOrganize = m.organize && renameOrganize(m.organize, name)
+        return { ...m, hosts, ...(this.lastOrganize && { organize: this.lastOrganize }), source: this.source }
       }
       case 'notify':
       case 'companion.reply':

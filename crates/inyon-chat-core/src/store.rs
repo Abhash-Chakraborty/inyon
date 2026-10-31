@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use indexmap::{IndexMap, IndexSet};
-use inyon_protocol::{AgentKind, AgentState, HostState, HostStatus, NotifyKind, ServerMsg};
+use inyon_protocol::{AgentKind, AgentState, HostState, HostStatus, NotifyKind, Organize, ServerMsg};
 use serde::{Deserialize, Serialize};
 
 use crate::chat_list::{chat_key_of, Chat, Splice};
@@ -93,6 +93,8 @@ pub struct Overview {
     pub loaded: bool,
     /// the overview is the copy kept on this device, not yet confirmed by the hub
     pub stale: bool,
+    /// how each source organises its sessions (from 0.24; an older hub sends none)
+    pub organize: IndexMap<String, Organize>,
 }
 
 impl Overview {
@@ -127,6 +129,11 @@ impl Overview {
         self.loaded = true;
         self.stale = false;
         all
+    }
+
+    /// Every source's marks and projects as one (see [`crate::organize`]).
+    pub fn organize(&self) -> Organize {
+        crate::organize::merge(self.organize.values())
     }
 
     /// Panes ended from here: gone from every list at once, and kept out of the updates that still
@@ -477,6 +484,8 @@ pub struct Update {
     pub hosts: Option<Vec<HostState>>,
     /// the chat that changed, and how its rows did
     pub chat: Option<(String, Vec<Splice>)>,
+    /// how the sessions are organised changed: all of it, every source together
+    pub organize: Option<Organize>,
     pub effects: Vec<Effect>,
 }
 
@@ -519,8 +528,17 @@ impl Store {
             return u;
         }
         match msg {
-            ServerMsg::Overview { hosts } => {
+            ServerMsg::Overview { hosts, organize } => {
                 let all = self.overview.apply(hosts.clone(), source, &self.hubs, now);
+                let src = source.unwrap_or("main").to_string();
+                let before = self.overview.organize.get(&src).cloned();
+                match organize {
+                    Some(o) => self.overview.organize.insert(src.clone(), (**o).clone()),
+                    None => self.overview.organize.shift_remove(&src),
+                };
+                if self.overview.organize.get(&src) != before.as_ref() {
+                    u.organize = Some(self.overview.organize());
+                }
                 self.notifier.clear_answered(&all, &mut u.effects);
                 u.hosts = Some(all);
             }
@@ -642,7 +660,7 @@ mod tests {
     const TAB_HIDDEN: Context = Context { route: "/", terminal_view: false, visible: false, native: false, browser_notices: true };
 
     fn overview(hosts: Vec<HostState>) -> ServerMsg {
-        ServerMsg::Overview { hosts }
+        ServerMsg::Overview { hosts, organize: None }
     }
     fn ids(s: &Store) -> Vec<String> {
         let mut v: Vec<String> = s.overview.hosts.iter().map(|h| h.config.id.clone()).collect();
@@ -994,5 +1012,24 @@ mod tests {
         assert!(s.overview.hosts.is_empty() && !s.overview.loaded && s.chats.is_empty());
         s.hub_forgot("studio");
         assert_eq!(toasts(&s), [("studio forgot this phone".into(), Some("Pair it again from the hub to see its machines here.".into()), None, Tone::Warn)]);
+    }
+
+    #[test]
+    fn each_sources_organize_is_kept_and_read_as_one() {
+        let mut s = Store::default();
+        let org = |pane: &str| -> Organize {
+            serde_json::from_value(json!({ "v": 1, "sessions": [{ "id": format!("s-{pane}"), "host": "a", "pane": pane, "live": true, "pinned": 0 }] })).unwrap()
+        };
+        let msg = |o: Option<Organize>| ServerMsg::Overview { hosts: vec![bare("a")], organize: o.map(Box::new) };
+        let u = s.apply(&msg(Some(org("%1"))), None, &HOME, NOW);
+        assert_eq!(u.organize.unwrap().sessions.len(), 1);
+        let u = s.apply(&msg(Some(org("%1"))), None, &HOME, NOW);
+        assert!(u.organize.is_none(), "unchanged");
+        let u = s.apply(&msg(Some(org("%2"))), Some("hub:x"), &HOME, NOW);
+        assert_eq!(u.organize.unwrap().sessions.iter().map(|m| m.pane.as_str()).collect::<Vec<_>>(), ["%1", "%2"]);
+        // an older hub sends none: its part goes
+        let u = s.apply(&msg(None), Some("hub:x"), &HOME, NOW);
+        assert_eq!(u.organize.unwrap().sessions.len(), 1);
+        assert_eq!(s.overview.organize().sessions[0].pane, "%1");
     }
 }

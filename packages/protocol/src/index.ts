@@ -718,6 +718,142 @@ export interface PageMarker {
   created: number
 }
 
+// ---------- Organize: pins, parking, snoozes, tags, notes and projects, kept by the hub (from 0.24) ----------
+
+/** A project's or a group's colour: the neutral ones, and a few muted ones. The app draws it on the project's mark and nowhere else. */
+export type ProjectColor = 'silver' | 'ink' | 'sage' | 'teal' | 'blue' | 'violet' | 'rose'
+
+/**
+ * What the hub keeps about one session, and how it finds the session again: by its agent's
+ * conversation id when known, else by its tmux pane id in the same tmux session, else by its place
+ * (tmux session name, window and pane numbers, folder) after tmux restarted.
+ */
+export interface SessionMark {
+  /** the hub's id for it: "s-" and 12 hex digits */
+  id: string
+  /** the machine */
+  host: string
+  /** the tmux pane it was last matched to ("%12") */
+  pane: string
+  /** matched to a pane on its machine now; the apps join a mark to a pane only while this is set */
+  live: boolean
+  /** the agent's conversation (Claude Code's session id, Codex's thread id), when known */
+  conv?: string
+  /** the tmux session's id ("$3") and name where it was last seen */
+  tmuxId?: string
+  tmuxName?: string
+  /** tmux's window and pane numbers there, "2.0" */
+  tmuxPlace?: string
+  /** its folder when last seen */
+  cwd?: string
+  /** when it was last seen on its machine, unix ms */
+  seen: number
+  /** pinned, at this place among the pinned (0 first) */
+  pinned?: number
+  parked?: boolean
+  /** hidden until then, unix ms; the hub clears it once it's past */
+  snoozedUntil?: number
+  /** raise a notice when the snooze ends */
+  snoozeNotice?: boolean
+  /** normalised: trimmed, no leading #, spaces squashed, lower case; 8 at most */
+  tags?: string[]
+  note?: string
+  /** shown in place of the session's own name */
+  title?: string
+  /** a section of its own within its project ("Move to group") */
+  section?: string
+  /** the project it belongs to, whatever its folder; else it falls into one by its folder */
+  project?: string
+  /** end the session (as End session does) once its agent has finished its next piece of work */
+  closeWhenDone?: boolean
+  /** the hub saw it working since closeWhenDone was set, so the next idle ends it */
+  closeSawWork?: boolean
+}
+
+/** A folder on one machine whose sessions belong to a project. */
+export interface ProjectRoot {
+  host: string
+  /** absolute; a session in it or any folder under it belongs to the project */
+  path: string
+}
+
+/** A project: a name, a colour and the folders its sessions live in, on any machine. */
+export interface Project {
+  /** "p-" and 12 hex digits */
+  id: string
+  name: string
+  color: ProjectColor
+  icon?: string
+  roots: ProjectRoot[]
+  /** the group it's in */
+  group?: string
+}
+
+/** Projects shown together under one heading. */
+export interface ProjectGroup {
+  /** "g-" and 12 hex digits */
+  id: string
+  name: string
+  color: ProjectColor
+}
+
+/** A named set of projects to look at on their own. */
+export interface Space {
+  /** "w-" and 12 hex digits */
+  id: string
+  name: string
+  icon?: string
+  projects: string[]
+}
+
+/** A message the hub types into a session at a set time, through the held queue: it waits for the agent to be free, then goes once. */
+export interface DelayedSend {
+  /** "d-" and 12 hex digits */
+  id: string
+  host: string
+  pane: string
+  conv?: string
+  tmuxId?: string
+  text: string
+  /** when it goes, unix ms */
+  at: number
+  /** why it couldn't go; it stays until dismissed */
+  error?: string
+}
+
+/** A prompt kept to send again: for every session, or for one project's. */
+export interface SavedPrompt {
+  /** "q-" and 12 hex digits */
+  id: string
+  name: string
+  text: string
+  /** the project it's for; none for every session */
+  project?: string
+  /** shown first */
+  starred?: boolean
+}
+
+/** After how many idle minutes an agent is put to sleep (Exit to shell), for a project's sessions or, with scope "all", every other one. Off unless there's a rule. */
+export interface SleepRule {
+  /** a project's id, or "all" */
+  scope: string
+  minutes: number
+}
+
+/** GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview (without `prompts`). Lists are in the order the apps show them. */
+export interface Organize {
+  /** the record's version when the hub wrote it */
+  v: number
+  sessions: SessionMark[]
+  projects: Project[]
+  groups: ProjectGroup[]
+  spaces: Space[]
+  /** from version 2 */
+  sends?: DelayedSend[]
+  prompts?: SavedPrompt[]
+  sleep?: SleepRule[]
+}
+
 // ---------- WebSocket protocol ----------
 
 export type ClientMsg =
@@ -735,7 +871,8 @@ export type ClientMsg =
   | { t: 'quiet'; on: boolean }
 
 export type ServerMsg =
-  | { t: 'overview'; hosts: HostState[] }
+  /** `organize` (from 0.24): how the sessions are organised; an older hub leaves it out */
+  | { t: 'overview'; hosts: HostState[]; organize?: Organize }
   | { t: 'chat.reset'; key: string; info: ChatInfo; items: ChatItem[]; hasMore: boolean }
   | { t: 'chat.append'; key: string; items: ChatItem[] }
   | { t: 'chat.more'; key: string; items: ChatItem[]; hasMore: boolean }
