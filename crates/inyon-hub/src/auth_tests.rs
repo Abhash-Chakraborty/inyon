@@ -27,6 +27,9 @@ async fn errors(ip: &str, n: usize) -> Vec<Option<&'static str>> {
 fn guesses_sent_all_at_once_are_each_counted_and_spread_ones_hit_a_shared_cap() {
     crate::test_util::core();
     setup();
+    // the limits count per minute and every guess runs scrypt: on a busy machine the real clock
+    // can pass the minute mid-test and reset the counts, so the minute stays put until it moves on purpose
+    inyon_core::clock::set_now(Some(now_ms()));
     block(async {
         let out = errors("203.0.113.1", 20).await;
         assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 8);
@@ -54,6 +57,7 @@ fn guesses_sent_all_at_once_are_each_counted_and_spread_ones_hit_a_shared_cap() 
 fn past_the_shared_cap_an_address_that_signed_in_before_and_this_machine_carry_on() {
     crate::test_util::core();
     setup();
+    inyon_core::clock::set_now(Some(now_ms()));
     block(async {
         assert!(try_login("192.0.2.50", "correct horse battery").await.is_ok());
         let all = futures_util::future::join_all((0..10).map(|i| async move { errors(&format!("198.51.100.{i}"), 4).await })).await;
@@ -65,6 +69,7 @@ fn past_the_shared_cap_an_address_that_signed_in_before_and_this_machine_carry_o
         let out = errors("192.0.2.50", 10).await;
         assert_eq!(out.iter().filter(|e| **e == Some("Wrong password")).count(), 8);
     });
+    inyon_core::clock::set_now(None);
 }
 
 #[test]
