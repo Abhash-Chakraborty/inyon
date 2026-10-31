@@ -1,4 +1,4 @@
-import type { Organize, SessionMark } from '@inyon/protocol'
+import type { DelayedSend, Organize, SessionMark } from '@inyon/protocol'
 import { matchesQuery, searchText } from './groups.ts'
 import type { PaneRef } from './overview.ts'
 
@@ -15,21 +15,42 @@ export function renameOrganize(o: Organize, name: (id: string) => string): Organ
   return {
     ...o,
     sessions: (o.sessions ?? []).map((m) => ({ ...m, host: name(m.host) })),
+    ...(o.sends && { sends: o.sends.map((s) => ({ ...s, host: name(s.host) })) }),
     projects: (o.projects ?? []).map((p) => ({ ...p, roots: (p.roots ?? []).map((r) => ({ ...r, host: name(r.host) })) })),
   }
 }
 
-/** Every hub's, as one: the main hub's first, then each paired hub's. */
+/** Every hub's, as one: the main hub's first, then each paired hub's. Sleep rules are each hub's own, so they're left out of a merge of several. */
 export function mergeOrganize(list: (Organize | undefined)[]): Organize {
   const all = list.filter((o): o is Organize => !!o)
   if (all.length === 1) return all[0]!
+  const sends = all.flatMap((o) => o.sends ?? [])
   return {
     v: Math.max(0, ...all.map((o) => o.v ?? 0)),
     sessions: all.flatMap((o) => o.sessions ?? []),
     projects: all.flatMap((o) => o.projects ?? []),
     groups: all.flatMap((o) => o.groups ?? []),
     spaces: all.flatMap((o) => o.spaces ?? []),
+    ...(sends.length && { sends }),
   }
+}
+
+/** The messages waiting to go to a pane, the soonest first. */
+export const sendsFor = (org: Organize, host: string, pane: string): DelayedSend[] => (org.sends ?? []).filter((s) => s.host === host && s.pane === pane).sort((a, b) => a.at - b.at)
+
+export type SendFor = 'halfHour' | 'hour' | 'threeHours' | 'tomorrow'
+
+export const SEND_CHOICES: { v: SendFor; label: string }[] = [
+  { v: 'halfHour', label: 'In 30 minutes' },
+  { v: 'hour', label: 'In an hour' },
+  { v: 'threeHours', label: 'In three hours' },
+  { v: 'tomorrow', label: 'Tomorrow morning' },
+]
+
+/** When a message sent later goes, by this device's clock. */
+export function sendAt(p: SendFor, now = new Date()): number {
+  if (p === 'halfHour') return now.getTime() + 30 * 60_000
+  return snoozeUntil(p, now)
 }
 
 /** The mark on a pane: only one the hub matched to it now, as a pane id can be handed out again. */
@@ -109,12 +130,15 @@ export function snoozeUntil(p: SnoozeFor, now = new Date()): number {
   return d.getTime()
 }
 
-/** "until 9:00", or with the day when it isn't today: "until Mon 9:00". */
-export function wakeText(at: number, now = new Date()) {
+/** "9:00", or with the day when it isn't today: "Mon 9:00". */
+export function timeText(at: number, now = new Date()) {
   const d = new Date(at)
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  return d.toDateString() === now.toDateString() ? `until ${time}` : `until ${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
+  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
 }
+
+/** "until 9:00", or with the day when it isn't today: "until Mon 9:00". */
+export const wakeText = (at: number, now = new Date()) => `until ${timeText(at, now)}`
 
 /** Tags as typed in one box ("review, #needs docs"), each as the hub keeps it. */
 export function parseTags(text: string): string[] {

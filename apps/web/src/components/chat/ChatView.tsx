@@ -19,6 +19,8 @@ import { ChatJobs } from './Tools.tsx'
 import { Composer } from './Composer.tsx'
 import { FailedScreen } from './FailedScreen.tsx'
 import { HeldBubble } from './HeldBubble.tsx'
+import { ScheduledBubble } from './ScheduledBubble.tsx'
+import { sendsFor } from '../../lib/organize.ts'
 import { backgroundText, failureText } from '../ui/status.tsx'
 import { confirmAction } from '../Confirm.tsx'
 import { HelpLink } from '../ConnectSheet.tsx'
@@ -78,6 +80,8 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const reconnecting = useReconnecting(machine?.status)
   const queue = chat?.info?.queue ?? NO_QUEUE
   const held = chat?.info?.held ?? NO_HELD
+  const organize = useStore((s) => s.organize)
+  const scheduled = useMemo(() => sendsFor(organize, host, pane), [organize, host, pane])
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
   // what the agent is writing right now, and the running command's output for the working line
   const live = chat?.live ?? NO_LIVE
@@ -380,6 +384,11 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
                     {held.map((p, i) => (
                       <div key={p.id} className="animate-slide-up">
                         <HeldBubble host={host} pane={pane} p={p} index={i} count={held.length} agentName={agent ? agentDef(agent).name : 'the agent'} />
+                      </div>
+                    ))}
+                    {scheduled.map((s) => (
+                      <div key={s.id} className="animate-slide-up">
+                        <ScheduledBubble host={host} pane={pane} s={s} />
                       </div>
                     ))}
                     {chat.catchingUp !== undefined && <Reading label="Catching up on what you missed" done={chat.catchingUp} />}

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { appendTo, onCompose } from '../../lib/compose.ts'
 import clsx from 'clsx'
-import { ArrowUp, Camera, Clock3, FileText, Folder, Hourglass, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
+import { ArrowUp, CalendarClock, Camera, Clock3, FileText, Folder, Hourglass, Paperclip, RotateCw, Square, SquareTerminal, X, Zap } from 'lucide-react'
 import { agentDef, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
-import { patchChat, toast, useStore } from '../../lib/store.ts'
+import { canOrganize, patchChat, toast, useStore } from '../../lib/store.ts'
+import { SendLaterSheet } from '../session/OrganizeSheets.tsx'
 import { socket } from '../../lib/socket.ts'
 import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.ts'
 import { bytes } from '../../lib/format.ts'
@@ -485,18 +486,23 @@ export function Composer({
   }
 
   // the hub keeps it and types it in once the agent is free; it can still be edited or dropped there
+  /** The box empties once the hub has the message (held, or kept to send later). */
+  const handedOver = () => {
+    clearTimeout(pushTimer.current)
+    pending.current = undefined
+    sent.current = { text, at: Date.now() }
+    synced.current = ''
+    setTextState('')
+    setOrigin(null)
+    setPop(null)
+  }
+  const [later, setLater] = useState(false)
   const hold = async () => {
     const msg = text.trim()
     if (!msg || uploading || files.length) return
     try {
       await api.hold(host, pane, msg)
-      clearTimeout(pushTimer.current)
-      pending.current = undefined
-      sent.current = { text, at: Date.now() }
-      synced.current = ''
-      setTextState('')
-      setOrigin(null)
-      setPop(null)
+      handedOver()
     } catch (e) {
       haptic('error')
       toast({ title: "Couldn't hold the message", body: (e as Error).message, tone: 'error' })
@@ -735,6 +741,8 @@ export function Composer({
             {...contextMenu(() => [
               !showStop && !shellMode && { key: 'send', label: canSteer && steer ? 'Steer now' : working ? 'Queue follow-up' : 'Send', icon: <ArrowUp className="size-4" />, disabled: !canSend, onSelect: () => void send() },
               !shellMode && { key: 'hold', label: `Hold until ${agentName} is free`, keys: keyLabel('alt', 'Enter'), icon: <Hourglass className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => void hold() },
+              // from 0.24 the hub can keep it to send at a set time
+              !shellMode && canOrganize(host) && { key: 'later', label: 'Send later…', icon: <CalendarClock className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => setLater(true) },
               showStop && { key: 'stop', label: 'Stop', icon: <Square className="size-4" />, onSelect: () => void stop() },
             ])}
             onClick={() => (showStop ? stop() : send())}
@@ -753,6 +761,7 @@ export function Composer({
           </button>
         </div>
       </div>
+      <SendLaterSheet host={host} pane={pane} text={text} open={later} onClose={() => setLater(false)} onSent={handedOver} />
       <input ref={fileInput} type="file" multiple hidden onChange={(e) => (addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />
       <input ref={cameraInput} type="file" accept="image/*" capture="environment" hidden onChange={(e) => (addFiles([...(e.target.files ?? [])]), (e.target.value = ''))} />
     </div>
