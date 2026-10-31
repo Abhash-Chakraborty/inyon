@@ -156,10 +156,10 @@ jobs:
         include:
           - { runner: ubuntu-24.04, target: x86_64-unknown-linux-musl, name: inyon-linux-x64 }
           - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, name: inyon-linux-arm64 }
-          - { runner: macos-14, target: aarch64-apple-darwin, name: inyon-darwin-arm64 }
+          - { runner: macos-15, target: aarch64-apple-darwin, name: inyon-darwin-arm64 }
           # GitHub has no Intel Mac runners left in the queue; the Apple silicon one builds the
           # Intel file and runs its tests under Rosetta
-          - { runner: macos-14, target: x86_64-apple-darwin, name: inyon-darwin-x64, rosetta: true }
+          - { runner: macos-15, target: x86_64-apple-darwin, name: inyon-darwin-x64, rosetta: true }
           - { runner: windows-latest, target: x86_64-pc-windows-msvc, name: inyon-windows-x64.exe }
           # cross-built on the x64 runner; its tests can't run there
           - { runner: windows-latest, target: aarch64-pc-windows-msvc, name: inyon-windows-arm64.exe, cross: true }
