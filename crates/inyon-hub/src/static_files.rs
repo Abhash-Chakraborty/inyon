@@ -97,14 +97,22 @@ pub fn normalize(path: &str) -> String {
     format!("/{}{}", parts.join("/"), if trailing { "/" } else { "" })
 }
 
-/// Whether the browser takes gzip: `gzip` (or `*`) in Accept-Encoding, not refused with `q=0`.
+/// Whether the browser takes gzip (RFC 9110): its own entry decides, else `*` does; `q=0` (the
+/// name and the parameter in any case) refuses.
 pub fn takes_gzip(accept: Option<&str>) -> bool {
-    accept.unwrap_or("").split(',').any(|coding| {
+    let mut star = None;
+    for coding in accept.unwrap_or("").split(',') {
         let mut parts = coding.split(';').map(str::trim);
         let name = parts.next().unwrap_or("").to_ascii_lowercase();
-        let refused = parts.any(|p| p.strip_prefix("q=").and_then(|q| q.trim().parse::<f32>().ok()) == Some(0.0));
-        (name == "gzip" || name == "*") && !refused
-    })
+        let q = parts.find_map(|p| p.split_once('=').filter(|(k, _)| k.trim().eq_ignore_ascii_case("q")).map(|(_, v)| v.trim().parse::<f32>().unwrap_or(1.0)));
+        let ok = q.unwrap_or(1.0) > 0.0;
+        match name.as_str() {
+            "gzip" => return ok,
+            "*" => star = Some(ok),
+            _ => {}
+        }
+    }
+    star.unwrap_or(false)
 }
 
 /// Text and wasm shrink to a third or less; pictures and fonts are compressed already.
@@ -361,6 +369,13 @@ mod tests {
         assert!(takes_gzip(Some("br;q=1.0, GZIP;q=0.5")));
         assert!(takes_gzip(Some("*")));
         assert!(!takes_gzip(Some("gzip;q=0, br")));
+        assert!(!takes_gzip(Some("gzip;Q=0")));
+        assert!(!takes_gzip(Some("gzip ; q = 0.000")));
+        // its own entry wins over the wildcard, either way round
+        assert!(!takes_gzip(Some("gzip;q=0, *;q=1")));
+        assert!(!takes_gzip(Some("*;q=1, gzip;q=0")));
+        assert!(takes_gzip(Some("*;q=0, gzip")));
+        assert!(!takes_gzip(Some("*;q=0")));
         assert!(!takes_gzip(Some("identity")));
         assert!(!takes_gzip(None));
     }
