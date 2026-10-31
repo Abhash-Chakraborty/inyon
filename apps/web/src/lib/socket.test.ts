@@ -122,6 +122,71 @@ test('a hub reached while the app is in the background hears it is quiet and get
   expect(FakeWS.all[0]!.sent.map((s) => JSON.parse(s))).toEqual([{ t: 'sub.overview' }, { t: 'quiet', on: true }, { t: 'sub.chat', host: 'local', pane: '%3' }])
 })
 
+test('the connection log hears when a hub connects, drops and why', async () => {
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  await conn.connect()
+  const ws = FakeWS.all[0]!
+  ws.open()
+  expect(connLog.get('hub:h1')).toMatchObject({ kind: 'hub', name: 'studio', up: true })
+  ws.onclose?.({ code: 1006 })
+  expect(connLog.lastDrop('hub:h1')).toMatchObject({ cause: 'closed', code: 1006 })
+  // the next try can't even get a ticket: one more failed try on the same drop
+  globalThis.fetch = mock(async () => { throw new TypeError('Failed to fetch') }) as any
+  await conn.connect()
+  expect(connLog.get('hub:h1')!.drops).toHaveLength(1)
+  expect(connLog.lastDrop('hub:h1')).toMatchObject({ tries: 1, last: 'Failed to fetch' })
+  connLog.forget('hub:h1')
+})
+
+test('a hub that forgot the phone is logged as signed out', async () => {
+  const { connLog, why } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  await conn.connect()
+  FakeWS.all[0]!.open()
+  FakeWS.all[0]!.onclose?.({ code: 4001 })
+  expect(why(connLog.lastDrop('hub:h1')!)).toBe('studio no longer knows this phone')
+  connLog.forget('hub:h1')
+})
+
+test('a hub forgotten while its ticket was on its way leaves no drop behind', async () => {
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  let fail: ((e: Error) => void) | undefined
+  globalThis.fetch = mock(() => new Promise((_, reject) => (fail = reject))) as any
+  const going = conn.connect()
+  // the plain-http check and the token come first
+  for (let i = 0; i < 100 && !fail; i++) await Promise.resolve()
+  conn.stop()
+  fail!(new TypeError('Failed to fetch'))
+  await going
+  expect(connLog.get('hub:h1')).toBeUndefined()
+})
+
+test("an old socket's sign-in check doesn't relabel the drop of the one after it", async () => {
+  const { Socket } = realSocketModule
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('self')
+  const answers: ((r: Response) => void)[] = []
+  globalThis.fetch = mock(() => new Promise<Response>((r) => answers.push(r))) as any
+  const s = new Socket()
+  s.start()
+  const first = FakeWS.all.find((w) => w.url.includes('/ws?'))!
+  first.open()
+  first.onclose?.({ code: 1006 })
+  // the next socket comes and goes before the first one's check answers
+  s.reconnect()
+  const second = FakeWS.all.filter((w) => w.url.includes('/ws?')).at(-1)!
+  expect(second).not.toBe(first)
+  second.open()
+  second.onclose?.({ code: 1012 })
+  answers[0]!(new Response(JSON.stringify({ authed: false })))
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+  expect(connLog.lastDrop('self')).toMatchObject({ cause: 'closed', code: 1012 })
+  s.stop()
+  connLog.forget('self')
+})
+
 describe('in the background', () => {
   const { Socket, QUIET_AFTER_MS } = realSocketModule
   let hidden = false

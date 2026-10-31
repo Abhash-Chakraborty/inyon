@@ -28,6 +28,7 @@ import { matchesQuery } from '../lib/groups.ts'
 import { confirmAction } from '../components/Confirm.tsx'
 import { NodeUpdate, nodeUpdateLabel } from '../components/NodeUpdate.tsx'
 import { contextMenu } from '../components/ui/ContextMenu.tsx'
+import { openConnectHelp, targetFor } from '../components/ConnectSheet.tsx'
 import { machineMenu, paneMenu, removeMachine } from '../components/menus.tsx'
 import { MachinePages } from '../components/pages/shared.tsx'
 import { TempFiles } from './Temp.tsx'
@@ -111,16 +112,18 @@ export function MachinesPage() {
   const [params, setParams] = useSearchParams()
   // a hub's code goes the same way; the sheet tells the two apart
   const pairLink = params.get('pair') ?? params.get('hub') ?? pairFragment()
-  const [sheet, setSheet] = useState(!!pairLink)
+  // "Pair again" from Can't connect? opens the same sheet
+  const adding = params.has('add')
+  const [sheet, setSheet] = useState(!!pairLink || adding)
   const [phone, setPhone] = useState(false)
   // a code scanned while this page is already open
   useEffect(() => {
-    if (pairLink) setSheet(true)
-  }, [pairLink])
+    if (pairLink || adding) setSheet(true)
+  }, [pairLink, adding])
   const close = () => {
     setSheet(false)
     forgetPairFragment()
-    if (params.get('pair') || params.get('hub')) setParams({}, { replace: true })
+    if (params.get('pair') || params.get('hub') || adding) setParams({}, { replace: true })
   }
   return (
     <PullRefresh onRefresh={refreshAll} className="min-h-0 flex-1 overflow-y-auto">
@@ -205,6 +208,8 @@ export function MachinePage() {
   // the machines haven't arrived yet (or this one is gone): the page's shape, sessions as rows
   if (!host) return <div className="mx-auto w-full max-w-[1100px] flex-1 px-4 py-5 lg:px-7"><Waiting shape="rows" label="Loading this machine" /></div>
   const remove = () => removeMachine(host, () => nav('/machines'))
+  // a joined machine that never ran its pairing command has its own instructions below
+  const checkable = !waitingToPair(host) && !!targetFor(host.config.id, [host])
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <PageHeader
@@ -248,14 +253,19 @@ export function MachinePage() {
             <span className="min-w-0 flex-1 break-words">{host.nodeWarning}</span>
           </div>
         )}
-        {host.error && host.status !== 'online' && (
-          <div className={clsx('animate-slide-up mb-4 flex items-start gap-2 rounded-2xl px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
+        {host.status !== 'online' && (host.error || checkable) && (
+          <div className={clsx('animate-slide-up mb-4 flex flex-wrap items-start gap-2 rounded-2xl px-3.5 py-3 text-[13px]', host.status === 'error' ? 'bg-danger-soft text-danger' : 'bg-sunken text-fg-2')}>
             {host.status === 'error' ? <AlertCircle className="mt-0.5 size-4 shrink-0" /> : <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center"><Pulse /></span>}
-            <span className="min-w-0 flex-1 break-words">{host.error}</span>
-            {/* unpaired on the computer: scanning a fresh code fixes it, in place */}
-            {host.config.kind === 'link' && /paired/i.test(host.error) && (
-              <Button size="xs" variant="secondary" className="-my-0.5" onClick={() => setRepair(true)}>Pair again</Button>
-            )}
+            <span className="min-w-0 flex-[1_1_200px] break-words">{host.error ?? 'Not connected right now.'}</span>
+            <span className="flex gap-1.5">
+              {/* unpaired on the computer: scanning a fresh code fixes it, in place */}
+              {host.config.kind === 'link' && host.error && /paired/i.test(host.error) && (
+                <Button size="xs" variant="secondary" className="-my-0.5" onClick={() => setRepair(true)}>Pair again</Button>
+              )}
+              {checkable && (
+                <Button size="xs" variant="secondary" className="-my-0.5" onClick={() => openConnectHelp(host.config.id)}>Can't connect?</Button>
+              )}
+            </span>
           </div>
         )}
         {waitingToPair(host) ? (

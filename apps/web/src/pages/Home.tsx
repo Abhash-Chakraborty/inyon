@@ -24,6 +24,7 @@ import { PhoneSheet } from '../components/PhoneSheet.tsx'
 import { Smartphone } from 'lucide-react'
 import { CompanionBar } from '../components/CompanionAgent.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
+import { openConnectHelp } from '../components/ConnectSheet.tsx'
 
 /** Past this many agent sessions the overview gets a search box. */
 const SEARCH_FROM = 6
@@ -105,9 +106,10 @@ export function Home() {
             {hosts.length} {isPhone() ? 'computer' : 'machine'}{hosts.length === 1 ? '' : 's'} · {panes.length} agent session{panes.length === 1 ? '' : 's'} · {panesTotal} pane{panesTotal === 1 ? '' : 's'}
           </span>
           {!connected && (
-            <span className="ml-auto flex items-center gap-1.5 text-[12px] text-warn">
+            // the hub this page came from: tapping it asks what's wrong
+            <button type="button" onClick={() => !isPhone() && openConnectHelp('self')} className="ml-auto flex h-8 items-center gap-1.5 rounded-full px-2 text-[12px] text-warn hover:bg-hover" title={isPhone() ? undefined : "Can't connect?"}>
               <WifiOff className="size-3.5" /> Reconnecting
-            </span>
+            </button>
           )}
           {/* with a mouse there is no pull to refresh: the mark's line reels here instead */}
           <button

@@ -2,10 +2,14 @@ package tech.abhashchakraborty.inyon.device
 
 import android.Manifest
 import android.app.Activity
+import android.app.ActivityManager
+import android.app.usage.UsageStatsManager
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
@@ -49,6 +53,7 @@ class InyonDevicePlugin : Plugin() {
         live = this
         Notifications.ensureChannels(context)
         (bridge.webView as? InyonWebView)?.contentListener = InyonWebView.ContentListener(::onKeyboardContent)
+        followDoze()
         // a notification tapped while the app wasn't running started the activity itself
         activity?.intent?.let { intent -> openedHref(intent)?.let { launchHref = it } }
         // the release smoke test looks for this line
@@ -99,6 +104,8 @@ class InyonDevicePlugin : Plugin() {
     override fun handleOnDestroy() {
         if (live === this) live = null
         (bridge.webView as? InyonWebView)?.contentListener = null
+        dozeReceiver?.let { runCatching { context.unregisterReceiver(it) } }
+        dozeReceiver = null
         // the WebView goes with the activity, so there is nothing left to keep alive
         if (KeepAliveService.running) context.stopService(Intent(context, KeepAliveService::class.java))
         pool.shutdown()
@@ -325,6 +332,46 @@ class InyonDevicePlugin : Plugin() {
         }
     }
 
+    // ---- Doze and battery limits, for the connection log ------------------------------------
+
+    private var dozeReceiver: BroadcastReceiver? = null
+
+    /** Notes when Doze starts and ends, so a link that dropped meanwhile can say so. */
+    private fun followDoze() {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager? ?: return
+        idleClock.changed(pm.isDeviceIdleMode, System.currentTimeMillis())
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context, intent: Intent) {
+                idleClock.changed(pm.isDeviceIdleMode, System.currentTimeMillis())
+            }
+        }
+        // a system broadcast, which reaches a receiver that isn't exported too
+        ContextCompat.registerReceiver(context, receiver, IntentFilter(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
+        dozeReceiver = receiver
+    }
+
+    /** Doze, battery saver, battery limits and Stay connected, as the web app's Power reads them. */
+    @PluginMethod
+    fun powerState(call: PluginCall) {
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager?
+        val bucket = if (Build.VERSION.SDK_INT >= 28) (context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager?)?.appStandbyBucket else null
+        val state = PowerState.Snapshot(
+            idle = pm?.isDeviceIdleMode == true,
+            powerSave = pm?.isPowerSaveMode == true,
+            ignoringOptimizations = pm?.isIgnoringBatteryOptimizations(context.packageName) == true,
+            backgroundRestricted = Build.VERSION.SDK_INT >= 28 && am?.isBackgroundRestricted == true,
+            keepAlive = KeepAliveService.running,
+            onScreen = onScreen,
+            idleSince = idleClock.since,
+            idleEnded = idleClock.ended,
+            standbyBucket = bucket,
+        )
+        val out = JSObject()
+        for ((k, v) in state.fields()) out.put(k, v)
+        call.resolve(out)
+    }
+
     // ---- this phone ------------------------------------------------------------------------
 
     /** The maker and model ("Nothing", "A142"), for the name a computer lists this phone under. */
@@ -447,6 +494,9 @@ class InyonDevicePlugin : Plugin() {
 
         // the services outlive the activity, so they reach the web app through whichever instance is live
         @Volatile private var live: InyonDevicePlugin? = null
+
+        // kept for the process, so a recreated activity still knows when Doze last began and ended
+        private val idleClock = PowerState.IdleClock()
 
         fun keepAliveEnded(reason: String) {
             live?.onKeepAliveEnded(reason)

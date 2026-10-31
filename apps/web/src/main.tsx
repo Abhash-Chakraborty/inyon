@@ -25,6 +25,7 @@ const PagesPage = lazy(() => import('./pages/Pages.tsx').then((m) => ({ default:
 const TempPage = lazy(() => import('./pages/Temp.tsx').then((m) => ({ default: m.TempPage })))
 import { installTapHaptics } from './lib/haptics.ts'
 import { installKeepAlive } from './lib/keepalive.ts'
+import { installConnWatch } from './lib/connwatch.ts'
 import { installHiddenFlag } from './lib/hidden.ts'
 import { installNative, isNative, nativeTheme, takePairFragment } from './lib/native.ts'
 import { watchInstall } from './lib/install.ts'
@@ -116,6 +117,7 @@ window.addEventListener('pagehide', flushSnapshots)
 // fetch the other pages once the first screen is up, so opening one doesn't wait on the network
 setTimeout(() => void Promise.all([import('./pages/PanePage.tsx'), import('./pages/Machines.tsx'), import('./pages/Settings.tsx'), import('./pages/Pages.tsx'), import('./pages/Temp.tsx')]).catch(() => {}), 1500)
 installKeepAlive()
+installConnWatch()
 installHiddenFlag()
 // the Android app looks for a newer APK once a day; it never installs one by itself
 if (isNative()) setTimeout(() => void import('./lib/appUpdate.ts').then((m) => m.startAppUpdateCheck()), 4000)

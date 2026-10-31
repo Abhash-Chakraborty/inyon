@@ -5,6 +5,26 @@ description: What to check when a computer won't pair, a hub won't answer, or a 
 
 Start with `inyon doctor` on the computer. It checks the engine, tmux, the agents, the service, the ports, the networks and the last update, one line each; a line starting with `!` is the problem. `inyon logs` shows what the service has been saying.
 
+## Can't connect?
+
+From 0.24 the app checks a connection for you. Tap **Reconnecting** at the top of the overview on a hub's page, the **Can't connect?** link under a chat that's reconnecting, **Can't connect?** on a computer or machine that isn't connected, or the one next to a hub in **Settings → Hubs** while it's out of reach. The checks run in order, each with one sentence saying what it found and what to do:
+
+| Check | What it looks at |
+|---|---|
+| Network | Whether this device is online |
+| Address | Whether the hub's name points anywhere (the Android app looks it up; a browser can't, so it skips this) and whether the app will use plain `http://` with it |
+| Hub answers | Whether anything answers at the hub's address in 8 seconds |
+| Right address | Whether the hub answers to that name, or refuses it with *This hub doesn't answer to that address* (add the name to `INYON_ALLOWED_HOSTS`) |
+| Signed in | On a hub's page, whether you're still signed in; in the app, whether the hub still knows this phone |
+| Live connection | Whether the hub's WebSocket opens (a proxy has to pass WebSockets through) |
+| Its address, Relay, Handshake | For a computer paired with the phone: whether it has published where it is, whether its relay answers, and whether the encrypted handshake works |
+| Hub reaches it | For a machine on a hub: whether the hub is connected to it, and what the hub says if not |
+| Battery limits | On Android: **Stay connected**, battery limits, a restricted app and battery saver |
+
+When a step fails, the ones that depend on it are skipped. Some steps offer the fix as a button: **Sign in**, **Pair again**, **Allow** or **Turn on**. **Details** shows the raw answers, and **Check again** runs everything once more.
+
+**Copy report** puts a plain-text report on the clipboard for whoever is helping you: the app's version and platform, the checks, Android's battery state, and the last ten times a hub or computer dropped, with when, why and for how long. Tokens, tickets, cookies, pairing codes and links, passwords, keys and anything after `?` or `#` in an address are replaced with `[hidden]`. Addresses themselves stay, so leave out any you don't want public.
+
 ## inyon: command not found
 
 The installers put it in `~/.inyon/bin`. From 0.17.1 they add that to your `PATH` too, but only new terminals see it: open one, or run `~/.inyon/bin/inyon`. With an older installer or `INYON_NO_MODIFY_PATH=1`, [add it to your PATH](install.md#put-inyon-on-your-path).
@@ -120,4 +140,4 @@ For Claude Code, the numbers come from the integration. Turn it on, or **Update*
 
 ## Still stuck
 
-Open an issue on [GitHub](https://github.com/Abhash-Chakraborty/inyon/issues) with the output of `inyon doctor --json` and **Settings → About → Copy version details**. Leave out tokens, codes and addresses you don't want public.
+Open an issue on [GitHub](https://github.com/Abhash-Chakraborty/inyon/issues) with the output of `inyon doctor --json` and **Settings → About → Copy version details**, or, for a connection problem, the report from [Can't connect?](#cant-connect). Leave out tokens, codes and addresses you don't want public.

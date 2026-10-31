@@ -87,6 +87,14 @@ From 0.23.1 the app does less while it's in the background. After 15 seconds awa
 
 A fully closed app gets no alerts yet. See [Notifications](notifications.md#the-android-app).
 
+### Why a link dropped
+
+From 0.24 the app keeps a log of when each hub and computer connected and dropped, and why: how the connection closed, the network going away, the app being in the background, a hub that forgot the phone, a handshake that failed, or nothing answering. It also asks Android whether the phone was in Doze (the deep sleep Android puts a phone in when it lies still with the screen off), whether Inyon was limited by battery settings, and whether **Stay connected** was on. Android often freezes the app during Doze, so the app only sees the drop when it wakes; a drop it notices within a minute of Doze ending counts as Doze.
+
+**Settings** shows the last drop under each computer and hub, like *Last drop 12m ago, Android's Doze paused the phone (down 4m)*. [Can't connect?](troubleshooting.md#cant-connect) checks the connection and puts the log in its report. The log stays on the phone, keeps the last few drops of each, and never holds tokens or codes.
+
+If drops say Doze or battery limits, keep **Stay connected** on and allow Inyon to run without battery limits.
+
 ## Moving to the next app
 
 From 0.23 the app keeps a sealed copy of its key, pairings, hubs and settings each time it starts or goes to the background. The next Inyon app for Android installs over this one and picks that copy up, so your computers, servers and hubs stay paired. Open the app once on 0.23 or later before you install it. [Security](security.md#the-android-app) says how the copy is kept.

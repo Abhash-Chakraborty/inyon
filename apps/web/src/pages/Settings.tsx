@@ -30,6 +30,8 @@ import { forgetHub, listHubs, onHubs } from '../lib/hubs.ts'
 import { checkHub, hubBuild, sameBuild, useHubBuild, watchHub, type Build } from '../lib/updates.ts'
 import { checkAppUpdate, type AppUpdate } from '../lib/appUpdate.ts'
 import { openLink } from '../lib/format.ts'
+import { LastDrop, hubLogId, openConnectHelp } from '../components/ConnectSheet.tsx'
+import { isDown, useConnLog, useLastDrop } from '../lib/connlog.ts'
 
 /** The phone app: stay connected while it's in the background, and Android's battery limits. */
 function Background() {
@@ -539,12 +541,14 @@ export function Settings() {
           {keepAliveSupported() && <Background />}
 
           <Section id="machines" title={isPhone() ? 'Computers' : 'Machines'}>
+            {!isPhone() && <ThisConnection />}
             {hosts.map((h) => (
               <Link key={h.config.id} to={`/machines/${encodeURIComponent(h.config.id)}`} className="flex items-center gap-3 px-4 py-3.5 hover:bg-hover/50">
                 <HostDot status={h.status} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[14px] font-medium">{h.config.name}</span>
                   <span className="block truncate text-[12px] text-fg-3">{hostLine(h, `${h.config.kind === 'local' ? 'This hub' : h.config.kind === 'node' ? h.hostname ?? 'Paired machine' : h.config.kind === 'link' ? h.hostname ?? 'Laptop' : sshAddress(h.config, hosts)} · integration ${h.integration === 'installed' ? 'on' : 'off'}`)}</span>
+                  <LastDrop id={h.config.id} />
                 </span>
                 <ChevronRight className="size-4 text-fg-3" />
               </Link>
@@ -859,10 +863,24 @@ function PairedDevices() {
   )
 }
 
+/** This page's own connection to the hub, once it has dropped at least once. */
+function ThisConnection() {
+  const drop = useLastDrop('self')
+  if (!drop) return null
+  return (
+    <Row label="This page's connection" hint={<LastDrop id="self" className="text-[12.5px]" />}>
+      <Button size="sm" variant="ghost" onClick={() => openConnectHelp('self')}>
+        Can't connect?
+      </Button>
+    </Row>
+  )
+}
+
 /** The hubs this phone is paired with; forgetting one takes its machines out of the lists. */
 function Hubs() {
   const [hubs, setHubs] = useState(listHubs)
   useEffect(() => onHubs(setHubs), [])
+  useConnLog()
   return (
     <Section id="hubs" title="Hubs" desc="A hub brings its machines into this app. Pair with one from Add, with the code its web app shows.">
       {!hubs.length && <p className="px-4 py-3.5 text-[13px] text-fg-3">No hubs paired.</p>}
@@ -872,7 +890,13 @@ function Hubs() {
           <span className="min-w-0 flex-1">
             <span className="block truncate font-medium">{h.name}</span>
             <span className="block truncate font-mono text-[12px] text-fg-3">{h.url.replace(/^https?:\/\//, '')}{h.version ? ` · ${h.version}` : ''}</span>
+            <LastDrop id={hubLogId(h.id)} />
           </span>
+          {isDown(hubLogId(h.id)) && (
+            <Button size="sm" variant="ghost" onClick={() => openConnectHelp(hubLogId(h.id))}>
+              Can't connect?
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={() => (forgetHub(h.id), toast({ title: `${h.name} forgotten`, body: 'Its machines are gone from this app. The hub still lists this phone until you forget it there too.', tone: 'success' }))}>
             Forget
           </Button>
