@@ -329,6 +329,10 @@ async fn fallback(mut req: Req) -> Resp {
         crate::static_files::page_headers(&mut r);
         return r;
     }
+    // the new app (apps/app) while it catches up with the web app at /
+    if req.path == "/next" || req.path.starts_with("/next/") {
+        return crate::static_files::serve_next(&req.path);
+    }
     crate::static_files::serve(&req.path)
 }
 

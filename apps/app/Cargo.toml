@@ -1,0 +1,30 @@
+[package]
+name = "inyon-app"
+version.workspace = true
+description = "The Inyon app in Rust (Dioxus): the browser copy at /next for now, then desktop and Android"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+dioxus = { version = "=0.7.10", default-features = false, features = ["launch", "lib"] }
+# the view model the React app keeps in apps/web/src/lib, shared by every screen
+inyon-chat-core = { path = "../../crates/inyon-chat-core" }
+inyon-protocol = { path = "../../crates/inyon-protocol" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures-channel = "0.3"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+gloo-timers = { version = "0.3", features = ["futures"] }
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["CloseEvent", "CssStyleDeclaration", "Document", "Element", "Event", "EventTarget", "Headers", "HtmlElement", "Location", "MediaQueryList", "MessageEvent", "Request", "RequestCredentials", "RequestInit", "Response", "Storage", "VisibilityState", "WebSocket", "Window"] }
+
+[features]
+default = []
+# dx turns on the one its --platform names
+web = ["dioxus/web"]
+desktop = ["dioxus/desktop"]
