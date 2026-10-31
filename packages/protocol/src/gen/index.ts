@@ -934,3 +934,113 @@ export type DraftSource = "app" | "terminal";
 export type NotifyKind = "waiting" | "done" | "offline" | "online";
 
 export type ServerMsg = { "t": "overview", hosts: Array<HostState>, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "page.notify", host: string, slug: string, title: string, body: string, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };
+
+/**
+ * How a large frame is compressed: raw DEFLATE (RFC 1951), sent as a binary WebSocket message.
+ * A browser reads it with `new DecompressionStream('deflate-raw')`, a Rust app with miniz_oxide.
+ */
+export type Zip = "deflate-raw";
+
+/**
+ * Where an app is in one stream: the last frame it applied.
+ */
+export type StreamPos = { epoch: number, seq: number, };
+
+/**
+ * What the app sends on `/ws2`. The v1 messages that aren't about streams (`draft`, `term.*`,
+ * `ping`, `quiet`) are sent as they are; `sub.overview`, `sub.chat`, `unsub.chat` and `chat.more`
+ * are ignored there.
+ */
+export type ClientMsg2 = { "t": "hello", v: number, zip?: Array<Zip>, } | { "t": "sub", stream: string, at?: StreamPos, } | { "t": "unsub", stream: string, } | { "t": "more", stream: string, before: number, };
+
+/**
+ * One message on its way to the agent, as every device sees it: held by Inyon until the agent is
+ * free, sent through Inyon and followed until the agent's record has it, or waiting in the agent's
+ * own queue. The hub owns this list; a chat's `info` carries none of it on `/ws2`.
+ */
+export type QueuedMsg = { kind: QueueKind, 
+/**
+ * the held prompt's id, the send's id, or the place in the agent's queue
+ */
+id: string, text: string, 
+/**
+ * unix ms; not known for the agent's queue
+ */
+at?: number, 
+/**
+ * send only: how far it got (`delivered` stays until the hub's ledger lets it go, so each
+ * device can settle its own bubble by id)
+ */
+state?: SendStatus, 
+/**
+ * send only, once delivered: the item it became
+ */
+uuid?: string, error?: string, 
+/**
+ * send only: a change made with the app's controls, not shown as a message
+ */
+setting?: boolean, };
+
+/**
+ * held: Inyon types it once the agent is free · send: sent through Inyon · agent: in the agent's
+ * own queue, as its screen or record shows it
+ */
+export type QueueKind = "held" | "send" | "agent";
+
+/**
+ * Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
+ * (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]).
+ */
+export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, };
+
+/**
+ * Row keys, by collection, for `remove`.
+ */
+export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, };
+
+/**
+ * The unsent message for a pane, shared by every device and the terminal's input box.
+ */
+export type DraftState = { text: string, source: DraftSource, at: number, };
+
+/**
+ * Reading what was said while nobody watched: bytes read of how many (0 of 0 once it's done).
+ */
+export type Progress = { done: number, total: number, };
+
+/**
+ * A chat's single values. In a snapshot every one the hub has is there; in a delta only those
+ * that changed, and a missing one is unchanged.
+ */
+export type ChatState = { 
+/**
+ * without `sends`, `held` and `queue`, which are the `queue` rows
+ */
+info?: ChatInfo, screen?: ScreenState, draft?: DraftState, progress?: Progress, 
+/**
+ * there are messages before the first item (ask with `more`)
+ */
+hasMore?: boolean, 
+/**
+ * the agent's record has been read: until then `items` is empty and an app keeps what it showed
+ */
+loaded?: boolean, };
+
+/**
+ * A stream's whole state at `epoch`/`seq`: the app drops what it had for the stream and takes
+ * this. Its `epoch` is new whenever the hub rebuilt the stream's history.
+ */
+export type Snapshot = { stream: string, epoch: number, seq: number, rows: Rows, state?: ChatState, };
+
+/**
+ * The change from `from` to `seq` in one epoch, applied in this order: `remove` rows by key,
+ * `replace` rows in place by key, `append` rows at the end of their collection, then `state`.
+ * A live change has `from = seq - 1`; catching up after a gap is one delta from the app's `seq`.
+ */
+export type Delta = { stream: string, epoch: number, from: number, seq: number, remove?: Keys, replace?: Rows, append?: Rows, state?: ChatState, };
+
+/**
+ * What the hub sends on `/ws2`. Alongside these it sends the v1 messages that aren't about streams
+ * as they are: `notify`, `page.notify`, `companion.reply`, `term.data`, `term.exit` and `pong`.
+ */
+export type ServerMsg2 = { "t": "hello", v: number, zip?: Zip, } | { "t": "snapshot" } & Snapshot | { "t": "delta" } & Delta | { "t": "more", stream: string, items: Array<ChatItem>, hasMore: boolean, };

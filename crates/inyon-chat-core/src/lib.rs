@@ -13,6 +13,7 @@
 //! | `groups.ts` | [`groups`] |
 //! | `store.ts` (the chat reducer), `snapshot.ts` (what a kept page holds), ChatView's rows | [`chat_list`] |
 //! | `store.ts` (overview, notices, toasts, activity, settings), `tellApart` in `hubs.ts` | [`store`] |
+//! | (new) protocol v2 frames from `/ws2` into the same rows and overview | [`v2`] |
 //!
 //! Nothing here touches the network, storage, the clock or the screen. Time comes in as `now`
 //! (unix ms), and what the TS did to the page comes back as [`store::Effect`]s. It builds for
@@ -27,6 +28,7 @@ pub mod overview;
 pub mod pending;
 pub mod store;
 pub mod tools;
+pub mod v2;
 
 #[cfg(test)]
 pub(crate) mod test_support;

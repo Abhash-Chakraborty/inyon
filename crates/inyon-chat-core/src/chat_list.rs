@@ -117,7 +117,7 @@ pub fn without_screen_read(live: Option<Vec<LiveItem>>, fresh: &[ChatItem]) -> O
     Some(live.into_iter().filter(|l| !l.id.starts_with("screen:")).collect())
 }
 
-fn sends(info: Option<&ChatInfo>) -> &[SendState] {
+pub(crate) fn sends(info: Option<&ChatInfo>) -> &[SendState] {
     info.and_then(|i| i.sends.as_deref()).unwrap_or(&[])
 }
 
@@ -336,12 +336,14 @@ pub fn diff(old: &[ListRow], new: &[ListRow]) -> Vec<Splice> {
 /// that returns how the rows changed.
 #[derive(Debug, Clone, Default)]
 pub struct Chat {
-    data: ChatData,
+    pub(crate) data: ChatData,
     /// the transcript's rows, rebuilt only when the transcript changes
     transcript: Vec<Row>,
     rows: Vec<ListRow>,
     /// how many of `rows` are transcript rows
     shown: usize,
+    /// where it is in its `/ws2` stream, and that stream's send queue
+    pub(crate) stream: crate::v2::ChatStream,
 }
 
 impl Deref for Chat {
@@ -396,7 +398,7 @@ impl Chat {
         self.patch(now, ChatData::forget)
     }
 
-    fn settled(&mut self, transcript_changed: bool, now: u64) -> Vec<Splice> {
+    pub(crate) fn settled(&mut self, transcript_changed: bool, now: u64) -> Vec<Splice> {
         // the hub's ledger (info.sends) can settle a send at any time, not only when the
         // transcript grows; ChatView does this on every change
         if !self.data.pending.is_empty() {

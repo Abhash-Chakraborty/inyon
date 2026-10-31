@@ -17,6 +17,8 @@ http = "1.5"
 indexmap = "2.10"
 inyon-core = { path = "../inyon-core" }
 inyon-protocol = { path = "../inyon-protocol" }
+# raw DEFLATE for /ws2's large frames (DecompressionStream('deflate-raw') reads it in a browser)
+miniz_oxide = "0.9"
 # for inyon_core::re!, with the same features as inyon-core's
 regex = { version = "1.12", default-features = false, features = ["std", "unicode-perl", "unicode-case", "unicode-gencat", "unicode-script"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -25,6 +27,8 @@ subtle = "2.6"
 url = "2.5"
 
 [dev-dependencies]
+# the app's side of /ws2, to check the hub's frames end in the rows v1 gives
+inyon-chat-core = { path = "../inyon-chat-core" }
 inyon-backends = { path = "../inyon-backends", features = ["testing"] }
 inyon-core = { path = "../inyon-core", features = ["testing"] }
 tokio = { version = "1.47", features = ["rt", "time", "macros"] }

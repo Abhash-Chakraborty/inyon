@@ -312,6 +312,9 @@ async fn fallback(mut req: Req) -> Resp {
     if req.path == "/ws" {
         return crate::ws::app_upgrade(req);
     }
+    if req.path == "/ws2" {
+        return crate::ws::app2_upgrade(req);
+    }
     // a page's own files: the token in the path is the only credential, never the cookie, and the
     // Host is checked there without one (pages::view)
     if req.path.starts_with("/v/") {
