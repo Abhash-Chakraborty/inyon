@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Plug, Plus, Search, WifiOff } from 'lucide-react'
+import { ChevronRight, Pin, Plug, Plus, Search, WifiOff } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
-import { agentPanes } from '../lib/overview.ts'
+import { agentPanes, allPanes, type PaneRef } from '../lib/overview.ts'
+import { nextWake, sortPanes } from '../lib/organize.ts'
 import { ActivityFeed, LimitsCard, MachinesTable, SessionCard } from '../components/Overview.tsx'
 import { Logo } from '../components/AppShell.tsx'
 import { Button, Empty, Segmented, SectionLabel } from '../components/ui/primitives.tsx'
@@ -25,6 +26,11 @@ import { Smartphone } from 'lucide-react'
 import { CompanionBar } from '../components/CompanionAgent.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
 import { openConnectHelp } from '../components/ConnectSheet.tsx'
+
+const GRID = 'grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4'
+const paneKey = (r: PaneRef) => r.host.config.id + r.pane.id
+/** the parked and snoozed start folded: this is kept with the folded groups, set when it's open */
+const PARKED_OPEN = 'parked:open'
 
 /** Past this many agent sessions the overview gets a search box. */
 const SEARCH_FROM = 6
@@ -49,6 +55,7 @@ export function Home() {
   const waiting = panes.filter((r) => r.pane.agent!.state === 'waiting')
   const [q, setQ] = useState('')
   const [folded, setFolded] = useState(loadFolded)
+  const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
   const toggle = (key: string) =>
     setFolded((f) => {
       const n = new Set(f)
@@ -58,13 +65,29 @@ export function Home() {
       saveFolded(n)
       return n
     })
-  // every agent session, grouped by machine, each in a place that doesn't change; one that asks
-  // something answers from its own card. A search looks through every machine.
-  const groups = useMemo(
-    () => groupPanes(hosts, { query: q, keep: (r) => !!r.pane.agent && !r.pane.companion && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent))) }),
-    [hosts, q, filter],
+  // the pinned first (from 0.24, kept by the hub so every device has the same), then every other
+  // agent session grouped by machine, each in a place that doesn't change, then the parked and
+  // snoozed, folded away. One that asks something answers from its own card. A search looks
+  // through every machine, tags and notes included.
+  const organize = useStore((s) => s.organize)
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    // a snooze that ends brings its session back right then
+    const at = nextWake(organize, now)
+    if (at === undefined) return
+    const t = setTimeout(() => setNow(Date.now()), Math.min(at - Date.now() + 250, 2 ** 31 - 1))
+    return () => clearTimeout(t)
+  }, [organize, now])
+  const sorted = useMemo(
+    () => sortPanes(allPanes(hosts).filter((r) => !!r.pane.agent && !r.pane.companion && (filter === 'all' || (filter === 'working' ? busy(r.pane.agent) : !busy(r.pane.agent)))), organize, { now, query: q }),
+    [hosts, q, filter, organize, now],
   )
-  const homeFolded = useMemo(() => new Set([...folded].filter((k) => k.startsWith('home:')).map((k) => k.slice(5))), [folded])
+  const groups = useMemo(() => {
+    const rest = new Set(sorted.sessions.map(paneKey))
+    return groupPanes(hosts, { keep: (r) => rest.has(paneKey(r)) })
+  }, [hosts, sorted])
+  const shownAny = groups.length + sorted.pinned.length + sorted.folded.length > 0
+  const parkedOpen = !!q || homeFolded.has(PARKED_OPEN)
   const working = panes.filter((r) => busy(r.pane.agent!)).length
   // the status line tells the two apart: a turn in progress, and work left running behind an idle prompt
   const inFront = panes.filter((r) => r.pane.agent!.state === 'working').length
@@ -228,7 +251,21 @@ export function Home() {
                   Agent sessions
                 </SectionLabel>
                 {panes.length > SEARCH_FROM && <FilterInput value={q} onChange={setQ} placeholder={`Search ${panes.length} sessions`} className="mb-3" />}
-                {groups.length ? (
+                {sorted.pinned.length > 0 && (
+                  <div className={clsx(groups.length && 'mb-5')}>
+                    <div className="mb-2 flex h-6 items-center gap-2 text-[13px] font-medium text-fg-2">
+                      <Pin className="size-3.5 text-fg-3" /> Pinned
+                    </div>
+                    <AnimatedList className={GRID} items={sorted.pinned.map((r) => ({ key: paneKey(r), node: <SessionCard r={r} showHost={hosts.length > 1} /> }))} />
+                  </div>
+                )}
+                {!shownAny ? (
+                  <div className="rounded-3xl border border-dashed border-line-strong">
+                    <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
+                      {panes.length ? (q ? `No session matches “${q}”.` : 'Try another filter.') : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
+                    </Empty>
+                  </div>
+                ) : !groups.length ? null : (
                   hosts.length > 1 ? (
                     <div className="flex flex-col gap-2">
                       {groups.map((g) => {
@@ -246,7 +283,7 @@ export function Home() {
                               <div inert={!open}>
                                 <AnimatedList
                                   className="grid grid-cols-1 gap-3 pt-2 pb-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4"
-                                  items={g.sessions.flatMap((sg) => sg.panes).map((r) => ({ key: r.host.config.id + r.pane.id, node: <SessionCard r={r} showHost={false} /> }))}
+                                  items={g.sessions.flatMap((sg) => sg.panes).map((r) => ({ key: paneKey(r), node: <SessionCard r={r} showHost={false} /> }))}
                                 />
                               </div>
                             </div>
@@ -255,16 +292,21 @@ export function Home() {
                       })}
                     </div>
                   ) : (
-                    <AnimatedList
-                      className="grid grid-cols-1 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(300px,1fr))] sm:gap-4"
-                      items={groups.flatMap((g) => g.sessions.flatMap((sg) => sg.panes)).map((r) => ({ key: r.host.config.id + r.pane.id, node: <SessionCard r={r} /> }))}
-                    />
+                    <AnimatedList className={GRID} items={groups.flatMap((g) => g.sessions.flatMap((sg) => sg.panes)).map((r) => ({ key: paneKey(r), node: <SessionCard r={r} /> }))} />
                   )
-                ) : (
-                  <div className="rounded-3xl border border-dashed border-line-strong">
-                    <Empty title={panes.length ? 'Nothing here' : 'No agent sessions'}>
-                      {panes.length ? (q ? `No session matches “${q}”.` : 'Try another filter.') : `Start Claude Code, Codex or another agent in tmux on any ${isPhone() ? 'computer' : 'machine'}, or ${isPhone() ? 'tap + ' : 'press N '}to start one from here.`}
-                    </Empty>
+                )}
+                {sorted.folded.length > 0 && (
+                  <div className="mt-3">
+                    <button type="button" onClick={() => toggle(PARKED_OPEN)} aria-expanded={parkedOpen} className="-mx-2 flex h-10 w-[calc(100%+1rem)] items-center gap-2 rounded-full px-2 text-left hover:bg-hover/60">
+                      <ChevronRight className={clsx('size-4 shrink-0 text-fg-3 transition-transform', parkedOpen && 'rotate-90')} />
+                      <span className="truncate text-[14px] font-medium text-fg-2">Parked and snoozed</span>
+                      <span className="tabular ml-auto shrink-0 font-mono text-[12px] text-fg-3">{sorted.folded.length}</span>
+                    </button>
+                    <div className="expand" data-open={parkedOpen}>
+                      <div inert={!parkedOpen}>
+                        <AnimatedList className={clsx(GRID, 'pt-2 pb-3')} items={sorted.folded.map((r) => ({ key: paneKey(r), node: <SessionCard r={r} showHost={hosts.length > 1} /> }))} />
+                      </div>
+                    </div>
                   </div>
                 )}
               </section>

@@ -1164,8 +1164,10 @@ pub enum NotifyKind {
 #[serde(tag = "t", rename_all_fields = "camelCase")]
 #[ts(optional_fields)]
 pub enum ServerMsg {
+    /// `organize` (from 0.24): how the sessions are organised, without saved prompts; an older
+    /// hub leaves it out
     #[serde(rename = "overview")]
-    Overview { hosts: Vec<HostState> },
+    Overview { hosts: Vec<HostState>, organize: Option<Box<crate::Organize>> },
     #[serde(rename = "chat.reset")]
     ChatReset { key: String, info: Box<ChatInfo>, items: Vec<ChatItem>, has_more: bool },
     #[serde(rename = "chat.append")]

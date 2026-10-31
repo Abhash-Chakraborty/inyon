@@ -4,13 +4,19 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use ts_rs::TS;
 
+use crate::organize::{Project, ProjectGroup, SessionMark, Space};
 use crate::types::{ChatInfo, ChatItem, DraftSource, HeldPrompt, HostState, LiveItem, ScreenState, SendState, SendStatus};
 
 /// The protocol version `hello` names.
 pub const PROTOCOL_V2: u32 = 2;
 
-/// The stream of machines and panes. Every other stream is a chat, named by its key (`host:pane`).
+/// The stream of machines and panes. Every other stream is a chat, named by its key (`host:pane`),
+/// or the organize stream.
 pub const OVERVIEW: &str = "overview";
+
+/// The stream of how sessions are organised (from 0.24): pins, parking, snoozes, tags, notes and
+/// projects, as `GET /api/organize` has them.
+pub const ORGANIZE: &str = "organize";
 
 /// A frame at least this long (its JSON, in bytes) goes out compressed to an app that asked.
 pub const ZIP_MIN: usize = 1024;
@@ -97,7 +103,8 @@ impl QueuedMsg {
 }
 
 /// Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
-/// (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]).
+/// (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
+/// stream has `sessions`, `projects`, `groups` and `spaces` (each keyed by `id`).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
@@ -106,6 +113,10 @@ pub struct Rows {
     pub items: Option<Vec<ChatItem>>,
     pub live: Option<Vec<LiveItem>>,
     pub queue: Option<Vec<QueuedMsg>>,
+    pub sessions: Option<Vec<SessionMark>>,
+    pub projects: Option<Vec<Project>>,
+    pub groups: Option<Vec<ProjectGroup>>,
+    pub spaces: Option<Vec<Space>>,
 }
 
 /// Row keys, by collection, for `remove`.
@@ -117,6 +128,10 @@ pub struct Keys {
     pub items: Option<Vec<i64>>,
     pub live: Option<Vec<String>>,
     pub queue: Option<Vec<String>>,
+    pub sessions: Option<Vec<String>>,
+    pub projects: Option<Vec<String>>,
+    pub groups: Option<Vec<String>>,
+    pub spaces: Option<Vec<String>>,
 }
 
 /// The unsent message for a pane, shared by every device and the terminal's input box.
@@ -197,6 +212,9 @@ impl Delta {
 
 /// What the hub sends on `/ws2`. Alongside these it sends the v1 messages that aren't about streams
 /// as they are: `notify`, `page.notify`, `companion.reply`, `term.data`, `term.exit` and `pong`.
+// a frame is made and sent (or read and applied) at once, never kept in numbers, so its size
+// against `hello`'s doesn't matter
+#[allow(clippy::large_enum_variant)]
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "t")]

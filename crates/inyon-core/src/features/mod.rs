@@ -13,6 +13,8 @@ pub mod features;
 pub mod models;
 // a page's research notes as pages to read
 pub mod notes;
+// how sessions are organised (pins, parking, snoozes, tags, notes, projects), kept for every device
+pub mod organize;
 // the rules for serving a page (pages-core.ts): no shell, no disk; the hub brings its own
 pub mod pages_core;
 // pages on other machines, through their own `inyon pages`: the hub's joined machines, the phone's computers

@@ -1,7 +1,8 @@
 //! Protocol v2 on `/ws2` (described in inyon-protocol's `v2.md`): the hub's streams and the apps
 //! that follow them.
 //!
-//! A stream is the overview or one chat. It keeps its state as rows with keys, and for each row
+//! A stream is the overview, one chat, or how the sessions are organised. It keeps its state as
+//! rows with keys, and for each row
 //! the `seq` it was added and last changed at, plus the keys of rows that went. That is all it
 //! needs to bring an app from any `seq` of the current epoch to now in one delta, so it keeps no log
 //! of frames. A chat stream follows the chat's watcher like a v1 app does and turns the watcher's
@@ -18,10 +19,10 @@ use inyon_core::claude::watcher::{watchers, Sub, Subscriber};
 use inyon_core::clock::now_ms;
 use inyon_core::hosts::registry::registry;
 use inyon_core::platform::rt::spawn;
-use inyon_protocol::v2::{split_queue, OVERVIEW, PROTOCOL_V2, ZIP_MIN};
+use inyon_protocol::v2::{split_queue, ORGANIZE, OVERVIEW, PROTOCOL_V2, ZIP_MIN};
 use inyon_protocol::{
-    AssistantBlock, ChatInfo, ChatItem, ChatState, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Progress, QueuedMsg, Rows, ScreenState, ServerMsg, ServerMsg2,
-    Snapshot, StreamPos, Zip,
+    AssistantBlock, ChatInfo, ChatItem, ChatState, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Organize, Progress, Project, ProjectGroup, QueuedMsg, Rows,
+    ScreenState, ServerMsg, ServerMsg2, SessionMark, Snapshot, Space, StreamPos, Zip,
 };
 use serde_json::Value;
 
@@ -73,6 +74,18 @@ impl Row for QueuedMsg {
         QueuedMsg::key(self)
     }
 }
+
+macro_rules! row_by_id {
+    ($($t:ty),*) => {$(
+        impl Row for $t {
+            type Key = String;
+            fn key(&self) -> String {
+                self.id.clone()
+            }
+        }
+    )*};
+}
+row_by_id!(SessionMark, Project, ProjectGroup, Space);
 
 struct Entry<V> {
     v: V,
@@ -324,9 +337,30 @@ impl ChatBody {
     }
 }
 
+struct OrganizeBody {
+    sessions: Coll<SessionMark>,
+    projects: Coll<Project>,
+    groups: Coll<ProjectGroup>,
+    spaces: Coll<Space>,
+}
+
+impl OrganizeBody {
+    fn new(gone: usize) -> Self {
+        OrganizeBody { sessions: Coll::new(gone), projects: Coll::new(gone), groups: Coll::new(gone), spaces: Coll::new(gone) }
+    }
+
+    fn restamp(&mut self, seq: u64) {
+        self.sessions.restamp(seq);
+        self.projects.restamp(seq);
+        self.groups.restamp(seq);
+        self.spaces.restamp(seq);
+    }
+}
+
 enum Body {
     Overview(Coll<HostState>),
     Chat(Box<ChatBody>),
+    Organize(Box<OrganizeBody>),
 }
 
 /// One change to a stream, gathered as the parts of a delta.
@@ -364,6 +398,20 @@ impl Change {
         put(&mut self.remove.queue, o.remove);
         put(&mut self.replace.queue, o.replace);
         put(&mut self.append.queue, o.append);
+    }
+    fn organize(&mut self, s: Ops<SessionMark>, p: Ops<Project>, g: Ops<ProjectGroup>, w: Ops<Space>) {
+        put(&mut self.remove.sessions, s.remove);
+        put(&mut self.replace.sessions, s.replace);
+        put(&mut self.append.sessions, s.append);
+        put(&mut self.remove.projects, p.remove);
+        put(&mut self.replace.projects, p.replace);
+        put(&mut self.append.projects, p.append);
+        put(&mut self.remove.groups, g.remove);
+        put(&mut self.replace.groups, g.replace);
+        put(&mut self.append.groups, g.append);
+        put(&mut self.remove.spaces, w.remove);
+        put(&mut self.replace.spaces, w.replace);
+        put(&mut self.append.spaces, w.append);
     }
 
     fn into_delta(self, stream: &str, epoch: u64, from: u64, seq: u64) -> Delta {
@@ -423,7 +471,11 @@ fn next_epoch() -> u64 {
 impl Stream {
     fn new(name: &str) -> Self {
         let gone = GONE_CAP.with(Cell::get);
-        let body = if name == OVERVIEW { Body::Overview(Coll::new(gone)) } else { Body::Chat(Box::new(ChatBody::new(gone))) };
+        let body = match name {
+            OVERVIEW => Body::Overview(Coll::new(gone)),
+            ORGANIZE => Body::Organize(Box::new(OrganizeBody::new(gone))),
+            _ => Body::Chat(Box::new(ChatBody::new(gone))),
+        };
         Stream { name: name.to_owned(), epoch: next_epoch(), seq: 0, ready: false, body, feed: None, left_at: None }
     }
 
@@ -439,6 +491,7 @@ impl Stream {
         match &mut self.body {
             Body::Overview(hosts) => hosts.restamp(self.seq),
             Body::Chat(c) => c.restamp(self.seq),
+            Body::Organize(o) => o.restamp(self.seq),
         }
         Out::Rebuilt
     }
@@ -460,6 +513,14 @@ impl Stream {
         let Body::Overview(coll) = &mut self.body else { return Out::Nothing };
         let mut ch = Change::default();
         ch.hosts(coll.set(hosts, seq));
+        self.commit(ch)
+    }
+
+    fn on_organize(&mut self, org: Organize) -> Out {
+        let seq = self.seq + 1;
+        let Body::Organize(o) = &mut self.body else { return Out::Nothing };
+        let mut ch = Change::default();
+        ch.organize(o.sessions.set(org.sessions, seq), o.projects.set(org.projects, seq), o.groups.set(org.groups, seq), o.spaces.set(org.spaces, seq));
         self.commit(ch)
     }
 
@@ -577,9 +638,19 @@ impl Stream {
                     items: Some(c.items.values().cloned().collect()),
                     live: Some(c.live.values().cloned().collect()),
                     queue: Some(c.queue.values().cloned().collect()),
-                    hosts: None,
+                    ..Rows::default()
                 },
                 Some(c.state_since(0)),
+            ),
+            Body::Organize(o) => (
+                Rows {
+                    sessions: Some(o.sessions.values().cloned().collect()),
+                    projects: Some(o.projects.values().cloned().collect()),
+                    groups: Some(o.groups.values().cloned().collect()),
+                    spaces: Some(o.spaces.values().cloned().collect()),
+                    ..Rows::default()
+                },
+                None,
             ),
         };
         Snapshot { stream: self.name.clone(), epoch: self.epoch, seq: self.seq, rows, state }
@@ -601,6 +672,13 @@ impl Stream {
                     ch.live(l);
                     ch.queue(q);
                     ch.state = c.state_since(at.seq);
+                    true
+                }
+                _ => false,
+            },
+            Body::Organize(o) => match (o.sessions.since(at.seq), o.projects.since(at.seq), o.groups.since(at.seq), o.spaces.since(at.seq)) {
+                (Some(s), Some(p), Some(g), Some(w)) => {
+                    ch.organize(s, p, g, w);
                     true
                 }
                 _ => false,
@@ -838,6 +916,22 @@ fn refresh_overview() {
     }
 }
 
+/// How the sessions are organised changed. Read only while a `/ws2` app follows it.
+pub(crate) fn organize_changed() {
+    if followers(ORGANIZE).is_empty() {
+        return;
+    }
+    refresh_organize();
+}
+
+fn refresh_organize() {
+    ensure(ORGANIZE);
+    let org = inyon_core::features::organize::current();
+    if let Some(out) = with_stream(ORGANIZE, |st| st.on_organize(org)) {
+        publish(ORGANIZE, out, None);
+    }
+}
+
 /// Feeds a chat's watcher messages into its stream.
 struct Feed {
     key: String,
@@ -878,9 +972,9 @@ fn split_key(key: &str) -> Option<(&str, &str)> {
 /// An app follows a stream from `at` (or from nothing).
 fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
     let Some(v) = conn(c) else { return };
-    if stream != OVERVIEW {
+    if stream != OVERVIEW && stream != ORGANIZE {
         let Some((host, _)) = split_key(stream) else { return };
-        let chats = v.at.borrow().keys().filter(|k| *k != OVERVIEW).count();
+        let chats = v.at.borrow().keys().filter(|k| *k != OVERVIEW && *k != ORGANIZE).count();
         if registry().get(host).is_none() || (!v.follows(stream) && chats >= MAX_CHATS) {
             return;
         }
@@ -891,6 +985,9 @@ fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
         // read now: nothing reads it while no /ws2 app follows it
         refresh_overview();
         *c.sent_key().borrow_mut() = quiet_key(&registry().overview());
+    }
+    if stream == ORGANIZE {
+        refresh_organize();
     }
     v.at.borrow_mut().insert(stream.to_owned(), at);
     if stream == OVERVIEW {
@@ -904,7 +1001,7 @@ fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
     } else {
         sync(c, stream, None);
     }
-    if stream != OVERVIEW {
+    if stream != OVERVIEW && stream != ORGANIZE {
         watch(stream);
     }
 }
@@ -969,6 +1066,9 @@ pub(crate) fn caught_up(c: &ClientRef) {
         if s == OVERVIEW {
             refresh_overview();
             *c.sent_key().borrow_mut() = quiet_key(&registry().overview());
+        }
+        if s == ORGANIZE {
+            refresh_organize();
         }
         sync(c, &s, None);
     }
