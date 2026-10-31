@@ -282,7 +282,8 @@ try {
       await page.getByText('Would you like to run the following command?').waitFor()
       check(!(await page.locator('.composer').count()), `${label}: the question takes the box's place`)
       check(await page.locator('.prompt-why').isVisible(), `${label}: one line says where the model controls went`)
-      check((await page.evaluate(() => document.activeElement?.textContent)) === '1Yes, proceed', `${label}: focus on the likely answer`)
+      const likely = await page.waitForFunction(() => document.activeElement?.textContent === '1Yes, proceed', null, { timeout: 3000 }).then(() => true, () => false)
+      check(likely, `${label}: focus on the likely answer`)
       await layout(page, `${label} question`)
       await page.screenshot({ path: path.join(shots, `session-${w}-${scheme}-question.png`) })
       await ctx.close()
@@ -334,16 +335,20 @@ try {
     check(!(await page.locator('.bubble-pending').count()), 'send: no longer pending once the record has it')
     await page.screenshot({ path: path.join(shots, 'session-390-light-sent.png') })
 
-    // the agent asks: keys pick, and the answer names its question (Ghostex #251)
+    // the agent asks: keys pick, and the answer names its question (Ghostex #251). The keys go
+    // in as soon as the card shows: the card holds focus from its first frame, before its likely
+    // choice can take it (that gap lost the keys on slow CI runners)
     await page.goto(`${base}/next/m/local/p/12`)
     await page.getByText('Would you like to run the following command?').waitFor()
+    check(await page.evaluate(() => !!document.activeElement?.closest('.prompt')), 'questions: the card has focus as soon as it shows')
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('Enter')
     await page.getByText('Which store should the passkeys live in?').waitFor()
     const first = state.answers[0] as Record<string, unknown> | undefined
     check(first?.option === 2 && first.question === promptKey(accounts().state.screen.prompt), `answer: ${JSON.stringify(first)}`)
     check((await page.getByRole('tab').count()) === 3, 'questions: one tab each')
-    check((await page.evaluate(() => document.activeElement?.textContent ?? '')).startsWith('1In the accounts table'), 'questions: focus moves to the new question')
+    const moved = await page.waitForFunction(() => (document.activeElement?.textContent ?? '').startsWith('1In the accounts table'), null, { timeout: 3000 }).then(() => true, () => false)
+    check(moved, 'questions: focus moves to the new question')
     await page.screenshot({ path: path.join(shots, 'session-390-light-questions.png') })
     // the free-text choice opens a box for the answer
     await page.keyboard.press('3')

@@ -11,13 +11,22 @@ use crate::prompt::{self as rules, Block, DiffLine, KeyAction};
 use crate::{api, dom, platform};
 
 const FREE: &str = "prompt-free";
+const CARD: &str = "prompt-card";
 
-/// Focus once the screen has drawn what's changing: the choices are disabled while an answer is on
-/// its way, and a disabled button can't take focus.
-fn focus_soon(id: String) {
+/// Focus on `id` once the screen has drawn it: the choices are disabled while an answer is on its
+/// way, and a disabled button can't take focus, so it tries again until it lands (a slow phone can
+/// take a few frames). With `yield_to_keys`, it gives up as soon as anything other than the card
+/// itself has focus, so it never undoes an arrow key pressed in the meantime.
+fn focus_soon(id: String, yield_to_keys: bool) {
     spawn(async move {
-        platform::sleep(16).await;
-        dom::focus(&id);
+        for _ in 0..60 {
+            platform::sleep(16).await;
+            let at = dom::active_id();
+            if at.as_deref() == Some(id.as_str()) || (yield_to_keys && at.is_some_and(|a| a != CARD)) {
+                return;
+            }
+            dom::focus(&id);
+        }
     });
 }
 
@@ -41,7 +50,10 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
             error.set(None);
             free.set(None);
             focused.set(likely);
-            focus_soon(option_id(likely));
+            // the card holds focus at once, so keys pressed before a choice can take it still
+            // reach it, and the likely choice takes it as soon as it can
+            dom::focus(CARD);
+            focus_soon(option_id(likely), true);
         }));
     }
     let locked = busy().is_some() || disabled;
@@ -80,7 +92,7 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
         move |n: u64| {
             if Some(n) == free_option {
                 free.set(Some(String::new()));
-                focus_soon(FREE.to_string());
+                focus_soon(FREE.to_string(), false);
                 return;
             }
             run(n.to_string(), Call::Answer { key: key.clone(), n, text: None });
@@ -111,7 +123,7 @@ pub fn PromptCard(prompt: ScreenPrompt, host: String, pane: String, disabled: bo
     let tabs = prompt.tabs.clone().filter(|t| t.len() > 1).unwrap_or_default();
     let whole = prompt.whole_lines == Some(true);
     rsx! {
-        div { class: "prompt slide-up", role: "group", "aria-label": "{title}", onkeydown: on_key,
+        div { id: CARD, class: "prompt slide-up", role: "group", tabindex: "-1", "aria-label": "{title}", onkeydown: on_key,
             if !tabs.is_empty() {
                 div { class: "prompt-tabs", role: "tablist",
                     for t in tabs.iter() {

@@ -761,6 +761,7 @@ input:focus-visible { outline: none; }
 /* ---------- an agent's question ---------- */
 
 .prompt { display: flex; min-height: 0; max-height: 70dvh; flex-direction: column; overflow: hidden; border-radius: 24px; border: 1px solid var(--line-strong); background: var(--panel); box-shadow: var(--shadow-lg); }
+.prompt:focus-visible { outline: none; }
 .prompt-tabs { display: flex; flex-shrink: 0; gap: 6px; overflow-x: auto; border-bottom: 1px solid var(--line); padding: 10px 16px; scrollbar-width: none; }
 .prompt-tab { display: inline-flex; height: 24px; flex-shrink: 0; align-items: center; gap: 4px; border-radius: 9999px; background: var(--raised); padding: 0 10px; font-size: 12px; font-weight: 500; color: var(--fg-3); }
 .prompt-tab-on { background: var(--fg); color: var(--bg); }
