@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  BookOpen, ChevronDown, ChevronLeft, ChevronRight, CloudOff, Copy, Ellipsis, ExternalLink, FileText, FolderOpen, FolderPlus, LayoutTemplate, Link2Off, PanelsTopLeft,
-  NotebookText, QrCode, RotateCw, Router, Search, ShieldCheck, Smartphone, Table2, Tablet, Monitor, Trash2,
+  BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleArrowUp, CloudOff, Copy, Ellipsis, ExternalLink, FileText, FolderOpen, FolderPlus, LayoutTemplate, Link2Off, PanelsTopLeft,
+  NotebookText, RotateCw, Search, ShieldCheck, Smartphone, Table2, Tablet, Monitor, Trash2,
 } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
 import { ApiError } from '../lib/api.ts'
@@ -12,7 +12,7 @@ import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
 import { listHubs } from '../lib/hubs.ts'
 import {
-  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupName, groupPages, hubForgot, hubIdOf, hubUnreachable, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId,
+  DEVICES, PART_LABEL, changedAt, fitScale, frameSrc, noteSrc, noteTitle, groupName, groupPages, hubForgot, hubIdOf, hubUnreachable, isBridged, isChanged, leftText, loadPages, markSeen, matchesPage, pageBase, pageHref, pageId,
   usePages, type Device, type Page, type Part,
 } from '../lib/pages.ts'
 import { Logo } from '../components/AppShell.tsx'
@@ -21,7 +21,6 @@ import { contextMenu } from '../components/ui/ContextMenu.tsx'
 import { FilterInput } from '../components/ui/FilterInput.tsx'
 import { PullRefresh } from '../components/ui/PullRefresh.tsx'
 import { MachineIcon, machineKindOf } from '../components/ui/MachineIcon.tsx'
-import { MachineSheet } from '../components/Sheets.tsx'
 import {
   ADD_COMMAND, BROWSER_HINT, ChangedDot, PAGES_DOCS, PageFrame, ProgressBar, SANDBOX_NOTE, copyFolder, openInBrowser, openPageSheet, pageLabel, pageMenu, removePage, renewLink,
   revokeLinks, updatedLine, useMachines, usePageLink, useRunningNames, useSiteParts, type PageMachine,
@@ -46,8 +45,6 @@ export function PagesPage() {
   const host = params.host ? decodeURIComponent(params.host) : undefined
   const id = host && params.slug ? pageId(host, params.slug) : undefined
   const wide = useWide()
-  const hubless = usePages((s) => s.hubless)
-  if (hubless) return <Hubless wide={wide} />
   if (wide) return <PagesDesktop selected={id} />
   // keyed by page: picking another page from the viewer starts it afresh
   return id ? <PhoneViewer key={id} id={id} /> : <PhoneList />
@@ -96,7 +93,11 @@ function useViewer(page: Page | undefined) {
   }, [page?.id, changed])
   // the page's hub didn't answer the last poll: a frame already showing stays, marked out of date
   const stale = usePages((s) => !!page && hubUnreachable(page.host, s.unreachable))
-  return { link, error, retry, parts, part, setPart: pickPart, note, setNote: pickNote, src, frameKey: `${src}#${n}`, reload, stale }
+  // a page on a computer paired with the phone: the app's viewer renders it from the link's files,
+  // and there is no address to open outside the app
+  const bridged = !!page && isBridged(page.host)
+  const bridge = bridged && link ? link.url : undefined
+  return { link, error, retry, parts, part, setPart: pickPart, note, setNote: pickNote, src, frameKey: `${src}#${n}`, reload, stale, bridged, bridge }
 }
 
 type Viewer = ReturnType<typeof useViewer>
@@ -148,15 +149,31 @@ function StaleLine({ name, className }: { name: string; className?: string }) {
 /** A paired hub's name by its id, for a hub that may have been forgotten here since. */
 const hubName = (id: string | undefined) => listHubs().find((h) => h.id === id)?.name ?? 'The hub'
 
-/** One line for each paired hub that refused this phone: forgotten there, so its pages are gone until it pairs again. */
-function ForgottenLines({ className }: { className?: string }) {
+/**
+ * Lines over the list: each paired hub that refused this phone (forgotten there, so its pages are
+ * gone until it pairs again), and each computer paired with the phone whose inyon is too old to
+ * serve its pages.
+ */
+function NoticeLines({ className }: { className?: string }) {
   const forgotten = usePages((s) => s.forgotten)
-  return forgotten.map((id) => (
-    <p key={id} role="status" className={clsx('flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
-      <Link2Off className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
-      <span>{hubName(id)} forgot this phone. Pair it again from the hub to see its pages here.</span>
-    </p>
-  ))
+  const outdated = usePages((s) => s.outdated)
+  const machine = useMachines()
+  return (
+    <>
+      {forgotten.map((id) => (
+        <p key={id} role="status" className={clsx('flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
+          <Link2Off className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
+          <span>{hubName(id)} forgot this phone. Pair it again from the hub to see its pages here.</span>
+        </p>
+      ))}
+      {outdated.map((host) => (
+        <p key={host} role="status" className={clsx('flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
+          <CircleArrowUp className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
+          <span>Update inyon on {machine(host).name} to open its pages here.</span>
+        </p>
+      ))}
+    </>
+  )
 }
 
 function StateCard({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
@@ -202,27 +219,6 @@ function NoPages({ wide }: { wide?: boolean }) {
   )
 }
 
-/** The phone app with no hub: the phone can't serve a page itself. */
-function Hubless({ wide }: { wide: boolean }) {
-  const [pair, setPair] = useState(false)
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <ListHeader />
-      <div className={clsx('mx-auto w-full max-w-[560px] px-3 pt-3 pb-8', wide && 'pt-10')}>
-        <div className="flex gap-3 rounded-3xl border border-line bg-elev p-4 shadow-card">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-line bg-sunken text-fg-2"><Router className="size-[18px]" /></span>
-          <div className="min-w-0">
-            <h2 className="text-[15px] font-semibold">Pages open through a hub</h2>
-            <p className="mt-0.5 mb-3 text-[14px] leading-relaxed text-fg-2">This phone reaches your computers itself, and pages need a hub to serve them. Pair one and its pages show up here.</p>
-            <Button size="lg" onClick={() => setPair(true)}><QrCode className="size-4" /> Pair a hub</Button>
-          </div>
-        </div>
-      </div>
-      <MachineSheet open={pair} onClose={() => setPair(false)} />
-    </div>
-  )
-}
-
 function ListHeader({ right }: { right?: React.ReactNode }) {
   return (
     <header className="pt-safe sticky top-0 z-20 border-b border-line bg-bg">
@@ -261,7 +257,7 @@ function PhoneList() {
       <div className="mx-auto w-full max-w-[720px] px-3 pt-2 pb-8">
         {filtering && <FilterInput value={q} onChange={setQ} placeholder="Filter pages" className="my-1.5 h-11" />}
         {error && <p role="alert" className="mx-1 my-2 text-[13px] text-danger">{error}</p>}
-        <ForgottenLines className="mx-1 my-2" />
+        <NoticeLines className="mx-1 my-2" />
         {pages === null ? (
           <Waiting shape="cards" count={2} label="Loading pages" className="pt-3" />
         ) : !pages.length ? (
@@ -363,7 +359,7 @@ function PhoneViewer({ id }: { id: string }) {
     ? [
         { key: 'reload', label: 'Reload', icon: <RotateCw className="size-4" />, disabled: !v.link, onSelect: v.reload },
         ...(v.parts.length > 1 ? v.parts.map((pt, i) => ({ key: pt, label: PART_LABEL[pt], icon: PART_ICON[pt], selected: !v.note && v.part === pt, separated: i === 0, disabled: !v.link, onSelect: () => v.setPart(pt) })) : []),
-        { key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page) },
+        ...(v.bridged ? [] : [{ key: 'browser', label: 'Open in browser', hint: BROWSER_HINT, icon: <ExternalLink className="size-4" />, separated: true, disabled: !v.link, onSelect: () => void openInBrowser(page) }]),
       ]
     : []
   const machineItems: MenuItem[] = page && m
@@ -438,7 +434,7 @@ function PhoneViewer({ id }: { id: string }) {
             <Waiting shape="panel" count={2} label="Opening" className="p-5" />
           )
         ) : v.src && (m!.online || v.stale) ? (
-          <PageFrame key={v.frameKey} src={v.src} title={page.name} className="absolute inset-0 size-full border-0 bg-bg" />
+          <PageFrame key={v.frameKey} src={v.src} bridge={v.bridge} title={page.name} className="absolute inset-0 size-full border-0 bg-bg" />
         ) : (
           <FrameState page={page} machine={m!} error={v.error} onRetry={() => void v.retry()} onBack={back} />
         )}
@@ -499,7 +495,7 @@ function PagesDesktop({ selected }: { selected?: string }) {
         )}
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pt-0.5 pb-3">
           {error && <p role="alert" className="px-2 py-2 text-[13px] text-danger">{error}</p>}
-          <ForgottenLines className="px-2 py-2" />
+          <NoticeLines className="px-2 py-2" />
           {pages === null ? (
             <Waiting shape="rows" label="Loading pages" className="px-1" />
           ) : !pages.length ? (
@@ -658,9 +654,11 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
         <Segmented size="sm" label="Frame size" value={device} onChange={setDevice} options={DEVICE_OPTIONS} />
         <IconButton label="Reload" disabled={!v.link} onClick={v.reload}><RotateCw className="size-4" /></IconButton>
         {/* a fresh 12 h link each time; the tab sits at the hub's address, which is never a sign-in page */}
-        <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page)}>
-          <ExternalLink className="size-4" />
-        </IconButton>
+        {!v.bridged && (
+          <IconButton label="Open in new tab" title="Open in new tab. A 12 h link; never sign in there." disabled={!v.link} onClick={() => void openInBrowser(page)}>
+            <ExternalLink className="size-4" />
+          </IconButton>
+        )}
         <Menu align="end" items={menu} header={page.name} trigger={({ toggle, ref }) => <IconButton label={`More for ${page.name}`} onClick={toggle} ref={ref}><Ellipsis className="size-4" /></IconButton>} />
       </div>
       <div ref={stage} className={clsx('relative flex min-h-0 flex-1 overflow-hidden bg-sunken/60', size ? 'items-start justify-center p-3' : 'p-3')}>
@@ -668,12 +666,12 @@ function DesktopViewer({ page, m }: { page: Page; m: PageMachine }) {
           size ? (
             <div className="relative shrink-0" style={{ width: size.w * scale, height: size.h * scale }}>
               <div className="animate-pop absolute top-0 left-0 origin-top-left overflow-hidden rounded-xl border border-line-strong bg-bg shadow-soft" style={{ width: size.w, height: size.h, transform: `scale(${scale})` }}>
-                <PageFrame key={v.frameKey} src={v.src} title={page.name} className="block size-full border-0" />
+                <PageFrame key={v.frameKey} src={v.src} bridge={v.bridge} title={page.name} className="block size-full border-0" />
               </div>
             </div>
           ) : (
             <div className="animate-pop size-full overflow-hidden rounded-xl border border-line-strong bg-bg shadow-soft">
-              <PageFrame key={v.frameKey} src={v.src} title={page.name} className="block size-full border-0" />
+              <PageFrame key={v.frameKey} src={v.src} bridge={v.bridge} title={page.name} className="block size-full border-0" />
             </div>
           )
         ) : (

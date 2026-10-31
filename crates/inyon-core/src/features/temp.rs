@@ -64,6 +64,12 @@ async fn run(host_id: &str, args: &str, input: Option<String>, timeout_ms: u64) 
     read_answer(&name, &r)
 }
 
+/// What an inyon from before the command asked for says (clap's words, and the engine's).
+pub fn answered_too_old(r: &ExecResult) -> bool {
+    let said = format!("{}\n{}", r.stderr, r.stdout);
+    re!(r"(?im)unrecognized subcommand|unexpected argument|unknown command|^inyon-engine\b|^usage:").is_match(&said)
+}
+
 /// The command's JSON, or the error a person can act on.
 pub fn read_answer(name: &str, r: &ExecResult) -> HubResult<Map<String, Value>> {
     let last = r.stdout.trim().split('\n').next_back().unwrap_or("");
@@ -74,8 +80,7 @@ pub fn read_answer(name: &str, r: &ExecResult) -> HubResult<Map<String, Value>> 
     if r.code == 127 || said.contains("inyon: not found") {
         return Err(http(409, missing(name)));
     }
-    // what an inyon from before `temp` says when asked for it (clap's words, and the engine's)
-    if re!(r"(?im)unrecognized subcommand|unexpected argument|unknown command|^inyon-engine\b|^usage:").is_match(&said) {
+    if answered_too_old(r) {
         return Err(http(409, too_old(name)));
     }
     if r.code == 124 {

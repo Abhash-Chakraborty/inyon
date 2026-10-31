@@ -39,8 +39,6 @@ tokio = { version = "1.47", features = ["rt", "net", "time", "process", "io-util
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 url = "2.5"
-# a page's research/*.md notes, shown as pages in the viewer
-pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

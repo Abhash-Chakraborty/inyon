@@ -47,7 +47,7 @@ Tap a card to open the page full screen. The bar on top has:
 - **Back**, which returns to the list. The phone's own back button does the same, even after you've clicked around inside the page.
 - The machine's name, a menu of the other pages on that machine and a way to open the machine.
 - **Notes**, from 0.22.4, when the site has a `research` folder with Markdown files in it. See [Notes](#notes).
-- **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser**. **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
+- **⋯** with **Reload**, **Plan**, **Mockups** and **Matrix** when the site has them, and **Open in browser** (not for a page on a computer paired with the phone directly). **Reload** opens the page with a new link. Picking a part always loads it, also the one already ticked, which takes you back after the page's own links moved you somewhere else.
 
 Under the bar, a line says **Sandboxed page: never sign in here**. It stays on screen, so a page can't pass itself off as the app asking for your password.
 
@@ -55,7 +55,19 @@ If the phone loses a hub for a moment (a weak signal, the VPN dropping, the hub 
 
 Long-press a card, or use its **⋯**, for **Open**, **Open in browser**, **Revoke links**, **Show folder** and **Remove**. **Show folder** lists the folder's path, the machine, the project and which agent added the page.
 
-The Android app reaches pages through a hub. With only computers paired directly over the phone link, the tab says **Pages open through a hub**. Tap **Pair a hub** there, or pair one under **Computers**, and its pages appear. With several hubs paired, you see all their pages together.
+The Android app lists the pages of every hub you paired, all together, and from 0.23.3 also those on the computers paired with the phone directly.
+
+### Pages on the phone's own computers
+
+A computer paired with the phone over the phone link needs no hub for its pages. The phone asks the computer's own `inyon` for the list and for each file of a page, over the same encrypted link it uses for everything else, and shows the page in the same sandboxed viewer. The rules are the hub's: nothing outside the page's folder, no names starting with a dot, nothing a symlink leads to outside the folder. A page there can't load anything from the internet either.
+
+A few things differ from a page behind a hub:
+
+- There's no **Open in browser**: the page has no address outside the app. **Revoke links** still ends the link on screen.
+- The phone asks a computer for one file at a time, so a site with many files takes a moment to open the first time. While a page is open the phone keeps the files it already has until something in that folder changes.
+- A single file can be up to 4 MB.
+- **Add a folder** offers each computer that's online, next to each hub's own machine.
+- The computer needs `inyon` 0.22 or later. With an older one the list says **Update inyon on *machine* to open its pages here.**
 
 ## On a desktop
 
@@ -121,6 +133,7 @@ For the same reason, a session's **Preview** tab won't show Inyon's own address.
 | ***machine* is offline** | The hub's computer is off or out of reach. **Try again** once it's back |
 | **Can't reach *hub* now** under the bar, or **The hub is out of reach** | The phone's last check with that hub failed. The page stays as it was and catches up when the hub answers. Check the phone's connection or VPN |
 | ***hub* forgot this phone** | The hub refused the phone (it was forgotten on the hub), so its pages left the list. Pair the phone again from the hub |
+| **Update inyon on *machine* to open its pages here.** | That computer is paired with the phone directly and runs an `inyon` from before 0.22, which can't serve pages. Run `inyon update` on it |
 | **This page is gone** | It was taken off the list on that machine. Add the folder again if you still want it |
 | **Couldn't open "*name*"** | The app couldn't get a link from the hub; the reason is under it. **Try again** |
 | **Not found** inside the page | The page's folder was moved or deleted, or a link inside the page points at a file that isn't there. `inyon pages` on that computer says when a folder is gone; add it again from its new place |

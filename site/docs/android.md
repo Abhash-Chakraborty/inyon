@@ -73,6 +73,10 @@ You can also connect *from a paired computer*: the phone asks that computer to S
 
 Passwords and keys stay in Android's encrypted storage, and the app's data is excluded from backups and from moving to a new phone. The phone has to reach the server itself, so use the same Wi-Fi or a VPN. A server on Tailscale SSH lets the phone in with no key at all.
 
+## Pages
+
+The **Pages** tab shows the plans and mockups your agents build, from every hub you paired and, from 0.23.3, from the computers paired with the phone directly. A computer's pages come over the same encrypted link as its sessions, with no hub needed; it needs `inyon` 0.22 or later. [Pages](pages.md#pages-on-the-phones-own-computers) has the details.
+
 ## Staying connected
 
 Android pauses apps in the background, which drops their connections. **Settings → Notifications → Stay connected**, on by default, keeps a small ongoing notification so your sessions stay live and alerts arrive at once. The notification has **Open** and **Stop**.

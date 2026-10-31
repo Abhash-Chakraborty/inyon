@@ -662,6 +662,38 @@ fn get_lines_sends_the_answer_then_the_file_as_base64_lines_of_48_kib() {
     assert_eq!(stdout.lines().count(), 1, "{stdout}");
 }
 
+// the phone app with no hub asks a paired computer for each file over its link, with a 4 MiB cap
+// (crates/inyon-phone/src/pages.rs): what it gets back for a file, a missing one, a bigger one and
+// a path that tries to climb out
+#[test]
+fn a_phone_with_no_hub_gets_each_file_under_its_own_cap() {
+    let h = Home::new("get-phone");
+    let site = h.site("plans/robot", "Robot");
+    fs::create_dir_all(site.join("kit")).unwrap();
+    fs::write(site.join("kit/site.css"), "body{margin:0}").unwrap();
+    fs::write(site.join("big.webp"), vec![1u8; 4 * 1024 * 1024 + 1]).unwrap();
+    assert_eq!(h.run(&["pages", "add", s(&site), "--slug", "robot"]).0, 0);
+    let phone = |segments: &[&str]| {
+        let mut a = vec!["pages", "get", "--json", "--lines", "--max", "4194304", "--", "robot"];
+        a.extend_from_slice(segments);
+        let (code, stdout, _) = h.run(&a);
+        assert_eq!(code, 0);
+        let mut lines = stdout.lines();
+        let answer: Value = serde_json::from_str(lines.next().unwrap()).unwrap();
+        (answer, lines.count())
+    };
+    let (css, lines) = phone(&["kit", "site.css"]);
+    assert_eq!((css["sends"].as_u64(), lines), (Some(14), 1), "{css}");
+    let (missing, lines) = phone(&["kit", "nope.css"]);
+    assert_eq!((missing["items"][0].is_null(), missing.get("sends"), lines), (true, None, 0), "{missing}");
+    let (big, lines) = phone(&["big.webp"]);
+    assert_eq!((big["big"].as_bool(), big.get("sends"), lines), (Some(true), None, 0), "{big}");
+    for climb in [&["..", "..", ".ssh", "id_ed25519"][..], &["kit", "..", "..", "secret.txt"], &["%2e%2e", "x"]] {
+        let (v, lines) = phone(climb);
+        assert_eq!((v.get("sends"), lines), (None, 0), "{climb:?} → {v}");
+    }
+}
+
 #[test]
 fn a_sites_stamp_moves_on_when_a_file_it_serves_changes_and_not_for_dot_files() {
     let h = Home::new("stamp");

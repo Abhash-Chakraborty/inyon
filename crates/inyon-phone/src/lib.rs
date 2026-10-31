@@ -6,6 +6,7 @@
 mod computers;
 pub mod keys;
 pub mod link;
+pub mod pages;
 pub mod phone;
 pub mod push;
 mod servers;

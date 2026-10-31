@@ -32,8 +32,9 @@ use inyon_protocol::PageProgress;
 use serde_json::{json, Map, Number, Value};
 
 use crate::http::{ok, ok_json, Req, Resp};
-use crate::pages_remote::{self, slashed, Listing, RemoteLists, RemotePage};
 use crate::server::{guarded, h, Routes};
+use inyon_core::features::pages_remote::{self, slashed, Listing, RemoteLists, RemotePage};
+pub use inyon_core::features::pages_remote::{as_record, is_note, is_session, Record, NOTES_DIR, NOTES_MAX, NOT_CONNECTED, UNKNOWN_PAGE};
 
 /// The store key (a file in the hub's data folder) that keeps each site's epoch, `{"<host>/<slug>": n}`.
 pub const EPOCHS_KEY: &str = "page-epochs";
@@ -50,9 +51,6 @@ const MARKER_MAX: u64 = 64 * 1024;
 /// A lock holds a process id and a tag; anything longer isn't one of ours.
 const LOCK_MAX: u64 = 256;
 
-pub const UNKNOWN_PAGE: &str = "Unknown page";
-/// A machine the hub doesn't have, or can't reach now.
-pub const NOT_CONNECTED: &str = "That machine isn't connected";
 pub const BROKEN_FILE: &str = "~/.inyon/pages.json isn't a page list Inyon can read. Fix it or delete it, then try again.";
 pub const LOCKED: &str = "Another program is changing ~/.inyon/pages.json. Try again in a moment.";
 pub const NOT_SAVED: &str = "The hub couldn't write to its data folder, so the old links stay closed only until it restarts. Check the hub's disk, then revoke again.";
@@ -62,43 +60,12 @@ pub fn pages_file(home: &Path) -> PathBuf {
     home.join(".inyon").join("pages.json")
 }
 
-/// One entry of the list as the file has it, when every field has its type and the slug is a slug.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Record {
-    pub slug: String,
-    pub name: String,
-    pub path: String,
-    pub project: String,
-    pub by: String,
-    /// unix ms, kept as the file wrote it
-    pub added: Number,
-    /// the agent conversation that added it, when the file says (from 0.22.5)
-    pub session: Option<String>,
-}
-
-pub(crate) fn as_record(v: &Value) -> Option<Record> {
-    let o = v.as_object()?;
-    let s = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
-    let slug = s("slug").filter(|x| is_slug(x))?;
-    let added = match o.get("added") {
-        Some(Value::Number(n)) if n.as_f64().is_some_and(f64::is_finite) => n.clone(),
-        _ => return None,
-    };
-    let session = s("session").filter(|x| is_session(x));
-    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added, session })
-}
-
 fn record_json(r: &Record) -> Value {
     let mut v = json!({ "slug": r.slug, "name": r.name, "path": r.path, "project": r.project, "by": r.by, "added": Value::Number(r.added.clone()) });
     if let Some(s) = &r.session {
         v["session"] = json!(s);
     }
     v
-}
-
-/// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
-pub fn is_session(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
 }
 
 /// The session a page belongs to: the one that added it, or the one it was found under (kept by
@@ -708,18 +675,6 @@ fn lexical(p: &Path) -> PathBuf {
     out
 }
 
-/// The folder of a site's notes, which the app lists in the viewer's Notes drawer.
-pub const NOTES_DIR: &str = "research";
-/// The most notes listed for one site.
-pub const NOTES_MAX: usize = 200;
-
-/// Whether a file in a site's notes folder is listed as a note: Markdown, a name a `/v/` address
-/// can carry (no dot first, no slash), and not too long.
-pub fn is_note(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    !name.starts_with('.') && name.len() <= 120 && lower.ends_with(".md") && lower.len() > 3 && !name.contains(['/', '\\', '\0'])
-}
-
 /// The Markdown notes in a site's `research/` folder, by name, sorted: plain files only, and only
 /// when `research` is a real folder, not a symlink. `inyon pages --json` lists them the same way
 /// (apps/cli/src/pages.rs) for a page on another machine.
@@ -1145,7 +1100,7 @@ async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyCo
         match stamp.as_deref().and_then(|st| p.remote.kept(&key, st)) {
             Some(kept) => kept,
             None => {
-                let l = Rc::new(pages_remote::get_lines(&claims.h, &claims.s, &root, &segments, slash).await.unwrap_or_default());
+                let l = Rc::new(pages_remote::get_lines(&claims.h, &claims.s, &root, &segments, slash, pages_remote::STREAM_FILE_MAX).await.unwrap_or_default());
                 if let Some(st) = stamp.filter(|_| l.answered() && !l.short) {
                     p.remote.keep(key, st, l.clone());
                 }
@@ -1153,7 +1108,7 @@ async fn remote_listing(p: &Pages, method: &str, target: &str, verify: &VerifyCo
             }
         }
     } else {
-        Rc::new(pages_remote::get(&claims.h, &claims.s, &root, &segments, slash, if_none_match).await.unwrap_or_default())
+        Rc::new(pages_remote::get(&claims.h, &claims.s, &root, &segments, slash, if_none_match, pages_remote::REMOTE_FILE_MAX).await.unwrap_or_default())
     };
     Some(RemoteView { host: claims.h, slug: claims.s, root, listing })
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { agentDef, type HostState, type PageEntry, type PageOpen } from '@inyon/protocol'
+import { agentDef, type HostState, type PageEntry, type PageList, type PageOpen } from '@inyon/protocol'
 import { api, ApiError } from './api.ts'
 import { hubHostId, isHubHost, listHubs, splitHostId, type PairedHub } from './hubs.ts'
 import { isPhone } from './phone.ts'
@@ -8,7 +8,9 @@ import { allPanes, paneTitle } from './overview.ts'
 /**
  * Pages: sites an agent made (plans, mockups) that the hub serves under a token link, shown in a
  * sandboxed frame. The list comes from GET /api/pages on the hub this app runs on, or, in the
- * phone app, from every paired hub with the phone's token. The phone itself can't serve a page.
+ * phone app, from every paired hub with the phone's token and from the phone's own core, which
+ * asks the computers paired with the phone. A page on one of those has no address a browser can
+ * open: the app's viewer renders it from its files (lib/pageBridge.ts, src/pageview).
  */
 
 /** A page as the app lists it: its entry, with the hub's machine id as this app names it. */
@@ -178,6 +180,12 @@ export const nextRetry = (wait: number) => Math.min(wait * 2, RENEW_RETRY_MAX_MS
 /** Where a page's hub is: '' for the hub this app came from, else the paired hub's address. */
 export const pageBase = (host: string) => splitHostId(host).hub?.url ?? ''
 
+/**
+ * Whether a page is on a computer paired with the phone rather than behind a hub: the phone core
+ * answers its link, which only the app's viewer can open (no browser outside the app can).
+ */
+export const isBridged = (host: string) => isPhone() && !isHubHost(host)
+
 /** A page link as the browser outside the app needs it, with the hub's address in front. */
 export const absoluteLink = (host: string, url: string) => `${pageBase(host) || location.origin}${url}`
 
@@ -263,8 +271,8 @@ export const fitScale = (w: number, h: number, stageW: number, stageH: number, p
 interface PagesState {
   /** null until the first answer */
   pages: Page[] | null
-  /** the phone app with no hub paired: pages open through a hub, so there is nothing to list */
-  hubless: boolean
+  /** in the phone app, the computers paired with it whose inyon is too old to serve their pages (by host id) */
+  outdated: string[]
   error?: string
   seen: Record<string, number>
   /** in the phone app, the paired hubs that didn't answer the last time: their pages stay listed, shown offline */
@@ -273,7 +281,7 @@ interface PagesState {
   forgotten: string[]
 }
 
-export const usePages = create<PagesState>(() => ({ pages: null, hubless: false, seen: loadSeen(), unreachable: [], forgotten: [] }))
+export const usePages = create<PagesState>(() => ({ pages: null, outdated: [], seen: loadSeen(), unreachable: [], forgotten: [] }))
 
 /** A hub that answered "who are you?": the phone was forgotten there, or this app was signed out. */
 export const isRefusal = (e: unknown) => e instanceof ApiError && (e.status === 401 || e.status === 403)
@@ -296,6 +304,14 @@ export const hubUnreachable = (host: string, unreachable: string[]) => {
 const asPages = (entries: PageEntry[] | undefined, host: (h: string) => string = (h) => h): Page[] =>
   (Array.isArray(entries) ? entries : []).map((e) => ({ ...e, host: host(e.host), id: pageId(host(e.host), e.slug) }))
 
+/** What the phone core lists: the paired computers' pages, and those too old to say. */
+type ComputerPages = PageList & { outdated?: unknown }
+
+async function fromComputers(): Promise<{ pages: Page[]; outdated: string[] }> {
+  const r = (await api.pages()) as ComputerPages
+  return { pages: asPages(r?.pages), outdated: Array.isArray(r?.outdated) ? r.outdated.filter((h): h is string => typeof h === 'string') : [] }
+}
+
 async function fromHub(hub: PairedHub): Promise<Page[]> {
   try {
     const r = await api.hubPages(hub)
@@ -306,6 +322,9 @@ async function fromHub(hub: PairedHub): Promise<Page[]> {
     throw e
   }
 }
+
+const ok = <T>(value: T): PromiseSettledResult<T> => ({ status: 'fulfilled', value })
+const no = (reason: unknown): PromiseRejectedResult => ({ status: 'rejected', reason })
 
 let loading: Promise<void> | undefined
 /** Asks for the list again (at most one request at a time). */
@@ -322,18 +341,22 @@ async function fetchPages(): Promise<void> {
   try {
     if (!isPhone()) {
       const r = await api.pages()
-      usePages.setState({ pages: asPages(r?.pages), hubless: false, error: undefined, unreachable: [], forgotten: [] })
+      usePages.setState({ pages: asPages(r?.pages), outdated: [], error: undefined, unreachable: [], forgotten: [] })
       return
     }
     const hubs = listHubs()
-    if (!hubs.length) return usePages.setState({ pages: [], hubless: true, error: undefined, unreachable: [], forgotten: [] })
-    const got = await Promise.allSettled(hubs.map(fromHub))
+    const [own, ...got] = await Promise.all([fromComputers().then(ok, no), ...hubs.map((h) => fromHub(h).then(ok, no))])
     // a hub out of reach (a blip, a restart, the phone off the VPN) keeps the pages it had, shown
     // offline; only an answer from a hub changes its list, and one that refuses the phone empties it
     const before = usePages.getState().pages ?? []
     const pages: Page[] = []
     const unreachable: string[] = []
     const forgotten: string[] = []
+    let outdated = usePages.getState().outdated
+    if (own!.status === 'fulfilled') {
+      pages.push(...own!.value.pages)
+      outdated = own!.value.outdated
+    } else pages.push(...before.filter((p) => hubIdOf(p.host) === undefined))
     got.forEach((g, i) => {
       const hub = hubs[i]!
       if (g.status === 'fulfilled') pages.push(...g.value)
@@ -343,9 +366,11 @@ async function fetchPages(): Promise<void> {
         pages.push(...before.filter((p) => hubIdOf(p.host) === hub.id))
       }
     })
-    const failed = got.find((g): g is PromiseRejectedResult => g.status === 'rejected' && !isRefusal(g.reason))
-    // all of them out of reach is an error; a forgotten hub says so on its own line
-    usePages.setState({ pages, hubless: false, unreachable, forgotten, error: failed && !got.some((g) => g.status === 'fulfilled') ? (failed.reason as Error).message : undefined })
+    const failed = [own!, ...got].find((g): g is PromiseRejectedResult => g.status === 'rejected' && !isRefusal(g.reason))
+    // all of them out of reach is an error (the core answering with no computer's pages doesn't
+    // count); a forgotten hub says so on its own line
+    const answered = got.some((g) => g.status === 'fulfilled') || (own!.status === 'fulfilled' && own!.value.pages.length > 0)
+    usePages.setState({ pages, outdated, unreachable, forgotten, error: failed && !answered ? (failed.reason as Error).message : undefined })
   } catch (e) {
     // signed out: the list goes with the sign-in (the app asks for it again); anything else keeps it
     if (isRefusal(e)) usePages.setState({ pages: [], error: (e as Error).message, unreachable: [], forgotten: [] })
@@ -368,8 +393,12 @@ export const dropPage = (id: string) => usePages.setState((s) => ({ pages: s.pag
 /** Mints a link for a page on its hub. */
 export const openLink = (p: Pick<Page, 'host' | 'slug'>): Promise<PageOpen> => api.openPage(p.host, p.slug)
 
-/** The machines a folder can be added on: each hub's own machine (other machines come later). */
-export function pageHosts(): string[] {
+/**
+ * The machines a folder can be added on: the hub's own machine; in the phone app, each paired
+ * hub's own machine and each computer paired with the phone that is online (`hosts`, the app's).
+ */
+export function pageHosts(hosts: HostState[] = []): string[] {
   if (!isPhone()) return ['local']
-  return listHubs().map((h) => hubHostId(h.id, 'local'))
+  const computers = hosts.filter((h) => h.config.kind !== 'local' && !isHubHost(h.config.id) && h.status === 'online').map((h) => h.config.id)
+  return [...listHubs().map((h) => hubHostId(h.id, 'local')), ...computers]
 }

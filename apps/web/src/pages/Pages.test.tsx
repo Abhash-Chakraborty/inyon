@@ -48,7 +48,7 @@ afterAll(() => void (settings.disableIframePageLoading = loadFrames))
 
 beforeEach(() => {
   useStore.setState({ hosts: [host('local', { config: { id: 'local', kind: 'local', name: 'abhash-arm' } }), host('laptop', { config: { id: 'laptop', kind: 'node', name: 'abhash-laptop' }, status: 'error' })], hostsLoaded: true })
-  usePages.setState({ pages: [PLAN, HANDY, LAPTOP], hubless: false, error: undefined, seen: { [HANDY.id]: NOW }, unreachable: [], forgotten: [] })
+  usePages.setState({ pages: [PLAN, HANDY, LAPTOP], outdated: [], error: undefined, seen: { [HANDY.id]: NOW }, unreachable: [], forgotten: [] })
   useStore.setState({ resolvedTheme: 'light' })
 })
 afterEach(() => viewport(1024, 768))
@@ -118,11 +118,11 @@ describe('the list on a phone', () => {
     expect(screen.getByRole('button', { name: /Add a folder/ })).toBeTruthy()
   })
 
-  test('the phone app with no hub paired: pages open through a hub', async () => {
-    usePages.setState({ pages: [], hubless: true })
+  test('a computer whose inyon is too old to serve its pages is named, with what to do', async () => {
+    usePages.setState({ pages: [], outdated: ['laptop'] })
     await at('/pages')
-    expect(screen.getByText('Pages open through a hub')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Pair a hub/ })).toBeTruthy()
+    expect(screen.getByText('Update inyon on abhash-laptop to open its pages here.')).toBeTruthy()
+    expect(screen.getByText('No pages yet')).toBeTruthy()
   })
 })
 
@@ -188,6 +188,35 @@ describe('the viewer', () => {
     await act(async () => void useStore.setState({ resolvedTheme: 'dark' }))
     expect(post).toHaveBeenCalledWith({ type: 'theme', value: 'dark' }, '*')
     expect(container.querySelector('iframe')!.getAttribute('src')).toBe('/v/v1.tok.sig/?theme=light')
+  })
+
+  test("a page on a computer paired with the phone opens in the app's own viewer, in the same sandbox, with no way out to a browser", async () => {
+    ;(window as any).Capacitor = {
+      isNativePlatform: () => true,
+      getPlatform: () => 'web',
+      Plugins: { InyonDevice: { framesIsolated: async () => ({ isolated: true }), addListener: () => {}, takeLaunchHref: async () => ({}) }, App: { addListener: () => {} } },
+    }
+    try {
+      const { installNative } = await import('../lib/native.ts')
+      installNative()
+      await flush()
+      viewport(390, 844)
+      useStore.setState({ hosts: [host('laptop', { config: { id: 'laptop', kind: 'link', name: 'abhash-laptop' }, status: 'online' })] })
+      api.openPage.mockResolvedValue({ url: '/v/v1.phone.sig/', expires: Date.now() + 12 * 3_600_000, ttl: 12 * 3_600_000 } as never)
+      const { container } = await at('/pages/laptop/win-paths')
+      await flush()
+      const frame = container.querySelector('iframe')!
+      expect(frame.getAttribute('src')).toBe('/pageview.html')
+      expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups allow-downloads')
+      expect(api.openPage).toHaveBeenCalledWith('laptop', 'win-paths')
+      // its parts are asked of the phone core, which answers the link
+      expect(api.pageFile).toHaveBeenCalledWith('/v/v1.phone.sig/mockups/', 'HEAD')
+      await userEvent.click(screen.getByRole('button', { name: 'More' }))
+      expect(screen.getByRole('menuitem', { name: /Reload/ })).toBeTruthy()
+      expect(screen.queryByRole('menuitem', { name: /Open in browser/ })).toBeNull()
+    } finally {
+      delete (window as any).Capacitor
+    }
   })
 
   test('on a phone, back closes the viewer instead of walking back through the frame', async () => {
