@@ -332,11 +332,12 @@ async fn fallback(mut req: Req) -> Resp {
         crate::static_files::page_headers(&mut r);
         return r;
     }
+    let gzip = crate::static_files::takes_gzip(req.header("accept-encoding").as_deref());
     // the new app (apps/app) while it catches up with the web app at /
     if req.path == "/next" || req.path.starts_with("/next/") {
-        return crate::static_files::serve_next(&req.path);
+        return crate::static_files::serve_next(&req.path, gzip);
     }
-    crate::static_files::serve(&req.path)
+    crate::static_files::serve(&req.path, gzip)
 }
 
 // ---------- the listener ----------

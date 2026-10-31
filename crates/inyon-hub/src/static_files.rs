@@ -6,6 +6,8 @@
 use crate::http::Body;
 use axum::http::{header, HeaderValue, Response, StatusCode};
 use rust_embed::RustEmbed;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::http::{set_header, text, Resp};
 
@@ -95,16 +97,62 @@ pub fn normalize(path: &str) -> String {
     format!("/{}{}", parts.join("/"), if trailing { "/" } else { "" })
 }
 
-fn file(name: &str, data: Vec<u8>, cache: &'static str) -> Resp {
-    let mut r = Response::new(Body::from(data));
+/// Whether the browser takes gzip: `gzip` (or `*`) in Accept-Encoding, not refused with `q=0`.
+pub fn takes_gzip(accept: Option<&str>) -> bool {
+    accept.unwrap_or("").split(',').any(|coding| {
+        let mut parts = coding.split(';').map(str::trim);
+        let name = parts.next().unwrap_or("").to_ascii_lowercase();
+        let refused = parts.any(|p| p.strip_prefix("q=").and_then(|q| q.trim().parse::<f32>().ok()) == Some(0.0));
+        (name == "gzip" || name == "*") && !refused
+    })
+}
+
+/// Text and wasm shrink to a third or less; pictures and fonts are compressed already.
+fn compressible(name: &str) -> bool {
+    let t = content_type(name);
+    t.starts_with("text/") || (t.starts_with("application/") && !t.ends_with("octet-stream") && !t.ends_with("pdf")) || t == "image/svg+xml"
+}
+
+/// Files this small cost more in a gzip header than they save.
+const GZIP_FROM: usize = 1024;
+
+/// Gzip copies of the carried files, made on first request. The files are fixed in the program,
+/// so the map holds at most one copy of each and never grows past them.
+fn gzipped(key: String, data: &[u8]) -> Arc<[u8]> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Arc<[u8]>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(z) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return z.clone();
+    }
+    let mut e = flate2::write::GzEncoder::new(Vec::with_capacity(data.len() / 3), flate2::Compression::best());
+    let z: Arc<[u8]> = match std::io::Write::write_all(&mut e, data).and_then(|()| e.finish()) {
+        Ok(z) => z.into(),
+        Err(_) => return data.into(),
+    };
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(key, z.clone());
+    z
+}
+
+fn file(app: &str, name: &str, data: Vec<u8>, cache: &'static str, gzip: bool) -> Resp {
+    let squeeze = compressible(name) && data.len() >= GZIP_FROM;
+    let mut r = if squeeze && gzip {
+        let mut r = Response::new(Body::from(gzipped(format!("{app}{name}"), &data).to_vec()));
+        r.headers_mut().insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        r
+    } else {
+        Response::new(Body::from(data))
+    };
+    if squeeze {
+        r.headers_mut().insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
     r.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(name)));
     r.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
     page_headers(&mut r);
     r
 }
 
-fn next_file(name: &str, data: Vec<u8>, cache: &'static str) -> Resp {
-    let mut r = file(name, data, cache);
+fn next_file(name: &str, data: Vec<u8>, cache: &'static str, gzip: bool) -> Resp {
+    let mut r = file("next:", name, data, cache, gzip);
     set_header(&mut r, "content-security-policy", NEXT_CSP);
     r
 }
@@ -114,16 +162,17 @@ pub fn built() -> bool {
     Web::get("index.html").is_some()
 }
 
-pub fn serve(path: &str) -> Resp {
+/// The web app's file for `path`, gzipped when `gzip` (the browser takes it) and worth it.
+pub fn serve(path: &str, gzip: bool) -> Resp {
     let rel = normalize(path);
     if rel != "/" {
         if let Some(f) = Web::get(&rel[1..]) {
             let immutable = rel.starts_with("/assets/");
-            return file(&rel, f.data.into_owned(), if immutable { "public, max-age=31536000, immutable" } else { "no-cache" });
+            return file("web:", &rel, f.data.into_owned(), if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }, gzip);
         }
     }
     match Web::get("index.html") {
-        Some(f) => file("index.html", f.data.into_owned(), "no-cache"),
+        Some(f) => file("web:", "index.html", f.data.into_owned(), "no-cache", gzip),
         None => {
             let mut r = text(503, "Web app not built. Run `bun run build`.");
             *r.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
@@ -134,17 +183,17 @@ pub fn serve(path: &str) -> Resp {
 
 /// The new app at /next: its hashed files under /next/assets/, index.html for every other path
 /// under /next (it will route itself), and a 404 when this hub was built without it.
-pub fn serve_next(path: &str) -> Resp {
-    serve_next_from(path, |name| Next::get(name).map(|f| f.data.into_owned()))
+pub fn serve_next(path: &str, gzip: bool) -> Resp {
+    serve_next_from(path, gzip, |name| Next::get(name).map(|f| f.data.into_owned()))
 }
 
-fn serve_next_from(path: &str, get: impl Fn(&str) -> Option<Vec<u8>>) -> Resp {
+fn serve_next_from(path: &str, gzip: bool, get: impl Fn(&str) -> Option<Vec<u8>>) -> Resp {
     let rel = normalize(path);
     let inner = rel.strip_prefix("/next").filter(|r| r.is_empty() || r.starts_with('/')).unwrap_or("");
     if inner.len() > 1 {
         if let Some(data) = get(&inner[1..]) {
             let immutable = inner.starts_with("/assets/");
-            return next_file(inner, data, if immutable { "public, max-age=31536000, immutable" } else { "no-cache" });
+            return next_file(inner, data, if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }, gzip);
         }
         // a hashed file this build doesn't have (an old page asking after an update) isn't the page
         if inner.starts_with("/assets/") {
@@ -152,7 +201,7 @@ fn serve_next_from(path: &str, get: impl Fn(&str) -> Option<Vec<u8>>) -> Resp {
         }
     }
     match get("index.html") {
-        Some(data) => next_file("index.html", data, "no-cache"),
+        Some(data) => next_file("index.html", data, "no-cache", gzip),
         None => {
             let mut r = text(404, NEXT_MISSING);
             page_headers(&mut r);
@@ -215,7 +264,7 @@ mod tests {
     fn next_serves_the_new_apps_page_for_every_path_under_it() {
         crate::test_util::block(async {
             for path in ["/next", "/next/", "/next/m/box/p/1", "/next/../next/"] {
-                let r = serve_next_from(path, built_next);
+                let r = serve_next_from(path, false, built_next);
                 assert_eq!(r.status().as_u16(), 200, "{path}");
                 assert_eq!(r.headers()["content-type"], "text/html;charset=utf-8");
                 assert_eq!(r.headers()["cache-control"], "no-cache");
@@ -227,21 +276,21 @@ mod tests {
 
     #[test]
     fn next_serves_its_files_and_refuses_ones_it_does_not_have() {
-        let r = serve_next_from("/next/assets/app-1.js", built_next);
+        let r = serve_next_from("/next/assets/app-1.js", false, built_next);
         assert_eq!(r.status().as_u16(), 200);
         assert_eq!(r.headers()["content-type"], "text/javascript;charset=utf-8");
         assert_eq!(r.headers()["cache-control"], "public, max-age=31536000, immutable");
-        assert_eq!(serve_next_from("/next/assets/app_bg-1.wasm", built_next).headers()["content-type"], "application/wasm");
+        assert_eq!(serve_next_from("/next/assets/app_bg-1.wasm", false, built_next).headers()["content-type"], "application/wasm");
         // an old build's file is a 404, never the page passed off as a script
-        assert_eq!(serve_next_from("/next/assets/app-0.js", built_next).status().as_u16(), 404);
+        assert_eq!(serve_next_from("/next/assets/app-0.js", false, built_next).status().as_u16(), 404);
         // nothing outside the new app's own files
-        assert_eq!(serve_next_from("/next/../../etc/passwd", built_next).headers()["content-type"], "text/html;charset=utf-8");
+        assert_eq!(serve_next_from("/next/../../etc/passwd", false, built_next).headers()["content-type"], "text/html;charset=utf-8");
     }
 
     #[test]
     fn a_hub_built_without_the_new_app_says_so_at_next() {
         crate::test_util::block(async {
-            let r = serve_next_from("/next/", |_| None);
+            let r = serve_next_from("/next/", false, |_| None);
             assert_eq!(r.status().as_u16(), 404);
             assert_eq!(r.headers()["content-security-policy"], PAGE_CSP);
             assert_eq!(body(r).await, NEXT_MISSING);
@@ -304,6 +353,59 @@ mod tests {
             // a name the hub doesn't answer to is refused before either app
             assert_eq!(get("/next/", "evil.example").await.status().as_u16(), 421);
         });
+    }
+
+    #[test]
+    fn gzip_is_taken_unless_refused() {
+        assert!(takes_gzip(Some("gzip, deflate, br, zstd")));
+        assert!(takes_gzip(Some("br;q=1.0, GZIP;q=0.5")));
+        assert!(takes_gzip(Some("*")));
+        assert!(!takes_gzip(Some("gzip;q=0, br")));
+        assert!(!takes_gzip(Some("identity")));
+        assert!(!takes_gzip(None));
+    }
+
+    fn big_next(name: &str) -> Option<Vec<u8>> {
+        match name {
+            "assets/app_bg-1.wasm" => Some([0u8, 97, 115, 109].repeat(4096)),
+            "assets/app-1.js" => Some(b"export const a = 1;\n".repeat(200)),
+            "assets/geist.woff2" => Some(vec![7; 4096]),
+            "assets/tiny.js" => Some(b"export{}".to_vec()),
+            _ => built_next(name),
+        }
+    }
+
+    #[test]
+    fn the_new_apps_wasm_and_scripts_go_out_gzipped_to_a_browser_that_takes_it() {
+        crate::test_util::block(async {
+            for name in ["/next/assets/app_bg-1.wasm", "/next/assets/app-1.js"] {
+                let plain = big_next(&name["/next/".len()..]).unwrap();
+                let r = serve_next_from(name, true, big_next);
+                assert_eq!(r.headers()["content-encoding"], "gzip", "{name}");
+                assert_eq!(r.headers()["vary"], "accept-encoding");
+                assert_eq!(r.headers()["content-security-policy"], NEXT_CSP);
+                let z = r.into_body().bytes().await.unwrap();
+                assert!(z.len() < plain.len() / 3, "{name}: {} of {}", z.len(), plain.len());
+                let mut out = vec![];
+                std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&z[..]), &mut out).unwrap();
+                assert_eq!(out, plain, "{name}");
+                // a browser that doesn't take gzip gets the file as it is, and caches know it varies
+                let r = serve_next_from(name, false, big_next);
+                assert!(r.headers().get("content-encoding").is_none());
+                assert_eq!(r.headers()["vary"], "accept-encoding");
+                assert_eq!(r.into_body().bytes().await.unwrap(), plain);
+            }
+        });
+    }
+
+    #[test]
+    fn fonts_and_tiny_files_go_out_as_they_are() {
+        for name in ["/next/assets/geist.woff2", "/next/assets/tiny.js"] {
+            let r = serve_next_from(name, true, big_next);
+            assert!(r.headers().get("content-encoding").is_none(), "{name}");
+        }
+        assert!(compressible("index.html") && compressible("a.wasm") && compressible("a.svg") && compressible("m.webmanifest"));
+        assert!(!compressible("a.woff2") && !compressible("a.png") && !compressible("a.pdf") && !compressible("a.bin"));
     }
 
     #[test]
