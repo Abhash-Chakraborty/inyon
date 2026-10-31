@@ -1,5 +1,7 @@
-//! The hub's two WebSockets: `/ws`, where the app gets live updates (core.ts's clients), and
-//! `/node`, where paired machines keep their connection (hosts/node-link). The upgrade is checked
+//! The hub's WebSockets: `/ws`, where the app gets live updates (core.ts's clients), `/ws2`, the
+//! same with protocol v2 (streams that resume from an epoch and seq, large frames compressed; see
+//! inyon-api's streams.rs), and `/node`, where paired machines keep their connection
+//! (hosts/node-link). The upgrade is checked
 //! and answered on the core thread like any request; the socket itself then runs as a task on the
 //! same thread, handing each message to the core in the order it came, and sending what the core
 //! queues for it.
@@ -34,10 +36,11 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 use crate::auth::{hold_socket, is_authed, Closer};
-use crate::clients::{add, client_message, close_client, new_client, wire};
+use crate::clients::{add, client_message, close_client, new_client, new_client2, wire};
 use crate::http::{same, sha256, text, Req, Resp};
 use crate::phones::{has_bearer, hold_phone_socket, phone_for, redeem_ticket};
 use crate::server::same_origin;
+use inyon_api::streams::{client_message2, Wire};
 
 /// how far behind a client may fall before it's closed
 const BACKPRESSURE: usize = 4 * 1024 * 1024;
@@ -59,7 +62,7 @@ const LIMITS: Limits = Limits { idle: IDLE, close_wait: Duration::from_secs(5) }
 
 /// The core's side of one socket: what it sends goes into the socket task's queue.
 pub struct Socket {
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::UnboundedSender<Wire>,
     /// a close goes on a channel of its own, so it never waits behind queued text
     close_tx: mpsc::UnboundedSender<(u16, String)>,
     queued: Rc<Cell<usize>>,
@@ -68,7 +71,7 @@ pub struct Socket {
 
 /// The socket task's side of a [`Socket`].
 struct Ends {
-    rx: mpsc::UnboundedReceiver<String>,
+    rx: mpsc::UnboundedReceiver<Wire>,
     close_rx: mpsc::UnboundedReceiver<(u16, String)>,
     queued: Rc<Cell<usize>>,
     closed: Rc<Cell<bool>>,
@@ -85,14 +88,23 @@ impl Socket {
     /// Queues a message. As uWS does, the limit is checked against what is still waiting to be
     /// written before this one is added, so a single large message always goes out.
     pub fn send_text(&self, s: String) {
+        self.send(Wire::Text(s));
+    }
+
+    /// Queues a text or binary message (binary: a `/ws2` frame, compressed).
+    pub fn send(&self, w: Wire) {
         if self.closed.get() {
             return;
         }
         if self.queued.get() > BACKPRESSURE {
             return self.close_with(1009, "Too far behind");
         }
-        self.queued.set(self.queued.get() + s.len());
-        let _ = self.tx.send(s);
+        let n = match &w {
+            Wire::Text(s) => s.len(),
+            Wire::Binary(b) => b.len(),
+        };
+        self.queued.set(self.queued.get() + n);
+        let _ = self.tx.send(w);
     }
 
     /// Closes the socket: from now on nothing the peer sends is acted on, and queued text is
@@ -211,9 +223,12 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
                 }
             }
             out = ends.rx.recv(), if writing.is_none() => match out {
-                Some(s) => {
-                    let n = s.len();
-                    writing = sink.take().map(|k| write(k, Message::text(s), n, ends.queued.clone()));
+                Some(w) => {
+                    let (n, m) = match w {
+                        Wire::Text(s) => (s.len(), Message::text(s)),
+                        Wire::Binary(b) => (b.len(), Message::binary(b)),
+                    };
+                    writing = sink.take().map(|k| write(k, m, n, ends.queued.clone()));
                 }
                 None => break,
             },
@@ -257,10 +272,19 @@ async fn run<IO: AsyncRead + AsyncWrite + Unpin + 'static>(io: IO, mut ends: End
 
 /// `/ws`: the app. A phone connects with a ticket (a page can't set a header on a WebSocket) or its
 /// bearer; either one is judged alone, never a cookie sent along with it.
-pub fn app_upgrade(mut req: Req) -> Resp {
+pub fn app_upgrade(req: Req) -> Resp {
+    app_socket(req, false)
+}
+
+/// `/ws2`: the app on protocol v2, signed in the same way. Companion apps stay on `/ws`.
+pub fn app2_upgrade(req: Req) -> Resp {
+    app_socket(req, true)
+}
+
+fn app_socket(mut req: Req, v2: bool) -> Resp {
     let ticket = req.query_get("ticket");
     // a companion app: its bearer, and its contract in a header or (for a client that can't set one) ?contract=
-    if ticket.is_none() {
+    if ticket.is_none() && !v2 {
         if let Some(c) = crate::companions::companion_for(&req) {
             return companion_upgrade(req, c);
         }
@@ -283,9 +307,13 @@ pub fn app_upgrade(mut req: Req) -> Resp {
     let (Some(res), Some(on)) = (handshake(&req), req.extensions.remove::<hyper::upgrade::OnUpgrade>()) else { return text(400, "Upgrade failed") };
     let (sock, ends) = Socket::new();
     let s = sock.clone();
-    // an app from before the newer agents gets them as plain terminals
-    let catalog = req.catalog();
-    let client = new_client(move |msg| s.send_text(wire(&inyon_protocol::compat::msg_for(msg, catalog))));
+    let client = if v2 {
+        new_client2(move |w| s.send(w))
+    } else {
+        // an app from before the newer agents gets them as plain terminals
+        let catalog = req.catalog();
+        new_client(move |msg| s.send_text(wire(&inyon_protocol::compat::msg_for(msg, catalog))))
+    };
     let s = sock.clone();
     let closer: Closer = Rc::new(move |code, reason| s.close_with(code, reason));
     let release: Box<dyn Fn()> = match &phone {
@@ -297,7 +325,7 @@ pub fn app_upgrade(mut req: Req) -> Resp {
         on,
         ends,
         move || add(&c1),
-        move |t| client_message(&c2, t),
+        move |t| if v2 { client_message2(&c2, t) } else { client_message(&c2, t) },
         move |_| {
             release();
             close_client(&c3);
@@ -442,6 +470,21 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         what()
+    }
+
+    #[test]
+    fn a_ws2_frame_goes_out_compressed_as_binary_and_text_stays_text() {
+        crate::test_util::block(async {
+            let mut r = rig(Limits { idle: Duration::from_secs(30), close_wait: Duration::from_millis(200) }).await;
+            let json = format!(r#"{{"t":"snapshot","stream":"h:%1","epoch":1,"seq":1,"rows":{{"items":[{}]}}}}"#, r#"{"kind":"user"}"#.repeat(100).replace("}{", "},{"));
+            r.sock.send(Wire::Binary(inyon_api::streams::deflate(json.as_bytes())));
+            r.sock.send_text(r#"{"t":"pong"}"#.into());
+            let next = |m: Option<Result<Message, _>>| m.expect("a message").expect("read");
+            let Message::Binary(b) = next(r.peer.next().await) else { panic!("binary first") };
+            assert_eq!(miniz_oxide::inflate::decompress_to_vec(&b).unwrap(), json.as_bytes());
+            assert!(b.len() < json.len() / 4);
+            assert!(matches!(next(r.peer.next().await), Message::Text(t) if t.as_str() == r#"{"t":"pong"}"#));
+        });
     }
 
     #[test]

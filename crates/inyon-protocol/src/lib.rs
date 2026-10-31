@@ -9,11 +9,13 @@ mod agents;
 pub mod compat;
 mod js;
 mod types;
+pub mod v2;
 mod versions;
 
 pub use agents::*;
 pub use js::{Num, True};
 pub use types::*;
+pub use v2::{ChatState, ClientMsg2, Delta, DraftState, Keys, Progress, QueueKind, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos, Zip};
 pub use versions::*;
 
 /// Every exported type, in the order `src/gen/index.ts` lists them. A macro rather than a list,
@@ -123,7 +125,21 @@ macro_rules! with_types {
             ClientMsg,
             DraftSource,
             NotifyKind,
-            ServerMsg
+            ServerMsg,
+            // v2.rs (/ws2)
+            Zip,
+            StreamPos,
+            ClientMsg2,
+            QueuedMsg,
+            QueueKind,
+            Rows,
+            Keys,
+            DraftState,
+            Progress,
+            ChatState,
+            Snapshot,
+            Delta,
+            ServerMsg2
         )
     };
 }

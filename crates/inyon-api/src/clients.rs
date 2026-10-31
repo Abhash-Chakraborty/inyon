@@ -26,6 +26,8 @@ pub struct Client {
     chats: RefCell<IndexSet<String>>,
     terms: RefCell<HashMap<String, Rc<PtyHandle>>>,
     out: Box<dyn Fn(&ServerMsg)>,
+    /// a `/ws2` app: the streams it follows and how its frames go out (see streams.rs)
+    pub(crate) v2: Option<Rc<crate::streams::Conn>>,
 }
 
 impl Subscriber for Client {
@@ -56,7 +58,36 @@ pub fn new_client(out: impl Fn(&ServerMsg) + 'static) -> ClientRef {
         chats: RefCell::new(IndexSet::new()),
         terms: RefCell::new(HashMap::new()),
         out: Box::new(out),
+        v2: None,
     })
+}
+
+/// An app on `/ws2`: `out` sends what the hub queues for it, a large frame compressed once the app
+/// asked for that. The v1 messages that aren't about streams (notices, terminals, pongs) reach it
+/// as they are.
+pub fn new_client2(out: impl Fn(crate::streams::Wire) + 'static) -> ClientRef {
+    let conn = Rc::new(crate::streams::Conn::new(out));
+    let c = conn.clone();
+    Rc::new(Client {
+        overview: Cell::new(false),
+        quiet: Cell::new(false),
+        sent_key: RefCell::new(String::new()),
+        chats: RefCell::new(IndexSet::new()),
+        terms: RefCell::new(HashMap::new()),
+        out: Box::new(move |msg| c.send_json(wire(msg))),
+        v2: Some(conn),
+    })
+}
+
+impl Client {
+    pub(crate) fn is_quiet(&self) -> bool {
+        self.quiet.get()
+    }
+
+    /// `quiet_key` of the last overview this app was sent
+    pub(crate) fn sent_key(&self) -> &RefCell<String> {
+        &self.sent_key
+    }
 }
 
 pub fn add(c: &ClientRef) {
@@ -68,7 +99,7 @@ fn listed(c: &ClientRef) -> bool {
     CLIENTS.with(|l| l.borrow().iter().any(|x| Rc::ptr_eq(x, c)))
 }
 
-fn all() -> Vec<ClientRef> {
+pub(crate) fn all() -> Vec<ClientRef> {
     CLIENTS.with(|l| l.borrow().clone())
 }
 
@@ -98,7 +129,7 @@ pub fn any() -> bool {
 
 /// Whether an app on screen follows the overview (one in the background has said it's quiet).
 pub fn watched() -> bool {
-    CLIENTS.with(|l| l.borrow().iter().any(|c| c.overview.get() && !c.quiet.get()))
+    CLIENTS.with(|l| l.borrow().iter().any(|c| (c.overview.get() || c.v2.as_ref().is_some_and(|v| v.follows(inyon_protocol::v2::OVERVIEW))) && !c.quiet.get()))
 }
 
 thread_local! {
@@ -114,7 +145,7 @@ pub fn poll_less_when_unwatched() {
     watched_changed();
 }
 
-fn watched_changed() {
+pub(crate) fn watched_changed() {
     if !FOLLOW.with(Cell::get) {
         return;
     }
@@ -165,6 +196,7 @@ pub fn listen() {
                 }
                 c.send(&msg);
             }
+            crate::streams::overview_changed();
         }
         RegistryEvent::Notify { host, pane, kind, title, body, agent } => {
             let sent = Rc::new(Cell::new(false));
@@ -229,7 +261,7 @@ pub fn listen() {
 const MAX_CHATS: usize = 64;
 
 /// Runs `f` once the machine reports the pane, now if it already does; gives up after 30 s.
-fn when_pane(host: &str, pane: &str, f: impl FnOnce() + 'static) {
+pub(crate) fn when_pane(host: &str, pane: &str, f: impl FnOnce() + 'static) {
     if registry().find_pane(host, pane).is_some() {
         return f();
     }
@@ -260,12 +292,12 @@ fn when_pane(host: &str, pane: &str, f: impl FnOnce() + 'static) {
     }));
 }
 
-fn s<'a>(m: &'a Value, k: &str) -> Option<&'a str> {
+pub(crate) fn s<'a>(m: &'a Value, k: &str) -> Option<&'a str> {
     m.get(k).and_then(Value::as_str)
 }
 
 /// `String(m.k)` for keys the TS uses unchecked in a template (`${m.host}:${m.pane}`).
-fn raw(m: &Value, k: &str) -> String {
+pub(crate) fn raw(m: &Value, k: &str) -> String {
     crate::http::str_raw(m.get(k))
 }
 
@@ -283,19 +315,7 @@ pub fn client_message(c: &ClientRef, text: &str) {
             watched_changed();
         }
         // the app went to the background (on: true) or came back
-        "quiet" => {
-            let on = m.get("on").and_then(Value::as_bool).unwrap_or(false);
-            if c.quiet.replace(on) == on {
-                return;
-            }
-            // what changed while it was away
-            if !on && c.overview.get() {
-                let hosts = registry().overview();
-                *c.sent_key.borrow_mut() = quiet_key(&hosts);
-                c.send(&ServerMsg::Overview { hosts });
-            }
-            watched_changed();
-        }
+        "quiet" => set_quiet(c, m.get("on").and_then(Value::as_bool).unwrap_or(false)),
         "sub.chat" => {
             let key = format!("{}:{}", raw(&m, "host"), raw(&m, "pane"));
             let host = raw(&m, "host");
@@ -396,9 +416,26 @@ pub fn client_message(c: &ClientRef, text: &str) {
     }
 }
 
+pub(crate) fn set_quiet(c: &ClientRef, on: bool) {
+    if c.quiet.replace(on) == on {
+        return;
+    }
+    // what changed while it was away
+    if !on && c.overview.get() {
+        let hosts = registry().overview();
+        *c.sent_key.borrow_mut() = quiet_key(&hosts);
+        c.send(&ServerMsg::Overview { hosts });
+    }
+    if !on {
+        crate::streams::caught_up(c);
+    }
+    watched_changed();
+}
+
 /// The app went away: stop everything it was watching.
 pub fn close_client(c: &ClientRef) {
     CLIENTS.with(|l| l.borrow_mut().retain(|x| !Rc::ptr_eq(x, c)));
+    crate::streams::close(c);
     watched_changed();
     let chats: Vec<String> = c.chats.borrow().iter().cloned().collect();
     for key in chats {
