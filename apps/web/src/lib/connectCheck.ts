@@ -208,6 +208,9 @@ function hubSteps(t: Extract<Target, { kind: 'self' | 'hub' }>, d: CheckDeps, ms
       run: async (ctx) => {
         const wrong: Result = { state: 'fail', say: `The hub doesn't answer to ${name}.`, fix: `Add ${name} to INYON_ALLOWED_HOSTS on the hub, or use the address the hub shows.` }
         if (t.kind === 'self') return ctx.session?.status === 421 ? { ...wrong, detail: 'HTTP 421' } : { state: 'pass', say: `The hub answers to ${name}.` }
+        // without a token the request needs no preflight, and the hub lets any origin read its 421
+        const plain = await d.fetch(`${url}/api/session`, { credentials: 'omit', cache: 'no-store', signal: signal() }).catch(() => undefined)
+        if (plain?.status === 421) return { ...wrong, detail: 'HTTP 421' }
         ctx.token = await d.token?.(t.hub.id)
         if (!ctx.token) return { state: 'skip', say: 'This phone has no key for the hub any more; the next step says what to do.' }
         try {
@@ -250,6 +253,7 @@ function hubSteps(t: Extract<Target, { kind: 'self' | 'hub' }>, d: CheckDeps, ms
         }
         if (!res.ok) return { state: 'fail', say: `The hub answered ${res.status}.`, fix: "The hub's log says why (inyon logs on its machine).", detail: `POST /api/phones/ticket answered ${res.status}` }
         ctx.ticket = ((await res.json().catch(() => ({}))) as { ticket?: string }).ticket
+        if (!ctx.ticket) return { state: 'fail', say: 'The hub answered without a ticket for the live connection.', fix: 'Something in front of the hub may be answering for it. Update the hub if it is older than this app.', detail: `POST /api/phones/ticket answered ${res.status} without a ticket` }
         return { state: 'pass', say: 'The hub knows this phone.' }
       },
     },
@@ -402,6 +406,7 @@ function batteryStep(d: CheckDeps): Plan {
       if (d.keepAliveWanted && !d.keepAliveWanted()) return { state: 'warn', say: 'Stay connected is off, so Android pauses Inyon soon after you leave it.', fix: 'Turn Stay connected on.', action: 'stay-connected', detail }
       if (p.backgroundRestricted) return { state: 'warn', say: "Android restricts Inyon's background use.", fix: "Set Inyon's battery use to Unrestricted in Android's settings.", action: 'battery-settings', detail }
       if (p.ignoringOptimizations === false) return { state: 'warn', say: 'Android limits Inyon in the background, so connections drop once the screen has been off a while.', fix: 'Allow Inyon to run in the background.', action: 'battery', detail }
+      if (p.keepAlive === false) return { state: 'warn', say: "Stay connected is on, but Android stopped its background connection.", fix: 'Start it again; opening Inyon also does.', action: 'stay-connected', detail }
       if (p.powerSave) return { state: 'warn', say: 'Battery saver is on, which cuts network use in the background.', fix: 'Turn battery saver off while you need alerts.', detail }
       return { state: 'pass', say: "Stay connected is on and Android doesn't limit Inyon.", detail }
     },

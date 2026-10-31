@@ -145,6 +145,15 @@ test('a hub that forgot the phone, and a sign-in page in the way', async () => {
   expect(noKey.by('signed-in')).toMatchObject({ state: 'fail', action: 'pair-hub' })
 })
 
+test("a hub's 421 can be read from the app, and a ticket must come back", async () => {
+  // the hub lets any origin read its refusal of a name, without a token or preflight
+  const wrong = await run(HUB, deps({ routes: { '/api/session': (init) => (init?.mode === 'no-cors' ? new Response(null) : init?.headers ? failed() : json(421, {})) } }))
+  expect(wrong.by('host')).toMatchObject({ state: 'fail', say: "The hub doesn't answer to studio.example.", detail: 'HTTP 421' })
+  const empty = await run(HUB, deps({ routes: { '/api/phones/ticket': json(200, {}) } }))
+  expect(empty.by('signed-in')).toMatchObject({ state: 'fail', say: 'The hub answered without a ticket for the live connection.' })
+  expect(empty.by('socket').state).toBe('skip')
+})
+
 test('the live connection: refused, signed out, or silent', async () => {
   const refused = await run(HUB, deps({ socket: sock(1006) }))
   expect(refused.by('socket')).toMatchObject({ state: 'fail', say: 'The live connection was refused (code 1006).' })
@@ -225,6 +234,8 @@ test('Android: battery limits and Stay connected, even when the hub check failed
   expect(limited.by('battery')).toMatchObject({ state: 'warn', action: 'battery' })
   const restricted = await run(HUB, deps({ power: async () => ({ ignoringOptimizations: true, backgroundRestricted: true }), keepAliveWanted: () => true }))
   expect(restricted.by('battery')).toMatchObject({ state: 'warn', action: 'battery-settings' })
+  const stopped = await run(HUB, deps({ power: async () => ({ ignoringOptimizations: true, keepAlive: false }), keepAliveWanted: () => true }))
+  expect(stopped.by('battery')).toMatchObject({ state: 'warn', action: 'stay-connected', say: 'Stay connected is on, but Android stopped its background connection.' })
   const fine = await run(HUB, deps({ power: async () => ({ ignoringOptimizations: true, keepAlive: true }), keepAliveWanted: () => true }))
   expect(fine.by('battery').state).toBe('pass')
 })

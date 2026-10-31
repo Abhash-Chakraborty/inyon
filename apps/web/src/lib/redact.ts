@@ -16,7 +16,8 @@ const RULES: [RegExp, string | ((...m: string[]) => string)][] = [
   [/\b(cookie|set-cookie|authorization)(["']?\s*[:=]\s*)[^\n]*/gi, (_, k, sep) => `${k}${sep}${HIDDEN}`],
   [/\b((?:__Host-)?(?:inyon|tether)_session)=[^\s;,"']+/gi, (_, k) => `${k}=${HIDDEN}`],
   // key=value and "key": "value" for anything that sounds secret
-  [/\b((?:token|ticket|password|passwd|secret|code|key|cookie|session|auth|seed|passphrase)[a-z_-]*)(["']?\s*[:=]\s*["']?)[^\s"',;&}]+/gi, (_, k, sep) => `${k}${sep}${HIDDEN}`],
+  // (a quoted value goes whole, spaces and all)
+  [/\b((?:token|ticket|password|passwd|secret|code|key|cookie|session|auth|seed|passphrase)[a-z_-]*)(["']?\s*[:=]\s*)(?:"[^"\n]*"?|'[^'\n]*'?|[^\s"',;&}]+)/gi, (_, k, sep) => `${k}${sep}${HIDDEN}`],
   // a hub pairing code as typed or shown: K7Q4-MX2T 493812, K7Q4MX2T:493812
   [/\b[0-9A-Z]{4}-?[0-9A-Z]{4}[: ]\d{6}\b/g, HIDDEN],
   // a private key block

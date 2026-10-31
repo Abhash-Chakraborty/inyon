@@ -198,6 +198,19 @@ fn allow_origin(mut res: Resp, origin: &str) -> Resp {
     res
 }
 
+/// An API route's answer to a name the hub doesn't answer to. A page on another origin (the phone
+/// app's) may read it, so its "Can't connect?" can tell a wrong name from a hub that isn't there.
+/// It carries only the origin it may be read from: the answer says nothing else, and no method or
+/// header is allowed with it.
+fn wrong_host(req: &Req) -> Resp {
+    let mut res = json(421, &serde_json::json!({ "error": WRONG_HOST }));
+    if let Some(o) = req.header("origin") {
+        set_header(&mut res, "access-control-allow-origin", &o);
+        set_header(&mut res, "vary", "Origin");
+    }
+    res
+}
+
 fn cors(req_origin: Option<&str>, phone: bool, res: Resp) -> Resp {
     match req_origin {
         Some(o) if phone => allow_origin(res, o),
@@ -255,7 +268,7 @@ pub fn api_for(f: ApiHandler, o: Opts, companion: Option<crate::companions::Comp
                 return pre;
             }
             if !right_host(&req) {
-                return json(421, &serde_json::json!({ "error": WRONG_HOST }));
+                return wrong_host(&req);
             }
             // a companion's token is judged on its own: its contract, then its scope for this route
             if let Some(c) = crate::companions::companion_for(&req) {

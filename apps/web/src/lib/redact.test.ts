@@ -36,6 +36,11 @@ test('addresses, words and paths stay readable', () => {
   expect(redact('inyon://hub?u=x&c=y')).toBe('inyon://hub?[hidden]')
 })
 
+test('a quoted secret goes whole, spaces and all', () => {
+  const out = redact('password: "correct horse battery staple" then token=\'two words\' end')
+  expect(out).toBe('password: [hidden] then token=[hidden] end')
+})
+
 test('a private key block goes whole', () => {
   const key = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----'
   expect(redact(`key:\n${key}\nafter`)).not.toContain('b3BlbnNzaC1rZXktdjEAAAAA')

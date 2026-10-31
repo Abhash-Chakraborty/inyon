@@ -113,6 +113,25 @@ test('Copy report puts the redacted report on the clipboard', async () => {
   expect(screen.getByText(/Everything here works/)).toBeTruthy()
 })
 
+test("a new run drops the last run's report", async () => {
+  pairHub()
+  let copied = ''
+  Object.defineProperty(window, 'isSecureContext', { configurable: true, value: true })
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (t: string) => void (copied = t) } })
+  let hold = false
+  const net = held()
+  await render(sheet(deps({ fetch: (url, init) => (hold ? net.fetch(url) : url.includes('/ticket') ? Promise.resolve(json(200, { ticket: 't' })) : Promise.resolve(json(200, { authed: true }))) })))
+  await settle()
+  hold = true
+  fireEvent.click(screen.getByRole('button', { name: /Check again/ }))
+  await settle()
+  fireEvent.click(screen.getByRole('button', { name: /Copy report/ }))
+  await settle()
+  // what's on screen now: the hub check still out, the live connection not run yet
+  expect(copied).toContain('[...] Hub answers')
+  expect(copied).not.toContain('[ok] Live connection')
+})
+
 test('Check again runs everything afresh', async () => {
   pairHub()
   let online = false

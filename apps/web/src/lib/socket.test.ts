@@ -149,6 +149,44 @@ test('a hub that forgot the phone is logged as signed out', async () => {
   connLog.forget('hub:h1')
 })
 
+test('a hub forgotten while its ticket was on its way leaves no drop behind', async () => {
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('hub:h1')
+  let fail: ((e: Error) => void) | undefined
+  globalThis.fetch = mock(() => new Promise((_, reject) => (fail = reject))) as any
+  const going = conn.connect()
+  // the plain-http check and the token come first
+  for (let i = 0; i < 100 && !fail; i++) await Promise.resolve()
+  conn.stop()
+  fail!(new TypeError('Failed to fetch'))
+  await going
+  expect(connLog.get('hub:h1')).toBeUndefined()
+})
+
+test("an old socket's sign-in check doesn't relabel the drop of the one after it", async () => {
+  const { Socket } = realSocketModule
+  const { connLog } = await import('./connlog.ts')
+  connLog.forget('self')
+  const answers: ((r: Response) => void)[] = []
+  globalThis.fetch = mock(() => new Promise<Response>((r) => answers.push(r))) as any
+  const s = new Socket()
+  s.start()
+  const first = FakeWS.all.find((w) => w.url.includes('/ws?'))!
+  first.open()
+  first.onclose?.({ code: 1006 })
+  // the next socket comes and goes before the first one's check answers
+  s.reconnect()
+  const second = FakeWS.all.filter((w) => w.url.includes('/ws?')).at(-1)!
+  expect(second).not.toBe(first)
+  second.open()
+  second.onclose?.({ code: 1012 })
+  answers[0]!(new Response(JSON.stringify({ authed: false })))
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+  expect(connLog.lastDrop('self')).toMatchObject({ cause: 'closed', code: 1012 })
+  s.stop()
+  connLog.forget('self')
+})
+
 describe('in the background', () => {
   const { Socket, QUIET_AFTER_MS } = realSocketModule
   let hidden = false

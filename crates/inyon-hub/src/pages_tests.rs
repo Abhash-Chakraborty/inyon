@@ -1378,6 +1378,29 @@ fn cookie_api_calls_from_a_framed_page_or_another_site_are_refused_reads_too_but
 }
 
 #[test]
+fn the_phone_app_can_read_that_a_name_is_refused_and_nothing_more() {
+    let tmp = Tmp::new("wrong-host");
+    let home = tmp.join("home");
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        let refused = dispatch(test_req("GET", "/api/pages", &[("host", "evil.example"), ("origin", "http://localhost")], "")).await;
+        assert_eq!(refused.status().as_u16(), 421);
+        let h = refused.headers();
+        assert_eq!(h["access-control-allow-origin"], "http://localhost");
+        assert_eq!(h["vary"], "Origin");
+        assert!(h.get("access-control-allow-headers").is_none() && h.get("access-control-allow-methods").is_none() && h.get("access-control-allow-credentials").is_none());
+        // without an origin there's nothing to allow
+        let plain = dispatch(test_req("GET", "/api/pages", &[("host", "evil.example")], "")).await;
+        assert_eq!(plain.status().as_u16(), 421);
+        assert!(plain.headers().get("access-control-allow-origin").is_none());
+        // the right name answers as before: signed out, and not readable from another origin
+        let right = dispatch(test_req("GET", "/api/pages", &[("host", HOST), ("origin", "http://localhost")], "")).await;
+        assert_eq!(right.status().as_u16(), 401);
+        assert!(right.headers().get("access-control-allow-origin").is_none());
+    });
+}
+
+#[test]
 fn view_refuses_a_host_the_hub_does_not_answer_to_even_with_a_signed_in_cookie() {
     let tmp = Tmp::new("host");
     let home = tmp.join("home");

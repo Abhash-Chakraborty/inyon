@@ -157,10 +157,12 @@ export function ConnectSheet({ id, open, onClose, checkDeps }: { id: string | un
     if (!t) return setSteps([])
     const mine = ++run.current
     setRunning(true)
+    // the last run's report doesn't match these checks
+    setText('')
     void runChecks(t, checkDeps ?? deps(), (s) => mine === run.current && setSteps(s), () => mine !== run.current).then((s) => {
       if (mine !== run.current) return
       setRunning(false)
-      void report(t, s).then(setText)
+      void report(t, s).then((r) => mine === run.current && setText(r))
     })
   }, [id, checkDeps])
 

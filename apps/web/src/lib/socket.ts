@@ -198,7 +198,8 @@ export class Socket {
       if (isPhone()) return
       fetch('/api/session').then((r) => r.json()).then((s) => {
         if (s.authed) return
-        connLog.explain(SELF, 'signed-out', 'your sign-in ended')
+        // a later socket's drop isn't this one's to explain
+        if (this.ws === ws) connLog.explain(SELF, 'signed-out', 'your sign-in ended')
         window.dispatchEvent(new Event('inyon:signed-out'))
       }).catch(() => {})
     }
@@ -322,7 +323,8 @@ export class HubConn {
       if (attempt !== this.attempts) return
       if (err instanceof HubRevoked) return this.revoked()
       const e = err as Error
-      dropped(this.source, this.about, err instanceof PlainRefused ? 'refused' : 'unreachable', { detail: e?.name === 'TimeoutError' ? "it didn't answer in 10 seconds" : e?.message })
+      // forgotten while the ticket was on its way: there's nothing left to log
+      if (!this.stopped) dropped(this.source, this.about, err instanceof PlainRefused ? 'refused' : 'unreachable', { detail: e?.name === 'TimeoutError' ? "it didn't answer in 10 seconds" : e?.message })
       // a hub that can't be reached at all is as gone as one whose connection dropped; one the
       // app won't use plain http with says why on its machines
       this.offline(err instanceof PlainRefused ? err.message : undefined)

@@ -85,6 +85,9 @@ test('Doze counts when it was on at the drop or ended just before the app notice
   // began after the drop
   expect(dozedAt({ idleSince: 9_000, idleEnded: 0 }, 2_000)).toBe(false)
   expect(dozedAt({}, 2_000)).toBe(false)
+  // dozing now, but it began after the drop
+  expect(dozedAt({ idle: true, idleSince: 9_000 }, 2_000)).toBe(false)
+  expect(dozedAt({ idle: true, idleSince: 1_000 }, 2_000)).toBe(true)
   expect(powerContexts({ ignoringOptimizations: false, keepAlive: false, powerSave: true }, 0)).toEqual(['restricted', 'saver', 'no-keepalive'])
   expect(powerContexts({ ignoringOptimizations: true, keepAlive: true, backgroundRestricted: false }, 0)).toEqual([])
 })

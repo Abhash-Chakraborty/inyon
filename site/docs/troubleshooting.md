@@ -14,7 +14,7 @@ From 0.24 the app checks a connection for you. Tap **Reconnecting** at the top o
 | Network | Whether this device is online |
 | Address | Whether the hub's name points anywhere (the Android app looks it up; a browser can't, so it skips this) and whether the app will use plain `http://` with it |
 | Hub answers | Whether anything answers at the hub's address in 8 seconds |
-| Right address | Whether the hub answers to that name, or refuses it (add the name to `INYON_ALLOWED_HOSTS`) |
+| Right address | Whether the hub answers to that name, or refuses it with *This hub doesn't answer to that address* (add the name to `INYON_ALLOWED_HOSTS`) |
 | Signed in | On a hub's page, whether you're still signed in; in the app, whether the hub still knows this phone |
 | Live connection | Whether the hub's WebSocket opens (a proxy has to pass WebSockets through) |
 | Its address, Relay, Handshake | For a computer paired with the phone: whether it has published where it is, whether its relay answers, and whether the encrypted handshake works |

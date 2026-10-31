@@ -114,10 +114,12 @@ export interface Power {
  * counts too.
  */
 export function dozedAt(p: Power, at: number): boolean {
-  if (p.idle) return true
   const since = p.idleSince ?? 0
   const ended = p.idleEnded ?? 0
-  if (!since || since > at) return false
+  // a Doze that began after the drop didn't cause it, even if it's still on
+  if (since > at) return false
+  if (p.idle) return true
+  if (!since) return false
   return ended < since || ended >= at - 60_000
 }
 

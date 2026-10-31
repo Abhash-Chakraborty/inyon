@@ -1,7 +1,8 @@
 import { beforeEach, expect, test } from 'bun:test'
 import type { HostState } from '@inyon/protocol'
 import { connLog, why } from './connlog.ts'
-import { followHosts } from './connwatch.ts'
+import { followHosts, installConnWatch } from './connwatch.ts'
+import { useStore } from './store.ts'
 
 const host = (id: string, status: HostState['status'], error?: string, kind = 'link') => ({ config: { id, name: id, kind }, status, error, sessions: [], agents: [] }) as unknown as HostState
 
@@ -35,4 +36,27 @@ test("a hub's machine that the hub lost, and one first seen unpaired", () => {
   // the hub itself out of reach is the hub's drop, not each machine's
   followHosts([host('hub:h1/a', 'connecting', 'Connecting to studio…', 'node')], seen)
   expect(connLog.get('hub:h1/a')).toBeUndefined()
+})
+
+test("its hub going away isn't a drop for each machine, and a reason of its own after is", () => {
+  const seen = new Map()
+  followHosts([host('hub:h1/a', 'online', undefined, 'node')], seen)
+  followHosts([host('hub:h1/a', 'connecting', 'Reconnecting to studio', 'node')], seen)
+  expect(connLog.lastDrop('hub:h1/a')).toBeUndefined()
+  // first seen while its hub was out of reach, then the hub says why it isn't there
+  followHosts([host('hub:h1/b', 'connecting', 'Connecting to studio…', 'node')], seen)
+  followHosts([host('hub:h1/b', 'error', 'Machine offline', 'node')], seen)
+  expect(why(connLog.lastDrop('hub:h1/b')!)).toBe('Machine offline')
+})
+
+test("the hub's first answer counts even when it matches the kept copy", () => {
+  installConnWatch()
+  const hosts = [host('pc', 'online')]
+  useStore.setState({ hosts, hostsStale: true })
+  expect(connLog.get('pc')).toBeUndefined()
+  // same list, now confirmed
+  useStore.setState({ hostsStale: false })
+  expect(connLog.get('pc')?.up).toBe(true)
+  useStore.setState({ hosts: [host('pc', 'connecting')] })
+  expect(connLog.lastDrop('pc')).toMatchObject({ cause: 'closed' })
 })
