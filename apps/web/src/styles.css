@@ -281,6 +281,8 @@ select:focus-visible {
 }
 .ultracode-mark { animation: ultracode-breathe 2.4s ease-in-out infinite; }
 /* with reduced motion the 1ms rule below would make looping animations flicker: stop them instead */
+/* off screen nothing loops: a running animation asks for a frame every vsync (lib/hidden.ts) */
+[data-hidden] *, [data-hidden] *::before, [data-hidden] *::after { animation-play-state: paused !important; }
 @media (prefers-reduced-motion: reduce) { .live-ring::after, .pulse-soft, .skeleton, .ultracode-box::after, .ultracode-label, .ultracode-mark, .mark-connecting .mark-line, .mark-drawn .mark-line, .mark-reeling .mark-line { animation: none; } }
 /* the mark's line draws itself while the hub is out of reach (Logo in AppShell.tsx) */
 @keyframes mark-draw {
