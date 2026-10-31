@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
 import type { PageEntry } from '@inyon/protocol'
 import {
-  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
+  RENEW_BEFORE_MS, agoText, appOrigins, changedAt, fitScale, folderKey, frameMessage, frameSrc, groupName, groupPages, isBridged, isChanged, leftText, linkedPages, loadPages, localDeadline, markSeen, matchesPage,
   pageHosts, pageId, previewRefusal, projectName, renewIn, runningNames, sessionPages, shouldRenew, usePages, type Page,
 } from './pages.ts'
 import { api } from '../test/fakes.ts'
@@ -14,7 +14,7 @@ const entry = (slug: string, more: Partial<PageEntry> = {}): Page => {
 const names: Record<string, string> = { local: 'studio', 'hub:h1/local': 'arm', laptop: 'air' }
 const nameOf = (h: string) => names[h] ?? h
 
-beforeEach(() => usePages.setState({ pages: null, hubless: false, error: undefined, seen: {}, unreachable: [], forgotten: [] }))
+beforeEach(() => usePages.setState({ pages: null, outdated: [], error: undefined, seen: {}, unreachable: [], forgotten: [] }))
 
 describe('grouping', () => {
   test('machine, then project, then page; the hub machine first, the newest change on top', () => {
@@ -228,12 +228,34 @@ describe('the list', () => {
     expect(pageHosts()).toEqual(['local'])
   })
 
-  test('the phone app with no hub paired has nothing to list, and says pages open through a hub', async () => {
+  test('the phone app with no hub lists the pages of the computers paired with it, from its own core, and names those too old to say', async () => {
     ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }
+    api.pages.mockResolvedValue({ pages: [{ host: 'laptop', slug: 'plan', name: 'Plan', project: '/p', by: 'cli', added: 1, folder: '/p/plan' }], outdated: ['old-box', 7] } as never)
     try {
       await loadPages()
-      expect(usePages.getState()).toMatchObject({ pages: [], hubless: true })
-      expect(api.pages).not.toHaveBeenCalled()
+      expect(usePages.getState()).toMatchObject({ outdated: ['old-box'], error: undefined })
+      expect(usePages.getState().pages!.map((p) => p.id)).toEqual(['laptop/plan'])
+      expect(api.pages).toHaveBeenCalledTimes(1)
+      expect(isBridged('laptop')).toBe(true)
+      expect(isBridged('hub:h1/local')).toBe(false)
+      // folders can be added on each paired hub's own machine and on each computer that is online
+      localStorage.setItem('inyon.hubs.v1', JSON.stringify([{ id: 'h1', name: 'arm', url: 'http://arm:4777', token: 't1', pairedAt: 1 }]))
+      const computer = (id: string, kind: string, status: string) => ({ config: { id, kind, name: id }, status }) as never
+      expect(pageHosts([computer('laptop', 'link', 'online'), computer('nas', 'ssh', 'online'), computer('off', 'link', 'offline'), computer('hub:h1/box', 'node', 'online')])).toEqual(['hub:h1/local', 'laptop', 'nas'])
+    } finally {
+      delete (window as any).Capacitor
+    }
+  })
+
+  test("the core out of reach keeps the computers' pages it had; it and every hub out of reach is an error", async () => {
+    ;(window as any).Capacitor = { isNativePlatform: () => true, getPlatform: () => 'android', Plugins: {} }
+    api.pages.mockResolvedValue({ pages: [{ host: 'laptop', slug: 'plan', name: 'Plan', project: '/p', by: 'cli', added: 1, folder: '/p/plan' }], outdated: [] } as never)
+    try {
+      await loadPages()
+      api.pages.mockRejectedValue(new Error('The core stopped') as never)
+      await loadPages()
+      expect(usePages.getState().pages!.map((p) => p.id)).toEqual(['laptop/plan'])
+      expect(usePages.getState().error).toBe('The core stopped')
     } finally {
       delete (window as any).Capacitor
     }

@@ -1,11 +1,13 @@
-//! Pages on the hub's other machines: a laptop joined to it, a server it reaches over SSH. Their
-//! own `inyon` does the reading, as for Temp files (features/temp.rs): `inyon pages --json` lists a
-//! machine's pages with their progress, and `inyon pages get --json` says what one request for a
-//! page's file needs to know and sends the file. The hub decides every answer with the same
-//! `decide_view` as for its own pages, over what the machine listed, so the rules (dot names,
-//! symlinks out of the site, folders and their slash, the cache) are the same on every machine.
+//! Pages on the hub's other machines (a laptop joined to it, a server it reaches over SSH) and on
+//! the computers the phone app is paired with. Their own `inyon` does the reading, as for Temp
+//! files (features/temp.rs): `inyon pages --json` lists a machine's pages with their progress, and
+//! `inyon pages get --json` says what one request for a page's file needs to know and sends the
+//! file. The hub (or the phone) decides every answer with the same `decide_view` as for the hub's
+//! own pages, over what the machine listed, so the rules (dot names, symlinks out of the site,
+//! folders and their slash, the cache) are the same on every machine.
 //!
-//! A machine with an inyon from before 0.22 lists no pages here: its list doesn't say `serves`.
+//! A machine with an inyon from before 0.22 lists no pages here: its list doesn't say `serves`, and
+//! `outdated` names it so the app can say to update it.
 //!
 //! From 0.22.3 the machine's inyon also runs `inyon pages watch` for the hub while pages are being
 //! looked at: it prints the list again only when something changes, with a stamp per site, so the
@@ -14,21 +16,20 @@
 //! 8 MB cap to 64 MB. A machine whose inyon has no `watch` is asked the old way.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use futures_util::future::{join_all, LocalBoxFuture};
-use inyon_core::features::pages_core::{FileStat, ViewFs};
-use inyon_core::features::temp::{read_answer, INYON_PAGES};
-use inyon_core::hosts::host::{shq, ExecOptions, Host, StreamHandle};
-use inyon_core::hosts::http_error::{http, HubResult};
-use inyon_core::hosts::registry::registry;
-use inyon_core::platform::rt;
 use inyon_protocol::{HostKind, HostStatus};
-use serde_json::{Map, Value};
+use serde_json::{Map, Number, Value};
 
-use crate::pages::{as_record, Record};
+use crate::features::pages_core::{is_slug, FileStat, ViewFs};
+use crate::features::temp::{read_answer, INYON_PAGES};
+use crate::hosts::host::{shq, ExecOptions, Host, StreamHandle};
+use crate::hosts::http_error::{http, HubResult};
+use crate::hosts::registry::registry;
+use crate::platform::rt;
 
 /// How long a machine's list is kept before it's read again.
 pub const REMOTE_TTL_MS: u64 = 15_000;
@@ -46,6 +47,54 @@ pub const WATCH_IDLE_MS: u64 = 5 * 60_000;
 pub const NO_WATCH_MS: u64 = 10 * 60_000;
 /// The most bytes of other machines' files the hub keeps.
 pub const FILE_CACHE_MAX: usize = 64 * 1024 * 1024;
+
+pub const UNKNOWN_PAGE: &str = "Unknown page";
+/// A machine the hub (or the phone) doesn't have, or can't reach now.
+pub const NOT_CONNECTED: &str = "That machine isn't connected";
+
+/// One entry of a page list (pages.json, or a machine's `inyon pages --json`), when every field
+/// has its type and the slug is a slug.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Record {
+    pub slug: String,
+    pub name: String,
+    pub path: String,
+    pub project: String,
+    pub by: String,
+    /// unix ms, kept as the file wrote it
+    pub added: Number,
+    /// the agent conversation that added it, when the file says (from 0.22.5)
+    pub session: Option<String>,
+}
+
+pub fn as_record(v: &Value) -> Option<Record> {
+    let o = v.as_object()?;
+    let s = |k: &str| o.get(k).and_then(Value::as_str).map(str::to_owned);
+    let slug = s("slug").filter(|x| is_slug(x))?;
+    let added = match o.get("added") {
+        Some(Value::Number(n)) if n.as_f64().is_some_and(f64::is_finite) => n.clone(),
+        _ => return None,
+    };
+    let session = s("session").filter(|x| is_session(x));
+    Some(Record { slug, name: s("name")?, path: s("path")?, project: s("project")?, by: s("by")?, added, session })
+}
+
+/// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
+pub fn is_session(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+/// The folder of a site's notes, which the app lists in the viewer's Notes drawer.
+pub const NOTES_DIR: &str = "research";
+/// The most notes listed for one site.
+pub const NOTES_MAX: usize = 200;
+
+/// Whether a file in a site's notes folder is listed as a note: Markdown, a name a `/v/` address
+/// can carry (no dot first, no slash), and not too long.
+pub fn is_note(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.starts_with('.') && name.len() <= 120 && lower.ends_with(".md") && lower.len() > 3 && !name.contains(['/', '\\', '\0'])
+}
 
 /// A page on another machine, as its list says.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,11 +135,37 @@ async fn run(id: &str, args: &str, wait: u64) -> HubResult<Map<String, Value>> {
     Ok(m)
 }
 
+/// What asking a machine for its pages came to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ListAnswer {
+    Pages(Vec<RemotePage>),
+    /// its inyon is from before 0.22: it has no `pages`, or its list doesn't say `serves`
+    Outdated,
+    /// it couldn't be asked, or didn't answer
+    Failed,
+}
+
+/// A machine's pages, read now.
+pub async fn ask_list(id: &str) -> ListAnswer {
+    let Some((host, name)) = machine(id) else { return ListAnswer::Failed };
+    let Ok(r) = host.exec(&format!("{INYON_PAGES} --json"), ExecOptions { input: None, timeout_ms: Some(LIST_WAIT) }).await else { return ListAnswer::Failed };
+    match read_answer(&name, &r) {
+        Ok(m) if m.get("ok") == Some(&Value::Bool(false)) => ListAnswer::Failed,
+        Ok(m) if m.get("serves") == Some(&Value::Bool(true)) => ListAnswer::Pages(pages_in(&m).into_iter().map(|(p, _)| p).collect()),
+        Ok(_) => ListAnswer::Outdated,
+        Err(_) if crate::features::temp::answered_too_old(&r) => ListAnswer::Outdated,
+        Err(_) => ListAnswer::Failed,
+    }
+}
+
 /// A machine's pages, read now. None when it couldn't be asked; empty when its inyon is too old
 /// to serve them.
 pub async fn read_list(id: &str) -> Option<Vec<RemotePage>> {
-    let m = run(id, "--json", LIST_WAIT).await.ok()?;
-    Some(pages_in(&m).into_iter().map(|(p, _)| p).collect())
+    match ask_list(id).await {
+        ListAnswer::Pages(list) => Some(list),
+        ListAnswer::Outdated => Some(vec![]),
+        ListAnswer::Failed => None,
+    }
 }
 
 /// The pages in a machine's list (`pages --json` or a `pages watch` line), each with its site's
@@ -108,16 +183,7 @@ pub fn pages_in(m: &Map<String, Value>) -> Vec<(RemotePage, Option<String>)> {
         }
         let stamp = p.get("stamp").and_then(Value::as_str).map(str::to_owned);
         // a name the hub wouldn't list for its own pages is left out
-        let notes = p
-            .get("notes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .filter(|n| crate::pages::is_note(n))
-            .take(crate::pages::NOTES_MAX)
-            .map(str::to_owned)
-            .collect();
+        let notes = p.get("notes").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|n| is_note(n)).take(NOTES_MAX).map(str::to_owned).collect();
         out.push((RemotePage { record, progress: p.get("progress").filter(|v| v.is_object()).cloned(), notes }, stamp));
     }
     out
@@ -152,11 +218,17 @@ struct Watch {
 }
 
 /// Files other machines sent for pages they watch, each with its site's stamp when it came: kept
-/// while the stamp stays the same, oldest dropped first past FILE_CACHE_MAX.
-#[derive(Default)]
+/// while the stamp stays the same, oldest dropped first past `max` bytes.
 struct Files {
     entries: VecDeque<(String, String, Rc<Listing>)>,
     bytes: usize,
+    max: usize,
+}
+
+impl Default for Files {
+    fn default() -> Self {
+        Files { entries: VecDeque::new(), bytes: 0, max: FILE_CACHE_MAX }
+    }
 }
 
 impl Files {
@@ -171,10 +243,10 @@ impl Files {
     fn put(&mut self, key: String, stamp: String, l: Rc<Listing>) {
         self.drop_where(|k| k == key);
         let size = Files::size(&l);
-        if size > FILE_CACHE_MAX {
+        if size > self.max {
             return;
         }
-        while self.bytes + size > FILE_CACHE_MAX {
+        while self.bytes + size > self.max {
             let Some((_, _, old)) = self.entries.pop_front() else { break };
             self.bytes -= Files::size(&old);
         }
@@ -207,11 +279,29 @@ pub struct RemoteLists {
     /// machines whose inyon had no `pages watch`, and until when the hub doesn't ask again
     no_watch: RefCell<HashMap<String, u64>>,
     files: RefCell<Files>,
+    /// machines whose inyon is too old to list pages, as they last answered
+    outdated: RefCell<HashSet<String>>,
     /// how many watches were started, for the tests
     started: Cell<u32>,
 }
 
 impl RemoteLists {
+    /// Lists that keep at most `max` bytes of other machines' files (FILE_CACHE_MAX by default).
+    pub fn with_cache(max: usize) -> RemoteLists {
+        let r = RemoteLists::default();
+        r.files.borrow_mut().max = max;
+        r
+    }
+
+    /// The connected machines whose inyon is too old to list its pages (from before 0.22), as they
+    /// answered the last time they were asked.
+    pub fn outdated(&self) -> Vec<String> {
+        let ids = machines();
+        let mut out: Vec<String> = self.outdated.borrow().iter().filter(|id| ids.contains(id)).cloned().collect();
+        out.sort();
+        out
+    }
+
     /// One machine's pages: its watch's latest list while one runs, else read again when older
     /// than REMOTE_TTL_MS. A machine that doesn't answer keeps its last list until the next try.
     /// `saw` hears each list.
@@ -227,12 +317,18 @@ impl RemoteLists {
                 return list.clone();
             }
         }
-        let list = match read_list(id).await {
-            Some(l) => {
+        let list = match ask_list(id).await {
+            ListAnswer::Pages(l) => {
+                self.outdated.borrow_mut().remove(id);
                 saw(id, &l.iter().map(|p| p.record.clone()).collect::<Vec<_>>());
                 l
             }
-            None => cached.map(|(_, l)| l).unwrap_or_default(),
+            ListAnswer::Outdated => {
+                self.outdated.borrow_mut().insert(id.to_owned());
+                saw(id, &[]);
+                vec![]
+            }
+            ListAnswer::Failed => cached.map(|(_, l)| l).unwrap_or_default(),
         };
         self.read.borrow_mut().insert(id.to_owned(), (now, list.clone()));
         list
@@ -261,7 +357,7 @@ impl RemoteLists {
                 if idle.borrow().ended {
                     return;
                 }
-                if inyon_core::clock::now_ms().saturating_sub(idle.borrow().used) > WATCH_IDLE_MS {
+                if crate::clock::now_ms().saturating_sub(idle.borrow().used) > WATCH_IDLE_MS {
                     stop.kill();
                     return;
                 }
@@ -454,10 +550,11 @@ impl Listing {
     }
 }
 
-/// Asks the machine about one request for a file of its page `slug` (the site at `root`, slashed).
-/// None when it couldn't be asked; decide_view then finds nothing and answers 404.
-pub async fn get(id: &str, slug: &str, root: &Path, segments: &[String], slash: bool, if_none_match: Option<&str>) -> Option<Listing> {
-    let mut args = format!("get --json --max {REMOTE_FILE_MAX}");
+/// Asks the machine about one request for a file of its page `slug` (the site at `root`, slashed),
+/// with the file when it's at most `max` bytes (REMOTE_FILE_MAX for the hub). None when it
+/// couldn't be asked; decide_view then finds nothing and answers 404.
+pub async fn get(id: &str, slug: &str, root: &Path, segments: &[String], slash: bool, if_none_match: Option<&str>, max: u64) -> Option<Listing> {
+    let mut args = format!("get --json --max {max}");
     if slash {
         args.push_str(" --slash");
     }
@@ -474,13 +571,14 @@ pub async fn get(id: &str, slug: &str, root: &Path, segments: &[String], slash: 
 }
 
 /// Asks a machine that streams files (`pages get --lines`, from 0.22.3) about one request, and
-/// takes the file as base64 lines after the answer: up to STREAM_FILE_MAX, since no one message
-/// has to hold it. The browser's If-None-Match isn't passed on, so the file comes even when the
-/// browser has it and the hub can keep it; decide_view still answers that browser with a 304.
-pub async fn get_lines(id: &str, slug: &str, root: &Path, segments: &[String], slash: bool) -> Option<Listing> {
+/// takes the file as base64 lines after the answer: up to `max` bytes (STREAM_FILE_MAX for the
+/// hub), since no one message has to hold it. The browser's If-None-Match isn't passed on, so the
+/// file comes even when the browser has it and the hub can keep it; decide_view still answers that
+/// browser with a 304.
+pub async fn get_lines(id: &str, slug: &str, root: &Path, segments: &[String], slash: bool, max: u64) -> Option<Listing> {
     use base64::Engine;
     let (host, _) = machine(id)?;
-    let mut args = format!("get --json --lines --max {STREAM_FILE_MAX}");
+    let mut args = format!("get --json --lines --max {max}");
     if slash {
         args.push_str(" --slash");
     }
@@ -506,7 +604,7 @@ pub async fn get_lines(id: &str, slug: &str, root: &Path, segments: &[String], s
     }
     let mut l = Listing::from_answer(root, segments, &m);
     if let (Some(sends), Some(real)) = (m.get("sends").and_then(Value::as_u64), l.ends.clone()) {
-        let mut bytes = Vec::with_capacity(sends.min(STREAM_FILE_MAX) as usize);
+        let mut bytes = Vec::with_capacity(sends.min(max) as usize);
         for line in it {
             bytes.extend(base64::engine::general_purpose::STANDARD.decode(line.trim_end()).ok()?);
         }

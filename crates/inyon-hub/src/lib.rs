@@ -21,9 +21,9 @@ pub mod index;
 pub mod limits;
 pub mod machines;
 pub mod node_dist;
-pub mod notes;
 pub mod pages;
-pub mod pages_remote;
+// both live in the core, which the phone app runs too
+pub use inyon_core::features::{notes, pages_remote};
 pub mod password;
 pub mod phones;
 pub mod push;

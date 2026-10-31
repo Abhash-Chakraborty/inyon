@@ -25,6 +25,7 @@ use inyon_protocol::{HostKind, LATEST_URL};
 
 use crate::keys::PhoneKeys;
 use crate::link::{Links, Reach};
+use crate::pages::PhonePages;
 use crate::ssh::{CredentialsFor, SshBackend, SshPlugin};
 use crate::tables::{find, Lookup};
 
@@ -44,6 +45,7 @@ pub struct Options {
 pub struct Phone {
     tables: Rc<[Routes; 2]>,
     links: Links,
+    pages: Rc<PhonePages>,
 }
 
 /// Starts the core: the records come from `store`, then the machines are watched and the
@@ -103,6 +105,9 @@ pub fn start(o: Options) -> Phone {
     crate::computers::add(&mut own, o.reach, links.clone());
     // notifications while the page is closed come from the computers
     crate::push::add(&mut own);
+    // pages on the computers, which the app's viewer opens through `/v/` here
+    let pages = Rc::new(PhonePages::new(Rc::new(inyon_core::clock::now_ms)));
+    crate::pages::add(&mut own, pages.clone());
     inyon_api::core_routes::start_core();
     ensure();
     crate::push::start_node_push(Rc::new(move || {
@@ -120,7 +125,7 @@ pub fn start(o: Options) -> Phone {
         },
         6 * 3_600_000,
     );
-    Phone { tables: Rc::new([own, core]), links }
+    Phone { tables: Rc::new([own, core]), links, pages }
 }
 
 /// The routes the phone answers itself, ahead of the core's.
@@ -135,6 +140,10 @@ fn phone_routes() -> Routes {
 impl Phone {
     /// Answers an /api request the way the hub would.
     pub async fn answer(&self, mut req: Req) -> Resp {
+        // a file of a page on a computer, which the app's page viewer asks for as a hub's would be
+        if req.path.starts_with("/v/") {
+            return self.pages.view(&req).await;
+        }
         match find(&self.tables[..], &req.path, &req.method) {
             Lookup::Handler(h, params) => {
                 req.params = params;
@@ -180,5 +189,13 @@ impl Phone {
 }
 
 #[cfg(test)]
+impl Phone {
+    /// Reads a computer's list of pages again next time.
+    pub fn pages_forget(&self, id: &str) {
+        self.pages.remote.forget(id);
+    }
+}
+
+#[cfg(test)]
 #[path = "phone_tests.rs"]
-mod tests;
+pub(crate) mod tests;

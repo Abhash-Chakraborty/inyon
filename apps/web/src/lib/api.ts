@@ -462,6 +462,8 @@ export const api = {
   addPage: (host: string, b: PageRegister) => request<PageEntry>('POST', pg(host), b, 20_000),
   /** takes a page off the list; its folder stays */
   removePage: (host: string, slug: string) => request<{ ok: true }>('DELETE', pg(host, slug)),
+  /** a file of a page on a computer paired with the phone: the core answers `/v/<token>/…` itself (lib/pageBridge.ts) */
+  pageFile: (path: string, method: 'GET' | 'HEAD') => send(new Request(new URL(path, location.href), { method, credentials: 'omit' })),
 
   // ---- phones paired with this hub (the hub's web app shows the code; the app claims it) ----
   /** A one-time code for a phone to pair with this hub; needs a recent sign-in. */

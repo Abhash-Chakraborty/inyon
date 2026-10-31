@@ -6,6 +6,7 @@ import { execSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { VERSION } from '@inyon/protocol'
 import { browserFiles, withPrecacheList } from './src/lib/precache.ts'
+import { pageview } from './src/pageview/build.ts'
 
 const HUB = process.env.INYON_HUB ?? process.env.TETHER_HUB ?? 'http://127.0.0.1:4777'
 
@@ -65,7 +66,7 @@ const precache: Plugin = {
 }
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), devWithoutCsp, wasmCsp, versionFile, precache],
+  plugins: [react(), tailwindcss(), devWithoutCsp, wasmCsp, versionFile, precache, pageview()],
   define: { __INYON_COMMIT__: JSON.stringify(commit()) },
   // the phone app runs the hub's core in-process (loaded only inside the app, see lib/phone.ts)
   resolve: { alias: { '@inyon/phone': phoneCore } },

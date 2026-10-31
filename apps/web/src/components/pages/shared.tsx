@@ -11,7 +11,7 @@ import { isNative, useFramesIsolated } from '../../lib/native.ts'
 import { FrameRefused } from '../FrameRefused.tsx'
 import { splitHostId } from '../../lib/hubs.ts'
 import {
-  PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
+  PART_PATH, absoluteLink, agoText, changedAt, dropPage, frameMessage, hubUnreachable, isBridged, isChanged, isHubMachine, loadPages, localDeadline, openLink, pageBase, pageHosts, pageHref, projectName,
   RENEW_RETRY_MS, nextRetry, renewIn, runningNames, shouldRenew, usePages, type Page, type PageLink, type Part,
 } from '../../lib/pages.ts'
 import { Button, Field, SectionLabel, Sheet, inputClass, type MenuItem } from '../ui/primitives.tsx'
@@ -19,6 +19,8 @@ import { contextMenu } from '../ui/ContextMenu.tsx'
 import { Select } from '../ui/Select.tsx'
 import { confirmAction } from '../Confirm.tsx'
 import { useOpened } from '../../lib/useOpened.ts'
+import { publicFile } from '../../lib/base.ts'
+import { bridgeFrame, virtualSrc } from '../../lib/pageBridge.ts'
 
 /** The docs page about Pages, for "How pages work". */
 export const PAGES_DOCS = 'https://inyon.tech/docs/pages/'
@@ -186,7 +188,10 @@ export function useSiteParts(page: Pick<Page, 'id' | 'host'> | undefined, link: 
     Promise.all(
       (['mockups', 'matrix'] as const).map(async (part) => {
         try {
-          const r = await fetch(`${base}${link.url}${PART_PATH[part]}`, { method: 'HEAD', credentials: 'omit', referrerPolicy: 'no-referrer' })
+          // a page on a computer paired with the phone: the phone core answers its link
+          const r = isBridged(page.host)
+            ? await api.pageFile(`${link.url}${PART_PATH[part]}`, 'HEAD')
+            : await fetch(`${base}${link.url}${PART_PATH[part]}`, { method: 'HEAD', credentials: 'omit', referrerPolicy: 'no-referrer' })
           return r.ok ? part : undefined
         } catch {
           return undefined
@@ -198,12 +203,19 @@ export function useSiteParts(page: Pick<Page, 'id' | 'host'> | undefined, link: 
   return found && found.id === page?.id ? found.parts : ['plan']
 }
 
+/** The flags of every page frame, which match the hub's own CSP sandbox. */
+const SANDBOX = 'allow-scripts allow-forms allow-popups allow-downloads'
+
 /**
  * The page in its frame. The sandbox matches the hub's own CSP sandbox: scripts run, on an opaque
  * origin, with no way at the app's cookie, storage or DOM. The theme goes in with ?theme= in the
  * address, and as a message when the app's theme changes or the frame loads a new document.
+ *
+ * With `bridge` (the link, `/v/<token>/`, of a page on a computer paired with the phone) the frame
+ * holds the app's page viewer instead, in the same sandbox, and the app answers it with the
+ * link's files (lib/pageBridge.ts).
  */
-export function PageFrame({ src, title, className, style }: { src: string; title: string; className?: string; style?: React.CSSProperties }) {
+export function PageFrame({ src, bridge, title, className, style }: { src: string; bridge?: string; title: string; className?: string; style?: React.CSSProperties }) {
   const ref = useRef<HTMLIFrameElement>(null)
   const theme = useStore((s) => s.resolvedTheme)
   const themeNow = useRef(theme)
@@ -222,9 +234,14 @@ export function PageFrame({ src, title, className, style }: { src: string; title
     window.addEventListener('message', on)
     return () => window.removeEventListener('message', on)
   }, [post])
+  useEffect(() => {
+    const win = ref.current?.contentWindow
+    if (!bridge || !win) return
+    return bridgeFrame({ win, base: bridge, url: virtualSrc(src, bridge), theme: themeNow.current, fetch: api.pageFile })
+  }, [bridge, src])
   const isolated = useFramesIsolated()
-  if (!isolated) return <FrameRefused src={src} className={className} style={style} />
-  return <iframe ref={ref} src={src} title={title} sandbox="allow-scripts allow-forms allow-popups allow-downloads" referrerPolicy="no-referrer" allow="" onLoad={post} className={className} style={style} />
+  if (!isolated) return <FrameRefused src={bridge ? undefined : src} className={className} style={style} />
+  return <iframe ref={ref} src={bridge ? publicFile('pageview.html') : src} title={title} sandbox={SANDBOX} referrerPolicy="no-referrer" allow="" onLoad={post} className={className} style={style} />
 }
 
 
@@ -306,7 +323,8 @@ export function pageMenu(p: Page, machine: PageMachine, nav: NavigateFunction, o
   const off = !machine.online
   return [
     ...(o.open === false ? [] : [{ key: 'open', label: 'Open', icon: <PanelsTopLeft className="size-4" />, onSelect: () => nav(pageHref(p.host, p.slug)) }]),
-    { key: 'browser', label: 'Open in browser', hint: off ? `${machine.name} is offline` : BROWSER_HINT, icon: <ExternalLink className="size-4" />, disabled: off, onSelect: () => void openInBrowser(p) },
+    // a page on a computer paired with the phone has no address outside the app
+    ...(isBridged(p.host) ? [] : [{ key: 'browser', label: 'Open in browser', hint: off ? `${machine.name} is offline` : BROWSER_HINT, icon: <ExternalLink className="size-4" />, disabled: off, onSelect: () => void openInBrowser(p) }]),
     { key: 'revoke', label: 'Revoke links', icon: <Link2Off className="size-4" />, separated: true, onSelect: () => void revokeLinks(p) },
     { key: 'folder', label: 'Show folder', icon: <FolderOpen className="size-4" />, onSelect: () => openPageSheet({ kind: 'folder', page: p }) },
     { key: 'remove', label: 'Remove', icon: <Trash2 className="size-4" />, danger: true, separated: true, onSelect: () => void removePage(p, machine.name) },
@@ -360,7 +378,7 @@ function FolderSheet({ page: p, open, onClose }: { page: Page; open: boolean; on
 }
 
 function AddFolderSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const hosts = useMemo(() => (open ? pageHosts() : []), [open])
+  const hosts = useMemo(() => (open ? pageHosts(useStore.getState().hosts) : []), [open])
   const machines = useMachines()
   const [host, setHost] = useState('')
   const [folder, setFolder] = useState('')
