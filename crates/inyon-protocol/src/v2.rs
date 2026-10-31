@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use ts_rs::TS;
 
-use crate::organize::{Project, ProjectGroup, SessionMark, Space};
+use crate::organize::{DelayedSend, Project, ProjectGroup, SavedPrompt, SessionMark, SleepRule, Space};
 use crate::types::{ChatInfo, ChatItem, DraftSource, HeldPrompt, HostState, LiveItem, ScreenState, SendState, SendStatus};
 
 /// The protocol version `hello` names.
@@ -14,8 +14,8 @@ pub const PROTOCOL_V2: u32 = 2;
 /// or the organize stream.
 pub const OVERVIEW: &str = "overview";
 
-/// The stream of how sessions are organised (from 0.24): pins, parking, snoozes, tags, notes and
-/// projects, as `GET /api/organize` has them.
+/// The stream of how sessions are organised (from 0.24): pins, parking, snoozes, tags, notes,
+/// projects, messages sent later, sleep rules and saved prompts, as `GET /api/organize` has them.
 pub const ORGANIZE: &str = "organize";
 
 /// A frame at least this long (its JSON, in bytes) goes out compressed to an app that asked.
@@ -104,7 +104,8 @@ impl QueuedMsg {
 
 /// Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
 /// (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
-/// stream has `sessions`, `projects`, `groups` and `spaces` (each keyed by `id`).
+/// stream has `sessions`, `projects`, `groups`, `spaces`, `sends` and `prompts` (each keyed by
+/// `id`) and `sleep` (keyed by `scope`).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
@@ -117,6 +118,9 @@ pub struct Rows {
     pub projects: Option<Vec<Project>>,
     pub groups: Option<Vec<ProjectGroup>>,
     pub spaces: Option<Vec<Space>>,
+    pub sends: Option<Vec<DelayedSend>>,
+    pub prompts: Option<Vec<SavedPrompt>>,
+    pub sleep: Option<Vec<SleepRule>>,
 }
 
 /// Row keys, by collection, for `remove`.
@@ -132,6 +136,9 @@ pub struct Keys {
     pub projects: Option<Vec<String>>,
     pub groups: Option<Vec<String>>,
     pub spaces: Option<Vec<String>>,
+    pub sends: Option<Vec<String>>,
+    pub prompts: Option<Vec<String>>,
+    pub sleep: Option<Vec<String>>,
 }
 
 /// The unsent message for a pane, shared by every device and the terminal's input box.

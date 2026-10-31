@@ -180,7 +180,7 @@ pub fn quiet_key(hosts: &[inyon_protocol::HostState]) -> String {
 /// The v1 overview: the machines, and how the sessions are organised (matched to them first).
 pub fn overview_msg(hosts: Vec<inyon_protocol::HostState>) -> ServerMsg {
     organize::reconcile(&hosts);
-    ServerMsg::Overview { hosts, organize: Some(Box::new(organize::get())) }
+    ServerMsg::Overview { hosts, organize: Some(Box::new(organize::for_overview())) }
 }
 
 /// What a v1 app on screen is sent when only the organising changed: the overview again.
@@ -213,7 +213,7 @@ pub fn listen() {
             let hosts = registry().overview();
             let key = quiet_key(&hosts);
             let moved = organize::reconcile(&hosts);
-            let msg = ServerMsg::Overview { hosts, organize: Some(Box::new(organize::get())) };
+            let msg = ServerMsg::Overview { hosts, organize: Some(Box::new(organize::for_overview())) };
             for c in all() {
                 if !c.overview.get() {
                     continue;

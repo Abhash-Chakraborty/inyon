@@ -134,6 +134,9 @@ macro_rules! with_types {
             Project,
             ProjectGroup,
             Space,
+            DelayedSend,
+            SavedPrompt,
+            SleepRule,
             Organize,
             ServerMsg,
             // v2.rs (/ws2)

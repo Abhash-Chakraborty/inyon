@@ -1,5 +1,6 @@
-// How sessions are organised (from 0.24): pins, parking, snoozes, tags and notes on sessions, and
-// projects that gather sessions by folder. The hub owns it, so every device (phone, browser,
+// How sessions are organised (from 0.24): pins, parking, snoozes, tags and notes on sessions,
+// projects that gather sessions by folder, and what the hub does for them on its own: messages sent
+// later, idle agents put to sleep, sessions closed once done, and saved prompts. The hub owns it, so every device (phone, browser,
 // desktop app) shows the same order. The TypeScript side is in packages/protocol/src/index.ts.
 //
 // A session here is a pane, as the overview lists it, found again by the anchors its mark keeps
@@ -12,7 +13,7 @@ use ts_rs::TS;
 
 /// The version of the `organize` record the hub writes. A hub that finds a later one reads what it
 /// knows and refuses to change it, so going back to an older hub can't lose what a newer one kept.
-pub const ORGANIZE_VERSION: u32 = 1;
+pub const ORGANIZE_VERSION: u32 = 2;
 
 /// Marks kept at most; past it the one seen longest ago goes.
 pub const MAX_MARKS: usize = 1000;
@@ -33,6 +34,18 @@ pub const MAX_ROOTS: usize = 8;
 pub const PATH_LEN: usize = 1024;
 pub const MAX_GROUPS: usize = 30;
 pub const MAX_SPACES: usize = 20;
+/// Messages waiting to be sent later, on all sessions together.
+pub const MAX_SENDS: usize = 50;
+/// A message sent later at most; they travel in every v1 overview, so they're kept short.
+pub const SEND_LEN: usize = 4_000;
+pub const MAX_PROMPTS: usize = 200;
+/// A saved prompt at most.
+pub const PROMPT_LEN: usize = 10_000;
+/// An idle agent can be put to sleep after this many minutes at the least, and at the most.
+pub const SLEEP_MIN: u32 = 5;
+pub const SLEEP_MAX: u32 = 24 * 60;
+/// The [`SleepRule::scope`] that covers every session no project rule does.
+pub const SLEEP_ALL: &str = "all";
 
 /// A project's or a group's colour: the neutral ones, and a few muted ones. The app draws it on the
 /// project's mark and nowhere else.
@@ -100,6 +113,10 @@ pub struct SessionMark {
     pub section: Option<String>,
     /// the project it belongs to, whatever its folder; else it falls into one by its folder
     pub project: Option<String>,
+    /// end the session (as End session does) once its agent has finished its next piece of work
+    pub close_when_done: Option<bool>,
+    /// the hub saw it working since `close_when_done` was set, so the next idle ends it
+    pub close_saw_work: Option<bool>,
 }
 
 impl SessionMark {
@@ -113,6 +130,7 @@ impl SessionMark {
             && self.title.is_none()
             && self.section.is_none()
             && self.project.is_none()
+            && self.close_when_done != Some(true)
     }
 }
 
@@ -166,8 +184,55 @@ pub struct Space {
     pub projects: Vec<String>,
 }
 
-/// GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview. Lists are
-/// in the order the apps show them.
+/// A message the hub types into a session at a set time, through the same queue as a held message:
+/// once the time comes it waits for the agent to be free, then goes once. Found again like a mark:
+/// by the conversation, else by the pane in the same tmux session.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(optional_fields)]
+pub struct DelayedSend {
+    /// "d-" and 12 hex digits
+    pub id: String,
+    pub host: String,
+    pub pane: String,
+    pub conv: Option<String>,
+    pub tmux_id: Option<String>,
+    pub text: String,
+    /// when it goes, unix ms
+    pub at: u64,
+    /// why it couldn't go; it stays until dismissed
+    pub error: Option<String>,
+}
+
+/// A prompt kept to send again: for every session, or for one project's.
+#[skip_serializing_none]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(optional_fields)]
+pub struct SavedPrompt {
+    /// "q-" and 12 hex digits
+    pub id: String,
+    pub name: String,
+    pub text: String,
+    /// the project it's for; none for every session
+    pub project: Option<String>,
+    /// shown first
+    pub starred: Option<bool>,
+}
+
+/// After how long idle an agent is put to sleep (exits to its shell, keeping the pane, as Exit to
+/// shell does), for one project's sessions or, with scope [`SLEEP_ALL`], every other session. Off
+/// unless there's a rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SleepRule {
+    /// a project's id, or "all"
+    pub scope: String,
+    pub minutes: u32,
+}
+
+/// GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview (without
+/// `prompts`, which only GET and the `/ws2` stream carry). Lists are in the order the apps show
+/// them.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
@@ -183,6 +248,10 @@ pub struct Organize {
     pub groups: Vec<ProjectGroup>,
     #[serde(default)]
     pub spaces: Vec<Space>,
+    /// from version 2
+    pub sends: Option<Vec<DelayedSend>>,
+    pub prompts: Option<Vec<SavedPrompt>>,
+    pub sleep: Option<Vec<SleepRule>>,
 }
 
 /// JavaScript's `s.length`: what the limits count.
@@ -232,6 +301,14 @@ pub fn project_of<'a>(org: &'a Organize, host: &str, cwd: &str, mark: Option<&Se
         .filter_map(|p| p.roots.iter().filter(|r| r.host == host && path_in(cwd, &r.path)).map(|r| js_len(&r.path)).max().map(|len| (len, p)))
         .max_by_key(|(len, _)| *len)
         .map(|(_, p)| p)
+}
+
+/// After how many idle minutes a session's agent is put to sleep: its project's rule, else the one
+/// for all sessions. None when it's off for it.
+pub fn sleep_minutes(org: &Organize, project: Option<&Project>) -> Option<u32> {
+    let rules = org.sleep.as_deref().unwrap_or_default();
+    let rule = |scope: &str| rules.iter().find(|r| r.scope == scope).map(|r| r.minutes);
+    project.and_then(|p| rule(&p.id)).or_else(|| rule(SLEEP_ALL))
 }
 
 #[cfg(test)]

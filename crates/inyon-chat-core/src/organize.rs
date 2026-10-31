@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use inyon_protocol::{project_of, Organize, Project, ProjectColor, ProjectGroup, SessionMark};
+use inyon_protocol::{project_of, sleep_minutes, DelayedSend, Organize, Project, ProjectColor, ProjectGroup, SavedPrompt, SessionMark};
 
 use crate::overview::{pane_title, PaneRef};
 
@@ -198,6 +198,9 @@ pub fn rename_hosts(org: &mut Organize, name: impl Fn(&str) -> String) {
     for m in &mut org.sessions {
         m.host = name(&m.host);
     }
+    for s in org.sends.iter_mut().flatten() {
+        s.host = name(&s.host);
+    }
     for p in &mut org.projects {
         for r in &mut p.roots {
             r.host = name(&r.host);
@@ -206,6 +209,8 @@ pub fn rename_hosts(org: &mut Organize, name: impl Fn(&str) -> String) {
 }
 
 /// Several hubs' organize as one list: each keeps its own ids, which can't clash (the hub makes them).
+/// Sleep rules are each hub's own ("all" means all of that hub's sessions), so a merge leaves them
+/// out: read them from the hub's own organize.
 pub fn merge<'o>(parts: impl IntoIterator<Item = &'o Organize>) -> Organize {
     let mut out = Organize::default();
     for o in parts {
@@ -214,8 +219,32 @@ pub fn merge<'o>(parts: impl IntoIterator<Item = &'o Organize>) -> Organize {
         out.projects.extend(o.projects.iter().cloned());
         out.groups.extend(o.groups.iter().cloned());
         out.spaces.extend(o.spaces.iter().cloned());
+        out.sends.get_or_insert_with(Vec::new).extend(o.sends.iter().flatten().cloned());
+        out.prompts.get_or_insert_with(Vec::new).extend(o.prompts.iter().flatten().cloned());
     }
+    out.sends = out.sends.filter(|l| !l.is_empty());
+    out.prompts = out.prompts.filter(|l| !l.is_empty());
     out
+}
+
+/// The messages waiting to go to a session, the soonest first (a failed one, with its reason, too).
+pub fn sends_for<'a>(org: &'a Organize, host: &str, pane: &str) -> Vec<&'a DelayedSend> {
+    let mut out: Vec<&DelayedSend> = org.sends.iter().flatten().filter(|s| s.host == host && s.pane == pane).collect();
+    out.sort_by_key(|s| s.at);
+    out
+}
+
+/// The saved prompts to offer in a session of `project`: the starred first, then the project's,
+/// then those for every session, each in the order kept. Another project's aren't offered.
+pub fn prompts_for<'a>(org: &'a Organize, project: Option<&str>) -> Vec<&'a SavedPrompt> {
+    let mut out: Vec<&SavedPrompt> = org.prompts.iter().flatten().filter(|q| q.project.is_none() || q.project.as_deref() == project).collect();
+    out.sort_by_key(|q| (q.starred != Some(true), q.project.is_none()));
+    out
+}
+
+/// After how many idle minutes this hub puts a session's agent to sleep; None when it doesn't.
+pub fn sleeps_after(r: &PaneRef, org: &Organize) -> Option<u32> {
+    sleep_minutes(org, pane_project(r, org))
 }
 
 #[cfg(test)]
@@ -337,6 +366,46 @@ mod tests {
         let all = merge([&sample(), &theirs]);
         assert_eq!((all.sessions.len(), all.projects.len(), all.v), (10, 4, 1));
         assert!(mark_for(&all, "hub:x/box", "%1").is_some());
+    }
+
+    #[test]
+    fn waiting_messages_prompts_and_sleep_rules_are_read_per_session() {
+        let mut o = sample();
+        o.sends = Some(
+            serde_json::from_value(json!([
+                { "id": "d-2", "host": "box", "pane": "%1", "text": "later", "at": NOW + 2 * HOUR },
+                { "id": "d-1", "host": "box", "pane": "%1", "text": "sooner", "at": NOW + HOUR },
+                { "id": "d-3", "host": "box", "pane": "%2", "text": "elsewhere", "at": NOW }
+            ]))
+            .unwrap(),
+        );
+        assert_eq!(sends_for(&o, "box", "%1").iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["d-1", "d-2"]);
+        let pid = o.projects[0].id.clone();
+        o.prompts = Some(
+            serde_json::from_value(json!([
+                { "id": "q-1", "name": "Mine", "text": "a" },
+                { "id": "q-2", "name": "Theirs", "text": "b", "project": "p-other" },
+                { "id": "q-3", "name": "Project", "text": "c", "project": pid },
+                { "id": "q-4", "name": "Star", "text": "d", "starred": true }
+            ]))
+            .unwrap(),
+        );
+        assert_eq!(prompts_for(&o, Some(&pid)).iter().map(|q| q.id.as_str()).collect::<Vec<_>>(), ["q-4", "q-3", "q-1"]);
+        assert_eq!(prompts_for(&o, None).iter().map(|q| q.id.as_str()).collect::<Vec<_>>(), ["q-4", "q-1"]);
+
+        let hs = hosts();
+        let all = all_panes(&hs);
+        assert_eq!(sleeps_after(&all[0], &o), None, "off unless there's a rule");
+        o.sleep = Some(vec![inyon_protocol::SleepRule { scope: "all".into(), minutes: 60 }, inyon_protocol::SleepRule { scope: pid.clone(), minutes: 15 }]);
+        let in_project = all.iter().find(|r| pane_project(r, &o).is_some_and(|p| p.id == pid)).unwrap();
+        let outside = all.iter().find(|r| pane_project(r, &o).is_none()).unwrap();
+        assert_eq!((sleeps_after(in_project, &o), sleeps_after(outside, &o)), (Some(15), Some(60)));
+
+        // a paired hub's messages carry its machines' new names; its rules stay its own
+        let mut theirs = o.clone();
+        rename_hosts(&mut theirs, |h| format!("hub:x/{h}"));
+        let both = merge([&o, &theirs]);
+        assert_eq!((sends_for(&both, "hub:x/box", "%1").len(), both.prompts.map(|l| l.len()), both.sleep), (2, Some(8), None));
     }
 
     #[test]

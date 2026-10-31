@@ -31,6 +31,8 @@ From 0.22, on the hub's web app: start the [companion agent](companion-agent.md)
 
 **Restart sessions that stop reporting.** If a session's live numbers stop updating, Inyon reconnects or restarts it by itself.
 
+**Put idle agents to sleep** (from 0.24): **Off**, **30 min**, **1 hour** or **2 hours**. An agent idle that long exits to its shell, as **Exit to shell** does, keeping its pane, so it stops using memory. Open the session and choose [**Resume conversation**](sessions.md#when-nothing-is-running) when you need it again. Idle means the turn is over, nothing runs in the background and nothing is being asked, and the time counts from when the hub first saw it idle, so a hub restart starts it again. Pinned sessions stay awake, and so do sessions with a held message or a message sent later waiting, ones without a conversation to resume, and the companion. It's off unless you choose a time, and it applies to this hub's sessions; a paired hub has its own.
+
 ## Uploads and clipboard
 
 | Setting | Choices | Default |

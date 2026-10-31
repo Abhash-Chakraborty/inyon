@@ -5,6 +5,8 @@ import { MemoryRouter } from 'react-router-dom'
 import type { HostState, Organize, SessionMark } from '@inyon/protocol'
 import { Home } from '../pages/Home.tsx'
 import { ActionSheets } from './menus.tsx'
+import { SendLaterSheet } from './session/OrganizeSheets.tsx'
+import { ScheduledBubble } from './chat/ScheduledBubble.tsx'
 import { useStore } from '../lib/store.ts'
 import { api, emit } from '../test/fakes.ts'
 import { agentPane, host } from '../test/fixtures.ts'
@@ -114,5 +116,44 @@ describe('organising sessions on the overview', () => {
     expect(useStore.getState().organize).toBe(first)
     emit({ t: 'overview', hosts: [box()], organize: org() })
     expect(useStore.getState().organize.sessions).toEqual([])
+  })
+
+  test('Close when done goes to the hub, and the menu then offers to keep it open', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org() })
+    const user = userEvent.setup()
+    await home()
+    await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Close when done' }))
+    expect(api.organize).toHaveBeenCalledWith('box', '%3', { closeWhenDone: true })
+    await hear({ t: 'overview', hosts: [box()], organize: org(mark('%3', { closeWhenDone: true })) })
+    await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
+    expect(screen.getByRole('menuitem', { name: 'Keep open when done' })).toBeTruthy()
+  })
+
+  test('a message kept to send later is handed to the hub with its time, and the box empties', async () => {
+    let sent = 0
+    api.sendLater.mockImplementation(async () => ({ id: 'd-1', host: 'box', pane: '%1', text: 'run the tests', at: 0 }))
+    const user = userEvent.setup()
+    await render(<SendLaterSheet host="box" pane="%1" text="run the tests " open onClose={() => {}} onSent={() => sent++} />)
+    const before = Date.now()
+    await user.click(screen.getByRole('button', { name: /In an hour/ }))
+    const [host, pane, text, at] = api.sendLater.mock.calls[0]!
+    expect([host, pane, text]).toEqual(['box', '%1', 'run the tests'])
+    expect(Math.abs(at - before - 3600_000)).toBeLessThan(5_000)
+    expect(sent).toBe(1)
+    expect(useStore.getState().toasts.at(-1)?.title).toMatch(/^Sends at /)
+  })
+
+  test('a scheduled message can be cancelled, and one that failed says why', async () => {
+    const user = userEvent.setup()
+    const s = { id: 'd-1', host: 'box', pane: '%1', text: 'run the tests', at: Date.now() + 3600_000 }
+    const view = await render(<ScheduledBubble host="box" pane="%1" s={s} />)
+    expect(screen.getByText(/^Sends at /)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(api.cancelSend).toHaveBeenCalledWith('box', 'd-1')
+    view.unmount()
+    await render(<ScheduledBubble host="box" pane="%1" s={{ ...s, error: "The session isn't there any more" }} />)
+    expect(screen.getByText("The session isn't there any more")).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy()
   })
 })

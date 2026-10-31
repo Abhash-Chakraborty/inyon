@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Organize, SessionMark } from '@inyon/protocol'
 import { allPanes } from './overview.ts'
-import { markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, snoozeUntil, sortPanes } from './organize.ts'
+import { markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, sendAt, sendsFor, snoozeUntil, sortPanes } from './organize.ts'
 import { agentPane, host } from '../test/fixtures.ts'
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime()
@@ -74,6 +74,28 @@ describe('organised sessions', () => {
     expect(new Date(snoozeUntil('nextWeek', tue))).toEqual(new Date(2026, 10, 2, 9, 0))
     // from a Monday, the one after
     expect(new Date(snoozeUntil('nextWeek', new Date(2026, 10, 2, 8, 0)))).toEqual(new Date(2026, 10, 9, 9, 0))
+  })
+
+  test("messages sent later: the soonest first, a paired hub's renamed, and their times", () => {
+    const o: Organize = {
+      ...org(),
+      sends: [
+        { id: 'd-2', host: 'box', pane: '%1', text: 'later', at: NOW + 7200_000 },
+        { id: 'd-1', host: 'box', pane: '%1', text: 'sooner', at: NOW + 3600_000 },
+        { id: 'd-3', host: 'box', pane: '%2', text: 'elsewhere', at: NOW },
+      ],
+      sleep: [{ scope: 'all', minutes: 60 }],
+    }
+    expect(sendsFor(o, 'box', '%1').map((s) => s.id)).toEqual(['d-1', 'd-2'])
+    const theirs = renameOrganize(o, (id) => `hub:abc:${id}`)
+    expect(sendsFor(theirs, 'hub:abc:box', '%1')).toHaveLength(2)
+    const both = mergeOrganize([o, theirs])
+    expect(both.sends).toHaveLength(6)
+    // each hub's own sleep rules don't mix
+    expect(both.sleep).toBeUndefined()
+    const tue = new Date(NOW)
+    expect(sendAt('halfHour', tue)).toBe(NOW + 30 * 60_000)
+    expect(new Date(sendAt('tomorrow', tue))).toEqual(new Date(2026, 9, 28, 9, 0))
   })
 
   test('tags are typed in one box and come out as the hub keeps them', () => {

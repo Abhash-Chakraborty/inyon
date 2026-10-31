@@ -101,6 +101,12 @@ From 0.22 the hub can hold a message for you and type it in once the agent has b
 
 If a held message can't be sent, it stays first in line with the reason, and nothing more goes until you edit it, send it now or drop it. Up to 50 messages can be held per session. The phone app holds messages only through a hub of 0.22 or later.
 
+### Sending a message later
+
+From 0.24 the hub can keep a message and send it at a time you pick. Right-click (or long-press) the send button, choose **Send later…**, then **In 30 minutes**, **In an hour**, **In three hours** or **Tomorrow morning** (9:00 by the clock of the device you're on). The message waits under the conversation with a dashed outline and *Sends at …*, with **Send now** and **Cancel** beside it, on every device. When its time comes it joins the held messages and goes once the agent is free, so it never cuts into a turn. It goes once, even if the hub restarts around that time.
+
+A message sent later follows its conversation if you resume it in another pane. If the session is gone by then, it stays with *The session isn't there any more* until you dismiss it. Up to 50 messages can wait at once, each up to 4,000 characters.
+
 Newer Claude Code versions show *← 1 agent* in their footer, a count of the other Claude Code sessions on the machine. Until 0.22.3 Inyon read it as this session's background work, so the session never looked free and held messages waited for good. From 0.22.3 that count is ignored.
 
 ## Renaming
@@ -111,7 +117,7 @@ From 0.22 you can rename the tmux session itself, on any machine (Linux, macOS o
 
 ## Pins, tags and notes
 
-From 0.24 a session's menu on the overview, in the sidebar or on a machine's page also has **Pin**, **Park**, **Snooze…**, **Tags…** and **Note…**. The hub keeps them, so every device shows the same, and they follow the conversation into another pane when you resume it. See [The overview](overview.md#pinning-parking-and-snoozing).
+From 0.24 a session's menu on the overview, in the sidebar or on a machine's page also has **Pin**, **Park**, **Snooze…**, **Tags…**, **Note…** and **Close when done**, which ends the session (as **End session…** does) once its agent finishes its next piece of work. The hub keeps them, so every device shows the same, and they follow the conversation into another pane when you resume it. See [The overview](overview.md#pinning-parking-and-snoozing).
 
 ## Past conversations
 

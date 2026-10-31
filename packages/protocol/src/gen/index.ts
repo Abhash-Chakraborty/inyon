@@ -1010,7 +1010,15 @@ section?: string,
 /**
  * the project it belongs to, whatever its folder; else it falls into one by its folder
  */
-project?: string, };
+project?: string, 
+/**
+ * end the session (as End session does) once its agent has finished its next piece of work
+ */
+closeWhenDone?: boolean, 
+/**
+ * the hub saw it working since `close_when_done` was set, so the next idle ends it
+ */
+closeSawWork?: boolean, };
 
 /**
  * A folder on one machine whose sessions belong to a project.
@@ -1053,14 +1061,66 @@ export type Space = {
 id: string, name: string, icon?: string, projects: Array<string>, };
 
 /**
- * GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview. Lists are
- * in the order the apps show them.
+ * A message the hub types into a session at a set time, through the same queue as a held message:
+ * once the time comes it waits for the agent to be free, then goes once. Found again like a mark:
+ * by the conversation, else by the pane in the same tmux session.
+ */
+export type DelayedSend = { 
+/**
+ * "d-" and 12 hex digits
+ */
+id: string, host: string, pane: string, conv?: string, tmuxId?: string, text: string, 
+/**
+ * when it goes, unix ms
+ */
+at: number, 
+/**
+ * why it couldn't go; it stays until dismissed
+ */
+error?: string, };
+
+/**
+ * A prompt kept to send again: for every session, or for one project's.
+ */
+export type SavedPrompt = { 
+/**
+ * "q-" and 12 hex digits
+ */
+id: string, name: string, text: string, 
+/**
+ * the project it's for; none for every session
+ */
+project?: string, 
+/**
+ * shown first
+ */
+starred?: boolean, };
+
+/**
+ * After how long idle an agent is put to sleep (exits to its shell, keeping the pane, as Exit to
+ * shell does), for one project's sessions or, with scope [`SLEEP_ALL`], every other session. Off
+ * unless there's a rule.
+ */
+export type SleepRule = { 
+/**
+ * a project's id, or "all"
+ */
+scope: string, minutes: number, };
+
+/**
+ * GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview (without
+ * `prompts`, which only GET and the `/ws2` stream carry). Lists are in the order the apps show
+ * them.
  */
 export type Organize = { 
 /**
  * [`ORGANIZE_VERSION`] when the hub wrote it
  */
-v: number, sessions: Array<SessionMark>, projects: Array<Project>, groups: Array<ProjectGroup>, spaces: Array<Space>, };
+v: number, sessions: Array<SessionMark>, projects: Array<Project>, groups: Array<ProjectGroup>, spaces: Array<Space>, 
+/**
+ * from version 2
+ */
+sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, };
 
 export type ServerMsg = { "t": "overview", hosts: Array<HostState>, organize?: Organize, } | { "t": "chat.reset", key: string, info: ChatInfo, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.append", key: string, items: Array<ChatItem>, } | { "t": "chat.more", key: string, items: Array<ChatItem>, hasMore: boolean, } | { "t": "chat.info", key: string, info: ChatInfo, } | { "t": "chat.screen", key: string, screen: ScreenState, } | { "t": "chat.live", key: string, items: Array<LiveItem>, } | { "t": "chat.progress", key: string, done: number, total: number, } | { "t": "chat.draft", key: string, text: string, source: DraftSource, at: number, } | { "t": "term.data", id: string, d: string, } | { "t": "term.exit", id: string, reason?: string, } | { "t": "notify", host: string, pane: string, kind: NotifyKind, title: string, body: string, agent?: AgentKind, } | { "t": "page.notify", host: string, slug: string, title: string, body: string, } | { "t": "pong" } | { "t": "companion.reply", id: string, host: string, pane: string, text: string, error?: boolean, at: number, };
 
@@ -1119,14 +1179,15 @@ export type QueueKind = "held" | "send" | "agent";
 /**
  * Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
  * (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
- * stream has `sessions`, `projects`, `groups` and `spaces` (each keyed by `id`).
+ * stream has `sessions`, `projects`, `groups`, `spaces`, `sends` and `prompts` (each keyed by
+ * `id`) and `sleep` (keyed by `scope`).
  */
-export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, sessions?: Array<SessionMark>, projects?: Array<Project>, groups?: Array<ProjectGroup>, spaces?: Array<Space>, };
+export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, sessions?: Array<SessionMark>, projects?: Array<Project>, groups?: Array<ProjectGroup>, spaces?: Array<Space>, sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, };
 
 /**
  * Row keys, by collection, for `remove`.
  */
-export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, sessions?: Array<string>, projects?: Array<string>, groups?: Array<string>, spaces?: Array<string>, };
+export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, sessions?: Array<string>, projects?: Array<string>, groups?: Array<string>, spaces?: Array<string>, sends?: Array<string>, prompts?: Array<string>, sleep?: Array<string>, };
 
 /**
  * The unsent message for a pane, shared by every device and the terminal's input box.

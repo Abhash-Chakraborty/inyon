@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
-import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowRight, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Pin, PinOff, Plus, Server, SquareTerminal, StickyNote, Tag, Trash2 } from 'lucide-react'
+import { AlarmClock, AlarmClockOff, Archive, ArchiveRestore, ArrowRight, CircleCheck, CircleX, Download, ExternalLink, FolderOpen, History, Pencil, Pin, PinOff, Plus, Server, SquareTerminal, StickyNote, Tag, Trash2 } from 'lucide-react'
 import { agentDef, isBusy, type HostState } from '@inyon/protocol'
 import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
@@ -52,6 +52,7 @@ export function paneMenu(r: PaneRef, nav: NavigateFunction): MenuItem[] {
       : { key: 'snooze', label: 'Snooze…', icon: <AlarmClock className="size-4" />, onSelect: () => openActionSheet({ kind: 'snooze', r }) }),
     org && { key: 'tags', label: m?.tags?.length ? 'Edit tags…' : 'Tags…', icon: <Tag className="size-4" />, onSelect: () => openActionSheet({ kind: 'tags', r }) },
     org && { key: 'note', label: m?.note ? 'Edit note…' : 'Note…', icon: <StickyNote className="size-4" />, onSelect: () => openActionSheet({ kind: 'note', r }) },
+    org && a && { key: 'close-done', label: m?.closeWhenDone ? 'Keep open when done' : 'Close when done', icon: <CircleCheck className="size-4" />, onSelect: () => void closeWhenDone(r, !m?.closeWhenDone) },
     { key: 'rename', label: 'Rename…', icon: <Pencil className="size-4" />, separated: true, onSelect: () => openActionSheet({ kind: 'rename', r }) },
     { key: 'rename-session', label: 'Rename tmux session…', icon: <Pencil className="size-4" />, onSelect: () => openActionSheet({ kind: 'tmux-session', r }) },
     a && !!agentDef(a.kind)?.conversations?.length && { key: 'conversations', label: 'Past conversations…', icon: <History className="size-4" />, onSelect: () => openActionSheet({ kind: 'conversations', r }) },
@@ -64,6 +65,12 @@ export function paneMenu(r: PaneRef, nav: NavigateFunction): MenuItem[] {
 async function park(r: PaneRef) {
   if (!(await organizePane(r, { parked: true }, 'Could not park'))) return
   toast({ title: `Parked ${paneName(r)}`, body: 'It waits under Parked and snoozed on the overview.', tone: 'info', action: { label: 'Undo', onSelect: () => void organizePane(r, { parked: null }, 'Could not undo') } })
+}
+
+/** Ends the session (as End session does) once its agent finishes its next piece of work. */
+async function closeWhenDone(r: PaneRef, on: boolean) {
+  if (!(await organizePane(r, { closeWhenDone: on }))) return
+  if (on) toast({ title: 'Closes when done', body: `Inyon ends ${paneName(r)} once its agent finishes its next piece of work.`, tone: 'info' })
 }
 
 /** A tmux session heading: `r` is any pane in it. */

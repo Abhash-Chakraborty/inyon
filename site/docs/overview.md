@@ -30,11 +30,13 @@ From 0.24 a session's menu can put it where you want it. The hub keeps all of th
 - **Tags…** adds up to 8 tags, typed with commas between them. They show after the folder on the card, as `#review`, and the overview's search box finds sessions by them.
 - **Note…** keeps up to 500 characters with the session. A note icon on the card shows it when you point at it, and the search box finds it too.
 
+- **Close when done** ends the session, as **End session…** would, once its agent finishes its next piece of work: it has to work and then sit idle for a few seconds, so setting it on an idle session waits for the next turn. **Keep open when done** takes it back. It still happens if the hub restarts in between, and only once.
+
 A pinned session that you park or snooze moves to the folded section and comes back to **Pinned** after. These choices follow the session, not the tmux pane: one you resume in another pane keeps them, and a pane number that tmux hands out again after a restart doesn't pick up an old session's pins. Sessions that tmux-resurrect puts back in the same place get theirs back. A session that's gone keeps its choices for 30 days in case it returns.
 
 A machine on a paired hub shows that hub's pins. A hub older than 0.24 doesn't keep them, so its sessions' menus don't offer these actions.
 
-Scripts can do the same with a signed-in session or a phone's token: `GET /api/organize` returns everything the hub keeps, and `PATCH /api/hosts/<machine>/panes/<pane>/organize` with a body such as `{"pinned": true}`, `{"parked": true}`, `{"snoozedUntil": 1793000000000, "snoozeNotice": true}`, `{"tags": ["review"]}` or `{"note": "…"}` changes one session (`null` clears a field). A machine's token can't use them. The hub keeps it all in `~/.inyon/organize.json`.
+Scripts can do the same with a signed-in session or a phone's token: `GET /api/organize` returns everything the hub keeps, and `PATCH /api/hosts/<machine>/panes/<pane>/organize` with a body such as `{"pinned": true}`, `{"parked": true}`, `{"snoozedUntil": 1793000000000, "snoozeNotice": true}`, `{"tags": ["review"]}`, `{"note": "…"}` or `{"closeWhenDone": true}` changes one session (`null` clears a field). `POST /api/hosts/<machine>/panes/<pane>/sends` with `{"text": "…", "at": 1793000000000}` keeps a [message to send later](sessions.md#sending-a-message-later), and `DELETE /api/hosts/<machine>/sends/<id>` cancels it. `PUT /api/organize/sleep` with `{"scope": "all", "minutes": 60}` sets [sleep](settings.md#live-numbers) for every session, or with a project's id as `scope` for that project's. Saved prompts, each with a name, the text, an optional project and a star, live under `/api/organize/prompts`; the apps don't show them yet. A machine's token can't use any of these. The hub keeps it all in `~/.inyon/organize.json`.
 
 ## Right-click menus
 

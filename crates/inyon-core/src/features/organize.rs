@@ -12,7 +12,8 @@
 //! not `live`, for when its pane comes back (a machine that was off), and goes after 30 days.
 //!
 //! Kept in the `organize` record with a version (see [`ORGANIZE_VERSION`]); a record written by a
-//! later hub is read but never written over.
+//! later hub is read but never written over. What the hub does on its own with it (messages sent
+//! later, agents put to sleep, sessions closed when done, saved prompts) is in [`auto`].
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -38,8 +39,8 @@ pub const FORGET_MS: u64 = 30 * 24 * 3_600_000;
 const SEEN_EVERY_MS: u64 = 3_600_000;
 /// A snooze can last this long at most.
 pub const MAX_SNOOZE_MS: u64 = 366 * 24 * 3_600_000;
-/// How often the hub looks for snoozes that are over.
-pub const TICK_MS: u64 = 15_000;
+/// How often the hub looks for snoozes that are over, messages due and idle agents.
+pub const TICK_MS: u64 = 5_000;
 
 pub const NEWER: &str = "A newer Inyon hub saved how your sessions are organised. Update this hub to change it.";
 
@@ -89,10 +90,12 @@ fn load() -> State {
 }
 
 /// Brings a record from an earlier version up to this one. Version 0 is a record from before
-/// versions were written, which never shipped; it reads as version 1.
+/// versions were written, which never shipped; it reads as version 1. Version 2 added messages
+/// sent later, sleep rules, saved prompts and closing when done, all of them new fields, so a
+/// version 1 record reads as it is.
 pub fn migrate(mut org: Organize) -> Organize {
-    if org.v < 1 {
-        org.v = 1;
+    if org.v < 2 {
+        org.v = 2;
     }
     org
 }
@@ -139,9 +142,14 @@ fn change<T>(f: impl FnOnce(&mut Organize) -> HubResult<T>) -> HubResult<T> {
     Ok(out)
 }
 
-/// Everything, as the apps get it.
+/// Everything, as GET /api/organize and the `/ws2` stream have it.
 pub fn get() -> Organize {
     with(|st| st.org.clone())
+}
+
+/// What a v1 overview carries (see [`auto::for_overview`]).
+pub fn for_overview() -> Organize {
+    auto::for_overview(get())
 }
 
 /// The same, matched to the machines as they are now.
@@ -364,6 +372,7 @@ pub struct SessionPatch {
     pub title: Option<Option<String>>,
     pub section: Option<Option<String>>,
     pub project: Option<Option<String>>,
+    pub close_when_done: Option<bool>,
 }
 
 impl SessionPatch {
@@ -412,6 +421,7 @@ impl SessionPatch {
             title: line_field(b, "title", TITLE_LEN, "A title")?,
             section: line_field(b, "section", SECTION_LEN, "A section's name")?,
             project,
+            close_when_done: bool_field(b, "closeWhenDone")?,
         })
     }
 }
@@ -452,6 +462,11 @@ fn apply(org: &mut Organize, i: usize, p: &SessionPatch) -> HubResult<()> {
     }
     if let Some(t) = &p.tags {
         m.tags = (!t.is_empty()).then(|| t.clone());
+    }
+    if let Some(v) = p.close_when_done {
+        // the agent's next piece of work counts from now
+        m.close_when_done = v.then_some(true);
+        m.close_saw_work = None;
     }
     for (to, from) in [(&mut m.note, &p.note), (&mut m.title, &p.title), (&mut m.section, &p.section), (&mut m.project, &p.project)] {
         if let Some(v) = from {
@@ -523,6 +538,8 @@ pub fn mark_pane(host_id: &str, pane_id: &str, patch: &SessionPatch) -> HubResul
                     title: None,
                     section: None,
                     project: None,
+                    close_when_done: None,
+                    close_saw_work: None,
                 });
                 org.sessions.len() - 1
             }
@@ -686,6 +703,7 @@ pub fn remove_project(id: &str) -> HubResult<()> {
         for s in &mut org.spaces {
             s.projects.retain(|p| p != id);
         }
+        auto::project_removed(org, id);
         org.sessions.retain(|m| !m.is_blank());
         renumber_pins(org);
         Ok(())
@@ -820,10 +838,11 @@ fn reorder<T>(list: &mut Vec<T>, ids: &[String], id: impl Fn(&T) -> &str) {
     list.append(&mut rest);
 }
 
-/// `PUT /api/organize/order`: the order of pinned sessions (by mark id), projects, groups and spaces.
+/// `PUT /api/organize/order`: the order of pinned sessions (by mark id), projects, groups, spaces
+/// and saved prompts.
 pub fn set_order(b: &Value) -> HubResult<()> {
     let b = object(b)?;
-    let (pins, projects, groups, spaces) = (id_list(b, "pins")?, id_list(b, "projects")?, id_list(b, "groups")?, id_list(b, "spaces")?);
+    let (pins, projects, groups, spaces, prompts) = (id_list(b, "pins")?, id_list(b, "projects")?, id_list(b, "groups")?, id_list(b, "spaces")?, id_list(b, "prompts")?);
     change(|org| {
         if let Some(pins) = pins {
             let mut order: Vec<String> = pins.into_iter().filter(|id| org.sessions.iter().any(|m| &m.id == id && m.pinned.is_some())).collect();
@@ -845,6 +864,9 @@ pub fn set_order(b: &Value) -> HubResult<()> {
         }
         if let Some(ids) = spaces {
             reorder(&mut org.spaces, &ids, |s| &s.id);
+        }
+        if let (Some(ids), Some(list)) = (prompts, org.prompts.as_mut()) {
+            reorder(list, &ids, |q| &q.id);
         }
         Ok(())
     })
@@ -891,7 +913,16 @@ pub fn wake_due(now: u64) -> bool {
     true
 }
 
-/// Starts the hub's clock for snoozes (once).
+/// One look at the clock: snoozes that are over, messages due, idle agents and finished sessions.
+pub fn tick(now: u64) {
+    wake_due(now);
+    let hosts = registry().overview();
+    reconcile(&hosts);
+    auto::send_due(now, &hosts);
+    auto::check_agents(now, &hosts);
+}
+
+/// Starts the hub's clock for all that (once).
 pub fn start() {
     if STARTED.with(|s| s.replace(true)) {
         return;
@@ -900,11 +931,18 @@ pub fn start() {
     spawn(async {
         loop {
             sleep(TICK_MS).await;
-            wake_due(now_ms());
+            tick(now_ms());
         }
     });
 }
 
+#[path = "organize_auto.rs"]
+pub mod auto;
+
 #[cfg(test)]
 #[path = "organize_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "organize_auto_tests.rs"]
+mod auto_tests;

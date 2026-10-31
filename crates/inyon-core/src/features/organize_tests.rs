@@ -104,10 +104,20 @@ fn a_record_from_before_versions_is_read_and_one_from_a_newer_hub_is_never_writt
         put(machine(&[("$1", "work", &[("%3", "/w", None)])]));
         kv::set_value(KEY, &json!({ "sessions": [{ "id": "s-1", "host": "box", "pane": "%3", "tmuxId": "$1", "parked": true }] })).unwrap();
         let org = current();
-        assert_eq!((org.v, org.sessions.len(), org.sessions[0].live), (1, 1, true));
+        assert_eq!((org.v, org.sessions.len(), org.sessions[0].live), (ORGANIZE_VERSION, 1, true));
+
+        // version 1 (pins, parking, snoozes, tags, notes, projects) reads as it is
+        fresh();
+        kv::set_value(
+            KEY,
+            &json!({ "v": 1, "sessions": [{ "id": "s-1", "host": "box", "pane": "%3", "tmuxId": "$1", "pinned": 0 }], "projects": [{ "id": "p-1", "name": "Inyon" }] }),
+        )
+        .unwrap();
+        let org = current();
+        assert_eq!((org.v, org.sessions[0].pinned, org.projects.len(), org.sends.clone()), (2, Some(0), 1, None));
 
         fresh();
-        let later = json!({ "v": 2, "sessions": [{ "id": "s-1", "host": "box", "pane": "%3", "parked": true, "colourOfTheDay": "red" }], "boards": [1] });
+        let later = json!({ "v": ORGANIZE_VERSION + 1, "sessions": [{ "id": "s-1", "host": "box", "pane": "%3", "parked": true, "colourOfTheDay": "red" }], "boards": [1] });
         kv::set_value(KEY, &later).unwrap();
         assert_eq!(current().sessions.len(), 1, "what it knows is read");
         let e = mark_pane("box", "%3", &patch(json!({ "pinned": true }))).unwrap_err();

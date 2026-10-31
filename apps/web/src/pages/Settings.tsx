@@ -4,7 +4,7 @@ import clsx from 'clsx'
 import { Bell, BookOpen, Check, ChevronRight, Copy, Download, Heart, KeyRound, LogOut, Mic, Minus, Monitor, Moon, MoreHorizontal, QrCode, ShieldCheck, Smartphone, Sun, Trash2, Vibrate } from 'lucide-react'
 import { AGENTS, INSTALL_URL, type CompanionScope, type PairedCompanion } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
-import { toast, useStore } from '../lib/store.ts'
+import { canSleep, toast, useStore } from '../lib/store.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Menu, Pulse, Segmented, Sheet, Toggle, Waiting, inputClass, type MenuItem } from '../components/ui/primitives.tsx'
@@ -304,6 +304,25 @@ function Section({ id, title, desc, children }: { id?: string; title: string; de
   )
 }
 
+const SLEEP_CHOICES = [
+  { v: '0', label: 'Off' },
+  { v: '30', label: '30 min' },
+  { v: '60', label: '1 hour' },
+  { v: '120', label: '2 hours' },
+]
+
+/** From 0.24: this hub puts agents idle this long to sleep (Exit to shell), so they stop using memory. */
+function SleepRow() {
+  const rule = useStore((s) => s.organize.sleep?.find((r) => r.scope === 'all'))
+  if (!canSleep()) return null
+  const set = (v: string) => void api.setSleep(Number(v) || null).catch((e) => toast({ title: 'Could not change it', body: (e as Error).message, tone: 'error' }))
+  return (
+    <Row label="Put idle agents to sleep" hint="An agent idle this long exits to its shell, keeping its pane, and Resume conversation brings it back when you need it. Pinned sessions, ones with a message waiting and ones without a conversation to resume stay awake.">
+      <Segmented size="sm" value={String(rule?.minutes ?? 0)} onChange={set} options={SLEEP_CHOICES} />
+    </Row>
+  )
+}
+
 function Row({ label, hint, children }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5">
@@ -480,6 +499,7 @@ export function Settings() {
                   <Toggle on={!!hub.autoResume} onChange={(v) => saveHub({}, { autoResume: v })} label="Restart sessions that stop reporting" />
                 </Row>
               )}
+              <SleepRow />
             </div>
           </section>
 

@@ -764,6 +764,10 @@ export interface SessionMark {
   section?: string
   /** the project it belongs to, whatever its folder; else it falls into one by its folder */
   project?: string
+  /** end the session (as End session does) once its agent has finished its next piece of work */
+  closeWhenDone?: boolean
+  /** the hub saw it working since closeWhenDone was set, so the next idle ends it */
+  closeSawWork?: boolean
 }
 
 /** A folder on one machine whose sessions belong to a project. */
@@ -802,7 +806,41 @@ export interface Space {
   projects: string[]
 }
 
-/** GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview. Lists are in the order the apps show them. */
+/** A message the hub types into a session at a set time, through the held queue: it waits for the agent to be free, then goes once. */
+export interface DelayedSend {
+  /** "d-" and 12 hex digits */
+  id: string
+  host: string
+  pane: string
+  conv?: string
+  tmuxId?: string
+  text: string
+  /** when it goes, unix ms */
+  at: number
+  /** why it couldn't go; it stays until dismissed */
+  error?: string
+}
+
+/** A prompt kept to send again: for every session, or for one project's. */
+export interface SavedPrompt {
+  /** "q-" and 12 hex digits */
+  id: string
+  name: string
+  text: string
+  /** the project it's for; none for every session */
+  project?: string
+  /** shown first */
+  starred?: boolean
+}
+
+/** After how many idle minutes an agent is put to sleep (Exit to shell), for a project's sessions or, with scope "all", every other one. Off unless there's a rule. */
+export interface SleepRule {
+  /** a project's id, or "all" */
+  scope: string
+  minutes: number
+}
+
+/** GET /api/organize, the hub's `organize` record, and the `organize` of a v1 overview (without `prompts`). Lists are in the order the apps show them. */
 export interface Organize {
   /** the record's version when the hub wrote it */
   v: number
@@ -810,6 +848,10 @@ export interface Organize {
   projects: Project[]
   groups: ProjectGroup[]
   spaces: Space[]
+  /** from version 2 */
+  sends?: DelayedSend[]
+  prompts?: SavedPrompt[]
+  sleep?: SleepRule[]
 }
 
 // ---------- WebSocket protocol ----------

@@ -119,7 +119,11 @@ const remembered = loadOverview()
 // each hub's organize by where it came from, as the machines are
 const organizeBy = new Map<string, Organize>(Object.entries((remembered && loadOrganize()) ?? {}))
 let organizeWire = ''
-const allOrganize = () => (organizeBy.size ? mergeOrganize([...organizeBy.values()]) : NO_ORGANIZE)
+// sleep rules are each hub's own: the screens show this hub's
+const allOrganize = () => (organizeBy.size ? { ...mergeOrganize([...organizeBy.values()]), sleep: organizeBy.get('main')?.sleep } : NO_ORGANIZE)
+/** Whether this hub (or the phone's own core) can put idle agents to sleep: from version 2 of its record. */
+export const canSleep = () => (organizeBy.get('main')?.v ?? 0) >= 2
+
 /** Whether the hub a machine is on keeps how sessions are organised (an older one doesn't). */
 export function canOrganize(hostId: string) {
   const hub = splitHostId(hostId).hub
