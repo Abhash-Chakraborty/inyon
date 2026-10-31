@@ -1,0 +1,11 @@
+[application]
+name = "inyon-app"
+
+[web.app]
+title = "Inyon"
+# the hub serves this copy at /next while the React app keeps /
+base_path = "next"
+
+# smallest over fastest: the page waits for the whole download before it draws anything
+[web.wasm_opt]
+level = "z"

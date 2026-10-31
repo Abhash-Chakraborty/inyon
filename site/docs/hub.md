@@ -175,6 +175,10 @@ The hub keeps its records in `~/.inyon` (or `INYON_DATA_DIR`): the password hash
 
 From 0.20 the hub also serves the sites your agents make on its machine, such as Blueprint plans, at `/v/<link>/` on its own port. Pages are listed in `~/.inyon/pages.json`. Each link is signed, opens one page for 12 hours and needs no cookie, so a reverse proxy in front of the hub has to pass `/v/` through as it does everything else. [Security](security.md#pages) says how a page is kept away from your sign-in.
 
+## The new app at /next
+
+From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It has the sign-in and the Overview so far, uses the same password and sign-in as the web app, and opens a session, Machines, Pages and Settings in the web app. Everything else stays at `/` until the new app can do all of it. A hub you build from source carries it only if you run `apps/app/build.sh` first; without it, `/next` answers "The new app isn't in this build of the hub" with a 404.
+
 ## The hub in Rust
 
 From 0.21 the hub runs on the hub built into `inyon`, written in Rust; 0.20 carried it as an opt-in test. It answers the web app, the Android app and joining machines as the Bun hub did, from the same records in `~/.inyon`: your password, phones, machines and Pages carry over both ways. It runs on Linux and macOS.
