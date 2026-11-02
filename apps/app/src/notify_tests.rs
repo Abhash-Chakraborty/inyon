@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use inyon_protocol::{HostState, NotifyKind, ServerMsg};
@@ -41,7 +41,7 @@ const ALL: Wants = Wants { done: true, pages: true };
 
 fn setup() -> (Rc<Tray>, Rc<Notifier>) {
     let tray = Rc::new(Tray::default());
-    (tray.clone(), Notifier::new(tray))
+    (tray.clone(), Notifier::with_clock(tray, || 0.0))
 }
 
 #[test]
@@ -190,4 +190,161 @@ fn a_page_moving_on_is_posted_unless_turned_off() {
 fn a_notice_reaches_kotlin_as_the_json_notifications_post_reads() {
     let n = Notice { title: "t".into(), body: "b".into(), href: "/".into(), tag: "x".into(), kind: "done".into(), host: None, pane: None, options: vec![] };
     assert_eq!(serde_json::to_string(&n).unwrap(), r#"{"title":"t","body":"b","href":"/","tag":"x","kind":"done"}"#);
+}
+
+fn tap(option: u32, label: &str, at: f64) -> Tap {
+    Tap { host: "lap top".into(), pane: "%3".into(), option, label: label.into(), tag: "lap top:%3".into(), at }
+}
+
+fn yes_no() -> Vec<HostState> {
+    vec![host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }, { "n": 2, "label": "No" }])))]
+}
+
+/// Runs an answer whose sending finishes at once, and says what was sent.
+fn answered(n: &Notifier, t: Tap, now: f64, hosts: &[HostState], result: Result<(), String>) -> Vec<(String, String, u32)> {
+    let sent = RefCell::new(vec![]);
+    let send = |h: String, p: String, o: u32| {
+        sent.borrow_mut().push((h, p, o));
+        std::future::ready(result)
+    };
+    futures_util::FutureExt::now_or_never(n.answer(t, now, hosts, send)).expect("finishes at once");
+    sent.into_inner()
+}
+
+#[test]
+fn a_tap_is_sent_only_while_the_session_asks_that_question() {
+    let hosts = yes_no();
+    assert_eq!(judge(&tap(1, "Yes", 0.0), 1_000.0, &hosts), Verdict::Send);
+    // a different label at that number, a number it doesn't offer, another pane
+    assert_eq!(judge(&tap(1, "No", 0.0), 1_000.0, &hosts), Verdict::Changed);
+    assert_eq!(judge(&tap(3, "Yes", 0.0), 1_000.0, &hosts), Verdict::Changed);
+    assert_eq!(judge(&Tap { pane: "%4".into(), ..tap(1, "Yes", 0.0) }, 1_000.0, &hosts), Verdict::Changed);
+    // the agent moved on
+    let working = vec![host("lap top", "online", json!({ "kind": "claude", "pid": 1, "state": "working" }))];
+    assert_eq!(judge(&tap(1, "Yes", 0.0), 1_000.0, &working), Verdict::Changed);
+}
+
+#[test]
+fn a_tap_older_than_twelve_seconds_is_dropped_without_a_word() {
+    let (tray, n) = setup();
+    assert_eq!(judge(&tap(1, "Yes", 0.0), ANSWER_TTL_MS, &yes_no()), Verdict::Send);
+    assert_eq!(judge(&tap(1, "Yes", 0.0), ANSWER_TTL_MS + 1.0, &yes_no()), Verdict::Late);
+    let sent = answered(&n, tap(1, "Yes", 0.0), 20_000.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    // Kotlin's AnswerService has already said it wasn't sent
+    assert!(tray.posted.borrow().is_empty() && tray.cleared.borrow().is_empty());
+}
+
+#[test]
+fn a_sent_answer_takes_its_notification_away() {
+    let (tray, n) = setup();
+    let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    n.ask(later, &yes_no());
+    let sent = answered(&n, tap(2, "No", 1_000.0), 2_000.0, &yes_no(), Ok(()));
+    assert_eq!(sent, vec![("lap top".to_owned(), "%3".to_owned(), 2)]);
+    assert_eq!(*tray.cleared.borrow(), vec!["lap top:%3"]);
+    // no longer asking: the overview after it doesn't clear it again
+    n.overview(&[host("lap top", "online", json!({ "kind": "claude", "pid": 1, "state": "working" }))]);
+    assert_eq!(tray.cleared.borrow().len(), 1);
+}
+
+#[test]
+fn a_changed_question_says_the_answer_was_not_sent() {
+    let (tray, n) = setup();
+    let sent = answered(&n, tap(1, "Allow", 1_000.0), 2_000.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    let p = tray.posted.borrow()[0].clone();
+    assert_eq!((p.title.as_str(), p.kind.as_str(), p.tag.as_str(), p.href.as_str()), ("That question changed", "done", "lap top:%3", "/m/lap%20top/p/3"));
+    assert!(p.body.contains("“Allow” wasn't sent"), "{}", p.body);
+    // no buttons: it doesn't offer the answers again
+    assert!(p.options.is_empty());
+}
+
+#[test]
+fn a_failed_answer_says_why_and_keeps_asking() {
+    let (tray, n) = setup();
+    let sent = answered(&n, tap(1, "Yes", 1_000.0), 2_000.0, &yes_no(), Err("lap top is offline".into()));
+    assert_eq!(sent.len(), 1);
+    let p = tray.posted.borrow()[0].clone();
+    assert_eq!((p.title.as_str(), p.body.as_str(), p.kind.as_str()), ("Couldn't send your answer", "lap top is offline", "waiting"));
+    assert!(tray.cleared.borrow().is_empty());
+}
+
+#[test]
+fn a_tap_reaches_rust_as_kotlin_writes_it() {
+    let t: Tap = serde_json::from_str(r#"{"host":"box","pane":"%7","option":2,"label":"No","tag":"box:%7","at":1730000000000}"#).unwrap();
+    assert_eq!(t, Tap { host: "box".into(), pane: "%7".into(), option: 2, label: "No".into(), tag: "box:%7".into(), at: 1.73e12 });
+}
+
+/// A notifier whose clock the test sets.
+fn timed() -> (Rc<Tray>, Rc<Notifier>, Rc<Cell<f64>>) {
+    let (tray, clock) = (Rc::new(Tray::default()), Rc::new(Cell::new(0.0)));
+    let c = clock.clone();
+    (tray.clone(), Notifier::with_clock(tray, move || c.get()), clock)
+}
+
+/// The session asks a question, and its notification goes up at `at`.
+fn asked(n: &Notifier, clock: &Cell<f64>, at: f64) {
+    clock.set(at);
+    let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    n.ask(later, &yes_no());
+}
+
+#[test]
+fn a_tap_on_a_notification_since_replaced_by_a_newer_question_is_not_sent() {
+    let (tray, n, clock) = timed();
+    asked(&n, &clock, 1_000.0);
+    // the same answers at the same numbers, asked again at 5 s; the tap was at 4 s, on the first
+    asked(&n, &clock, 5_000.0);
+    let sent = answered(&n, tap(1, "Yes", 4_000.0), 6_000.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    // the newer question's notification stays as it is
+    assert_eq!(tray.posted.borrow().len(), 2);
+    assert!(tray.cleared.borrow().is_empty());
+    // a tap on the newer one goes
+    let sent = answered(&n, tap(1, "Yes", 5_500.0), 6_000.0, &yes_no(), Ok(()));
+    assert_eq!(sent.len(), 1);
+    assert_eq!(*tray.cleared.borrow(), vec!["lap top:%3"]);
+}
+
+#[test]
+fn a_tap_while_a_newer_question_waits_for_its_answers_leaves_it_alone() {
+    let (tray, n, clock) = timed();
+    asked(&n, &clock, 1_000.0);
+    // asked again; its notification goes up once the overview has its answers
+    let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    // the tap no longer matches what's asked: no "That question changed" over the new one
+    let sent = answered(&n, tap(1, "Allow", 2_000.0), 2_100.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    assert_eq!(tray.posted.borrow().len(), 1);
+    n.ask(later, &yes_no());
+    assert_eq!(tray.posted.borrow().len(), 2);
+    assert_eq!(tray.posted.borrow()[1].kind, "waiting");
+}
+
+#[test]
+fn an_answer_that_lands_after_a_newer_question_keeps_that_notification() {
+    let (tray, n, clock) = timed();
+    asked(&n, &clock, 1_000.0);
+    let n2 = n.clone();
+    let c2 = clock.clone();
+    // while the answer goes, the agent asks something new
+    let send = move |_: String, _: String, _: u32| {
+        asked(&n2, &c2, 3_000.0);
+        std::future::ready(Ok(()))
+    };
+    futures_util::FutureExt::now_or_never(n.answer(tap(1, "Yes", 2_000.0), 2_000.0, &yes_no(), send)).unwrap();
+    assert!(tray.cleared.borrow().is_empty(), "the new question's notification was cleared");
+    // and the overview can still take it away once that one is answered
+    n.overview(&[host("lap top", "online", json!({ "kind": "claude", "pid": 1, "state": "working" }))]);
+    assert_eq!(*tray.cleared.borrow(), vec!["lap top:%3"]);
+}
+
+#[test]
+fn a_send_stops_before_kotlin_says_it_was_not_sent() {
+    assert_eq!(send_window_ms(1_000.0, 1_000.0), 14_000);
+    assert_eq!(send_window_ms(1_000.0, 13_000.0), 2_000);
+    assert_eq!(send_window_ms(1_000.0, 20_000.0), 0);
+    // Kotlin's AnswerService.TTL_MS
+    const { assert!(ANSWER_SEND_BY_MS < 15_000.0 && ANSWER_SEND_BY_MS > ANSWER_TTL_MS) };
 }

@@ -12,6 +12,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import tech.abhashchakraborty.inyon.device.AnswerService
+import tech.abhashchakraborty.inyon.device.Choice
 import tech.abhashchakraborty.inyon.device.DeviceEvents
 import tech.abhashchakraborty.inyon.device.KeepAliveService
 import tech.abhashchakraborty.inyon.device.Notifications
@@ -45,11 +46,11 @@ object Native {
         DeviceEvents.sink = object : DeviceEvents.Sink {
             override fun keepAliveEnded(reason: String) = Native.keepAliveEnded(reason)
 
+            // the core runs outside any window, so AnswerService keeping the process up is enough
             override fun answerAwake(on: Boolean) {}
 
-            // answering from a notification comes with the next change; until then no notification
-            // has answer buttons (postNotification)
-            override fun answer(host: String, pane: String, option: Int, label: String, tag: String, at: Long) = false
+            override fun answer(host: String, pane: String, option: Int, label: String, tag: String, at: Long) =
+                Native.answer(JSONObject().put("host", host).put("pane", pane).put("option", option).put("label", label).put("tag", tag).put("at", at).toString())
         }
         startCore(File(app.filesDir, "inyon").path, Build.MANUFACTURER ?: "", Build.MODEL ?: "")
     }
@@ -75,6 +76,8 @@ object Native {
     @JvmStatic external fun openHref(href: String)
 
     @JvmStatic external fun darkTheme(night: Boolean): Boolean
+
+    @JvmStatic external fun answer(json: String): Boolean
 
     // ---------- called from Rust ----------
 
@@ -103,10 +106,18 @@ object Native {
         val n = JSONObject(json)
         // a session's notification replaced: an answer sent from it went, or failed and says why
         if (n.has("tag")) AnswerService.settled(n.optString("tag"))
+        val choices = mutableListOf<Choice>()
+        n.optJSONArray("options")?.let { o ->
+            for (i in 0 until o.length()) {
+                val c = o.optJSONObject(i) ?: continue
+                val label = c.optString("label")
+                // a number past Int.MAX_VALUE would wrap to a negative one the core refuses: no button
+                val num = c.optLong("n", -1L)
+                if (num in 0L..Int.MAX_VALUE.toLong() && label.isNotEmpty()) choices.add(Choice(num.toInt(), label))
+            }
+        }
         fun opt(k: String) = if (n.has(k)) n.optString(k) else null
-        // no answer buttons until answering from a notification reaches the core (the next change):
-        // a tap would only say the answer wasn't sent
-        return Notifications.post(app, opt("title") ?: "Inyon", opt("body") ?: "", opt("href"), opt("tag"), opt("kind"), opt("host"), opt("pane"), emptyList())
+        return Notifications.post(app, opt("title") ?: "Inyon", opt("body") ?: "", opt("href"), opt("tag"), opt("kind"), opt("host"), opt("pane"), choices)
     }
 
     @JvmStatic
