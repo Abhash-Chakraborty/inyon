@@ -9,8 +9,9 @@ on:
   # a push to main runs this through node.yml, which publishes what it builds
   pull_request:
     # the protocol crate's tests also read packages/protocol and fixtures/;
-    # `inyon docs` carries site/docs inside the binary
-    paths: ['apps/cli/**', 'apps/app/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'installers/**', 'fixtures/**', 'apps/web/scripts/phone-core.ts', 'apps/web/vite.config.ts', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
+    # `inyon docs` carries site/docs inside the binary; the new app's terminal is bundled from
+    # the web app's terminal files and the workspace's packages
+    paths: ['apps/cli/**', 'apps/app/**', 'site/docs/**', 'crates/**', 'packages/protocol/**', 'installers/**', 'fixtures/**', 'apps/web/scripts/phone-core.ts', 'apps/web/vite.config.ts', 'apps/web/src/components/terminal/**', 'apps/web/src/lib/renderer.ts', 'bun.lock', '.cargo/**', 'Cargo.toml', 'Cargo.lock', 'rustfmt.toml', '.github/workflows/cli.yml']
   workflow_dispatch:
   workflow_call:
 
@@ -91,12 +92,15 @@ jobs:
           mkdir -p dx && tar xzf dx-x86_64-unknown-linux-gnu.tar.gz -C dx
           echo "$RUNNER_TEMP/dx" >> "$GITHUB_PATH"
       - run: rustup target add wasm32-unknown-unknown
-      - run: apps/app/build.sh
-      - run: ls -l apps/app/dist apps/app/dist/assets
+      # build.sh bundles the terminal's xterm.js with Bun, from the workspace's packages
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - run: apps/app/build.sh
+      - run: ls -l apps/app/dist apps/app/dist/assets
+      - run: bunx tsc --noEmit
+        working-directory: apps/app
       - run: bunx playwright install --with-deps chromium
       - run: bun apps/app/e2e/overview.ts
         env:

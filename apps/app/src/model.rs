@@ -345,7 +345,7 @@ pub fn meter_tone(pct: f64) -> &'static str {
 /// Where a session opens: this app's route for it, as the web app's (`/m/<machine>/p/<pane
 /// without %>`) under /next.
 pub fn pane_href(host: &str, pane: &str) -> String {
-    crate::route::Route::Session { host: host.into(), pane: pane.into(), terminal: false }.href()
+    crate::route::Route::Session { host: host.into(), pane: pane.into(), view: None }.href()
 }
 
 pub fn machine_href(host: &str) -> String {

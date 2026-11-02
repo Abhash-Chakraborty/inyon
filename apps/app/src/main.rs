@@ -18,6 +18,9 @@ mod route;
 mod socket;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod state;
+// the terminal drives xterm.js, which only the browser build has
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod term;
 mod ui;
 
 fn main() {

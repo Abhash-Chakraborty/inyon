@@ -12,6 +12,9 @@ mod prompt;
 mod rows;
 mod session;
 mod shell;
+// xterm.js and the page's events reach it only in the browser build
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod terminal;
 
 use dioxus::prelude::*;
 use inyon_protocol::v2::OVERVIEW;
@@ -143,7 +146,8 @@ fn Connected(auth: Signal<Auth>) -> Element {
                         }
                     }
                 }
-                // terminals (`term.data`) come with the terminal view; notices with the toasts
+                // a terminal's output goes straight to its drawing; notices come with the toasts
+                Incoming::Hub { t, text } if t.starts_with("term.") => crate::term::dispatch(&text),
                 Incoming::Hub { .. } | Incoming::Other => {}
             },
         }));

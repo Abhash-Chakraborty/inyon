@@ -177,13 +177,14 @@ From 0.20 the hub also serves the sites your agents make on its machine, such as
 
 ## The new app at /next
 
-From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview and a session's chat:
+From 0.24 the hub also serves an early copy of Inyon's next app, written in Rust, at `/next` on its own address (for example `https://hub.example/next`). It uses the same password and sign-in as the web app, and so far has the sign-in, the Overview and a session's chat and terminal:
 
 - the conversation, with replies, tool calls and code blocks you can copy, and **Earlier messages** as you scroll up
 - the message box: Enter sends, a message sent while the agent works waits in its queue, and Esc in an empty box stops the agent
 - an agent's question or approval as a card you answer by tapping a choice or pressing its number, with the model, effort and mode line back once it's answered
+- the terminal, under **Chat · Terminal** in the session header, as the web app has it (see [The terminal](terminal.md)): the key bar, text size, typing in any language through your keyboard's input method, and a right-click menu (a long press on a phone) with **Copy**, **Paste** and **Select all**. A plain shell, or an agent Inyon doesn't read as chat, opens on its terminal.
 
-Terminal, Machines, Pages and Settings still open in the web app, and everything else stays at `/` until the new app can do all of it. A hub you build from source carries it only if you run `apps/app/build.sh` first; without it, `/next` answers "The new app isn't in this build of the hub" with a 404.
+Machines, Pages and Settings still open in the web app, and everything else stays at `/` until the new app can do all of it. A hub you build from source carries it only if you run `apps/app/build.sh` first (it needs Bun and `bun install` for the terminal); without it, `/next` answers "The new app isn't in this build of the hub" with a 404.
 
 ## The hub in Rust
 

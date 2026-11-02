@@ -29,8 +29,8 @@ pub fn Shell() -> Element {
                         TabBar {}
                     },
                     // a session has the screen to itself on a phone, as in the web app
-                    Route::Session { host, pane, terminal } => rsx! {
-                        div { key: "{host}:{pane}", class: "page", Session { host, pane, terminal } }
+                    Route::Session { host, pane, view } => rsx! {
+                        div { key: "{host}:{pane}", class: "page", Session { host, pane, view } }
                     },
                 }
             }

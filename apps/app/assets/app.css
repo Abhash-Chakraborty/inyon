@@ -806,6 +806,35 @@ input:focus-visible { outline: none; }
 .prompt-foot { display: flex; flex-shrink: 0; align-items: center; gap: 4px; border-top: 1px solid var(--line); padding: 6px 8px; }
 .prompt-foot-end { margin-left: auto; display: flex; align-items: center; gap: 4px; }
 
+/* ---------- the terminal ---------- */
+
+.session-view { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.term { display: flex; min-height: 0; flex: 1; flex-direction: column; background: var(--bg); }
+.term-stage { position: relative; min-height: 0; flex: 1; }
+/* xterm.js fills this; the padding keeps the text off the edges, and the phone keyboard's share is
+   added to the bottom by term.ts where the keyboard covers the page */
+.term-screen { position: absolute; inset: 0; padding: 6px 4px 0 8px; }
+.term-screen .xterm { height: 100%; }
+/* xterm.css paints the viewport black, and it runs a few pixels past the last row */
+.term-screen .xterm .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
+.term-screen .xterm-viewport::-webkit-scrollbar { width: 6px; }
+.term-screen .xterm-viewport::-webkit-scrollbar-thumb { border-radius: 3px; background: var(--line-strong); }
+.term-cover { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: var(--bg); padding: 24px; }
+.term-cover .skeleton-line { width: min(320px, 70%); }
+.term-closed-text { max-width: 36ch; text-align: center; font-size: 14px; color: var(--fg-2); }
+.term-status { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); margin: 0; border-radius: 9999px; border: 1px solid var(--line); background: var(--panel); padding: 4px 12px; }
+.term-keys { display: flex; flex-shrink: 0; align-items: center; gap: 4px; overflow-x: auto; border-top: 1px solid var(--line); background: var(--sidebar); padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); scrollbar-width: none; }
+.term-keys::-webkit-scrollbar { display: none; }
+.term-key { display: flex; height: 40px; min-width: 40px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); padding: 0 10px; font-family: var(--font-mono); font-size: 13px; color: var(--fg-2); transition: background-color var(--dur-small) var(--ease-out-soft), color var(--dur-small) var(--ease-out-soft); }
+.term-key:hover:not(:disabled) { color: var(--fg); }
+.term-key:disabled { opacity: 0.4; }
+.term-key-on { border-color: var(--fg); background: var(--fg); color: var(--bg); }
+.term-key-on:hover:not(:disabled) { color: var(--bg); }
+.term-keys-rule { margin: 0 4px; height: 20px; width: 1px; flex-shrink: 0; background: var(--line); }
+@media (pointer: fine) {
+  .term-key { height: 36px; min-width: 36px; }
+}
+
 /* ---------- right-click menus ---------- */
 
 .menu-backdrop { position: fixed; inset: 0; z-index: 90; }

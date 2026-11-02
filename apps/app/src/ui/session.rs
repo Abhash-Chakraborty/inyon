@@ -1,7 +1,7 @@
 //! A session's screen (PanePage.tsx and SessionHeader.tsx): the header with the agent, the title,
 //! where the pane is and its state, then the chat. Opening it follows the chat's `/ws2` stream from
-//! where this app left it; leaving stops following it. The terminal view isn't in this app yet, so
-//! Terminal opens the web app's.
+//! where this app left it; leaving stops following it. Chat and Terminal switch between the two
+//! views; a plain shell, or an agent that stays in its terminal, opens on the terminal.
 
 use dioxus::prelude::*;
 use inyon_chat_core::format::model_name;
@@ -13,9 +13,15 @@ use super::chat::ChatView;
 use super::icons::{AgentMark, Glyph, Icon};
 use super::outbox;
 use super::rows::Ctx;
+use super::terminal::TerminalView;
 use crate::model::Shown;
+use crate::route::BASE;
 use crate::state::{self, Chats, Hub};
 use crate::{dom, format, platform};
+
+// each view rises in over the one it replaces
+const CHAT_KEY: &str = "chat";
+const TERMINAL_KEY: &str = "terminal";
 
 /// "Opus 4.8 · high · Plan": the model, effort and mode, as far as they're known.
 pub fn controls_line(model: Option<&str>, effort: Option<&str>, mode: Option<&str>, def: Option<&AgentDef>) -> String {
@@ -72,7 +78,7 @@ fn settings() -> Settings {
 }
 
 #[component]
-pub fn Session(host: String, pane: String, terminal: bool) -> Element {
+pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let mut chats = use_context::<Signal<Chats>>();
     let out = outbox();
@@ -100,12 +106,6 @@ pub fn Session(host: String, pane: String, terminal: bool) -> Element {
             out.send(state::wire2(&ClientMsg2::Unsub { stream: key.clone() }));
         });
     }
-    // this app has no terminal yet: ?view=terminal goes to the web app's
-    let terminal_href = pane_href(&host, &pane, Some(PaneView::Terminal));
-    if terminal {
-        dom::go(&terminal_href);
-    }
-
     let h = hub.read();
     let c = chats.read();
     let info = c.get(&key).and_then(|e| e.chat.info.clone());
@@ -151,6 +151,11 @@ pub fn Session(host: String, pane: String, terminal: bool) -> Element {
         all_tools: settings.tool_detail != ToolDetail::Compact,
     };
     let connected = h.connected && r.is_none_or(|r| r.host.status == inyon_protocol::HostStatus::Online);
+    let home = home_view(agent);
+    let shows = shown_view(view, agent, r.is_some() || info.is_some());
+    // each view's address: the pane's own view goes without ?view=
+    let view_href = |v: PaneView| format!("{BASE}{}", pane_href(&host, &pane, (v != home).then_some(v)));
+    let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
     drop(c);
     drop(h);
@@ -183,15 +188,11 @@ pub fn Session(host: String, pane: String, terminal: bool) -> Element {
                             "{s.label()}"
                         }
                     }
-                    nav { class: "segmented session-views", "aria-label": "View",
-                        span { class: "segment segment-on", "aria-current": "page",
-                            Glyph { icon: Icon::MessageSquare, size: 14 }
-                            span { class: "segment-word", "Chat" }
-                        }
-                        // the terminal opens in the web app until this one has it
-                        a { class: "segment", href: "{terminal_href}", title: "Terminal (opens in the current app)",
-                            Glyph { icon: Icon::SquareTerminal, size: 14 }
-                            span { class: "segment-word", "Terminal" }
+                    // a plain shell has only its terminal
+                    if agent.is_some() {
+                        nav { class: "segmented session-views", "aria-label": "View",
+                            ViewSegment { href: chat_href, on: shows == Some(PaneView::Chat), icon: Icon::MessageSquare, word: "Chat" }
+                            ViewSegment { href: terminal_href, on: shows == Some(PaneView::Terminal), icon: Icon::SquareTerminal, word: "Terminal" }
                         }
                     }
                 }
@@ -204,8 +205,46 @@ pub fn Session(host: String, pane: String, terminal: bool) -> Element {
                         a { class: "button button-md button-primary press empty-action", href: "/next/", "Back to the Overview" }
                     }
                 }
+            } else if shows == Some(PaneView::Terminal) {
+                div { key: "{TERMINAL_KEY}", class: "session-view fade-in", TerminalView { host: host.clone(), pane: pane.clone() } }
+            } else if shows == Some(PaneView::Chat) {
+                div { key: "{CHAT_KEY}", class: "session-view fade-in", ChatView { ctx, connected, controls } }
             } else {
-                ChatView { ctx, connected, controls }
+                div { class: "session-view" }
+            }
+        }
+    }
+}
+
+/// The view on screen: the one the address names, else the pane's own once Inyon knows what runs
+/// in it. Until then none, so an agent's pane doesn't open (and resize) its terminal while the
+/// hub's list is still on its way.
+pub fn shown_view(view: Option<PaneView>, agent: Option<AgentKind>, known: bool) -> Option<PaneView> {
+    view.or_else(|| known.then(|| home_view(agent)))
+}
+
+/// The view a pane opens on: the chat for an agent Inyon reads as chat, the terminal otherwise.
+pub fn home_view(agent: Option<AgentKind>) -> PaneView {
+    if agent.is_some_and(|k| k.def().chat) {
+        PaneView::Chat
+    } else {
+        PaneView::Terminal
+    }
+}
+
+/// One of the header's two views: a link to it, or the one on screen.
+#[component]
+fn ViewSegment(href: String, on: bool, icon: Icon, word: &'static str) -> Element {
+    rsx! {
+        if on {
+            span { class: "segment segment-on", "aria-current": "page",
+                Glyph { icon, size: 14 }
+                span { class: "segment-word", "{word}" }
+            }
+        } else {
+            a { class: "segment", href: "{href}", title: "{word}",
+                Glyph { icon, size: 14 }
+                span { class: "segment-word", "{word}" }
             }
         }
     }
@@ -231,6 +270,26 @@ mod tests {
         assert_eq!(font_class(ReplyFontSetting::Auto, Some(claude)), "reply-serif");
         assert_eq!(font_class(ReplyFontSetting::Mono, Some(claude)), "reply-mono");
         assert_eq!(font_class(ReplyFontSetting::Auto, None), "");
+    }
+
+    #[test]
+    fn a_pane_opens_on_the_view_its_agent_has() {
+        assert_eq!(home_view(Some(AgentKind::Claude)), PaneView::Chat);
+        assert_eq!(home_view(None), PaneView::Terminal);
+        // an agent Inyon doesn't read as chat stays in its terminal
+        let k = inyon_protocol::AGENT_KINDS.into_iter().find(|k| !k.def().chat).expect("a terminal-first agent");
+        assert_eq!(home_view(Some(k)), PaneView::Terminal);
+    }
+
+    #[test]
+    fn a_pane_waits_to_know_its_agent_before_it_picks_a_view() {
+        // the hub's list not in yet: nothing, rather than a terminal that a chat replaces
+        assert_eq!(shown_view(None, None, false), None);
+        assert_eq!(shown_view(None, Some(AgentKind::Claude), true), Some(PaneView::Chat));
+        assert_eq!(shown_view(None, None, true), Some(PaneView::Terminal));
+        // an address that names its view needs no wait
+        assert_eq!(shown_view(Some(PaneView::Terminal), None, false), Some(PaneView::Terminal));
+        assert_eq!(shown_view(Some(PaneView::Terminal), Some(AgentKind::Claude), true), Some(PaneView::Terminal));
     }
 
     #[test]

@@ -61,6 +61,13 @@ pub enum Icon {
     Search,
     Timer,
     Workflow,
+    ArrowLeft,
+    RotateCw,
+    ClipboardPaste,
+    TextSelect,
+    Minus,
+    Plus,
+    Keyboard,
 }
 
 #[component]
@@ -341,6 +348,41 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     rect { width: "8", height: "8", x: "3", y: "3", rx: "2" }
                     path { d: "M7 11v4a2 2 0 0 0 2 2h4" }
                     rect { width: "8", height: "8", x: "13", y: "13", rx: "2" }
+                },
+                Icon::ArrowLeft => rsx! {
+                    path { d: "m12 19-7-7 7-7" }
+                    path { d: "M19 12H5" }
+                },
+                Icon::RotateCw => rsx! {
+                    path { d: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" }
+                    path { d: "M21 3v5h-5" }
+                },
+                Icon::ClipboardPaste => rsx! {
+                    path { d: "M11 14h10" }
+                    path { d: "M16 4h2a2 2 0 0 1 2 2v1.344" }
+                    path { d: "m17 18 4-4-4-4" }
+                    path { d: "M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113" }
+                    rect { x: "8", y: "2", width: "8", height: "4", rx: "1" }
+                },
+                Icon::TextSelect => rsx! {
+                    path { d: "M5 3a2 2 0 0 0-2 2" }
+                    path { d: "M19 3a2 2 0 0 1 2 2" }
+                    path { d: "M21 19a2 2 0 0 1-2 2" }
+                    path { d: "M5 21a2 2 0 0 1-2-2" }
+                    path { d: "M9 3h1M14 3h1M9 21h1M14 21h1M3 9v1M3 14v1M21 9v1M21 14v1" }
+                    path { d: "M7 8h8M7 12h10M7 16h6" }
+                },
+                Icon::Minus => rsx! {
+                    path { d: "M5 12h14" }
+                },
+                Icon::Plus => rsx! {
+                    path { d: "M5 12h14" }
+                    path { d: "M12 5v14" }
+                },
+                Icon::Keyboard => rsx! {
+                    path { d: "M10 8h.01M12 12h.01M14 8h.01M16 12h.01M18 8h.01M6 8h.01M8 12h.01" }
+                    path { d: "M7 16h10" }
+                    rect { width: "20", height: "16", x: "2", y: "4", rx: "2" }
                 },
             }
         }
