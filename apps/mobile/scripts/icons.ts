@@ -36,14 +36,16 @@ await png(filled('square', 0.78), 180).flatten({ background: BG }).toFile(`${web
 await png(Buffer.from(svg), 32).toFile(`${web}/favicon-32.png`)
 
 const res = path.join(root, 'android/app/src/main/res')
+// the launcher icons are shared with the Dioxus build (apps/app/android), which installs over this app
+const shared = path.join(root, 'android/app/src/shared/res')
 for (const [dir, size] of [['mdpi', 48], ['hdpi', 72], ['xhdpi', 96], ['xxhdpi', 144], ['xxxhdpi', 192]] as const) {
-  await png(Buffer.from(svg), size).toFile(`${res}/mipmap-${dir}/ic_launcher.png`)
-  await png(filled('circle', 0.78), size).toFile(`${res}/mipmap-${dir}/ic_launcher_round.png`)
+  await png(Buffer.from(svg), size).toFile(`${shared}/mipmap-${dir}/ic_launcher.png`)
+  await png(filled('circle', 0.78), size).toFile(`${shared}/mipmap-${dir}/ic_launcher_round.png`)
   // adaptive icons are 108dp with a 66dp safe circle in the middle
   const fg = Math.round((size * 108) / 48)
-  await png(mark(0.55), fg).toFile(`${res}/mipmap-${dir}/ic_launcher_foreground.png`)
+  await png(mark(0.55), fg).toFile(`${shared}/mipmap-${dir}/ic_launcher_foreground.png`)
 }
-await Bun.write(`${res}/values/ic_launcher_background.xml`, `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">${BG}</color>\n</resources>\n`)
+await Bun.write(`${shared}/values/ic_launcher_background.xml`, `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">${BG}</color>\n</resources>\n`)
 
 async function splash(file: string, w: number, h: number) {
   const s = Math.round(Math.min(w, h) * 0.42)

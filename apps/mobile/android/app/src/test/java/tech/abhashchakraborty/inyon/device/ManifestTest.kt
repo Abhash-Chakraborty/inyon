@@ -23,7 +23,7 @@ class ManifestTest {
         val app = application()
         assertEquals("false", app.getAttributeNS(android, "allowBackup"))
         assertEquals("@xml/data_extraction_rules", app.getAttributeNS(android, "dataExtractionRules"))
-        val rules = xml("src/main/res/xml/data_extraction_rules.xml")
+        val rules = xml("src/shared/res/xml/data_extraction_rules.xml")
         for (section in listOf("cloud-backup", "device-transfer")) {
             val s = rules.getElementsByTagName(section).item(0) as Element
             val excluded = (0 until s.getElementsByTagName("exclude").length).map { (s.getElementsByTagName("exclude").item(it) as Element).getAttribute("domain") }.toSet()

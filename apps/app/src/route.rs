@@ -152,12 +152,83 @@ mod imp {
 #[cfg(target_arch = "wasm32")]
 pub use imp::{current, listen, push};
 
-#[cfg(not(target_arch = "wasm32"))]
+/// The Android build's page (the `phone` feature): the same rules, kept by a script in the page,
+/// since Rust there runs outside it. Each link into the app adds a history entry, so Android's back
+/// button walks back through them.
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+mod imp {
+    use super::Route;
+    use dioxus::prelude::spawn;
+    use futures_channel::mpsc::UnboundedSender;
+
+    /// Clicks on links into the app (taken before Dioxus's own handler, which would hand every
+    /// link to the system browser), and back and forward, reported as hrefs.
+    const LISTEN: &str = r#"
+        if (window.interpreter) window.interpreter.intercept_link_redirects = false;
+        window.addEventListener('click', (e) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+            if (!a) return;
+            const t = a.getAttribute('target');
+            if ((t && t !== '_self') || a.hasAttribute('download')) return;
+            const href = a.getAttribute('href');
+            if (href !== '/next' && !href.startsWith('/next/') && !href.startsWith('/next?')) return;
+            e.preventDefault();
+            history.pushState(null, '', href);
+            dioxus.send(href);
+        }, true);
+        window.addEventListener('popstate', () => dioxus.send(location.pathname + location.search));
+        await new Promise(() => {});
+    "#;
+
+    pub fn current() -> Route {
+        Route::Overview
+    }
+
+    /// The script that records a route in the page's history (a new entry, or in place).
+    pub(super) fn history_js(r: &Route, replace: bool) -> String {
+        let method = if replace { "replaceState" } else { "pushState" };
+        format!("history.{method}(null, '', {})", serde_json::to_string(&r.href()).unwrap_or_default())
+    }
+
+    /// A move inside the app, in the page's history, so Android's back button steps back through it.
+    pub fn push(r: &Route, replace: bool) {
+        let _ = dioxus::document::eval(&history_js(r, replace));
+    }
+
+    pub fn listen(tx: UnboundedSender<Route>) {
+        let mut page = dioxus::document::eval(LISTEN);
+        let t = tx.clone();
+        spawn(async move {
+            while let Ok(href) = page.recv::<String>().await {
+                let (path, query) = href.split_once('?').unwrap_or((&href, ""));
+                let _ = t.unbounded_send(Route::parse(path, query));
+            }
+        });
+        // a tapped notification opens its session
+        spawn(async move {
+            let mut opened = crate::phone::opened();
+            while opened.changed().await.is_ok() {
+                opened.borrow_and_update();
+                let Some(href) = crate::phone::take_opened() else { continue };
+                let (path, query) = href.split_once('?').unwrap_or((&href, ""));
+                let route = Route::parse(path, query);
+                push(&route, false);
+                let _ = tx.unbounded_send(route);
+            }
+        });
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+pub use imp::{current, listen, push};
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub fn current() -> Route {
     Route::Overview
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub fn push(_r: &Route, _replace: bool) {}
 
 /// Goes to a route inside the app: a new history entry, and the screen follows.
@@ -193,6 +264,14 @@ mod tests {
         for other in ["/next", "/next/", "/next/settings", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+    #[test]
+    fn the_android_page_records_each_move_in_its_history() {
+        let r = Route::Machine { id: "box \"one\"".into() };
+        assert_eq!(imp::history_js(&r, false), r#"history.pushState(null, '', "/next/machines/box%20%22one%22")"#);
+        assert_eq!(imp::history_js(&Route::Overview, true), format!("history.replaceState(null, '', {:?})", Route::Overview.href()));
     }
 
     #[test]

@@ -42,6 +42,14 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+    // what the Dioxus build (apps/app/android) uses too: the services, notifications, SSH and the
+    // launcher icons, kept free of Capacitor
+    sourceSets {
+        main {
+            java.srcDirs += 'src/shared/java'
+            res.srcDirs += 'src/shared/res'
+        }
+    }
     packaging {
         resources {
             // gson, error_prone_annotations and jspecify (pulled in by the SSH and secrets libraries) all ship one
