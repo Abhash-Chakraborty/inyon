@@ -122,6 +122,8 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
         .or_else(|| r.map(|r| if r.pane.agent.is_some() { pane_title(r) } else { terminal_name(r).map_or_else(|| pane_title(r), str::to_string) }))
         .unwrap_or_else(|| "Session".into());
     let cwd = info.as_ref().and_then(|i| i.cwd.clone()).or(r.map(|r| r.pane.cwd.clone()));
+    let cwd_full = cwd.clone();
+    let session_id = page_session(agent_info.and_then(|a| a.session_id.as_deref()), info.as_ref().and_then(|i| i.session_id.as_deref()));
     let subtitle = [
         Some(def.map_or("Terminal".to_string(), |d| d.name.clone())),
         r.map(|r| r.host.config.name.clone()),
@@ -182,6 +184,7 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                         }
                         p { class: "session-sub mono truncate", "{subtitle}" }
                     }
+                    super::pages::SessionPages { host: host.clone(), cwd: cwd_full.clone(), session: session_id.clone() }
                     if let Some(s) = shown {
                         span { class: "pill session-pill",
                             span { class: "dot dot-{s.class()}" }
@@ -250,9 +253,22 @@ fn ViewSegment(href: String, on: bool, icon: Icon, word: &'static str) -> Elemen
     }
 }
 
+/// The conversation a session's pages are matched by: the pane's agent's, else the chat's own (which
+/// the hub fills when the pane state has none).
+fn page_session(pane: Option<&str>, chat: Option<&str>) -> Option<String> {
+    pane.or(chat).map(str::to_string)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sessions_pages_follow_the_chats_conversation_when_the_pane_has_none() {
+        assert_eq!(page_session(Some("a"), Some("b")).as_deref(), Some("a"));
+        assert_eq!(page_session(None, Some("b")).as_deref(), Some("b"));
+        assert_eq!(page_session(None, None), None);
+    }
 
     #[test]
     fn the_controls_read_as_one_line() {

@@ -24,6 +24,7 @@ pub mod node_dist;
 #[cfg(test)]
 mod organize_tests;
 pub mod pages;
+pub mod pages_stream;
 // both live in the core, which the phone app runs too
 pub use inyon_core::features::{notes, pages_remote};
 pub mod password;

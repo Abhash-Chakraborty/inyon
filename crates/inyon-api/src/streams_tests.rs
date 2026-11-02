@@ -358,6 +358,66 @@ fn a_quiet_app_hears_of_the_overview_only_when_an_agent_changes_state_and_catche
     });
 }
 
+fn page(host: &str, slug: &str, done: u64) -> inyon_protocol::PageEntry {
+    serde_json::from_value(
+        json!({ "host": host, "slug": slug, "name": slug, "project": "/p", "by": "cli", "added": 1, "folder": format!("/p/{slug}"), "progress": { "done": done, "total": 9 } }),
+    )
+    .unwrap()
+}
+
+#[test]
+fn the_pages_stream_is_read_when_followed_and_sends_only_the_pages_that_changed() {
+    crate::test_util::block(async {
+        let asked = Rc::new(std::cell::Cell::new(0));
+        let n = asked.clone();
+        on_pages_wanted(move || n.set(n.get() + 1));
+        // nobody follows: the hub's reads go nowhere
+        pages_changed(vec![page("local", "plan", 0)]);
+        assert!(!pages_followed());
+
+        let a = app();
+        a.follow(PAGES, None);
+        assert_eq!(asked.get(), 1, "following asks the hub to read its pages");
+        assert!(a.frames().is_empty(), "nothing until the hub has read them");
+        assert!(pages_followed());
+        pages_changed(vec![page("local", "plan", 1), page("lap", "plan", 0)]);
+        let f = a.frames();
+        let ServerMsg2::Snapshot(snap) = &f[0] else { panic!("{f:?}") };
+        assert_eq!(snap.rows.pages.as_ref().map(Vec::len), Some(2));
+        let mut p = inyon_chat_core::v2::Pages2::default();
+        p.apply(&f[0]);
+
+        // a board moved on one machine: that page alone, in place
+        pages_changed(vec![page("local", "plan", 2), page("lap", "plan", 0)]);
+        let f = a.frames();
+        assert_eq!(delta(&f[0]).replace.as_ref().and_then(|r| r.pages.clone()), Some(vec![page("local", "plan", 2)]));
+        p.apply(&f[0]);
+        // the same list again: nothing goes out
+        pages_changed(vec![page("local", "plan", 2), page("lap", "plan", 0)]);
+        assert!(a.frames().is_empty());
+
+        // in the background nothing comes; back on screen, it's read again and caught up in one delta
+        a.send(json!({ "t": "quiet", "on": true }));
+        pages_changed(vec![page("local", "plan", 2)]);
+        assert!(a.frames().is_empty(), "quiet");
+        a.send(json!({ "t": "quiet", "on": false }));
+        assert_eq!(asked.get(), 2, "coming back asks for a fresh read");
+        let f = a.frames();
+        assert_eq!(delta(&f[0]).remove.as_ref().and_then(|k| k.pages.clone()), Some(vec!["lap/plan".to_string()]));
+        let (pages, resync) = p.apply(&f[0]);
+        assert_eq!((pages, resync), (Some(vec![page("local", "plan", 2)]), None));
+
+        // an app back after a reconnect with nothing missed gets the empty delta
+        let at = Some(pos(&f[0]));
+        let b = app();
+        b.follow(PAGES, at);
+        assert!(matches!(&b.frames()[..], [ServerMsg2::Delta(d)] if d.is_empty()));
+        a.close();
+        b.close();
+        assert!(!pages_followed());
+    });
+}
+
 #[test]
 fn the_send_queue_is_the_hubs_and_every_app_sees_the_same_rows() {
     crate::test_util::block(async {

@@ -40,6 +40,8 @@ pub enum Action {
     UpdateMachine(String),
     /// asks, then removes a machine from the hub
     RemoveMachine(String),
+    /// what can be done to a page (components/pages/shared.tsx's page menu)
+    Page(super::pages::PageOp),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,15 +52,35 @@ pub struct Item {
     pub danger: bool,
     /// a hairline above it, starting a new group
     pub separated: bool,
+    /// a second line under the label
+    pub hint: Option<String>,
+    /// one of a few to pick from (a part of a page, a note), and whether it's the one picked
+    pub checked: Option<bool>,
+    pub disabled: bool,
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, icon: Icon, action: Action) -> Item {
-        Item { label: label.into(), icon, action, danger: false, separated: false }
+        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, disabled: false }
     }
 
     pub fn copy(label: &str, text: &str) -> Item {
-        Item { label: label.into(), icon: Icon::Copy, action: Action::Copy(text.into()), danger: false, separated: false }
+        Item::new(label, Icon::Copy, Action::Copy(text.into()))
+    }
+
+    pub fn hint(mut self, h: impl Into<String>) -> Item {
+        self.hint = Some(h.into());
+        self
+    }
+
+    pub fn checked(mut self, on: bool) -> Item {
+        self.checked = Some(on);
+        self
+    }
+
+    pub fn disabled(mut self, off: bool) -> Item {
+        self.disabled = off;
+        self
     }
 
     pub fn danger(mut self) -> Item {
@@ -154,6 +176,16 @@ pub fn open_with(items: impl Fn() -> Vec<Item> + 'static) -> impl FnMut(Event<Mo
         let p = e.client_coordinates();
         menu.set(Some(Menu { x: p.x, y: p.y, items }));
     }
+}
+
+/// A ⋯ button's menu, under the button with their right edges lined up (or over it near the
+/// bottom of the screen). `anchor` is the button's id.
+pub fn drop_down(menu: &mut Signal<Option<Menu>>, anchor: &str, items: Vec<Item>) {
+    if items.is_empty() {
+        return;
+    }
+    let (x, y) = dom::rect(anchor).map_or((8.0, 8.0), |(_, _, right, bottom)| ((right - 220.0).max(8.0), bottom + 4.0));
+    menu.set(Some(Menu { x, y, items }));
 }
 
 // ---------- a long press on a touch screen ----------
@@ -298,7 +330,9 @@ pub fn MenuLayer() -> Element {
     });
     let Some(m) = menu() else { return rsx! {} };
     let (w, h) = dom::viewport();
-    let (left, top) = place(m.x, m.y, m.items.len(), w, h);
+    // a hint makes its row a little taller
+    let rows = m.items.len() + m.items.iter().filter(|i| i.hint.is_some()).count().div_ceil(2);
+    let (left, top) = place(m.x, m.y, rows, w, h);
     let n = m.items.len();
     rsx! {
         div {
@@ -343,21 +377,33 @@ pub fn MenuLayer() -> Element {
                         (false, true) => "menu-item menu-group",
                         (false, false) => "menu-item",
                     },
-                    role: "menuitem",
+                    role: if item.checked.is_some() { "menuitemradio" } else { "menuitem" },
+                    "aria-checked": item.checked.map(|on| if on { "true" } else { "false" }),
                     r#type: "button",
+                    disabled: item.disabled,
                     onclick: move |_| {
                         menu.set(None);
                         run(item.action.clone(), chats, here, hub);
                     },
                     Glyph { icon: item.icon, size: 16 }
-                    "{item.label}"
+                    if let Some(hint) = &item.hint {
+                        span { class: "menu-words",
+                            span { class: "truncate", "{item.label}" }
+                            span { class: "menu-hint truncate", "{hint}" }
+                        }
+                    } else {
+                        span { class: "menu-words truncate", "{item.label}" }
+                    }
+                    if item.checked == Some(true) {
+                        Glyph { icon: Icon::Check, size: 16, class: "menu-check" }
+                    }
                 }
             }
         }
     }
 }
 
-fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<Route>, hub: Signal<crate::state::Hub>) {
+pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<Route>, hub: Signal<crate::state::Hub>) {
     match action {
         Action::Copy(text) => {
             spawn(async move {
@@ -384,6 +430,7 @@ fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<Rout
                 super::machines::remove(&h).await;
             });
         }
+        Action::Page(op) => super::pages::run(op, here, hub),
     }
 }
 

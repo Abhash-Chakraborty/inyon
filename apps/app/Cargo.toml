@@ -26,7 +26,7 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["BinaryType", "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "Element", "Event", "EventTarget", "Headers", "History", "HtmlElement", "HtmlScriptElement", "HtmlTextAreaElement", "Location", "MediaQueryList", "MessageEvent", "MouseEvent", "Navigator", "Node", "NodeList", "Request", "RequestCredentials", "RequestInit", "Response", "Storage", "VisibilityState", "WebSocket", "Window"] }
+web-sys = { version = "0.3", features = ["BinaryType", "Clipboard", "CloseEvent", "CssStyleDeclaration", "Document", "DomRect", "Element", "Event", "EventTarget", "Headers", "History", "KeyboardEvent", "HtmlElement", "HtmlIFrameElement", "HtmlScriptElement", "HtmlTextAreaElement", "Location", "MediaQueryList", "MessageEvent", "MouseEvent", "Navigator", "Node", "NodeList", "Request", "ReferrerPolicy", "RequestCredentials", "RequestInit", "Response", "Storage", "VisibilityState", "WebSocket", "Window"] }
 
 [dev-dependencies]
 # compressed /ws2 frames in the tests, as the hub sends them

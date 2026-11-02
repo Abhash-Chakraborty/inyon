@@ -1,14 +1,16 @@
 //! What the app holds from the hub's `/ws2` (protocol v2, see inyon-protocol's `v2.md`): the
-//! machines from the `overview` stream, each open chat from its own stream, and whether the
-//! socket is up. Frames go through chat-core (`v2::decode`, `Overview2`, `Chat::apply2`), which
+//! machines from the `overview` stream, the pages from the `pages` stream, each open chat from its
+//! own stream, and whether the socket is up. Frames go through chat-core (`v2::decode`, `Overview2`, `Chat::apply2`), which
 //! turns them into the same overview and chat rows the v1 messages build.
 
 use std::collections::HashMap;
 
-use inyon_chat_core::v2::{decode, Overview2};
+use inyon_chat_core::v2::{decode, Overview2, Pages2};
 use inyon_chat_core::{Chat, Context, Store};
-use inyon_protocol::v2::{Zip, OVERVIEW};
-use inyon_protocol::{ClientMsg, ClientMsg2, HostState, ServerMsg, ServerMsg2};
+use inyon_protocol::v2::{Zip, OVERVIEW, PAGES};
+use inyon_protocol::{ClientMsg, ClientMsg2, HostState, PageEntry, ServerMsg, ServerMsg2};
+
+use crate::pages::{self, Seen};
 
 use crate::list::VList;
 
@@ -84,6 +86,7 @@ impl Hub {
 pub struct Feed {
     overview: Overview2,
     store: Store,
+    pages: Pages2,
 }
 
 impl Feed {
@@ -100,9 +103,56 @@ impl Feed {
         (hosts, resync)
     }
 
-    /// What to follow on a new connection: the overview from where it was left.
-    pub fn sub(&self) -> ClientMsg2 {
-        ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() }
+    /// A pages frame: every page, when the list changed, and a message for the hub when the
+    /// stream needs bringing up to date.
+    pub fn pages(&mut self, f: &ServerMsg2) -> (Option<Vec<PageEntry>>, Option<ClientMsg2>) {
+        self.pages.apply(f)
+    }
+
+    /// What to follow on a new connection: the overview and the pages, from where they were left.
+    pub fn subs(&self) -> [ClientMsg2; 2] {
+        [ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() }, ClientMsg2::Sub { stream: PAGES.into(), at: self.pages.cursor.at() }]
+    }
+}
+
+/// The pages as the screens show them: none until the stream's first frame, and when each was last
+/// looked at here (kept in the browser, as the web app keeps it).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PageList {
+    pub pages: Option<Vec<PageEntry>>,
+    pub seen: Seen,
+}
+
+impl PageList {
+    pub fn new(saved: Option<&str>) -> PageList {
+        PageList { pages: None, seen: pages::parse_seen(saved) }
+    }
+
+    pub fn find(&self, host: &str, slug: &str) -> Option<&PageEntry> {
+        self.pages.as_deref()?.iter().find(|p| p.host == host && p.slug == slug)
+    }
+
+    /// Takes a page off the list here at once (the hub is asked separately).
+    pub fn drop_page(&mut self, host: &str, slug: &str) {
+        if let Some(v) = self.pages.as_mut() {
+            v.retain(|p| !(p.host == host && p.slug == slug));
+        }
+    }
+
+    /// Remembers that a page was looked at `now`; the marks to save, when they changed.
+    pub fn mark_seen(&mut self, p: &PageEntry, now: f64) -> Option<String> {
+        let id = pages::id_of(p);
+        let mark = pages::seen_mark(p, now);
+        if !pages::is_changed(p, &self.seen) {
+            return None;
+        }
+        self.seen.insert(id, mark);
+        Some(pages::seen_json(&self.seen))
+    }
+
+    /// Pages that changed since they were last opened, for the badges.
+    pub fn changed(&self) -> usize {
+        self.pages.as_deref().map_or(0, |v| v.iter().filter(|p| pages::is_changed(p, &self.seen)).count())
     }
 }
 
@@ -224,10 +274,37 @@ mod tests {
         let gone = frame(json!({ "t": "delta", "stream": "overview", "epoch": 5, "from": 2, "seq": 3, "remove": { "hosts": ["box"] } }));
         assert_eq!(feed.overview(&gone, &hub, 0).0, Some(vec![]));
         // a reconnect asks for what it missed since seq 3
-        assert_eq!(wire2(&feed.sub()), r#"{"t":"sub","stream":"overview","at":{"epoch":5,"seq":3}}"#);
+        assert_eq!(wire2(&feed.subs()[0]), r#"{"t":"sub","stream":"overview","at":{"epoch":5,"seq":3}}"#);
         // a gap: the stream is asked for again from where it was
         let late = frame(json!({ "t": "delta", "stream": "overview", "epoch": 5, "from": 9, "seq": 10, "remove": { "hosts": [] } }));
         assert_eq!(feed.overview(&late, &hub, 0).1, Some(ClientMsg2::Sub { stream: "overview".into(), at: Some(StreamPos { epoch: 5, seq: 3 }) }));
+    }
+
+    #[test]
+    fn the_pages_stream_lists_every_page_and_marks_what_changed() {
+        let mut feed = Feed::default();
+        let page = |slug: &str, added: u64| json!({ "host": "local", "slug": slug, "name": slug, "project": "/p", "by": "cli", "added": added, "folder": format!("/p/{slug}") });
+        // the first connection follows the pages from the start
+        assert_eq!(wire2(&feed.subs()[1]), r#"{"t":"sub","stream":"pages"}"#);
+        let snap = frame(json!({ "t": "snapshot", "stream": "pages", "epoch": 2, "seq": 1, "rows": { "pages": [page("plan", 100), page("site", 200)] } }));
+        let mut list = PageList::new(Some(r#"{"local/plan":150}"#));
+        assert_eq!(list.pages, None);
+        let (pages, resync) = feed.pages(&snap);
+        assert_eq!(resync, None);
+        list.pages = pages;
+        assert_eq!(list.changed(), 1, "the site was never opened");
+        let site = list.find("local", "site").cloned().unwrap();
+        let saved = list.mark_seen(&site, 300.0).expect("a new mark");
+        assert_eq!(list.changed(), 0);
+        assert!(saved.contains(r#""local/site":300"#));
+        // looking again before it changes saves nothing
+        assert_eq!(list.mark_seen(&site, 400.0), None);
+        let gone = frame(json!({ "t": "delta", "stream": "pages", "epoch": 2, "from": 1, "seq": 2, "remove": { "pages": ["local/plan"] } }));
+        list.pages = feed.pages(&gone).0;
+        assert_eq!(list.pages.as_ref().map(Vec::len), Some(1));
+        list.drop_page("local", "site");
+        assert_eq!(list.pages, Some(vec![]));
+        assert_eq!(wire2(&feed.subs()[1]), r#"{"t":"sub","stream":"pages","at":{"epoch":2,"seq":2}}"#);
     }
 
     #[test]

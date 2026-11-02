@@ -356,6 +356,7 @@ pub fn MachinePage(id: String) -> Element {
                             }
                         }
                     }
+                    super::pages::MachinePages { host: host.config.id.clone() }
                 }
             }
         }

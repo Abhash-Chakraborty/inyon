@@ -842,7 +842,16 @@ pub async fn revoke(req: Req) -> HubResult<Resp> {
     Ok(ok())
 }
 
-pub async fn register(mut req: Req) -> HubResult<Resp> {
+/// POST /api/pages/:host: adds a folder, and tells the apps that follow the pages.
+pub async fn register(req: Req) -> HubResult<Resp> {
+    let r = register_page(req).await;
+    if r.is_ok() {
+        crate::pages_stream::read();
+    }
+    r
+}
+
+async fn register_page(mut req: Req) -> HubResult<Resp> {
     let b = read_body(&mut req).await?;
     let host = req.param("host");
     let p = pages();
@@ -905,7 +914,16 @@ pub async fn register(mut req: Req) -> HubResult<Resp> {
     Ok(ok_json(&p.entry(&record)))
 }
 
+/// DELETE /api/pages/:host/:slug: takes a page off the list, and tells the apps that follow the pages.
 pub async fn remove(req: Req) -> HubResult<Resp> {
+    let r = remove_page(req).await;
+    if r.is_ok() {
+        crate::pages_stream::read();
+    }
+    r
+}
+
+async fn remove_page(req: Req) -> HubResult<Resp> {
     let (host, slug) = (req.param("host"), req.param("slug"));
     if !is_slug(&slug) {
         return Err(http(404, UNKNOWN_PAGE));

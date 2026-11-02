@@ -191,14 +191,8 @@ fn PendingBubble(p: PendingMessage, ctx: Ctx) -> Element {
     let failed = p.status == PendingStatus::Failed;
     let mut items = vec![Item::copy("Copy message", &p.text)];
     if failed && !p.remote {
-        items.push(Item {
-            label: "Retry".into(),
-            icon: Icon::RotateCcw,
-            action: Action::Retry { host: ctx.host.clone(), pane: ctx.pane.clone(), id: p.id.clone(), text: p.text.clone() },
-            danger: false,
-            separated: false,
-        });
-        items.push(Item { label: "Dismiss".into(), icon: Icon::X, action: Action::Dismiss { key: ctx.key.clone(), id: p.id.clone() }, danger: true, separated: false });
+        items.push(Item::new("Retry", Icon::RotateCcw, Action::Retry { host: ctx.host.clone(), pane: ctx.pane.clone(), id: p.id.clone(), text: p.text.clone() }));
+        items.push(Item::new("Dismiss", Icon::X, Action::Dismiss { key: ctx.key.clone(), id: p.id.clone() }).danger());
     }
     let (retry_host, retry_pane, retry_id, retry_text) = (ctx.host.clone(), ctx.pane.clone(), p.id.clone(), p.text.clone());
     let (key, id) = (ctx.key.clone(), p.id.clone());
@@ -298,6 +292,9 @@ fn Turn(turn: AssistantTurn, live: bool, ctx: Ctx) -> Element {
             div { class: "turn-body", oncontextmenu: menu::open(items),
                 for p in turn.parts.iter() {
                     PartView { key: "{p.key()}", part: p.clone(), live, ctx: ctx.clone() }
+                }
+                if !turn.open && text.contains("/pages/") {
+                    super::pages::PageCards { text: text.clone(), host: ctx.host.clone() }
                 }
                 if !turn.open {
                     div { class: "turn-meta",

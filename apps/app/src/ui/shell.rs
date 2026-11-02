@@ -1,6 +1,6 @@
 //! The frame around the pages: a sidebar from tablet width up, a tab bar on phones
-//! (components/AppShell.tsx). This app has the Overview, the session screen and the Machines so
-//! far; the other items open the web app's pages, so nothing here is a dead end. The layers every
+//! (components/AppShell.tsx). This app has the Overview, the session screen, the Machines and
+//! Pages so far; Settings opens the web app's page, so nothing here is a dead end. The layers every
 //! page shares (menus, toasts, the confirm sheet, the sheets a menu opens, Can't connect?) are
 //! mounted here once.
 
@@ -10,7 +10,7 @@ use super::icons::{Glyph, Icon, Logo};
 use super::menu::MenuLayer;
 use super::overview::Overview;
 use super::session::Session;
-use super::{add, connect, machines, toast};
+use super::{add, connect, machines, pages, toast};
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -18,6 +18,7 @@ use crate::state::Hub;
 /// The Overview page's key, beside the sessions' `host:pane` ones.
 const OVERVIEW_KEY: &str = "overview";
 const MACHINES_KEY: &str = "machines";
+const PAGES_KEY: &str = "pages";
 
 #[component]
 pub fn Shell() -> Element {
@@ -26,6 +27,7 @@ pub fn Shell() -> Element {
     let section = match route {
         Route::Overview => Section::Overview,
         Route::Machines { .. } | Route::Machine { .. } => Section::Machines,
+        Route::Pages { .. } => Section::Pages,
         Route::Session { .. } => Section::None,
     };
     rsx! {
@@ -49,10 +51,18 @@ pub fn Shell() -> Element {
                         div { key: "machine:{id}", class: "page", machines::MachinePage { id } }
                         TabBar { section }
                     },
+                    // a page open on a phone takes the whole screen
+                    Route::Pages { page } => rsx! {
+                        div { key: "{PAGES_KEY}", class: "page", pages::PagesPage { page: page.clone() } }
+                        if !pages::full_screen(&page) {
+                            TabBar { section }
+                        }
+                    },
                 }
             }
             MenuLayer {}
             add::ActionSheets {}
+            pages::PageSheets {}
             connect::ConnectHelpHost {}
             toast::ConfirmHost {}
             toast::Toasts {}
@@ -65,6 +75,7 @@ pub fn Shell() -> Element {
 enum Section {
     Overview,
     Machines,
+    Pages,
     None,
 }
 
@@ -88,6 +99,11 @@ fn tab_class(on: bool) -> &'static str {
 fn Sidebar(section: Section) -> Element {
     let overview = section == Section::Overview;
     let on_machines = section == Section::Machines;
+    let on_pages = section == Section::Pages;
+    let (changed, pages_total) = {
+        let l = pages::PAGES.read();
+        (l.changed(), l.pages.as_ref().map_or(0, Vec::len))
+    };
     let hub = use_context::<Signal<Hub>>();
     let h = hub.read();
     let online = h.hosts.iter().filter(|x| x.status == inyon_protocol::HostStatus::Online).count();
@@ -124,9 +140,18 @@ fn Sidebar(section: Section) -> Element {
                         span { class: "nav-count mono tabular", title: "{online} of {total} online", "{count}" }
                     }
                 }
-                a { class: "nav-item", href: "/pages",
+                a { class: nav_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
                     Glyph { icon: Icon::PanelsTopLeft, size: 16 }
                     "Pages"
+                    if changed > 0 {
+                        span {
+                            class: "nav-badge mono tabular",
+                            title: if changed == 1 { "1 changed since you last opened it".to_string() } else { format!("{changed} changed since you last opened them") },
+                            "{changed}"
+                        }
+                    } else if pages_total > 0 {
+                        span { class: "nav-count mono tabular", "{pages_total}" }
+                    }
                 }
                 a { class: "nav-item", href: "/settings",
                     Glyph { icon: Icon::Settings, size: 16 }
@@ -141,6 +166,8 @@ fn Sidebar(section: Section) -> Element {
 fn TabBar(section: Section) -> Element {
     let overview = section == Section::Overview;
     let on_machines = section == Section::Machines;
+    let on_pages = section == Section::Pages;
+    let changed = pages::PAGES.read().changed();
     let hub = use_context::<Signal<Hub>>();
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
     rsx! {
@@ -154,8 +181,13 @@ fn TabBar(section: Section) -> Element {
                 }
                 "Overview"
             }
-            a { class: "tab", href: "/pages",
-                Glyph { icon: Icon::PanelsTopLeft, size: 21 }
+            a { class: tab_class(on_pages), href: "/next/pages", "aria-current": on_pages.then_some("page"),
+                span { class: "tab-icon",
+                    Glyph { icon: Icon::PanelsTopLeft, size: 21 }
+                    if changed > 0 {
+                        span { class: "tab-badge tab-badge-pages mono tabular", "aria-label": "{changed} changed", "{changed}" }
+                    }
+                }
                 "Pages"
             }
             a { class: tab_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),

@@ -12,6 +12,7 @@ mod machines;
 mod md;
 mod menu;
 mod overview;
+mod pages;
 mod phone;
 mod prompt;
 mod rows;
@@ -24,7 +25,7 @@ mod terminal;
 mod toast;
 
 use dioxus::prelude::*;
-use inyon_protocol::v2::OVERVIEW;
+use inyon_protocol::v2::{OVERVIEW, PAGES};
 
 use crate::route;
 #[cfg(target_arch = "wasm32")]
@@ -118,8 +119,10 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 if !hub.peek().connected {
                     hub.write().set_connected(true);
                 }
-                // follow the overview and every open chat from where they were left
-                out.send(state::wire2(&feed.sub()));
+                // follow the overview, the pages and every open chat from where they were left
+                for sub in feed.subs() {
+                    out.send(state::wire2(&sub));
+                }
                 for sub in chats.peek().subs() {
                     out.send(state::wire2(&sub));
                 }
@@ -144,6 +147,15 @@ fn Connected(auth: Signal<Auth>) -> Element {
                     let (hosts, resync) = feed.overview(&f, &hub.peek(), now());
                     if let Some(hosts) = hosts {
                         hub.write().set_hosts(hosts);
+                    }
+                    if let Some(m) = resync {
+                        out.send(state::wire2(&m));
+                    }
+                }
+                Incoming::Frame(f) if f.stream() == Some(PAGES) => {
+                    let (list, resync) = feed.pages(&f);
+                    if let Some(list) = list {
+                        pages::PAGES.write().pages = Some(list);
                     }
                     if let Some(m) = resync {
                         out.send(state::wire2(&m));

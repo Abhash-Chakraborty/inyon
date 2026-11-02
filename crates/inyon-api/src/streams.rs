@@ -1,7 +1,7 @@
 //! Protocol v2 on `/ws2` (described in inyon-protocol's `v2.md`): the hub's streams and the apps
 //! that follow them.
 //!
-//! A stream is the overview, one chat, or how the sessions are organised. It keeps its state as
+//! A stream is the overview, one chat, how the sessions are organised, or the pages. It keeps its state as
 //! rows with keys, and for each row
 //! the `seq` it was added and last changed at, plus the keys of rows that went. That is all it
 //! needs to bring an app from any `seq` of the current epoch to now in one delta, so it keeps no log
@@ -19,10 +19,10 @@ use inyon_core::claude::watcher::{watchers, Sub, Subscriber};
 use inyon_core::clock::now_ms;
 use inyon_core::hosts::registry::registry;
 use inyon_core::platform::rt::spawn;
-use inyon_protocol::v2::{split_queue, ORGANIZE, OVERVIEW, PROTOCOL_V2, ZIP_MIN};
+use inyon_protocol::v2::{page_key, split_queue, ORGANIZE, OVERVIEW, PAGES, PROTOCOL_V2, ZIP_MIN};
 use inyon_protocol::{
-    AssistantBlock, ChatInfo, ChatItem, ChatState, DelayedSend, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Organize, Progress, Project, ProjectGroup, QueuedMsg,
-    Rows, SavedPrompt, ScreenState, ServerMsg, ServerMsg2, SessionMark, SleepRule, Snapshot, Space, StreamPos, Zip,
+    AssistantBlock, ChatInfo, ChatItem, ChatState, DelayedSend, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Organize, PageEntry, Progress, Project, ProjectGroup,
+    QueuedMsg, Rows, SavedPrompt, ScreenState, ServerMsg, ServerMsg2, SessionMark, SleepRule, Snapshot, Space, StreamPos, Zip,
 };
 use serde_json::Value;
 
@@ -86,6 +86,13 @@ macro_rules! row_by_id {
     )*};
 }
 row_by_id!(SessionMark, Project, ProjectGroup, Space, DelayedSend, SavedPrompt);
+
+impl Row for PageEntry {
+    type Key = String;
+    fn key(&self) -> String {
+        page_key(self)
+    }
+}
 
 impl Row for SleepRule {
     type Key = String;
@@ -432,6 +439,7 @@ enum Body {
     Overview(Coll<HostState>),
     Chat(Box<ChatBody>),
     Organize(Box<OrganizeBody>),
+    Pages(Coll<PageEntry>),
 }
 
 /// One change to a stream, gathered as the parts of a delta.
@@ -476,6 +484,9 @@ impl Change {
         put(&mut self.remove.queue, o.remove);
         put(&mut self.replace.queue, o.replace);
         put(&mut self.append.queue, o.append);
+    }
+    fn pages(&mut self, o: Ops<PageEntry>) {
+        put_ops(&mut self.remove.pages, &mut self.replace.pages, &mut self.append.pages, o);
     }
     fn organize(&mut self, o: OrganizeOps) {
         let (rm, rp, ap) = (&mut self.remove, &mut self.replace, &mut self.append);
@@ -548,6 +559,7 @@ impl Stream {
         let body = match name {
             OVERVIEW => Body::Overview(Coll::new(gone)),
             ORGANIZE => Body::Organize(Box::new(OrganizeBody::new(gone))),
+            PAGES => Body::Pages(Coll::new(gone)),
             _ => Body::Chat(Box::new(ChatBody::new(gone))),
         };
         Stream { name: name.to_owned(), epoch: next_epoch(), seq: 0, ready: false, body, feed: None, left_at: None }
@@ -566,6 +578,7 @@ impl Stream {
             Body::Overview(hosts) => hosts.restamp(self.seq),
             Body::Chat(c) => c.restamp(self.seq),
             Body::Organize(o) => o.restamp(self.seq),
+            Body::Pages(pages) => pages.restamp(self.seq),
         }
         Out::Rebuilt
     }
@@ -587,6 +600,14 @@ impl Stream {
         let Body::Overview(coll) = &mut self.body else { return Out::Nothing };
         let mut ch = Change::default();
         ch.hosts(coll.set(hosts, seq));
+        self.commit(ch)
+    }
+
+    fn on_pages(&mut self, pages: Vec<PageEntry>) -> Out {
+        let seq = self.seq + 1;
+        let Body::Pages(coll) = &mut self.body else { return Out::Nothing };
+        let mut ch = Change::default();
+        ch.pages(coll.set(pages, seq));
         self.commit(ch)
     }
 
@@ -717,6 +738,7 @@ impl Stream {
                 Some(c.state_since(0)),
             ),
             Body::Organize(o) => (o.rows(), None),
+            Body::Pages(pages) => (Rows { pages: Some(pages.values().cloned().collect()), ..Rows::default() }, None),
         };
         Snapshot { stream: self.name.clone(), epoch: self.epoch, seq: self.seq, rows, state }
     }
@@ -742,6 +764,7 @@ impl Stream {
                 _ => false,
             },
             Body::Organize(o) => o.since(at.seq).map(|ops| ch.organize(ops)).is_some(),
+            Body::Pages(pages) => pages.since(at.seq).map(|o| ch.pages(o)).is_some(),
         };
         if !ok {
             return Some(ServerMsg2::Snapshot(self.snapshot()));
@@ -991,6 +1014,40 @@ fn refresh_organize() {
     }
 }
 
+thread_local! {
+    /// what the hub does to read the pages again (it answers with [`pages_changed`])
+    static PAGES_WANTED: RefCell<Option<Rc<dyn Fn()>>> = const { RefCell::new(None) };
+}
+
+/// Sets how the hub reads its pages again when an app starts following them, or comes back from
+/// the background. It answers, now or later, with [`pages_changed`].
+pub fn on_pages_wanted(f: impl Fn() + 'static) {
+    PAGES_WANTED.with(|w| *w.borrow_mut() = Some(Rc::new(f)));
+}
+
+fn want_pages() {
+    if let Some(f) = PAGES_WANTED.with(|w| w.borrow().clone()) {
+        f();
+    }
+}
+
+/// Whether any `/ws2` app follows the pages, so the hub knows to keep reading them.
+pub fn pages_followed() -> bool {
+    !followers(PAGES).is_empty()
+}
+
+/// Every machine's pages, as `GET /api/pages` lists them, read again by the hub. Taken only while
+/// an app follows them.
+pub fn pages_changed(pages: Vec<PageEntry>) {
+    if followers(PAGES).is_empty() {
+        return;
+    }
+    ensure(PAGES);
+    if let Some(out) = with_stream(PAGES, |st| st.on_pages(pages)) {
+        publish(PAGES, out, None);
+    }
+}
+
 /// Feeds a chat's watcher messages into its stream.
 struct Feed {
     key: String,
@@ -1031,9 +1088,9 @@ fn split_key(key: &str) -> Option<(&str, &str)> {
 /// An app follows a stream from `at` (or from nothing).
 fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
     let Some(v) = conn(c) else { return };
-    if stream != OVERVIEW && stream != ORGANIZE {
+    if is_chat(stream) {
         let Some((host, _)) = split_key(stream) else { return };
-        let chats = v.at.borrow().keys().filter(|k| *k != OVERVIEW && *k != ORGANIZE).count();
+        let chats = v.at.borrow().keys().filter(|k| is_chat(k)).count();
         if registry().get(host).is_none() || (!v.follows(stream) && chats >= MAX_CHATS) {
             return;
         }
@@ -1049,6 +1106,10 @@ fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
         refresh_organize();
     }
     v.at.borrow_mut().insert(stream.to_owned(), at);
+    if stream == PAGES {
+        // read by the hub, which may answer later; the snapshot goes out once it has
+        want_pages();
+    }
     if stream == OVERVIEW {
         crate::clients::watched_changed();
     }
@@ -1060,9 +1121,14 @@ fn follow(c: &ClientRef, stream: &str, at: Option<StreamPos>) {
     } else {
         sync(c, stream, None);
     }
-    if stream != OVERVIEW && stream != ORGANIZE {
+    if is_chat(stream) {
         watch(stream);
     }
+}
+
+/// A chat's stream, rather than the overview, organize or pages.
+fn is_chat(stream: &str) -> bool {
+    stream != OVERVIEW && stream != ORGANIZE && stream != PAGES
 }
 
 /// Subscribes a chat stream to its watcher, once the machine reports the pane.
@@ -1128,6 +1194,9 @@ pub(crate) fn caught_up(c: &ClientRef) {
         }
         if s == ORGANIZE {
             refresh_organize();
+        }
+        if s == PAGES {
+            want_pages();
         }
         sync(c, &s, None);
     }

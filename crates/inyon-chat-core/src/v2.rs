@@ -6,8 +6,8 @@
 //! with a resync (`sub` again with the cursor), by the table in `v2.md`. Large frames come
 //! compressed as binary messages; [`decode`] reads either kind.
 
-use inyon_protocol::v2::join_queue;
-use inyon_protocol::{ChatItem, ChatState, ClientMsg2, Delta, HostState, Keys, LiveItem, Organize, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos};
+use inyon_protocol::v2::{join_queue, page_key};
+use inyon_protocol::{ChatItem, ChatState, ClientMsg2, Delta, HostState, Keys, LiveItem, Organize, PageEntry, QueuedMsg, Rows, ServerMsg2, Snapshot, StreamPos};
 
 use crate::chat_list::{sends, without_recorded, Chat, ChatData, Draft, Splice};
 use crate::pending::settle;
@@ -327,6 +327,38 @@ impl Organize2 {
         });
         let resync = resync.then(|| ClientMsg2::Sub { stream: inyon_protocol::v2::ORGANIZE.to_owned(), at: self.cursor.at() });
         (changed.then(|| self.org.clone()), resync)
+    }
+}
+
+/// The pages stream (from 0.25): every machine's pages with their progress, as `GET /api/pages`
+/// lists them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Pages2 {
+    pub cursor: Cursor,
+    pub pages: Vec<PageEntry>,
+}
+
+impl Pages2 {
+    /// Applies a pages frame. Returns the pages when they changed, and a message for the hub when
+    /// the stream needs bringing up to date.
+    pub fn apply(&mut self, msg: &ServerMsg2) -> (Option<Vec<PageEntry>>, Option<ClientMsg2>) {
+        let mut changed = false;
+        let pages = &mut self.pages;
+        let resync = self.cursor.take(msg, |m| match m {
+            ServerMsg2::Snapshot(s) => {
+                *pages = s.rows.pages.clone().unwrap_or_default();
+                changed = true;
+            }
+            ServerMsg2::Delta(d) => {
+                let none = Keys::default();
+                let empty = Rows::default();
+                let (rm, rp, ap) = (d.remove.as_ref().unwrap_or(&none), d.replace.as_ref().unwrap_or(&empty), d.append.as_ref().unwrap_or(&empty));
+                changed |= patch_rows(pages, page_key, rm.pages.as_deref(), rp.pages.as_deref(), ap.pages.as_deref());
+            }
+            _ => {}
+        });
+        let resync = resync.then(|| ClientMsg2::Sub { stream: inyon_protocol::v2::PAGES.to_owned(), at: self.cursor.at() });
+        (changed.then(|| self.pages.clone()), resync)
     }
 }
 

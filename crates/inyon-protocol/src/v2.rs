@@ -5,18 +5,27 @@ use serde_with::skip_serializing_none;
 use ts_rs::TS;
 
 use crate::organize::{DelayedSend, Project, ProjectGroup, SavedPrompt, SessionMark, SleepRule, Space};
-use crate::types::{ChatInfo, ChatItem, DraftSource, HeldPrompt, HostState, LiveItem, ScreenState, SendState, SendStatus};
+use crate::types::{ChatInfo, ChatItem, DraftSource, HeldPrompt, HostState, LiveItem, PageEntry, ScreenState, SendState, SendStatus};
 
 /// The protocol version `hello` names.
 pub const PROTOCOL_V2: u32 = 2;
 
 /// The stream of machines and panes. Every other stream is a chat, named by its key (`host:pane`),
-/// or the organize stream.
+/// or the organize or pages stream.
 pub const OVERVIEW: &str = "overview";
 
 /// The stream of how sessions are organised (from 0.24): pins, parking, snoozes, tags, notes,
 /// projects, messages sent later, sleep rules and saved prompts, as `GET /api/organize` has them.
 pub const ORGANIZE: &str = "organize";
+
+/// The stream of Pages (from 0.25): every machine's pages with their progress, as `GET /api/pages`
+/// lists them, kept up to date while an app follows it.
+pub const PAGES: &str = "pages";
+
+/// A page's key in the pages stream: `<host>/<slug>`.
+pub fn page_key(p: &PageEntry) -> String {
+    format!("{}/{}", p.host, p.slug)
+}
 
 /// A frame at least this long (its JSON, in bytes) goes out compressed to an app that asked.
 pub const ZIP_MIN: usize = 1024;
@@ -105,7 +114,7 @@ impl QueuedMsg {
 /// Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
 /// (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
 /// stream has `sessions`, `projects`, `groups`, `spaces`, `sends` and `prompts` (each keyed by
-/// `id`) and `sleep` (keyed by `scope`).
+/// `id`) and `sleep` (keyed by `scope`); the pages stream has `pages` (keyed by [`page_key`]).
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, TS)]
 #[ts(optional_fields)]
@@ -121,6 +130,7 @@ pub struct Rows {
     pub sends: Option<Vec<DelayedSend>>,
     pub prompts: Option<Vec<SavedPrompt>>,
     pub sleep: Option<Vec<SleepRule>>,
+    pub pages: Option<Vec<PageEntry>>,
 }
 
 /// Row keys, by collection, for `remove`.
@@ -139,6 +149,7 @@ pub struct Keys {
     pub sends: Option<Vec<String>>,
     pub prompts: Option<Vec<String>>,
     pub sleep: Option<Vec<String>>,
+    pub pages: Option<Vec<String>>,
 }
 
 /// The unsent message for a pane, shared by every device and the terminal's input box.

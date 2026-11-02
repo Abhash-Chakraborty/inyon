@@ -81,6 +81,15 @@ pub enum Icon {
     Server,
     FolderOpen,
     CircleArrowUp,
+    Ellipsis,
+    FolderPlus,
+    Link2Off,
+    CloudOff,
+    BookOpen,
+    NotebookText,
+    LayoutTemplate,
+    Table2,
+    Tablet,
 }
 
 #[component]
@@ -444,6 +453,55 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                 },
                 Icon::FolderOpen => rsx! {
                     path { d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" }
+                },
+                Icon::Ellipsis => rsx! {
+                    circle { cx: "12", cy: "12", r: "1" }
+                    circle { cx: "19", cy: "12", r: "1" }
+                    circle { cx: "5", cy: "12", r: "1" }
+                },
+                Icon::FolderPlus => rsx! {
+                    path { d: "M12 10v6" }
+                    path { d: "M9 13h6" }
+                    path { d: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" }
+                },
+                Icon::Link2Off => rsx! {
+                    path { d: "M9 17H7A5 5 0 0 1 7 7" }
+                    path { d: "M15 7h2a5 5 0 0 1 4 8" }
+                    line { x1: "8", x2: "12", y1: "12", y2: "12" }
+                    line { x1: "2", x2: "22", y1: "2", y2: "22" }
+                },
+                Icon::CloudOff => rsx! {
+                    path { d: "M10.94 5.274A7 7 0 0 1 15.71 10h1.79a4.5 4.5 0 0 1 4.222 6.057" }
+                    path { d: "M18.796 18.81A4.5 4.5 0 0 1 17.5 19H9A7 7 0 0 1 5.79 5.78" }
+                    path { d: "m2 2 20 20" }
+                },
+                Icon::BookOpen => rsx! {
+                    path { d: "M12 5v16" }
+                    path { d: "M20.001 19A2 2 0 0022 17V5a2 2 0 00-1.999-2L16 3.002A5 5 0 0012 5a5 5 0 00-4-2H4a2 2 0 00-2 2v12a2 2 0 001.999 2H8a5 5 0 014 2 5 5 0 014-2z" }
+                },
+                Icon::NotebookText => rsx! {
+                    path { d: "M2 6h4" }
+                    path { d: "M2 10h4" }
+                    path { d: "M2 14h4" }
+                    path { d: "M2 18h4" }
+                    rect { width: "16", height: "20", x: "4", y: "2", rx: "2" }
+                    path { d: "M9.5 8h5" }
+                    path { d: "M9.5 12H16" }
+                    path { d: "M9.5 16H14" }
+                },
+                Icon::LayoutTemplate => rsx! {
+                    rect { width: "18", height: "7", x: "3", y: "3", rx: "1" }
+                    rect { width: "9", height: "7", x: "3", y: "14", rx: "1" }
+                    rect { width: "5", height: "7", x: "16", y: "14", rx: "1" }
+                },
+                Icon::Table2 => rsx! {
+                    path { d: "M3 9h18" }
+                    path { d: "M9 3v18" }
+                    rect { x: "3", y: "3", width: "18", height: "18", rx: "2" }
+                },
+                Icon::Tablet => rsx! {
+                    rect { width: "16", height: "20", x: "4", y: "2", rx: "2", ry: "2" }
+                    line { x1: "12", x2: "12.01", y1: "18", y2: "18" }
                 },
                 Icon::CircleArrowUp => rsx! {
                     circle { cx: "12", cy: "12", r: "10" }

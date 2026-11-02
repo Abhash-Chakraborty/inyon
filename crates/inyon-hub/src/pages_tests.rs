@@ -1939,3 +1939,49 @@ fn the_hub_has_each_machine_find_the_sites_where_its_agents_work() {
         assert_eq!(machine.count("find "), asked);
     });
 }
+
+#[test]
+fn an_app_following_the_pages_stream_hears_a_page_added_and_removed_through_the_hub() {
+    use inyon_protocol::ServerMsg2;
+    let tmp = Tmp::new("stream");
+    let home = tmp.join("home");
+    let a = site(&tmp, "a", false);
+    let b = site(&tmp, "b", false);
+    write_list(&pages_file(&home), json!([record("a", &a)]));
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        crate::pages_stream::start();
+        let got = Rc::new(RefCell::new(vec![]));
+        let g = got.clone();
+        let app = crate::clients::new_client2(move |w| g.borrow_mut().push(w));
+        crate::clients::add(&app);
+        // small frames, and no compression asked for: all text
+        let frames = || -> Vec<ServerMsg2> {
+            got.borrow_mut()
+                .drain(..)
+                .filter_map(|w| match w {
+                    inyon_api::streams::Wire::Text(t) => serde_json::from_str(&t).ok(),
+                    inyon_api::streams::Wire::Binary(_) => None,
+                })
+                .collect()
+        };
+        let settle = || inyon_core::platform::rt::sleep(200);
+        let slugs = |rows: &Option<inyon_protocol::Rows>| rows.as_ref().and_then(|r| r.pages.as_ref()).map(|p| p.iter().map(|p| p.slug.clone()).collect::<Vec<_>>());
+        inyon_api::streams::client_message2(&app, &json!({ "t": "sub", "stream": "pages" }).to_string());
+        settle().await;
+        let f = frames();
+        assert!(matches!(&f[..], [ServerMsg2::Snapshot(s)] if slugs(&Some(s.rows.clone())) == Some(vec!["a".into()])), "the list as GET /api/pages has it: {f:?}");
+
+        add_page(json!({ "path": b })).await.unwrap();
+        settle().await;
+        let f = frames();
+        // a folder added from the app is named after it ("b-…")
+        assert!(matches!(&f[..], [ServerMsg2::Delta(d)] if slugs(&d.append).is_some_and(|s| s.len() == 1 && s[0].starts_with("b-"))), "{f:?}");
+
+        call(h_remove, "DELETE", &[("host", "local"), ("slug", "a")], None, &[]).await.unwrap();
+        settle().await;
+        let f = frames();
+        assert!(matches!(&f[..], [ServerMsg2::Delta(d)] if d.remove.as_ref().and_then(|k| k.pages.clone()) == Some(vec!["local/a".into()])), "{f:?}");
+        crate::clients::close_client(&app);
+    });
+}

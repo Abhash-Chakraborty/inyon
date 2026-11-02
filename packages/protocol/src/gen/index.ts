@@ -1180,14 +1180,14 @@ export type QueueKind = "held" | "send" | "agent";
  * Rows, by collection. The overview stream has `hosts` (keyed by `config.id`); a chat has `items`
  * (keyed by `seq`), `live` (keyed by `id`) and `queue` (keyed by [`QueuedMsg::key`]); the organize
  * stream has `sessions`, `projects`, `groups`, `spaces`, `sends` and `prompts` (each keyed by
- * `id`) and `sleep` (keyed by `scope`).
+ * `id`) and `sleep` (keyed by `scope`); the pages stream has `pages` (keyed by [`page_key`]).
  */
-export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, sessions?: Array<SessionMark>, projects?: Array<Project>, groups?: Array<ProjectGroup>, spaces?: Array<Space>, sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, };
+export type Rows = { hosts?: Array<HostState>, items?: Array<ChatItem>, live?: Array<LiveItem>, queue?: Array<QueuedMsg>, sessions?: Array<SessionMark>, projects?: Array<Project>, groups?: Array<ProjectGroup>, spaces?: Array<Space>, sends?: Array<DelayedSend>, prompts?: Array<SavedPrompt>, sleep?: Array<SleepRule>, pages?: Array<PageEntry>, };
 
 /**
  * Row keys, by collection, for `remove`.
  */
-export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, sessions?: Array<string>, projects?: Array<string>, groups?: Array<string>, spaces?: Array<string>, sends?: Array<string>, prompts?: Array<string>, sleep?: Array<string>, };
+export type Keys = { hosts?: Array<string>, items?: Array<number>, live?: Array<string>, queue?: Array<string>, sessions?: Array<string>, projects?: Array<string>, groups?: Array<string>, spaces?: Array<string>, sends?: Array<string>, prompts?: Array<string>, sleep?: Array<string>, pages?: Array<string>, };
 
 /**
  * The unsent message for a pane, shared by every device and the terminal's input box.

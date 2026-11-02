@@ -263,3 +263,36 @@ fn the_organize_stream_hands_over_the_marks_when_they_change() {
     let other = d(2, 3, json!({ "stream": "organize", "epoch": 6, "from": 0, "seq": 0, "remove": { "sessions": ["s-a"] } }));
     assert_eq!(o.apply(&other), (None, Some(ClientMsg2::Sub { stream: "organize".into(), at: Some(StreamPos { epoch: 5, seq: 2 }) })));
 }
+
+#[test]
+fn the_pages_stream_keeps_every_page_by_machine_and_slug() {
+    let page = |host: &str, slug: &str, done: u64| -> inyon_protocol::PageEntry {
+        serde_json::from_value(
+            json!({ "host": host, "slug": slug, "name": slug, "project": "/p", "by": "cli", "added": 1, "folder": "/p/plan", "progress": { "done": done, "total": 9 } }),
+        )
+        .unwrap()
+    };
+    let mut p = Pages2::default();
+    let snapshot = ServerMsg2::Snapshot(Snapshot {
+        stream: "pages".into(),
+        epoch: 7,
+        seq: 1,
+        rows: Rows { pages: Some(vec![page("local", "plan", 1), page("lap", "plan", 0)]), ..Rows::default() },
+        state: None,
+    });
+    let (pages, resync) = p.apply(&snapshot);
+    assert_eq!((pages.map(|l| l.len()), resync), (Some(2), None));
+    let d = |from: u64, seq: u64, v: Value| -> ServerMsg2 {
+        let mut d: Delta = serde_json::from_value(v).unwrap();
+        (d.from, d.seq) = (from, seq);
+        ServerMsg2::Delta(d)
+    };
+    // the same slug on two machines are two pages: a board that moved replaces only its own
+    let moved = d(1, 2, json!({ "stream": "pages", "epoch": 7, "from": 0, "seq": 0, "replace": { "pages": [page("local", "plan", 2)] } }));
+    assert_eq!(p.apply(&moved).0, Some(vec![page("local", "plan", 2), page("lap", "plan", 0)]));
+    let gone = d(2, 3, json!({ "stream": "pages", "epoch": 7, "from": 0, "seq": 0, "remove": { "pages": ["lap/plan"] } }));
+    assert_eq!(p.apply(&gone).0, Some(vec![page("local", "plan", 2)]));
+    assert_eq!(p.apply(&gone), (None, None), "a duplicate");
+    let early = d(5, 6, json!({ "stream": "pages", "epoch": 7, "from": 0, "seq": 0 }));
+    assert_eq!(p.apply(&early).1, Some(ClientMsg2::Sub { stream: "pages".into(), at: Some(StreamPos { epoch: 7, seq: 3 }) }));
+}

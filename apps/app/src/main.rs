@@ -15,6 +15,7 @@ mod list;
 mod machines;
 mod markdown;
 mod model;
+mod pages;
 mod platform;
 mod prompt;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
