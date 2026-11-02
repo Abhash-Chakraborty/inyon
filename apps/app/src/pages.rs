@@ -347,6 +347,23 @@ pub fn next_retry(wait: f64) -> f64 {
     (wait * 2.0).min(RENEW_RETRY_MAX_MS)
 }
 
+/// Requests of one kind that can overlap (a link for a page, the check for its parts): each takes a
+/// ticket, and only the answer to the newest one counts, so a slow early answer can't replace a
+/// later one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Latest(u64);
+
+impl Latest {
+    pub fn ask(&mut self) -> u64 {
+        self.0 += 1;
+        self.0
+    }
+
+    pub fn is_newest(&self, ticket: u64) -> bool {
+        self.0 == ticket
+    }
+}
+
 /// The parts of a Blueprint site the viewer can jump to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
@@ -553,6 +570,16 @@ pub fn machine_of(hosts: &[HostState], host: &str) -> PageMachine {
 mod tests {
     use super::*;
     use inyon_protocol::PageProgress;
+
+    #[test]
+    fn only_the_newest_request_counts() {
+        let mut l = Latest::default();
+        let open = l.ask();
+        let revoke = l.ask();
+        // the open answers last, with a link the revoke already ended
+        assert!(l.is_newest(revoke));
+        assert!(!l.is_newest(open));
+    }
 
     fn entry(slug: &str) -> PageEntry {
         PageEntry {

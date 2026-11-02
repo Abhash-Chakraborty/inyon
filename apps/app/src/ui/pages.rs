@@ -262,13 +262,18 @@ struct LinkState {
 }
 
 /// Asks for a new link; true when one came. One that answers after another page was picked is
-/// dropped.
-async fn mint(host: String, slug: String, mut state: Signal<Option<LinkState>>, shown: Signal<Option<String>>) -> bool {
+/// dropped, and so is one that a newer request overtook (true then, since that one brings the link):
+/// an open sent before a revoke may answer after it, with a link the revoke already ended.
+async fn mint(host: String, slug: String, mut state: Signal<Option<LinkState>>, shown: Signal<Option<String>>, mut mints: Signal<pg::Latest>) -> bool {
     let id = pg::page_id(&host, &slug);
     let at = platform::clock().now;
+    let ticket = mints.write().ask();
     let got = api::open_page(&host, &slug).await;
     if shown.peek().as_deref() != Some(id.as_str()) {
         return false;
+    }
+    if !mints.peek().is_newest(ticket) {
+        return true;
     }
     match got {
         Ok(l) => {
@@ -296,6 +301,7 @@ struct Viewer {
     part: Signal<Part>,
     note: Signal<Option<String>>,
     n: Signal<u64>,
+    mints: Signal<pg::Latest>,
 }
 
 impl Viewer {
@@ -327,19 +333,19 @@ impl Viewer {
     }
 
     fn retry(&self, p: &PageEntry) {
-        let (host, slug, state, shown) = (p.host.clone(), p.slug.clone(), self.state, self.shown);
+        let (host, slug, state, shown, mints) = (p.host.clone(), p.slug.clone(), self.state, self.shown, self.mints);
         spawn(async move {
-            mint(host, slug, state, shown).await;
+            mint(host, slug, state, shown, mints).await;
         });
     }
 
     /// A new link every time: the one on screen may have been revoked from another device. The new
     /// address reloads the frame; when no link comes the old one is tried again.
     fn reload(&self, p: &PageEntry) {
-        let (state, shown, mut n) = (self.state, self.shown, self.n);
+        let (state, shown, mut n, mints) = (self.state, self.shown, self.n, self.mints);
         let (host, slug) = (p.host.clone(), p.slug.clone());
         spawn(async move {
-            if !mint(host, slug, state, shown).await {
+            if !mint(host, slug, state, shown, mints).await {
                 n += 1;
             }
         });
@@ -362,7 +368,9 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
     let state = use_signal(|| None::<LinkState>);
     let mut shown = use_signal(|| None::<String>);
     let mut parts = use_signal(|| None::<(String, Vec<Part>)>);
-    let mut v = Viewer { state, shown, parts, part: use_signal(|| Part::Plan), note: use_signal(|| None), n: use_signal(|| 0) };
+    let mints = use_signal(pg::Latest::default);
+    let mut checks = use_signal(pg::Latest::default);
+    let mut v = Viewer { state, shown, parts, part: use_signal(|| Part::Plan), note: use_signal(|| None), n: use_signal(|| 0), mints };
     let key = page.as_ref().map(|p| (p.host.clone(), p.slug.clone()));
     let id = page.as_ref().map(pg::id_of);
     let rev = id.as_ref().map_or(0, |i| LINK_REV.read().get(i).copied().unwrap_or(0));
@@ -381,7 +389,7 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
             _ => *s = Some(LinkState { id: id.clone(), link: None, error: None }),
         });
         spawn(async move {
-            mint(host, slug, state, shown).await;
+            mint(host, slug, state, shown, mints).await;
         });
     }));
     // renewed on time by a timer, since a page left on screen (a second monitor, a tablet on a
@@ -402,7 +410,7 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
                 if *gen.peek() != g || !dom::visible() {
                     return;
                 }
-                if mint(host.clone(), slug.clone(), state, shown).await || *gen.peek() != g {
+                if mint(host.clone(), slug.clone(), state, shown, mints).await || *gen.peek() != g {
                     return;
                 }
                 wait = retry;
@@ -417,7 +425,7 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
         if let (Some(until), Some((host, slug))) = (until, wake_key) {
             if pg::should_renew(until, platform::clock().now) {
                 spawn(async move {
-                    mint(host, slug, state, shown).await;
+                    mint(host, slug, state, shown, mints).await;
                 });
             }
         }
@@ -427,6 +435,8 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
     let parts_id = id.clone();
     use_effect(use_reactive!(|parts_id, url| {
         let (Some(id), Some(url)) = (parts_id, url) else { return };
+        // a check for an older link that finishes last mustn't replace this one's answer
+        let ticket = checks.write().ask();
         spawn(async move {
             let mut found = vec![Part::Plan];
             for part in [Part::Mockups, Part::Matrix] {
@@ -434,7 +444,7 @@ fn use_viewer(page: Option<PageEntry>) -> Viewer {
                     found.push(part);
                 }
             }
-            if shown.peek().as_deref() == Some(id.as_str()) {
+            if shown.peek().as_deref() == Some(id.as_str()) && checks.peek().is_newest(ticket) {
                 parts.set(Some((id, found)));
             }
         });
@@ -868,6 +878,8 @@ fn PageCard(p: PageEntry, m: PageMachine, changed: bool) -> Element {
                     class: "icon-button icon-button-lg press page-card-more",
                     r#type: "button",
                     "aria-label": "More for {p.name}",
+                    // Enter here opens the menu, not the card's page
+                    onkeydown: move |e: KeyboardEvent| e.stop_propagation(),
                     onclick: move |e| {
                         e.stop_propagation();
                         menu::drop_down(&mut menu_at, &anchor, more_items.clone());

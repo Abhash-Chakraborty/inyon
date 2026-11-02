@@ -243,6 +243,13 @@ try {
       check((await menuItems(page)).join('|').includes('Revoke links|Show folder|Remove'), `${label}: the ⋯ menu's other items`)
       await page.keyboard.press('Escape')
       await page.getByRole('menu').waitFor({ state: 'detached' })
+      // Enter on ⋯ opens its menu and leaves the card where it is
+      await card.getByRole('button', { name: 'More for Checkout redesign' }).focus()
+      await page.keyboard.press('Enter')
+      await page.getByRole('menu').waitFor()
+      check(page.url().endsWith('/next/pages'), `${label}: Enter on ⋯ didn't open the page`)
+      await page.keyboard.press('Escape')
+      await page.getByRole('menu').waitFor({ state: 'detached' })
       const other = page.locator('.page-card', { hasText: 'Passkeys rollout' })
       const box = (await other.boundingBox())!
       const cdp = await ctx.newCDPSession(page)
