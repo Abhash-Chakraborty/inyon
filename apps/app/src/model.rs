@@ -5,7 +5,6 @@
 
 pub use inyon_chat_core::groups::tmux_target;
 use inyon_chat_core::groups::{group_panes as group_by_session, GroupFilter};
-use inyon_chat_core::js::encode_uri_component;
 pub use inyon_chat_core::overview::{all_panes, pane_title, PaneRef};
 use inyon_protocol::{is_busy, AgentKind, AgentPaneInfo, AgentState, HostKind, HostState, HostStatus, MachineKind, RateWindow, TmuxState};
 
@@ -348,8 +347,9 @@ pub fn pane_href(host: &str, pane: &str) -> String {
     crate::route::Route::Session { host: host.into(), pane: pane.into(), view: None }.href()
 }
 
+/// A machine's page in this app.
 pub fn machine_href(host: &str) -> String {
-    format!("/machines/{}", encode_uri_component(host))
+    crate::route::Route::Machine { id: host.into() }.href()
 }
 
 #[cfg(test)]

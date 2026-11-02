@@ -316,10 +316,10 @@ pub fn TerminalView(host: String, pane: String) -> Element {
     let on_menu = menu::open_with(|| {
         let mut items = Vec::new();
         if term::has_selection() {
-            items.push(Item { label: "Copy".into(), icon: Icon::Copy, action: Action::Term(MenuOp::Copy), danger: false });
+            items.push(Item { label: "Copy".into(), icon: Icon::Copy, action: Action::Term(MenuOp::Copy), danger: false, separated: false });
         }
-        items.push(Item { label: "Paste".into(), icon: Icon::ClipboardPaste, action: Action::Term(MenuOp::Paste), danger: false });
-        items.push(Item { label: "Select all".into(), icon: Icon::TextSelect, action: Action::Term(MenuOp::SelectAll), danger: false });
+        items.push(Item { label: "Paste".into(), icon: Icon::ClipboardPaste, action: Action::Term(MenuOp::Paste), danger: false, separated: false });
+        items.push(Item { label: "Select all".into(), icon: Icon::TextSelect, action: Action::Term(MenuOp::SelectAll), danger: false, separated: false });
         items
     });
 

@@ -6,9 +6,13 @@
 // desktop transport lands
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod api;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod connect;
 mod dom;
 mod format;
 mod list;
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod machines;
 mod markdown;
 mod model;
 mod platform;

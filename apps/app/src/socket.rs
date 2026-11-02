@@ -10,10 +10,21 @@
 pub enum Event {
     /// connected (`hello` is sent): follow the streams again
     Up,
-    /// the connection closed; the app checks whether the session ended with it
-    Down,
+    /// the connection closed, or the try failed; the app logs why and checks whether the session
+    /// ended with it
+    Down(Dropped),
     /// a message: text, or a compressed frame
     Message { text: Option<String>, binary: Option<Vec<u8>> },
+}
+
+/// How a connection ended: the close code and reason the browser reported, or that it went
+/// quiet and was given up on.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub struct Dropped {
+    pub code: Option<u16>,
+    pub reason: String,
+    pub timeout: bool,
 }
 
 /// Where the app's messages to the hub go. While the socket is down they are dropped: what
@@ -71,7 +82,7 @@ mod imp {
     pub enum Raw {
         Open(u32),
         Message(u32, Option<String>, Option<Vec<u8>>),
-        Close(u32),
+        Close(u32, Option<u16>, String),
         /// the page was shown (true) or hidden
         Visible(bool),
         Online,
@@ -123,7 +134,10 @@ mod imp {
             }
         }));
         let t = tx.clone();
-        let closed = on(Box::new(move |_| drop(t.unbounded_send(Raw::Close(id)))));
+        let closed = on(Box::new(move |e: web_sys::Event| {
+            let c = e.dyn_ref::<web_sys::CloseEvent>();
+            let _ = t.unbounded_send(Raw::Close(id, c.map(|c| c.code()), c.map(|c| c.reason()).unwrap_or_default()));
+        }));
         ws.set_onopen(Some(opened.as_ref().unchecked_ref()));
         ws.set_onmessage(Some(message.as_ref().unchecked_ref()));
         ws.set_onclose(Some(closed.as_ref().unchecked_ref()));
@@ -201,6 +215,7 @@ mod imp {
             let mut opened_at: Option<f64> = None;
             let mut heard = now();
             let mut next_ping = now() + PING_MS;
+            let mut ended = super::Dropped::default();
             // one connection, until it closes or goes quiet
             while let Some(conn) = &conn {
                 let quiet_at = hidden_since.filter(|_| !quiet).map(|t| t + QUIET_AFTER_MS);
@@ -225,7 +240,10 @@ mod imp {
                             send_raw(conn, &text);
                         }
                     }
-                    Some(Raw::Close(i)) if i == id => break,
+                    Some(Raw::Close(i, code, reason)) if i == id => {
+                        ended = super::Dropped { code, reason, timeout: false };
+                        break;
+                    }
                     Some(Raw::Visible(true)) | Some(Raw::Online) => {
                         hidden_since = None;
                         if quiet {
@@ -234,6 +252,7 @@ mod imp {
                         }
                         // a phone drops sockets in the background: check on this one now
                         if opened_at.is_some() && now() - heard > 30_000.0 {
+                            ended.timeout = true;
                             break;
                         }
                         send(conn, &ClientMsg::Ping);
@@ -243,6 +262,7 @@ mod imp {
                     Some(_) => {}
                     None => {
                         if now() - heard > DEAD_MS {
+                            ended.timeout = true;
                             break;
                         }
                         if now() >= next_ping {
@@ -257,7 +277,7 @@ mod imp {
                 }
             }
             drop(conn);
-            on(Event::Down);
+            on(Event::Down(ended));
             retry = attempt_after(retry, opened_at, now());
             let wait = backoff(retry, 400.0, 8000.0, random());
             retry += 1;

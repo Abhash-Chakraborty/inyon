@@ -50,7 +50,11 @@ pub fn Overview() -> Element {
                     span { class: "phone-only", Logo { connecting: !h.connected } }
                     span { class: "topbar-counts mono wide-only", {model::counts_line(&h.hosts, panes.len())} }
                     if !h.connected {
-                        span { class: "reconnecting", Glyph { icon: Icon::WifiOff, size: 14 } "Reconnecting" }
+                        span { class: "reconnecting",
+                            Glyph { icon: Icon::WifiOff, size: 14 }
+                            "Reconnecting"
+                            button { class: "help-link", r#type: "button", onclick: move |_| super::connect::open_connect_help(None), "Can't connect?" }
+                        }
                     }
                 }
             }
@@ -67,7 +71,7 @@ pub fn Overview() -> Element {
                             div { class: "empty-icon", Logo { class: "mark-drawn logo-28" } }
                             p { class: "empty-title", "No machines yet" }
                             p { class: "empty-text", "Pair a machine or add one over SSH to see the coding agents running in tmux on it." }
-                            a { class: "button button-primary button-md press empty-action", href: "/machines", "Add a machine →" }
+                            a { class: "button button-primary button-md press empty-action", href: "/next/machines?add=1", "Add a machine →" }
                         }
                     } else {
                         div {
@@ -152,7 +156,7 @@ pub fn Overview() -> Element {
                         section {
                             div { class: "section-label",
                                 h2 { "Machines" }
-                                a { class: "section-link", href: "/machines", "Manage →" }
+                                a { class: "section-link", href: "/next/machines", "Manage →" }
                             }
                             {machines(&h.hosts, clock)}
                         }
@@ -291,7 +295,7 @@ fn meter(pct: f64, class: &str) -> Element {
     }
 }
 
-fn host_dot(status: HostStatus) -> Element {
+pub(super) fn host_dot(status: HostStatus) -> Element {
     let s = match status {
         HostStatus::Online => "online",
         HostStatus::Connecting => "connecting",
@@ -301,7 +305,7 @@ fn host_dot(status: HostStatus) -> Element {
 }
 
 /// The agents installed on a machine: in colour when one runs there now, grey when only installed.
-fn badges(h: &HostState, size: u32) -> Element {
+pub(super) fn badges(h: &HostState, size: u32) -> Element {
     let list = model::agent_badges(h);
     if list.is_empty() {
         return rsx! { span { class: "fg-3", "—" } };
