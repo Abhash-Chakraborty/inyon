@@ -591,6 +591,17 @@ fn a_window_nobody_shows_rests_wide_and_the_next_client_still_sizes_it() {
         )
         .await;
         client.kill();
+        // wait for the client to be gone: one still leaving on a busy machine can resize the next
+        // windows (seen with tmux 3.4 in CI)
+        let h = host.clone();
+        until(
+            move || {
+                let h = h.clone();
+                Box::pin(async move { tmux(&h, "list-clients -F '#{client_name}'").await.is_empty() })
+            },
+            5000,
+        )
+        .await;
 
         // a window someone gave a window-size of its own is left as it is
         let m = tmux(&host, "new-session -d -s m -x 80 -y 24 -P -F '#{window_id}' 'sleep 600'").await;
