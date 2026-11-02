@@ -13,7 +13,7 @@ use inyon_protocol::ClientMsg;
 use tokio::sync::watch;
 
 use crate::api::{error_of, ApiError};
-use crate::socket::Event;
+use crate::socket::{Dropped, Event};
 use crate::state::{wire, wire2};
 
 struct Installed {
@@ -130,7 +130,7 @@ const QUIET_AFTER_MS: u64 = 15_000;
 pub async fn run(mut outbox: futures_channel::mpsc::UnboundedReceiver<String>, mut on: impl FnMut(Event)) {
     let Some(phone) = handle() else {
         // no core to talk to: the screen says it's offline and stays so
-        on(Event::Down);
+        on(Event::Down(Dropped { code: None, reason: "Inyon's core isn't running".into(), timeout: false }));
         return std::future::pending().await;
     };
     let (tx, mut frames) = futures_channel::mpsc::unbounded::<Frame>();
@@ -148,7 +148,7 @@ pub async fn run(mut outbox: futures_channel::mpsc::UnboundedReceiver<String>, m
                 Some(Frame::Binary(b)) => on(Event::Message { text: None, binary: Some(b) }),
                 // the core stopped
                 None => {
-                    on(Event::Down);
+                    on(Event::Down(Dropped { code: None, reason: "Inyon's core stopped".into(), timeout: false }));
                     return std::future::pending().await;
                 }
             },
