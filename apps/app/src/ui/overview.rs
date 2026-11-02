@@ -47,7 +47,7 @@ pub fn Overview() -> Element {
         div { class: "scroll",
             header { class: "topbar",
                 div { class: "topbar-row",
-                    span { class: "phone-only", Logo { connecting: !h.connected } }
+                    span { class: "phone-only", Logo { connecting: !h.connected, target: true } }
                     span { class: "topbar-counts mono wide-only", {model::counts_line(&h.hosts, panes.len())} }
                     if !h.connected {
                         span { class: "reconnecting",
@@ -78,6 +78,7 @@ pub fn Overview() -> Element {
                             h1 { class: "title", "Overview" }
                             p { class: "lede", span { class: "truncate", {model::status_line(&panes)} } }
                         }
+                        super::companion::CompanionBar {}
                         section {
                             div { class: "section-label",
                                 h2 { "Agent sessions" }

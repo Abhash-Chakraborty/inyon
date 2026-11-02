@@ -90,6 +90,18 @@ pub enum Icon {
     LayoutTemplate,
     Table2,
     Tablet,
+    Sun,
+    Moon,
+    Vibrate,
+    KeyRound,
+    LogOut,
+    Mic,
+    QrCode,
+    Heart,
+    MessageCircle,
+    SquareCheck,
+    Eye,
+    Link2,
 }
 
 #[component]
@@ -499,6 +511,66 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     path { d: "M9 3v18" }
                     rect { x: "3", y: "3", width: "18", height: "18", rx: "2" }
                 },
+                Icon::Sun => rsx! {
+                    circle { cx: "12", cy: "12", r: "4" }
+                    path { d: "M12 2v2" }
+                    path { d: "M12 20v2" }
+                    path { d: "m4.93 4.93 1.41 1.41" }
+                    path { d: "m17.66 17.66 1.41 1.41" }
+                    path { d: "M2 12h2" }
+                    path { d: "M20 12h2" }
+                    path { d: "m6.34 17.66-1.41 1.41" }
+                    path { d: "m19.07 4.93-1.41 1.41" }
+                },
+                Icon::Moon => rsx! { path { d: "M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401" } },
+                Icon::Vibrate => rsx! {
+                    path { d: "m2 8 2 2-2 2 2 2-2 2" }
+                    path { d: "m22 8-2 2 2 2-2 2 2 2" }
+                    rect { width: "8", height: "14", x: "8", y: "5", rx: "1" }
+                },
+                Icon::KeyRound => rsx! {
+                    path { d: "M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" }
+                    circle { cx: "16.5", cy: "7.5", r: ".5", fill: "currentColor" }
+                },
+                Icon::LogOut => rsx! {
+                    path { d: "m16 17 5-5-5-5" }
+                    path { d: "M21 12H9" }
+                    path { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" }
+                },
+                Icon::Mic => rsx! {
+                    path { d: "M12 19v3" }
+                    path { d: "M19 10v2a7 7 0 0 1-14 0v-2" }
+                    rect { x: "9", y: "2", width: "6", height: "13", rx: "3" }
+                },
+                Icon::QrCode => rsx! {
+                    rect { width: "5", height: "5", x: "3", y: "3", rx: "1" }
+                    rect { width: "5", height: "5", x: "16", y: "3", rx: "1" }
+                    rect { width: "5", height: "5", x: "3", y: "16", rx: "1" }
+                    path { d: "M21 16h-3a2 2 0 0 0-2 2v3" }
+                    path { d: "M21 21v.01" }
+                    path { d: "M12 7v3a2 2 0 0 1-2 2H7" }
+                    path { d: "M3 12h.01" }
+                    path { d: "M12 3h.01" }
+                    path { d: "M12 16v.01" }
+                    path { d: "M16 12h1" }
+                    path { d: "M21 12v.01" }
+                    path { d: "M12 21v-1" }
+                },
+                Icon::Heart => rsx! { path { d: "M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5" } },
+                Icon::MessageCircle => rsx! { path { d: "M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" } },
+                Icon::SquareCheck => rsx! {
+                    path { d: "M21 10.656V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12.344" }
+                    path { d: "m9 11 3 3L22 4" }
+                },
+                Icon::Link2 => rsx! {
+                    path { d: "M9 17H7A5 5 0 0 1 7 7h2" }
+                    path { d: "M15 7h2a5 5 0 1 1 0 10h-2" }
+                    line { x1: "8", x2: "16", y1: "12", y2: "12" }
+                },
+                Icon::Eye => rsx! {
+                    path { d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" }
+                    circle { cx: "12", cy: "12", r: "3" }
+                },
                 Icon::Tablet => rsx! {
                     rect { width: "16", height: "20", x: "4", y: "2", rx: "2", ry: "2" }
                     line { x1: "12", x2: "12.01", y1: "18", y2: "18" }
@@ -568,10 +640,11 @@ const SQUIRCLE: &str = "M25 0H39C60 0 64 4 64 25V39C64 60 60 64 39 64H25C4 64 0 
 /// Inyon's mark, a Korean shield kite on its line (apps/web/public/icon.svg). While the hub is out
 /// of reach the line draws itself over and over.
 #[component]
-pub fn Logo(#[props(default)] class: String, #[props(default)] connecting: bool) -> Element {
+pub fn Logo(#[props(default)] class: String, #[props(default)] connecting: bool, #[props(default)] target: bool) -> Element {
     let state = if connecting { "mark-connecting" } else { "" };
     rsx! {
-        svg { class: "logo {state} {class}", view_box: "0 0 64 64", "aria-hidden": "true",
+        // `target`: the cold-start intro's mark lands here (ui/intro.rs)
+        svg { class: "logo {state} {class}", view_box: "0 0 64 64", "aria-hidden": "true", "data-intro-target": target.then_some("true"),
             path { d: SQUIRCLE, fill: "var(--logo-tile)" }
             path { d: SQUIRCLE, transform: "translate(.5 .5) scale(.984)", fill: "none", stroke: "#fff", "stroke-opacity": ".08" }
             g { fill: "#F1F0EC",

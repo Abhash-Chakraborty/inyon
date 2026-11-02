@@ -1,8 +1,7 @@
 //! The frame around the pages: a sidebar from tablet width up, a tab bar on phones
-//! (components/AppShell.tsx). This app has the Overview, the session screen, the Machines and
-//! Pages so far; Settings opens the web app's page, so nothing here is a dead end. The layers every
-//! page shares (menus, toasts, the confirm sheet, the sheets a menu opens, Can't connect?) are
-//! mounted here once.
+//! (components/AppShell.tsx), around the Overview, the session screen, Machines, Pages, Settings
+//! and Temp files. The layers every page shares (menus, toasts, the confirm sheet, the sheets a
+//! menu opens, Can't connect?, "Inyon was updated") are mounted here once.
 
 use dioxus::prelude::*;
 
@@ -10,7 +9,7 @@ use super::icons::{Glyph, Icon, Logo};
 use super::menu::MenuLayer;
 use super::overview::Overview;
 use super::session::Session;
-use super::{add, connect, machines, pages, toast};
+use super::{add, companion, connect, machines, notices, pages, settings, temp, toast};
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -19,6 +18,8 @@ use crate::state::Hub;
 const OVERVIEW_KEY: &str = "overview";
 const MACHINES_KEY: &str = "machines";
 const PAGES_KEY: &str = "pages";
+const SETTINGS_KEY: &str = "settings";
+const TEMP_KEY: &str = "temp";
 
 #[component]
 pub fn Shell() -> Element {
@@ -28,11 +29,16 @@ pub fn Shell() -> Element {
         Route::Overview => Section::Overview,
         Route::Machines { .. } | Route::Machine { .. } => Section::Machines,
         Route::Pages { .. } => Section::Pages,
+        Route::Settings | Route::Temp { .. } => Section::Settings,
         Route::Session { .. } => Section::None,
+    };
+    let current = match &route {
+        Route::Session { host, pane, .. } => Some((host.clone(), pane.clone())),
+        _ => None,
     };
     rsx! {
         div { class: "shell",
-            Sidebar { section }
+            Sidebar { section, current }
             main { class: "main",
                 match route {
                     Route::Overview => rsx! {
@@ -58,6 +64,14 @@ pub fn Shell() -> Element {
                             TabBar { section }
                         }
                     },
+                    Route::Settings => rsx! {
+                        div { key: "{SETTINGS_KEY}", class: "page", settings::SettingsPage {} }
+                        TabBar { section }
+                    },
+                    Route::Temp { host } => rsx! {
+                        div { key: "{TEMP_KEY}", class: "page", temp::TempPage { host } }
+                        TabBar { section }
+                    },
                 }
             }
             MenuLayer {}
@@ -66,6 +80,7 @@ pub fn Shell() -> Element {
             connect::ConnectHelpHost {}
             toast::ConfirmHost {}
             toast::Toasts {}
+            notices::UpdatePrompt {}
         }
     }
 }
@@ -76,6 +91,7 @@ enum Section {
     Overview,
     Machines,
     Pages,
+    Settings,
     None,
 }
 
@@ -96,8 +112,9 @@ fn tab_class(on: bool) -> &'static str {
 }
 
 #[component]
-fn Sidebar(section: Section) -> Element {
+fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
     let overview = section == Section::Overview;
+    let on_settings = section == Section::Settings;
     let on_machines = section == Section::Machines;
     let on_pages = section == Section::Pages;
     let (changed, pages_total) = {
@@ -112,9 +129,9 @@ fn Sidebar(section: Section) -> Element {
     rsx! {
         aside { class: "sidebar",
             div { class: "sidebar-head",
-                Logo { connecting: !h.connected }
+                Logo { connecting: !h.connected, target: true }
                 span { class: "brand", "Inyon" }
-                span { class: "chip chip-quiet", title: "The new app, in progress. Items it doesn't have yet open the current app.", "Preview" }
+                span { class: "chip chip-quiet", title: "The new app, which takes over from the current one in 1.0", "Preview" }
                 if !h.connected {
                     button {
                         class: "sidebar-offline icon-button press",
@@ -131,6 +148,7 @@ fn Sidebar(section: Section) -> Element {
                     Glyph { icon: Icon::LayoutGrid, size: 16 }
                     "Overview"
                 }
+                companion::CompanionNav { current }
             }
             div { class: "sidebar-foot",
                 a { class: nav_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
@@ -153,7 +171,7 @@ fn Sidebar(section: Section) -> Element {
                         span { class: "nav-count mono tabular", "{pages_total}" }
                     }
                 }
-                a { class: "nav-item", href: "/settings",
+                a { class: nav_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
                     Glyph { icon: Icon::Settings, size: 16 }
                     "Settings"
                 }
@@ -167,6 +185,7 @@ fn TabBar(section: Section) -> Element {
     let overview = section == Section::Overview;
     let on_machines = section == Section::Machines;
     let on_pages = section == Section::Pages;
+    let on_settings = section == Section::Settings;
     let changed = pages::PAGES.read().changed();
     let hub = use_context::<Signal<Hub>>();
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
@@ -194,7 +213,7 @@ fn TabBar(section: Section) -> Element {
                 Glyph { icon: Icon::Monitor, size: 21 }
                 "Machines"
             }
-            a { class: "tab", href: "/settings",
+            a { class: tab_class(on_settings), href: "/next/settings", "aria-current": on_settings.then_some("page"),
                 Glyph { icon: Icon::Settings, size: 21 }
                 "Settings"
             }

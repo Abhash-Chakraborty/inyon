@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use inyon_chat_core::store::{Effect, Settings, Toast as StoreToast};
 use inyon_chat_core::v2::{decode, Overview2, Pages2};
 use inyon_chat_core::{Chat, Context, Store};
 use inyon_protocol::v2::{Zip, OVERVIEW, PAGES};
@@ -113,6 +114,45 @@ impl Feed {
     pub fn subs(&self) -> [ClientMsg2; 2] {
         [ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() }, ClientMsg2::Sub { stream: PAGES.into(), at: self.pages.cursor.at() }]
     }
+
+    /// A notice from the hub (`notify`, `page.notify`, `companion.reply`) under the app's settings
+    /// now: what to do about it, and the toasts it added, newest last.
+    pub fn notice(&mut self, msg: &ServerMsg, settings: &Settings, ctx: &Context, now: u64) -> (Vec<Effect>, Vec<StoreToast>) {
+        self.store.settings = settings.clone();
+        let effects = self.store.apply(msg, None, ctx, now).effects;
+        let ids: Vec<u64> = effects.iter().filter_map(|e| if let Effect::Toast { id, .. } = e { Some(*id) } else { None }).collect();
+        let toasts = self.store.toasts.list.iter().filter(|t| ids.contains(&t.id)).cloned().collect();
+        // the app keeps its own list on screen
+        for id in ids {
+            self.store.toasts.dismiss(id);
+        }
+        (effects, toasts)
+    }
+
+    /// Takes a pane being ended out of every list at once (or brings it back, when the end failed):
+    /// the machines as they should show now.
+    pub fn hide_pane(&mut self, host: &str, pane: &str, hide: bool, now: u64) -> Vec<HostState> {
+        self.store.hide_pane(host, pane, hide, now);
+        self.store.overview.hosts.clone()
+    }
+}
+
+thread_local! {
+    static FEED: std::cell::RefCell<Feed> = std::cell::RefCell::new(Feed::default());
+}
+
+/// The app's one [`Feed`]: the socket fills it, and a pane ended from a menu is taken out of it.
+pub fn with_feed<R>(f: impl FnOnce(&mut Feed) -> R) -> R {
+    FEED.with(|x| f(&mut x.borrow_mut()))
+}
+
+/// Reads a notice the hub sends outside the streams; None for another kind or one this build
+/// can't read.
+pub fn notice_msg(t: &str, text: &str) -> Option<ServerMsg> {
+    if !matches!(t, "notify" | "page.notify" | "companion.reply") {
+        return None;
+    }
+    serde_json::from_str(text).ok()
 }
 
 /// The pages as the screens show them: none until the stream's first frame, and when each was last

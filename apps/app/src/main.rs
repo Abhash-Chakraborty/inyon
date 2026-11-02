@@ -31,6 +31,7 @@ mod platform;
 mod prompt;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod route;
+mod settings;
 mod socket;
 #[cfg(feature = "phone")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]

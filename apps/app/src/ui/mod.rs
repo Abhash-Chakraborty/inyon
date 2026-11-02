@@ -11,15 +11,20 @@ mod login;
 mod machines;
 mod md;
 mod menu;
+mod notices;
 mod overview;
 mod pages;
 mod phone;
 mod prompt;
 mod rows;
 mod session;
+mod settings;
 mod setup;
 mod shell;
 // xterm.js and the page's events reach it only in the browser build
+mod companion;
+mod intro;
+mod temp;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod terminal;
 mod toast;
@@ -31,10 +36,11 @@ use crate::route;
 #[cfg(any(target_arch = "wasm32", feature = "phone"))]
 use crate::route::Route;
 use crate::socket::{self, Outbox};
-use crate::state::{self, Chats, Feed, Hub, Incoming};
+use crate::state::{self, Chats, Hub, Incoming};
 use crate::{api, platform};
 
-const CSS: Asset = asset!("/assets/app.css");
+// in index.html's head, so the first paint is styled (the link Dioxus adds would come after the wasm)
+const CSS: Asset = asset!("/assets/app.css", AssetOptions::css().with_static_head(true));
 const GEIST: Asset = asset!("/assets/fonts/geist-latin-wght-normal.woff2");
 const GEIST_MONO: Asset = asset!("/assets/fonts/geist-mono-latin-wght-normal.woff2");
 /// the serif replies are set in (Claude's); the browser fetches it only when a reply uses it
@@ -73,6 +79,8 @@ async fn check(mut auth: Signal<Auth>) {
 pub fn App() -> Element {
     let auth = use_signal(|| Auth::Checking);
     use_hook(move || spawn(check(auth)));
+    // the intro once per tab session, over the page as it loads; the mark lands on the header's
+    let intro = use_hook(intro::due);
     rsx! {
         document::Stylesheet { href: CSS }
         document::Link { rel: "preload", href: GEIST, r#as: "font", r#type: "font/woff2", crossorigin: "anonymous" }
@@ -83,6 +91,9 @@ pub fn App() -> Element {
                 login::Login { setup, needs_code: code, on_done: move |_| { spawn(check(auth)); } }
             },
             Auth::SignedIn => rsx! { Connected { auth } },
+        }
+        if intro {
+            intro::Intro {}
         }
     }
 }
@@ -112,15 +123,16 @@ fn Connected(auth: Signal<Auth>) -> Element {
     let outbox = use_hook(move || {
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
-        let mut feed = Feed::default();
         spawn(socket::run(inbox, move |ev| match ev {
             socket::Event::Up => {
                 connect::record_up();
+                // a hub that restarted comes back on a new connection, maybe running newer code
+                notices::check_build();
                 if !hub.peek().connected {
                     hub.write().set_connected(true);
                 }
                 // follow the overview, the pages and every open chat from where they were left
-                for sub in feed.subs() {
+                for sub in state::with_feed(|f| f.subs()) {
                     out.send(state::wire2(&sub));
                 }
                 for sub in chats.peek().subs() {
@@ -144,7 +156,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
             socket::Event::Message { text, binary } => match state::read(text.as_deref(), binary.as_deref()) {
                 Incoming::Frame(f) if f.stream() == Some(OVERVIEW) => {
                     // read without subscribing, so an unchanged overview doesn't redraw the screen
-                    let (hosts, resync) = feed.overview(&f, &hub.peek(), now());
+                    let (hosts, resync) = state::with_feed(|feed| feed.overview(&f, &hub.peek(), now()));
                     if let Some(hosts) = hosts {
                         hub.write().set_hosts(hosts);
                     }
@@ -153,7 +165,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                     }
                 }
                 Incoming::Frame(f) if f.stream() == Some(PAGES) => {
-                    let (list, resync) = feed.pages(&f);
+                    let (list, resync) = state::with_feed(|feed| feed.pages(&f));
                     if let Some(list) = list {
                         pages::PAGES.write().pages = Some(list);
                     }
@@ -169,9 +181,14 @@ fn Connected(auth: Signal<Auth>) -> Element {
                         }
                     }
                 }
-                // a terminal's output goes straight to its drawing; notices come with the toasts
+                // a terminal's output goes straight to its drawing; notices become toasts
                 Incoming::Hub { t, text } if t.starts_with("term.") => crate::term::dispatch(&text),
-                Incoming::Hub { .. } | Incoming::Other => {}
+                Incoming::Hub { t, text } => {
+                    if let Some(m) = state::notice_msg(&t, &text) {
+                        notices::handle(&m, &here.peek());
+                    }
+                }
+                Incoming::Other => {}
             },
         }));
         outbox

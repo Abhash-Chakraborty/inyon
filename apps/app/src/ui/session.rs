@@ -14,6 +14,7 @@ use super::icons::{AgentMark, Glyph, Icon};
 use super::outbox;
 use super::rows::Ctx;
 use super::terminal::TerminalView;
+use super::toast::{self, confirm, Ask, ToastTone};
 use crate::model::Shown;
 use crate::route::BASE;
 use crate::state::{self, Chats, Hub};
@@ -73,17 +74,13 @@ pub fn skin_css(kind: AgentKind) -> String {
     format!(".skin-{k}{{{}background:var(--bg);color:var(--fg)}}[data-theme='dark'] .skin-{k}{{{}}}", skin_vars(&s.light), skin_vars(&s.dark))
 }
 
-fn settings() -> Settings {
-    platform::load("inyon.settings.v2").map(|s| Settings::load(&s)).unwrap_or_default()
-}
-
 #[component]
 pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let hub = use_context::<Signal<Hub>>();
     let mut chats = use_context::<Signal<Chats>>();
     let out = outbox();
     let key = chat_key(&host, &pane);
-    let settings = use_hook(settings);
+    let settings: Settings = super::notices::PREFS.read().clone();
 
     // follow the chat while it's on screen, from where this app left it
     {
@@ -159,6 +156,14 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let view_href = |v: PaneView| format!("{BASE}{}", pane_href(&host, &pane, (v != home).then_some(v)));
     let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
+    // the header's ⋯: what the web app's session menu offers that this screen has so far
+    let mut more = Vec::new();
+    if let Some(id) = &session_id {
+        more.push(super::menu::Item::copy("Copy session ID", id));
+    }
+    more.push(super::menu::Item::new("End session…", Icon::CircleX, super::menu::Action::EndSession { host: host.clone(), pane: pane.clone() }).danger());
+    let mut menu_at = use_context::<Signal<Option<super::menu::Menu>>>();
+    let has_pane = r.is_some();
     drop(c);
     drop(h);
 
@@ -191,6 +196,17 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
                             "{s.label()}"
                         }
                     }
+                    if has_pane {
+                        button {
+                            id: "session-more",
+                            class: "icon-button icon-button-lg press",
+                            r#type: "button",
+                            "aria-label": "More",
+                            title: "More",
+                            onclick: move |_| super::menu::drop_down(&mut menu_at, "session-more", more.clone()),
+                            Glyph { icon: Icon::Ellipsis, size: 17 }
+                        }
+                    }
                     // a plain shell has only its terminal
                     if agent.is_some() {
                         nav { class: "segmented session-views", "aria-label": "View",
@@ -217,6 +233,45 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
             }
         }
     }
+}
+
+/// Asks, then ends a session: it leaves every list at once with a notice, while the machine stops
+/// the agent and closes its pane. A failure brings it back with the reason. `back` goes to the
+/// Overview once it's gone (from the session's own screen).
+pub async fn end_session(mut hub: Signal<Hub>, host: &str, pane: &str, back: Option<Signal<crate::route::Route>>) -> bool {
+    let (ask, found) = {
+        let h = hub.peek();
+        let refs = all_panes(&h.hosts);
+        let Some(r) = refs.iter().find(|r| r.host.config.id == host && r.pane.id == pane) else { return false };
+        let agent = r.pane.agent.as_ref().map(|a| a.custom.clone().unwrap_or_else(|| a.kind.def().name.clone()));
+        let name = if r.pane.agent.is_some() { pane_title(r) } else { terminal_name(r).map_or_else(|| r.pane.command.clone(), str::to_string) };
+        let body = crate::settings::end_text(agent.as_deref(), r.window.panes.len(), r.session.windows.len(), &r.session.name, r.window.index.0 as u32);
+        let ask = Ask {
+            title: "End this session?".into(),
+            details: vec![("Session".into(), name), ("Machine".into(), r.host.config.name.clone()), ("tmux".into(), inyon_chat_core::groups::tmux_target(r))],
+            body: Some(body),
+            yes: "End session".into(),
+            danger: true,
+        };
+        (ask, true)
+    };
+    if !found || !confirm(ask).await {
+        return false;
+    }
+    let now = platform::clock().now as u64;
+    let hosts = state::with_feed(|f| f.hide_pane(host, pane, true, now));
+    hub.write().set_hosts(hosts);
+    super::notices::haptic(inyon_chat_core::store::Haptic::Success);
+    toast::toast("Session ended", None, ToastTone::Success);
+    if let Some(mut here) = back {
+        crate::route::go(&mut here, crate::route::Route::Overview);
+    }
+    if let Err(e) = crate::api::end(host, pane).await {
+        let hosts = state::with_feed(|f| f.hide_pane(host, pane, false, platform::clock().now as u64));
+        hub.write().set_hosts(hosts);
+        toast::toast("Could not end the session", Some(e.message), ToastTone::Error);
+    }
+    true
 }
 
 /// The view on screen: the one the address names, else the pane's own once Inyon knows what runs

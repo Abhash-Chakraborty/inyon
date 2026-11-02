@@ -45,7 +45,7 @@ pub fn Login(setup: bool, needs_code: bool, on_done: EventHandler<()>) -> Elemen
     rsx! {
         div { class: "login",
             form { class: "login-form slide-up", onsubmit: submit,
-                Logo { class: "logo-lg" }
+                Logo { class: "logo-lg", target: true }
                 h1 { class: "login-title", if setup { "Create your password" } else { "Welcome back" } }
                 p { class: "login-lede",
                     if setup {

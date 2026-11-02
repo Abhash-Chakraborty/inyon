@@ -194,6 +194,17 @@ const styled = (page: Page) => page.waitForFunction(() => getComputedStyle(docum
 
 const menuItems = (page: Page) => page.getByRole('menu').locator('.menu-item').allTextContents()
 const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {})
+// the cold-start intro has its own check (settings.ts); here it would cover the first screen
+const newContext = browser.newContext.bind(browser)
+browser.newContext = async (o) => {
+  const ctx = await newContext(o)
+  await ctx.addInitScript(() => {
+    try {
+      sessionStorage.setItem('inyon.intro.seen', '1')
+    } catch {}
+  })
+  return ctx
+}
 const errors: string[] = []
 const watch = (page: Page) => {
   page.on('pageerror', (e) => errors.push(e.message))

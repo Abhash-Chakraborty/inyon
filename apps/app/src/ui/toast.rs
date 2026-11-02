@@ -16,6 +16,8 @@ use crate::platform;
 pub enum ToastTone {
     Info,
     Success,
+    /// needs you: an agent asking, a machine gone quiet
+    Warn,
     Error,
 }
 
@@ -29,14 +31,17 @@ pub struct Toast {
     pub href: Option<String>,
     /// a button on it (Undo) and what it does
     pub action: Option<(String, super::menu::Action)>,
+    /// the agent it's about, whose mark it shows in place of the icon
+    pub agent: Option<inyon_protocol::AgentKind>,
 }
 
 static TOASTS: GlobalSignal<Vec<Toast>> = Signal::global(Vec::new);
 static NEXT: GlobalSignal<u64> = Signal::global(|| 0);
 
-/// How long a toast stays: errors a little longer, so there's time to read them.
-pub fn toast_ms(tone: ToastTone) -> u32 {
-    if tone == ToastTone::Error {
+/// How long a toast stays: errors and one with an action (Undo) a little longer, so there's time
+/// to read or reach them.
+pub fn toast_ms(tone: ToastTone, action: bool) -> u32 {
+    if tone == ToastTone::Error || action {
         6000
     } else {
         4500
@@ -55,14 +60,14 @@ pub fn push(list: &[Toast], t: Toast) -> Vec<Toast> {
 
 /// Shows a toast for a few seconds.
 pub fn toast(title: impl Into<String>, body: Option<String>, tone: ToastTone) {
-    show(Toast { id: 0, title: title.into(), body: body.filter(|b| !b.is_empty()), tone, href: None, action: None });
+    show(Toast { id: 0, title: title.into(), body: body.filter(|b| !b.is_empty()), tone, href: None, action: None, agent: None });
 }
 
 pub fn show(mut t: Toast) {
     let id = *NEXT.peek() + 1;
     *NEXT.write() = id;
     t.id = id;
-    let ms = toast_ms(t.tone);
+    let ms = toast_ms(t.tone, t.action.is_some());
     let next = push(&TOASTS.peek(), t);
     *TOASTS.write() = next;
     dioxus::core::spawn_forever(async move {
@@ -112,6 +117,7 @@ fn ToastCard(t: Toast) -> Element {
     let (icon, tone) = match t.tone {
         ToastTone::Info => (Icon::Info, "fg-2"),
         ToastTone::Success => (Icon::CircleCheck, ""),
+        ToastTone::Warn => (Icon::MessageCircleQuestion, "warn"),
         ToastTone::Error => (Icon::CircleAlert, "danger"),
     };
     let (x, y) = drag();
@@ -164,7 +170,11 @@ fn ToastCard(t: Toast) -> Element {
                 }
                 dismiss(id);
             },
-            Glyph { icon, size: 18, class: "toast-icon {tone}" }
+            if let Some(k) = t.agent {
+                super::icons::AgentMark { kind: k, size: 22 }
+            } else {
+                Glyph { icon, size: 18, class: "toast-icon {tone}" }
+            }
             div { class: "toast-words",
                 p { class: "toast-title truncate", "{t.title}" }
                 if let Some(b) = &t.body {
@@ -281,7 +291,7 @@ mod tests {
     use super::*;
 
     fn t(id: u64, href: Option<&str>) -> Toast {
-        Toast { id, title: format!("t{id}"), body: None, tone: ToastTone::Info, href: href.map(str::to_string), action: None }
+        Toast { id, title: format!("t{id}"), body: None, tone: ToastTone::Info, href: href.map(str::to_string), action: None, agent: None }
     }
 
     #[test]
@@ -290,7 +300,8 @@ mod tests {
         assert_eq!(list.iter().map(|x| x.id).collect::<Vec<_>>(), [2, 3, 4]);
         let list = push(&list, t(5, Some("/next/m/a/p/1")));
         assert_eq!(list.iter().map(|x| x.id).collect::<Vec<_>>(), [3, 4, 5]);
-        assert_eq!(toast_ms(ToastTone::Error), 6000);
-        assert_eq!(toast_ms(ToastTone::Success), 4500);
+        assert_eq!(toast_ms(ToastTone::Error, false), 6000);
+        assert_eq!(toast_ms(ToastTone::Success, false), 4500);
+        assert_eq!(toast_ms(ToastTone::Info, true), 6000, "time to reach Undo");
     }
 }

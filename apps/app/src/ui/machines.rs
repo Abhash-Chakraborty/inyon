@@ -350,7 +350,7 @@ pub fn MachinePage(id: String) -> Element {
                             Tab::Setup => rsx! { super::setup::SetupPanel { host: host.clone() } },
                             Tab::Config => rsx! { ConfigTab { key: "{host.config.id}", id: host.config.id.clone(), name: host.config.name.clone() } },
                             Tab::Uploads => rsx! { UploadsCard { key: "{host.config.id}", host: host.clone() } },
-                            Tab::Temp => rsx! { TempTab { id: host.config.id.clone() } },
+                            Tab::Temp => rsx! { super::temp::TempFiles { key: "{host.config.id}", host: host.clone() } },
                             Tab::Integration => rsx! { IntegrationCard { host: host.clone() } },
                         }
                             }
@@ -775,22 +775,6 @@ pub fn UploadsCard(host: HostState) -> Element {
                         "Delete all"
                     }
                 }
-            }
-        }
-    }
-}
-
-/// Temp files come with the Settings screens; until then they open in the current app.
-#[component]
-fn TempTab(id: String) -> Element {
-    rsx! {
-        div { class: "empty",
-            span { class: "empty-icon", Glyph { icon: Icon::FolderOpen, size: 20 } }
-            p { class: "empty-title", "Temp files" }
-            p { class: "empty-text", "Files agents left in this machine's temp folders. This screen isn't in the new app yet." }
-            a { class: "button button-md button-quiet press empty-action", href: "/temp/{inyon_chat_core::js::encode_uri_component(&id)}",
-                "Open in the current app"
-                Glyph { icon: Icon::ArrowRight, size: 14 }
             }
         }
     }
