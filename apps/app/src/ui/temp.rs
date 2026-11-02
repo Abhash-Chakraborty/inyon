@@ -42,10 +42,20 @@ async fn thumb(host: String, path: String) -> Option<String> {
         platform::sleep(60).await;
     }
     RUNNING.with(|r| *r.borrow_mut() += 1);
-    let got = api::temp_preview(&host, &path, Some(st::THUMB_MAX)).await.ok().filter(|p| p.mime.starts_with("image/")).and_then(|p| st::data_url(&p.mime, p.base64.as_deref()));
+    let answer = api::temp_preview(&host, &path, Some(st::THUMB_MAX)).await;
     RUNNING.with(|r| *r.borrow_mut() -= 1);
-    THUMBS.with(|t| t.borrow_mut().insert(key, got.clone()));
-    got
+    let kept = thumb_answer(answer);
+    if let Some(t) = &kept {
+        THUMBS.with(|c| c.borrow_mut().insert(key, t.clone()));
+    }
+    kept.flatten()
+}
+
+/// What a preview answer leaves in the cache: the picture, or that there is none; nothing for a
+/// failed request, which a later look tries again.
+fn thumb_answer(answer: Result<TempPreview, api::ApiError>) -> Option<Option<String>> {
+    let p = answer.ok()?;
+    Some(Some(p).filter(|p| p.mime.starts_with("image/")).and_then(|p| st::data_url(&p.mime, p.base64.as_deref())))
 }
 
 /// Forgets the thumbnails of what was deleted.
@@ -211,6 +221,8 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
     let mut last = use_signal(|| None::<usize>);
     let mut open = use_signal(|| None::<TempItem>);
     let mut tries = use_signal(|| 0u64);
+    // the latest listing asked for: an earlier one that answers late is dropped
+    let mut asked = use_signal(|| 0u64);
     let load_id = id.clone();
     use_effect(use_reactive!(|online, reload| {
         let _ = (reload, tries());
@@ -218,8 +230,14 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
             return;
         }
         let id = load_id.clone();
+        let n = *asked.peek() + 1;
+        asked.set(n);
         spawn(async move {
-            match api::temp_list(&id).await {
+            let answer = api::temp_list(&id).await;
+            if *asked.peek() != n {
+                return;
+            }
+            match answer {
                 Ok(l) => {
                     let items = l.items.clone().unwrap_or_default();
                     // what went away can't stay picked
@@ -310,6 +328,14 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
     let (del_id, del_machine) = (id.clone(), machine.clone());
     rsx! {
         div { class: "temp-files",
+            // a refresh that failed: the list is as it was, and says so
+            if let Some((_, message)) = err {
+                div { class: "temp-stale", role: "status",
+                    Glyph { icon: Icon::CircleAlert, size: 14 }
+                    span { class: "temp-stale-text", "Couldn't refresh the list: {message}" }
+                    button { class: "button button-xs button-ghost press", r#type: "button", onclick: move |_| tries += 1, "Try again" }
+                }
+            }
             div { class: "temp-summary",
                 p { class: "temp-total tabular", "{bytes(total)} in {st::items_text(order.len())}" }
                 div { class: "temp-quick",
@@ -704,5 +730,18 @@ fn PreviewSheet(host: String, file: Option<TempFile>, on_close: EventHandler<()>
                 div { class: "skeleton skeleton-panel", role: "status", "aria-label": "Opening" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failed_thumbnail_is_tried_again_and_a_missing_one_is_not() {
+        let png = TempPreview { mime: "image/png".into(), base64: Some("iVBO".into()), ..Default::default() };
+        assert_eq!(thumb_answer(Ok(png)), Some(Some("data:image/png;base64,iVBO".into())));
+        assert_eq!(thumb_answer(Ok(TempPreview { mime: "text/plain".into(), ..Default::default() })), Some(None));
+        assert_eq!(thumb_answer(Err(api::ApiError { status: 0, message: "offline".into() })), None);
     }
 }

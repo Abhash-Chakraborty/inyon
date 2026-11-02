@@ -102,8 +102,16 @@ pub fn Intro() -> Element {
     let class = format!("intro{}{}", if p == Phase::Handoff { " intro-off" } else { "" }, if still { " intro-still" } else { "" });
     // a tap wants it gone: fly if the header is there, otherwise fade at once
     let skip = move || {
-        if *phase.peek() == Phase::Draw {
-            handoff(0.0);
+        let now = *phase.peek();
+        match now {
+            Phase::Draw => handoff(0.0),
+            // nothing drawn yet: gone at once
+            Phase::Wait => {
+                let mut ph = phase;
+                ph.set(Phase::Gone);
+                dom::root_class(RUNNING, false);
+            }
+            Phase::Handoff | Phase::Gone => {}
         }
     };
     rsx! {

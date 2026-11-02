@@ -121,6 +121,8 @@ fn Connected(auth: Signal<Auth>) -> Element {
         });
     });
     let outbox = use_hook(move || {
+        // a new sign-in: the screens start empty, so the streams start over
+        state::reset_feed();
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
         spawn(socket::run(inbox, move |ev| match ev {
@@ -185,7 +187,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
                 Incoming::Hub { t, text } if t.starts_with("term.") => crate::term::dispatch(&text),
                 Incoming::Hub { t, text } => {
                     if let Some(m) = state::notice_msg(&t, &text) {
-                        notices::handle(&m, &here.peek());
+                        notices::handle(&m, &here.peek(), &hub.peek().hosts);
                     }
                 }
                 Incoming::Other => {}

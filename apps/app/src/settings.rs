@@ -348,6 +348,9 @@ pub fn password_error(next: &str, again: &str) -> Option<&'static str> {
     }
 }
 
+/// What the hub address says when it names the hub machine itself.
+pub const LOCAL_HINT: &str = "This is the hub machine itself. Other devices use its Tailscale or NetBird name or IP with the same port.";
+
 /// The hub address on this page's own machine, which other devices can't use as it is.
 pub fn local_address(origin: &str) -> bool {
     let rest = origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")).unwrap_or("");

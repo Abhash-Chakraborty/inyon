@@ -24,10 +24,11 @@ use crate::{dom, platform};
 const OLD_HUB: &str = "This hub runs on Bun, which keeps no custom agents. Run the default Rust hub to add them.";
 
 /// The sections the desktop's side list jumps to, in order.
-const NAV: [(&str, &str); 11] = [
+const NAV: [(&str, &str); 12] = [
     ("appearance", "Appearance"),
     ("agents", "Agents"),
     ("companion", "Companion"),
+    ("sessions", "Live numbers"),
     ("uploads", "Uploads and clipboard"),
     ("notifications", "Notifications"),
     ("machines", "Machines"),
@@ -102,6 +103,13 @@ fn customs() -> Vec<CustomAgent> {
 
 /// Saves the custom agents with the hub's other settings as they are now.
 async fn save_agents(next: Vec<CustomAgent>) -> Result<(), String> {
+    take_turn().await;
+    let out = put_agents(next).await;
+    end_turn();
+    out
+}
+
+async fn put_agents(next: Vec<CustomAgent>) -> Result<(), String> {
     let Some(mut base) = HUB.peek().clone() else { return Err("The hub's settings haven't loaded yet.".into()) };
     base.custom_agents = Some(next);
     let saved = api::save_settings(&base).await.map_err(|e| e.message)?;
@@ -109,6 +117,7 @@ async fn save_agents(next: Vec<CustomAgent>) -> Result<(), String> {
     if saved.custom_agents.is_none() {
         return Err(OLD_HUB.into());
     }
+    EDITS.with(|e| e.set(e.get() + 1));
     *HUB.write() = Some(saved);
     Ok(())
 }
@@ -173,17 +182,73 @@ async fn remove_companion(c: PairedCompanion) {
     }
 }
 
+// The hub's settings go out whole, so one save at a time: a change made while one is on its way
+// goes out after it, as the settings are then. `EDITS` counts the changes made here, so an answer
+// is only shown when nothing newer was changed meanwhile.
+thread_local! {
+    static SAVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static AGAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static EDITS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+fn edits() -> u64 {
+    EDITS.with(|e| e.get())
+}
+
+/// Shows what the hub said, unless something was changed here since `at`.
+fn settle(at: u64, s: HubSettings) {
+    if edits() == at {
+        *HUB.write() = Some(s);
+    }
+}
+
+/// Waits for the save on its way, then holds the turn.
+async fn take_turn() {
+    while SAVING.with(|s| s.replace(true)) {
+        platform::sleep(30).await;
+    }
+}
+
+/// Gives the turn back, sending what changed while it was held.
+fn end_turn() {
+    SAVING.with(|s| s.set(false));
+    if AGAIN.with(|a| a.replace(false)) {
+        spawn_forever_here(push_hub());
+    }
+}
+
 /// Saves the hub's settings with a change, showing it at once.
 fn save_hub(change: impl FnOnce(&mut HubSettings)) {
     let Some(mut next) = HUB.peek().clone() else { return };
     change(&mut next);
-    *HUB.write() = Some(next.clone());
-    spawn(async move {
+    *HUB.write() = Some(next);
+    EDITS.with(|e| e.set(e.get() + 1));
+    if SAVING.with(|s| s.get()) {
+        AGAIN.with(|a| a.set(true));
+    } else {
+        spawn_forever_here(push_hub());
+    }
+}
+
+/// Sends the settings as they are now. A failure shows the hub's own again, unless something
+/// newer was changed meanwhile (which goes out next).
+async fn push_hub() {
+    take_turn().await;
+    let at = edits();
+    // read before the answer writes HUB: a guard in the `if let` would last through it
+    let next = HUB.peek().clone();
+    if let Some(next) = next {
         match api::save_settings(&next).await {
-            Ok(saved) => *HUB.write() = Some(saved),
-            Err(e) => toast::toast("Could not save", Some(e.message), ToastTone::Error),
+            Ok(saved) => settle(at, saved),
+            Err(e) => {
+                toast::toast("Could not save", Some(e.message), ToastTone::Error);
+                if let Ok(s) = api::settings().await {
+                    settle(at, s);
+                }
+            }
         }
-    });
+    }
+    end_turn();
 }
 
 fn date(ms: f64) -> String {
@@ -201,8 +266,9 @@ pub fn SettingsPage() -> Element {
     let hub = use_context::<Signal<Hub>>();
     use_hook(|| {
         spawn(async move {
+            let at = edits();
             if let Ok(s) = api::settings().await {
-                *HUB.write() = Some(s);
+                settle(at, s);
             }
         });
         // a link to one section (/settings#notifications) opens on it
@@ -795,9 +861,11 @@ fn OtherDevices() -> Element {
     let copy = address.clone();
     rsx! {
         Section { id: "devices", title: "Your other devices", desc: "Everything runs on this hub. Open the same address anywhere you want Inyon.",
-            Row {
+            // the Android build has no address of its own to show
+            if !address.is_empty() {
+                Row {
                 label: "Hub address",
-                hint: local.then(|| "This is the hub machine itself. Other devices use its Tailscale or NetBird name or IP with the same port.".to_string()),
+                hint: local.then(|| st::LOCAL_HINT.to_string()),
                 button {
                     class: "set-address mono press",
                     r#type: "button",
@@ -811,6 +879,7 @@ fn OtherDevices() -> Element {
                     },
                     span { class: "truncate", "{address}" }
                     Glyph { icon: Icon::Copy, size: 14, class: "fg-3" }
+                }
                 }
             }
             Row {
@@ -1053,9 +1122,12 @@ fn Account() -> Element {
                 icon: Icon::LogOut,
                 danger: true,
                 on_click: move |_| {
+                    // signed out only once the hub has ended the sign-in, or a reload would bring it back
                     spawn(async move {
-                        api::logout().await;
-                        auth.set(Auth::SignedOut { setup: false, code: false });
+                        match api::logout().await {
+                            Ok(()) => auth.set(Auth::SignedOut { setup: false, code: false }),
+                            Err(e) => toast::toast("Could not sign out", Some(e.message), ToastTone::Error),
+                        }
                     });
                 },
             }
@@ -1292,7 +1364,7 @@ mod tests {
     #[test]
     fn every_section_the_side_list_names_is_on_the_page() {
         let ids: Vec<&str> = NAV.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, ["appearance", "agents", "companion", "uploads", "notifications", "machines", "devices", "paired", "account", "updates", "about"]);
+        assert_eq!(ids, ["appearance", "agents", "companion", "sessions", "uploads", "notifications", "machines", "devices", "paired", "account", "updates", "about"]);
     }
 
     #[test]

@@ -4,10 +4,10 @@
 //! and "Inyon was updated" (components/UpdatePrompt.tsx) once the hub runs newer code than this page.
 
 use dioxus::prelude::*;
-use inyon_chat_core::overview::PaneView;
+use inyon_chat_core::overview::{all_panes, PaneView};
 use inyon_chat_core::store::{Effect, Haptic, Settings, Tone};
 use inyon_chat_core::Context;
-use inyon_protocol::ServerMsg;
+use inyon_protocol::{HostState, ServerMsg};
 
 use super::icons::{Glyph, Icon};
 use super::toast::{self, Toast, ToastTone};
@@ -77,9 +77,9 @@ fn route_path(r: &Route) -> String {
 
 /// A notice from the hub: a toast unless what it's about is on screen, a buzz, and the browser's
 /// notification while the app is hidden (when it's allowed).
-pub fn handle(msg: &ServerMsg, here: &Route) {
+pub fn handle(msg: &ServerMsg, here: &Route, hosts: &[HostState]) {
     let path = route_path(here);
-    let terminal_view = matches!(here, Route::Session { view: Some(PaneView::Terminal), .. });
+    let terminal_view = terminal_on_screen(here, hosts);
     let ctx = Context { route: &path, terminal_view, visible: dom::visible(), native: false, browser_notices: dom::notice_permission() == Permission::Granted };
     let prefs = PREFS.peek().clone();
     let (effects, toasts) = state::with_feed(|f| f.notice(msg, &prefs, &ctx, platform::clock().now as u64));
@@ -109,6 +109,15 @@ pub fn handle(msg: &ServerMsg, here: &Route) {
             Effect::Toast { .. } | Effect::NativeNotify { .. } => {}
         }
     }
+}
+
+/// Whether a session's terminal is what's on screen: the view the address names, else the pane's
+/// own (the terminal, for an agent Inyon doesn't read as chat).
+fn terminal_on_screen(here: &Route, hosts: &[HostState]) -> bool {
+    let Route::Session { host, pane, view } = here else { return false };
+    let r = all_panes(hosts).into_iter().find(|r| r.host.config.id == *host && r.pane.id == *pane);
+    let agent = r.as_ref().and_then(|r| r.pane.agent.as_ref().map(|a| a.kind));
+    super::session::shown_view(*view, agent, r.is_some()) == Some(PaneView::Terminal)
 }
 
 // ---------- "Inyon was updated" ----------
@@ -192,6 +201,7 @@ mod tests {
     use super::*;
     use inyon_chat_core::store::Theme;
     use inyon_protocol::NotifyKind;
+    use serde_json::json;
 
     #[test]
     fn saving_a_setting_keeps_the_ones_this_app_does_not_know() {
@@ -229,6 +239,20 @@ mod tests {
         let hidden = Context { visible: false, browser_notices: true, ..home };
         let (effects, _) = feed.notice(&done("%4"), &Settings::default(), &hidden, 4);
         assert!(effects.iter().any(|e| matches!(e, Effect::BrowserNotify { tag, .. } if tag == "box:%4")));
+    }
+
+    #[test]
+    fn a_terminal_on_screen_is_the_view_the_session_shows() {
+        let pane = |id: &str, kind: &str| json!({ "id": id, "index": 0, "active": true, "command": kind, "cwd": "/home/sam", "title": "t", "width": 80, "height": 40, "dead": false, "agent": { "kind": kind, "pid": 1, "state": "idle" } });
+        let hosts: Vec<HostState> = vec![serde_json::from_value(json!({ "config": { "id": "box", "name": "box", "kind": "node" }, "status": "online", "integration": "installed", "tmux": "ok", "agents": [], "updatedAt": 0,
+            "sessions": [{ "id": "$1", "name": "a", "attached": 0, "windows": [{ "id": "@1", "index": 1, "name": "", "active": true, "activity": 0, "panes": [pane("%1", "claude"), pane("%2", "cursor")] }] }] }))
+        .unwrap()];
+        let at = |pane: &str, view: Option<PaneView>| Route::Session { host: "box".into(), pane: pane.into(), view };
+        // Claude Code opens on its chat, Cursor (not read as chat) on its terminal
+        assert!(!terminal_on_screen(&at("%1", None), &hosts));
+        assert!(terminal_on_screen(&at("%1", Some(PaneView::Terminal)), &hosts));
+        assert!(terminal_on_screen(&at("%2", None), &hosts));
+        assert!(!terminal_on_screen(&Route::Overview, &hosts));
     }
 
     #[test]

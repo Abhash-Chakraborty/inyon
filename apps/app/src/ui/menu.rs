@@ -443,8 +443,10 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
         Action::Temp(op) => super::temp::run(op),
         Action::Settings(op) => super::settings::run(op),
         Action::EndSession { host, pane } => {
+            // from the session's own screen, the Overview after
+            let own = matches!(&*here.peek(), Route::Session { host: h, pane: p, .. } if *h == host && *p == pane);
             spawn(async move {
-                super::session::end_session(hub, &host, &pane, None).await;
+                super::session::end_session(hub, &host, &pane, own.then_some(here)).await;
             });
         }
     }

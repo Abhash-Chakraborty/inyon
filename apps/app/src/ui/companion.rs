@@ -100,7 +100,9 @@ pub fn CompanionRows() -> Element {
         Status::Got(s) if !s.host.is_empty() => s.host.clone(),
         _ => "local".into(),
     };
-    let running = all.iter().find(|c| c.host == own).cloned();
+    // a companion just stopped: its pane stays in the overview until the machine's next report
+    let mut stopped = use_signal(|| None::<String>);
+    let running = all.iter().find(|c| c.host == own && stopped.read().as_deref() != Some(c.pane.as_str())).cloned();
     let running_id = running.as_ref().map(|c| c.pane.clone());
     let t = tries();
     use_effect(use_reactive!(|running_id, t| {
@@ -119,6 +121,7 @@ pub fn CompanionRows() -> Element {
         spawn(async move {
             match api::start_companion(kind).await {
                 Ok(s) => {
+                    stopped.set(None);
                     let link = s.pane.as_ref().map(|p| model::pane_href(&s.host, p));
                     status.set(Status::Got(s));
                     toast::show(Toast {
@@ -136,11 +139,13 @@ pub fn CompanionRows() -> Element {
             busy.set(None);
         });
     };
-    let stop = move || {
+    // the pane it ran in, kept off the list until the overview drops it
+    let stop = move |pane: Option<String>| {
         busy.set(Some("stop"));
         spawn(async move {
             match api::stop_companion().await {
                 Ok(()) => {
+                    stopped.set(pane);
                     status.set(Status::Got(CompanionStatus { agent: None, host: "local".into(), pane: None }));
                     toast::toast("Companion stopped", None, ToastTone::Info);
                 }
@@ -174,6 +179,7 @@ pub fn CompanionRows() -> Element {
         Status::Got(s) => {
             if let Some(r) = running {
                 let to = Route::Session { host: r.host.clone(), pane: r.pane.clone(), view: None };
+                let pane = r.pane.clone();
                 let mut stop = stop;
                 rsx! {
                     div { class: "set-row",
@@ -190,7 +196,7 @@ pub fn CompanionRows() -> Element {
                         }
                         div { class: "button-row",
                             button { class: "button button-sm button-primary press", r#type: "button", onclick: move |_| crate::route::go(&mut here, to.clone()), "Open" }
-                            button { class: "button button-sm button-ghost press", r#type: "button", disabled: busy().is_some(), onclick: move |_| stop(),
+                            button { class: "button button-sm button-ghost press", r#type: "button", disabled: busy().is_some(), onclick: move |_| stop(Some(pane.clone())),
                                 Busy { on: busy() == Some("stop") }
                                 "Stop"
                             }
@@ -212,7 +218,7 @@ pub fn CompanionRows() -> Element {
                                 Busy { on: busy() == Some("start") }
                                 "Start again"
                             }
-                            button { class: "button button-sm button-ghost press", r#type: "button", disabled: busy().is_some(), onclick: move |_| stop(),
+                            button { class: "button button-sm button-ghost press", r#type: "button", disabled: busy().is_some(), onclick: move |_| stop(None),
                                 Busy { on: busy() == Some("stop") }
                                 "Turn off"
                             }
@@ -319,11 +325,17 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
     let mut known = use_signal(|| None::<Vec<String>>);
     let mut gen = use_signal(|| 0u64);
 
-    // asks the hub for a code; false when it didn't make one (the old code, if any, still works)
+    // asks the hub for a code; false when it didn't make one (the old code, if any, still works).
+    // An answer for an earlier opening of the sheet changes nothing in this one.
     let fetch = move || async move {
+        let g = *gen.peek();
         error.set(None);
         busy.set(true);
-        let ok = match api::companion_pair().await {
+        let answer = api::companion_pair().await;
+        if *gen.peek() != g {
+            return false;
+        }
+        let ok = match answer {
             Ok(c) => {
                 code.set(Some(c));
                 now.set(platform::clock().now);
@@ -353,10 +365,17 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
         paired.set(None);
         password.set(String::new());
         known.set(None);
+        busy.set(false);
         spawn(async move {
-            // the companions there are before the code exists, so the one that claims it is the new one
-            let list = api::companions().await.unwrap_or_default();
-            known.set(Some(list.into_iter().map(|c| c.id).collect()));
+            // the companions there are before the code exists, so the one that claims it is the new
+            // one; without that list no claim can be told apart, so none is looked for
+            let list = api::companions().await;
+            if *gen.peek() != g {
+                return;
+            }
+            if let Ok(list) = list {
+                known.set(Some(list.into_iter().map(|c| c.id).collect()));
+            }
             fetch().await;
             // the countdown, a new code when it runs out, and the app's claim, looked for in the list
             let mut renewed_for = 0u64;
@@ -372,13 +391,18 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                 if paired.peek().is_some() {
                     continue;
                 }
-                let Some(c) = code.peek().clone() else { continue };
-                if at >= c.expires_at as f64 && renewed_for != c.expires_at {
-                    renewed_for = c.expires_at;
-                    // a renewal that fails drops the dead code, which shows the error and Try again
-                    if !fetch().await {
+                let expired = code.peek().as_ref().map(|c| c.expires_at).filter(|e| at >= *e as f64 && renewed_for != *e);
+                if let Some(e) = expired {
+                    renewed_for = e;
+                    // a renewal that fails drops the dead code, which shows the error and Try again;
+                    // the list is still watched, for an app that claimed it just before it ran out
+                    if !fetch().await && *gen.peek() == g {
                         code.set(None);
                     }
+                    continue;
+                }
+                // nothing to claim before the first code
+                if code.peek().is_none() && renewed_for == 0 {
                     continue;
                 }
                 if tick.is_multiple_of(2) {
@@ -516,6 +540,9 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                                     Glyph { icon: Icon::Copy, size: 14 }
                                 }
                             }
+                            if st::local_address(&address) {
+                                p { class: "pair-hint", "{st::LOCAL_HINT}" }
+                            }
                             if paired().is_none() {
                                 button {
                                     class: "pair-link press",
@@ -533,24 +560,7 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                                 }
                             }
                             if let Some(p) = paired() {
-                                div { class: "pair-done", role: "status",
-                                    div { class: "pair-done-title",
-                                        Glyph { icon: Icon::CircleCheck, size: 16, class: "ok" }
-                                        "{p.name} is paired"
-                                    }
-                                    ul { class: "pair-can",
-                                        for s in st::COMPANION_CAN {
-                                            li { key: "{s}",
-                                                Glyph { icon: Icon::Check, size: 14, class: "ok" }
-                                                "{s}"
-                                            }
-                                        }
-                                        li { class: "fg-3",
-                                            Glyph { icon: Icon::Minus, size: 14 }
-                                            "{st::COMPANION_CANT}"
-                                        }
-                                    }
-                                }
+                                PairDone { name: p.name }
                             } else {
                                 p { class: "pair-wait", role: "status",
                                     span { class: "pulse-dot" }
@@ -560,6 +570,9 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                         }
                     }
                 }
+            } else if let Some(p) = paired() {
+                // claimed just before its code ran out, with no new code to show
+                PairDone { name: p.name }
             } else if let Some(e) = error() {
                 div { class: "stack",
                     p { class: "form-error", "{e}" }
@@ -578,6 +591,31 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                 }
             } else {
                 div { class: "skeleton skeleton-panel", role: "status", "aria-label": "Making a code" }
+            }
+        }
+    }
+}
+
+/// The app that claimed the code, and what it may do.
+#[component]
+fn PairDone(name: String) -> Element {
+    rsx! {
+        div { class: "pair-done", role: "status",
+            div { class: "pair-done-title",
+                Glyph { icon: Icon::CircleCheck, size: 16, class: "ok" }
+                "{name} is paired"
+            }
+            ul { class: "pair-can",
+                for s in st::COMPANION_CAN {
+                    li { key: "{s}",
+                        Glyph { icon: Icon::Check, size: 14, class: "ok" }
+                        "{s}"
+                    }
+                }
+                li { class: "fg-3",
+                    Glyph { icon: Icon::Minus, size: 14 }
+                    "{st::COMPANION_CANT}"
+                }
             }
         }
     }

@@ -358,8 +358,12 @@ pub async fn change_password(current: &str, next: &str) -> Result<(), ApiError> 
     request("POST", "/api/password", json(&NewPassword { current, next })).await.map(drop)
 }
 
-pub async fn logout() {
-    let _ = request("POST", "/api/logout", None).await;
+/// Ends this browser's sign-in at the hub; a 401 means it already had.
+pub async fn logout() -> Result<(), ApiError> {
+    match request("POST", "/api/logout", None).await {
+        Err(e) if e.status != 401 => Err(e),
+        _ => Ok(()),
+    }
 }
 
 /// What the hub runs and whether a newer release is out (`GET /api/hub/update`).

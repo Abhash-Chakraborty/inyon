@@ -353,8 +353,17 @@ mod imp {
     pub async fn ask_notices() -> crate::settings::Permission {
         let Some(n) = notification_class() else { return crate::settings::Permission::Unsupported };
         if let Some(f) = js_sys::Reflect::get(&n, &"requestPermission".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()) {
-            if let Ok(p) = f.call0(&n).and_then(|p| p.dyn_into::<js_sys::Promise>()) {
-                let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+            // a promise from today's browsers; only the callback from older Safari
+            let mut slot = None;
+            let answered = js_sys::Promise::new(&mut |resolve, _| slot = Some(resolve));
+            let callback = slot.map(|resolve| {
+                Closure::once_into_js(move |_: wasm_bindgen::JsValue| {
+                    let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
+                })
+            });
+            if let Ok(ret) = f.call1(&n, callback.as_ref().unwrap_or(&wasm_bindgen::JsValue::UNDEFINED)) {
+                let wait = ret.dyn_into::<js_sys::Promise>().unwrap_or(answered);
+                let _ = wasm_bindgen_futures::JsFuture::from(wait).await;
             }
         }
         notice_permission()
@@ -601,8 +610,10 @@ mod imp {
         false
     }
     pub fn vibrate(_pattern: &[u32]) {}
+    /// A date in the phone's time zone, written the one way every locale reads ("2026-11-02").
     pub fn local_date(ms: f64) -> String {
-        format!("{}", (ms / 86_400_000.0) as i64)
+        let t = inyon_chat_core::js::local_time(ms, crate::platform::clock().tz_minutes);
+        format!("{}-{:02}-{:02}", t.year, t.month, t.day)
     }
     pub fn scroll_to(_id: &str) {}
     pub fn hash() -> String {
@@ -630,3 +641,12 @@ mod imp {
 }
 
 pub use imp::*;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    #[test]
+    fn a_date_off_the_browser_is_a_calendar_date() {
+        // 2 November 2026, 18:00 UTC
+        assert_eq!(super::local_date(1_793_642_400_000.0), "2026-11-02");
+    }
+}

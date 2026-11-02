@@ -258,18 +258,20 @@ pub async fn end_session(mut hub: Signal<Hub>, host: &str, pane: &str, back: Opt
     if !found || !confirm(ask).await {
         return false;
     }
+    // off every list at once; said to be ended once the machine has taken it
     let now = platform::clock().now as u64;
     let hosts = state::with_feed(|f| f.hide_pane(host, pane, true, now));
     hub.write().set_hosts(hosts);
-    super::notices::haptic(inyon_chat_core::store::Haptic::Success);
-    toast::toast("Session ended", None, ToastTone::Success);
-    if let Some(mut here) = back {
-        crate::route::go(&mut here, crate::route::Route::Overview);
-    }
     if let Err(e) = crate::api::end(host, pane).await {
         let hosts = state::with_feed(|f| f.hide_pane(host, pane, false, platform::clock().now as u64));
         hub.write().set_hosts(hosts);
         toast::toast("Could not end the session", Some(e.message), ToastTone::Error);
+        return false;
+    }
+    super::notices::haptic(inyon_chat_core::store::Haptic::Success);
+    toast::toast("Session ended", None, ToastTone::Success);
+    if let Some(mut here) = back {
+        crate::route::go(&mut here, crate::route::Route::Overview);
     }
     true
 }

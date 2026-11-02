@@ -133,6 +133,11 @@ impl Feed {
     /// the machines as they should show now.
     pub fn hide_pane(&mut self, host: &str, pane: &str, hide: bool, now: u64) -> Vec<HostState> {
         self.store.hide_pane(host, pane, hide, now);
+        if !hide {
+            // back from the machines as the hub last reported them
+            let ctx = Context { route: "/", terminal_view: false, visible: true, native: false, browser_notices: false };
+            self.store.apply(&ServerMsg::Overview { hosts: self.overview.hosts.clone(), organize: None }, None, &ctx, now);
+        }
         self.store.overview.hosts.clone()
     }
 }
@@ -144,6 +149,12 @@ thread_local! {
 /// The app's one [`Feed`]: the socket fills it, and a pane ended from a menu is taken out of it.
 pub fn with_feed<R>(f: impl FnOnce(&mut Feed) -> R) -> R {
     FEED.with(|x| f(&mut x.borrow_mut()))
+}
+
+/// Starts the feed over for a new sign-in: its screens start empty, so the streams must too, or a
+/// resume from the old position would bring nothing to show.
+pub fn reset_feed() {
+    with_feed(|f| *f = Feed::default());
 }
 
 /// Reads a notice the hub sends outside the streams; None for another kind or one this build
@@ -318,6 +329,32 @@ mod tests {
         // a gap: the stream is asked for again from where it was
         let late = frame(json!({ "t": "delta", "stream": "overview", "epoch": 5, "from": 9, "seq": 10, "remove": { "hosts": [] } }));
         assert_eq!(feed.overview(&late, &hub, 0).1, Some(ClientMsg2::Sub { stream: "overview".into(), at: Some(StreamPos { epoch: 5, seq: 3 }) }));
+    }
+
+    #[test]
+    fn a_pane_whose_end_failed_comes_back() {
+        let mut feed = Feed::default();
+        let mut host = host_json();
+        host["sessions"] = json!([{ "id": "$1", "name": "a", "attached": 0, "windows": [{ "id": "@1", "index": 1, "name": "", "active": true, "activity": 0,
+            "panes": [{ "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "/home/sam", "title": "t", "width": 80, "height": 40, "dead": false }] }] }]);
+        let snap = frame(json!({ "t": "snapshot", "stream": "overview", "epoch": 5, "seq": 1, "rows": { "hosts": [host] } }));
+        feed.overview(&snap, &Hub::default(), 0);
+        let pane = "%1";
+        let count = |h: &[HostState]| h.iter().flat_map(|h| &h.sessions).flat_map(|s| &s.windows).map(|w| w.panes.len()).sum::<usize>();
+        assert_eq!(count(&feed.hide_pane("box", pane, true, 1)), 0);
+        assert_eq!(count(&feed.hide_pane("box", pane, false, 2)), 1);
+    }
+
+    #[test]
+    fn a_new_sign_in_starts_the_streams_over() {
+        let snap = frame(json!({ "t": "snapshot", "stream": "overview", "epoch": 5, "seq": 1, "rows": { "hosts": [host_json()] } }));
+        with_feed(|f| f.overview(&snap, &Hub::default(), 0));
+        assert!(wire2(&with_feed(|f| f.subs())[0]).contains(r#""at":{"epoch":5,"seq":1}"#));
+        // signed out and in again: a fresh Hub, and the feed asks for the whole overview
+        reset_feed();
+        assert_eq!(wire2(&with_feed(|f| f.subs())[0]), r#"{"t":"sub","stream":"overview"}"#);
+        let (hosts, _) = with_feed(|f| f.overview(&snap, &Hub::default(), 0));
+        assert_eq!(hosts.map(|h| h.len()), Some(1));
     }
 
     #[test]
