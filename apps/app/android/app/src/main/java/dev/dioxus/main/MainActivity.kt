@@ -3,6 +3,7 @@ package dev.dioxus.main
 import android.content.Intent
 import android.os.Bundle
 import android.view.View
+import android.webkit.WebView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -19,6 +20,12 @@ typealias BuildConfig = tech.abhashchakraborty.inyon.BuildConfig
  */
 class MainActivity : WryActivity() {
 
+    private var web: WebView? = null
+
+    override fun onWebViewCreate(webView: WebView) {
+        web = webView
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         insets()
@@ -33,11 +40,20 @@ class MainActivity : WryActivity() {
 
     override fun onStart() {
         super.onStart()
+        web?.onResume()
+        web?.resumeTimers()
         Native.onScreen(this, true)
     }
 
+    /**
+     * Off screen the page has nothing to do: the core runs in Rust and posts the alerts itself. So
+     * its timers, animations and layout stop until it's back (pauseTimers is for every WebView in
+     * the process, and this is the only one), and the CPU isn't woken for it.
+     */
     override fun onStop() {
         Native.onScreen(this, false)
+        web?.onPause()
+        web?.pauseTimers()
         super.onStop()
     }
 
