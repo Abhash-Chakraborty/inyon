@@ -196,10 +196,15 @@ pub fn squash_spaces(s: &str) -> String {
 }
 
 /// A tag as the hub keeps it: trimmed, without a leading `#`, spaces squashed, in lower case.
-/// None when nothing is left, or it's too long, or it holds a control character.
+/// None when nothing is left, or it's too long, or it holds a control character (a line break
+/// inside it among them, which squashing the spaces would otherwise hide).
 pub fn normalize_tag(raw: &str) -> Option<String> {
-    let t = squash_spaces(raw.trim().trim_start_matches('#')).to_lowercase();
-    (!t.is_empty() && js_len(&t) <= TAG_LEN && !t.chars().any(char::is_control)).then_some(t)
+    let raw = raw.trim();
+    if raw.chars().any(char::is_control) {
+        return None;
+    }
+    let t = squash_spaces(raw.trim_start_matches('#')).to_lowercase();
+    (!t.is_empty() && js_len(&t) <= TAG_LEN).then_some(t)
 }
 
 /// Whether `path` is `root` or a folder under it. Both are absolute; a trailing slash on the root
@@ -216,7 +221,8 @@ pub fn path_in(path: &str, root: &str) -> bool {
         }
     };
     let (p, r) = (norm(path), norm(root));
-    p == r || r == "/" || p.strip_prefix(&r).is_some_and(|rest| rest.starts_with('/'))
+    // `/` holds every Unix path, never a Windows one
+    p == r || (r == "/" && p.starts_with('/')) || p.strip_prefix(&r).is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The project a session belongs to: the one it was put in, else the one whose folder on its
@@ -245,6 +251,8 @@ mod tests {
         assert_eq!(normalize_tag(&"x".repeat(TAG_LEN)), Some("x".repeat(TAG_LEN)));
         assert_eq!(normalize_tag(&"x".repeat(TAG_LEN + 1)), None);
         assert_eq!(normalize_tag("a\u{7}b"), None);
+        assert_eq!(normalize_tag("first\nsecond"), None, "one line");
+        assert_eq!(normalize_tag(" review\n"), Some("review".into()), "a line break around it is trimmed");
         assert_eq!(normalize_tag("Überprüfen"), Some("überprüfen".into()));
     }
 
@@ -254,6 +262,7 @@ mod tests {
         assert!(path_in("/home/a/inyon/apps/web", "/home/a/inyon/"));
         assert!(!path_in("/home/a/inyon-plans", "/home/a/inyon"));
         assert!(path_in("/anything", "/"));
+        assert!(!path_in("C:\\code\\other", "/"), "a Windows folder isn't under /");
         assert!(path_in("c:/Users/A/Code/x", "C:\\Users\\a\\code"));
         assert!(!path_in("C:\\Users\\a\\codex", "C:\\Users\\a\\code"));
     }

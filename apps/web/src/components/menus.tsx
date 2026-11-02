@@ -6,7 +6,7 @@ import type { MenuItem } from './ui/primitives.tsx'
 import { copyItem, type MenuItems } from './ui/ContextMenu.tsx'
 import { RenameSheet } from './session/RenameSheet.tsx'
 import { ConversationsSheet } from './session/ConversationsSheet.tsx'
-import { currentMark, NoteSheet, organizePane, SnoozeSheet, TagsSheet } from './session/OrganizeSheets.tsx'
+import { currentMark, NoteSheet, organizeMark, organizePane, SnoozeSheet, TagsSheet } from './session/OrganizeSheets.tsx'
 import { MachineSheet, NewSessionSheet } from './Sheets.tsx'
 import { confirmAction } from './Confirm.tsx'
 import { paneHref, paneTitle, terminalName, type PaneRef } from '../lib/overview.ts'
@@ -62,8 +62,15 @@ export function paneMenu(r: PaneRef, nav: NavigateFunction): MenuItem[] {
 
 /** Out of the way on every device until unparked, with a moment to take it back. */
 async function park(r: PaneRef) {
-  if (!(await organizePane(r, { parked: true }, 'Could not park'))) return
-  toast({ title: `Parked ${paneName(r)}`, body: 'It waits under Parked and snoozed on the overview.', tone: 'info', action: { label: 'Undo', onSelect: () => void organizePane(r, { parked: null }, 'Could not undo') } })
+  const m = await organizeMark(r, { parked: true }, 'Could not park')
+  if (m === false) return
+  // Undo goes to the pane, so it first checks the pane still holds the session that was parked
+  const undo = () => {
+    const now = currentMark(r)
+    if (m && now && now.id !== m.id) toast({ title: 'Could not undo', body: 'That session has moved on since. Unpark it from its card.', tone: 'error' })
+    else void organizePane(r, { parked: null }, 'Could not undo')
+  }
+  toast({ title: `Parked ${paneName(r)}`, body: 'It waits under Parked and snoozed on the overview.', tone: 'info', action: { label: 'Undo', onSelect: undo } })
 }
 
 /** A tmux session heading: `r` is any pane in it. */

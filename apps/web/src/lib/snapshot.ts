@@ -35,12 +35,20 @@ function read<T>(key: string): T | undefined {
   }
 }
 
-function write(key: string, data: unknown) {
+/** Keeps a picture. With `orDrop`, one that can't be kept takes the old one away with it, so a
+ * later launch doesn't show something out of date as if it were current. */
+function write(key: string, data: unknown, orDrop = false) {
   try {
     const raw = JSON.stringify({ at: Date.now(), data })
-    if (raw.length > MAX_BYTES) return
+    if (raw.length > MAX_BYTES) throw new Error('too big')
     localStorage.setItem(key, raw)
-  } catch {}
+  } catch {
+    if (orDrop) {
+      try {
+        localStorage.removeItem(key)
+      } catch {}
+    }
+  }
 }
 
 const waiting = new Map<string, { timer: ReturnType<typeof setTimeout>; fn: () => void }>()
@@ -59,7 +67,7 @@ export const saveOverview = (hosts: HostState[]) => later(OVERVIEW_KEY, 1000, ()
 
 /** each hub's pins and parked sessions, so the first frame already has them in their places */
 export const loadOrganize = () => read<Record<string, Organize>>(ORGANIZE_KEY)
-export const saveOrganize = (by: Record<string, Organize>) => later(ORGANIZE_KEY, 1000, () => write(ORGANIZE_KEY, by))
+export const saveOrganize = (by: Record<string, Organize>) => later(ORGANIZE_KEY, 1000, () => write(ORGANIZE_KEY, by, true))
 
 export const loadChat = (key: string) => read<ChatSnapshot>(CHAT_PREFIX + key)
 

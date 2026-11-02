@@ -4,7 +4,7 @@ import { AlarmClock, StickyNote, Tag } from 'lucide-react'
 import { api, type SessionPatch } from '../../lib/api.ts'
 import { toast, useStore } from '../../lib/store.ts'
 import { useOpened } from '../../lib/useOpened.ts'
-import { markFor, parseTags, SNOOZE_CHOICES, snoozeUntil, wakeText } from '../../lib/organize.ts'
+import { markFor, parseTags, SNOOZE_CHOICES, type SnoozeFor, snoozeUntil, wakeText } from '../../lib/organize.ts'
 import type { PaneRef } from '../../lib/overview.ts'
 import { Button, Field, Sheet, Toggle, inputClass } from '../ui/primitives.tsx'
 
@@ -13,10 +13,15 @@ const MAX_TAGS = 8
 const NOTE_LEN = 500
 
 /** Changes how a session is organised; true when the hub took it. */
+/** Changes how a session is organised; true when the hub took it (with the mark it keeps now, if any). */
 export async function organizePane(r: PaneRef, patch: SessionPatch, failed = 'Could not change the session') {
+  return (await organizeMark(r, patch, failed)) !== false
+}
+
+/** The same, giving back the mark the hub keeps now (null when nothing's left), or false when it failed. */
+export async function organizeMark(r: PaneRef, patch: SessionPatch, failed = 'Could not change the session') {
   try {
-    await api.organize(r.host.config.id, r.pane.id, patch)
-    return true
+    return (await api.organize(r.host.config.id, r.pane.id, patch)).session
   } catch (e) {
     toast({ title: failed, body: (e as Error).message, tone: 'error' })
     return false
@@ -31,10 +36,12 @@ export function SnoozeSheet({ r, open, onClose }: { r: PaneRef; open: boolean; o
   const [notice, setNotice] = useState(false)
   const [busy, setBusy] = useState<string>()
   useOpened(open, r.host.config.id + r.pane.id, () => setNotice(!!currentMark(r)?.snoozeNotice))
+  const finished = useStore((s) => s.settings.notifyDone)
   const now = new Date()
-  const pick = async (v: string, until: number) => {
+  // the time is worked out on the tap, so a sheet left open a while doesn't snooze for less
+  const pick = async (v: SnoozeFor) => {
     setBusy(v)
-    if (await organizePane(r, { snoozedUntil: until, snoozeNotice: notice || null }, 'Could not snooze')) onClose()
+    if (await organizePane(r, { snoozedUntil: snoozeUntil(v), snoozeNotice: notice || null }, 'Could not snooze')) onClose()
     setBusy(undefined)
   }
   return (
@@ -48,7 +55,7 @@ export function SnoozeSheet({ r, open, onClose }: { r: PaneRef; open: boolean; o
               key={c.v}
               type="button"
               disabled={!!busy}
-              onClick={() => void pick(c.v, until)}
+              onClick={() => void pick(c.v)}
               className={clsx('flex h-11 items-center gap-3 rounded-xl px-2 text-left text-[14px] hover:bg-hover disabled:opacity-60', busy === c.v && 'bg-hover')}
             >
               <span className="min-w-0 flex-1 truncate">{c.label}</span>
@@ -61,6 +68,9 @@ export function SnoozeSheet({ r, open, onClose }: { r: PaneRef; open: boolean; o
         <span className="min-w-0 flex-1 text-[13px] text-fg-2">Tell me when it's back</span>
         <Toggle on={notice} onChange={setNotice} label="Tell me when it's back" />
       </div>
+      {notice && !finished && (
+        <p className="mt-2 text-[12px] leading-relaxed text-fg-3">It comes with the finished notices, which are off on this device. Turn on “When an agent finishes” in Settings to get it.</p>
+      )}
     </Sheet>
   )
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -31,7 +31,10 @@ const shown = () =>
 const hear = (m: Parameters<typeof emit>[0]) => act(async () => emit(m))
 
 // the hub's organize outlives the store's reset between tests: an overview without one clears it
-afterEach(() => emit({ t: 'overview', hosts: [] }))
+afterEach(() => {
+  emit({ t: 'overview', hosts: [] })
+  setSystemTime()
+})
 
 const home = () => render(<MemoryRouter><Home /><ActionSheets /></MemoryRouter>)
 
@@ -69,9 +72,49 @@ describe('organising sessions on the overview', () => {
     await act(() => new Promise((r) => setTimeout(r, LEAVE_MS + 50)))
     await user.click(screen.getByRole('button', { name: 'Actions for Tidy the CSS' }))
     expect(screen.getByRole('menuitem', { name: 'Unpin' })).toBeTruthy()
+    api.organize.mockResolvedValueOnce({ session: mark('%2', { pinned: 0, parked: true }) })
     await user.click(screen.getByRole('menuitem', { name: 'Park' }))
     expect(api.organize).toHaveBeenLastCalledWith('box', '%2', { parked: true })
-    expect(useStore.getState().toasts.at(-1)?.action?.label).toBe('Undo')
+    const undo = useStore.getState().toasts.at(-1)!.action!
+    expect(undo.label).toBe('Undo')
+    await hear({ t: 'overview', hosts: [box()], organize: org(mark('%2', { pinned: 0, parked: true })) })
+    await act(async () => undo.onSelect())
+    expect(api.organize).toHaveBeenLastCalledWith('box', '%2', { parked: null })
+  })
+
+  test("Undo leaves alone another session that has come to the parked one's pane", async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org() })
+    const user = userEvent.setup()
+    await home()
+    api.organize.mockResolvedValueOnce({ session: mark('%2', { parked: true }) })
+    await user.click(screen.getByRole('button', { name: 'Actions for Tidy the CSS' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Park' }))
+    const undo = useStore.getState().toasts.at(-1)!.action!
+    // the pane closed and tmux gave its id to a session that was parked too
+    await hear({ t: 'overview', hosts: [box()], organize: org({ ...mark('%2', { parked: true }), id: 's-other' }) })
+    const calls = api.organize.mock.calls.length
+    await act(async () => undo.onSelect())
+    expect(api.organize.mock.calls.length).toBe(calls)
+    expect(useStore.getState().toasts.at(-1)?.title).toBe('Could not undo')
+  })
+
+  test('a card shows the title given in Inyon, and says Parked when that is all it is', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org(mark('%1', { title: 'Login bug' }), mark('%2', { parked: true })) })
+    await home()
+    expect(screen.getByRole('link', { name: 'Login bug' })).toBeTruthy()
+    await userEvent.setup().click(screen.getByRole('button', { name: /Parked and snoozed/ }))
+    const card = screen.getByRole('link', { name: 'Tidy the CSS' }).parentElement!
+    expect(within(card).getByText('Parked')).toBeTruthy()
+  })
+
+  test('Show opens the parked and snoozed to reach a session there that needs you', async () => {
+    const waiting = host('box', { panes: [agentPane('%1', 'claude', { title: 'Fix the login test' }), agentPane('%2', 'codex', { title: 'Tidy the CSS', agent: { kind: 'codex', pid: 1, state: 'waiting' } })] })
+    emit({ t: 'overview', hosts: [waiting], organize: org(mark('%2', { parked: true })) })
+    await home()
+    const fold = screen.getByRole('button', { name: /Parked and snoozed/ })
+    expect(fold.getAttribute('aria-expanded')).toBe('false')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Show' }))
+    expect(fold.getAttribute('aria-expanded')).toBe('true')
   })
 
   test('tags and a note are saved from their sheets and shown on the card', async () => {
@@ -104,6 +147,33 @@ describe('organising sessions on the overview', () => {
     expect(patch.snoozeNotice).toBe(true)
     expect(patch.snoozedUntil! - before).toBeGreaterThanOrEqual(3600_000 - 5_000)
     expect(patch.snoozedUntil! - before).toBeLessThanOrEqual(3600_000 + 5_000)
+  })
+
+  test('the snooze time is worked out on the tap, not when the sheet opened', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org() })
+    const user = userEvent.setup()
+    await home()
+    await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Snooze…' }))
+    // the sheet stays open for two hours before the tap
+    const later = Date.now() + 2 * 3600_000
+    setSystemTime(new Date(later))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /For an hour/ }))
+    const [, , patch] = api.organize.mock.calls.at(-1)!
+    expect(patch.snoozedUntil! - later).toBeGreaterThanOrEqual(3600_000 - 5_000)
+  })
+
+  test('asking for a notice while finished notices are off says how to get it', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org() })
+    useStore.setState((s) => ({ settings: { ...s.settings, notifyDone: false } }))
+    const user = userEvent.setup()
+    await home()
+    await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Snooze…' }))
+    const sheet = screen.getByRole('dialog')
+    expect(within(sheet).queryByText(/When an agent finishes/)).toBeNull()
+    await user.click(within(sheet).getByRole('switch', { name: "Tell me when it's back" }))
+    expect(within(sheet).getByText(/When an agent finishes/)).toBeTruthy()
   })
 
   test('the store keeps the same organize until it changes, so cards render again only then', () => {

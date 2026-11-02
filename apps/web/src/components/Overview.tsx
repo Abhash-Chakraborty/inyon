@@ -101,6 +101,8 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
   // pinned, parked or snoozed, tags and a note: the hub's, the same on every device
   const mark = useStore((s) => markFor(s.organize, r.host.config.id, r.pane.id))
   const snoozed = isSnoozed(mark) ? mark!.snoozedUntil! : undefined
+  // a title given in Inyon takes the place of the session's own name
+  const title = mark?.title ?? paneTitle(r)
   return (
     <div
       {...press}
@@ -114,11 +116,11 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
         'group relative flex flex-col gap-3 rounded-3xl border bg-elev p-4 shadow-card transition-[color,background-color,border-color,transform] [-webkit-touch-callout:none] active:scale-[0.99] sm:gap-4 sm:p-5',
         a.state === 'waiting' ? 'border-warn/35' : 'border-line hover:border-line-strong',
       )}>
-      <Link to={href} aria-label={paneTitle(r)} className="absolute inset-0 rounded-3xl" />
+      <Link to={href} aria-label={title} className="absolute inset-0 rounded-3xl" />
       <div className="pointer-events-none flex items-center gap-2.5">
         <AgentLogo kind={a.kind} size={26} active={isBusy(a)} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg-3">{a.custom ?? agentDef(a.kind).name}</span>
-        {(mark?.pinned !== undefined || mark?.note || snoozed) && (
+        {(mark?.pinned !== undefined || mark?.parked || mark?.note || snoozed) && (
           <span className="pointer-events-auto flex shrink-0 items-center gap-1.5 text-fg-3">
             {snoozed ? (
               <span className="flex items-center gap-1 font-mono text-[12px]" title="Snoozed">
@@ -144,7 +146,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
                 ref={ref}
                 type="button"
                 onClick={toggle}
-                aria-label={`Actions for ${paneTitle(r)}`}
+                aria-label={`Actions for ${title}`}
                 className={clsx(
                   'flex size-8 items-center justify-center rounded-full text-fg-3 transition-opacity hover:bg-hover hover:text-fg focus-visible:opacity-100 pointer-coarse:opacity-100',
                   open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
@@ -157,7 +159,7 @@ export const SessionCard = memo(function SessionCard({ r, showHost = true }: { r
         </span>
       </div>
       <div className="pointer-events-none min-w-0">
-        <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{paneTitle(r)}</div>
+        <div className="truncate text-[17px] font-semibold tracking-[-0.03em]">{title}</div>
         <div className="mt-1 truncate font-mono text-[12px] text-fg-3">
           {[showHost && r.host.config.name, tmuxTarget(r), shortPath(r.pane.cwd, 34), mark?.tags?.map((t) => `#${t}`).join(' ')].filter(Boolean).join(' · ')}
         </div>

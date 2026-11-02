@@ -50,9 +50,48 @@ fn machine(sessions: &[(&str, &str, &[Pane])]) -> HostState {
 
 /// Puts the machine in the registry as it is (nothing polls it).
 fn put(state: HostState) {
+    let id = state.config.id.clone();
     let rt = Rc::new(RefCell::new(HostRuntime::new(Host::new(state.config.clone()), state)));
     rt.borrow_mut().hold_polls();
-    registry().insert_runtime("box", rt);
+    registry().insert_runtime(&id, rt);
+}
+
+/// The same machine under another id, with no tmux sessions.
+fn other(id: &str) -> HostState {
+    let mut h = machine(&[]);
+    h.config.id = id.to_owned();
+    h
+}
+
+/// The machine as it was last seen, now not connected.
+fn offline(mut h: HostState) -> HostState {
+    h.status = HostStatus::Error;
+    h
+}
+
+/// A store whose writes of one record fail while `failing` is set, as on a full disk.
+struct Flaky {
+    inner: crate::platform::store::MemoryStore,
+    key: &'static str,
+    failing: std::cell::Cell<bool>,
+}
+
+impl crate::platform::store::Store for Flaky {
+    fn get(&self, key: &str) -> Option<Value> {
+        self.inner.get(key)
+    }
+    fn set(&self, key: &str, value: &Value) -> Result<(), String> {
+        if key == self.key && self.failing.get() {
+            return Err("No space left on device".into());
+        }
+        self.inner.set(key, value)
+    }
+    fn del(&self, key: &str) {
+        self.inner.del(key)
+    }
+    fn keys(&self, prefix: &str) -> Vec<String> {
+        self.inner.keys(prefix)
+    }
 }
 
 fn patch(v: Value) -> SessionPatch {
@@ -131,6 +170,7 @@ fn what_an_app_sends_is_checked_against_the_limits() {
         assert_eq!(bad(json!({ "tags": ["a", "b", "c", "d", "e", "f", "g", "h", "i"] })), "A session can have at most 8 tags");
         assert_eq!(bad(json!({ "tags": ["x".repeat(33)] })), "A tag can be at most 32 characters, on one line");
         assert_eq!(bad(json!({ "tags": "ui" })), "tags must be a list of words");
+        assert_eq!(bad(json!({ "tags": ["first\nsecond"] })), "A tag can be at most 32 characters, on one line");
         assert_eq!(bad(json!({ "note": "n".repeat(501) })), "A note can be at most 500 characters");
         assert_eq!(bad(json!({ "title": "t".repeat(81) })), "A title can be at most 80 characters");
         assert_eq!(bad(json!({ "snoozedUntil": T - 1 })), "Pick a time in the future to snooze until");
@@ -147,6 +187,9 @@ fn what_an_app_sends_is_checked_against_the_limits() {
             "A project's folder is a full path on one machine"
         );
         assert_eq!(add_project(&json!({ "name": "x", "group": "g-nope" })).unwrap_err().status, Some(404));
+        // a folder on a machine the hub doesn't have would never match anything
+        let e = add_project(&json!({ "name": "x", "roots": [{ "host": "laptpo", "path": "/w" }] })).unwrap_err();
+        assert_eq!((e.status, e.message.as_str()), (Some(404), "Unknown machine: laptpo"));
         for i in 0..MAX_PROJECTS {
             add_project(&json!({ "name": format!("p{i}") })).unwrap();
         }
@@ -267,6 +310,8 @@ fn a_snooze_ends_on_time_and_raises_the_notice_it_asked_for() {
 fn a_session_falls_into_the_project_whose_folder_holds_it_most_closely() {
     run(|| async {
         fresh();
+        put(machine(&[]));
+        put(other("laptop"));
         let wide = add_project(&json!({ "name": "Work", "roots": [{ "host": "box", "path": "/w" }] })).unwrap();
         let inyon = add_project(
             &json!({ "name": "Inyon", "color": "sage", "icon": "🪁", "roots": [{ "host": "box", "path": "/w/inyon" }, { "host": "laptop", "path": "C:\\code\\inyon" }] }),
@@ -304,5 +349,114 @@ fn removing_a_project_or_group_leaves_nothing_pointing_at_it() {
         assert!(org.spaces.iter().find(|x| x.id == s.id).unwrap().projects.is_empty());
         set_order(&json!({ "spaces": [s.id] })).unwrap();
         assert_eq!(remove_space("w-nope").unwrap_err().status, Some(404));
+    });
+}
+
+#[test]
+fn a_change_refused_half_way_leaves_nothing_behind() {
+    run(|| async {
+        fresh();
+        let g = add_group(&json!({ "name": "Clients" })).unwrap();
+        // the name is fine, the colour isn't: neither is kept
+        assert_eq!(update_group(&g.id, &json!({ "name": "Renamed", "color": "gold" })).unwrap_err().message, "Unknown colour");
+        assert_eq!(get().groups[0].name, "Clients");
+        add_space(&json!({ "name": "Focus" })).unwrap();
+        assert_eq!(kv::get_value(KEY).unwrap()["groups"][0]["name"], json!("Clients"), "and the next save doesn't write it either");
+    });
+}
+
+#[test]
+fn an_unreadable_record_is_never_written_over_before_a_copy_of_it_is_kept() {
+    run(|| async {
+        fresh();
+        let store = Rc::new(Flaky { inner: crate::platform::store::MemoryStore::new(), key: UNREADABLE_KEY, failing: std::cell::Cell::new(true) });
+        crate::platform::store::use_store(store.clone());
+        put(machine(&[("$1", "work", &[("%3", "/w", None)])]));
+        let broken = json!({ "v": 1, "sessions": "not a list" });
+        kv::set_value(KEY, &broken).unwrap();
+        assert!(get().sessions.is_empty());
+        // the copy couldn't be made: nothing is saved over the original
+        let e = mark_pane("box", "%3", &patch(json!({ "pinned": true }))).unwrap_err();
+        assert!(e.message.starts_with(UNREADABLE), "{}", e.message);
+        assert_eq!(kv::get_value(KEY).unwrap(), broken);
+        // once it can be, the copy comes first and the change goes through
+        store.failing.set(false);
+        mark_pane("box", "%3", &patch(json!({ "pinned": true }))).unwrap();
+        assert_eq!(kv::get_value(UNREADABLE_KEY).unwrap(), broken);
+        assert_eq!(kv::get_value(KEY).unwrap()["sessions"][0]["pinned"], json!(0));
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+    });
+}
+
+#[test]
+fn a_new_session_of_the_same_name_given_an_old_pane_id_is_not_the_old_session() {
+    run(|| async {
+        fresh();
+        put(machine(&[("$1", "work", &[("%3", "/w/inyon", None)])]));
+        mark_pane("box", "%3", &patch(json!({ "pinned": true }))).unwrap();
+        // tmux restarted and a new "work" session got %3, in another folder
+        assert!(reconcile(&[machine(&[("$0", "work", &[("%3", "/tmp", None)])])]));
+        assert!(mark("box", "%3").is_none());
+        // the same name in the same folder is still taken for it
+        assert!(reconcile(&[machine(&[("$0", "work", &[("%3", "/w/inyon", None)])])]));
+        assert!(mark("box", "%3").is_some());
+    });
+}
+
+#[test]
+fn marks_on_a_machine_that_is_not_connected_wait_for_it() {
+    run(|| async {
+        fresh();
+        let box_ = machine(&[("$1", "work", &[("%3", "/w", None)])]);
+        put(box_.clone());
+        let heard = Rc::new(RefCell::new(vec![]));
+        let h = heard.clone();
+        on_event(move |e| h.borrow_mut().push(e.clone()));
+        mark_pane("box", "%3", &patch(json!({ "snoozedUntil": T + 60_000, "snoozeNotice": true }))).unwrap();
+        // the machine drops off, still listing the panes it had
+        put(offline(box_.clone()));
+        assert!(!reconcile(&[offline(box_.clone())]), "nothing moves while it's away");
+        heard.borrow_mut().clear();
+        assert!(!wake_due(T + 60_000), "its snooze waits for it");
+        assert!(heard.borrow().is_empty());
+        // a month away: it isn't refreshed, and it isn't forgotten either while the machine is still there
+        set_now(Some(T + FORGET_MS + 1));
+        reconcile(&[offline(box_.clone())]);
+        assert_eq!(get().sessions.len(), 1);
+        // back: the snooze ends and says so
+        put(box_.clone());
+        assert!(wake_due(T + FORGET_MS + 1));
+        assert!(heard.borrow().iter().any(|e| matches!(e, Event::Notice { pane, .. } if pane == "%3")));
+    });
+}
+
+#[test]
+fn a_request_that_keeps_nothing_costs_no_other_session_its_mark() {
+    run(|| async {
+        fresh();
+        put(machine(&[("$1", "work", &[("%3", "/w", None)])]));
+        let full: Vec<Value> = (0..MAX_MARKS).map(|i| json!({ "id": format!("s-{i}"), "host": "box", "pane": format!("%{}", 1000 + i), "seen": T, "parked": true })).collect();
+        kv::set_value(KEY, &json!({ "v": 1, "sessions": full })).unwrap();
+        assert_eq!(mark_pane("box", "%3", &patch(json!({}))).unwrap(), None);
+        assert_eq!(get().sessions.len(), MAX_MARKS);
+        // one that keeps something makes room by letting the oldest gone one go
+        mark_pane("box", "%3", &patch(json!({ "pinned": true }))).unwrap().unwrap();
+        assert_eq!(get().sessions.len(), MAX_MARKS);
+        assert!(mark("box", "%3").is_some());
+    });
+}
+
+#[test]
+fn the_clock_forgets_marks_gone_a_month_even_when_nothing_else_happens() {
+    run(|| async {
+        fresh();
+        put(machine(&[("$1", "work", &[("%3", "/w", None)])]));
+        mark_pane("box", "%3", &patch(json!({ "parked": true }))).unwrap();
+        put(machine(&[]));
+        tick(T);
+        assert_eq!(get().sessions.len(), 1);
+        set_now(Some(T + FORGET_MS));
+        tick(T + FORGET_MS);
+        assert!(kv::get_value(KEY).unwrap()["sessions"].as_array().unwrap().is_empty());
     });
 }

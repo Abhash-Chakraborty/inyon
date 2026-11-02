@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import { Link } from 'react-router-dom'
 import { ChevronRight, Pin, Plug, Plus, Search, WifiOff } from 'lucide-react'
@@ -88,6 +88,19 @@ export function Home() {
   }, [hosts, sorted])
   const shownAny = groups.length + sorted.pinned.length + sorted.folded.length > 0
   const parkedOpen = !!q || homeFolded.has(PARKED_OPEN)
+  // Show finds a session that needs you even in the folded parked and snoozed: it opens them
+  // first, then brings the card into view once it's on screen
+  const showAfterOpen = useRef(false)
+  const show = () => {
+    if (showNext() || parkedOpen || !sorted.folded.some((r) => r.pane.agent?.state === 'waiting')) return
+    showAfterOpen.current = true
+    toggle(PARKED_OPEN)
+  }
+  useEffect(() => {
+    if (!parkedOpen || !showAfterOpen.current) return
+    showAfterOpen.current = false
+    showNext()
+  }, [parkedOpen])
   const working = panes.filter((r) => busy(r.pane.agent!)).length
   // the status line tells the two apart: a turn in progress, and work left running behind an idle prompt
   const inFront = panes.filter((r) => r.pane.agent!.state === 'working').length
@@ -203,7 +216,7 @@ export function Home() {
                       : 'No agents are running right now.'}
                 </span>
                 {waiting.length > 0 && (
-                  <button type="button" onClick={showNext} className="-my-1 shrink-0 rounded-full px-2 py-1 text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg">
+                  <button type="button" onClick={show} className="-my-1 shrink-0 rounded-full px-2 py-1 text-fg underline decoration-line-strong underline-offset-4 hover:decoration-fg">
                     Show
                   </button>
                 )}
@@ -333,11 +346,12 @@ let shown = -1
 function showNext() {
   // a card in a folded machine group isn't on screen
   const cards = [...document.querySelectorAll<HTMLElement>('[data-waiting]')].filter((c) => !c.closest('[inert]'))
-  if (!cards.length) return
+  if (!cards.length) return false
   shown = (shown + 1) % cards.length
   const card = cards[shown]!
-  card.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  card.scrollIntoView?.({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
   card.querySelector<HTMLElement>('[data-answer]')?.focus({ preventScroll: true })
+  return true
 }
 
 const PHONE_CARD_KEY = 'inyon.phoneCard.dismissed'

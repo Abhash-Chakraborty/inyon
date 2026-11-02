@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, setSystemTime, test } from 'bun:test'
-import { clearSnapshots, flushSnapshots, loadChat, loadOverview, saveChat, saveOverview } from './snapshot.ts'
+import { clearSnapshots, flushSnapshots, loadChat, loadOrganize, loadOverview, saveChat, saveOrganize, saveOverview } from './snapshot.ts'
 import { agentPane, chatInfo, host, item } from '../test/fixtures.ts'
 
 // another test file may have left a save behind, written by its timer after it finished
@@ -53,4 +53,14 @@ test('signing out clears everything', () => {
   clearSnapshots()
   expect(loadOverview()).toBeUndefined()
   expect(loadChat('k')).toBeUndefined()
+})
+
+test('an organize record too big to keep takes the old one away instead of leaving it to be shown later', () => {
+  const org = (note: string) => ({ main: { v: 1, sessions: [{ id: 's-1', host: 'a', pane: '%1', live: true, seen: 0, note }], projects: [], groups: [], spaces: [] } })
+  saveOrganize(org('small'))
+  flushSnapshots()
+  expect(loadOrganize()?.main?.sessions[0]?.note).toBe('small')
+  saveOrganize(org('n'.repeat(400_000)))
+  flushSnapshots()
+  expect(loadOrganize()).toBeUndefined()
 })

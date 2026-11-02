@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use inyon_protocol::{
-    js_len, normalize_tag, squash_spaces, HostState, Organize, PaneInfo, Project, ProjectColor, ProjectGroup, ProjectRoot, SessionInfo, SessionMark, Space, WindowInfo, ICON_LEN,
-    MAX_GROUPS, MAX_MARKS, MAX_PROJECTS, MAX_ROOTS, MAX_SPACES, MAX_TAGS, NAME_LEN, NOTE_LEN, ORGANIZE_VERSION, PATH_LEN, SECTION_LEN, TAG_LEN, TITLE_LEN,
+    js_len, normalize_tag, squash_spaces, HostState, HostStatus, Organize, PaneInfo, Project, ProjectColor, ProjectGroup, ProjectRoot, SessionInfo, SessionMark, Space, WindowInfo,
+    ICON_LEN, MAX_GROUPS, MAX_MARKS, MAX_PROJECTS, MAX_ROOTS, MAX_SPACES, MAX_TAGS, NAME_LEN, NOTE_LEN, ORGANIZE_VERSION, PATH_LEN, SECTION_LEN, TAG_LEN, TITLE_LEN,
 };
 use serde_json::{Map, Value};
 
@@ -41,6 +41,8 @@ pub const MAX_SNOOZE_MS: u64 = 366 * 24 * 3_600_000;
 /// How often the hub looks for snoozes that are over.
 pub const TICK_MS: u64 = 15_000;
 
+/// The record couldn't be read, and couldn't be copied aside either, so it isn't written over.
+pub const UNREADABLE: &str = "Inyon couldn't read how your sessions are organised, nor keep a copy of it, so it won't save over it";
 pub const NEWER: &str = "A newer Inyon hub saved how your sessions are organised. Update this hub to change it.";
 
 /// What the apps hear of.
@@ -56,6 +58,9 @@ struct State {
     org: Organize,
     /// written by a later hub: read only
     newer: bool,
+    /// a record this hub couldn't read and couldn't yet put aside: nothing is written over it
+    /// until it has been
+    aside: Option<Value>,
 }
 
 type Listener = Rc<dyn Fn(&Event)>;
@@ -67,7 +72,7 @@ thread_local! {
 }
 
 fn load() -> State {
-    let Some(raw) = kv::get_value(KEY) else { return State { org: Organize { v: ORGANIZE_VERSION, ..Organize::default() }, newer: false } };
+    let Some(raw) = kv::get_value(KEY) else { return State { org: Organize { v: ORGANIZE_VERSION, ..Organize::default() }, newer: false, aside: None } };
     match serde_json::from_value::<Organize>(raw.clone()) {
         Ok(mut org) => {
             let newer = org.v > ORGANIZE_VERSION;
@@ -78,12 +83,15 @@ fn load() -> State {
             for m in &mut org.sessions {
                 m.live = false;
             }
-            State { org, newer }
+            State { org, newer, aside: None }
         }
         Err(e) => {
-            crate::platform::console::error(&format!("the organize record couldn't be read ({e}); it was put aside as {UNREADABLE_KEY}"));
-            let _ = kv::set_value(UNREADABLE_KEY, &raw);
-            State { org: Organize { v: ORGANIZE_VERSION, ..Organize::default() }, newer: false }
+            crate::platform::console::error(&format!("the organize record couldn't be read ({e}); it goes aside as {UNREADABLE_KEY}"));
+            let mut st = State { org: Organize { v: ORGANIZE_VERSION, ..Organize::default() }, newer: false, aside: Some(raw) };
+            if let Err(e) = put_aside(&mut st) {
+                crate::platform::console::error(&e.message);
+            }
+            st
         }
     }
 }
@@ -101,10 +109,19 @@ fn with<T>(f: impl FnOnce(&mut State) -> T) -> T {
     STATE.with(|s| f(s.borrow_mut().get_or_insert_with(load)))
 }
 
-fn save(st: &State) -> HubResult<()> {
+/// Puts an unreadable record aside, if there's one still waiting to be.
+fn put_aside(st: &mut State) -> HubResult<()> {
+    let Some(raw) = &st.aside else { return Ok(()) };
+    kv::set_value(UNREADABLE_KEY, raw).map_err(|e| HubError::plain(format!("{UNREADABLE}: {e}")))?;
+    st.aside = None;
+    Ok(())
+}
+
+fn save(st: &mut State) -> HubResult<()> {
     if st.newer {
         return Err(http(409, NEWER));
     }
+    put_aside(st)?;
     let v = serde_json::to_value(&st.org).map_err(|e| HubError::plain(e.to_string()))?;
     kv::set_value(KEY, &v).map_err(|e| HubError::plain(format!("couldn't keep how the sessions are organised: {e}")))
 }
@@ -128,7 +145,14 @@ fn change<T>(f: impl FnOnce(&mut Organize) -> HubResult<T>) -> HubResult<T> {
             return Err(http(409, NEWER));
         }
         let before = st.org.clone();
-        let out = f(&mut st.org)?;
+        let out = match f(&mut st.org) {
+            Ok(out) => out,
+            Err(e) => {
+                // a change refused half way leaves nothing behind
+                st.org = before;
+                return Err(e);
+            }
+        };
         if let Err(e) = save(st) {
             st.org = before;
             return Err(e);
@@ -184,7 +208,8 @@ fn conv_of(p: &PaneInfo) -> Option<&str> {
 }
 
 /// Matches every mark to a pane on its machine and notes where each was found. Returns whether
-/// anything the apps show changed; writes the record when an anchor moved.
+/// anything the apps show changed; writes the record when an anchor moved. Marks on a machine
+/// that isn't online stay as they were until it is: its panes are the last it reported.
 pub fn reconcile(hosts: &[HostState]) -> bool {
     let now = now_ms();
     with(|st| {
@@ -216,22 +241,30 @@ fn match_marks(marks: &mut [SessionMark], hosts: &[HostState], now: u64) -> (boo
         .map(|h| h.sessions.iter().flat_map(|s| s.windows.iter().flat_map(move |w| w.panes.iter().map(move |p| Live { pane: p, window: w, session: s }))).collect())
         .collect();
     let host_at = |id: &str| hosts.iter().position(|h| h.config.id == id);
+    let away = |m: &SessionMark| host_at(&m.host).is_some_and(|h| hosts[h].status != HostStatus::Online);
     // first by conversation: it follows the conversation wherever it was resumed
     for (i, m) in marks.iter().enumerate() {
         let (Some(conv), Some(h)) = (m.conv.as_deref(), host_at(&m.host)) else { continue };
+        if away(m) {
+            continue;
+        }
         if let Some(j) = lives[h].iter().position(|l| conv_of(l.pane) == Some(conv) && !claimed.contains(&(m.host.clone(), l.pane.id.clone()))) {
             claimed.insert((m.host.clone(), lives[h][j].pane.id.clone()));
             found[i] = Some((h, j));
         }
     }
-    // then by the pane id, in the tmux session it was in (by id or name, so a renamed one still counts)
+    // then by the pane id, in the tmux session it was in: the same session id (so a renamed one
+    // still counts), or the same name in the same folder. A name alone isn't enough: after tmux
+    // restarts, a new session of the same name can get an old pane id.
     for (i, m) in marks.iter().enumerate() {
-        if found[i].is_some() {
+        if found[i].is_some() || away(m) {
             continue;
         }
         let Some(h) = host_at(&m.host) else { continue };
         let same_place = |l: &Live| {
-            (m.tmux_id.is_none() && m.tmux_name.is_none()) || m.tmux_id.as_deref() == Some(l.session.id.as_str()) || m.tmux_name.as_deref() == Some(l.session.name.as_str())
+            (m.tmux_id.is_none() && m.tmux_name.is_none())
+                || m.tmux_id.as_deref() == Some(l.session.id.as_str())
+                || (m.tmux_name.as_deref() == Some(l.session.name.as_str()) && m.cwd.as_deref() == Some(l.pane.cwd.as_str()))
         };
         if let Some(j) = lives[h].iter().position(|l| l.pane.id == m.pane && same_place(l) && !claimed.contains(&(m.host.clone(), l.pane.id.clone()))) {
             claimed.insert((m.host.clone(), lives[h][j].pane.id.clone()));
@@ -241,6 +274,9 @@ fn match_marks(marks: &mut [SessionMark], hosts: &[HostState], now: u64) -> (boo
     // last by place: put back after tmux restarted, under new ids
     for (i, m) in marks.iter().enumerate() {
         let (None, Some(h), Some(name), Some(place)) = (found[i], host_at(&m.host), m.tmux_name.as_deref(), m.tmux_place.as_deref()) else { continue };
+        if away(m) {
+            continue;
+        }
         if let Some(j) = lives[h]
             .iter()
             .position(|l| l.session.name == name && l.place() == place && m.cwd.as_deref() == Some(l.pane.cwd.as_str()) && !claimed.contains(&(m.host.clone(), l.pane.id.clone())))
@@ -250,6 +286,9 @@ fn match_marks(marks: &mut [SessionMark], hosts: &[HostState], now: u64) -> (boo
         }
     }
     for (i, m) in marks.iter_mut().enumerate() {
+        if away(m) {
+            continue;
+        }
         let Some((h, j)) = found[i] else {
             if m.live {
                 m.live = false;
@@ -467,9 +506,10 @@ fn new_id(prefix: &str) -> String {
     format!("{prefix}-{hex}")
 }
 
-/// Room for one more mark: the one seen longest ago that isn't live goes when the list is full.
+/// Keeps the list within its limit once a new mark is in: the one seen longest ago that isn't
+/// live goes. The new mark is live, so it's never the one.
 fn make_room(org: &mut Organize) -> HubResult<()> {
-    if org.sessions.len() < MAX_MARKS {
+    if org.sessions.len() <= MAX_MARKS {
         return Ok(());
     }
     let oldest = org.sessions.iter().enumerate().filter(|(_, m)| !m.live).min_by_key(|(_, m)| m.seen).map(|(i, _)| i);
@@ -502,7 +542,6 @@ pub fn mark_pane(host_id: &str, pane_id: &str, patch: &SessionPatch) -> HubResul
             Some(i) => i,
             None => {
                 let f = found.as_ref().ok_or_else(|| http(404, "Pane not found"))?;
-                make_room(org)?;
                 org.sessions.push(SessionMark {
                     id: new_id("s"),
                     host: host_id.to_owned(),
@@ -528,7 +567,11 @@ pub fn mark_pane(host_id: &str, pane_id: &str, patch: &SessionPatch) -> HubResul
             }
         };
         apply(org, i, patch)?;
-        Ok(finish(org, i))
+        let Some(mark) = finish(org, i) else { return Ok(None) };
+        // room is made only for a mark that keeps something, so a request that keeps nothing
+        // can't cost another session its mark
+        make_room(org)?;
+        Ok(Some(mark))
     })
 }
 
@@ -635,6 +678,11 @@ fn set_project(org: &Organize, p: &mut Project, b: &Map<String, Value>, new: boo
         p.icon = i;
     }
     if let Some(r) = roots_field(b)? {
+        // a folder on a machine this hub doesn't have would never match a session; one kept from
+        // before stays even when its machine has since gone
+        if let Some(bad) = r.iter().find(|x| !p.roots.contains(x) && registry().get(&x.host).is_none()) {
+            return Err(http(404, format!("Unknown machine: {}", bad.host)));
+        }
         p.roots = r;
     }
     if let Some(g) = ref_field(b, "group")? {
@@ -863,15 +911,19 @@ fn name_for(m: &SessionMark, hosts: &[HostState]) -> String {
 
 /// Ends the snoozes that are over, raising the notices they asked for. Whether any ended.
 pub fn wake_due(now: u64) -> bool {
-    let due = with(|st| st.org.sessions.iter().any(|m| m.snoozed_until.is_some_and(|t| t <= now)) && !st.newer);
+    let hosts = registry().overview();
+    // a session on a machine that isn't online wakes when the machine is back, so its notice
+    // is about a session you can open
+    let away = |m: &SessionMark| hosts.iter().any(|h| h.config.id == m.host && h.status != HostStatus::Online);
+    let ready = |m: &SessionMark| m.snoozed_until.is_some_and(|t| t <= now) && !away(m);
+    let due = with(|st| st.org.sessions.iter().any(ready) && !st.newer);
     if !due {
         return false;
     }
-    let hosts = registry().overview();
     let woke = change(|org| {
         let mut woke = vec![];
         for m in &mut org.sessions {
-            if m.snoozed_until.is_some_and(|t| t <= now) {
+            if ready(m) {
                 if m.snooze_notice == Some(true) && m.live {
                     woke.push((m.host.clone(), m.pane.clone(), name_for(m, &hosts), m.note.clone()));
                 }
@@ -891,6 +943,15 @@ pub fn wake_due(now: u64) -> bool {
     true
 }
 
+/// What the clock does: ends snoozes that are over, and matches the marks again so a mark whose
+/// session has been gone a month is forgotten even when nothing else happens.
+pub fn tick(now: u64) {
+    wake_due(now);
+    if reconcile(&registry().overview()) {
+        emit(Event::Changed);
+    }
+}
+
 /// Starts the hub's clock for snoozes (once).
 pub fn start() {
     if STARTED.with(|s| s.replace(true)) {
@@ -900,7 +961,7 @@ pub fn start() {
     spawn(async {
         loop {
             sleep(TICK_MS).await;
-            wake_due(now_ms());
+            tick(now_ms());
         }
     });
 }
