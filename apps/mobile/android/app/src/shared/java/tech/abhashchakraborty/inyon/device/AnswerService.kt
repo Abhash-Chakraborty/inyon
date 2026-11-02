@@ -67,7 +67,7 @@ class AnswerService : Service() {
             Log.w(TAG, "could not start in the foreground: $e")
         }
         current = this
-        InyonDevicePlugin.answerAwake(true)
+        DeviceEvents.answerAwake(true)
         handler.removeCallbacksAndMessages(null)
         handler.postDelayed(::check, TTL_MS)
         return START_NOT_STICKY
@@ -83,7 +83,7 @@ class AnswerService : Service() {
     private fun finish() {
         handler.removeCallbacksAndMessages(null)
         if (current === this) current = null
-        InyonDevicePlugin.answerAwake(false)
+        DeviceEvents.answerAwake(false)
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

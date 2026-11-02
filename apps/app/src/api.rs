@@ -670,9 +670,8 @@ async fn request(method: &str, path: &str, body: Option<String>) -> Result<Strin
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn request(_method: &str, _path: &str, _body: Option<String>) -> Result<String, ApiError> {
-    // the desktop build will talk to a hub it was given; this slice is the browser's
-    Err(ApiError::new(0, "Only the browser build reaches a hub so far."))
+async fn request(method: &str, path: &str, body: Option<String>) -> Result<String, ApiError> {
+    crate::platform::request(method, path, body).await
 }
 
 #[cfg(test)]

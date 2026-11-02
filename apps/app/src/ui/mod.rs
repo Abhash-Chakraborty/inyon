@@ -28,7 +28,7 @@ use dioxus::prelude::*;
 use inyon_protocol::v2::{OVERVIEW, PAGES};
 
 use crate::route;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "phone"))]
 use crate::route::Route;
 use crate::socket::{self, Outbox};
 use crate::state::{self, Chats, Feed, Hub, Incoming};
@@ -93,12 +93,12 @@ pub fn App() -> Element {
 fn Connected(auth: Signal<Auth>) -> Element {
     let mut hub = use_context_provider(|| Signal::new(Hub::default()));
     let mut chats = use_context_provider(|| Signal::new(Chats::default()));
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut, unused_variables))]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "phone")), allow(unused_mut, unused_variables))]
     let mut here = use_context_provider(|| Signal::new(route::current()));
     use_context_provider(|| Signal::new(None::<menu::Menu>));
     // "Sign in" in Can't connect? goes back to the form
     use_context_provider(|| auth);
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", feature = "phone"))]
     use_hook(move || {
         let (tx, mut rx) = futures_channel::mpsc::unbounded::<Route>();
         route::listen(tx);

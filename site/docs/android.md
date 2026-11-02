@@ -8,7 +8,7 @@ The Android app runs Inyon's core on the phone itself. It pairs with your comput
 
 ## Install
 
-Download the APK from the [download page](/download/) and open it. Android asks once to allow installs from your browser. The app needs Android 7.0 or later.
+Download the APK from the [download page](/download/) and open it. Android asks once to allow installs from your browser. The app needs Android 7.0 or later, and from 1.0 Android 9 or later (see [The app from 1.0](#the-app-from-10)).
 
 Because it doesn't come from the Play Store, Google Play Protect may say *App scan recommended*. Scanning it is fine and takes a few seconds. To check the file yourself first, see [Downloads](security.md#downloads).
 
@@ -99,6 +99,17 @@ If drops say Doze or battery limits, keep **Stay connected** on and allow Inyon 
 
 From 0.23 the app keeps a sealed copy of its key, pairings, hubs and settings each time it starts or goes to the background. The next Inyon app for Android installs over this one and picks that copy up, so your computers, servers and hubs stay paired. Open the app once on 0.23 or later before you install it. [Security](security.md#the-android-app) says how the copy is kept.
 
+## The app from 1.0
+
+From 1.0 the Android app is built from the same Rust code as the rest of Inyon. Its screens are the new app's, the one a hub serves at `/next`, and the phone's core runs as native code inside the app rather than as WebAssembly in a web page. It keeps the app ID and signing key, so it installs over the app you have.
+
+What changes for you:
+
+- It needs Android 9 or later. A phone on Android 7 or 8 keeps the current app.
+- The core starts with the app, before any screen opens, and posts alerts itself, so they keep coming while Android has closed the app's window and only **Stay connected** keeps the app running.
+- Notifications and **Stay connected** look and behave as before: the same channels, the same ongoing notification with **Open** and **Stop**. Turning **Stay connected** off with **Stop** keeps it off.
+- The app's page loads from inside the app and never over plain http. Connections to your computers are the core's own, with the link's end-to-end encryption as before.
+
 ## Phone conveniences
 
 - From 0.15, a phone stays upright. A tablet, or a foldable when it's open, turns with the device and gets the wide layout: a sidebar with every session, and on a large tablet in landscape a side panel next to the chat.
@@ -120,6 +131,14 @@ cd apps/mobile
 bun x cap sync android
 bun x cap open android
 ```
+
+The app from 1.0 is in `apps/app/android`. With the Android SDK and NDK, Java 21, the Rust Android targets and the Dioxus CLI (`dx`, at the version `apps/app/build.sh` names):
+
+```sh
+INYON_ABIS=arm64-v8a apps/app/android/build.sh
+```
+
+It writes `apps/app/android/app/build/outputs/apk/release/`, signed when `INYON_KEYSTORE` and its passwords are set.
 
 Every push to `main` refreshes the *Latest Android build* pre-release on GitHub, and each version tag attaches `inyon-X.Y.Z.apk` to its release. A fork without the signing secrets gets a debug build.
 

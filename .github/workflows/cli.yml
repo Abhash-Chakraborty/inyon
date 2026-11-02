@@ -70,6 +70,10 @@ jobs:
       # the new app (apps/app): its view model and state natively, its browser build through clippy
       - run: cargo test -p inyon-app
       - run: cargo clippy -p inyon-app --target wasm32-unknown-unknown --features web -- -D warnings
+      # the Android app (from 1.0): the phone core in-process, its notifications and the SSH bridge
+      # to Kotlin, natively; the Android build itself is android.yml's
+      - run: cargo test -p inyon-app --features phone
+      - run: cargo clippy -p inyon-app --features phone --all-targets -- -D warnings
 
   # the new app the hub serves at /next, built once with dx (wasm is the same on every system) and
   # handed to each build below, then signed in to and looked at in Chromium behind a stand-in hub
@@ -137,6 +141,9 @@ jobs:
         working-directory: .
       - uses: ./.github/actions/phone-core
       - run: cargo test -p inyon-phone
+      # the native side the Android app runs it on (sockets, HTTP, files)
+      - run: cargo test -p inyon-phone --features native
+      - run: cargo clippy -p inyon-phone --features native --all-targets -- -D warnings
       # the computer the wasm core pairs with in its tests
       - run: cargo build -p inyon-cli
       - run: bun scripts/phone-core.ts

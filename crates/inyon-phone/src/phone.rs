@@ -161,6 +161,14 @@ impl Phone {
         c
     }
 
+    /// A screen on protocol v2 (the hub's `/ws2`): it follows streams, and hears them through
+    /// `out`, as text or (once it asked for that) compressed.
+    pub fn connect2(&self, out: impl Fn(inyon_api::streams::Wire) + 'static) -> ClientRef {
+        let c = clients::new_client2(out);
+        clients::add(&c);
+        c
+    }
+
     /// The app went to the background (true) or came back (false): poll less while hidden.
     pub fn background(&self, hidden: bool) {
         registry().quiet(hidden);

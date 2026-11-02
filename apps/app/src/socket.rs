@@ -6,7 +6,7 @@
 
 /// What the socket tells the app.
 #[derive(Debug)]
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "phone")), allow(dead_code))]
 pub enum Event {
     /// connected (`hello` is sent): follow the streams again
     Up,
@@ -30,13 +30,19 @@ pub struct Dropped {
 /// Where the app's messages to the hub go. While the socket is down they are dropped: what
 /// matters is sent again on the next `Up` (the streams), or by the person (a draft, keys).
 #[derive(Clone)]
-pub struct Outbox(#[cfg(target_arch = "wasm32")] futures_channel::mpsc::UnboundedSender<imp::Raw>);
+pub struct Outbox(
+    #[cfg(target_arch = "wasm32")] futures_channel::mpsc::UnboundedSender<imp::Raw>,
+    // the phone core in the app (crate::phone) takes the messages as they are
+    #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))] futures_channel::mpsc::UnboundedSender<String>,
+);
 
 impl Outbox {
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_variables))]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "phone")), allow(unused_variables))]
     pub fn send(&self, json: String) {
         #[cfg(target_arch = "wasm32")]
         let _ = self.0.unbounded_send(imp::Raw::Send(json));
+        #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+        let _ = self.0.unbounded_send(json);
     }
 }
 
@@ -47,19 +53,33 @@ pub fn channel() -> (Outbox, Inbox) {
         let (tx, rx) = futures_channel::mpsc::unbounded();
         (Outbox(tx.clone()), Inbox { tx, rx })
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+    {
+        let (tx, rx) = futures_channel::mpsc::unbounded();
+        (Outbox(tx), Inbox(rx))
+    }
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
     (Outbox(), Inbox)
 }
 
 #[cfg(target_arch = "wasm32")]
 pub use imp::{run, Inbox};
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+pub struct Inbox(futures_channel::mpsc::UnboundedReceiver<String>);
+
+/// The socket to the phone core in the app, in place of the hub's `/ws2`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+pub async fn run(inbox: Inbox, on: impl FnMut(Event)) {
+    crate::phone::run(inbox.0, on).await
+}
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub struct Inbox;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub async fn run(_inbox: Inbox, _on: impl FnMut(Event)) {
-    // only the browser build has a hub to reach so far
+    // only the browser and phone builds have something to reach so far
     std::future::pending::<()>().await
 }
 

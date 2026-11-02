@@ -1,5 +1,7 @@
-//! The few things the app asks of where it runs: the clock, saved settings, the theme. The browser
-//! build uses the page; other builds (desktop, later Android) get plain stand-ins for now.
+//! The few things the app asks of where it runs: the clock, saved settings, the theme, and where
+//! its requests go. The browser build uses the page and the hub that served it; the Android build
+//! (the `phone` feature) the phone core in the app and files next to its records; the desktop build
+//! plain stand-ins for now.
 
 use crate::format::Clock;
 
@@ -77,29 +79,162 @@ mod imp {
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
+    use crate::api::ApiError;
+
     pub fn now() -> f64 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
     }
 
+    /// The phone's time zone, as minutes east of UTC.
+    #[cfg(target_os = "android")]
+    pub fn tz_minutes() -> i32 {
+        crate::android::tz_minutes()
+    }
+
+    #[cfg(not(target_os = "android"))]
     pub fn tz_minutes() -> i32 {
         0
     }
 
+    /// The app's own settings next to the core's records: one small JSON object of strings.
+    #[cfg(feature = "phone")]
+    mod saved {
+        use std::sync::Mutex;
+
+        static LOCK: Mutex<()> = Mutex::new(());
+
+        fn file() -> Option<std::path::PathBuf> {
+            crate::phone::data_dir().map(|d| d.join("app.json"))
+        }
+
+        fn read(f: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {
+            std::fs::read_to_string(f).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        }
+
+        pub fn load(key: &str) -> Option<String> {
+            let _held = LOCK.lock().ok()?;
+            read(&file()?).get(key)?.as_str().map(str::to_owned)
+        }
+
+        pub fn save(key: &str, value: &str) {
+            let (Ok(_held), Some(f)) = (LOCK.lock(), file()) else { return };
+            let mut all = read(&f);
+            all.insert(key.to_owned(), value.into());
+            // write then rename, so a crash never leaves half a file
+            let tmp = f.with_extension("json.tmp");
+            if std::fs::write(&tmp, serde_json::Value::Object(all).to_string()).is_ok() {
+                let _ = std::fs::rename(&tmp, &f);
+            }
+        }
+    }
+
+    #[cfg(feature = "phone")]
+    pub use saved::{load, save};
+
+    #[cfg(not(feature = "phone"))]
     pub fn load(_key: &str) -> Option<String> {
         None
     }
 
+    #[cfg(not(feature = "phone"))]
     pub fn save(_key: &str, _value: &str) {}
 
+    #[cfg(not(target_os = "android"))]
     pub fn follow_theme() {}
 
-    pub async fn sleep(_ms: u32) {}
+    #[cfg_attr(not(feature = "phone"), allow(unused_variables))]
+    pub async fn sleep(ms: u32) {
+        #[cfg(feature = "phone")]
+        tokio::time::sleep(std::time::Duration::from_millis(ms.into())).await
+    }
+
+    /// A request to whatever the app talks to: the phone core in the app, or nothing yet.
+    #[cfg(feature = "phone")]
+    pub async fn request(method: &str, path: &str, body: Option<String>) -> Result<String, ApiError> {
+        crate::phone::request(method, path, body).await
+    }
+
+    #[cfg(not(feature = "phone"))]
+    pub async fn request(_method: &str, _path: &str, _body: Option<String>) -> Result<String, ApiError> {
+        // the desktop build will talk to a hub it was given
+        Err(ApiError { status: 0, message: "Only the browser and phone builds reach a hub so far.".into() })
+    }
 }
 
-pub use imp::{follow_theme, load, save, sleep};
+/// The theme the saved settings ask for (`inyon.settings.v2`): light, dark or system.
+#[cfg(all(feature = "phone", any(target_os = "android", test)))]
+pub fn theme_setting() -> &'static str {
+    let saved = load("inyon.settings.v2").and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+    match saved.as_ref().and_then(|v| v.get("theme")).and_then(|t| t.as_str()) {
+        Some("light") => "light",
+        Some("dark") => "dark",
+        _ => "system",
+    }
+}
+
+/// The page's head in the Android build: the viewport under the system bars, and the theme set
+/// before the first paint (what index.html and /theme.js do in the browser), following the system
+/// when it switches.
+#[cfg(all(feature = "phone", any(target_os = "android", test)))]
+pub fn android_head(theme: &str) -> String {
+    let theme = if matches!(theme, "light" | "dark") { theme } else { "system" };
+    format!(
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content\">\
+         <script>(function(){{var t='{theme}',m=matchMedia('(prefers-color-scheme: dark)');\
+         function a(){{var r=t==='system'?(m.matches?'dark':'light'):t,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4'}}\
+         a();m.addEventListener('change',a)}})()</script>"
+    )
+}
+
+/// The ground the window shows before the page paints, in the theme's colours.
+#[cfg(all(feature = "phone", any(target_os = "android", test)))]
+pub fn ground(theme: &str, night: bool) -> (u8, u8, u8, u8) {
+    let dark = theme == "dark" || (theme == "system" && night);
+    if dark {
+        (0x1b, 0x1a, 0x18, 0xff)
+    } else {
+        (0xe9, 0xe8, 0xe4, 0xff)
+    }
+}
+
+pub use imp::{load, save, sleep};
+// Android sets the theme in the page's head instead (android_head)
+#[cfg(not(target_os = "android"))]
+pub use imp::follow_theme;
+#[cfg(not(target_arch = "wasm32"))]
+pub use imp::request;
 #[cfg(target_arch = "wasm32")]
 pub use imp::{now, random};
 
 pub fn clock() -> Clock {
     Clock { now: imp::now(), tz_minutes: imp::tz_minutes() }
+}
+
+#[cfg(all(test, feature = "phone"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_android_head_sets_only_a_known_theme() {
+        assert!(android_head("dark").contains("var t='dark'"));
+        assert!(android_head("system").contains("var t='system'"));
+        // nothing else reaches the script
+        assert!(android_head("'</script><script>x").contains("var t='system'"));
+        assert!(android_head("light").contains("viewport-fit=cover"));
+    }
+
+    #[test]
+    fn the_ground_follows_the_theme_then_the_system() {
+        assert_eq!(ground("dark", false), (0x1b, 0x1a, 0x18, 0xff));
+        assert_eq!(ground("light", true), (0xe9, 0xe8, 0xe4, 0xff));
+        assert_eq!(ground("system", true), (0x1b, 0x1a, 0x18, 0xff));
+        assert_eq!(ground("system", false), (0xe9, 0xe8, 0xe4, 0xff));
+    }
+
+    #[test]
+    fn without_a_core_nothing_is_saved_and_the_theme_is_the_systems() {
+        save("inyon.settings.v2", r#"{"theme":"dark"}"#);
+        assert_eq!(load("inyon.settings.v2"), None);
+        assert_eq!(theme_setting(), "system");
+    }
 }

@@ -15,7 +15,6 @@ import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import tech.abhashchakraborty.inyon.MainActivity
 import tech.abhashchakraborty.inyon.R
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
@@ -109,6 +108,12 @@ internal object Notifications {
         return NotificationManagerCompat.from(ctx).areNotificationsEnabled()
     }
 
+    /** The app's one launcher activity: Capacitor's MainActivity, or the Dioxus build's. */
+    private fun launcher(ctx: Context): Intent {
+        val component = ctx.packageManager.getLaunchIntentForPackage(ctx.packageName)?.component
+        return if (component != null) Intent().setComponent(component) else Intent().setPackage(ctx.packageName)
+    }
+
     /**
      * Opens (or brings back) the app; with an href, the plugin hands it to the web app. `tag` (or
      * failing that the href) is made part of the Intent's identity: Android matches PendingIntents
@@ -116,7 +121,7 @@ internal object Notifications {
      * and both open whichever href was posted last.
      */
     private fun openApp(ctx: Context, href: String?, requestCode: Int, tag: String? = null): PendingIntent {
-        val intent = Intent(ctx, MainActivity::class.java)
+        val intent = launcher(ctx)
         if (href != null) {
             // its own action, so Android never treats it as "just bring the task to the front"
             intent.setAction(ACTION_OPEN_HREF).putExtra(EXTRA_HREF, href)
@@ -350,7 +355,7 @@ class NotificationActions : BroadcastReceiver() {
                 val at = System.currentTimeMillis()
                 // the web app sends it and then clears the session's notification, or posts why not;
                 // AnswerService keeps the app awake for that, since Android may have frozen it
-                if (InyonDevicePlugin.answerFromNotification(host, pane, option, label, tag, at)) {
+                if (DeviceEvents.answer(host, pane, option, label, tag, at)) {
                     if (AnswerService.start(context, tag, label, href, at)) {
                         Notifications.clear(context, tag)
                     } else {
@@ -362,7 +367,7 @@ class NotificationActions : BroadcastReceiver() {
             }
             STOP_KEEP_ALIVE -> {
                 context.stopService(Intent(context, KeepAliveService::class.java))
-                InyonDevicePlugin.keepAliveEnded("stopped")
+                DeviceEvents.keepAliveEnded("stopped")
             }
         }
     }

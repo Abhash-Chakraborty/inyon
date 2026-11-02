@@ -152,7 +152,68 @@ mod imp {
 #[cfg(target_arch = "wasm32")]
 pub use imp::{current, listen, push};
 
-#[cfg(not(target_arch = "wasm32"))]
+/// The Android build's page (the `phone` feature): the same rules, kept by a script in the page,
+/// since Rust there runs outside it. Each link into the app adds a history entry, so Android's back
+/// button walks back through them.
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+mod imp {
+    use super::Route;
+    use dioxus::prelude::spawn;
+    use futures_channel::mpsc::UnboundedSender;
+
+    /// Clicks on links into the app (taken before Dioxus's own handler, which would hand every
+    /// link to the system browser), and back and forward, reported as hrefs.
+    const LISTEN: &str = r#"
+        if (window.interpreter) window.interpreter.intercept_link_redirects = false;
+        window.addEventListener('click', (e) => {
+            if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
+            if (!a) return;
+            const t = a.getAttribute('target');
+            if ((t && t !== '_self') || a.hasAttribute('download')) return;
+            const href = a.getAttribute('href');
+            if (href !== '/next' && !href.startsWith('/next/') && !href.startsWith('/next?')) return;
+            e.preventDefault();
+            history.pushState(null, '', href);
+            dioxus.send(href);
+        }, true);
+        window.addEventListener('popstate', () => dioxus.send(location.pathname + location.search));
+        await new Promise(() => {});
+    "#;
+
+    pub fn current() -> Route {
+        Route::Overview
+    }
+
+    pub fn listen(tx: UnboundedSender<Route>) {
+        let mut page = dioxus::document::eval(LISTEN);
+        let t = tx.clone();
+        spawn(async move {
+            while let Ok(href) = page.recv::<String>().await {
+                let (path, query) = href.split_once('?').unwrap_or((&href, ""));
+                let _ = t.unbounded_send(Route::parse(path, query));
+            }
+        });
+        // a tapped notification opens its session
+        spawn(async move {
+            let mut opened = crate::phone::opened();
+            while opened.changed().await.is_ok() {
+                opened.borrow_and_update();
+                let Some(href) = crate::phone::take_opened() else { continue };
+                let (path, query) = href.split_once('?').unwrap_or((&href, ""));
+                let route = Route::parse(path, query);
+                let js = format!("history.pushState(null, '', {})", serde_json::to_string(&route.href()).unwrap_or_default());
+                let _ = dioxus::document::eval(&js);
+                let _ = tx.unbounded_send(route);
+            }
+        });
+    }
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+pub use imp::{current, listen};
+
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub fn current() -> Route {
     Route::Overview
 }

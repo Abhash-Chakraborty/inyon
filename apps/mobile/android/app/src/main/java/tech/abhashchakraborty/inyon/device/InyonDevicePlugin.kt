@@ -49,8 +49,17 @@ class InyonDevicePlugin : Plugin() {
     private var savedRendererPriority: Int? = null
     private var savedRendererWaived = false
 
+    // the services outlive the activity, so they reach the web app through whichever plugin is live
+    private val events = object : DeviceEvents.Sink {
+        override fun keepAliveEnded(reason: String) = onKeepAliveEnded(reason)
+
+        override fun answerAwake(on: Boolean) = onAnswerAwake(on)
+
+        override fun answer(host: String, pane: String, option: Int, label: String, tag: String, at: Long) = deliverAnswer(host, pane, option, label, tag, at)
+    }
+
     override fun load() {
-        live = this
+        DeviceEvents.sink = events
         Notifications.ensureChannels(context)
         (bridge.webView as? InyonWebView)?.contentListener = InyonWebView.ContentListener(::onKeyboardContent)
         followDoze()
@@ -102,7 +111,7 @@ class InyonDevicePlugin : Plugin() {
     }
 
     override fun handleOnDestroy() {
-        if (live === this) live = null
+        if (DeviceEvents.sink === events) DeviceEvents.sink = null
         (bridge.webView as? InyonWebView)?.contentListener = null
         dozeReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         dozeReceiver = null
@@ -257,6 +266,7 @@ class InyonDevicePlugin : Plugin() {
         return true
     }
 
+    /** While an answer is sent, the renderer counts as much as the app, as with Stay connected. */
     private fun onAnswerAwake(on: Boolean) {
         // with Stay connected on, the renderer stays important after the answer too
         bridge.executeOnMainThread { if (on || !KeepAliveService.running) rendererImportant(on) }
@@ -492,23 +502,8 @@ class InyonDevicePlugin : Plugin() {
         const val NOTIFICATIONS = "notifications"
         private const val TAG = "InyonDevice"
 
-        // the services outlive the activity, so they reach the web app through whichever instance is live
-        @Volatile private var live: InyonDevicePlugin? = null
-
         // kept for the process, so a recreated activity still knows when Doze last began and ended
         private val idleClock = PowerState.IdleClock()
-
-        fun keepAliveEnded(reason: String) {
-            live?.onKeepAliveEnded(reason)
-        }
-
-        fun answerFromNotification(host: String, pane: String, option: Int, label: String, tag: String, at: Long): Boolean =
-            live?.deliverAnswer(host, pane, option, label, tag, at) ?: false
-
-        /** While an answer is sent, the renderer counts as much as the app, as with Stay connected. */
-        fun answerAwake(on: Boolean) {
-            live?.onAnswerAwake(on)
-        }
 
         private fun ok(): JSObject = JSObject().put("ok", true)
 

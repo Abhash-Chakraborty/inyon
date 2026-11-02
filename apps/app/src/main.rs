@@ -1,9 +1,13 @@
-//! Inyon's app in Rust, on Dioxus 0.7: one codebase for the browser, desktop and Android. So far it
-//! is the browser copy the hub serves at /next: sign-in, the Overview and a session's chat, over the same API as the React app (apps/web) and the hub's `/ws2` protocol. The React
+//! Inyon's app in Rust, on Dioxus 0.7: one codebase for the browser, desktop and Android. It is the
+//! browser copy the hub serves at /next (sign-in, the Overview and a session's chat, over the same
+//! API as the React app in apps/web and the hub's `/ws2` protocol), and the Android app (the
+//! `mobile` feature), where the same screens talk to the phone core running in the app. The React
 //! app keeps `/` until this one reaches parity.
 
-// only the browser build reaches a hub so far, so elsewhere its wire code goes unused until the
-// desktop transport lands
+#[cfg(target_os = "android")]
+mod android;
+// only the browser build has every part of the wire code in use so far (the phone build most of
+// it), so elsewhere some goes unused until the desktop transport lands
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod api;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -15,12 +19,22 @@ mod list;
 mod machines;
 mod markdown;
 mod model;
+// the Android side drives these; the host build only tests them
+#[cfg(feature = "phone")]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod notify;
+#[cfg(feature = "phone")]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod phone;
 mod pages;
 mod platform;
 mod prompt;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod route;
 mod socket;
+#[cfg(feature = "phone")]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod ssh_bridge;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod state;
 // the terminal drives xterm.js, which only the browser build has
@@ -28,7 +42,17 @@ mod state;
 mod term;
 mod ui;
 
+#[cfg(not(target_os = "android"))]
 fn main() {
     platform::follow_theme();
     dioxus::launch(ui::App);
+}
+
+/// Android runs this for each window the app opens; the phone core is already running by then
+/// (the Application starts it), so the saved theme is there to read before the first paint.
+#[cfg(target_os = "android")]
+fn main() {
+    let theme = platform::theme_setting();
+    let cfg = dioxus::mobile::Config::new().with_custom_head(platform::android_head(theme)).with_background_color(platform::ground(theme, android::night()));
+    dioxus::LaunchBuilder::new().with_cfg(cfg).launch(ui::App);
 }

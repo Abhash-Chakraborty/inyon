@@ -62,7 +62,7 @@ class KeepAliveService : Service() {
         running = false
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
-        InyonDevicePlugin.keepAliveEnded(reason)
+        DeviceEvents.keepAliveEnded(reason)
     }
 
     companion object {

@@ -1,7 +1,7 @@
 [package]
 name = "inyon-app"
 version.workspace = true
-description = "The Inyon app in Rust (Dioxus): the browser copy at /next for now, then desktop and Android"
+description = "The Inyon app in Rust (Dioxus): the browser copy at /next, the Android app, then desktop"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
@@ -21,6 +21,18 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # the phone pairing code on the Machines page, drawn as SVG
 qrcode = { version = "0.14", default-features = false }
 
+# the phone core in the app itself (the `phone` feature): the Android build runs it natively
+inyon-phone = { path = "../../crates/inyon-phone", features = ["native"], optional = true }
+inyon-api = { path = "../../crates/inyon-api", optional = true }
+inyon-core = { path = "../../crates/inyon-core", optional = true }
+tokio = { version = "1.47", features = ["rt", "time", "sync", "macros"], optional = true }
+
+# the bridge to the Android side (the Kotlin services, notifications and SSH); the same major
+# version dioxus-desktop uses, so there is one copy
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+libc = "0.2"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { version = "0.3", features = ["futures"] }
 js-sys = "0.3"
@@ -37,3 +49,7 @@ default = []
 # dx turns on the one its --platform names
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
+# Android: the app in a WebView, with the phone core in the same process (android/build.sh)
+mobile = ["dioxus/mobile", "phone"]
+# the phone core (crates/inyon-phone) in-process instead of a hub over the network
+phone = ["dep:inyon-phone", "dep:inyon-api", "dep:inyon-core", "dep:tokio"]
