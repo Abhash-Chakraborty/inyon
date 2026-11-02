@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use jni::objects::{GlobalRef, JClass, JString, JValue};
-use jni::sys::{jboolean, jlong, JNI_TRUE};
+use jni::sys::{jboolean, jlong, JNI_FALSE, JNI_TRUE};
 use jni::{JNIEnv, JavaVM};
 
 use crate::notify::{Notice, Shade};
@@ -233,4 +233,18 @@ pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_darkTheme(_e
 /// Whether the system is in dark mode now (for the theme "system").
 pub fn night() -> bool {
     call("night", |env, class| env.call_static_method(class, "night", "()Z", &[])?.z()).unwrap_or(false)
+}
+
+/// `Native.answer(json)`: an answer tapped on a question's notification, as notify::Tap; false
+/// when the core can't send it.
+#[no_mangle]
+pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_answer(mut env: JNIEnv, _class: JClass, json: JString) -> jboolean {
+    let json = jstr(&mut env, &json);
+    match serde_json::from_str::<crate::notify::Tap>(&json) {
+        Ok(tap) => crate::notify::answer(tap).into(),
+        Err(e) => {
+            log(true, &format!("a tapped answer didn't read: {e}"));
+            JNI_FALSE
+        }
+    }
 }

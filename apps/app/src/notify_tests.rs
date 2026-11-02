@@ -191,3 +191,87 @@ fn a_notice_reaches_kotlin_as_the_json_notifications_post_reads() {
     let n = Notice { title: "t".into(), body: "b".into(), href: "/".into(), tag: "x".into(), kind: "done".into(), host: None, pane: None, options: vec![] };
     assert_eq!(serde_json::to_string(&n).unwrap(), r#"{"title":"t","body":"b","href":"/","tag":"x","kind":"done"}"#);
 }
+
+fn tap(option: u32, label: &str, at: f64) -> Tap {
+    Tap { host: "lap top".into(), pane: "%3".into(), option, label: label.into(), tag: "lap top:%3".into(), at }
+}
+
+fn yes_no() -> Vec<HostState> {
+    vec![host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }, { "n": 2, "label": "No" }])))]
+}
+
+/// Runs an answer whose sending finishes at once, and says what was sent.
+fn answered(n: &Notifier, t: Tap, now: f64, hosts: &[HostState], result: Result<(), String>) -> Vec<(String, String, u32)> {
+    let sent = RefCell::new(vec![]);
+    let send = |h: String, p: String, o: u32| {
+        sent.borrow_mut().push((h, p, o));
+        std::future::ready(result)
+    };
+    futures_util::FutureExt::now_or_never(n.answer(t, now, hosts, send)).expect("finishes at once");
+    sent.into_inner()
+}
+
+#[test]
+fn a_tap_is_sent_only_while_the_session_asks_that_question() {
+    let hosts = yes_no();
+    assert_eq!(judge(&tap(1, "Yes", 0.0), 1_000.0, &hosts), Verdict::Send);
+    // a different label at that number, a number it doesn't offer, another pane
+    assert_eq!(judge(&tap(1, "No", 0.0), 1_000.0, &hosts), Verdict::Changed);
+    assert_eq!(judge(&tap(3, "Yes", 0.0), 1_000.0, &hosts), Verdict::Changed);
+    assert_eq!(judge(&Tap { pane: "%4".into(), ..tap(1, "Yes", 0.0) }, 1_000.0, &hosts), Verdict::Changed);
+    // the agent moved on
+    let working = vec![host("lap top", "online", json!({ "kind": "claude", "pid": 1, "state": "working" }))];
+    assert_eq!(judge(&tap(1, "Yes", 0.0), 1_000.0, &working), Verdict::Changed);
+}
+
+#[test]
+fn a_tap_older_than_twelve_seconds_is_dropped_without_a_word() {
+    let (tray, n) = setup();
+    assert_eq!(judge(&tap(1, "Yes", 0.0), ANSWER_TTL_MS, &yes_no()), Verdict::Send);
+    assert_eq!(judge(&tap(1, "Yes", 0.0), ANSWER_TTL_MS + 1.0, &yes_no()), Verdict::Late);
+    let sent = answered(&n, tap(1, "Yes", 0.0), 20_000.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    // Kotlin's AnswerService has already said it wasn't sent
+    assert!(tray.posted.borrow().is_empty() && tray.cleared.borrow().is_empty());
+}
+
+#[test]
+fn a_sent_answer_takes_its_notification_away() {
+    let (tray, n) = setup();
+    let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    n.ask(later, &yes_no());
+    let sent = answered(&n, tap(2, "No", 1_000.0), 2_000.0, &yes_no(), Ok(()));
+    assert_eq!(sent, vec![("lap top".to_owned(), "%3".to_owned(), 2)]);
+    assert_eq!(*tray.cleared.borrow(), vec!["lap top:%3"]);
+    // no longer asking: the overview after it doesn't clear it again
+    n.overview(&[host("lap top", "online", json!({ "kind": "claude", "pid": 1, "state": "working" }))]);
+    assert_eq!(tray.cleared.borrow().len(), 1);
+}
+
+#[test]
+fn a_changed_question_says_the_answer_was_not_sent() {
+    let (tray, n) = setup();
+    let sent = answered(&n, tap(1, "Allow", 1_000.0), 2_000.0, &yes_no(), Ok(()));
+    assert!(sent.is_empty());
+    let p = tray.posted.borrow()[0].clone();
+    assert_eq!((p.title.as_str(), p.kind.as_str(), p.tag.as_str(), p.href.as_str()), ("That question changed", "done", "lap top:%3", "/m/lap%20top/p/3"));
+    assert!(p.body.contains("“Allow” wasn't sent"), "{}", p.body);
+    // no buttons: it doesn't offer the answers again
+    assert!(p.options.is_empty());
+}
+
+#[test]
+fn a_failed_answer_says_why_and_keeps_asking() {
+    let (tray, n) = setup();
+    let sent = answered(&n, tap(1, "Yes", 1_000.0), 2_000.0, &yes_no(), Err("lap top is offline".into()));
+    assert_eq!(sent.len(), 1);
+    let p = tray.posted.borrow()[0].clone();
+    assert_eq!((p.title.as_str(), p.body.as_str(), p.kind.as_str()), ("Couldn't send your answer", "lap top is offline", "waiting"));
+    assert!(tray.cleared.borrow().is_empty());
+}
+
+#[test]
+fn a_tap_reaches_rust_as_kotlin_writes_it() {
+    let t: Tap = serde_json::from_str(r#"{"host":"box","pane":"%7","option":2,"label":"No","tag":"box:%7","at":1730000000000}"#).unwrap();
+    assert_eq!(t, Tap { host: "box".into(), pane: "%7".into(), option: 2, label: "No".into(), tag: "box:%7".into(), at: 1.73e12 });
+}

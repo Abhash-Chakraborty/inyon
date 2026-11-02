@@ -5,6 +5,10 @@
 //! One notification per session (or machine, or page): the next replaces it. A question waits a
 //! moment for the overview that carries its answers; one answered meanwhile gets none, and one
 //! answered somewhere else takes its notification away.
+//!
+//! A question with one to three answers gets them as buttons (Kotlin's Notifications, which asks
+//! for a fingerprint or the PIN on the lock screen before any answer that isn't a no). A tapped
+//! answer comes back here ([`answer`]) and is sent as notifyAnswer.ts sends it.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -12,7 +16,7 @@ use std::rc::Rc;
 
 use inyon_chat_core::js::encode_uri_component;
 use inyon_protocol::{AgentState, HostState, HostStatus, NotifyKind, ServerMsg};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// How long a question's notice waits for the overview with its answers (the web app's ANSWERS_WAIT_MS).
 pub const ANSWERS_WAIT_MS: u64 = 400;
@@ -105,6 +109,52 @@ pub fn choices_for(hosts: &[HostState], host: &str, pane: &str) -> Vec<Choice> {
     }
 }
 
+/// How old a tap may be when it's sent (the web app's ANSWER_TTL_MS). Android may hold a tap while
+/// the app is frozen; Kotlin's AnswerService gives up after 15 s and says the answer wasn't sent,
+/// so one older than this is dropped rather than sent late.
+pub const ANSWER_TTL_MS: f64 = 12_000.0;
+
+/// An answer tapped on a question's notification (Kotlin's NotificationActions).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Tap {
+    pub host: String,
+    pub pane: String,
+    pub option: u32,
+    pub label: String,
+    pub tag: String,
+    /// when it was tapped, in ms since the epoch
+    pub at: f64,
+}
+
+/// What becomes of a tap.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Verdict {
+    /// too old: Kotlin has already said it wasn't sent
+    Late,
+    /// the session no longer asks that question with that answer at that number
+    Changed,
+    Send,
+}
+
+/// Whether a tap may be sent: only while the session still asks that question with that answer at
+/// that number, so a tap that comes late never lands on the next question.
+pub fn judge(tap: &Tap, now: f64, hosts: &[HostState]) -> Verdict {
+    if now - tap.at > ANSWER_TTL_MS {
+        return Verdict::Late;
+    }
+    let agent = hosts
+        .iter()
+        .find(|h| h.config.id == tap.host)
+        .and_then(|h| h.sessions.iter().flat_map(|s| &s.windows).flat_map(|w| &w.panes).find(|p| p.id == tap.pane))
+        .and_then(|p| p.agent.as_ref());
+    let asks = agent.is_some_and(|a| a.state == AgentState::Waiting && a.options.as_deref().unwrap_or_default().iter().any(|o| o.n == tap.option && o.label == tap.label));
+    if asks {
+        Verdict::Send
+    } else {
+        Verdict::Changed
+    }
+}
+
 /// What the notifier remembers between notices.
 pub struct Notifier {
     shade: Rc<dyn Shade>,
@@ -190,6 +240,33 @@ impl Notifier {
         self.shade.post(&notice);
     }
 
+    /// Sends a tapped answer with `send` (host, pane, option; an error says why it failed) when
+    /// [`judge`] allows it. The notification goes once the agent has it, or says why it didn't.
+    pub async fn answer<F, Fut>(&self, tap: Tap, now: f64, hosts: &[HostState], send: F)
+    where
+        F: FnOnce(String, String, u32) -> Fut,
+        Fut: std::future::Future<Output = Result<(), String>>,
+    {
+        let href = href_of(&tap.host, Some(&tap.pane));
+        let say = |title: &str, body: String, kind: &str| {
+            self.shade.post(&Notice { title: title.into(), body, href: href.clone(), tag: tap.tag.clone(), kind: kind.into(), host: None, pane: None, options: vec![] });
+        };
+        match judge(&tap, now, hosts) {
+            Verdict::Late => {}
+            Verdict::Changed => {
+                self.asking.borrow_mut().remove(&tap.tag);
+                say("That question changed", format!("“{}” wasn't sent. Open the session to see what it asks now.", tap.label), "done");
+            }
+            Verdict::Send => match send(tap.host.clone(), tap.pane.clone(), tap.option).await {
+                Ok(()) => {
+                    self.asking.borrow_mut().remove(&tap.tag);
+                    self.shade.clear(&tap.tag);
+                }
+                Err(why) => say("Couldn't send your answer", why, "waiting"),
+            },
+        }
+    }
+
     /// A question answered somewhere else (on the computer, say) takes its notification with it,
     /// so what's left in the shade still needs you.
     pub fn overview(&self, hosts: &[HostState]) {
@@ -212,12 +289,35 @@ impl Notifier {
     }
 }
 
+thread_local! {
+    /// the notifier [`start`] made, on the core's thread
+    static NOTIFIER: RefCell<Option<Rc<Notifier>>> = const { RefCell::new(None) };
+}
+
+/// Sends an answer tapped on a notification, from the core's thread; false when the core isn't
+/// running, and the notification then says to open the app.
+pub fn answer(tap: Tap) -> bool {
+    let Some(phone) = crate::phone::handle() else { return false };
+    phone.spawn(move || async move {
+        use inyon_core::hosts::registry::registry;
+        let Some(n) = NOTIFIER.with(|n| n.borrow().clone()) else { return };
+        // Kotlin stamps the tap with the wall clock (System.currentTimeMillis)
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+        n.answer(tap, now, &registry().overview(), |host, pane, option| async move {
+            crate::api::answer(&host, &pane, &crate::api::Answer { option, text: None, question: None }).await.map_err(|e| e.message)
+        })
+        .await;
+    });
+    true
+}
+
 /// Starts posting notifications from the core's thread into `shade` (made there).
 pub fn start(phone: &inyon_phone::native::PhoneHandle, shade: impl FnOnce() -> Rc<dyn Shade> + Send + 'static) {
     use inyon_core::hosts::registry::{registry, RegistryEvent};
     use inyon_core::platform::rt::set_timeout;
     phone.spawn(move || async move {
         let n = Notifier::new(shade());
+        NOTIFIER.with(|cell| *cell.borrow_mut() = Some(n.clone()));
         let heard = n.clone();
         inyon_api::clients::on_notice(move |msg| {
             let wants = Wants::from_settings(crate::platform::load("inyon.settings.v2").as_deref());
