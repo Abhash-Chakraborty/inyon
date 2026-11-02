@@ -108,6 +108,7 @@ What changes for you:
 - It needs Android 9 or later. A phone on Android 7 or 8 keeps the current app.
 - The core starts with the app, before any screen opens, and posts alerts itself, so they keep coming while Android has closed the app's window and only **Stay connected** keeps the app running.
 - Notifications and **Stay connected** look and behave as before: the same channels, the same ongoing notification with **Open** and **Stop**. Turning **Stay connected** off with **Stop** keeps it off.
+- Off screen, the app's page stops completely: no timers, no animations, no layout. Only the core keeps running, for your connections and alerts.
 - The app's page loads from inside the app and never over plain http. Connections to your computers are the core's own, with the link's end-to-end encryption as before.
 
 ## Phone conveniences
