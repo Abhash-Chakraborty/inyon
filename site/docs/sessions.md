@@ -109,6 +109,10 @@ Click or tap the title in the header to rename a session (up to 80 characters), 
 
 From 0.22 you can rename the tmux session itself, on any machine (Linux, macOS or Windows): right-click its heading in the sidebar, or choose **Rename tmux session…** from a session's menu. tmux shows the new name too, in `tmux ls` and its status bar. tmux doesn't allow a dot or a colon in a session's name, so those become underscores, and a `#` becomes a dash. Two sessions on one machine can't share a name.
 
+## Pins, tags and notes
+
+From 0.24 a session's menu on the overview, in the sidebar or on a machine's page also has **Pin**, **Park**, **Snooze…**, **Tags…** and **Note…**. The hub keeps them, so every device shows the same, and they follow the conversation into another pane when you resume it. See [The overview](overview.md#pinning-parking-and-snoozing).
+
 ## Past conversations
 
 From 0.15, Inyon lists an agent's past conversations itself, since its own resume picker only works in the terminal. Open the list with **Past conversations…** in the header's **⋯** menu, with **History** in the controls sheet on a phone, or by sending the agent's resume command from the message box:

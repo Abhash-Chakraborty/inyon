@@ -119,6 +119,7 @@ pub fn start_core() {
     crate::clients::listen();
     registry().start();
     feat::start_upload_janitor();
+    inyon_core::features::organize::start();
     inyon_core::claude::chat_cache::prune_chats(None);
     signin::start();
     use inyon_core::platform::rt::{set_timeout, sleep, spawn};
@@ -330,7 +331,9 @@ async fn temp_delete(mut r: Req) -> HubResult<Resp> {
 /// The routes, each behind sign-in.
 /// What the overview shows, as the WebSocket's overview message carries it (a companion app reads this too).
 pub fn overview(catalog: u32) -> Resp {
-    ok_json(&json!({ "hosts": inyon_protocol::compat::hosts_for(&registry().overview(), catalog) }))
+    let hosts = registry().overview();
+    inyon_core::features::organize::reconcile(&hosts);
+    ok_json(&json!({ "hosts": inyon_protocol::compat::hosts_for(&hosts, catalog), "organize": inyon_core::features::organize::get() }))
 }
 
 pub fn add(routes: &mut Routes) {
@@ -985,6 +988,7 @@ pub fn add(routes: &mut Routes) {
             }),
         )],
     );
+    crate::organize_routes::add(routes);
 }
 
 async fn send(mut r: Req) -> HubResult<Resp> {
