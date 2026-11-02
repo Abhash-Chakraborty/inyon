@@ -111,7 +111,9 @@ object Native {
             for (i in 0 until o.length()) {
                 val c = o.optJSONObject(i) ?: continue
                 val label = c.optString("label")
-                if (c.has("n") && label.isNotEmpty()) choices.add(Choice(c.optInt("n"), label))
+                // a number past Int.MAX_VALUE would wrap to a negative one the core refuses: no button
+                val num = c.optLong("n", -1L)
+                if (num in 0L..Int.MAX_VALUE.toLong() && label.isNotEmpty()) choices.add(Choice(num.toInt(), label))
             }
         }
         fun opt(k: String) = if (n.has(k)) n.optString(k) else null

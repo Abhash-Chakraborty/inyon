@@ -163,6 +163,36 @@ pub struct Notifier {
     asking: RefCell<HashMap<String, (String, String, u64)>>,
     /// the last question's number
     asked: Cell<u64>,
+    /// the question each tag's notification shows now, and when it was posted: a tap from before
+    /// that was on an older notification
+    shown: RefCell<HashMap<String, (u64, f64)>>,
+    /// ms since the epoch
+    clock: Box<dyn Fn() -> f64>,
+}
+
+/// Which question a tap was on, from what the notifier posted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Whose {
+    /// the question the session asks now, by its number
+    Live(u64),
+    /// one since replaced by a newer question (shown, or about to be)
+    Older,
+    /// nothing to go by (the app started again since it was posted)
+    Unknown,
+}
+
+/// The wall clock, in ms since the epoch (Kotlin stamps taps with System.currentTimeMillis).
+pub fn wall_ms() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64)
+}
+
+/// Kotlin's AnswerService says an answer wasn't sent 15 s after the tap; the send stops a second
+/// before, so what it says stays true.
+pub const ANSWER_SEND_BY_MS: f64 = 14_000.0;
+
+/// How long a send that starts now may take, for a tap at `at`.
+pub fn send_window_ms(at: f64, now: f64) -> u64 {
+    (ANSWER_SEND_BY_MS - (now - at)).max(0.0) as u64
 }
 
 /// What to do once the overview with a question's answers has had time to arrive.
@@ -175,7 +205,11 @@ pub struct Later {
 
 impl Notifier {
     pub fn new(shade: Rc<dyn Shade>) -> Rc<Notifier> {
-        Rc::new(Notifier { shade, asking: RefCell::default(), asked: Cell::new(0) })
+        Notifier::with_clock(shade, wall_ms)
+    }
+
+    pub fn with_clock(shade: Rc<dyn Shade>, clock: impl Fn() -> f64 + 'static) -> Rc<Notifier> {
+        Rc::new(Notifier { shade, asking: RefCell::default(), asked: Cell::new(0), shown: RefCell::default(), clock: Box::new(clock) })
     }
 
     /// A notice from the core. Posted at once, unless it's a question: that one comes back as
@@ -192,6 +226,7 @@ impl Notifier {
                 // on screen, the app shows it itself
                 if (*kind == NotifyKind::Done && !wants.done) || visible {
                     if was_asking {
+                        self.shown.borrow_mut().remove(&tag);
                         self.shade.clear(&tag);
                     }
                     return None;
@@ -207,6 +242,7 @@ impl Notifier {
                     options: vec![],
                 };
                 if *kind != NotifyKind::Waiting {
+                    self.shown.borrow_mut().remove(&tag);
                     self.shade.post(&notice);
                     return None;
                 }
@@ -237,7 +273,38 @@ impl Notifier {
         }
         let mut notice = later.notice;
         notice.options = choices_for(hosts, &host, &pane);
+        self.shown.borrow_mut().insert(later.tag.clone(), (seq, (self.clock)()));
         self.shade.post(&notice);
+    }
+
+    fn whose(&self, tap: &Tap) -> Whose {
+        let asks = self.asking.borrow().get(&tap.tag).map(|a| a.2);
+        match (self.shown.borrow().get(&tap.tag).copied(), asks) {
+            (Some((seq, at)), Some(now)) if seq == now && tap.at >= at => Whose::Live(seq),
+            (None, None) => Whose::Unknown,
+            // tapped before the notification it was on was replaced, or a newer question is
+            // waiting for its answers
+            (_, Some(_)) => Whose::Older,
+            // the question it was on ended, and nothing replaced its notification
+            (Some(_), None) => Whose::Unknown,
+        }
+    }
+
+    /// Whether the session still asks the question a tap was on (or there's nothing to tell).
+    fn still(&self, tag: &str, whose: Whose) -> bool {
+        let asks = self.asking.borrow().get(tag).map(|a| a.2);
+        match whose {
+            Whose::Live(seq) => asks == Some(seq),
+            Whose::Unknown => asks.is_none(),
+            Whose::Older => false,
+        }
+    }
+
+    /// The tag's question is over: its notification goes.
+    fn settle(&self, tag: &str) {
+        self.asking.borrow_mut().remove(tag);
+        self.shown.borrow_mut().remove(tag);
+        self.shade.clear(tag);
     }
 
     /// Sends a tapped answer with `send` (host, pane, option; an error says why it failed) when
@@ -251,19 +318,30 @@ impl Notifier {
         let say = |title: &str, body: String, kind: &str| {
             self.shade.post(&Notice { title: title.into(), body, href: href.clone(), tag: tap.tag.clone(), kind: kind.into(), host: None, pane: None, options: vec![] });
         };
+        let whose = self.whose(&tap);
+        // a newer question took its place: that one's notification is what the shade shows (or
+        // soon will), and a word about this tap would replace it
+        if whose == Whose::Older {
+            return;
+        }
         match judge(&tap, now, hosts) {
             Verdict::Late => {}
             Verdict::Changed => {
                 self.asking.borrow_mut().remove(&tap.tag);
+                self.shown.borrow_mut().remove(&tap.tag);
                 say("That question changed", format!("“{}” wasn't sent. Open the session to see what it asks now.", tap.label), "done");
             }
-            Verdict::Send => match send(tap.host.clone(), tap.pane.clone(), tap.option).await {
-                Ok(()) => {
-                    self.asking.borrow_mut().remove(&tap.tag);
-                    self.shade.clear(&tap.tag);
+            Verdict::Send => {
+                let sent = send(tap.host.clone(), tap.pane.clone(), tap.option).await;
+                // the session may have asked something new meanwhile; its notification stays
+                if !self.still(&tap.tag, whose) {
+                    return;
                 }
-                Err(why) => say("Couldn't send your answer", why, "waiting"),
-            },
+                match sent {
+                    Ok(()) => self.settle(&tap.tag),
+                    Err(why) => say("Couldn't send your answer", why, "waiting"),
+                }
+            }
         }
     }
 
@@ -283,8 +361,7 @@ impl Notifier {
             .map(|(tag, _)| tag.clone())
             .collect();
         for tag in answered {
-            self.asking.borrow_mut().remove(&tag);
-            self.shade.clear(&tag);
+            self.settle(&tag);
         }
     }
 }
@@ -301,10 +378,15 @@ pub fn answer(tap: Tap) -> bool {
     phone.spawn(move || async move {
         use inyon_core::hosts::registry::registry;
         let Some(n) = NOTIFIER.with(|n| n.borrow().clone()) else { return };
-        // Kotlin stamps the tap with the wall clock (System.currentTimeMillis)
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_millis() as f64);
+        let (now, at) = (wall_ms(), tap.at);
         n.answer(tap, now, &registry().overview(), |host, pane, option| async move {
-            crate::api::answer(&host, &pane, &crate::api::Answer { option, text: None, question: None }).await.map_err(|e| e.message)
+            let body = crate::api::Answer { option, text: None, question: None };
+            let send = crate::api::answer(&host, &pane, &body);
+            // past Kotlin's 15 s it would say "not sent" while the answer still arrived
+            match tokio::time::timeout(std::time::Duration::from_millis(send_window_ms(at, wall_ms())), send).await {
+                Ok(r) => r.map_err(|e| e.message),
+                Err(_) => Err("It took too long to reach the agent, so it may not have arrived. Open the session to check.".into()),
+            }
         })
         .await;
     });
