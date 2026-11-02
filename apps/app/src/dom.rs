@@ -4,6 +4,7 @@
 
 #[cfg(target_arch = "wasm32")]
 mod imp {
+    use wasm_bindgen::closure::Closure;
     use wasm_bindgen::JsCast;
 
     fn el(id: &str) -> Option<web_sys::HtmlElement> {
@@ -191,6 +192,163 @@ mod imp {
     pub fn windows() -> bool {
         user_agent().contains("Windows")
     }
+
+    /// The theme on screen: what /theme.js and [`crate::platform::follow_theme`] put on the root.
+    pub fn theme() -> &'static str {
+        let t = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()).and_then(|r| r.get_attribute("data-theme"));
+        if t.as_deref() == Some("dark") {
+            "dark"
+        } else {
+            "light"
+        }
+    }
+
+    fn post_theme_to(win: &web_sys::Window) {
+        let msg = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&msg, &"type".into(), &"theme".into());
+        let _ = js_sys::Reflect::set(&msg, &"value".into(), &theme().into());
+        let _ = win.post_message(&msg, "*");
+    }
+
+    fn page_frames() -> Vec<web_sys::HtmlIFrameElement> {
+        let Some(list) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.query_selector_all("iframe.page-frame").ok()) else { return vec![] };
+        (0..list.length()).filter_map(|i| list.get(i)).filter_map(|n| n.dyn_into().ok()).collect()
+    }
+
+    /// Tells every page frame the app's theme; a page that knows the message follows it.
+    pub fn post_theme_all() {
+        for f in page_frames() {
+            if let Some(w) = f.content_window() {
+                post_theme_to(&w);
+            }
+        }
+    }
+
+    /// Tells one page frame the theme, as it loads a new document.
+    pub fn post_theme(id: &str) {
+        let f = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(id)).and_then(|e| e.dyn_into::<web_sys::HtmlIFrameElement>().ok());
+        if let Some(w) = f.and_then(|f| f.content_window()) {
+            post_theme_to(&w);
+        }
+    }
+
+    /// Whether a message a page sent asks for the theme: `{ type: 'theme?' }` and nothing else
+    /// counts (lib/pages.ts's frameMessage).
+    pub fn asks_theme(data: &wasm_bindgen::JsValue) -> bool {
+        data.is_object() && !js_sys::Array::is_array(data) && js_sys::Reflect::get(data, &"type".into()).ok().and_then(|t| t.as_string()).as_deref() == Some("theme?")
+    }
+
+    thread_local! {
+        static LISTENING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static SLASH: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+        static WAKE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+        static RESIZE: std::cell::RefCell<Vec<Box<dyn Fn()>>> = std::cell::RefCell::new(Vec::new());
+    }
+
+    /// The page-wide listeners Pages needs, added once: a page frame asking for the theme (answered
+    /// only when the message came from that frame's own window, never a frame inside it or another
+    /// window), "/" to the filter, coming back into view, and the window's size.
+    fn listen() {
+        if LISTENING.with(|l| l.replace(true)) {
+            return;
+        }
+        let Some(win) = web_sys::window() else { return };
+        let msg = Closure::<dyn Fn(web_sys::MessageEvent)>::new(|e: web_sys::MessageEvent| {
+            if !asks_theme(&e.data()) {
+                return;
+            }
+            let Some(src) = e.source() else { return };
+            for f in page_frames() {
+                if let Some(w) = f.content_window() {
+                    if wasm_bindgen::JsValue::from(w.clone()) == wasm_bindgen::JsValue::from(src.clone()) {
+                        post_theme_to(&w);
+                    }
+                }
+            }
+        });
+        let _ = win.add_event_listener_with_callback("message", msg.as_ref().unchecked_ref());
+        msg.forget();
+        let key = Closure::<dyn Fn(web_sys::KeyboardEvent)>::new(|e: web_sys::KeyboardEvent| {
+            if e.key() != "/" || e.meta_key() || e.ctrl_key() || e.alt_key() {
+                return;
+            }
+            let Some(target) = SLASH.with(|s| s.borrow().clone()) else { return };
+            let typing = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea, [contenteditable]").ok().flatten().is_some());
+            if typing {
+                return;
+            }
+            e.prevent_default();
+            focus(&target);
+        });
+        let _ = win.add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
+        key.forget();
+        let wake = Closure::<dyn Fn()>::new(|| {
+            if visible() {
+                WAKE.with(|w| w.borrow().iter().for_each(|f| f()));
+            }
+        });
+        let _ = win.add_event_listener_with_callback("focus", wake.as_ref().unchecked_ref());
+        if let Some(d) = win.document() {
+            let _ = d.add_event_listener_with_callback("visibilitychange", wake.as_ref().unchecked_ref());
+        }
+        wake.forget();
+        let resize = Closure::<dyn Fn()>::new(|| RESIZE.with(|r| r.borrow().iter().for_each(|f| f())));
+        let _ = win.add_event_listener_with_callback("resize", resize.as_ref().unchecked_ref());
+        resize.forget();
+    }
+
+    /// Starts answering page frames that ask for the theme.
+    pub fn answer_frames() {
+        listen();
+    }
+
+    /// "/" focuses the element with this id, while one is set (the Pages filter on a wide screen).
+    pub fn slash_focuses(id: Option<&str>) {
+        listen();
+        SLASH.with(|s| *s.borrow_mut() = id.map(str::to_string));
+    }
+
+    /// Calls `f` whenever the app comes back into view (window focus, the tab shown again).
+    pub fn on_wake(f: impl Fn() + 'static) {
+        listen();
+        WAKE.with(|w| w.borrow_mut().push(Box::new(f)));
+    }
+
+    /// Calls `f` whenever the window changes size.
+    pub fn on_resize(f: impl Fn() + 'static) {
+        listen();
+        RESIZE.with(|r| r.borrow_mut().push(Box::new(f)));
+    }
+
+    /// A tab opened at once, before the address it goes to is known: a browser blocks one opened
+    /// after a wait (Open in browser mints a link first).
+    pub struct PendingTab(Option<web_sys::Window>);
+
+    impl PendingTab {
+        pub fn open() -> PendingTab {
+            let w = web_sys::window().and_then(|w| w.open_with_url_and_target("", "_blank").ok().flatten());
+            if let Some(w) = &w {
+                // the page can't reach back into the app
+                let _ = js_sys::Reflect::set(w, &"opener".into(), &wasm_bindgen::JsValue::NULL);
+            }
+            PendingTab(w)
+        }
+
+        pub fn go(self, url: &str) {
+            match self.0 {
+                Some(w) => {
+                    let _ = w.location().set_href(url);
+                }
+                None => open_tab(url),
+            }
+        }
+
+        pub fn close(self) {
+            if let Some(w) = self.0 {
+                let _ = w.close();
+            }
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -255,6 +413,22 @@ mod imp {
     }
     pub fn windows() -> bool {
         false
+    }
+    pub fn theme() -> &'static str {
+        "light"
+    }
+    pub fn post_theme(_id: &str) {}
+    pub fn answer_frames() {}
+    pub fn slash_focuses(_id: Option<&str>) {}
+    pub fn on_wake(_f: impl Fn() + 'static) {}
+    pub fn on_resize(_f: impl Fn() + 'static) {}
+    pub struct PendingTab;
+    impl PendingTab {
+        pub fn open() -> PendingTab {
+            PendingTab
+        }
+        pub fn go(self, _url: &str) {}
+        pub fn close(self) {}
     }
 }
 

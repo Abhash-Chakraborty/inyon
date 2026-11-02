@@ -27,6 +27,8 @@ pub struct Toast {
     pub tone: ToastTone,
     /// a route inside the app that a tap on the toast opens
     pub href: Option<String>,
+    /// a button on it (Undo) and what it does
+    pub action: Option<(String, super::menu::Action)>,
 }
 
 static TOASTS: GlobalSignal<Vec<Toast>> = Signal::global(Vec::new);
@@ -53,7 +55,7 @@ pub fn push(list: &[Toast], t: Toast) -> Vec<Toast> {
 
 /// Shows a toast for a few seconds.
 pub fn toast(title: impl Into<String>, body: Option<String>, tone: ToastTone) {
-    show(Toast { id: 0, title: title.into(), body: body.filter(|b| !b.is_empty()), tone, href: None });
+    show(Toast { id: 0, title: title.into(), body: body.filter(|b| !b.is_empty()), tone, href: None, action: None });
 }
 
 pub fn show(mut t: Toast) {
@@ -105,6 +107,8 @@ fn ToastCard(t: Toast) -> Element {
     let mut drag = use_signal(|| (0.0f64, 0.0f64));
     let mut moved = use_signal(|| false);
     let mut here = use_context::<Signal<crate::route::Route>>();
+    let chats = use_context::<Signal<crate::state::Chats>>();
+    let hub = use_context::<Signal<crate::state::Hub>>();
     let (icon, tone) = match t.tone {
         ToastTone::Info => (Icon::Info, "fg-2"),
         ToastTone::Success => (Icon::CircleCheck, ""),
@@ -165,6 +169,18 @@ fn ToastCard(t: Toast) -> Element {
                 p { class: "toast-title truncate", "{t.title}" }
                 if let Some(b) = &t.body {
                     p { class: "toast-body", "{b}" }
+                }
+            }
+            if let Some((label, action)) = t.action.clone() {
+                button {
+                    class: "button button-xs button-quiet press toast-action",
+                    r#type: "button",
+                    onclick: move |e| {
+                        e.stop_propagation();
+                        dismiss(id);
+                        super::menu::run(action.clone(), chats, here, hub);
+                    },
+                    "{label}"
                 }
             }
             button {
@@ -265,7 +281,7 @@ mod tests {
     use super::*;
 
     fn t(id: u64, href: Option<&str>) -> Toast {
-        Toast { id, title: format!("t{id}"), body: None, tone: ToastTone::Info, href: href.map(str::to_string) }
+        Toast { id, title: format!("t{id}"), body: None, tone: ToastTone::Info, href: href.map(str::to_string), action: None }
     }
 
     #[test]

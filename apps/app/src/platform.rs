@@ -64,6 +64,8 @@ mod imp {
                 if let Some(el) = root.dyn_ref::<web_sys::HtmlElement>() {
                     let _ = el.style().set_property("background", if t == "dark" { "#1b1a18" } else { "#e9e8e4" });
                 }
+                // pages in their frames follow the app's theme
+                crate::dom::post_theme_all();
             }
         };
         apply();

@@ -578,6 +578,69 @@ pub async fn phone_pair(origin: &str) -> Result<PhoneCode, ApiError> {
     parse(&request("POST", "/api/phones/pair", json(&Origin { origin })).await?)
 }
 
+// ---------- pages (pages/Pages.tsx and components/pages) ----------
+
+/// `/api/pages/<machine>` and `/api/pages/<machine>/<slug>`, as api.ts's `pg`.
+pub fn page_path(host: &str, slug: Option<&str>) -> String {
+    let enc = inyon_chat_core::js::encode_uri_component;
+    match slug {
+        Some(s) => format!("/api/pages/{}/{}", enc(host), enc(s)),
+        None => format!("/api/pages/{}", enc(host)),
+    }
+}
+
+/// A link to the page, good for 12 hours; `url` is a path on this hub.
+pub async fn open_page(host: &str, slug: &str) -> Result<inyon_protocol::PageOpen, ApiError> {
+    parse(&request("POST", &format!("{}/open", page_path(host, Some(slug))), None).await?)
+}
+
+/// Every link to the page stops working.
+pub async fn revoke_page(host: &str, slug: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/revoke", page_path(host, Some(slug))), None).await.map(drop)
+}
+
+/// A folder with an index.html to list as a page; the slug only to put a removed page back as it was.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct PageBody {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub slug: Option<String>,
+}
+
+pub async fn add_page(host: &str, b: &PageBody) -> Result<inyon_protocol::PageEntry, ApiError> {
+    parse(&request("POST", &page_path(host, None), json(b)).await?)
+}
+
+/// Takes a page off the list; its folder stays.
+pub async fn remove_page(host: &str, slug: &str) -> Result<(), ApiError> {
+    request("DELETE", &page_path(host, Some(slug)), None).await.map(drop)
+}
+
+/// Whether a file of a page's site is there: a HEAD request without the app's cookie, as the page's
+/// own frame would ask.
+#[cfg(target_arch = "wasm32")]
+pub async fn page_file_exists(url: &str) -> bool {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let init = web_sys::RequestInit::new();
+    init.set_method("HEAD");
+    init.set_credentials(web_sys::RequestCredentials::Omit);
+    init.set_referrer_policy(web_sys::ReferrerPolicy::NoReferrer);
+    let Ok(req) = web_sys::Request::new_with_str_and_init(url, &init) else { return false };
+    let Some(win) = web_sys::window() else { return false };
+    match JsFuture::from(win.fetch_with_request(&req)).await {
+        Ok(v) => v.dyn_into::<web_sys::Response>().is_ok_and(|r| r.ok()),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn page_file_exists(_url: &str) -> bool {
+    false
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn request(method: &str, path: &str, body: Option<String>) -> Result<String, ApiError> {
     use wasm_bindgen::JsCast;
@@ -615,6 +678,14 @@ async fn request(_method: &str, _path: &str, _body: Option<String>) -> Result<St
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn page_routes_match_the_web_app() {
+        assert_eq!(page_path("hub:h1/box one", Some("my-plan")), "/api/pages/hub%3Ah1%2Fbox%20one/my-plan");
+        assert_eq!(page_path("local", None), "/api/pages/local");
+        let b = PageBody { path: "/p/plan".into(), name: None, slug: Some("plan".into()) };
+        assert_eq!(serde_json::to_string(&b).unwrap(), r#"{"path":"/p/plan","slug":"plan"}"#);
+    }
 
     #[test]
     fn the_hubs_own_words_win() {
