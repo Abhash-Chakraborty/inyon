@@ -98,7 +98,7 @@ mod imp {
 
     /// The app's own settings next to the core's records: one small JSON object of strings.
     #[cfg(feature = "phone")]
-    mod saved {
+    pub(crate) mod saved {
         use std::sync::Mutex;
 
         static LOCK: Mutex<()> = Mutex::new(());
@@ -118,13 +118,20 @@ mod imp {
 
         pub fn save(key: &str, value: &str) {
             let (Ok(_held), Some(f)) = (LOCK.lock(), file()) else { return };
-            let mut all = read(&f);
+            write(&f, key, value);
+        }
+
+        /// Sets one value in the file, made with its folder if need be (the core makes the folder
+        /// on its own thread, maybe not yet).
+        pub(crate) fn write(f: &std::path::Path, key: &str, value: &str) -> bool {
+            if let Some(dir) = f.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let mut all = read(f);
             all.insert(key.to_owned(), value.into());
             // write then rename, so a crash never leaves half a file
             let tmp = f.with_extension("json.tmp");
-            if std::fs::write(&tmp, serde_json::Value::Object(all).to_string()).is_ok() {
-                let _ = std::fs::rename(&tmp, &f);
-            }
+            std::fs::write(&tmp, serde_json::Value::Object(all).to_string()).is_ok() && std::fs::rename(&tmp, f).is_ok()
         }
     }
 
@@ -186,11 +193,16 @@ pub fn android_head(theme: &str) -> String {
     )
 }
 
+/// Whether the theme is dark now: set so, or following a system in dark mode.
+#[cfg(all(feature = "phone", any(target_os = "android", test)))]
+pub fn dark(theme: &str, night: bool) -> bool {
+    theme == "dark" || (theme == "system" && night)
+}
+
 /// The ground the window shows before the page paints, in the theme's colours.
 #[cfg(all(feature = "phone", any(target_os = "android", test)))]
 pub fn ground(theme: &str, night: bool) -> (u8, u8, u8, u8) {
-    let dark = theme == "dark" || (theme == "system" && night);
-    if dark {
+    if dark(theme, night) {
         (0x1b, 0x1a, 0x18, 0xff)
     } else {
         (0xe9, 0xe8, 0xe4, 0xff)
@@ -229,6 +241,26 @@ mod tests {
         assert_eq!(ground("light", true), (0xe9, 0xe8, 0xe4, 0xff));
         assert_eq!(ground("system", true), (0x1b, 0x1a, 0x18, 0xff));
         assert_eq!(ground("system", false), (0xe9, 0xe8, 0xe4, 0xff));
+    }
+
+    #[test]
+    fn the_system_bars_follow_the_chosen_theme_over_the_system() {
+        // a light theme on a phone in dark mode keeps dark icons on the bars, and the other way round
+        assert!(!dark("light", true));
+        assert!(dark("dark", false));
+        assert!(dark("system", true));
+        assert!(!dark("system", false));
+    }
+
+    #[test]
+    fn a_setting_saved_before_the_core_made_its_folder_is_kept() {
+        let dir = std::env::temp_dir().join(format!("inyon-app-saved-{}", std::process::id()));
+        let f = dir.join("inyon").join("app.json");
+        assert!(imp::saved::write(&f, "inyon.keepAlive", "0"));
+        assert!(imp::saved::write(&f, "inyon.settings.v2", "{}"));
+        let all: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        assert_eq!(all, serde_json::json!({ "inyon.keepAlive": "0", "inyon.settings.v2": "{}" }));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -104,6 +104,26 @@ pub fn set_visible(on: bool) {
     }
 }
 
+/// Says when the first machine arrives while the app is on screen (one paired just now), so the
+/// platform can start what only makes sense with a machine to stay connected to.
+#[derive(Default)]
+pub struct FirstMachine {
+    had: std::cell::Cell<bool>,
+}
+
+impl FirstMachine {
+    /// The machines now and whether the app is on screen; true when there were none before. Off
+    /// screen it waits: the app coming back on screen starts things anyway.
+    pub fn seen(&self, machines: usize, visible: bool) -> bool {
+        if !visible {
+            return false;
+        }
+        let first = machines > 0 && !self.had.get();
+        self.had.set(machines > 0);
+        first
+    }
+}
+
 /// A request to the core, answered as the hub's HTTP API would answer it.
 pub async fn request(method: &str, path: &str, body: Option<String>) -> Result<String, ApiError> {
     let gone = || ApiError { status: 0, message: "Inyon's core isn't running. Close the app and open it again.".into() };
@@ -187,6 +207,19 @@ mod tests {
         assert_eq!(readable_name(" Fairphone ", ""), "Fairphone");
         assert_eq!(readable_name("", ""), "Phone");
         assert_eq!(readable_name("", "Pixel 9"), "Pixel 9");
+    }
+
+    #[test]
+    fn the_first_machine_paired_on_screen_is_noticed_once() {
+        let f = FirstMachine::default();
+        assert!(!f.seen(0, true));
+        // off screen nothing counts yet
+        assert!(!f.seen(1, false));
+        assert!(f.seen(1, true));
+        assert!(!f.seen(2, true));
+        // all removed, then one paired again
+        assert!(!f.seen(0, true));
+        assert!(f.seen(1, true));
     }
 
     #[test]

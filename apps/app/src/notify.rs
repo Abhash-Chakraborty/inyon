@@ -6,7 +6,7 @@
 //! moment for the overview that carries its answers; one answered meanwhile gets none, and one
 //! answered somewhere else takes its notification away.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -108,19 +108,24 @@ pub fn choices_for(hosts: &[HostState], host: &str, pane: &str) -> Vec<Choice> {
 /// What the notifier remembers between notices.
 pub struct Notifier {
     shade: Rc<dyn Shade>,
-    /// sessions with a "needs you" notification up, by tag
-    asking: RefCell<HashMap<String, (String, String)>>,
+    /// sessions with a "needs you" notification up (or about to be), by tag: the host, the pane
+    /// and which question it is
+    asking: RefCell<HashMap<String, (String, String, u64)>>,
+    /// the last question's number
+    asked: Cell<u64>,
 }
 
 /// What to do once the overview with a question's answers has had time to arrive.
 pub struct Later {
     pub tag: String,
     pub notice: Notice,
+    /// which question: one asked again since replaces this one
+    pub seq: u64,
 }
 
 impl Notifier {
     pub fn new(shade: Rc<dyn Shade>) -> Rc<Notifier> {
-        Rc::new(Notifier { shade, asking: RefCell::default() })
+        Rc::new(Notifier { shade, asking: RefCell::default(), asked: Cell::new(0) })
     }
 
     /// A notice from the core. Posted at once, unless it's a question: that one comes back as
@@ -129,15 +134,18 @@ impl Notifier {
         match msg {
             ServerMsg::Notify { host, pane, kind, title, body, .. } => {
                 let machine = matches!(kind, NotifyKind::Offline | NotifyKind::Online);
-                if *kind == NotifyKind::Done && !wants.done {
-                    return None;
-                }
-                // on screen, the app shows it itself
-                if visible {
-                    return None;
-                }
                 let pane = (!machine).then_some(pane.as_str());
                 let tag = tag_of(host, pane);
+                // any notice from the session ends the question it had, posted or not (a new question
+                // takes its place below)
+                let was_asking = self.asking.borrow_mut().remove(&tag).is_some();
+                // on screen, the app shows it itself
+                if (*kind == NotifyKind::Done && !wants.done) || visible {
+                    if was_asking {
+                        self.shade.clear(&tag);
+                    }
+                    return None;
+                }
                 let notice = Notice {
                     title: title.clone(),
                     body: body.clone(),
@@ -149,12 +157,13 @@ impl Notifier {
                     options: vec![],
                 };
                 if *kind != NotifyKind::Waiting {
-                    self.asking.borrow_mut().remove(&tag);
                     self.shade.post(&notice);
                     return None;
                 }
-                self.asking.borrow_mut().insert(tag.clone(), (host.clone(), pane.unwrap_or_default().to_owned()));
-                Some(Later { tag, notice })
+                let seq = self.asked.get() + 1;
+                self.asked.set(seq);
+                self.asking.borrow_mut().insert(tag.clone(), (host.clone(), pane.unwrap_or_default().to_owned(), seq));
+                Some(Later { tag, notice, seq })
             }
             ServerMsg::PageNotify { host, slug, title, body } => {
                 if !wants.pages || visible {
@@ -170,9 +179,12 @@ impl Notifier {
     }
 
     /// Posts a question's notification with the answers the overview now shows, unless it was
-    /// answered meanwhile.
+    /// answered meanwhile or asked again (the newer one posts its own).
     pub fn ask(&self, later: Later, hosts: &[HostState]) {
-        let Some((host, pane)) = self.asking.borrow().get(&later.tag).cloned() else { return };
+        let Some((host, pane, seq)) = self.asking.borrow().get(&later.tag).cloned() else { return };
+        if seq != later.seq {
+            return;
+        }
         let mut notice = later.notice;
         notice.options = choices_for(hosts, &host, &pane);
         self.shade.post(&notice);
@@ -185,7 +197,7 @@ impl Notifier {
             .asking
             .borrow()
             .iter()
-            .filter(|(_, (host, pane))| {
+            .filter(|(_, (host, pane, _))| {
                 // a machine that went quiet says nothing about the question
                 let Some(h) = hosts.iter().find(|h| &h.config.id == host).filter(|h| h.status == HostStatus::Online) else { return false };
                 let p = h.sessions.iter().flat_map(|s| &s.windows).flat_map(|w| &w.panes).find(|p| &p.id == pane);

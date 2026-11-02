@@ -1,6 +1,7 @@
 package dev.dioxus.main
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.webkit.WebView
@@ -40,6 +41,8 @@ class MainActivity : WryActivity() {
 
     override fun onStart() {
         super.onStart()
+        // the theme may have changed in Settings since
+        bars(Native.night())
         web?.onResume()
         web?.resumeTimers()
         Native.onScreen(this, true)
@@ -63,17 +66,28 @@ class MainActivity : WryActivity() {
      */
     private fun insets() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        val night = Native.night()
-        WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = !night
-            isAppearanceLightNavigationBars = !night
-        }
+        bars(Native.night())
         val content = findViewById<View>(android.R.id.content)
         ViewCompat.setOnApplyWindowInsetsListener(content) { v, w ->
             val bars = w.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = w.getInsets(WindowInsetsCompat.Type.ime())
             v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             WindowInsetsCompat.CONSUMED
+        }
+    }
+
+    /** The system switched to dark mode or out of it (the manifest keeps the window through it). */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        bars(newConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES)
+    }
+
+    /** Light icons on the bars over a dark page, dark ones over a light page. */
+    private fun bars(night: Boolean) {
+        val dark = Native.darkTheme(night)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
         }
     }
 

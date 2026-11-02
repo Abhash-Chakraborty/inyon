@@ -136,6 +136,20 @@ fn keep_alive_on_screen() {
     });
 }
 
+/// Starts the keep-alive service when a machine is paired while the app is on screen, as it starts
+/// when the app comes on screen with machines already paired.
+fn keep_alive_when_paired(phone: &inyon_phone::native::PhoneHandle) {
+    phone.spawn(|| async {
+        use inyon_core::hosts::registry::{registry, RegistryEvent};
+        let first = crate::phone::FirstMachine::default();
+        let _ = registry().on(move |e| {
+            if matches!(e, RegistryEvent::Overview) && crate::phone::is_visible() && first.seen(registry().configs().len(), true) {
+                keep_alive_on_screen();
+            }
+        });
+    });
+}
+
 // ---------- from Kotlin ----------
 
 /// `Native.startCore(dir, maker, model)`, from the Application as the process starts: the phone
@@ -161,6 +175,7 @@ pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_startCore(mu
         offline: false,
     });
     crate::notify::start(&phone, || Rc::new(AndroidShade));
+    keep_alive_when_paired(&phone);
     crate::phone::install(phone, Path::new(&dir));
     // the release smoke test looks for this line
     log(false, "core ready");
@@ -206,6 +221,13 @@ pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_keepAliveEnd
 pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_openHref(mut env: JNIEnv, _class: JClass, href: JString) {
     let href = jstr(&mut env, &href);
     crate::phone::open(&href);
+}
+
+/// `Native.darkTheme(night)`: whether the page is dark, from the theme in Settings and whether the
+/// system is in dark mode, so the system bars' icons match it.
+#[no_mangle]
+pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_darkTheme(_env: JNIEnv, _class: JClass, night: jboolean) -> jboolean {
+    crate::platform::dark(crate::platform::theme_setting(), night == JNI_TRUE) as jboolean
 }
 
 /// Whether the system is in dark mode now (for the theme "system").

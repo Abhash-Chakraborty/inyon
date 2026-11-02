@@ -19,9 +19,12 @@ on:
     paths:
       - 'apps/app/**'
       - 'apps/mobile/**'
-      - 'crates/inyon-phone/**'
+      # the app builds on the other crates too, and on the locked versions
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/android.yml'
-      - '.github/scripts/app-smoke.sh'
+      - '.github/scripts/app-smoke*.sh'
   workflow_dispatch:
 
 permissions:
@@ -392,6 +395,8 @@ jobs:
         with:
           name: inyon-${{ steps.version.outputs.name }}
           path: ${{ runner.temp }}/capacitor
+      - name: Test the smoke script's checks
+        run: bash .github/scripts/app-smoke.test.sh
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

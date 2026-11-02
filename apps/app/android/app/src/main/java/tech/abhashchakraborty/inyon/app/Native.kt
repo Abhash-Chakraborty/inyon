@@ -12,7 +12,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import tech.abhashchakraborty.inyon.device.AnswerService
-import tech.abhashchakraborty.inyon.device.Choice
 import tech.abhashchakraborty.inyon.device.DeviceEvents
 import tech.abhashchakraborty.inyon.device.KeepAliveService
 import tech.abhashchakraborty.inyon.device.Notifications
@@ -48,8 +47,8 @@ object Native {
 
             override fun answerAwake(on: Boolean) {}
 
-            // answering from a notification comes with the next change; until then the button
-            // says to open the app
+            // answering from a notification comes with the next change; until then no notification
+            // has answer buttons (postNotification)
             override fun answer(host: String, pane: String, option: Int, label: String, tag: String, at: Long) = false
         }
         startCore(File(app.filesDir, "inyon").path, Build.MANUFACTURER ?: "", Build.MODEL ?: "")
@@ -74,6 +73,8 @@ object Native {
     @JvmStatic external fun keepAliveEnded(reason: String)
 
     @JvmStatic external fun openHref(href: String)
+
+    @JvmStatic external fun darkTheme(night: Boolean): Boolean
 
     // ---------- called from Rust ----------
 
@@ -102,16 +103,10 @@ object Native {
         val n = JSONObject(json)
         // a session's notification replaced: an answer sent from it went, or failed and says why
         if (n.has("tag")) AnswerService.settled(n.optString("tag"))
-        val choices = mutableListOf<Choice>()
-        n.optJSONArray("options")?.let { o ->
-            for (i in 0 until o.length()) {
-                val c = o.optJSONObject(i) ?: continue
-                val label = c.optString("label")
-                if (c.has("n") && label.isNotEmpty()) choices.add(Choice(c.optInt("n"), label))
-            }
-        }
         fun opt(k: String) = if (n.has(k)) n.optString(k) else null
-        return Notifications.post(app, opt("title") ?: "Inyon", opt("body") ?: "", opt("href"), opt("tag"), opt("kind"), opt("host"), opt("pane"), choices)
+        // no answer buttons until answering from a notification reaches the core (the next change):
+        // a tap would only say the answer wasn't sent
+        return Notifications.post(app, opt("title") ?: "Inyon", opt("body") ?: "", opt("href"), opt("tag"), opt("kind"), opt("host"), opt("pane"), emptyList())
     }
 
     @JvmStatic
@@ -139,9 +134,13 @@ object Native {
         if (Build.VERSION.SDK_INT < 33 || askedNotifications) return
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
         val activity = screen?.get() ?: return
-        askedNotifications = true
+        // checked and set on the main thread, so a window closing first doesn't use up the one ask,
+        // and two calls close together still ask once
         main.post {
-            if (!activity.isFinishing) ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            if (!askedNotifications && !activity.isFinishing) {
+                askedNotifications = true
+                ActivityCompat.requestPermissions(activity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+            }
         }
     }
 

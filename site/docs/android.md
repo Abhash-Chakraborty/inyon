@@ -139,7 +139,7 @@ The app from 1.0 is in `apps/app/android`. With the Android SDK and NDK, Java 21
 INYON_ABIS=arm64-v8a apps/app/android/build.sh
 ```
 
-It writes `apps/app/android/app/build/outputs/apk/release/`, signed when `INYON_KEYSTORE` and its passwords are set.
+It writes `apps/app/android/app/build/outputs/apk/release/`, signed when `INYON_KEYSTORE` and its passwords are set. Its version code is 1 unless `INYON_VERSION_CODE` sets one, and Android won't install a lower version code over the app you have, so to install it over a release, set `INYON_VERSION_CODE` to at least the release's (the GitHub build's run number) and sign it with the same key.
 
 Every push to `main` refreshes the *Latest Android build* pre-release on GitHub, and each version tag attaches `inyon-X.Y.Z.apk` to its release. A fork without the signing secrets gets a debug build.
 

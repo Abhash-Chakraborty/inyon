@@ -117,6 +117,49 @@ fn a_question_answered_before_its_answers_arrive_gets_no_notification() {
 }
 
 #[test]
+fn a_finished_turn_ends_its_question_even_when_finished_turns_are_muted() {
+    let (tray, n) = setup();
+    let muted = Wants { done: false, pages: true };
+    // before the answers arrive: no question is posted
+    let later = n.heard(&notify(NotifyKind::Waiting), false, muted).unwrap();
+    n.heard(&notify(NotifyKind::Done), false, muted);
+    n.ask(later, &[host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }])))]);
+    assert!(tray.posted.borrow().is_empty());
+    // after it was posted: it's taken away, and nothing replaces it
+    let later = n.heard(&notify(NotifyKind::Waiting), false, muted).unwrap();
+    n.ask(later, &[host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }])))]);
+    assert_eq!(tray.posted.borrow().len(), 1);
+    tray.cleared.borrow_mut().clear();
+    n.heard(&notify(NotifyKind::Done), false, muted);
+    assert_eq!(*tray.cleared.borrow(), vec!["lap top:%3"]);
+    assert_eq!(tray.posted.borrow().len(), 1);
+    // a finished turn while on screen takes it away too
+    let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    n.ask(later, &[host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }])))]);
+    n.heard(&notify(NotifyKind::Done), true, ALL);
+    assert_eq!(tray.cleared.borrow().len(), 2);
+    assert_eq!(tray.posted.borrow().len(), 2);
+}
+
+#[test]
+fn a_question_asked_again_posts_only_the_newer_one() {
+    let (tray, n) = setup();
+    let first = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();
+    let mut again = notify(NotifyKind::Waiting);
+    if let ServerMsg::Notify { body, .. } = &mut again {
+        *body = "Edit the file?".into();
+    }
+    let second = n.heard(&again, false, ALL).unwrap();
+    let hosts = [host("lap top", "online", asking(json!([{ "n": 1, "label": "Yes" }])))];
+    // the first one's wait ends first, and is stale by then
+    n.ask(first, &hosts);
+    assert!(tray.posted.borrow().is_empty());
+    n.ask(second, &hosts);
+    let bodies: Vec<_> = tray.posted.borrow().iter().map(|p| p.body.clone()).collect();
+    assert_eq!(bodies, ["Edit the file?"]);
+}
+
+#[test]
 fn a_question_answered_on_the_computer_takes_its_notification_away() {
     let (tray, n) = setup();
     let later = n.heard(&notify(NotifyKind::Waiting), false, ALL).unwrap();

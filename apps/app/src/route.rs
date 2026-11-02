@@ -185,6 +185,17 @@ mod imp {
         Route::Overview
     }
 
+    /// The script that records a route in the page's history (a new entry, or in place).
+    pub(super) fn history_js(r: &Route, replace: bool) -> String {
+        let method = if replace { "replaceState" } else { "pushState" };
+        format!("history.{method}(null, '', {})", serde_json::to_string(&r.href()).unwrap_or_default())
+    }
+
+    /// A move inside the app, in the page's history, so Android's back button steps back through it.
+    pub fn push(r: &Route, replace: bool) {
+        let _ = dioxus::document::eval(&history_js(r, replace));
+    }
+
     pub fn listen(tx: UnboundedSender<Route>) {
         let mut page = dioxus::document::eval(LISTEN);
         let t = tx.clone();
@@ -202,8 +213,7 @@ mod imp {
                 let Some(href) = crate::phone::take_opened() else { continue };
                 let (path, query) = href.split_once('?').unwrap_or((&href, ""));
                 let route = Route::parse(path, query);
-                let js = format!("history.pushState(null, '', {})", serde_json::to_string(&route.href()).unwrap_or_default());
-                let _ = dioxus::document::eval(&js);
+                push(&route, false);
                 let _ = tx.unbounded_send(route);
             }
         });
@@ -211,14 +221,14 @@ mod imp {
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
-pub use imp::{current, listen};
+pub use imp::{current, listen, push};
 
 #[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub fn current() -> Route {
     Route::Overview
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), not(feature = "phone")))]
 pub fn push(_r: &Route, _replace: bool) {}
 
 /// Goes to a route inside the app: a new history entry, and the screen follows.
@@ -254,6 +264,14 @@ mod tests {
         for other in ["/next", "/next/", "/next/settings", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
+    }
+
+    #[cfg(all(not(target_arch = "wasm32"), feature = "phone"))]
+    #[test]
+    fn the_android_page_records_each_move_in_its_history() {
+        let r = Route::Machine { id: "box \"one\"".into() };
+        assert_eq!(imp::history_js(&r, false), r#"history.pushState(null, '', "/next/machines/box%20%22one%22")"#);
+        assert_eq!(imp::history_js(&Route::Overview, true), format!("history.replaceState(null, '', {:?})", Route::Overview.href()));
     }
 
     #[test]
