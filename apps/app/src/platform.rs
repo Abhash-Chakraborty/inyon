@@ -121,6 +121,13 @@ mod imp {
             write(&f, key, value);
         }
 
+        /// [`save`] before the core is installed (the upgrade from the Capacitor app runs then).
+        #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+        pub fn save_in(dir: &std::path::Path, key: &str, value: &str) {
+            let Ok(_held) = LOCK.lock() else { return };
+            write(&dir.join("app.json"), key, value);
+        }
+
         /// Sets one value in the file, made with its folder if need be (the core makes the folder
         /// on its own thread, maybe not yet).
         pub(crate) fn write(f: &std::path::Path, key: &str, value: &str) -> bool {
@@ -135,6 +142,8 @@ mod imp {
         }
     }
 
+    #[cfg(all(feature = "phone", target_os = "android"))]
+    pub use saved::save_in;
     #[cfg(feature = "phone")]
     pub use saved::{load, save};
 
@@ -209,6 +218,8 @@ pub fn ground(theme: &str, night: bool) -> (u8, u8, u8, u8) {
     }
 }
 
+#[cfg(all(feature = "phone", target_os = "android"))]
+pub use imp::save_in;
 pub use imp::{load, save, sleep};
 // Android sets the theme in the page's head instead (android_head)
 #[cfg(not(target_os = "android"))]

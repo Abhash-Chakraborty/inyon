@@ -37,6 +37,9 @@ mod socket;
 mod ssh_bridge;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod state;
+#[cfg(feature = "phone")]
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+mod upgrade;
 // the terminal drives xterm.js, which only the browser build has
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod term;

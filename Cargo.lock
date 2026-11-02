@@ -3385,6 +3385,7 @@ dependencies = [
  "futures-util",
  "gloo-timers",
  "inyon-api",
+ "inyon-backends",
  "inyon-chat-core",
  "inyon-core",
  "inyon-phone",
