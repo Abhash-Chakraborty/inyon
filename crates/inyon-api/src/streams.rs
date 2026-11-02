@@ -21,8 +21,8 @@ use inyon_core::hosts::registry::registry;
 use inyon_core::platform::rt::spawn;
 use inyon_protocol::v2::{split_queue, ORGANIZE, OVERVIEW, PROTOCOL_V2, ZIP_MIN};
 use inyon_protocol::{
-    AssistantBlock, ChatInfo, ChatItem, ChatState, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Organize, Progress, Project, ProjectGroup, QueuedMsg, Rows,
-    ScreenState, ServerMsg, ServerMsg2, SessionMark, Snapshot, Space, StreamPos, Zip,
+    AssistantBlock, ChatInfo, ChatItem, ChatState, DelayedSend, Delta, DraftSource, DraftState, HostState, Keys, LiveItem, Organize, Progress, Project, ProjectGroup, QueuedMsg,
+    Rows, SavedPrompt, ScreenState, ServerMsg, ServerMsg2, SessionMark, SleepRule, Snapshot, Space, StreamPos, Zip,
 };
 use serde_json::Value;
 
@@ -85,7 +85,14 @@ macro_rules! row_by_id {
         }
     )*};
 }
-row_by_id!(SessionMark, Project, ProjectGroup, Space);
+row_by_id!(SessionMark, Project, ProjectGroup, Space, DelayedSend, SavedPrompt);
+
+impl Row for SleepRule {
+    type Key = String;
+    fn key(&self) -> String {
+        self.scope.clone()
+    }
+}
 
 struct Entry<V> {
     v: V,
@@ -342,11 +349,34 @@ struct OrganizeBody {
     projects: Coll<Project>,
     groups: Coll<ProjectGroup>,
     spaces: Coll<Space>,
+    sends: Coll<DelayedSend>,
+    prompts: Coll<SavedPrompt>,
+    sleep: Coll<SleepRule>,
+}
+
+/// A change to each of the organize stream's collections.
+#[derive(Default)]
+struct OrganizeOps {
+    sessions: Ops<SessionMark>,
+    projects: Ops<Project>,
+    groups: Ops<ProjectGroup>,
+    spaces: Ops<Space>,
+    sends: Ops<DelayedSend>,
+    prompts: Ops<SavedPrompt>,
+    sleep: Ops<SleepRule>,
 }
 
 impl OrganizeBody {
     fn new(gone: usize) -> Self {
-        OrganizeBody { sessions: Coll::new(gone), projects: Coll::new(gone), groups: Coll::new(gone), spaces: Coll::new(gone) }
+        OrganizeBody {
+            sessions: Coll::new(gone),
+            projects: Coll::new(gone),
+            groups: Coll::new(gone),
+            spaces: Coll::new(gone),
+            sends: Coll::new(gone),
+            prompts: Coll::new(gone),
+            sleep: Coll::new(gone),
+        }
     }
 
     fn restamp(&mut self, seq: u64) {
@@ -354,6 +384,47 @@ impl OrganizeBody {
         self.projects.restamp(seq);
         self.groups.restamp(seq);
         self.spaces.restamp(seq);
+        self.sends.restamp(seq);
+        self.prompts.restamp(seq);
+        self.sleep.restamp(seq);
+    }
+
+    fn set(&mut self, org: Organize, seq: u64) -> OrganizeOps {
+        OrganizeOps {
+            sessions: self.sessions.set(org.sessions, seq),
+            projects: self.projects.set(org.projects, seq),
+            groups: self.groups.set(org.groups, seq),
+            spaces: self.spaces.set(org.spaces, seq),
+            sends: self.sends.set(org.sends.unwrap_or_default(), seq),
+            prompts: self.prompts.set(org.prompts.unwrap_or_default(), seq),
+            sleep: self.sleep.set(org.sleep.unwrap_or_default(), seq),
+        }
+    }
+
+    /// What changed after `from`, if the stream still remembers that far back.
+    fn since(&self, from: u64) -> Option<OrganizeOps> {
+        Some(OrganizeOps {
+            sessions: self.sessions.since(from)?,
+            projects: self.projects.since(from)?,
+            groups: self.groups.since(from)?,
+            spaces: self.spaces.since(from)?,
+            sends: self.sends.since(from)?,
+            prompts: self.prompts.since(from)?,
+            sleep: self.sleep.since(from)?,
+        })
+    }
+
+    fn rows(&self) -> Rows {
+        Rows {
+            sessions: Some(self.sessions.values().cloned().collect()),
+            projects: Some(self.projects.values().cloned().collect()),
+            groups: Some(self.groups.values().cloned().collect()),
+            spaces: Some(self.spaces.values().cloned().collect()),
+            sends: Some(self.sends.values().cloned().collect()),
+            prompts: Some(self.prompts.values().cloned().collect()),
+            sleep: Some(self.sleep.values().cloned().collect()),
+            ..Rows::default()
+        }
     }
 }
 
@@ -378,6 +449,13 @@ fn put<T>(to: &mut Option<Vec<T>>, more: Vec<T>) {
     }
 }
 
+/// One collection's change, into a delta's parts.
+fn put_ops<V: Row>(remove: &mut Option<Vec<V::Key>>, replace: &mut Option<Vec<V>>, append: &mut Option<Vec<V>>, o: Ops<V>) {
+    put(remove, o.remove);
+    put(replace, o.replace);
+    put(append, o.append);
+}
+
 impl Change {
     fn hosts(&mut self, o: Ops<HostState>) {
         put(&mut self.remove.hosts, o.remove);
@@ -399,19 +477,15 @@ impl Change {
         put(&mut self.replace.queue, o.replace);
         put(&mut self.append.queue, o.append);
     }
-    fn organize(&mut self, s: Ops<SessionMark>, p: Ops<Project>, g: Ops<ProjectGroup>, w: Ops<Space>) {
-        put(&mut self.remove.sessions, s.remove);
-        put(&mut self.replace.sessions, s.replace);
-        put(&mut self.append.sessions, s.append);
-        put(&mut self.remove.projects, p.remove);
-        put(&mut self.replace.projects, p.replace);
-        put(&mut self.append.projects, p.append);
-        put(&mut self.remove.groups, g.remove);
-        put(&mut self.replace.groups, g.replace);
-        put(&mut self.append.groups, g.append);
-        put(&mut self.remove.spaces, w.remove);
-        put(&mut self.replace.spaces, w.replace);
-        put(&mut self.append.spaces, w.append);
+    fn organize(&mut self, o: OrganizeOps) {
+        let (rm, rp, ap) = (&mut self.remove, &mut self.replace, &mut self.append);
+        put_ops(&mut rm.sessions, &mut rp.sessions, &mut ap.sessions, o.sessions);
+        put_ops(&mut rm.projects, &mut rp.projects, &mut ap.projects, o.projects);
+        put_ops(&mut rm.groups, &mut rp.groups, &mut ap.groups, o.groups);
+        put_ops(&mut rm.spaces, &mut rp.spaces, &mut ap.spaces, o.spaces);
+        put_ops(&mut rm.sends, &mut rp.sends, &mut ap.sends, o.sends);
+        put_ops(&mut rm.prompts, &mut rp.prompts, &mut ap.prompts, o.prompts);
+        put_ops(&mut rm.sleep, &mut rp.sleep, &mut ap.sleep, o.sleep);
     }
 
     fn into_delta(self, stream: &str, epoch: u64, from: u64, seq: u64) -> Delta {
@@ -520,7 +594,7 @@ impl Stream {
         let seq = self.seq + 1;
         let Body::Organize(o) = &mut self.body else { return Out::Nothing };
         let mut ch = Change::default();
-        ch.organize(o.sessions.set(org.sessions, seq), o.projects.set(org.projects, seq), o.groups.set(org.groups, seq), o.spaces.set(org.spaces, seq));
+        ch.organize(o.set(org, seq));
         self.commit(ch)
     }
 
@@ -642,16 +716,7 @@ impl Stream {
                 },
                 Some(c.state_since(0)),
             ),
-            Body::Organize(o) => (
-                Rows {
-                    sessions: Some(o.sessions.values().cloned().collect()),
-                    projects: Some(o.projects.values().cloned().collect()),
-                    groups: Some(o.groups.values().cloned().collect()),
-                    spaces: Some(o.spaces.values().cloned().collect()),
-                    ..Rows::default()
-                },
-                None,
-            ),
+            Body::Organize(o) => (o.rows(), None),
         };
         Snapshot { stream: self.name.clone(), epoch: self.epoch, seq: self.seq, rows, state }
     }
@@ -676,13 +741,7 @@ impl Stream {
                 }
                 _ => false,
             },
-            Body::Organize(o) => match (o.sessions.since(at.seq), o.projects.since(at.seq), o.groups.since(at.seq), o.spaces.since(at.seq)) {
-                (Some(s), Some(p), Some(g), Some(w)) => {
-                    ch.organize(s, p, g, w);
-                    true
-                }
-                _ => false,
-            },
+            Body::Organize(o) => o.since(at.seq).map(|ops| ch.organize(ops)).is_some(),
         };
         if !ok {
             return Some(ServerMsg2::Snapshot(self.snapshot()));

@@ -1,4 +1,4 @@
-import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
+import { AGENT_CATALOG, type AgentCatalog, type AgentKind, type ChatItem, type CompanionPairCode, type HeldPrompt, type PairedCompanion, type PageEntry, type PageList, type PageOpen, type PageRegister, type PastConversation, type ProvidersReport, type SessionMark, type SleepRule, type DelayedSend, type SlashCommand, type ToolResultMeta } from '@inyon/protocol'
 import { hubOrigin } from './hub.ts'
 import { isPhone, phone } from './phone.ts'
 import { checkPlain, hubToken, isHubHost, splitHostId, type PairedHub } from './hubs.ts'
@@ -103,6 +103,7 @@ export interface SessionPatch {
   snoozeNotice?: boolean | null
   tags?: string[] | null
   note?: string | null
+  closeWhenDone?: boolean
 }
 
 export interface UploadUsage {
@@ -379,6 +380,14 @@ export const api = {
   rename: (host: string, pane: string, name: string) => request('PUT', `${panePath(host, pane)}/name`, { name }),
   /** pins, parks, snoozes, tags or notes a session (from 0.24); null clears a field, and the answer is the mark after it */
   organize: (host: string, pane: string, patch: SessionPatch) => request<{ session: SessionMark | null }>('PATCH', `${panePath(host, pane)}/organize`, patch),
+  /** a message the hub sends at `at` (unix ms), once the agent is free then */
+  /** `conv`: the conversation it's for, when it's put back (Undo); else the pane's own. */
+  sendLater: (host: string, pane: string, text: string, at: number, conv?: string) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, { text, at, ...(conv && { conv }) }),
+  /** A waiting message goes now: off the schedule and into the held queue in one step. */
+  sendNow: (host: string, id: string) => request<{ pane: string }>('POST', `${h(host)}/sends/${encodeURIComponent(id)}/now`),
+  cancelSend: (host: string, id: string) => request('DELETE', `${h(host)}/sends/${encodeURIComponent(id)}`),
+  /** puts this hub's idle agents to sleep after `minutes`; null turns it off */
+  setSleep: (minutes: number | null, scope = 'all') => request<SleepRule[]>('PUT', '/api/organize/sleep', { scope, minutes }),
   /** renames the tmux session itself (`session` is tmux's id, `$52`); answers the name tmux took (from 0.22) */
   renameTmuxSession: (host: string, session: string, name: string) =>
     request<{ name: string }>('PUT', `${h(host)}/sessions/${encodeURIComponent(session.replace(/^\$/, ''))}/name`, { name }),

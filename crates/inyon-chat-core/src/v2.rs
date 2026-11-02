@@ -305,6 +305,9 @@ impl Organize2 {
                     projects: r.projects.clone().unwrap_or_default(),
                     groups: r.groups.clone().unwrap_or_default(),
                     spaces: r.spaces.clone().unwrap_or_default(),
+                    sends: r.sends.clone().filter(|l| !l.is_empty()),
+                    prompts: r.prompts.clone().filter(|l| !l.is_empty()),
+                    sleep: r.sleep.clone().filter(|l| !l.is_empty()),
                 };
                 changed = true;
             }
@@ -316,12 +319,23 @@ impl Organize2 {
                 changed |= patch_rows(&mut org.projects, |p| p.id.clone(), rm.projects.as_deref(), rp.projects.as_deref(), ap.projects.as_deref());
                 changed |= patch_rows(&mut org.groups, |g| g.id.clone(), rm.groups.as_deref(), rp.groups.as_deref(), ap.groups.as_deref());
                 changed |= patch_rows(&mut org.spaces, |s| s.id.clone(), rm.spaces.as_deref(), rp.spaces.as_deref(), ap.spaces.as_deref());
+                changed |= patch_opt(&mut org.sends, |s| s.id.clone(), rm.sends.as_deref(), rp.sends.as_deref(), ap.sends.as_deref());
+                changed |= patch_opt(&mut org.prompts, |q| q.id.clone(), rm.prompts.as_deref(), rp.prompts.as_deref(), ap.prompts.as_deref());
+                changed |= patch_opt(&mut org.sleep, |r| r.scope.clone(), rm.sleep.as_deref(), rp.sleep.as_deref(), ap.sleep.as_deref());
             }
             _ => {}
         });
         let resync = resync.then(|| ClientMsg2::Sub { stream: inyon_protocol::v2::ORGANIZE.to_owned(), at: self.cursor.at() });
         (changed.then(|| self.org.clone()), resync)
     }
+}
+
+/// [`patch_rows`] on a list the record leaves out while it's empty.
+fn patch_opt<T: Clone>(rows: &mut Option<Vec<T>>, key: impl Fn(&T) -> String, remove: Option<&[String]>, replace: Option<&[T]>, append: Option<&[T]>) -> bool {
+    let mut list = rows.take().unwrap_or_default();
+    let changed = patch_rows(&mut list, key, remove, replace, append);
+    *rows = (!list.is_empty()).then_some(list);
+    changed
 }
 
 #[cfg(test)]

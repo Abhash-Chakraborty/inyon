@@ -333,7 +333,7 @@ async fn temp_delete(mut r: Req) -> HubResult<Resp> {
 pub fn overview(catalog: u32) -> Resp {
     let hosts = registry().overview();
     inyon_core::features::organize::reconcile(&hosts);
-    ok_json(&json!({ "hosts": inyon_protocol::compat::hosts_for(&hosts, catalog), "organize": inyon_core::features::organize::get() }))
+    ok_json(&json!({ "hosts": inyon_protocol::compat::hosts_for(&hosts, catalog), "organize": inyon_core::features::organize::for_overview() }))
 }
 
 pub fn add(routes: &mut Routes) {

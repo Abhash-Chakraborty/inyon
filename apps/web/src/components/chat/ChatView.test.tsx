@@ -263,6 +263,18 @@ describe('ChatView', () => {
     expect(screen.getByText('No agent is running in this pane')).toBeTruthy()
   })
 
+  test('a message waiting to go still shows, with its buttons, when no agent is running', async () => {
+    const sends = [{ id: 'd-1', host: 'box', pane: '%1', text: 'run the tests', at: Date.now() + 3600_000 }]
+    act(() => emit({ t: 'overview', hosts: [host('box')], organize: { v: 2, sessions: [], projects: [], groups: [], spaces: [], sends } }))
+    useStore.setState({ connected: true })
+    render(view())
+    load([], chatInfo({ running: false }))
+    expect(screen.getByText('No agent is running in this pane')).toBeTruthy()
+    expect(screen.getByText(/^Sends at /)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    act(() => emit({ t: 'overview', hosts: [] }))
+  })
+
   test('before the conversation arrives: lines in its shape, and the catch-up percentage on the label', async () => {
     useStore.setState({ connected: true, hosts: [host('box')] })
     const { container } = render(view())
