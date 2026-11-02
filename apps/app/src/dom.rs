@@ -64,13 +64,6 @@ mod imp {
         (!id.is_empty()).then_some(id)
     }
 
-    /// Loads another page in place of this one (no history entry).
-    pub fn go(href: &str) {
-        if let Some(w) = web_sys::window() {
-            let _ = w.location().replace(href);
-        }
-    }
-
     pub fn set_title(t: &str) {
         if let Some(d) = web_sys::window().and_then(|w| w.document()) {
             d.set_title(t);
@@ -85,6 +78,17 @@ mod imp {
     pub async fn copy(text: &str) -> bool {
         let Some(nav) = web_sys::window().map(|w| w.navigator()) else { return false };
         wasm_bindgen_futures::JsFuture::from(nav.clipboard().write_text(text)).await.is_ok()
+    }
+
+    /// The clipboard's text, when the browser lets the page read it.
+    pub async fn paste() -> Option<String> {
+        let nav = web_sys::window()?.navigator();
+        wasm_bindgen_futures::JsFuture::from(nav.clipboard().read_text()).await.ok()?.as_string()
+    }
+
+    /// The page is on screen (not a background tab or a phone app in the background).
+    pub fn visible() -> bool {
+        web_sys::window().and_then(|w| w.document()).is_none_or(|d| d.visibility_state() != web_sys::VisibilityState::Hidden)
     }
 
     /// A short random id (a send's request id, a terminal's).
@@ -112,13 +116,20 @@ mod imp {
     pub fn active_id() -> Option<String> {
         None
     }
-    pub fn go(_href: &str) {}
     pub fn set_title(_t: &str) {}
     pub fn coarse() -> bool {
         false
     }
     pub async fn copy(_text: &str) -> bool {
         false
+    }
+    // the terminal's paste, which only the browser build has
+    #[allow(dead_code)]
+    pub async fn paste() -> Option<String> {
+        None
+    }
+    pub fn visible() -> bool {
+        true
     }
     pub fn random_id() -> String {
         use std::sync::atomic::{AtomicU64, Ordering};

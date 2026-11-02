@@ -2,7 +2,8 @@
 // stand-in hub: the page under the hub's own CSP for /next, the sign-in endpoints, the pane actions
 // and the /ws2 streams (protocol v2), fed made-up data (demo.ts). Signs in, checks the Overview and
 // a session's screen at phone and desktop sizes in light and dark, answers a waiting agent from a
-// card and from the chat, sends a message, loads older messages, folds a machine, rides out a
+// card and from the chat, sends a message, loads older messages, opens the terminal (typing, an IME,
+// the key bar, its menu, resting while hidden, closing, reconnecting), folds a machine, rides out a
 // dropped socket, and saves a screenshot of each size and theme to $SHOTS (default: a temp folder).
 // CHROME=/path/to/chrome uses a browser other than Playwright's own.
 import { mkdirSync } from 'node:fs'
@@ -23,7 +24,7 @@ const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs'
 const NEXT_CSP = /pub const NEXT_CSP: &str = "([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
-const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[] }
+const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0 }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
 
@@ -135,7 +136,12 @@ const server = Bun.serve({
         const c = streams.get(msg.stream)
         const seq = msg.stream === 'overview' ? 1 : (c?.seq ?? 1)
         if (msg.at?.epoch === EPOCH && msg.at.seq === seq) ws.send(JSON.stringify({ t: 'delta', stream: msg.stream, epoch: EPOCH, from: seq, seq }))
-        else ws.send(JSON.stringify(snapshot(msg.stream)))
+        else {
+          // `slow` holds the lists back, as a hub that's slow to answer would
+          const send = () => ws.send(JSON.stringify(snapshot(msg.stream)))
+          if (state.slow) setTimeout(send, state.slow)
+          else send()
+        }
       }
       if (msg.t === 'unsub') ws.data.subs.delete(msg.stream)
       if (msg.t === 'more') {
@@ -145,10 +151,51 @@ const server = Bun.serve({
       }
       if (msg.t === 'draft') state.drafts.push(msg)
       if (msg.t === 'ping') ws.send(JSON.stringify({ t: 'pong' }))
+      if (msg.t.startsWith('term.')) terminal(ws, msg)
     },
   },
 })
 const base = `http://127.0.0.1:${server.port}`
+
+// the pane's tmux window, as the hub streams it: a shell that echoes what's typed, prints a prompt
+// on Enter, and lets go when `exit` is typed
+const PROMPT = '\x1b[1mstorefront\x1b[0m on \x1b[32mmain\x1b[0m $ '
+const lines = new Map<string, string>()
+function terminal(ws: Socket, msg: { t: string; id: string; d?: string }) {
+  const data = (d: string) => ws.send(JSON.stringify({ t: 'term.data', id: msg.id, d }))
+  if (msg.t === 'term.open') {
+    lines.set(msg.id, '')
+    data('Last login: Fri Oct 31 18:02 on ttys002\r\n\x1b[34msrc\x1b[0m  \x1b[34mtests\x1b[0m  package.json  README.md  bun.lock\r\n' + PROMPT)
+  }
+  if (msg.t === 'term.in' && lines.has(msg.id)) {
+    for (const c of msg.d ?? '') {
+      if (c === '\r') {
+        if (lines.get(msg.id) === 'exit') {
+          lines.delete(msg.id)
+          return ws.send(JSON.stringify({ t: 'term.exit', id: msg.id, reason: 'The pane closed' }))
+        }
+        lines.set(msg.id, '')
+        data('\r\n' + PROMPT)
+      } else if (c >= ' ') {
+        lines.set(msg.id, lines.get(msg.id) + c)
+        data(c)
+      }
+    }
+  }
+  if (msg.t === 'term.close') lines.delete(msg.id)
+}
+type Frame = { t: string; [k: string]: unknown }
+/** What the app has sent lately, for a failed check to show. */
+const trail = () => JSON.stringify((state.frames.slice(-24) as Frame[]).filter((f) => f.t !== 'ping').map((f) => `${f.t} ${f.id ?? f.stream ?? ''}`))
+/** The app's messages of one kind from the `from`th on, once there are `n` of them. */
+async function frames(t: string, n = 1, from = 0, ms = 8000): Promise<Frame[]> {
+  const end = Date.now() + ms
+  for (;;) {
+    const got = (state.frames.slice(from) as Frame[]).filter((f) => f.t === t)
+    if (got.length >= n || Date.now() > end) return got
+    await Bun.sleep(50)
+  }
+}
 
 const problems: string[] = []
 const check = (ok: unknown, what: string) => {
@@ -266,7 +313,7 @@ try {
       check(await page.getByRole('button', { name: 'Queue follow-up' }).count() + (await page.getByRole('button', { name: 'Stop' }).count()) === 1, `${label}: one send/stop button`)
       check(await page.locator('.composer-controls').filter({ hasText: 'Sonnet 5.5 · medium' }).isVisible(), `${label}: the model and effort under the box`)
       check(phone === (await page.getByRole('link', { name: 'Back' }).isVisible()), `${label}: a back link on phones only`)
-      check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/m/local/p/11?view=terminal', `${label}: the terminal opens in the web app`)
+      check((await page.getByRole('link', { name: /Terminal/ }).getAttribute('href')) === '/next/m/local/p/11?view=terminal', `${label}: the terminal opens in this app`)
       // only the rows near the screen are in the page
       const drawn = await page.locator('.vrow').count()
       check(drawn > 3 && drawn < 40, `${label}: ${drawn} of 64 rows drawn`)
@@ -378,6 +425,193 @@ try {
     await ctx.close()
   }
 
+  // ---- a session's terminal: typing, IME, the key bar, the menu, resting, closing, reconnecting ----
+  {
+    resetChats()
+    state.frames = []
+    const ctx = await browser.newContext({ ...devices['iPhone 13'], colorScheme: 'light', reducedMotion: 'reduce' })
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.clock.install()
+    // an agent's pane waits to learn what runs in it, rather than opening a terminal its chat replaces
+    state.slow = 1500
+    await page.goto(`${base}/next/m/local/p/11`)
+    await page.getByRole('link', { name: 'Terminal' }).waitFor()
+    state.slow = 0
+    check(!(state.frames as Frame[]).some((f) => f.t.startsWith('term.')), `terminal: a chat pane opens no terminal while it loads (${trail()})`)
+    // the header's Terminal, from the chat
+    await page.getByRole('link', { name: 'Terminal' }).click()
+    await page.waitForURL(/\/next\/m\/local\/p\/11\?view=terminal$/)
+    const [open] = await frames('term.open')
+    check(open?.host === 'local' && open.pane === '%11' && Number(open.cols) >= 30 && Number(open.rows) >= 10, `terminal: opened ${JSON.stringify(open)}`)
+    const id = String(open?.id)
+    await page.locator('.xterm').waitFor()
+    const renderer = await page.locator('#term-screen').getAttribute('data-renderer')
+    check(renderer === 'webgl' || renderer === 'dom', `terminal: drawn by ${renderer}`)
+    check(await page.getByRole('toolbar', { name: 'Keys' }).isVisible(), 'terminal: the key bar shows on a phone')
+    check(await page.getByRole('button', { name: 'Keyboard' }).isVisible(), 'terminal: a phone gets the keyboard key')
+    await page.waitForTimeout(400)
+    await layout(page, 'terminal 390 light')
+    await page.screenshot({ path: path.join(shots, 'terminal-390-light.png') })
+
+    // typing: a tap brings the keyboard up, keys go to tmux one by one
+    let at = state.frames.length
+    await page.locator('#term-screen').click()
+    await page.keyboard.type('ls')
+    await page.keyboard.press('Enter')
+    const typed = (await frames('term.in', 3, at)).map((f) => f.d).join('')
+    check(typed === 'ls\r', `terminal: typed ${JSON.stringify(typed)}`)
+    check((await frames('term.in', 1, at)).every((f) => f.id === id), `terminal: typing goes to its own terminal (${trail()})`)
+
+    // an IME: nothing goes while composing, the chosen text goes once it's committed
+    at = state.frames.length
+    const cdp = await ctx.newCDPSession(page)
+    await cdp.send('Input.imeSetComposition', { text: 'にほん', selectionStart: 3, selectionEnd: 3 })
+    await page.waitForTimeout(200)
+    check(!(await frames('term.in', 1, at, 300)).length, 'terminal: nothing is sent while composing')
+    await cdp.send('Input.insertText', { text: '日本' })
+    const ime = (await frames('term.in', 1, at)).map((f) => f.d).join('')
+    check(ime === '日本', `terminal: IME committed ${JSON.stringify(ime)}`)
+    await page.keyboard.insertText('語')
+    check((await frames('term.in', 2, at)).at(-1)?.d === '語', 'terminal: inserted text goes as typed')
+
+    // the key bar: sticky Ctrl for the next key, then up again; keys a phone lacks
+    at = state.frames.length
+    const ctrl = page.getByRole('button', { name: 'Ctrl (for the next key)' })
+    await ctrl.click()
+    check((await ctrl.getAttribute('aria-pressed')) === 'true', 'terminal: Ctrl stays down')
+    await page.keyboard.type('c')
+    await page.getByRole('button', { name: 'Escape' }).click()
+    await page.getByRole('button', { name: 'Up', exact: true }).click()
+    const keys = (await frames('term.in', 3, at)).map((f) => f.d)
+    check(JSON.stringify(keys) === JSON.stringify(['\x03', '\x1b', '\x1b[A']), `terminal: key bar sent ${JSON.stringify(keys)}`)
+    check((await ctrl.getAttribute('aria-pressed')) === 'false', 'terminal: Ctrl lets go after one key')
+
+    // larger text: fewer columns, told to tmux, and kept for next time (the web app's setting)
+    at = state.frames.length
+    await page.getByRole('button', { name: 'Larger text' }).click()
+    const [bigger] = await frames('term.resize', 1, at)
+    check(bigger?.id === id && Number(bigger.cols) < Number(open?.cols), `terminal: larger text resized to ${JSON.stringify(bigger)}`)
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('inyon.settings.v2') ?? '{}').termFontSize)
+    check(saved === 14, `terminal: text size saved as ${saved}`)
+
+    // the right-click menu: Paste and Select all, and Copy once something is selected
+    const screen = page.locator('#term-screen')
+    await screen.click({ button: 'right' })
+    const items = async () => (await page.getByRole('menuitem').allTextContents()).map((t) => t.trim())
+    check(JSON.stringify(await items()) === JSON.stringify(['Paste', 'Select all']), `terminal menu: ${JSON.stringify(await items())}`)
+    await page.getByRole('menuitem', { name: 'Select all' }).click()
+    await screen.click({ button: 'right' })
+    check((await items())[0] === 'Copy', `terminal menu with a selection: ${JSON.stringify(await items())}`)
+    await page.getByRole('menuitem', { name: 'Copy' }).click()
+    const copied = await page.evaluate(() => navigator.clipboard.readText())
+    check(copied.includes('storefront on main $ ls'), `terminal: copied ${JSON.stringify(copied.slice(0, 80))}`)
+    await page.evaluate(() => navigator.clipboard.writeText('echo pasted'))
+    at = state.frames.length
+    await screen.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Paste' }).click()
+    const pasted = (await frames('term.in', 1, at)).map((f) => f.d).join('')
+    check(pasted === 'echo pasted', `terminal: pasted ${JSON.stringify(pasted)}`)
+    await page.screenshot({ path: path.join(shots, 'terminal-390-light-typed.png') })
+
+    // nobody watching: after a while hidden it lets go of the window (so it rests at 200×50), and
+    // takes it back when the page is shown
+    const visibility = (v: string) =>
+      page.evaluate((v) => {
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => v })
+        document.dispatchEvent(new Event('visibilitychange'))
+      }, v)
+    at = state.frames.length
+    await visibility('hidden')
+    await page.clock.fastForward(5_000)
+    check(!(await frames('term.close', 1, at, 300)).length, 'terminal: a short look away keeps the window')
+    await page.clock.fastForward(11_000)
+    const [rested] = await frames('term.close', 1, at)
+    check(rested?.id === id, `terminal: let go while hidden ${JSON.stringify(rested)}`)
+    await visibility('visible')
+    const [back] = await frames('term.open', 1, at)
+    check(!!back && back.id !== id && back.pane === '%11', `terminal: opened again when shown ${JSON.stringify(back)}`)
+
+    // tmux lets go: it says so, and Reconnect opens it again
+    at = state.frames.length
+    await page.keyboard.type('exit')
+    await page.keyboard.press('Enter')
+    await page.getByText('The pane closed').waitFor()
+    await page.screenshot({ path: path.join(shots, 'terminal-390-light-closed.png') })
+    await page.getByRole('button', { name: 'Reconnect' }).click()
+    check((await frames('term.open', 1, at)).length === 1, 'terminal: Reconnect opens it again')
+
+    // the hub restarting: the socket comes back and the terminal opens on it again
+    at = state.frames.length
+    for (const ws of sockets) ws.close()
+    const [again] = await frames('term.open', 1, at, 15_000)
+    check(!!again, 'terminal: open again after the socket came back')
+
+    // back to the chat: the terminal lets go
+    at = state.frames.length
+    await page.getByRole('link', { name: 'Chat' }).click()
+    await page.waitForURL(/\/next\/m\/local\/p\/11$/)
+    check((await frames('term.close', 1, at)).length === 1, 'terminal: closed when the chat shows')
+    await ctx.close()
+  }
+
+  // ---- the terminal at each size and theme; a window resized; the drawing without WebGL ----
+  for (const [w, h] of [[390, 844], [1440, 900]] as const) {
+    for (const scheme of ['dark', 'light'] as const) {
+      if (w === 390 && scheme === 'light') continue
+      const phone = w < 600
+      const ctx = await browser.newContext({ ...(phone ? devices['iPhone 13'] : {}), viewport: { width: w, height: h }, colorScheme: scheme, reducedMotion: 'reduce' })
+      const page = await ctx.newPage()
+      watch(page)
+      const at = state.frames.length
+      // a slow hub: the terminal opens before the session learns its agent and puts its skin on
+      if (phone) state.slow = 1200
+      await page.goto(`${base}/next/m/local/p/11?view=terminal`)
+      const [open] = await frames('term.open', 1, at)
+      await page.locator('.xterm').waitFor()
+      await page.locator('.session.skin-claude').waitFor()
+      state.slow = 0
+      await page.waitForTimeout(400)
+      const label = `terminal ${w} ${scheme}`
+      const ground = await page.evaluate(() => {
+        const bg = (s: string) => getComputedStyle(document.querySelector(s) as Element).backgroundColor
+        return { session: bg('.session'), grid: bg('.xterm-scrollable-element'), viewport: bg('.xterm-viewport') }
+      })
+      check(ground.grid === ground.session, `${label}: the grid takes the session's skin ${JSON.stringify(ground)}`)
+      check(ground.viewport === 'rgba(0, 0, 0, 0)', `${label}: nothing paints under the last row ${JSON.stringify(ground)}`)
+      check(!!open, `${label}: opened`)
+      check(phone === (await page.getByRole('button', { name: 'Keyboard' }).isVisible()), `${label}: the keyboard key only on a phone`)
+      await layout(page, label)
+      await page.screenshot({ path: path.join(shots, `terminal-${w}-${scheme}.png`) })
+      if (!phone && scheme === 'light') {
+        const from = state.frames.length
+        await page.setViewportSize({ width: 1000, height: 700 })
+        await frames('term.resize', 1, from)
+        await page.waitForTimeout(500)
+        const r = (await frames('term.resize', 1, from)).at(-1)
+        check(!!r && Number(r.cols) < Number(open?.cols) && Number(r.rows) < Number(open?.rows), `${label}: a smaller window resized to ${JSON.stringify(r)} from ${open?.cols}x${open?.rows}`)
+      }
+      await ctx.close()
+    }
+  }
+  {
+    // without WebGL the page draws the text itself, so what tmux sent can be read back
+    const plain = await chromium.launch({ ...(process.env.CHROME ? { executablePath: process.env.CHROME } : {}), args: ['--disable-webgl', '--disable-3d-apis'] })
+    const ctx = await plain.newContext({ viewport: { width: 1024, height: 700 }, colorScheme: 'light', reducedMotion: 'reduce' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/m/local/p/11?view=terminal`)
+    await page.locator('.xterm-rows').waitFor()
+    await page.keyboard.type('pwd')
+    await page.waitForFunction(() => document.querySelector('.xterm-rows')?.textContent?.includes('storefront on main $ pwd'), null, { timeout: 8000 }).catch(() => {})
+    const text = (await page.locator('.xterm-rows').textContent()) ?? ''
+    check((await page.locator('#term-screen').getAttribute('data-renderer')) === 'dom', 'terminal without WebGL: drawn by the page')
+    check(text.includes('Last login') && text.includes('storefront on main $ pwd'), `terminal without WebGL: shows ${JSON.stringify(text.slice(0, 120))} (${trail()})`)
+    await ctx.close()
+    await plain.close()
+  }
+
   // ---- answering, folding, a dropped socket ----
   resetChats()
   state.answers = []
@@ -430,4 +664,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, filtering, folding, reconnecting; screenshots in ${shots}`)
+console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, the terminal, filtering, folding, reconnecting; screenshots in ${shots}`)

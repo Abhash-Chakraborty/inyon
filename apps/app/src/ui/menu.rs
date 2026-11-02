@@ -1,5 +1,5 @@
 //! Right-click menus (ui/ContextMenu.tsx): a right click, or a long press on a phone, on a message,
-//! a code block or a reply opens a short list of what can be done with it. One menu at a time, drawn
+//! a code block, a reply or the terminal opens a short list of what can be done with it. One menu at a time, drawn
 //! over everything by [`MenuLayer`]; ↑/↓ move, Enter picks, Esc closes.
 
 use dioxus::prelude::*;
@@ -24,6 +24,8 @@ pub enum Action {
         key: String,
         id: String,
     },
+    /// copy, paste or select in the terminal on screen
+    Term(crate::term::MenuOp),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +60,22 @@ pub fn open(items: Vec<Item>) -> impl FnMut(Event<MouseData>) + 'static {
         e.stop_propagation();
         let p = e.client_coordinates();
         menu.set(Some(Menu { x: p.x, y: p.y, items: items.clone() }));
+    }
+}
+
+/// An `oncontextmenu` handler for a menu whose items depend on the moment it opens (the
+/// terminal's Copy, there only while text is selected).
+pub fn open_with(items: impl Fn() -> Vec<Item> + 'static) -> impl FnMut(Event<MouseData>) + 'static {
+    let mut menu = use_context::<Signal<Option<Menu>>>();
+    move |e: Event<MouseData>| {
+        let items = items();
+        if items.is_empty() {
+            return;
+        }
+        e.prevent_default();
+        e.stop_propagation();
+        let p = e.client_coordinates();
+        menu.set(Some(Menu { x: p.x, y: p.y, items }));
     }
 }
 
@@ -138,6 +156,7 @@ fn run(action: Action, chats: Signal<crate::state::Chats>) {
         }
         Action::Retry { host, pane, id, text } => super::composer::retry(chats, host, pane, id, text),
         Action::Dismiss { key, id } => super::composer::dismiss(chats, &key, &id),
+        Action::Term(op) => crate::term::menu(op),
     }
 }
 

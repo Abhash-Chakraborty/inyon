@@ -2,17 +2,20 @@
 //! (App.tsx), under the `/next` base path while both apps run side by side. Links are plain hrefs;
 //! a click on one inside the app changes the route without loading the page again.
 
+use inyon_chat_core::overview::PaneView;
+
 /// The page base path the hub serves this app under (Dioxus.toml's `base_path`).
 pub const BASE: &str = "/next";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     Overview,
-    /// a session; `terminal` when `?view=terminal` asks for its terminal instead of its chat
+    /// a session; `view` when `?view=chat` or `?view=terminal` asks for one, otherwise the pane's
+    /// own (its chat, or its terminal for a plain shell or an agent that stays in its terminal)
     Session {
         host: String,
         pane: String,
-        terminal: bool,
+        view: Option<PaneView>,
     },
 }
 
@@ -44,8 +47,12 @@ impl Route {
             let slug = decode(pane);
             // pane ids travel without their "%" (api.ts paneFromSlug)
             let pane = if slug.starts_with('%') { slug } else { format!("%{slug}") };
-            let terminal = query.trim_start_matches('?').split('&').any(|kv| kv == "view=terminal");
-            return Route::Session { host, pane, terminal };
+            let view = query.trim_start_matches('?').split('&').find_map(|kv| match kv {
+                "view=terminal" => Some(PaneView::Terminal),
+                "view=chat" => Some(PaneView::Chat),
+                _ => None,
+            });
+            return Route::Session { host, pane, view };
         }
         Route::Overview
     }
@@ -54,10 +61,7 @@ impl Route {
     pub fn href(&self) -> String {
         match self {
             Route::Overview => format!("{BASE}/"),
-            Route::Session { host, pane, terminal } => {
-                let view = if *terminal { Some(inyon_chat_core::overview::PaneView::Terminal) } else { None };
-                format!("{BASE}{}", inyon_chat_core::overview::pane_href(host, pane, view))
-            }
+            Route::Session { host, pane, view } => format!("{BASE}{}", inyon_chat_core::overview::pane_href(host, pane, *view)),
         }
     }
 }
@@ -134,7 +138,7 @@ mod tests {
     use super::*;
 
     fn session(host: &str, pane: &str, terminal: bool) -> Route {
-        Route::Session { host: host.into(), pane: pane.into(), terminal }
+        Route::Session { host: host.into(), pane: pane.into(), view: terminal.then_some(PaneView::Terminal) }
     }
 
     #[test]
@@ -143,6 +147,8 @@ mod tests {
         assert_eq!(Route::parse("/m/box/p/12", "?view=terminal"), session("box", "%12", true));
         assert_eq!(Route::parse("/next/m/hub%3Ah1%2Flaptop/p/%253", ""), session("hub:h1/laptop", "%3", false));
         assert_eq!(Route::parse("/next/m/box%20one/p/7/", "?a=1&view=terminal"), session("box one", "%7", true));
+        // a terminal-first agent's chat is asked for by name
+        assert_eq!(Route::parse("/next/m/box/p/4", "?view=chat"), Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) });
         for other in ["/next", "/next/", "/next/machines", "/next/m/box", "/nextcloud/m/a/p/1"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
@@ -150,7 +156,8 @@ mod tests {
 
     #[test]
     fn hrefs_go_back_to_the_same_route() {
-        for r in [Route::Overview, session("box 1", "%12", false), session("hub:h1/laptop", "%3", true)] {
+        let chat = Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) };
+        for r in [Route::Overview, session("box 1", "%12", false), session("hub:h1/laptop", "%3", true), chat] {
             let href = r.href();
             assert!(href.starts_with("/next/"), "{href}");
             assert_eq!(internal(&href), Some(r));
