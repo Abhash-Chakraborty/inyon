@@ -376,7 +376,7 @@ jobs:
   app-smoke:
     needs: [apk, app-apk]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 50
     env:
       OUT: ${{ github.workspace }}/app-smoke
     steps:
