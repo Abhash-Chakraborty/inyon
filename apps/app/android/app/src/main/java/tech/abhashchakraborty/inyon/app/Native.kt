@@ -11,6 +11,7 @@ import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import tech.abhashchakraborty.inyon.device.AnswerService
 import tech.abhashchakraborty.inyon.device.Choice
 import tech.abhashchakraborty.inyon.device.DeviceEvents
 import tech.abhashchakraborty.inyon.device.KeepAliveService
@@ -99,6 +100,8 @@ object Native {
     @JvmStatic
     fun postNotification(json: String): Boolean {
         val n = JSONObject(json)
+        // a session's notification replaced: an answer sent from it went, or failed and says why
+        if (n.has("tag")) AnswerService.settled(n.optString("tag"))
         val choices = mutableListOf<Choice>()
         n.optJSONArray("options")?.let { o ->
             for (i in 0 until o.length()) {
@@ -112,7 +115,10 @@ object Native {
     }
 
     @JvmStatic
-    fun clearNotification(tag: String) = Notifications.clear(app, tag)
+    fun clearNotification(tag: String) {
+        Notifications.clear(app, tag)
+        AnswerService.settled(tag)
+    }
 
     /** Starts Stay connected; null when it's running, or why Android refused. */
     @JvmStatic
