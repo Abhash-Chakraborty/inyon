@@ -1,5 +1,6 @@
 //! Where the app is: the Overview, a session at `/m/<machine>/p/<pane>`, the machines at
-//! `/machines`, one machine at `/machines/<id>` and the pages at `/pages[/<machine>/<slug>]`, as the web app routes them (App.tsx), under the
+//! `/machines`, one machine at `/machines/<id>`, the pages at `/pages[/<machine>/<slug>]`, Settings at
+//! `/settings` and the temp files at `/temp[/<machine>]`, as the web app routes them (App.tsx), under the
 //! `/next` base path while both apps run side by side. Links are plain hrefs;
 //! a click on one inside the app changes the route without loading the page again.
 
@@ -28,6 +29,11 @@ pub enum Route {
     /// the pages, with one open (`/pages/<machine>/<slug>`)
     Pages {
         page: Option<(String, String)>,
+    },
+    Settings,
+    /// a machine's temp files (`/temp/<machine>`), or the first online machine's (`/temp`)
+    Temp {
+        host: Option<String>,
     },
 }
 
@@ -71,6 +77,9 @@ impl Route {
             ["machines", id] => Route::Machine { id: decode(id) },
             ["pages"] => Route::Pages { page: None },
             ["pages", host, slug] => Route::Pages { page: Some((decode(host), decode(slug))) },
+            ["settings"] => Route::Settings,
+            ["temp"] => Route::Temp { host: None },
+            ["temp", host] => Route::Temp { host: Some(decode(host)) },
             _ => Route::Overview,
         }
     }
@@ -86,6 +95,9 @@ impl Route {
             Route::Pages { page: Some((host, slug)) } => {
                 format!("{BASE}/pages/{}/{}", inyon_chat_core::js::encode_uri_component(host), inyon_chat_core::js::encode_uri_component(slug))
             }
+            Route::Settings => format!("{BASE}/settings"),
+            Route::Temp { host: None } => format!("{BASE}/temp"),
+            Route::Temp { host: Some(h) } => format!("{BASE}/temp/{}", inyon_chat_core::js::encode_uri_component(h)),
         }
     }
 }
@@ -96,6 +108,7 @@ pub fn internal(href: &str) -> Option<Route> {
     if !(path.is_empty() || path.starts_with('/')) {
         return None;
     }
+    let path = path.split_once('#').map_or(path, |(p, _)| p);
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
     Some(Route::parse(path, query))
 }
@@ -261,7 +274,7 @@ mod tests {
         assert_eq!(Route::parse("/next/m/box%20one/p/7/", "?a=1&view=terminal"), session("box one", "%7", true));
         // a terminal-first agent's chat is asked for by name
         assert_eq!(Route::parse("/next/m/box/p/4", "?view=chat"), Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) });
-        for other in ["/next", "/next/", "/next/settings", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
+        for other in ["/next", "/next/", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
     }
@@ -303,12 +316,17 @@ mod tests {
             Route::Machine { id: "a/b c".into() },
             Route::Pages { page: None },
             Route::Pages { page: Some(("hub:h1/local".into(), "plan".into())) },
+            Route::Settings,
+            Route::Temp { host: None },
+            Route::Temp { host: Some("hub:h1/box".into()) },
         ] {
             let href = r.href();
             assert!(href.starts_with("/next/"), "{href}");
             assert_eq!(internal(&href), Some(r));
         }
         assert_eq!(session("box", "%12", true).href(), "/next/m/box/p/12?view=terminal");
+        // a section of Settings is the same screen, scrolled to it
+        assert_eq!(internal("/next/settings#notifications"), Some(Route::Settings));
         // links out of the app load their page
         assert_eq!(internal("/machines"), None);
         assert_eq!(internal("/nextcloud"), None);

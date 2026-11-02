@@ -52,26 +52,35 @@ mod imp {
         }
     }
 
+    fn apply(mq: &web_sys::MediaQueryList) {
+        let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) else { return };
+        let t = resolved(mq);
+        let _ = root.set_attribute("data-theme", t);
+        if let Some(el) = root.dyn_ref::<web_sys::HtmlElement>() {
+            let _ = el.style().set_property("background", if t == "dark" { "#1b1a18" } else { "#e9e8e4" });
+        }
+        // pages in their frames follow the app's theme
+        crate::dom::post_theme_all();
+    }
+
+    fn dark_query() -> Option<web_sys::MediaQueryList> {
+        web_sys::window()?.match_media("(prefers-color-scheme: dark)").ok().flatten()
+    }
+
+    /// Puts the saved theme on the page now (after Settings changed it).
+    pub fn apply_theme() {
+        if let Some(mq) = dark_query() {
+            apply(&mq);
+        }
+    }
+
     /// /theme.js (shared with the web app) sets the theme before the first paint; this keeps it in
     /// step when the system switches between light and dark.
     pub fn follow_theme() {
-        let Some(win) = web_sys::window() else { return };
-        let Ok(Some(mq)) = win.match_media("(prefers-color-scheme: dark)") else { return };
-        let apply = {
-            let mq = mq.clone();
-            move || {
-                let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) else { return };
-                let t = resolved(&mq);
-                let _ = root.set_attribute("data-theme", t);
-                if let Some(el) = root.dyn_ref::<web_sys::HtmlElement>() {
-                    let _ = el.style().set_property("background", if t == "dark" { "#1b1a18" } else { "#e9e8e4" });
-                }
-                // pages in their frames follow the app's theme
-                crate::dom::post_theme_all();
-            }
-        };
-        apply();
-        let cb = Closure::<dyn Fn()>::new(apply);
+        let Some(mq) = dark_query() else { return };
+        apply(&mq);
+        let m = mq.clone();
+        let cb = Closure::<dyn Fn()>::new(move || apply(&m));
         let _ = mq.add_event_listener_with_callback("change", cb.as_ref().unchecked_ref());
         cb.forget();
     }
@@ -158,6 +167,18 @@ mod imp {
     #[cfg(not(target_os = "android"))]
     pub fn follow_theme() {}
 
+    /// Puts the saved theme on the page now (after Settings changed it); the browser build does
+    /// this in the page, Android re-runs what its head did.
+    pub fn apply_theme() {
+        #[cfg(all(feature = "phone", target_os = "android"))]
+        {
+            let t = super::theme_setting();
+            let _ = dioxus::document::eval(&format!(
+                "var t='{t}',r=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t,d=document.documentElement;window.inyonTheme=t;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4';"
+            ));
+        }
+    }
+
     #[cfg_attr(not(feature = "phone"), allow(unused_variables))]
     pub async fn sleep(ms: u32) {
         #[cfg(feature = "phone")]
@@ -197,7 +218,7 @@ pub fn android_head(theme: &str) -> String {
     format!(
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content\">\
          <script>(function(){{var t='{theme}',m=matchMedia('(prefers-color-scheme: dark)');\
-         function a(){{var r=t==='system'?(m.matches?'dark':'light'):t,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4'}}\
+         function a(){{var u=window.inyonTheme||t,r=u==='system'?(m.matches?'dark':'light'):u,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4'}}\
          a();m.addEventListener('change',a)}})()</script>"
     )
 }
@@ -220,7 +241,7 @@ pub fn ground(theme: &str, night: bool) -> (u8, u8, u8, u8) {
 
 #[cfg(all(feature = "phone", target_os = "android"))]
 pub use imp::save_in;
-pub use imp::{load, save, sleep};
+pub use imp::{apply_theme, load, save, sleep};
 // Android sets the theme in the page's head instead (android_head)
 #[cfg(not(target_os = "android"))]
 pub use imp::follow_theme;
@@ -241,6 +262,8 @@ mod tests {
     fn the_android_head_sets_only_a_known_theme() {
         assert!(android_head("dark").contains("var t='dark'"));
         assert!(android_head("system").contains("var t='system'"));
+        // a theme Settings put on later wins over the one the app opened with
+        assert!(android_head("dark").contains("var u=window.inyonTheme||t"));
         // nothing else reaches the script
         assert!(android_head("'</script><script>x").contains("var t='system'"));
         assert!(android_head("light").contains("viewport-fit=cover"));

@@ -26,6 +26,16 @@ pub fn open_connect_help(id: Option<String>) {
     *OPEN.write() = true;
 }
 
+/// "Last drop 5m ago, the network went away (down 12s)", once a connection has dropped
+/// (ConnectSheet.tsx's LastDrop). `self` is this page's own connection.
+pub fn drop_line(id: &str) -> Option<String> {
+    let log = LOG.read();
+    let d = log.last_drop(id)?;
+    let clock = platform::clock();
+    let back = d.back.map(|_| format!(" (down {})", c::down_for(d, clock.now))).unwrap_or_default();
+    Some(format!("Last drop {}, {}{back}", crate::format::time_ago(d.at, clock), c::why(d)))
+}
+
 fn hub_name() -> String {
     dom::host()
 }

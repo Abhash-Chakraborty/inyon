@@ -143,12 +143,20 @@ pub fn Toggle(on: bool, label: String, on_change: EventHandler<bool>, #[props(de
     }
 }
 
-/// One of a few choices side by side. `full` stretches it across its row.
+/// One of a few choices side by side. `full` stretches it across its row; `icons`, when given, go
+/// before the labels in the same order.
 #[component]
-pub fn Segmented(value: String, options: Vec<(String, String)>, on_change: EventHandler<String>, #[props(default)] full: bool, #[props(default)] label: Option<String>) -> Element {
+pub fn Segmented(
+    value: String,
+    options: Vec<(String, String)>,
+    on_change: EventHandler<String>,
+    #[props(default)] full: bool,
+    #[props(default)] label: Option<String>,
+    #[props(default)] icons: Vec<Icon>,
+) -> Element {
     rsx! {
         div { class: if full { "segmented segmented-inline segmented-full" } else { "segmented segmented-inline" }, role: "radiogroup", "aria-label": label,
-            for (v, l) in options {
+            for (i , (v , l)) in options.into_iter().enumerate() {
                 button {
                     key: "{v}",
                     class: if v == value { "segment segment-on" } else { "segment" },
@@ -156,6 +164,9 @@ pub fn Segmented(value: String, options: Vec<(String, String)>, on_change: Event
                     role: "radio",
                     "aria-checked": "{v == value}",
                     onclick: { let v = v.clone(); move |_| on_change.call(v.clone()) },
+                    if let Some(icon) = icons.get(i) {
+                        Glyph { icon: *icon, size: 14 }
+                    }
                     "{l}"
                 }
             }

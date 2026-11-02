@@ -42,6 +42,15 @@ pub enum Action {
     RemoveMachine(String),
     /// what can be done to a page (components/pages/shared.tsx's page menu)
     Page(super::pages::PageOp),
+    /// a temp item or file (pages/Temp.tsx)
+    Temp(super::temp::TempOp),
+    /// a custom agent or a paired companion app in Settings
+    Settings(super::settings::SettingsOp),
+    /// asks, then ends a session: its agent exits and its pane closes (lib/end.ts)
+    EndSession {
+        host: String,
+        pane: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,8 +117,7 @@ pub fn machine_menu(h: &HostState, tabs: bool) -> Vec<Item> {
         v.push(Item::new("Open in new tab", Icon::ExternalLink, Action::NewTab(page.href())));
     }
     if paired {
-        // the temp files screen comes with Settings; until then the current app's
-        v.push(Item::new("Temp files", Icon::FolderOpen, Action::NewTab(format!("/temp/{}", inyon_chat_core::js::encode_uri_component(&id)))));
+        v.push(Item::new("Temp files", Icon::FolderOpen, Action::Go(Route::Temp { host: Some(id.clone()) })));
     }
     v.push(Item::new(if h.config.kind == HostKind::Ssh { "Edit…" } else { "Rename…" }, Icon::Pencil, Action::EditMachine(id.clone())).separated());
     if let Some(latest) = machines::can_update(h) {
@@ -138,6 +146,7 @@ pub fn pane_menu(host: &str, pane: &str, agent: bool, session_id: Option<&str>, 
     if let Some(id) = session_id {
         v.push(Item::copy("Copy session ID", id).separated());
     }
+    v.push(Item::new("End session…", Icon::CircleX, Action::EndSession { host: host.into(), pane: pane.into() }).danger().separated());
     v
 }
 
@@ -431,6 +440,15 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
             });
         }
         Action::Page(op) => super::pages::run(op, here, hub),
+        Action::Temp(op) => super::temp::run(op),
+        Action::Settings(op) => super::settings::run(op),
+        Action::EndSession { host, pane } => {
+            // from the session's own screen, the Overview after
+            let own = matches!(&*here.peek(), Route::Session { host: h, pane: p, .. } if *h == host && *p == pane);
+            spawn(async move {
+                super::session::end_session(hub, &host, &pane, own.then_some(here)).await;
+            });
+        }
     }
 }
 
@@ -495,8 +513,11 @@ mod tests {
     #[test]
     fn a_sessions_menu_opens_it_its_terminal_or_a_tab() {
         let m = pane_menu("box", "%3", true, Some("abc-123"), true);
-        assert_eq!(labels(&m), ["Open", "Open terminal", "Open in new tab", "Copy session ID"]);
+        assert_eq!(labels(&m), ["Open", "Open terminal", "Open in new tab", "Copy session ID", "End session…"]);
         assert_eq!(m[2].action, Action::NewTab("/next/m/box/p/3".into()));
-        assert_eq!(labels(&pane_menu("box", "%4", false, None, false)), ["Open"]);
+        assert!(m[4].danger && m[4].separated);
+        assert_eq!(m[4].action, Action::EndSession { host: "box".into(), pane: "%3".into() });
+        assert_eq!(labels(&pane_menu("box", "%4", false, None, false)), ["Open", "End session…"]);
+        assert_eq!(machine_menu(&host(json!({})), true)[3].action, Action::Go(Route::Temp { host: Some("box".into()) }));
     }
 }

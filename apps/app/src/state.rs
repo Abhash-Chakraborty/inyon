@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use inyon_chat_core::store::{Effect, Settings, Toast as StoreToast};
 use inyon_chat_core::v2::{decode, Overview2, Pages2};
 use inyon_chat_core::{Chat, Context, Store};
 use inyon_protocol::v2::{Zip, OVERVIEW, PAGES};
@@ -113,6 +114,62 @@ impl Feed {
     pub fn subs(&self) -> [ClientMsg2; 2] {
         [ClientMsg2::Sub { stream: OVERVIEW.into(), at: self.overview.cursor.at() }, ClientMsg2::Sub { stream: PAGES.into(), at: self.pages.cursor.at() }]
     }
+
+    /// A notice from the hub (`notify`, `page.notify`, `companion.reply`) under the app's settings
+    /// now: what to do about it, and the toasts it added, newest last.
+    pub fn notice(&mut self, msg: &ServerMsg, settings: &Settings, ctx: &Context, now: u64) -> (Vec<Effect>, Vec<StoreToast>) {
+        self.store.settings = settings.clone();
+        let effects = self.store.apply(msg, None, ctx, now).effects;
+        let ids: Vec<u64> = effects.iter().filter_map(|e| if let Effect::Toast { id, .. } = e { Some(*id) } else { None }).collect();
+        let toasts = self.store.toasts.list.iter().filter(|t| ids.contains(&t.id)).cloned().collect();
+        // the app keeps its own list on screen
+        for id in ids {
+            self.store.toasts.dismiss(id);
+        }
+        (effects, toasts)
+    }
+
+    /// Takes a pane being ended out of every list at once (or brings it back, when the end failed):
+    /// the machines as they should show now.
+    pub fn hide_pane(&mut self, host: &str, pane: &str, hide: bool, now: u64) -> Vec<HostState> {
+        self.store.hide_pane(host, pane, hide, now);
+        if !hide {
+            // back from the machines as the hub last reported them
+            let ctx = Context { route: "/", terminal_view: false, visible: true, native: false, browser_notices: false };
+            self.store.apply(&ServerMsg::Overview { hosts: self.overview.hosts.clone(), organize: None }, None, &ctx, now);
+        }
+        self.store.overview.hosts.clone()
+    }
+
+    /// Whether the hub's last report still has this pane; none when it doesn't have the machine.
+    pub fn reports_pane(&self, host: &str, pane: &str) -> Option<bool> {
+        let h = self.overview.hosts.iter().find(|h| h.config.id == host)?;
+        Some(h.sessions.iter().flat_map(|s| &s.windows).any(|w| w.panes.iter().any(|p| p.id == pane)))
+    }
+}
+
+thread_local! {
+    static FEED: std::cell::RefCell<Feed> = std::cell::RefCell::new(Feed::default());
+}
+
+/// The app's one [`Feed`]: the socket fills it, and a pane ended from a menu is taken out of it.
+pub fn with_feed<R>(f: impl FnOnce(&mut Feed) -> R) -> R {
+    FEED.with(|x| f(&mut x.borrow_mut()))
+}
+
+/// Starts the feed over for a new sign-in: its screens start empty, so the streams must too, or a
+/// resume from the old position would bring nothing to show.
+pub fn reset_feed() {
+    with_feed(|f| *f = Feed::default());
+}
+
+/// Reads a notice the hub sends outside the streams; None for another kind or one this build
+/// can't read.
+pub fn notice_msg(t: &str, text: &str) -> Option<ServerMsg> {
+    if !matches!(t, "notify" | "page.notify" | "companion.reply") {
+        return None;
+    }
+    serde_json::from_str(text).ok()
 }
 
 /// The pages as the screens show them: none until the stream's first frame, and when each was last
@@ -278,6 +335,35 @@ mod tests {
         // a gap: the stream is asked for again from where it was
         let late = frame(json!({ "t": "delta", "stream": "overview", "epoch": 5, "from": 9, "seq": 10, "remove": { "hosts": [] } }));
         assert_eq!(feed.overview(&late, &hub, 0).1, Some(ClientMsg2::Sub { stream: "overview".into(), at: Some(StreamPos { epoch: 5, seq: 3 }) }));
+    }
+
+    #[test]
+    fn a_pane_whose_end_failed_comes_back() {
+        let mut feed = Feed::default();
+        let mut host = host_json();
+        host["sessions"] = json!([{ "id": "$1", "name": "a", "attached": 0, "windows": [{ "id": "@1", "index": 1, "name": "", "active": true, "activity": 0,
+            "panes": [{ "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "/home/sam", "title": "t", "width": 80, "height": 40, "dead": false }] }] }]);
+        let snap = frame(json!({ "t": "snapshot", "stream": "overview", "epoch": 5, "seq": 1, "rows": { "hosts": [host] } }));
+        feed.overview(&snap, &Hub::default(), 0);
+        let pane = "%1";
+        let count = |h: &[HostState]| h.iter().flat_map(|h| &h.sessions).flat_map(|s| &s.windows).map(|w| w.panes.len()).sum::<usize>();
+        assert_eq!(count(&feed.hide_pane("box", pane, true, 1)), 0);
+        assert_eq!(count(&feed.hide_pane("box", pane, false, 2)), 1);
+        assert_eq!(feed.reports_pane("box", pane), Some(true));
+        assert_eq!(feed.reports_pane("box", "%9"), Some(false));
+        assert_eq!(feed.reports_pane("elsewhere", pane), None);
+    }
+
+    #[test]
+    fn a_new_sign_in_starts_the_streams_over() {
+        let snap = frame(json!({ "t": "snapshot", "stream": "overview", "epoch": 5, "seq": 1, "rows": { "hosts": [host_json()] } }));
+        with_feed(|f| f.overview(&snap, &Hub::default(), 0));
+        assert!(wire2(&with_feed(|f| f.subs())[0]).contains(r#""at":{"epoch":5,"seq":1}"#));
+        // signed out and in again: a fresh Hub, and the feed asks for the whole overview
+        reset_feed();
+        assert_eq!(wire2(&with_feed(|f| f.subs())[0]), r#"{"t":"sub","stream":"overview"}"#);
+        let (hosts, _) = with_feed(|f| f.overview(&snap, &Hub::default(), 0));
+        assert_eq!(hosts.map(|h| h.len()), Some(1));
     }
 
     #[test]

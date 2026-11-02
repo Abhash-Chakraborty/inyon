@@ -203,6 +203,13 @@ mod imp {
         }
     }
 
+    /// The app's stylesheet is in: Dioxus adds it as the app starts, so the first paint can come
+    /// before it.
+    pub fn styled() -> bool {
+        let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) else { return true };
+        web_sys::window().and_then(|w| w.get_computed_style(&root).ok().flatten()).and_then(|s| s.get_property_value("--bg").ok()).is_some_and(|v| !v.trim().is_empty())
+    }
+
     fn post_theme_to(win: &web_sys::Window) {
         let msg = js_sys::Object::new();
         let _ = js_sys::Reflect::set(&msg, &"type".into(), &"theme".into());
@@ -320,6 +327,170 @@ mod imp {
         RESIZE.with(|r| r.borrow_mut().push(Box::new(f)));
     }
 
+    // ---------- Settings, notices and the intro ----------
+
+    /// The page may use what browsers keep to secure origins (notifications, the service worker).
+    pub fn secure() -> bool {
+        web_sys::window().is_some_and(|w| w.is_secure_context())
+    }
+
+    fn notification_class() -> Option<js_sys::Function> {
+        js_sys::Reflect::get(&js_sys::global(), &"Notification".into()).ok().and_then(|v| v.dyn_into().ok())
+    }
+
+    /// What the browser allows for notifications.
+    pub fn notice_permission() -> crate::settings::Permission {
+        use crate::settings::Permission;
+        let Some(n) = notification_class() else { return Permission::Unsupported };
+        match js_sys::Reflect::get(&n, &"permission".into()).ok().and_then(|p| p.as_string()).as_deref() {
+            Some("granted") => Permission::Granted,
+            Some("denied") => Permission::Denied,
+            _ => Permission::Default,
+        }
+    }
+
+    /// Asks the browser for notifications; what it answered.
+    pub async fn ask_notices() -> crate::settings::Permission {
+        let Some(n) = notification_class() else { return crate::settings::Permission::Unsupported };
+        if let Some(f) = js_sys::Reflect::get(&n, &"requestPermission".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()) {
+            // a promise from today's browsers; only the callback from older Safari
+            let mut slot = None;
+            let answered = js_sys::Promise::new(&mut |resolve, _| slot = Some(resolve));
+            let callback = slot.map(|resolve| {
+                Closure::once_into_js(move |_: wasm_bindgen::JsValue| {
+                    let _ = resolve.call0(&wasm_bindgen::JsValue::NULL);
+                })
+            });
+            if let Ok(ret) = f.call1(&n, callback.as_ref().unwrap_or(&wasm_bindgen::JsValue::UNDEFINED)) {
+                let wait = ret.dyn_into::<js_sys::Promise>().unwrap_or(answered);
+                let _ = wasm_bindgen_futures::JsFuture::from(wait).await;
+            }
+        }
+        notice_permission()
+    }
+
+    thread_local! {
+        /// the notification shown for each tag, so the next one replaces it
+        static SHOWN: std::cell::RefCell<std::collections::HashMap<String, wasm_bindgen::JsValue>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+
+    /// Takes back the notification shown under `tag`.
+    pub fn close_notice(tag: &str) {
+        if let Some(n) = SHOWN.with(|s| s.borrow_mut().remove(tag)) {
+            if let Some(f) = js_sys::Reflect::get(&n, &"close".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()) {
+                let _ = f.call0(&n);
+            }
+        }
+    }
+
+    /// A notification from the browser itself; clicking it brings the app forward at `href` (a
+    /// route inside the app). False when the browser wouldn't show it.
+    pub fn show_notice(title: &str, body: &str, tag: &str, href: Option<&str>) -> bool {
+        let Some(class) = notification_class() else { return false };
+        close_notice(tag);
+        let opts = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&opts, &"body".into(), &body.into());
+        let _ = js_sys::Reflect::set(&opts, &"tag".into(), &tag.into());
+        let _ = js_sys::Reflect::set(&opts, &"icon".into(), &"/icon-192.png".into());
+        let _ = js_sys::Reflect::set(&opts, &"badge".into(), &"/badge-96.png".into());
+        let args = js_sys::Array::of2(&title.into(), &opts);
+        let Ok(n) = js_sys::Reflect::construct(&class, &args) else { return false };
+        if let Some(href) = href {
+            let (href, tag2) = (href.to_string(), tag.to_string());
+            let click = wasm_bindgen::closure::Closure::<dyn FnMut()>::new(move || {
+                close_notice(&tag2);
+                if let Some(w) = web_sys::window() {
+                    let _ = w.focus();
+                    if let Ok(h) = w.history() {
+                        let _ = h.push_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&href));
+                    }
+                    if let Ok(e) = web_sys::Event::new("popstate") {
+                        let _ = w.dispatch_event(&e);
+                    }
+                }
+            });
+            let _ = js_sys::Reflect::set(&n, &"onclick".into(), click.as_ref());
+            click.forget();
+        }
+        SHOWN.with(|s| s.borrow_mut().insert(tag.to_string(), n));
+        true
+    }
+
+    /// A short buzz on a device that has the Vibration API.
+    pub fn vibrate(pattern: &[u32]) {
+        let Some(nav) = web_sys::window().map(|w| w.navigator()) else { return };
+        let arr = js_sys::Array::new();
+        for p in pattern {
+            arr.push(&(*p).into());
+        }
+        if let Some(f) = js_sys::Reflect::get(&nav, &"vibrate".into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()) {
+            let _ = f.call1(&nav, &arr);
+        }
+    }
+
+    /// A date as this browser writes it ("2/11/2026", "11.2.2026"), in its own locale: naming
+    /// `navigator.language` would throw where that isn't a valid tag (a Linux browser under the C
+    /// locale says "en-US@posix").
+    pub fn local_date(ms: f64) -> String {
+        let d = js_sys::Date::new(&ms.into());
+        js_sys::Reflect::get(&d, &"toLocaleDateString".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+            .and_then(|f| f.call0(&d).ok())
+            .and_then(|s| s.as_string())
+            .unwrap_or_else(|| d.to_iso_string().as_string().unwrap_or_default().chars().take(10).collect())
+    }
+
+    /// Brings the element with this id into view.
+    pub fn scroll_to(id: &str) {
+        if let Some(el) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.get_element_by_id(id)) {
+            el.scroll_into_view();
+        }
+    }
+
+    /// The address's `#…`, without the `#`.
+    pub fn hash() -> String {
+        web_sys::window().and_then(|w| w.location().hash().ok()).map(|h| h.trim_start_matches('#').to_string()).unwrap_or_default()
+    }
+
+    pub fn reload() {
+        if let Some(w) = web_sys::window() {
+            let _ = w.location().reload();
+        }
+    }
+
+    pub fn reduced_motion() -> bool {
+        web_sys::window().and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten()).is_some_and(|m| m.matches())
+    }
+
+    /// True the first time it's asked for `key` in this browser tab's session, then false.
+    pub fn first_in_session(key: &str) -> bool {
+        let Some(s) = web_sys::window().and_then(|w| w.session_storage().ok().flatten()) else { return false };
+        if s.get_item(key).ok().flatten().is_some() {
+            return false;
+        }
+        s.set_item(key, "1").is_ok()
+    }
+
+    /// A class on the page's root element, on or off.
+    pub fn root_class(name: &str, on: bool) {
+        if let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) {
+            let list = root.class_list();
+            let _ = if on { list.add_1(name) } else { list.remove_1(name) };
+        }
+    }
+
+    /// Where the element marked `data-intro-target` sits, if one is on screen.
+    pub fn intro_target() -> Option<(f64, f64, f64, f64)> {
+        let list = web_sys::window()?.document()?.query_selector_all("[data-intro-target]").ok()?;
+        (0..list.length())
+            .filter_map(|i| list.get(i))
+            .filter_map(|n| n.dyn_into::<web_sys::Element>().ok())
+            .map(|e| e.get_bounding_client_rect())
+            .find(|r| r.width() > 0.0 && r.height() > 0.0)
+            .map(|r| (r.left(), r.top(), r.width(), r.height()))
+    }
+
     /// A tab opened at once, before the address it goes to is known: a browser blocks one opened
     /// after a wait (Open in browser mints a link first).
     pub struct PendingTab(Option<web_sys::Window>);
@@ -417,11 +588,48 @@ mod imp {
     pub fn theme() -> &'static str {
         "light"
     }
+    pub fn styled() -> bool {
+        true
+    }
     pub fn post_theme(_id: &str) {}
     pub fn answer_frames() {}
     pub fn slash_focuses(_id: Option<&str>) {}
     pub fn on_wake(_f: impl Fn() + 'static) {}
     pub fn on_resize(_f: impl Fn() + 'static) {}
+    pub fn secure() -> bool {
+        true
+    }
+    pub fn notice_permission() -> crate::settings::Permission {
+        crate::settings::Permission::Unsupported
+    }
+    pub async fn ask_notices() -> crate::settings::Permission {
+        crate::settings::Permission::Unsupported
+    }
+    pub fn close_notice(_tag: &str) {}
+    pub fn show_notice(_title: &str, _body: &str, _tag: &str, _href: Option<&str>) -> bool {
+        false
+    }
+    pub fn vibrate(_pattern: &[u32]) {}
+    /// A date in the phone's time zone, written the one way every locale reads ("2026-11-02").
+    pub fn local_date(ms: f64) -> String {
+        let t = inyon_chat_core::js::local_time(ms, crate::platform::clock().tz_minutes);
+        format!("{}-{:02}-{:02}", t.year, t.month, t.day)
+    }
+    pub fn scroll_to(_id: &str) {}
+    pub fn hash() -> String {
+        String::new()
+    }
+    pub fn reload() {}
+    pub fn reduced_motion() -> bool {
+        false
+    }
+    pub fn first_in_session(_key: &str) -> bool {
+        false
+    }
+    pub fn root_class(_name: &str, _on: bool) {}
+    pub fn intro_target() -> Option<(f64, f64, f64, f64)> {
+        None
+    }
     pub struct PendingTab;
     impl PendingTab {
         pub fn open() -> PendingTab {
@@ -433,3 +641,12 @@ mod imp {
 }
 
 pub use imp::*;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    #[test]
+    fn a_date_off_the_browser_is_a_calendar_date() {
+        // 2 November 2026, 18:00 UTC
+        assert_eq!(super::local_date(1_793_642_400_000.0), "2026-11-02");
+    }
+}

@@ -201,6 +201,7 @@ async fn remove(p: PageEntry, machine: String) -> bool {
                 tone: ToastTone::Success,
                 href: None,
                 action: Some(("Undo".into(), Action::Page(PageOp::Restore(p)))),
+                agent: None,
             });
             true
         }

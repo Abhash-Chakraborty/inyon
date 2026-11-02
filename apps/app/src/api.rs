@@ -25,6 +25,11 @@ pub struct Session {
     /// the first password also needs the code the hub printed when it started
     #[serde(default)]
     pub setup_code: bool,
+    /// what the hub runs, once signed in
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -299,16 +304,297 @@ pub struct CustomAgent {
     pub like: inyon_protocol::AgentKind,
 }
 
-/// The hub's settings, as far as the screens here read them.
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+/// Uploads (Settings › Uploads and clipboard): how long they're kept and how big they may be.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadSettings {
+    #[serde(default)]
+    pub retention_days: f64,
+    #[serde(default, rename = "maxMB")]
+    pub max_mb: f64,
+    #[serde(default, rename = "maxTotalMB")]
+    pub max_total_mb: Option<f64>,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The hub's settings (`GET`/`PUT /api/settings`). Saving sends all of them back, so fields this
+/// app doesn't read are kept as they came.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HubSettings {
     #[serde(default)]
+    pub uploads: UploadSettings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_resume: Option<bool>,
+    /// joined machines may hold messages for agents with `inyon send`
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machines_send: Option<bool>,
+    /// missing until the first is saved
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_agents: Option<Vec<CustomAgent>>,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
 }
 
 pub async fn settings() -> Result<HubSettings, ApiError> {
-    parse(&request("GET", "/api/settings", None).await?)
+    parse(&with_retries(|| request("GET", "/api/settings", None)).await?)
+}
+
+pub async fn save_settings(s: &HubSettings) -> Result<HubSettings, ApiError> {
+    parse(&request("PUT", "/api/settings", json(s)).await?)
+}
+
+// ---------- Settings (pages/Settings.tsx) ----------
+
+#[derive(Serialize)]
+struct NewPassword<'a> {
+    current: &'a str,
+    next: &'a str,
+}
+
+/// A new password signs out every other browser and phone; this one stays signed in.
+pub async fn change_password(current: &str, next: &str) -> Result<(), ApiError> {
+    request("POST", "/api/password", json(&NewPassword { current, next })).await.map(drop)
+}
+
+/// Ends this browser's sign-in at the hub; a 401 means it already had.
+pub async fn logout() -> Result<(), ApiError> {
+    match request("POST", "/api/logout", None).await {
+        Err(e) if e.status != 401 => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// What the hub runs and whether a newer release is out (`GET /api/hub/update`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubUpdate {
+    #[serde(default)]
+    pub current: String,
+    pub latest: Option<String>,
+    pub behind: Option<u32>,
+    #[serde(default)]
+    pub can_update: bool,
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub running: bool,
+    pub error: Option<String>,
+    pub log: Option<String>,
+    #[serde(default)]
+    pub restart_needed: bool,
+}
+
+pub async fn hub_update(refresh: bool) -> Result<HubUpdate, ApiError> {
+    parse(&request("GET", if refresh { "/api/hub/update?refresh=1" } else { "/api/hub/update" }, None).await?)
+}
+
+pub async fn start_hub_update() -> Result<(), ApiError> {
+    request("POST", "/api/hub/update", None).await.map(drop)
+}
+
+/// The hub's organize record, as far as Settings reads it: its version and the sleep rules.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct OrganizeSleep {
+    #[serde(default)]
+    pub v: u32,
+    #[serde(default)]
+    pub sleep: Vec<inyon_protocol::SleepRule>,
+}
+
+pub async fn organize() -> Result<OrganizeSleep, ApiError> {
+    parse(&request("GET", "/api/organize", None).await?)
+}
+
+#[derive(Serialize)]
+struct Sleep<'a> {
+    scope: &'a str,
+    minutes: Option<u32>,
+}
+
+/// Agents idle this long go to sleep; `None` turns it off. The answer is every rule now.
+pub async fn set_sleep(minutes: Option<u32>) -> Result<Vec<inyon_protocol::SleepRule>, ApiError> {
+    parse(&request("PUT", "/api/organize/sleep", json(&Sleep { scope: "all", minutes })).await?)
+}
+
+/// A phone paired with this hub.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedPhone {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub paired_at: f64,
+    pub last_seen: Option<f64>,
+}
+
+pub async fn phones() -> Result<Vec<PairedPhone>, ApiError> {
+    parse(&request("GET", "/api/phones", None).await?)
+}
+
+pub async fn forget_phone(id: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("/api/phones/{}", inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
+}
+
+pub async fn companions() -> Result<Vec<inyon_protocol::PairedCompanion>, ApiError> {
+    parse(&request("GET", "/api/companions", None).await?)
+}
+
+pub async fn forget_companion(id: &str) -> Result<(), ApiError> {
+    request("DELETE", &format!("/api/companions/{}", inyon_chat_core::js::encode_uri_component(id)), None).await.map(drop)
+}
+
+/// A one-time code a companion app types; it needs a recent sign-in (403 otherwise).
+pub async fn companion_pair() -> Result<inyon_protocol::CompanionPairCode, ApiError> {
+    parse(&request("POST", "/api/companions/pair", Some("{}".into())).await?)
+}
+
+/// The companion agent: the one it runs (none when off), on which machine and pane.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct CompanionStatus {
+    pub agent: Option<inyon_protocol::AgentKind>,
+    #[serde(default)]
+    pub host: String,
+    pub pane: Option<String>,
+}
+
+pub async fn companion() -> Result<CompanionStatus, ApiError> {
+    parse(&request("GET", "/api/companion", None).await?)
+}
+
+#[derive(Serialize)]
+struct AgentBody {
+    agent: inyon_protocol::AgentKind,
+}
+
+pub async fn start_companion(agent: inyon_protocol::AgentKind) -> Result<CompanionStatus, ApiError> {
+    parse(&request("POST", "/api/companion", json(&AgentBody { agent })).await?)
+}
+
+pub async fn stop_companion() -> Result<(), ApiError> {
+    request("DELETE", "/api/companion", None).await.map(drop)
+}
+
+/// Ends a session: its agent exits and its tmux pane closes.
+pub async fn end(host: &str, pane: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/end", pane_path(host, pane)), None).await.map(drop)
+}
+
+// ---------- temp files (pages/Temp.tsx) ----------
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TempRoot {
+    pub id: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub size: f64,
+    #[serde(default)]
+    pub exists: bool,
+}
+
+/// One thing in a temp folder that can go as a whole: a session's folder, an upload day, a file.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TempItem {
+    pub root: String,
+    pub path: String,
+    pub name: String,
+    /// "dir" or "file"
+    pub kind: String,
+    #[serde(default)]
+    pub size: f64,
+    #[serde(default)]
+    pub files: u32,
+    /// ms, the newest change inside
+    #[serde(default)]
+    pub modified: f64,
+    /// changed in the last 30 minutes: an agent may still be using it
+    #[serde(default)]
+    pub recent: bool,
+    /// up to four images inside, newest first
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct TempListing {
+    #[serde(default)]
+    pub roots: Option<Vec<TempRoot>>,
+    #[serde(default)]
+    pub items: Option<Vec<TempItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TempFile {
+    pub path: String,
+    pub rel: String,
+    #[serde(default)]
+    pub size: f64,
+    #[serde(default)]
+    pub modified: f64,
+    /// "image", "text" or "other"
+    #[serde(default)]
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct TempFiles {
+    #[serde(default)]
+    pub files: Option<Vec<TempFile>>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct TempPreview {
+    #[serde(default)]
+    pub mime: String,
+    #[serde(default)]
+    pub size: f64,
+    pub text: Option<String>,
+    pub base64: Option<String>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct TempRemoved {
+    #[serde(default)]
+    pub removed: Option<Vec<String>>,
+    #[serde(default)]
+    pub freed: Option<f64>,
+    #[serde(default)]
+    pub failed: Option<Vec<(String, String)>>,
+}
+
+/// `?path=…&max=…`, encoded as URLSearchParams would.
+fn temp_query(path: &str, max: Option<u64>) -> String {
+    let enc = inyon_chat_core::js::encode_uri_component;
+    match max {
+        Some(m) => format!("?path={}&max={m}", enc(path)),
+        None => format!("?path={}", enc(path)),
+    }
+}
+
+pub async fn temp_list(id: &str) -> Result<TempListing, ApiError> {
+    parse(&request("GET", &format!("{}/temp", host_path(id)), None).await?)
+}
+
+pub async fn temp_files(id: &str, path: &str) -> Result<TempFiles, ApiError> {
+    parse(&request("GET", &format!("{}/temp/files{}", host_path(id), temp_query(path, None)), None).await?)
+}
+
+pub async fn temp_preview(id: &str, path: &str, max: Option<u64>) -> Result<TempPreview, ApiError> {
+    parse(&request("GET", &format!("{}/temp/preview{}", host_path(id), temp_query(path, max)), None).await?)
+}
+
+#[derive(Serialize)]
+struct Paths<'a> {
+    paths: &'a [String],
+}
+
+pub async fn temp_delete(id: &str, paths: &[String]) -> Result<TempRemoved, ApiError> {
+    parse(&request("POST", &format!("{}/temp/delete", host_path(id)), json(&Paths { paths })).await?)
 }
 
 /// A check in a machine's Setup tab, with its fix when one is safe to run from here.
@@ -687,6 +973,25 @@ mod tests {
     }
 
     #[test]
+    fn settings_routes_and_bodies_match_the_web_app() {
+        assert_eq!(temp_query("/tmp/a b", None), "?path=%2Ftmp%2Fa%20b");
+        assert_eq!(temp_query("/x", Some(1_500_000)), "?path=%2Fx&max=1500000");
+        assert_eq!(serde_json::to_string(&NewPassword { current: "a", next: "b" }).unwrap(), r#"{"current":"a","next":"b"}"#);
+        assert_eq!(serde_json::to_string(&Sleep { scope: "all", minutes: None }).unwrap(), r#"{"scope":"all","minutes":null}"#);
+        // saving sends back what this app doesn't read
+        let raw = r#"{"uploads":{"retentionDays":7,"maxMB":100,"maxTotalMB":1024,"longPasteLines":40},"autoResume":true,"newer":{"x":1}}"#;
+        let mut s: HubSettings = serde_json::from_str(raw).unwrap();
+        s.uploads.max_mb = 500.0;
+        let back: serde_json::Value = serde_json::to_value(&s).unwrap();
+        assert_eq!(back["uploads"]["longPasteLines"], 40);
+        assert_eq!(back["uploads"]["maxMB"], 500.0);
+        assert_eq!(back["uploads"]["maxTotalMB"], 1024.0);
+        assert_eq!(back["newer"]["x"], 1);
+        assert_eq!(back["autoResume"], true);
+        assert!(back.get("customAgents").is_none());
+    }
+
+    #[test]
     fn the_hubs_own_words_win() {
         assert_eq!(error_of(401, r#"{"error":"Wrong password"}"#).message, "Wrong password");
         assert_eq!(error_of(502, "<html>bad gateway</html>").message, "Request failed (502)");
@@ -696,7 +1001,7 @@ mod tests {
     #[test]
     fn a_session_reads_with_or_without_the_setup_fields() {
         let s: Session = serde_json::from_str(r#"{"authed":false,"setup":true,"setupCode":true,"version":"0.23.1"}"#).unwrap();
-        assert_eq!(s, Session { authed: false, setup: true, setup_code: true });
+        assert_eq!(s, Session { authed: false, setup: true, setup_code: true, version: Some("0.23.1".into()), commit: None });
         let s: Session = serde_json::from_str(r#"{"authed":true}"#).unwrap();
         assert!(s.authed && !s.setup);
     }
