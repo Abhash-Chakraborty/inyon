@@ -419,11 +419,17 @@ mod imp {
         }
     }
 
-    /// A date as this browser writes it ("2/11/2026", "11.2.2026").
+    /// A date as this browser writes it ("2/11/2026", "11.2.2026"), in its own locale: naming
+    /// `navigator.language` would throw where that isn't a valid tag (a Linux browser under the C
+    /// locale says "en-US@posix").
     pub fn local_date(ms: f64) -> String {
         let d = js_sys::Date::new(&ms.into());
-        let lang = web_sys::window().and_then(|w| w.navigator().language()).unwrap_or_else(|| "en".into());
-        d.to_locale_date_string(&lang, &wasm_bindgen::JsValue::UNDEFINED).into()
+        js_sys::Reflect::get(&d, &"toLocaleDateString".into())
+            .ok()
+            .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+            .and_then(|f| f.call0(&d).ok())
+            .and_then(|s| s.as_string())
+            .unwrap_or_else(|| d.to_iso_string().as_string().unwrap_or_default().chars().take(10).collect())
     }
 
     /// Brings the element with this id into view.
