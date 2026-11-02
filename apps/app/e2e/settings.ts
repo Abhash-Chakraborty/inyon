@@ -270,7 +270,10 @@ const saved = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getIte
 
 const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {})
 const errors: string[] = []
+// every page opened, so a failure can show what each one had on screen
+const opened: Page[] = []
 const watch = (page: Page) => {
+  opened.push(page)
   page.on('pageerror', (e) => errors.push(e.message))
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()))
 }
@@ -582,6 +585,13 @@ try {
       }
     }
   }
+} catch (e) {
+  // what the open pages showed, and what they logged, for a failure on a machine you can't look at
+  for (const [i, page] of opened.filter((p) => !p.isClosed()).entries()) {
+    await page.screenshot({ path: path.join(shots, `failed-${i + 1}.png`) }).catch(() => {})
+  }
+  if (errors.length) console.error(`errors in the page: ${errors.join(' | ')}`)
+  throw e
 } finally {
   await browser.close()
   server.stop(true)
