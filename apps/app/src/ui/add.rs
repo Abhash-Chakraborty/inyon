@@ -542,7 +542,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                     }
                 }
                 div { class: "form-grid",
-                    Field { label: "Machine",
+                    Field { label: "Machine", group: true,
                         Select {
                             title: "Machine",
                             value: on(),
@@ -581,7 +581,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                 if let Some(d) = def.filter(|d| !d.models.is_empty() || has_mode) {
                     div { class: "form-grid",
                         if !d.models.is_empty() {
-                            Field { label: "Model",
+                            Field { label: "Model", group: true,
                                 Select {
                                     title: "Model",
                                     value: model(),
@@ -591,7 +591,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                             }
                         }
                         if has_mode {
-                            Field { label: "Permissions",
+                            Field { label: "Permissions", group: true,
                                 Select {
                                     title: "Permissions",
                                     value: mode(),
@@ -614,7 +614,7 @@ pub fn NewSessionSheet(open: bool, on_close: EventHandler<()>, host: String) -> 
                     }
                 }
                 div { class: "form-grid",
-                    Field { label: "tmux",
+                    Field { label: "tmux", group: true,
                         Select { title: "tmux", value: session(), options: tmux, on_change: move |v| session.set(v) }
                     }
                     if session().is_empty() {

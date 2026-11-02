@@ -101,7 +101,20 @@ pub fn Sheet(
 
 /// A label over a field, with a hint under it.
 #[component]
-pub fn Field(label: String, #[props(default)] hint: Option<String>, children: Element) -> Element {
+pub fn Field(label: String, #[props(default)] hint: Option<String>, #[props(default)] group: bool, children: Element) -> Element {
+    // `group` for a control that isn't a form input, such as a Select: inside a <label> every click
+    // on its list, sheet or backdrop would also click the field again and open the list back up
+    if group {
+        return rsx! {
+            div { class: "field-wrap", role: "group", "aria-label": "{label}",
+                span { class: "field-label", "{label}" }
+                {children}
+                if let Some(h) = hint {
+                    span { class: "field-hint", "{h}" }
+                }
+            }
+        };
+    }
     rsx! {
         label { class: "field-wrap",
             span { class: "field-label", "{label}" }
