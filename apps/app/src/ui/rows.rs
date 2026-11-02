@@ -196,8 +196,9 @@ fn PendingBubble(p: PendingMessage, ctx: Ctx) -> Element {
             icon: Icon::RotateCcw,
             action: Action::Retry { host: ctx.host.clone(), pane: ctx.pane.clone(), id: p.id.clone(), text: p.text.clone() },
             danger: false,
+            separated: false,
         });
-        items.push(Item { label: "Dismiss".into(), icon: Icon::X, action: Action::Dismiss { key: ctx.key.clone(), id: p.id.clone() }, danger: true });
+        items.push(Item { label: "Dismiss".into(), icon: Icon::X, action: Action::Dismiss { key: ctx.key.clone(), id: p.id.clone() }, danger: true, separated: false });
     }
     let (retry_host, retry_pane, retry_id, retry_text) = (ctx.host.clone(), ctx.pane.clone(), p.id.clone(), p.text.clone());
     let (key, id) = (ctx.key.clone(), p.id.clone());

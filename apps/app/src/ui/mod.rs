@@ -1,20 +1,27 @@
 //! The screens. The root asks the hub whether this browser is signed in, then shows the sign-in
 //! form or the app with its socket.
 
+mod add;
 mod chat;
 mod composer;
+mod connect;
 mod icons;
+mod kit;
 mod login;
+mod machines;
 mod md;
 mod menu;
 mod overview;
+mod phone;
 mod prompt;
 mod rows;
 mod session;
+mod setup;
 mod shell;
 // xterm.js and the page's events reach it only in the browser build
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod terminal;
+mod toast;
 
 use dioxus::prelude::*;
 use inyon_protocol::v2::OVERVIEW;
@@ -88,6 +95,8 @@ fn Connected(auth: Signal<Auth>) -> Element {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut, unused_variables))]
     let mut here = use_context_provider(|| Signal::new(route::current()));
     use_context_provider(|| Signal::new(None::<menu::Menu>));
+    // "Sign in" in Can't connect? goes back to the form
+    use_context_provider(|| auth);
     #[cfg(target_arch = "wasm32")]
     use_hook(move || {
         let (tx, mut rx) = futures_channel::mpsc::unbounded::<Route>();
@@ -105,6 +114,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
         let mut feed = Feed::default();
         spawn(socket::run(inbox, move |ev| match ev {
             socket::Event::Up => {
+                connect::record_up();
                 if !hub.peek().connected {
                     hub.write().set_connected(true);
                 }
@@ -114,7 +124,8 @@ fn Connected(auth: Signal<Auth>) -> Element {
                     out.send(state::wire2(&sub));
                 }
             }
-            socket::Event::Down => {
+            socket::Event::Down(why) => {
+                connect::record_down(&why);
                 if hub.peek().connected {
                     hub.write().set_connected(false);
                 }

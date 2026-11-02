@@ -96,6 +96,101 @@ mod imp {
         let n = (js_sys::Math::random() * 2f64.powi(52)) as u64;
         format!("{n:x}")
     }
+
+    /// An element's box on screen: left, top, right, bottom.
+    pub fn rect(id: &str) -> Option<(f64, f64, f64, f64)> {
+        let r = el(id)?.get_bounding_client_rect();
+        Some((r.left(), r.top(), r.right(), r.bottom()))
+    }
+
+    /// Moves focus into a sheet that just opened: to the element marked `data-autofocus`, or the
+    /// sheet itself, unless focus is in it already.
+    pub fn focus_into(id: &str) {
+        let Some(panel) = el(id) else { return };
+        let doc = web_sys::window().and_then(|w| w.document());
+        if doc.as_ref().and_then(|d| d.active_element()).is_some_and(|a| panel.contains(Some(&a))) {
+            return;
+        }
+        let target = panel.query_selector("[data-autofocus]").ok().flatten().and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+        let _ = target.unwrap_or(panel).focus();
+    }
+
+    const FOCUSABLE: &str = "a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+    /// Tab and Shift+Tab go round inside a sheet: true when focus was moved here, so the key's own
+    /// move must not happen.
+    pub fn trap_tab(id: &str, back: bool) -> bool {
+        let Some(panel) = el(id) else { return false };
+        let Ok(list) = panel.query_selector_all(FOCUSABLE) else { return false };
+        let all: Vec<web_sys::HtmlElement> = (0..list.length()).filter_map(|i| list.get(i)).filter_map(|n| n.dyn_into().ok()).collect();
+        let active = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element());
+        let (Some(first), Some(last)) = (all.first(), all.last()) else {
+            let _ = panel.focus();
+            return true;
+        };
+        let at = |e: &web_sys::HtmlElement| active.as_ref().is_some_and(|a| a == e.unchecked_ref::<web_sys::Element>());
+        let inside = active.as_ref().is_some_and(|a| panel.contains(Some(a)));
+        let on_panel = active.as_ref().is_some_and(|a| a == panel.unchecked_ref::<web_sys::Element>());
+        if !inside || (back && (at(first) || on_panel)) {
+            let _ = if back { last.focus() } else { first.focus() };
+            return true;
+        }
+        if !back && at(last) {
+            let _ = first.focus();
+            return true;
+        }
+        false
+    }
+
+    thread_local! {
+        static OPENERS: std::cell::RefCell<Vec<web_sys::HtmlElement>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Remembers what had focus as a sheet opens…
+    pub fn push_focus() {
+        let el = web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok());
+        if let Some(el) = el {
+            OPENERS.with(|o| o.borrow_mut().push(el));
+        }
+    }
+
+    /// …and hands focus back to it as the sheet closes, if it's still on the page.
+    pub fn pop_focus() {
+        if let Some(el) = OPENERS.with(|o| o.borrow_mut().pop()) {
+            if el.is_connected() {
+                let _ = el.focus();
+            }
+        }
+    }
+
+    pub fn open_tab(url: &str) {
+        if let Some(w) = web_sys::window() {
+            let _ = w.open_with_url_and_target_and_features(url, "_blank", "noopener");
+        }
+    }
+
+    /// This page's origin ("https://hub.example:4777") and host ("hub.example:4777").
+    pub fn origin() -> String {
+        web_sys::window().and_then(|w| w.location().origin().ok()).unwrap_or_default()
+    }
+
+    pub fn host() -> String {
+        web_sys::window().and_then(|w| w.location().host().ok()).unwrap_or_default()
+    }
+
+    pub fn user_agent() -> String {
+        web_sys::window().and_then(|w| w.navigator().user_agent().ok()).unwrap_or_default()
+    }
+
+    /// The browser thinks it has a network.
+    pub fn online() -> bool {
+        web_sys::window().is_none_or(|w| w.navigator().on_line())
+    }
+
+    /// Windows, going by the browser: only a guess at what the machine being added runs.
+    pub fn windows() -> bool {
+        user_agent().contains("Windows")
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -135,6 +230,31 @@ mod imp {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(1);
         format!("{:x}", N.fetch_add(1, Ordering::Relaxed))
+    }
+    pub fn rect(_id: &str) -> Option<(f64, f64, f64, f64)> {
+        None
+    }
+    pub fn focus_into(_id: &str) {}
+    pub fn trap_tab(_id: &str, _back: bool) -> bool {
+        false
+    }
+    pub fn push_focus() {}
+    pub fn pop_focus() {}
+    pub fn open_tab(_url: &str) {}
+    pub fn origin() -> String {
+        String::new()
+    }
+    pub fn host() -> String {
+        String::new()
+    }
+    pub fn user_agent() -> String {
+        String::new()
+    }
+    pub fn online() -> bool {
+        true
+    }
+    pub fn windows() -> bool {
+        false
     }
 }
 

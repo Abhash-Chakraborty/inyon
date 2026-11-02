@@ -1,5 +1,6 @@
-//! Where the app is: the Overview, or a session at `/m/<machine>/p/<pane>` as the web app routes it
-//! (App.tsx), under the `/next` base path while both apps run side by side. Links are plain hrefs;
+//! Where the app is: the Overview, a session at `/m/<machine>/p/<pane>`, the machines at
+//! `/machines` and one machine at `/machines/<id>`, as the web app routes them (App.tsx), under the
+//! `/next` base path while both apps run side by side. Links are plain hrefs;
 //! a click on one inside the app changes the route without loading the page again.
 
 use inyon_chat_core::overview::PaneView;
@@ -17,10 +18,17 @@ pub enum Route {
         pane: String,
         view: Option<PaneView>,
     },
+    /// the machines; `add` opens the Add sheet (`?add=1`, from "Pair again" in Can't connect?)
+    Machines {
+        add: bool,
+    },
+    Machine {
+        id: String,
+    },
 }
 
 /// `decodeURIComponent`, keeping what isn't valid percent-encoded UTF-8 as it was.
-fn decode(s: &str) -> String {
+pub fn decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -54,7 +62,11 @@ impl Route {
             });
             return Route::Session { host, pane, view };
         }
-        Route::Overview
+        match parts.as_slice() {
+            ["machines"] => Route::Machines { add: query.trim_start_matches('?').split('&').any(|kv| kv == "add=1" || kv.starts_with("add=")) },
+            ["machines", id] => Route::Machine { id: decode(id) },
+            _ => Route::Overview,
+        }
     }
 
     /// The path in the address bar, base path included.
@@ -62,6 +74,8 @@ impl Route {
         match self {
             Route::Overview => format!("{BASE}/"),
             Route::Session { host, pane, view } => format!("{BASE}{}", inyon_chat_core::overview::pane_href(host, pane, *view)),
+            Route::Machines { add } => format!("{BASE}/machines{}", if *add { "?add=1" } else { "" }),
+            Route::Machine { id } => format!("{BASE}/machines/{}", inyon_chat_core::js::encode_uri_component(id)),
         }
     }
 }
@@ -126,11 +140,28 @@ mod imp {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use imp::{current, listen};
+pub use imp::{current, listen, push};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn current() -> Route {
     Route::Overview
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn push(_r: &Route, _replace: bool) {}
+
+/// Goes to a route inside the app: a new history entry, and the screen follows.
+pub fn go(here: &mut dioxus::prelude::Signal<Route>, r: Route) {
+    use dioxus::prelude::WritableExt;
+    push(&r, false);
+    here.set(r);
+}
+
+/// Changes the address without a new history entry (a sheet that was opened by the address closed).
+pub fn replace(here: &mut dioxus::prelude::Signal<Route>, r: Route) {
+    use dioxus::prelude::WritableExt;
+    push(&r, true);
+    here.set(r);
 }
 
 #[cfg(test)]
@@ -149,15 +180,26 @@ mod tests {
         assert_eq!(Route::parse("/next/m/box%20one/p/7/", "?a=1&view=terminal"), session("box one", "%7", true));
         // a terminal-first agent's chat is asked for by name
         assert_eq!(Route::parse("/next/m/box/p/4", "?view=chat"), Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) });
-        for other in ["/next", "/next/", "/next/machines", "/next/m/box", "/nextcloud/m/a/p/1"] {
+        for other in ["/next", "/next/", "/next/settings", "/next/m/box", "/nextcloud/m/a/p/1", "/next/machines/a/b"] {
             assert_eq!(Route::parse(other, ""), Route::Overview, "{other}");
         }
     }
 
     #[test]
+    fn machines_route_as_the_web_app_does() {
+        assert_eq!(Route::parse("/next/machines", ""), Route::Machines { add: false });
+        assert_eq!(Route::parse("/next/machines/", "?add=1"), Route::Machines { add: true });
+        assert_eq!(Route::parse("/next/machines/hub%3Ah1%2Flaptop", ""), Route::Machine { id: "hub:h1/laptop".into() });
+        assert_eq!(Route::Machine { id: "box one".into() }.href(), "/next/machines/box%20one");
+        assert_eq!(internal("/next/machines?add=1"), Some(Route::Machines { add: true }));
+    }
+
+    #[test]
     fn hrefs_go_back_to_the_same_route() {
         let chat = Route::Session { host: "box".into(), pane: "%4".into(), view: Some(PaneView::Chat) };
-        for r in [Route::Overview, session("box 1", "%12", false), session("hub:h1/laptop", "%3", true), chat] {
+        for r in
+            [Route::Overview, session("box 1", "%12", false), session("hub:h1/laptop", "%3", true), chat, Route::Machines { add: false }, Route::Machine { id: "a/b c".into() }]
+        {
             let href = r.href();
             assert!(href.starts_with("/next/"), "{href}");
             assert_eq!(internal(&href), Some(r));

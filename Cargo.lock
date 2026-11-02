@@ -3389,6 +3389,7 @@ dependencies = [
  "js-sys",
  "miniz_oxide 0.9.1",
  "pulldown-cmark",
+ "qrcode",
  "serde",
  "serde_json",
  "wasm-bindgen",
