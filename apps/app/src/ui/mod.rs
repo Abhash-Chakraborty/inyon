@@ -123,6 +123,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
     let outbox = use_hook(move || {
         // a new sign-in: the screens start empty, so the streams start over
         state::reset_feed();
+        pages::PAGES.write().pages = None;
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
         spawn(socket::run(inbox, move |ev| match ev {

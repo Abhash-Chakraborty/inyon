@@ -370,6 +370,14 @@ pub fn with_custom(list: &[CustomAgent], old: Option<&str>, next: CustomAgent) -
     }
 }
 
+/// A removed custom agent back where it was (or last, when the list got shorter), unless it's
+/// there again already.
+pub fn put_back(list: &mut Vec<CustomAgent>, agent: CustomAgent, at: usize) {
+    if !list.iter().any(|a| a.id == agent.id) {
+        list.insert(at.min(list.len()), agent);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,5 +540,19 @@ mod tests {
         assert_eq!(edited.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["One", "Deux"]);
         let added = with_custom(&list, None, a("", "Three"));
         assert_eq!(added.len(), 3);
+    }
+
+    #[test]
+    fn undo_puts_a_removed_agent_back_into_the_list_as_it_is_now() {
+        let a = |id: &str| CustomAgent { id: id.into(), name: id.into(), command: "claude".into(), like: AgentKind::Claude };
+        // "2" was removed from 1, 2, 3; "4" was added since
+        let mut list = vec![a("1"), a("3"), a("4")];
+        put_back(&mut list, a("2"), 1);
+        assert_eq!(list.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
+        put_back(&mut list, a("2"), 1);
+        assert_eq!(list.len(), 4);
+        let mut short = vec![];
+        put_back(&mut short, a("9"), 5);
+        assert_eq!(short.len(), 1);
     }
 }

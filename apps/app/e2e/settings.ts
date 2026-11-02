@@ -68,6 +68,7 @@ const state = {
   tempFails: false,
   tempLag: [] as number[],
   endFails: false,
+  endLag: 0,
   // how late the next settings saves are taken, and whether saving fails
   settingsLag: [] as number[],
   settingsFail: false,
@@ -211,6 +212,11 @@ const server = Bun.serve({
       }
       const end = /^panes\/(\d+)\/end$/.exec(rest)
       if (end && state.endFails) return json({ error: 'tmux is busy' }, 500)
+      if (end && state.endLag) {
+        const lag = state.endLag
+        state.endLag = 0
+        await Bun.sleep(lag)
+      }
       if (end) {
         // as tmux does: a window without panes closes, and a session without windows
         for (const h of state.hosts) {
@@ -443,6 +449,26 @@ try {
     check(await until(() => (state.settings.customAgents ?? []).length === 1), 'custom: Undo puts it back')
     await row.waitFor()
 
+    // two removes and a Machines change in a row, the first save taken slowly: nothing is lost
+    state.settings.customAgents = [...state.settings.customAgents, { id: 'fast', name: 'Codex fast', command: 'codex --yolo', like: 'codex' }]
+    await page.reload()
+    await styled(page)
+    const fast = page.locator('.set-custom', { hasText: 'Codex fast' })
+    await fast.waitFor()
+    state.settingsLag = [1200]
+    await row.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Remove' }).click()
+    await fast.click({ button: 'right' })
+    await page.getByRole('menuitem', { name: 'Remove' }).click()
+    await send.click()
+    check(
+      await until(() => (state.settings.customAgents ?? []).length === 0 && state.settings.machinesSend === false, 6000),
+      `settings: both removed and the Machines change kept (${JSON.stringify(state.settings.customAgents)}, ${state.settings.machinesSend})`,
+    )
+    check((await send.getAttribute('aria-checked')) === 'false', 'settings: the Machines switch stays as set')
+    await send.click()
+    check(await until(() => state.settings.machinesSend === true), 'settings: Machines back on')
+
     // the companion: start, its sidebar item, stop
     await page.getByRole('radio', { name: 'Codex' }).click()
     await page.locator('#companion').getByRole('button', { name: 'Start', exact: true }).click()
@@ -457,6 +483,14 @@ try {
     await toast(page, 'Companion stopped').waitFor()
     await page.locator('#companion').getByRole('button', { name: 'Start', exact: true }).waitFor({ timeout: 2000 })
     state.reportLag = 50
+    // once the report has dropped it, a companion back in the same pane (started elsewhere) shows
+    await page.locator('.sidebar').getByRole('link', { name: /Companion/ }).waitFor({ state: 'detached', timeout: 8000 })
+    state.companion = { agent: 'codex', host: 'local', pane: '%30' }
+    state.hosts[0]!.sessions.push(companionPane('codex'))
+    publish()
+    await page.locator('#companion').getByRole('button', { name: 'Open' }).waitFor({ timeout: 4000 })
+    await page.locator('#companion').getByRole('button', { name: 'Stop' }).click()
+    await page.locator('#companion').getByRole('button', { name: 'Start', exact: true }).waitFor()
 
     // a companion app's details, from its menu
     await page.locator('.set-device', { hasText: 'Legato on desk' }).getByRole('button', { name: 'Options for Legato on desk' }).click()
@@ -612,6 +646,20 @@ try {
     await ask.getByRole('button', { name: 'End session' }).click()
     await toast(page, 'Session ended').waitFor()
     await page.waitForURL(/\/next\/?$/)
+
+    // gone somewhere else while the machine ends it: stays there
+    await page.goto(`${base}/next/m/local/p/12`)
+    await styled(page)
+    state.endLag = 1500
+    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('menuitem', { name: 'End session…' }).click()
+    await ask.getByRole('button', { name: 'End session' }).click()
+    await page.locator('.sidebar').getByRole('link', { name: 'Pages' }).click()
+    await page.waitForURL(/\/next\/pages/)
+    await toast(page, 'Session ended').waitFor()
+    await Bun.sleep(300)
+    check(/\/next\/pages/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
+    state.endLag = 0
     await ctx.close()
   }
 
@@ -672,6 +720,14 @@ try {
         await Bun.sleep(1800)
         check(!(await page.locator('.temp-row', { hasText: 'storefront' }).count()), 'temp: a late answer to an earlier refresh is dropped')
         check(!(await page.getByText("Couldn't refresh the list").count()), 'temp: a good refresh clears the failure')
+        // and over an empty list too
+        state.temp.items = []
+        await page.getByRole('button', { name: 'Refresh' }).click()
+        await page.getByText('Nothing here').waitFor()
+        state.tempFails = true
+        await page.getByRole('button', { name: 'Refresh' }).click()
+        await page.getByText("Couldn't refresh the list: The machine is busy").waitFor()
+        state.tempFails = false
       }
       await ctx.close()
     }

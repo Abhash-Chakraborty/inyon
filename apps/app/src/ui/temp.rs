@@ -315,8 +315,19 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
     if list.read().is_none() {
         return rsx! { WaitRows { label: "Looking through temp files on {machine}" } };
     }
+    // a refresh that failed: the list is as it was, and says so
+    let stale = err.map(|(_, message)| {
+        rsx! {
+            div { class: "temp-stale", role: "status",
+                Glyph { icon: Icon::CircleAlert, size: 14 }
+                span { class: "temp-stale-text", "Couldn't refresh the list: {message}" }
+                button { class: "button button-xs button-ghost press", r#type: "button", onclick: move |_| tries += 1, "Try again" }
+            }
+        }
+    });
     if order.is_empty() {
         return rsx! {
+            {stale}
             Empty { icon: Icon::FileText, title: "Nothing here", text: "Agents' temp files show up here as they make them." }
         };
     }
@@ -328,14 +339,7 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
     let (del_id, del_machine) = (id.clone(), machine.clone());
     rsx! {
         div { class: "temp-files",
-            // a refresh that failed: the list is as it was, and says so
-            if let Some((_, message)) = err {
-                div { class: "temp-stale", role: "status",
-                    Glyph { icon: Icon::CircleAlert, size: 14 }
-                    span { class: "temp-stale-text", "Couldn't refresh the list: {message}" }
-                    button { class: "button button-xs button-ghost press", r#type: "button", onclick: move |_| tries += 1, "Try again" }
-                }
-            }
+            {stale}
             div { class: "temp-summary",
                 p { class: "temp-total tabular", "{bytes(total)} in {st::items_text(order.len())}" }
                 div { class: "temp-quick",

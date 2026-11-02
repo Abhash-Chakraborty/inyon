@@ -103,6 +103,13 @@ pub fn CompanionRows() -> Element {
     // a companion just stopped: its pane stays in the overview until the machine's next report
     let mut stopped = use_signal(|| None::<String>);
     let running = all.iter().find(|c| c.host == own && stopped.read().as_deref() != Some(c.pane.as_str())).cloned();
+    // once the overview has dropped the stopped pane, a companion in that pane again is a new one
+    let reported_gone = stopped.read().as_ref().is_some_and(|p| !all.iter().any(|c| c.host == own && c.pane == *p));
+    use_effect(use_reactive!(|reported_gone| {
+        if reported_gone {
+            stopped.set(None);
+        }
+    }));
     let running_id = running.as_ref().map(|c| c.pane.clone());
     let t = tries();
     use_effect(use_reactive!(|running_id, t| {

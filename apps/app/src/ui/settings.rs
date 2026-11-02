@@ -54,8 +54,8 @@ static DETAILS: GlobalSignal<Option<PairedCompanion>> = Signal::global(|| None);
 pub enum SettingsOp {
     EditAgent(String),
     RemoveAgent(String),
-    /// puts back the custom agents from before a remove
-    UndoAgents(Vec<CustomAgent>),
+    /// puts a removed custom agent back where it was
+    UndoRemove(CustomAgent, usize),
     CompanionDetails(String),
     RemoveCompanion(String),
     ForgetPhone(String),
@@ -70,8 +70,8 @@ pub fn run(op: SettingsOp) {
             }
         }
         SettingsOp::RemoveAgent(id) => spawn_forever_here(remove_agent(id)),
-        SettingsOp::UndoAgents(before) => spawn_forever_here(async move {
-            if let Err(e) = save_agents(before).await {
+        SettingsOp::UndoRemove(agent, at) => spawn_forever_here(async move {
+            if let Err(e) = save_agents(move |list| st::put_back(list, agent, at)).await {
                 toast::toast("Could not undo", Some(e), ToastTone::Error);
             }
         }),
@@ -102,39 +102,50 @@ fn customs() -> Vec<CustomAgent> {
 }
 
 /// Saves the custom agents with the hub's other settings as they are now.
-async fn save_agents(next: Vec<CustomAgent>) -> Result<(), String> {
+/// Changes the custom agents and saves them with the hub's other settings. The change runs once
+/// it's this save's turn, on the list as it is then, so one save can't undo another.
+async fn save_agents<R>(change: impl FnOnce(&mut Vec<CustomAgent>) -> R) -> Result<R, String> {
     take_turn().await;
-    let out = put_agents(next).await;
+    let out = put_agents(change).await;
     end_turn();
     out
 }
 
-async fn put_agents(next: Vec<CustomAgent>) -> Result<(), String> {
+async fn put_agents<R>(change: impl FnOnce(&mut Vec<CustomAgent>) -> R) -> Result<R, String> {
     let Some(mut base) = HUB.peek().clone() else { return Err("The hub's settings haven't loaded yet.".into()) };
-    base.custom_agents = Some(next);
+    let mut list = base.custom_agents.clone().unwrap_or_default();
+    let out = change(&mut list);
+    base.custom_agents = Some(list);
     let saved = api::save_settings(&base).await.map_err(|e| e.message)?;
     // the Bun hub (INYON_HUB_IMPL=bun) doesn't keep them
     if saved.custom_agents.is_none() {
         return Err(OLD_HUB.into());
     }
+    // only the agents from the answer: anything else changed meanwhile goes out on its own turn
     EDITS.with(|e| e.set(e.get() + 1));
-    *HUB.write() = Some(saved);
-    Ok(())
+    if let Some(h) = HUB.write().as_mut() {
+        h.custom_agents = saved.custom_agents;
+    }
+    Ok(out)
 }
 
 async fn remove_agent(id: String) {
-    let before = customs();
-    let Some(a) = before.iter().find(|a| a.id == id).cloned() else { return };
-    match save_agents(before.iter().filter(|x| x.id != id).cloned().collect()).await {
-        Ok(()) => toast::show(Toast {
+    let removed = save_agents(|list| {
+        let at = list.iter().position(|a| a.id == id)?;
+        Some((list.remove(at), at))
+    })
+    .await;
+    match removed {
+        Ok(Some((a, at))) => toast::show(Toast {
             id: 0,
             title: format!("Removed {}", a.name),
             body: None,
             tone: ToastTone::Info,
             href: None,
-            action: Some(("Undo".into(), Action::Settings(SettingsOp::UndoAgents(before)))),
+            action: Some(("Undo".into(), Action::Settings(SettingsOp::UndoRemove(a, at)))),
             agent: None,
         }),
+        Ok(None) => {}
         Err(e) => toast::toast("Could not remove", Some(e), ToastTone::Error),
     }
 }
@@ -577,7 +588,8 @@ fn CustomAgentSheet() -> Element {
         let l = like();
         spawn(async move {
             let next = CustomAgent { id: old.as_ref().map(|a| a.id.clone()).unwrap_or_default(), name: n.clone(), command: c, like: l };
-            match save_agents(st::with_custom(&customs(), old.as_ref().map(|a| a.id.as_str()), next)).await {
+            let id = old.as_ref().map(|a| a.id.clone());
+            match save_agents(move |list| *list = st::with_custom(list, id.as_deref(), next)).await {
                 Ok(()) => {
                     let body = old.is_none().then(|| format!("New sessions can start it, and Inyon reads it as {}.", l.def().name));
                     toast::toast(if old.is_some() { format!("Saved {n}") } else { format!("Added {n}") }, body, ToastTone::Success);

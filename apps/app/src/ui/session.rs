@@ -270,7 +270,8 @@ pub async fn end_session(mut hub: Signal<Hub>, host: &str, pane: &str, back: Opt
     }
     super::notices::haptic(inyon_chat_core::store::Haptic::Success);
     toast::toast("Session ended", None, ToastTone::Success);
-    if let Some(mut here) = back {
+    // still on the session's screen: somewhere else meanwhile stays where it is
+    if let Some(mut here) = back.filter(|h| matches!(&*h.peek(), crate::route::Route::Session { host: h, pane: p, .. } if h == host && p == pane)) {
         crate::route::go(&mut here, crate::route::Route::Overview);
     }
     true
