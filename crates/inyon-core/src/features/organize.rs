@@ -142,6 +142,20 @@ pub fn on_event(f: impl Fn(&Event) + 'static) {
 }
 
 /// Changes the record, writes it and tells the apps; nothing changes when it can't be written.
+/// Like [`change`], for what mustn't be lost: when it can't be written it stays in memory, to be
+/// written with the next save, and the error says so.
+fn change_or_keep(f: impl FnOnce(&mut Organize)) -> HubResult<()> {
+    let out = with(|st| {
+        if st.newer {
+            return Err(http(409, NEWER));
+        }
+        f(&mut st.org);
+        save(st)
+    });
+    emit(Event::Changed);
+    out
+}
+
 fn change<T>(f: impl FnOnce(&mut Organize) -> HubResult<T>) -> HubResult<T> {
     let out = with(|st| {
         if st.newer {
@@ -974,6 +988,7 @@ pub fn tick(now: u64) {
     if reconcile(&hosts) {
         emit(Event::Changed);
     }
+    auto::follow_sends(&hosts);
     auto::send_due(now, &hosts);
     auto::check_agents(now, &hosts);
 }

@@ -124,6 +124,13 @@ const allOrganize = () => (organizeBy.size ? { ...mergeOrganize([...organizeBy.v
 /** Whether this hub (or the phone's own core) can put idle agents to sleep: from version 2 of its record. */
 export const canSleep = () => (organizeBy.get('main')?.v ?? 0) >= 2
 
+/** Whether the hub a machine is on sends messages later and closes sessions when done (version 2
+ * of its record, from 0.24); one with only pins and parking doesn't. */
+export function canSchedule(hostId: string) {
+  const hub = splitHostId(hostId).hub
+  return (organizeBy.get(hub ? `hub:${hub.id}` : 'main')?.v ?? 0) >= 2
+}
+
 /** Whether the hub a machine is on keeps how sessions are organised (an older one doesn't). */
 export function canOrganize(hostId: string) {
   const hub = splitHostId(hostId).hub

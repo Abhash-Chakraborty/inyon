@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { Organize, SessionMark } from '@inyon/protocol'
 import { allPanes } from './overview.ts'
-import { markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, sendAt, sendsFor, snoozeUntil, sortPanes } from './organize.ts'
+import { markFor, mergeOrganize, nextWake, parseTags, placeOf, renameOrganize, sendAt, sendsFor, snoozeUntil, sortPanes, timeText } from './organize.ts'
 import { agentPane, host } from '../test/fixtures.ts'
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime()
@@ -97,6 +97,20 @@ describe('organised sessions', () => {
     expect(sendAt('halfHour', tue)).toBe(NOW + 30 * 60_000)
     expect(new Date(sendAt('tomorrow', tue))).toEqual(new Date(2026, 9, 28, 9, 0))
   })
+
+  test('a time within the week reads by its weekday, one further off by its date', () => {
+    const now = new Date(2026, 9, 27, 10, 0)
+    const weekday = (d: Date) => d.toLocaleDateString([], { weekday: 'short' })
+    const date = (d: Date) => d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+    const today = new Date(2026, 9, 27, 15, 0)
+    expect(timeText(today.getTime(), now)).toBe(today.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))
+    const inThree = new Date(2026, 9, 30, 9, 0)
+    expect(timeText(inThree.getTime(), now)).toContain(weekday(inThree))
+    const inTen = new Date(2026, 10, 6, 9, 0)
+    expect(timeText(inTen.getTime(), now)).toContain(date(inTen))
+    expect(timeText(inTen.getTime(), now)).not.toContain(weekday(inTen))
+  })
+
 
   test('tags are typed in one box and come out as the hub keeps them', () => {
     expect(parseTags(' Review, #needs   docs,, review ')).toEqual(['review', 'needs docs'])

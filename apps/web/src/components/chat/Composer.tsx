@@ -5,7 +5,7 @@ import { ArrowUp, CalendarClock, Camera, Clock3, FileText, Folder, Hourglass, Pa
 import { agentDef, chatKey, type AgentKind, type SlashCommand } from '@inyon/protocol'
 import { haptic } from '../../lib/haptics.ts'
 import { api, isTransient, withRetries, type Uploaded } from '../../lib/api.ts'
-import { canOrganize, patchChat, toast, useStore } from '../../lib/store.ts'
+import { canSchedule, patchChat, toast, useStore } from '../../lib/store.ts'
 import { SendLaterSheet } from '../session/OrganizeSheets.tsx'
 import { socket } from '../../lib/socket.ts'
 import { nativeFile, onNative, plugin, type NativeFile } from '../../lib/native.ts'
@@ -742,7 +742,7 @@ export function Composer({
               !showStop && !shellMode && { key: 'send', label: canSteer && steer ? 'Steer now' : working ? 'Queue follow-up' : 'Send', icon: <ArrowUp className="size-4" />, disabled: !canSend, onSelect: () => void send() },
               !shellMode && { key: 'hold', label: `Hold until ${agentName} is free`, keys: keyLabel('alt', 'Enter'), icon: <Hourglass className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => void hold() },
               // from 0.24 the hub can keep it to send at a set time
-              !shellMode && canOrganize(host) && { key: 'later', label: 'Send later…', icon: <CalendarClock className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => setLater(true) },
+              !shellMode && canSchedule(host) && { key: 'later', label: 'Send later…', icon: <CalendarClock className="size-4" />, disabled: !text.trim() || uploading || files.length > 0, onSelect: () => setLater(true) },
               showStop && { key: 'stop', label: 'Stop', icon: <Square className="size-4" />, onSelect: () => void stop() },
             ])}
             onClick={() => (showStop ? stop() : send())}

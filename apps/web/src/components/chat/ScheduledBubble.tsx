@@ -16,12 +16,11 @@ function failed(title: string, e: unknown) {
 /** A message the hub sends at a set time (from 0.24): it can still go now or be cancelled. */
 export function ScheduledBubble({ host, pane, s }: { host: string; pane: string; s: DelayedSend }) {
   const [busy, setBusy] = useState(false)
-  // now: into the held queue at once, and off the schedule
+  // now: off the schedule and into the held queue, in one step on the hub
   const sendNow = async () => {
     setBusy(true)
     try {
-      await api.hold(host, pane, s.text)
-      await api.cancelSend(host, s.id)
+      await api.sendNow(host, s.id)
     } catch (e) {
       failed("Couldn't send it", e)
     } finally {
@@ -32,7 +31,7 @@ export function ScheduledBubble({ host, pane, s }: { host: string; pane: string;
     try {
       await api.cancelSend(host, s.id)
       if (!s.error)
-        toast({ title: 'Message cancelled', tone: 'success', action: { label: 'Undo', onSelect: () => void api.sendLater(host, pane, s.text, s.at).catch((e) => failed("Couldn't put it back", e)) } })
+        toast({ title: 'Message cancelled', tone: 'success', action: { label: 'Undo', onSelect: () => void api.sendLater(host, pane, s.text, s.at, s.conv ?? undefined).catch((e) => failed("Couldn't put it back", e)) } })
     } catch (e) {
       failed("Couldn't cancel it", e)
     }

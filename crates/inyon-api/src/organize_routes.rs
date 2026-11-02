@@ -80,6 +80,17 @@ pub fn add(routes: &mut Routes) {
             ),
         ],
     );
+    guarded(
+        routes,
+        "/api/hosts/:id/sends/:did/now",
+        vec![(
+            M::POST,
+            h(|r| async move {
+                let pane = auto::send_now(&send_on(&r)?)?;
+                Ok(ok_json(&json!({ "pane": pane })))
+            }),
+        )],
+    );
     guarded(routes, "/api/organize/sleep", vec![(M::PUT, h(|mut r| async move { Ok(json_of(&auto::set_sleep(&body(&mut r).await?)?)) }))]);
     guarded(routes, "/api/organize/prompts", vec![(M::POST, h(|mut r| async move { Ok(json_of(&auto::add_prompt(&body(&mut r).await?)?)) }))]);
     guarded(

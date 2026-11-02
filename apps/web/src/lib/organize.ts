@@ -130,11 +130,17 @@ export function snoozeUntil(p: SnoozeFor, now = new Date()): number {
   return d.getTime()
 }
 
-/** "9:00", or with the day when it isn't today: "Mon 9:00". */
+/** "9:00"; with the day when it isn't today, "Mon 9:00"; with the date when it's more than six
+ * days off, where a weekday alone would read as the coming one: "12 Mar 9:00". */
 export function timeText(at: number, now = new Date()) {
   const d = new Date(at)
   const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
+  if (d.toDateString() === now.toDateString()) return time
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const far = at - startOfToday >= 7 * 24 * 3600_000 || at < startOfToday
+  if (!far) return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
+  const date = d.toLocaleDateString([], { day: 'numeric', month: 'short', ...(d.getFullYear() !== now.getFullYear() && { year: 'numeric' }) })
+  return `${date} ${time}`
 }
 
 /** "until 9:00", or with the day when it isn't today: "until Mon 9:00". */

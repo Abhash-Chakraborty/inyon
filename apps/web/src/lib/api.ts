@@ -381,7 +381,10 @@ export const api = {
   /** pins, parks, snoozes, tags or notes a session (from 0.24); null clears a field, and the answer is the mark after it */
   organize: (host: string, pane: string, patch: SessionPatch) => request<{ session: SessionMark | null }>('PATCH', `${panePath(host, pane)}/organize`, patch),
   /** a message the hub sends at `at` (unix ms), once the agent is free then */
-  sendLater: (host: string, pane: string, text: string, at: number) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, { text, at }),
+  /** `conv`: the conversation it's for, when it's put back (Undo); else the pane's own. */
+  sendLater: (host: string, pane: string, text: string, at: number, conv?: string) => request<DelayedSend>('POST', `${panePath(host, pane)}/sends`, { text, at, ...(conv && { conv }) }),
+  /** A waiting message goes now: off the schedule and into the held queue in one step. */
+  sendNow: (host: string, id: string) => request<{ pane: string }>('POST', `${h(host)}/sends/${encodeURIComponent(id)}/now`),
   cancelSend: (host: string, id: string) => request('DELETE', `${h(host)}/sends/${encodeURIComponent(id)}`),
   /** puts this hub's idle agents to sleep after `minutes`; null turns it off */
   setSleep: (minutes: number | null, scope = 'all') => request<SleepRule[]>('PUT', '/api/organize/sleep', { scope, minutes }),

@@ -311,14 +311,21 @@ const SLEEP_CHOICES = [
   { v: '120', label: '2 hours' },
 ]
 
+const sleepLabel = (m: number) => (m % 60 === 0 ? `${m / 60} hour${m === 60 ? '' : 's'}` : `${m} min`)
+
 /** From 0.24: this hub puts agents idle this long to sleep (Exit to shell), so they stop using memory. */
 function SleepRow() {
-  const rule = useStore((s) => s.organize.sleep?.find((r) => r.scope === 'all'))
+  // the whole record, so the row turns up when the hub's record does
+  const organize = useStore((s) => s.organize)
   if (!canSleep()) return null
+  const rule = organize.sleep?.find((r) => r.scope === 'all')
+  // a time set another way (the API takes any minutes) shows as one more choice
+  const current = String(rule?.minutes ?? 0)
+  const choices = SLEEP_CHOICES.some((c) => c.v === current) ? SLEEP_CHOICES : [...SLEEP_CHOICES, { v: current, label: sleepLabel(Number(current)) }].sort((a, b) => Number(a.v) - Number(b.v))
   const set = (v: string) => void api.setSleep(Number(v) || null).catch((e) => toast({ title: 'Could not change it', body: (e as Error).message, tone: 'error' }))
   return (
     <Row label="Put idle agents to sleep" hint="An agent idle this long exits to its shell, keeping its pane, and Resume conversation brings it back when you need it. Pinned sessions, ones with a message waiting and ones without a conversation to resume stay awake.">
-      <Segmented size="sm" value={String(rule?.minutes ?? 0)} onChange={set} options={SLEEP_CHOICES} />
+      <Segmented size="sm" value={current} onChange={set} options={choices} />
     </Row>
   )
 }

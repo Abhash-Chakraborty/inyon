@@ -82,6 +82,15 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
   const held = chat?.info?.held ?? NO_HELD
   const organize = useStore((s) => s.organize)
   const scheduled = useMemo(() => sendsFor(organize, host, pane), [organize, host, pane])
+  // where the chat has no list to put them in (nothing running, or a terminal-first agent), the
+  // messages waiting to go still show, with their Send now and Cancel
+  const scheduledList = scheduled.length > 0 && (
+    <div className="mt-6 space-y-5">
+      {scheduled.map((s) => (
+        <ScheduledBubble key={s.id} host={host} pane={pane} s={s} />
+      ))}
+    </div>
+  )
   const queued = useMemo(() => new Set(queue.map(msgKey)), [queue])
   // what the agent is writing right now, and the running command's output for the working line
   const live = chat?.live ?? NO_LIVE
@@ -337,15 +346,24 @@ export function ChatView({ host, pane, agent, onTerminal, controls, ultracode }:
             <div className="mx-auto w-full max-w-[760px] px-4 pt-5 pb-6 sm:px-6">
               {/* a terminal-first agent has no chat for the hub to load, so nothing waits on one */}
               {!chatCapable && !running ? (
-                <NotRunning host={host} pane={pane} agent={agent} installed={installed} onTerminal={onTerminal} />
+                <>
+                  <NotRunning host={host} pane={pane} agent={agent} installed={installed} onTerminal={onTerminal} />
+                  {scheduledList}
+                </>
               ) : !chatCapable ? (
-                <Empty icon={<AgentLogo kind={agent} size={28} />} title={`${agentDef(agent!).name} runs in the terminal`} action={<Button onClick={onTerminal}><SquareTerminal className="size-4" /> Open terminal</Button>}>
-                  Inyon doesn't read {agentDef(agent!).name}'s conversation files yet, so use the terminal view. Status and notifications still work.
-                </Empty>
+                <>
+                  <Empty icon={<AgentLogo kind={agent} size={28} />} title={`${agentDef(agent!).name} runs in the terminal`} action={<Button onClick={onTerminal}><SquareTerminal className="size-4" /> Open terminal</Button>}>
+                    Inyon doesn't read {agentDef(agent!).name}'s conversation files yet, so use the terminal view. Status and notifications still work.
+                  </Empty>
+                  {scheduledList}
+                </>
               ) : !chat?.loaded ? (
                 <Waiting shape="lines" className="pt-4" label={chat?.catchingUp !== undefined ? `Loading the conversation · ${Math.round(chat.catchingUp * 100)}%` : 'Loading the conversation'} />
               ) : !running && !rows.length ? (
-                <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
+                <>
+                  <NotRunning host={host} pane={pane} agent={agent} installed={installed} sessionId={chat.info?.sessionId} onTerminal={onTerminal} />
+                  {scheduledList}
+                </>
               ) : (
                 <>
                   {chat.hasMore && (

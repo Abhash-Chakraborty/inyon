@@ -285,3 +285,150 @@ fn nothing_is_done_to_a_machine_that_is_not_online_until_it_is_back() {
         assert_eq!(*acts.borrow(), vec![hold("%3", "go on")]);
     });
 }
+
+#[test]
+fn a_message_whose_conversation_is_gone_never_goes_to_another_one_in_its_pane() {
+    run(|| async {
+        let acts = fresh(None);
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &json!({ "text": "for a", "at": T + MIN }), T).unwrap();
+        // another conversation was started in %3
+        let hosts = put(&[("%3", "/w", Some("conv-z"), "idle")]);
+        auto::send_due(T + MIN, &hosts);
+        assert!(acts.borrow().is_empty());
+        assert_eq!(get().sends.unwrap()[0].error.as_deref(), Some("The session isn't there any more"));
+        // Send now says the same
+        assert_eq!(auto::send_now(&s.id).unwrap_err().status, Some(409));
+        assert!(acts.borrow().is_empty());
+    });
+}
+
+#[test]
+fn a_waiting_message_moves_with_its_conversation_and_keeps_that_agent_awake() {
+    run(|| async {
+        let acts = fresh(None);
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        auto::add_send("box", "%3", &json!({ "text": "go on", "at": T + 600 * MIN }), T).unwrap();
+        auto::set_sleep(&json!({ "minutes": 10 })).unwrap();
+        // resumed in %9: the chat there shows it, and the agent there isn't put to sleep before it goes
+        let hosts = put(&[("%9", "/w", Some("conv-a"), "idle")]);
+        assert!(auto::follow_sends(&hosts));
+        assert_eq!(get().sends.unwrap()[0].pane, "%9");
+        assert!(!auto::follow_sends(&hosts), "once");
+        auto::check_agents(T, &hosts);
+        auto::check_agents(T + 60 * MIN, &hosts);
+        assert!(acts.borrow().is_empty());
+    });
+}
+
+#[test]
+fn send_now_takes_it_off_the_list_and_holds_it_in_one_step() {
+    run(|| async {
+        let acts = fresh(None);
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &json!({ "text": "now", "at": T + 600 * MIN }), T).unwrap();
+        assert_eq!(auto::send_now(&s.id).unwrap(), "%3");
+        assert_eq!(*acts.borrow(), vec![hold("%3", "now")]);
+        assert_eq!(get().sends, None);
+        assert_eq!(auto::send_now(&s.id).unwrap_err().status, Some(404));
+    });
+}
+
+#[test]
+fn one_put_back_keeps_the_conversation_it_was_for() {
+    run(|| async {
+        fresh(None);
+        put(&[("%3", "/w", Some("conv-b"), "idle")]);
+        let s = auto::add_send("box", "%3", &json!({ "text": "a", "at": T + MIN, "conv": "conv-a" }), T).unwrap();
+        assert_eq!(s.conv.as_deref(), Some("conv-a"));
+        assert_eq!(auto::add_send("box", "%3", &json!({ "text": "a", "at": T + MIN, "conv": 7 }), T).unwrap_err().status, Some(400));
+    });
+}
+
+/// A store whose writes of the record fail while `failing` is set, as on a full disk.
+struct Flaky {
+    inner: crate::platform::store::MemoryStore,
+    failing: std::cell::Cell<bool>,
+}
+
+impl crate::platform::store::Store for Flaky {
+    fn get(&self, key: &str) -> Option<Value> {
+        self.inner.get(key)
+    }
+    fn set(&self, key: &str, value: &Value) -> Result<(), String> {
+        if key == KEY && self.failing.get() {
+            return Err("No space left on device".into());
+        }
+        self.inner.set(key, value)
+    }
+    fn del(&self, key: &str) {
+        self.inner.del(key)
+    }
+    fn keys(&self, prefix: &str) -> Vec<String> {
+        self.inner.keys(prefix)
+    }
+}
+
+#[test]
+fn a_refused_message_that_cant_be_written_back_is_still_kept() {
+    run(|| async {
+        fresh(None);
+        let store = Rc::new(Flaky { inner: crate::platform::store::MemoryStore::new(), failing: std::cell::Cell::new(false) });
+        crate::platform::store::use_store(store.clone());
+        reset();
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        let s = auto::add_send("box", "%3", &json!({ "text": "a", "at": T + MIN }), T).unwrap();
+        // the held queue refuses it, and the disk is full by then
+        let st = store.clone();
+        auto::set_actions(Some(Rc::new(move |_: &Act| {
+            st.failing.set(true);
+            Err(http(409, "No room in the held queue"))
+        })));
+        auto::send_due(T + MIN, &hosts);
+        let kept = get().sends.unwrap();
+        assert_eq!((kept[0].id.as_str(), kept[0].error.as_deref()), (s.id.as_str(), Some("No room in the held queue")), "still there to retry or dismiss");
+        // written down with the next save that works
+        store.failing.set(false);
+        auto::update_send(&s.id, &json!({ "at": T + 5 * MIN }), T + 2 * MIN).unwrap();
+        assert_eq!(kv::get_value(KEY).unwrap()["sends"][0]["id"], json!(s.id));
+        crate::platform::store::use_store(Rc::new(crate::platform::store::MemoryStore::new()));
+    });
+}
+
+#[test]
+fn a_new_agent_in_the_same_pane_starts_its_own_idle_time() {
+    run(|| async {
+        let acts = fresh(None);
+        auto::set_sleep(&json!({ "minutes": 10 })).unwrap();
+        let hosts = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        auto::check_agents(T, &hosts);
+        // the agent exits and another one, with its own conversation, is idle in %3 by the next look
+        let hosts = put(&[("%3", "/w", Some("conv-b"), "idle")]);
+        auto::check_agents(T + 9 * MIN, &hosts);
+        auto::check_agents(T + 11 * MIN, &hosts);
+        assert!(acts.borrow().is_empty(), "idle 2 minutes, not 11");
+        auto::check_agents(T + 19 * MIN, &hosts);
+        assert_eq!(*acts.borrow(), vec![Act::Sleep { host: "box".into(), pane: "%3".into() }]);
+    });
+}
+
+#[test]
+fn a_session_that_could_not_be_ended_is_tried_again_after_a_while() {
+    run(|| async {
+        let acts = fresh(Some("tmux didn't answer"));
+        let end = Act::End { host: "box".into(), pane: "%3".into() };
+        put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        mark_pane("box", "%3", &SessionPatch::read(&json!({ "closeWhenDone": true }), T).unwrap()).unwrap();
+        auto::check_agents(T, &put(&[("%3", "/w", Some("conv-a"), "working")]));
+        let idle = put(&[("%3", "/w", Some("conv-a"), "idle")]);
+        auto::check_agents(T + MIN, &idle);
+        auto::check_agents(T + MIN + CLOSE_SETTLE_MS, &idle);
+        assert_eq!(*acts.borrow(), vec![end.clone()]);
+        let m = get().sessions.into_iter().find(|m| m.pane == "%3").unwrap();
+        assert_eq!((m.close_when_done, m.close_saw_work), (Some(true), Some(true)), "still to close");
+        auto::check_agents(T + MIN + CLOSE_SETTLE_MS + 5_000, &idle);
+        assert_eq!(acts.borrow().len(), 1, "not again at once");
+        auto::check_agents(T + 2 * MIN + CLOSE_SETTLE_MS, &idle);
+        assert_eq!(*acts.borrow(), vec![end.clone(), end]);
+    });
+}

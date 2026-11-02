@@ -358,3 +358,17 @@ describe('Paired devices', () => {
     expect(screen.getByText('Interrupt, terminal, files, settings')).toBeTruthy()
   })
 })
+
+describe('Put idle agents to sleep', () => {
+  test('turns up when the hub keeps it, and shows a time set some other way', async () => {
+    const org = { v: 1, sessions: [], projects: [], groups: [], spaces: [] }
+    act(() => emit({ t: 'overview', hosts: fresh(hosts), organize: org }))
+    await render(page())
+    expect(screen.queryByText('Put idle agents to sleep')).toBeNull()
+    // the hub moves on to a record that has it, with 15 minutes set through the API
+    await act(async () => emit({ t: 'overview', hosts: useStore.getState().hosts, organize: { ...org, v: 2, sleep: [{ scope: 'all', minutes: 15 }] } }))
+    expect(screen.getByText('Put idle agents to sleep')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: '15 min' }).getAttribute('aria-checked')).toBe('true')
+    act(() => emit({ t: 'overview', hosts: [] }))
+  })
+})

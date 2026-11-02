@@ -194,6 +194,23 @@ fn messages_sent_later_sleep_rules_and_prompts_have_routes_and_prompts_stay_out_
         assert_eq!(ask(&r, "DELETE", &format!("/api/hosts/elsewhere/sends/{did}"), json!(null)).await.0, 404, "only under its own machine");
         let (status, s) = ask(&r, "PATCH", &format!("/api/hosts/h/sends/{did}"), json!({ "text": "run them all" })).await;
         assert_eq!((status, s["text"].as_str()), (200, Some("run them all")));
+        assert_eq!(ask(&r, "PUT", "/api/organize/sleep", json!({ "scope": 123, "minutes": 30 })).await.0, 400, "a scope that isn't text");
+
+        // Send now: off the list and into the held queue in one step
+        use organize::auto::{self, Act};
+        let held = Rc::new(RefCell::new(vec![]));
+        let h = held.clone();
+        auto::set_actions(Some(Rc::new(move |a: &Act| {
+            h.borrow_mut().push(a.clone());
+            Ok(())
+        })));
+        let (_, now) = ask(&r, "POST", "/api/hosts/h/panes/7/sends", json!({ "text": "now please", "at": at })).await;
+        let (status, v) = ask(&r, "POST", &format!("/api/hosts/h/sends/{}/now", now["id"].as_str().unwrap()), json!(null)).await;
+        assert_eq!((status, v), (200, json!({ "pane": "%7" })));
+        assert_eq!(*held.borrow(), vec![Act::Hold { host: "h".into(), pane: "%7".into(), text: "now please".into() }]);
+        let (_, list) = ask(&r, "GET", "/api/hosts/h/sends", json!(null)).await;
+        assert_eq!(list.as_array().map(Vec::len), Some(1));
+        auto::set_actions(None);
 
         let (status, rules) = ask(&r, "PUT", "/api/organize/sleep", json!({ "scope": "all", "minutes": 30 })).await;
         assert_eq!((status, rules), (200, json!([{ "scope": "all", "minutes": 30 }])));

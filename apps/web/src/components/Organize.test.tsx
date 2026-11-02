@@ -189,15 +189,24 @@ describe('organising sessions on the overview', () => {
   })
 
   test('Close when done goes to the hub, and the menu then offers to keep it open', async () => {
-    emit({ t: 'overview', hosts: [box()], organize: org() })
+    emit({ t: 'overview', hosts: [box()], organize: { ...org(), v: 2 } })
     const user = userEvent.setup()
     await home()
     await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
     await user.click(screen.getByRole('menuitem', { name: 'Close when done' }))
     expect(api.organize).toHaveBeenCalledWith('box', '%3', { closeWhenDone: true })
-    await hear({ t: 'overview', hosts: [box()], organize: org(mark('%3', { closeWhenDone: true })) })
+    await hear({ t: 'overview', hosts: [box()], organize: { ...org(mark('%3', { closeWhenDone: true })), v: 2 } })
     await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
     expect(screen.getByRole('menuitem', { name: 'Keep open when done' })).toBeTruthy()
+  })
+
+  test('a hub that keeps only pins and parking offers no Close when done', async () => {
+    emit({ t: 'overview', hosts: [box()], organize: org() })
+    const user = userEvent.setup()
+    await home()
+    await user.click(screen.getByRole('button', { name: 'Actions for Write the docs' }))
+    expect(screen.getByRole('menuitem', { name: 'Pin' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'Close when done' })).toBeNull()
   })
 
   test('a message kept to send later is handed to the hub with its time, and the box empties', async () => {
@@ -232,8 +241,25 @@ describe('organising sessions on the overview', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(api.cancelSend).toHaveBeenCalledWith('box', 'd-1')
     view.unmount()
+    // Undo puts it back for the conversation it was for
+    const withConv = await render(<ScheduledBubble host="box" pane="%1" s={{ ...s, conv: 'conv-a' }} />)
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await act(async () => useStore.getState().toasts.at(-1)!.action!.onSelect())
+    expect(api.sendLater).toHaveBeenLastCalledWith('box', '%1', 'run the tests', s.at, 'conv-a')
+    withConv.unmount()
     await render(<ScheduledBubble host="box" pane="%1" s={{ ...s, error: "The session isn't there any more" }} />)
     expect(screen.getByText("The session isn't there any more")).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy()
+  })
+})
+
+describe('a message waiting to go', () => {
+  test('Send now is one request to the hub, not a hold and a cancel', async () => {
+    const s = { id: 'd-1', host: 'box', pane: '%1', text: 'run the tests', at: Date.now() + 3600_000 }
+    await render(<ScheduledBubble host="box" pane="%1" s={s} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send now' }))
+    expect(api.sendNow).toHaveBeenCalledWith('box', 'd-1')
+    expect(api.hold).not.toHaveBeenCalled()
+    expect(api.cancelSend).not.toHaveBeenCalled()
   })
 })
