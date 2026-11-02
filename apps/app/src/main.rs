@@ -23,10 +23,10 @@ mod model;
 #[cfg(feature = "phone")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod notify;
+mod pages;
 #[cfg(feature = "phone")]
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 mod phone;
-mod pages;
 mod platform;
 mod prompt;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
