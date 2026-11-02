@@ -93,7 +93,7 @@ impl Feed {
         let (hosts, resync) = self.overview.apply(f);
         let hosts = hosts.and_then(|hosts| {
             let ctx = Context { route: "/", terminal_view: false, visible: true, native: false, browser_notices: false };
-            self.store.apply(&ServerMsg::Overview { hosts }, None, &ctx, now);
+            self.store.apply(&ServerMsg::Overview { hosts, organize: None }, None, &ctx, now);
             let all = &self.store.overview.hosts;
             (!shown.loaded || shown.hosts != *all).then(|| all.clone())
         });
