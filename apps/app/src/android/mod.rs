@@ -80,6 +80,20 @@ fn ssh_call(id: u64, method: &'static str, args: &str) -> bool {
     .is_some()
 }
 
+/// The upgrade file the Capacitor app sealed (MigrationExport.read), opened; None when there's none.
+fn read_migration() -> Option<String> {
+    call("readMigration", |env, class| {
+        let r = env.call_static_method(class, "readMigration", "()Ljava/lang/String;", &[])?.l()?;
+        Ok(if r.is_null() { None } else { Some(jstr(env, &JString::from(r))) })
+    })
+    .flatten()
+}
+
+/// Deletes the upgrade file and its key, once its contents are in this app's stores.
+fn discard_migration() {
+    call("discardMigration", |env, class| env.call_static_method(class, "discardMigration", "()V", &[]).map(drop));
+}
+
 /// The notification shade, through Kotlin's Notifications (the same as the Capacitor app posts).
 struct AndroidShade;
 
@@ -167,6 +181,15 @@ pub extern "system" fn Java_tech_abhashchakraborty_inyon_app_Native_startCore(mu
     }
     let dir = PathBuf::from(jstr(&mut env, &dir));
     let name = crate::phone::readable_name(&jstr(&mut env, &maker), &jstr(&mut env, &model));
+    // the Capacitor app's records and settings, on the first start after installing over it
+    let _ = std::fs::create_dir_all(&dir);
+    match crate::upgrade::first_start(&dir, read_migration, discard_migration, &mut |k, v| crate::platform::save_in(&dir, k, v)) {
+        Some(Ok(got)) => {
+            log(false, &format!("brought over from the previous app: {} records, {} settings, kept {:?}, skipped {:?}", got.records, got.settings, got.kept, got.skipped))
+        }
+        Some(Err(why)) => log(true, &format!("the previous app's file wasn't imported: {why:?}")),
+        None => {}
+    }
     let phone = inyon_phone::native::start(inyon_phone::native::Options {
         dir: dir.join("core"),
         name,

@@ -16,6 +16,7 @@ import tech.abhashchakraborty.inyon.device.Choice
 import tech.abhashchakraborty.inyon.device.DeviceEvents
 import tech.abhashchakraborty.inyon.device.KeepAliveService
 import tech.abhashchakraborty.inyon.device.Notifications
+import tech.abhashchakraborty.inyon.migrate.MigrationExport
 import tech.abhashchakraborty.inyon.ssh.SshMethods
 import java.io.File
 import java.lang.ref.WeakReference
@@ -154,6 +155,13 @@ object Native {
             }
         }
     }
+
+    /** The Capacitor app's sealed upgrade file, opened, or null (MigrationExport). */
+    @JvmStatic
+    fun readMigration(): String? = MigrationExport.read(app)?.toString(Charsets.UTF_8)
+
+    @JvmStatic
+    fun discardMigration() = MigrationExport.discard(app)
 
     /** Whether the system is in dark mode now. */
     @JvmStatic

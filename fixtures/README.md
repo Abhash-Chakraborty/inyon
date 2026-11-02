@@ -16,6 +16,7 @@ fixtures/
   pages/                             a small site and what a hub answers for it under /v/
   expected/                          what the readers make of the captures
   old-git/                           a git that prints rev-parse options it doesn't know back
+  upgrade/export-v1.json             what the Capacitor app seals for the app that installs over it
 ```
 
 `<agent>` is the agent's id from `packages/protocol/src/agents.ts`: `claude`, `codex`, `opencode`,
@@ -90,3 +91,8 @@ Shorten home paths and anything private before you commit it.
 - Rust tests: `screen_fixture("codex", "queued")` from `crates/inyon-core/src/test_support.rs`.
 - The layout: `cargo test -p inyon-protocol --test fixtures` (`crates/inyon-protocol/tests/fixtures.rs`)
   loads every file and fails on one that is out of place or doesn't parse.
+
+`upgrade/export-v1.json` is the Android upgrade file's contents (from 1.0): what
+`apps/web/src/lib/upgradeExport.ts` collects, plus the `secrets` the Kotlin side adds before it
+seals the file. The web app's test checks it writes this, and `apps/app/src/upgrade.rs` checks it
+reads it back, so the two ends of the upgrade can't drift apart. The secrets are placeholders.

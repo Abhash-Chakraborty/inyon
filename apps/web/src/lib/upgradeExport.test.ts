@@ -90,3 +90,14 @@ test('only the Android app exports, at start and each time it goes to the backgr
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
   expect(got).toHaveLength(4)
 })
+
+test('the export is what the app from 1.0 reads back (fixtures/upgrade/export-v1.json)', async () => {
+  const fixture = await Bun.file(new URL('../../../../fixtures/upgrade/export-v1.json', import.meta.url)).json()
+  for (const [k, v] of Object.entries(fixture.local as Record<string, string>)) localStorage.setItem(k, v)
+  localStorage.setItem('inyon.overview.v1', '{"hosts":[]}')
+  const records = new Map(Object.entries(fixture.records as Record<string, string>))
+  records.set('chats/box %3', '{"items":[]}')
+  const { secrets: _added, ...collected } = fixture
+  // the Kotlin side adds the secrets; the version is whichever build wrote it
+  expect(await collectExport(records, localStorage, fixture.exportedAt)).toEqual({ ...collected, appVersion: VERSION })
+})
