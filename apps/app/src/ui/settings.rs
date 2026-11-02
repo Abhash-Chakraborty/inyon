@@ -46,6 +46,10 @@ static HUB: GlobalSignal<Option<HubSettings>> = Signal::global(|| None);
 static EDITING: GlobalSignal<Option<Option<CustomAgent>>> = Signal::global(|| None);
 static PHONES: GlobalSignal<Option<Vec<PairedPhone>>> = Signal::global(|| None);
 static COMPANIONS: GlobalSignal<Option<Vec<PairedCompanion>>> = Signal::global(|| None);
+// why the last read of each failed; what was read before stays on screen
+static PHONES_FAILED: GlobalSignal<Option<String>> = Signal::global(|| None);
+static COMPANIONS_FAILED: GlobalSignal<Option<String>> = Signal::global(|| None);
+static SETTINGS_FAILED: GlobalSignal<Option<String>> = Signal::global(|| None);
 /// The companion app whose "What it can do" sheet is open.
 static DETAILS: GlobalSignal<Option<PairedCompanion>> = Signal::global(|| None);
 
@@ -151,13 +155,47 @@ async fn remove_agent(id: String) {
 }
 
 async fn load_phones() {
-    let list = api::phones().await.unwrap_or_default();
-    *PHONES.write() = Some(list);
+    match api::phones().await {
+        Ok(list) => {
+            *PHONES.write() = Some(list);
+            *PHONES_FAILED.write() = None;
+        }
+        // not "no phones paired": the list from before stays
+        Err(e) => *PHONES_FAILED.write() = Some(e.message),
+    }
 }
 
 async fn load_companions() {
-    let list = api::companions().await.unwrap_or_default();
-    *COMPANIONS.write() = Some(list);
+    match api::companions().await {
+        Ok(list) => {
+            *COMPANIONS.write() = Some(list);
+            *COMPANIONS_FAILED.write() = None;
+        }
+        Err(e) => *COMPANIONS_FAILED.write() = Some(e.message),
+    }
+}
+
+async fn load_settings() {
+    let at = edits();
+    match api::settings().await {
+        Ok(s) => {
+            *SETTINGS_FAILED.write() = None;
+            settle(at, s);
+        }
+        Err(e) => *SETTINGS_FAILED.write() = Some(e.message),
+    }
+}
+
+/// A read that failed, with Try again.
+#[component]
+fn ReadFailed(text: String, on_retry: EventHandler<()>) -> Element {
+    rsx! {
+        div { class: "stale-note", role: "status",
+            Glyph { icon: Icon::CircleAlert, size: 14 }
+            span { class: "stale-note-text", "{text}" }
+            button { class: "button button-xs button-ghost press", r#type: "button", onclick: move |_| on_retry.call(()), "Try again" }
+        }
+    }
 }
 
 async fn forget_phone(p: PairedPhone) {
@@ -276,12 +314,7 @@ fn since(at: f64) -> String {
 pub fn SettingsPage() -> Element {
     let hub = use_context::<Signal<Hub>>();
     use_hook(|| {
-        spawn(async move {
-            let at = edits();
-            if let Ok(s) = api::settings().await {
-                settle(at, s);
-            }
-        });
+        spawn(load_settings());
         // a link to one section (/settings#notifications) opens on it
         let hash = dom::hash();
         if !hash.is_empty() {
@@ -307,6 +340,14 @@ pub fn SettingsPage() -> Element {
                     }
                 }
                 div { class: "settings-body",
+                    if let (None, Some(why)) = (HUB.read().as_ref(), SETTINGS_FAILED()) {
+                        ReadFailed {
+                            text: format!("Couldn't read the hub's settings: {why}"),
+                            on_retry: move |_| {
+                                spawn(load_settings());
+                            },
+                        }
+                    }
                     Appearance {}
                     Agents {}
                     Section { id: "companion", title: "Companion", desc: "An agent you talk to about your other sessions, here, on your phone or on Legato's island. It reads every session, and sends a message or answers a question when you ask it to.",
@@ -560,13 +601,19 @@ fn CustomAgentSheet() -> Element {
     let mut like = use_signal(|| AgentKind::Claude);
     let mut error = use_signal(String::new);
     let mut busy = use_signal(|| false);
+    // each opening, and each submit, so a save that ends after the sheet closed (or opened again)
+    // leaves the sheet alone
+    let mut opening = use_signal(|| 0u64);
+    let mut submits = use_signal(|| 0u64);
     let key = editing.as_ref().map(|a| a.as_ref().map_or_else(|| "new".to_string(), |a| a.id.clone()));
     {
         let agent = agent.clone();
         use_effect(use_reactive!(|key| {
+            *opening.write() += 1;
             if key.is_none() {
                 return;
             }
+            busy.set(false);
             name.set(agent.as_ref().map(|a| a.name.clone()).unwrap_or_default());
             command.set(agent.as_ref().map(|a| a.command.clone()).unwrap_or_default());
             like.set(agent.as_ref().map_or(AgentKind::Claude, |a| a.like));
@@ -586,18 +633,36 @@ fn CustomAgentSheet() -> Element {
         error.set(String::new());
         let old = old.clone();
         let l = like();
+        let this_opening = *opening.peek();
+        *submits.write() += 1;
+        let ticket = *submits.peek();
         spawn(async move {
             let next = CustomAgent { id: old.as_ref().map(|a| a.id.clone()).unwrap_or_default(), name: n.clone(), command: c, like: l };
             let id = old.as_ref().map(|a| a.id.clone());
-            match save_agents(move |list| *list = st::with_custom(list, id.as_deref(), next)).await {
-                Ok(()) => {
+            let saved = save_agents(move |list| match st::with_custom(list, id.as_deref(), next) {
+                Some(edited) => {
+                    *list = edited;
+                    true
+                }
+                None => false,
+            })
+            .await;
+            let still_open = *opening.peek() == this_opening;
+            match saved {
+                Ok(true) => {
                     let body = old.is_none().then(|| format!("New sessions can start it, and Inyon reads it as {}.", l.def().name));
                     toast::toast(if old.is_some() { format!("Saved {n}") } else { format!("Added {n}") }, body, ToastTone::Success);
-                    *EDITING.write() = None;
+                    if still_open {
+                        *EDITING.write() = None;
+                    }
                 }
-                Err(e) => error.set(e),
+                Ok(false) if still_open => error.set("This agent was removed meanwhile, so the edit wasn't saved.".into()),
+                Err(e) if still_open => error.set(e),
+                _ => {}
             }
-            busy.set(false);
+            if still_open && *submits.peek() == ticket {
+                busy.set(false);
+            }
         });
     };
     let title = agent.as_ref().map_or_else(|| "Add an agent".to_string(), |a| format!("Edit {}", a.name));
@@ -685,8 +750,11 @@ fn SleepRow() -> Element {
             }
         });
     });
+    // the choice not yet on the hub; one request at a time, then the latest choice if it's another
+    let mut want = use_signal(|| None::<u32>);
+    let mut sending = use_signal(|| false);
     let Some(r) = rules() else { return rsx! {} };
-    let current = st::sleep_minutes(&r);
+    let current = want().unwrap_or_else(|| st::sleep_minutes(&r));
     rsx! {
         Row { label: "Put idle agents to sleep", hint: "An agent idle this long exits to its shell, keeping its pane, and Resume conversation brings it back when you need it. Pinned sessions, ones with a message waiting and ones without a conversation to resume stay awake.",
             Segmented {
@@ -694,12 +762,29 @@ fn SleepRow() -> Element {
                 options: st::sleep_choices(current),
                 label: "Put idle agents to sleep",
                 on_change: move |v: String| {
-                    let m = v.parse::<u32>().unwrap_or(0);
+                    want.set(Some(v.parse::<u32>().unwrap_or(0)));
+                    if *sending.peek() {
+                        return;
+                    }
+                    sending.set(true);
                     spawn(async move {
-                        match api::set_sleep((m > 0).then_some(m)).await {
-                            Ok(next) => rules.set(Some(next)),
-                            Err(e) => toast::toast("Could not change it", Some(e.message), ToastTone::Error),
+                        loop {
+                            // read first: a guard in the `while let` would last through the writes
+                            let next = *want.peek();
+                            let Some(m) = next else { break };
+                            let answer = api::set_sleep((m > 0).then_some(m)).await;
+                            let latest = *want.peek();
+                            if latest != Some(m) {
+                                // chosen again meanwhile: that goes next
+                                continue;
+                            }
+                            want.set(None);
+                            match answer {
+                                Ok(next) => rules.set(Some(next)),
+                                Err(e) => toast::toast("Could not change it", Some(e.message), ToastTone::Error),
+                            }
                         }
+                        sending.set(false);
                     });
                 },
             }
@@ -926,6 +1011,14 @@ fn PairedDevices() -> Element {
                 button { class: "button button-sm button-primary press", r#type: "button", onclick: move |_| companion_code.set(true), "Pair a companion app" }
             }
             GroupLabel { text: "Phones", n: phones.as_ref().map(Vec::len) }
+            if let Some(why) = PHONES_FAILED() {
+                ReadFailed {
+                    text: format!("Couldn't read the paired phones: {why}"),
+                    on_retry: move |_| {
+                        spawn(load_phones());
+                    },
+                }
+            }
             if phones.as_ref().is_some_and(Vec::is_empty) {
                 p { class: "set-empty", "No phones paired." }
             }
@@ -933,6 +1026,14 @@ fn PairedDevices() -> Element {
                 PhoneRow { key: "{p.id}", p }
             }
             GroupLabel { text: "Companion apps", n: companions.as_ref().map(Vec::len) }
+            if let Some(why) = COMPANIONS_FAILED() {
+                ReadFailed {
+                    text: format!("Couldn't read the companion apps: {why}"),
+                    on_retry: move |_| {
+                        spawn(load_companions());
+                    },
+                }
+            }
             if companions.as_ref().is_some_and(Vec::is_empty) {
                 p { class: "set-empty", "No companion apps. Apps like Legato pair with a short code." }
             }
@@ -1251,7 +1352,8 @@ fn HubUpdateRow() -> Element {
                     break;
                 }
                 if let Ok(u) = api::hub_update(false).await {
-                    if u.error.is_some() || u.restart_needed {
+                    // done: failed, waiting for a restart, or finished with nothing to install
+                    if !u.running {
                         from.set(None);
                     }
                     info.set(Some(u));

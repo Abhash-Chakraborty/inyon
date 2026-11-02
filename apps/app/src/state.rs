@@ -140,6 +140,12 @@ impl Feed {
         }
         self.store.overview.hosts.clone()
     }
+
+    /// Whether the hub's last report still has this pane; none when it doesn't have the machine.
+    pub fn reports_pane(&self, host: &str, pane: &str) -> Option<bool> {
+        let h = self.overview.hosts.iter().find(|h| h.config.id == host)?;
+        Some(h.sessions.iter().flat_map(|s| &s.windows).any(|w| w.panes.iter().any(|p| p.id == pane)))
+    }
 }
 
 thread_local! {
@@ -343,6 +349,9 @@ mod tests {
         let count = |h: &[HostState]| h.iter().flat_map(|h| &h.sessions).flat_map(|s| &s.windows).map(|w| w.panes.len()).sum::<usize>();
         assert_eq!(count(&feed.hide_pane("box", pane, true, 1)), 0);
         assert_eq!(count(&feed.hide_pane("box", pane, false, 2)), 1);
+        assert_eq!(feed.reports_pane("box", pane), Some(true));
+        assert_eq!(feed.reports_pane("box", "%9"), Some(false));
+        assert_eq!(feed.reports_pane("elsewhere", pane), None);
     }
 
     #[test]

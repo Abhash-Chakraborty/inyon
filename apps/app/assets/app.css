@@ -1496,8 +1496,8 @@ input:focus-visible { outline: none; }
 .temp-page { padding-top: 20px; }
 .temp-picker { margin-bottom: 16px; }
 .temp-files { padding-bottom: 16px; }
-.temp-stale { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 6px 6px 6px 12px; font-size: 13px; color: var(--danger); }
-.temp-stale-text { flex: 1; min-width: 0; }
+.stale-note { margin-bottom: 12px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 6px 6px 6px 12px; font-size: 13px; color: var(--danger); }
+.stale-note-text { flex: 1; min-width: 0; }
 .temp-summary { margin-bottom: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .temp-total { flex: 1; white-space: nowrap; font-size: 13px; color: var(--fg-2); }
 .temp-quick { display: flex; flex-wrap: wrap; gap: 4px; }

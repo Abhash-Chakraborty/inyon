@@ -174,7 +174,7 @@ mod imp {
         {
             let t = super::theme_setting();
             let _ = dioxus::document::eval(&format!(
-                "var t='{t}',r=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4';"
+                "var t='{t}',r=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t,d=document.documentElement;window.inyonTheme=t;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4';"
             ));
         }
     }
@@ -218,7 +218,7 @@ pub fn android_head(theme: &str) -> String {
     format!(
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content\">\
          <script>(function(){{var t='{theme}',m=matchMedia('(prefers-color-scheme: dark)');\
-         function a(){{var r=t==='system'?(m.matches?'dark':'light'):t,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4'}}\
+         function a(){{var u=window.inyonTheme||t,r=u==='system'?(m.matches?'dark':'light'):u,d=document.documentElement;d.dataset.theme=r;d.style.background=r==='dark'?'#1b1a18':'#e9e8e4'}}\
          a();m.addEventListener('change',a)}})()</script>"
     )
 }
@@ -262,6 +262,8 @@ mod tests {
     fn the_android_head_sets_only_a_known_theme() {
         assert!(android_head("dark").contains("var t='dark'"));
         assert!(android_head("system").contains("var t='system'"));
+        // a theme Settings put on later wins over the one the app opened with
+        assert!(android_head("dark").contains("var u=window.inyonTheme||t"));
         // nothing else reaches the script
         assert!(android_head("'</script><script>x").contains("var t='system'"));
         assert!(android_head("light").contains("viewport-fit=cover"));

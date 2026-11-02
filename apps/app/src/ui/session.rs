@@ -262,7 +262,12 @@ pub async fn end_session(mut hub: Signal<Hub>, host: &str, pane: &str, back: Opt
     let now = platform::clock().now as u64;
     let hosts = state::with_feed(|f| f.hide_pane(host, pane, true, now));
     hub.write().set_hosts(hosts);
-    if let Err(e) = crate::api::end(host, pane).await {
+    let answer = match crate::api::end(host, pane).await {
+        // a pane the hub no longer reports closed while the question was open: it has ended
+        Err(e) if e.status == 404 && state::with_feed(|f| f.reports_pane(host, pane)) == Some(false) => Ok(()),
+        other => other,
+    };
+    if let Err(e) = answer {
         let hosts = state::with_feed(|f| f.hide_pane(host, pane, false, platform::clock().now as u64));
         hub.write().set_hosts(hosts);
         toast::toast("Could not end the session", Some(e.message), ToastTone::Error);

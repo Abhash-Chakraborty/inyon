@@ -375,13 +375,17 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
         busy.set(false);
         spawn(async move {
             // the companions there are before the code exists, so the one that claims it is the new
-            // one; without that list no claim can be told apart, so none is looked for
-            let list = api::companions().await;
-            if *gen.peek() != g {
-                return;
-            }
-            if let Ok(list) = list {
-                known.set(Some(list.into_iter().map(|c| c.id).collect()));
+            // one; a read that fails is tried again, here and then while the code shows
+            for wait in [0, 700, 2000] {
+                platform::sleep(wait).await;
+                let list = api::companions().await;
+                if *gen.peek() != g {
+                    return;
+                }
+                if let Ok(list) = list {
+                    known.set(Some(list.into_iter().map(|c| c.id).collect()));
+                    break;
+                }
             }
             fetch().await;
             // the countdown, a new code when it runs out, and the app's claim, looked for in the list
@@ -412,7 +416,14 @@ pub fn CompanionSheet(open: bool, on_close: EventHandler<()>, #[props(default)] 
                 if code.peek().is_none() && renewed_for == 0 {
                     continue;
                 }
-                if tick.is_multiple_of(2) {
+                if tick.is_multiple_of(2) && known.peek().is_none() {
+                    // still no list from before: one read now is the next best thing
+                    if let Ok(list) = api::companions().await {
+                        if *gen.peek() == g {
+                            known.set(Some(list.into_iter().map(|c| c.id).collect()));
+                        }
+                    }
+                } else if tick.is_multiple_of(2) {
                     if let (Ok(list), Some(k)) = (api::companions().await, known.peek().clone()) {
                         if let Some(fresh) = list.into_iter().find(|c| !k.contains(&c.id)) {
                             if *gen.peek() == g {

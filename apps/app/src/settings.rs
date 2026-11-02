@@ -191,7 +191,8 @@ pub fn notices_hint(secure: bool, perm: Permission, push: bool) -> &'static str 
         Permission::Granted if push => "On for this device, also while Inyon is closed",
         Permission::Granted => "On for this device",
         Permission::Denied => "Turned off in your phone's settings for Inyon",
-        _ => "Alerts when an agent needs you, even with Inyon closed",
+        _ if push => "Alerts when an agent needs you, even with Inyon closed",
+        _ => "Alerts when an agent needs you, while Inyon is open",
     }
 }
 
@@ -354,7 +355,7 @@ pub const LOCAL_HINT: &str = "This is the hub machine itself. Other devices use 
 /// The hub address on this page's own machine, which other devices can't use as it is.
 pub fn local_address(origin: &str) -> bool {
     let rest = origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")).unwrap_or("");
-    rest.starts_with("localhost") || rest.starts_with("127.")
+    rest.starts_with("localhost") || rest.starts_with("127.") || rest.starts_with("[::1]")
 }
 
 /// The agents a custom agent can work like: the ones whose conversation Inyon reads.
@@ -363,10 +364,12 @@ pub fn chat_kinds() -> Vec<AgentKind> {
 }
 
 /// A custom agent's list with `next` in place of the one with `old`'s id, or added at the end.
-pub fn with_custom(list: &[CustomAgent], old: Option<&str>, next: CustomAgent) -> Vec<CustomAgent> {
+pub fn with_custom(list: &[CustomAgent], old: Option<&str>, next: CustomAgent) -> Option<Vec<CustomAgent>> {
     match old {
-        Some(id) => list.iter().map(|a| if a.id == id { next.clone() } else { a.clone() }).collect(),
-        None => list.iter().cloned().chain([next]).collect(),
+        // removed meanwhile (on another device): there's nothing to edit
+        Some(id) if !list.iter().any(|a| a.id == id) => None,
+        Some(id) => Some(list.iter().map(|a| if a.id == id { next.clone() } else { a.clone() }).collect()),
+        None => Some(list.iter().cloned().chain([next]).collect()),
     }
 }
 
@@ -463,7 +466,9 @@ mod tests {
     fn the_notifications_row_says_why_they_are_off() {
         assert!(notices_hint(false, Permission::Granted, true).starts_with("Browsers only allow"));
         assert_eq!(notices_hint(true, Permission::Granted, true), "On for this device, also while Inyon is closed");
-        assert_eq!(notices_hint(true, Permission::Default, false), "Alerts when an agent needs you, even with Inyon closed");
+        // without Web Push nothing reaches a closed tab
+        assert_eq!(notices_hint(true, Permission::Default, false), "Alerts when an agent needs you, while Inyon is open");
+        assert_eq!(notices_hint(true, Permission::Default, true), "Alerts when an agent needs you, even with Inyon closed");
     }
 
     #[test]
@@ -526,6 +531,7 @@ mod tests {
         assert_eq!(guide_url(), "https://inyon.tech/docs/");
         assert!(local_address("http://localhost:7681"));
         assert!(local_address("http://127.0.0.1:7681"));
+        assert!(local_address("http://[::1]:7681"));
         assert!(!local_address("https://box.netbird.cloud"));
     }
 
@@ -536,10 +542,11 @@ mod tests {
         assert!(kinds.iter().all(|k| k.def().chat));
         let a = |id: &str, name: &str| CustomAgent { id: id.into(), name: name.into(), command: "claude".into(), like: AgentKind::Claude };
         let list = vec![a("1", "One"), a("2", "Two")];
-        let edited = with_custom(&list, Some("2"), a("2", "Deux"));
+        let edited = with_custom(&list, Some("2"), a("2", "Deux")).unwrap();
         assert_eq!(edited.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["One", "Deux"]);
-        let added = with_custom(&list, None, a("", "Three"));
+        let added = with_custom(&list, None, a("", "Three")).unwrap();
         assert_eq!(added.len(), 3);
+        assert_eq!(with_custom(&list, Some("9"), a("9", "Gone")), None);
     }
 
     #[test]

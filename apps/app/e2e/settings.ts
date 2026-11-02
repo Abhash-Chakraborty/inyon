@@ -69,6 +69,15 @@ const state = {
   tempLag: [] as number[],
   endFails: false,
   endLag: 0,
+  // the pane closes on its own while the question is open: the end then finds nothing (404)
+  endGone: false,
+  // how late the next sleep changes are taken
+  sleepLag: [] as number[],
+  // whether reading the phones fails, and the next reads of the hub's settings that fail
+  phonesFail: false,
+  settingsReadFails: 0,
+  // temp paths a delete can't remove
+  tempKeep: [] as string[],
   // how late the next settings saves are taken, and whether saving fails
   settingsLag: [] as number[],
   settingsFail: false,
@@ -131,10 +140,17 @@ const server = Bun.serve({
         if (lag) return new Promise<Response>((r) => setTimeout(() => r(json((state.settings = body))), lag))
         state.settings = body
       }
+      if (state.settingsReadFails > 0) {
+        state.settingsReadFails--
+        return json({ error: 'No settings here' }, 404)
+      }
       return json(state.settings)
     }
     if (p === '/api/organize') return json({ v: 2, pins: [], parked: [], sleep: state.sleep })
     if (p === '/api/organize/sleep') {
+      // a slow change is taken when it arrives, late
+      const lag = state.sleepLag.shift() ?? 0
+      if (lag) await Bun.sleep(lag)
       state.sleep = body.minutes ? [{ scope: 'all', minutes: body.minutes }] : []
       return json(state.sleep)
     }
@@ -149,7 +165,7 @@ const server = Bun.serve({
       if (req.method === 'POST') state.update = { ...state.update, running: true }
       return json(state.update)
     }
-    if (p === '/api/phones') return json(state.phones)
+    if (p === '/api/phones') return state.phonesFail ? json({ error: 'The hub is busy' }, 500) : json(state.phones)
     if (p.startsWith('/api/phones/') && req.method === 'DELETE') {
       state.phones = state.phones.filter((x) => x.id !== decodeURIComponent(p.slice(12)))
       return json({ ok: true })
@@ -205,13 +221,21 @@ const server = Bun.serve({
         return file.endsWith('.png') ? json({ mime: 'image/png', size: 210_000, base64: png }) : json({ mime: 'text/markdown', size: 1_200, text: '# Notes\n\nThe checkout test waits on the cart.' })
       }
       if (rest === 'temp/delete') {
-        const gone: string[] = body.paths
+        const gone: string[] = body.paths.filter((x: string) => !state.tempKeep.includes(x))
+        const failed = body.paths.filter((x: string) => state.tempKeep.includes(x)).map((x: string) => [x, 'Permission denied'])
         const items = state.temp.items.filter((i) => gone.includes(i.path))
         state.temp.items = state.temp.items.filter((i) => !gone.includes(i.path))
-        return json({ removed: gone, freed: items.reduce((n, i) => n + i.size, 0) })
+        return json({ removed: gone, freed: items.reduce((n, i) => n + i.size, 0), failed })
       }
       const end = /^panes\/(\d+)\/end$/.exec(rest)
       if (end && state.endFails) return json({ error: 'tmux is busy' }, 500)
+      if (end && state.endGone) {
+        state.endGone = false
+        for (const h of state.hosts) h.sessions = h.sessions.filter((s: Entry) => !s.windows.some((w: Entry) => w.panes.some((x: Entry) => x.id === `%${end[1]}`)))
+        publish()
+        await Bun.sleep(300)
+        return json({ error: 'No pane %' + end[1] }, 404)
+      }
       if (end && state.endLag) {
         const lag = state.endLag
         state.endLag = 0
@@ -383,8 +407,19 @@ try {
     const page = await ctx.newPage()
     watch(page)
     await page.addInitScript(() => localStorage.setItem('inyon.settings.v2', JSON.stringify({ theme: 'system', sidePanelWidth: 420 })))
+    // reads that fail say so, keep what was there, and try again
+    state.phonesFail = true
+    state.settingsReadFails = 1
     await page.goto(`${base}/next/settings`)
     await styled(page)
+    await page.getByText("Couldn't read the hub's settings: No settings here").waitFor()
+    await page.getByText("Couldn't read the paired phones: The hub is busy").waitFor()
+    check(!(await page.getByText('No phones paired.').count()), 'phones: a failed read is not "no phones"')
+    state.phonesFail = false
+    await page.locator('.stale-note', { hasText: 'paired phones' }).getByRole('button', { name: 'Try again' }).click()
+    await page.locator('.set-device', { hasText: 'Pixel 9' }).waitFor()
+    await page.locator('.stale-note', { hasText: "hub's settings" }).getByRole('button', { name: 'Try again' }).click()
+    await page.locator('.stale-note').first().waitFor({ state: 'detached' })
     await page.getByText('Update available: 0.25.1').waitFor()
 
     // the theme turns at once, and is kept where the web app keeps it, with the keys this app doesn't know
@@ -419,6 +454,16 @@ try {
     state.settingsFail = false
     await page.getByRole('radio', { name: '30 min' }).click()
     check(await until(() => called('PUT', '/api/organize/sleep').at(-1)?.body?.minutes === 30), 'sleep: 30 minutes')
+    // two quick choices, the first taken slowly: one at a time, and the last one stays
+    state.sleepLag = [1200]
+    await page.getByRole('radio', { name: '2 hours' }).click()
+    await page.getByRole('radio', { name: 'Off' }).click()
+    check(await page.getByRole('radio', { name: 'Off' }).getAttribute('aria-checked') === 'true', 'sleep: shows the latest choice at once')
+    check(await until(() => called('PUT', '/api/organize/sleep').at(-1)?.body?.minutes === 120), 'sleep: the first goes out')
+    check(!called('PUT', '/api/organize/sleep').some((c) => c.body?.minutes === 0), 'sleep: the second waits for the first')
+    check(await until(() => state.sleep.length === 0, 4000), `sleep: the last choice is the one kept (${JSON.stringify(state.sleep)})`)
+    await Bun.sleep(300)
+    check(await page.getByRole('radio', { name: 'Off' }).getAttribute('aria-checked') === 'true', 'sleep: the row stays on the last choice')
 
     // custom agents: add, the menus, remove and Undo
     await page.getByRole('button', { name: 'Add an agent' }).click()
@@ -553,6 +598,10 @@ try {
     await page.getByRole('button', { name: 'Update', exact: true }).click()
     await page.getByText('Updating the hub…').waitFor()
     check(called('POST', '/api/hub/update').length === 1, 'update: started')
+    // it ends with nothing to install, and no restart: the row says so
+    state.update = { current: VERSION, canUpdate: true, running: false }
+    check(await until(() => page.getByText('Up to date').isVisible(), 7000), 'update: up to date when there was nothing to install')
+    check(!(await page.getByText('Updating the hub…').count()), 'update: no longer updating')
 
     // a notice from the hub is a toast
     hub({ t: 'notify', host: 'build-box', pane: '%13', kind: 'done', title: 'Claude Code finished', body: 'Release notes are ready' })
@@ -660,6 +709,16 @@ try {
     await Bun.sleep(300)
     check(/\/next\/pages/.test(page.url()), `end: stays where you went meanwhile (${page.url()})`)
     state.endLag = 0
+
+    // the pane closed by itself while the question was open: it has ended all the same
+    await page.goto(`${base}/next/m/local/p/11`)
+    await styled(page)
+    state.endGone = true
+    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('menuitem', { name: 'End session…' }).click()
+    await ask.getByRole('button', { name: 'End session' }).click()
+    await toast(page, 'Session ended').waitFor()
+    check(!(await toast(page, 'Could not end the session').count()), 'end: no failure for a pane already gone')
     await ctx.close()
   }
 
@@ -684,8 +743,16 @@ try {
         await page.getByText('2 selected').waitFor()
         await page.getByRole('button', { name: 'Clear selection' }).click()
         await page.getByRole('checkbox', { name: 'Select accounts' }).click()
+        // one that can't be deleted stays picked, for another try
+        state.tempKeep = ['/tmp/claude-1000/accounts']
         await page.getByRole('region', { name: 'Selection' }).getByRole('button', { name: 'Delete' }).click()
         const ask = page.getByRole('dialog', { name: 'Delete accounts?' })
+        await ask.waitFor()
+        await ask.getByRole('button', { name: 'Delete' }).click()
+        await toast(page, "Couldn't delete accounts").waitFor()
+        check(await page.getByText('1 selected').isVisible(), 'temp: a failed delete keeps the selection')
+        state.tempKeep = []
+        await page.getByRole('region', { name: 'Selection' }).getByRole('button', { name: 'Delete' }).click()
         await ask.waitFor()
         await ask.getByRole('button', { name: 'Delete' }).click()
         await toast(page, 'Freed').waitFor()

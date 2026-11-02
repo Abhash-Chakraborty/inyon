@@ -23,6 +23,8 @@ use crate::{format, platform};
 // ---------- thumbnails: fetched when on screen, a few at a time, kept for the session ----------
 
 const THUMBS_AT_ONCE: usize = 3;
+/// About 2 MB each at most, so the cache starts over past this many.
+const THUMBS_KEPT: usize = 64;
 
 thread_local! {
     static THUMBS: RefCell<HashMap<String, Option<String>>> = RefCell::new(HashMap::new());
@@ -33,6 +35,33 @@ fn thumb_key(host: &str, path: &str) -> String {
     format!("{host}\0{path}")
 }
 
+/// One of the [`THUMBS_AT_ONCE`] requests, given back when it's dropped: also when the row
+/// scrolls away and its request is dropped half way.
+struct ThumbSlot;
+
+impl ThumbSlot {
+    fn take() -> ThumbSlot {
+        RUNNING.with(|r| *r.borrow_mut() += 1);
+        ThumbSlot
+    }
+}
+
+impl Drop for ThumbSlot {
+    fn drop(&mut self) {
+        RUNNING.with(|r| *r.borrow_mut() -= 1);
+    }
+}
+
+fn keep_thumb(key: String, t: Option<String>) {
+    THUMBS.with(|c| {
+        let mut c = c.borrow_mut();
+        if c.len() >= THUMBS_KEPT && !c.contains_key(&key) {
+            c.clear();
+        }
+        c.insert(key, t);
+    });
+}
+
 async fn thumb(host: String, path: String) -> Option<String> {
     let key = thumb_key(&host, &path);
     if let Some(t) = THUMBS.with(|t| t.borrow().get(&key).cloned()) {
@@ -41,12 +70,12 @@ async fn thumb(host: String, path: String) -> Option<String> {
     while RUNNING.with(|r| *r.borrow()) >= THUMBS_AT_ONCE {
         platform::sleep(60).await;
     }
-    RUNNING.with(|r| *r.borrow_mut() += 1);
+    let slot = ThumbSlot::take();
     let answer = api::temp_preview(&host, &path, Some(st::THUMB_MAX)).await;
-    RUNNING.with(|r| *r.borrow_mut() -= 1);
+    drop(slot);
     let kept = thumb_answer(answer);
     if let Some(t) = &kept {
-        THUMBS.with(|c| c.borrow_mut().insert(key, t.clone()));
+        keep_thumb(key, t.clone());
     }
     kept.flatten()
 }
@@ -114,17 +143,19 @@ pub fn run(op: TempOp) {
     *OP.write() = Some((n, op));
 }
 
-/// Asks, deletes, and says what was freed. True when it deleted anything.
-async fn delete_paths(host: &str, machine: &str, items: Vec<(String, String, f64, bool)>) -> bool {
+/// Asks, deletes, and says what was freed. The paths it deleted: what failed stays picked and
+/// open, for another try.
+async fn delete_paths(host: &str, machine: &str, items: Vec<(String, String, f64, bool)>) -> Vec<String> {
     let (title, body) = st::delete_question(&items.iter().map(|(_, n, s, r)| (n.clone(), *s, *r)).collect::<Vec<_>>(), machine);
     if !confirm(Ask { title, body: Some(body), yes: "Delete".into(), danger: true, ..Ask::default() }).await {
-        return false;
+        return Vec::new();
     }
     let paths: Vec<String> = items.into_iter().map(|i| i.0).collect();
     match api::temp_delete(host, &paths).await {
         Ok(r) => {
             let removed = r.removed.unwrap_or_default();
             forget_thumbs(host, &removed);
+            let removed_too = removed.clone();
             if !removed.is_empty() {
                 toast::toast(format!("Freed {}", bytes(r.freed.unwrap_or(0.0))), None, ToastTone::Success);
             }
@@ -135,10 +166,13 @@ async fn delete_paths(host: &str, machine: &str, items: Vec<(String, String, f64
                     failed.iter().take(3).map(|(p, why)| if failed.len() == 1 { why.clone() } else { format!("{}: {why}", basename(Some(p))) }).collect::<Vec<_>>().join("\n");
                 toast::toast(title, Some(body), ToastTone::Error);
             }
+            removed_too
         }
-        Err(e) => toast::toast("Couldn't delete", Some(e.message), ToastTone::Error),
+        Err(e) => {
+            toast::toast("Couldn't delete", Some(e.message), ToastTone::Error);
+            Vec::new()
+        }
     }
-    true
 }
 
 // ---------- the screen ----------
@@ -152,6 +186,7 @@ pub fn TempPage(host: Option<String>) -> Element {
     use_hook(|| crate::dom::set_title("Temp files · Inyon"));
     let h = hub.read();
     let hosts = h.hosts.clone();
+    let loaded = h.loaded || !hosts.is_empty();
     drop(h);
     let id = host.clone().or_else(|| hosts.iter().find(|h| h.status == HostStatus::Online).or(hosts.first()).map(|h| h.config.id.clone()));
     let current = id.as_ref().and_then(|id| hosts.iter().find(|h| h.config.id == *id)).cloned();
@@ -180,8 +215,10 @@ pub fn TempPage(host: Option<String>) -> Element {
                         }
                     }
                 }
-                if hosts.is_empty() {
+                if !loaded {
                     WaitRows { label: "Loading machines" }
+                } else if hosts.is_empty() {
+                    Empty { icon: Icon::FolderOpen, title: "No machines yet", text: "Pair a machine or add one over SSH to see its temp files." }
                 } else if let Some(h) = current {
                     TempFiles { key: "{h.config.id}", host: h, reload: reload() }
                 } else {
@@ -242,6 +279,8 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
                     let items = l.items.clone().unwrap_or_default();
                     // what went away can't stay picked
                     picked.with_mut(|p| p.retain(|x| items.iter().any(|i| i.path == *x)));
+                    // the anchor is a place in the list, which may hold something else now
+                    last.set(None);
                     list.set(Some(l));
                     error.set(None);
                 }
@@ -276,7 +315,7 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
                     let Some(i) = order.iter().find(|i| i.path == p).cloned() else { return };
                     let (id, machine) = (id.clone(), machine.clone());
                     spawn(async move {
-                        if delete_paths(&id, &machine, vec![(i.path.clone(), i.name.clone(), i.size, i.recent)]).await {
+                        if delete_paths(&id, &machine, vec![(i.path.clone(), i.name.clone(), i.size, i.recent)]).await.contains(&i.path) {
                             picked.with_mut(|v| v.retain(|x| *x != i.path));
                             if open.peek().as_ref().is_some_and(|o| o.path == i.path) {
                                 open.set(None);
@@ -318,9 +357,9 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
     // a refresh that failed: the list is as it was, and says so
     let stale = err.map(|(_, message)| {
         rsx! {
-            div { class: "temp-stale", role: "status",
+            div { class: "stale-note", role: "status",
                 Glyph { icon: Icon::CircleAlert, size: 14 }
-                span { class: "temp-stale-text", "Couldn't refresh the list: {message}" }
+                span { class: "stale-note-text", "Couldn't refresh the list: {message}" }
                 button { class: "button button-xs button-ghost press", r#type: "button", onclick: move |_| tries += 1, "Try again" }
             }
         }
@@ -401,10 +440,10 @@ pub fn TempFiles(host: HostState, #[props(default)] reload: u64) -> Element {
                         button { class: "button button-sm button-danger press", r#type: "button",
                             onclick: move |_| {
                                 let items: Vec<(String, String, f64, bool)> = chosen.iter().map(|i| (i.path.clone(), i.name.clone(), i.size, i.recent)).collect();
-                                let gone: Vec<String> = items.iter().map(|i| i.0.clone()).collect();
                                 let (id, machine) = (del_id.clone(), del_machine.clone());
                                 spawn(async move {
-                                    if delete_paths(&id, &machine, items).await {
+                                    let gone = delete_paths(&id, &machine, items).await;
+                                    if !gone.is_empty() {
                                         picked.with_mut(|v| v.retain(|x| !gone.contains(x)));
                                         if open.peek().as_ref().is_some_and(|o| gone.contains(&o.path)) {
                                             open.set(None);
@@ -547,7 +586,7 @@ fn ItemSheet(host: HostState, item: Option<TempItem>, on_close: EventHandler<()>
             let (id, machine, mut load) = (id.clone(), machine.clone(), load.clone());
             spawn(async move {
                 let recent = platform::clock().now - f.modified < 30.0 * 60_000.0;
-                if !delete_paths(&id, &machine, vec![(f.path.clone(), f.rel.clone(), f.size, recent)]).await {
+                if !delete_paths(&id, &machine, vec![(f.path.clone(), f.rel.clone(), f.size, recent)]).await.contains(&f.path) {
                     return;
                 }
                 if preview.peek().as_ref().is_some_and(|p| p.path == f.path) {
@@ -747,5 +786,33 @@ mod tests {
         assert_eq!(thumb_answer(Ok(png)), Some(Some("data:image/png;base64,iVBO".into())));
         assert_eq!(thumb_answer(Ok(TempPreview { mime: "text/plain".into(), ..Default::default() })), Some(None));
         assert_eq!(thumb_answer(Err(api::ApiError { status: 0, message: "offline".into() })), None);
+    }
+
+    #[test]
+    fn the_thumbnail_cache_starts_over_when_full() {
+        for i in 0..THUMBS_KEPT {
+            keep_thumb(thumb_key("box", &format!("/tmp/{i}")), None);
+        }
+        assert_eq!(THUMBS.with(|c| c.borrow().len()), THUMBS_KEPT);
+        // one already there is only replaced
+        keep_thumb(thumb_key("box", "/tmp/0"), Some("x".into()));
+        assert_eq!(THUMBS.with(|c| c.borrow().len()), THUMBS_KEPT);
+        keep_thumb(thumb_key("box", "/tmp/new"), None);
+        assert_eq!(THUMBS.with(|c| c.borrow().len()), 1);
+    }
+
+    #[test]
+    fn a_thumbnail_dropped_half_way_gives_its_slot_back() {
+        let running = || RUNNING.with(|r| *r.borrow());
+        let before = running();
+        let slot = ThumbSlot::take();
+        assert_eq!(running(), before + 1);
+        // a request future dropped while it waits drops its slot with it
+        let waiting = async move {
+            let _slot = slot;
+            std::future::pending::<()>().await;
+        };
+        drop(waiting);
+        assert_eq!(running(), before);
     }
 }

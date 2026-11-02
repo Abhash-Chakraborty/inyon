@@ -338,7 +338,7 @@ pub struct HubSettings {
 }
 
 pub async fn settings() -> Result<HubSettings, ApiError> {
-    parse(&request("GET", "/api/settings", None).await?)
+    parse(&with_retries(|| request("GET", "/api/settings", None)).await?)
 }
 
 pub async fn save_settings(s: &HubSettings) -> Result<HubSettings, ApiError> {
