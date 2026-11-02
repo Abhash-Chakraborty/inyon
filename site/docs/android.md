@@ -99,7 +99,7 @@ If drops say Doze or battery limits, keep **Stay connected** on and allow Inyon 
 
 From 0.23 the app keeps a sealed copy of its key, pairings, hubs and settings each time it starts or goes to the background. The next Inyon app for Android installs over this one and picks that copy up, so your computers, servers and hubs stay paired. Open the app once on 0.23 or later before you install it. [Security](security.md#the-android-app) says how the copy is kept.
 
-The app from 1.0 is that next app. On its first start it reads the copy, keeps your computers, servers, hubs, session names and settings, then deletes the copy and its key. The phone's key, hub tokens and server sign-ins never leave the phone's secret store, which both apps share. If the app was last opened on a version before 0.23 there's no copy, and the app starts fresh: pair your computers again and remove the old phone from each with `inyon forget`.
+The app from 1.0 is that next app. On its first start it reads the copy, keeps your computers, servers, hubs, session names and settings, then deletes the copy and its key. It takes nothing secret from the copy: the phone's key, hub tokens and server sign-ins are already in the secret store both apps share, and it reads them from there. The secrets in the copy are deleted with it, unread. If the app was last opened on a version before 0.23 there's no copy, and the app starts fresh: pair your computers again and remove the old phone from each with `inyon forget`.
 
 ## The app from 1.0
 
