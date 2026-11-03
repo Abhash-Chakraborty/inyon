@@ -18,6 +18,7 @@ mod phone;
 mod prompt;
 mod rows;
 mod session;
+mod session_menu;
 mod settings;
 mod setup;
 mod shell;
@@ -197,7 +198,10 @@ fn Connected(auth: Signal<Auth>) -> Element {
         outbox
     });
     use_context_provider(|| outbox);
-    rsx! { shell::Shell {} }
+    rsx! {
+        shell::Shell {}
+        notices::PushWatch {}
+    }
 }
 
 /// Unix ms, for the chat model.

@@ -334,6 +334,18 @@ mod imp {
         web_sys::window().is_some_and(|w| w.is_secure_context())
     }
 
+    /// Safari in a tab on an iPhone or iPad (iPadOS says it's a Mac with a touch screen), where
+    /// only an app added to the Home Screen gets notifications.
+    pub fn home_screen_hint() -> bool {
+        let Some(w) = web_sys::window() else { return false };
+        let n = w.navigator();
+        let ua = n.user_agent().unwrap_or_default();
+        let apple = ["iPhone", "iPad", "iPod"].iter().any(|d| ua.contains(d)) || (ua.contains("Macintosh") && n.max_touch_points() > 1);
+        let standalone = w.match_media("(display-mode: standalone)").ok().flatten().is_some_and(|m| m.matches())
+            || js_sys::Reflect::get(&n, &"standalone".into()).ok().and_then(|v| v.as_bool()) == Some(true);
+        apple && !standalone
+    }
+
     fn notification_class() -> Option<js_sys::Function> {
         js_sys::Reflect::get(&js_sys::global(), &"Notification".into()).ok().and_then(|v| v.dyn_into().ok())
     }
@@ -598,6 +610,9 @@ mod imp {
     pub fn on_resize(_f: impl Fn() + 'static) {}
     pub fn secure() -> bool {
         true
+    }
+    pub fn home_screen_hint() -> bool {
+        false
     }
     pub fn notice_permission() -> crate::settings::Permission {
         crate::settings::Permission::Unsupported

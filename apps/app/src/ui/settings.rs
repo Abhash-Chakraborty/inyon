@@ -858,17 +858,30 @@ fn Notifications() -> Element {
     let p = PREFS.read().clone();
     let mut perm = use_signal(dom::notice_permission);
     let secure = dom::secure();
+    let push = crate::push::supported();
     let allow = move |_| {
         spawn(async move {
-            perm.set(dom::ask_notices().await);
+            let p = dom::ask_notices().await;
+            perm.set(p);
+            // with permission, the browser can be told while Inyon is closed too
+            if p == Permission::Granted {
+                let s = PREFS.peek().clone();
+                let _ = crate::push::enable(s.notify_done, s.notify_pages).await;
+            }
         });
     };
     let test = move |_| {
-        if dom::show_notice("Inyon", "Notifications work. You\u{2019}ll get one when an agent finishes or needs you.", "test", Some(&Route::Settings.href())) {
-            toast::toast("Test notification sent", None, ToastTone::Success);
-        } else {
-            toast::toast("Couldn't show a notification", Some("Check that notifications are allowed for Inyon in your settings.".into()), ToastTone::Error);
-        }
+        spawn(async move {
+            // through the browser's push service, the way they arrive while Inyon is closed
+            let s = PREFS.peek().clone();
+            if push && crate::push::test(s.notify_done, s.notify_pages).await > 0 {
+                toast::toast("Test sent", Some("It went through your browser\u{2019}s push service.".into()), ToastTone::Success);
+            } else if dom::show_notice("Inyon", "Notifications work. You\u{2019}ll get one when an agent finishes or needs you.", "test", Some(&Route::Settings.href())) {
+                toast::toast("Test notification sent", None, ToastTone::Success);
+            } else {
+                toast::toast("Couldn't show a notification", Some("Check that notifications are allowed for Inyon in your settings.".into()), ToastTone::Error);
+            }
+        });
     };
     let pm = perm();
     rsx! {
@@ -879,7 +892,7 @@ fn Notifications() -> Element {
             Row { label: "When a page moves on", hint: "A notice when a task on a page's progress board is done.",
                 Toggle { on: p.notify_pages, label: "Page notices", on_change: move |v| set_prefs(|s| s.notify_pages = v) }
             }
-            Row { label: "System notifications", icon: Icon::Bell, hint: st::notices_hint(secure, pm, false),
+            Row { label: "System notifications", icon: Icon::Bell, hint: st::notices_hint(secure, pm, push, dom::home_screen_hint()),
                 if secure && pm == Permission::Default {
                     button { class: "button button-sm button-quiet press", r#type: "button", onclick: allow, "Allow" }
                 }
@@ -1448,10 +1461,20 @@ fn About() -> Element {
     let version = build.version.clone();
     let commit = build.commit.clone();
     let summary = st::version_summary(&version, commit.as_deref());
+    // the browser draws the terminal with xterm.js; the Android app doesn't have one yet
+    #[cfg(target_arch = "wasm32")]
+    let drawing = Some(crate::term::js::drawing());
+    #[cfg(not(target_arch = "wasm32"))]
+    let drawing: Option<&str> = None;
     rsx! {
         Section { id: "about", title: "About",
             Row { label: "Version", hint: commit.as_ref().map(|c| format!("Built from commit {c}")),
                 span { class: "mono set-value", "{version}" }
+            }
+            if let Some(d) = drawing {
+                Row { label: "Terminal drawing", hint: "WebGL draws on the graphics chip; a device without it uses the page.",
+                    span { class: "mono set-value", "{d}" }
+                }
             }
             ActionRow {
                 label: "Copy version details",

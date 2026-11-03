@@ -82,6 +82,11 @@ pub enum Icon {
     FolderOpen,
     CircleArrowUp,
     Ellipsis,
+    // the session's ⋯ menu
+    Shrink,
+    GitFork,
+    RadioTower,
+    Power,
     FolderPlus,
     Link2Off,
     CloudOff,
@@ -470,6 +475,32 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                     circle { cx: "12", cy: "12", r: "1" }
                     circle { cx: "19", cy: "12", r: "1" }
                     circle { cx: "5", cy: "12", r: "1" }
+                },
+                Icon::Shrink => rsx! {
+                    path { d: "m15 15 6 6m-6-6v4.8m0-4.8h4.8" }
+                    path { d: "M9 19.8V15m0 0H4.2M9 15l-6 6" }
+                    path { d: "M15 4.2V9m0 0h4.8M15 9l6-6" }
+                    path { d: "M9 4.2V9m0 0H4.2M9 9 3 3" }
+                },
+                Icon::GitFork => rsx! {
+                    circle { cx: "12", cy: "18", r: "3" }
+                    circle { cx: "6", cy: "6", r: "3" }
+                    circle { cx: "18", cy: "6", r: "3" }
+                    path { d: "M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" }
+                    path { d: "M12 12v3" }
+                },
+                Icon::RadioTower => rsx! {
+                    path { d: "M4.9 16.1C1 12.2 1 5.8 4.9 1.9" }
+                    path { d: "M7.8 4.7a6.14 6.14 0 0 0-.8 7.5" }
+                    circle { cx: "12", cy: "9", r: "2" }
+                    path { d: "M16.2 4.8c2 2 2.26 5.11.8 7.47" }
+                    path { d: "M19.1 1.9a9.96 9.96 0 0 1 0 14.1" }
+                    path { d: "M9.5 18h5" }
+                    path { d: "m8 22 4-11 4 11" }
+                },
+                Icon::Power => rsx! {
+                    path { d: "M12 2v10" }
+                    path { d: "M18.4 6.6a9 9 0 1 1-12.77.04" }
                 },
                 Icon::FolderPlus => rsx! {
                     path { d: "M12 10v6" }

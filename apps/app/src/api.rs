@@ -480,6 +480,58 @@ pub async fn end(host: &str, pane: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/end", pane_path(host, pane)), None).await.map(drop)
 }
 
+/// The agent exits to its shell; the pane stays.
+pub async fn exit(host: &str, pane: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/exit", pane_path(host, pane)), None).await.map(drop)
+}
+
+/// Codex forgets the last message and its reply.
+pub async fn rewind(host: &str, pane: &str) -> Result<(), ApiError> {
+    request("POST", &format!("{}/rewind", pane_path(host, pane)), Some("{}".into())).await.map(drop)
+}
+
+#[derive(Serialize)]
+struct On {
+    on: bool,
+}
+
+/// Claude Code's Remote Control on or off.
+pub async fn remote_control(host: &str, pane: &str, on: bool) -> Result<(), ApiError> {
+    request("POST", &format!("{}/rc", pane_path(host, pane)), Some(serde_json::to_string(&On { on }).unwrap())).await.map(drop)
+}
+
+pub async fn ultracode(host: &str, pane: &str, on: bool) -> Result<(), ApiError> {
+    request("POST", &format!("{}/ultracode", pane_path(host, pane)), Some(serde_json::to_string(&On { on }).unwrap())).await.map(drop)
+}
+
+#[derive(Deserialize)]
+struct Forked {
+    pane: String,
+}
+
+/// A copy of the conversation carrying on in a new window: its pane.
+pub async fn fork(host: &str, pane: &str) -> Result<String, ApiError> {
+    parse::<Forked>(&request("POST", &format!("{}/fork", pane_path(host, pane)), None).await?).map(|f| f.pane)
+}
+
+// ---------- Web Push (lib/push.ts) ----------
+
+pub async fn push(b: &crate::push::PushBody) -> Result<(), ApiError> {
+    request("POST", "/api/push", Some(serde_json::to_string(b).unwrap())).await.map(drop)
+}
+
+#[derive(Deserialize)]
+struct Sent {
+    #[serde(default)]
+    sent: u32,
+}
+
+/// A test notice through the push service to `endpoint`: how many senders delivered it.
+pub async fn push_test(endpoint: &str) -> Result<u32, ApiError> {
+    let body = serde_json::json!({ "endpoint": endpoint }).to_string();
+    parse::<Sent>(&request("POST", "/api/push/test", Some(body)).await?).map(|s| s.sent)
+}
+
 // ---------- temp files (pages/Temp.tsx) ----------
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]

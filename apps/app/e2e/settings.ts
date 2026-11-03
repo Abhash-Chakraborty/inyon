@@ -26,7 +26,7 @@ mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str = "([^"]+)"/.exec(rs)![1]!
+const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 // the version the page is built as: the hub serving it runs the same
 const cargo = await Bun.file(path.join(root, 'Cargo.toml')).text()
 const VERSION = /^version = "([^"]+)"/m.exec(cargo)![1]!
@@ -165,6 +165,8 @@ const server = Bun.serve({
       if (req.method === 'POST') state.update = { ...state.update, running: true }
       return json(state.update)
     }
+    if (p === '/api/push') return json({ ok: true })
+    if (p === '/api/push/test') return json({ sent: 1 })
     if (p === '/api/phones') return state.phonesFail ? json({ error: 'The hub is busy' }, 500) : json(state.phones)
     if (p.startsWith('/api/phones/') && req.method === 'DELETE') {
       state.phones = state.phones.filter((x) => x.id !== decodeURIComponent(p.slice(12)))
@@ -636,6 +638,57 @@ try {
     await ctx.close()
   }
 
+  // ---- notifications while Inyon is closed: the browser's push service, faked ----
+  {
+    const ctx = await context({ ...desktop, colorScheme: 'light' })
+    await ctx.addInitScript(() => {
+      // allowed already (the headless browser turns notifications down whatever it's granted)
+      ;(window as any).Notification = class {
+        static permission = 'granted'
+        static requestPermission = async () => 'granted'
+        close() {}
+      }
+      // a push service that hands out one subscription for whatever key it's given
+      let current: any = null
+      const reg = {
+        pushManager: {
+          getSubscription: async () => current,
+          subscribe: async (o: { applicationServerKey: Uint8Array }) => {
+            const key = o.applicationServerKey.slice().buffer
+            current = { endpoint: 'https://push.example/sub1', options: { applicationServerKey: key }, toJSON: () => ({ endpoint: 'https://push.example/sub1', keys: { p256dh: 'p', auth: 'a' } }), unsubscribe: async () => ((current = null), true) }
+            return current
+          },
+        },
+      }
+      Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { register: async () => reg, ready: Promise.resolve(reg), addEventListener() {} } })
+      ;(window as any).PushManager = function () {}
+    })
+    const page = await ctx.newPage()
+    watch(page)
+    const pushes = () => called('POST', '/api/push')
+    const before = pushes().length
+    await page.goto(`${base}/next/settings`)
+    await styled(page)
+    check(await until(() => pushes().length > before, 5000), 'push: the subscription goes to the hub at start')
+    const body = pushes().at(-1)?.body
+    check(body?.subscription?.endpoint === 'https://push.example/sub1' && body?.vapid?.subject === 'https://inyon.tech/' && !!body?.vapid?.privateJwk?.d && body?.done === true, `push: what the hub gets ${JSON.stringify(body)}`)
+    check(!!(await page.evaluate(() => localStorage.getItem('inyon.push-vapid'))), 'push: the key is kept where the web app keeps it')
+    await page.getByText('On for this device, also while Inyon is closed').waitFor()
+    await page.getByRole('button', { name: 'Send a test' }).click()
+    await toast(page, 'Test sent').waitFor()
+    check(called('POST', '/api/push/test').at(-1)?.body?.endpoint === 'https://push.example/sub1', 'push: the test goes through the push service')
+    // a switch change goes to the hub, with the same subscription and key
+    const n = pushes().length
+    await page.getByRole('switch', { name: 'Finished notices' }).click()
+    check(await until(() => pushes().length > n && pushes().at(-1)?.body?.done === false), 'push: finished notices off at the hub too')
+    check(pushes().at(-1)?.body?.vapid?.privateJwk?.d === body?.vapid?.privateJwk?.d, 'push: the same key every time')
+    await page.getByRole('switch', { name: 'Finished notices' }).click()
+    // About says how the terminal draws (the page, until a terminal opens)
+    const drawing = page.locator('.set-row', { hasText: 'Terminal drawing' })
+    check((await drawing.textContent())?.includes('Page'), `about: terminal drawing (${await drawing.textContent()})`)
+    await ctx.close()
+  }
+
   // ---- the companion on the Overview, on a phone ----
   {
     const ctx = await context({ ...phone, colorScheme: 'dark' })
@@ -861,4 +914,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: Settings at 390x844 and 1440x900 in light and dark, app and hub settings, custom agents, the companion and pairing an app, the password, the hub update and "Inyon was updated", notices, ending a session, Temp files and the intro; screenshots in ${shots}`)
+console.log(`ok: Settings at 390x844 and 1440x900 in light and dark, app and hub settings, custom agents, the companion and pairing an app, the password, the hub update and "Inyon was updated", notices and Web Push, ending a session, Temp files and the intro; screenshots in ${shots}`)
