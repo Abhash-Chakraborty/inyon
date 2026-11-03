@@ -118,16 +118,113 @@ fn patch_stats(call: &ToolCall) -> Option<Stats> {
 
 /// `new URL(u).host + pathname` without its trailing slash, or `u` when it isn't a URL.
 fn host(u: &str) -> String {
-    match url::Url::parse(u) {
-        Ok(p) => {
-            let mut h = p.host_str().unwrap_or("").to_string();
-            if let Some(port) = p.port() {
-                h.push_str(&format!(":{port}"));
-            }
-            h + p.path().strip_suffix('/').unwrap_or(p.path())
-        }
-        Err(_) => u.to_string(),
+    web_address(u).unwrap_or_else(|| u.to_string())
+}
+
+/// What the WHATWG URL parser makes of a web address's host, port and path, by hand: the `url`
+/// crate brings Unicode tables a page this size doesn't want. Covers what agents fetch (http,
+/// https, ws, wss and ftp with `://`): the host lowercased, a default port dropped, dot
+/// segments taken out and the path percent-encoded as `new URL()` does. Anything else, a host
+/// outside ASCII among them, is left to show as it was written.
+fn web_address(u: &str) -> Option<String> {
+    let u = u.trim_matches(|c: char| c <= ' ');
+    let (scheme, rest) = u.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "http" | "ws" => 80,
+        "https" | "wss" => 443,
+        "ftp" => 21,
+        _ => return None,
+    };
+    if rest.contains(['\\', '\t', '\n', '\r']) {
+        return None;
     }
+    // more slashes than two before the host are skipped
+    let rest = rest.trim_start_matches('/');
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let (name, port) = match hostport.rsplit_once(':') {
+        Some((h, p)) if !h.starts_with('[') || h.ends_with(']') => (h, Some(p)),
+        _ => (hostport, None),
+    };
+    let forbidden = |c: char| !c.is_ascii() || c.is_ascii_control() || " #%/:<>?@[\\]^|".contains(c);
+    let name = if name.starts_with('[') && name.ends_with(']') {
+        name.to_ascii_lowercase()
+    } else if name.contains(forbidden)
+        || name.rsplit('.').find(|l| !l.is_empty()).is_some_and(|l| l.bytes().all(|b| b.is_ascii_digit()) || l.starts_with("0x")) && !dotted_quad(name)
+    {
+        // percent escapes, Unicode, and numbers the parser reads as an IPv4 address of its own
+        return None;
+    } else {
+        name.to_ascii_lowercase()
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let mut out = name;
+    match port.filter(|p| !p.is_empty()) {
+        Some(p) if !p.bytes().all(|b| b.is_ascii_digit()) => return None,
+        Some(p) => {
+            let n: u32 = match p.trim_start_matches('0') {
+                "" => 0,
+                digits if digits.len() <= 5 => digits.parse().ok()?,
+                _ => return None,
+            };
+            if n > 65535 {
+                return None;
+            }
+            if n != default_port {
+                out.push_str(&format!(":{n}"));
+            }
+        }
+        None => {}
+    }
+    let path = &tail[..tail.find(['?', '#']).unwrap_or(tail.len())];
+    let path = web_path(path);
+    Some(out + path.strip_suffix('/').unwrap_or(&path))
+}
+
+/// Four numbers from 0 to 255, as the parser writes an IPv4 address back.
+fn dotted_quad(h: &str) -> bool {
+    let parts: Vec<&str> = h.split('.').collect();
+    parts.len() == 4
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 3 && p.bytes().all(|b| b.is_ascii_digit()) && (p.len() == 1 || !p.starts_with('0')) && p.parse::<u16>().is_ok_and(|n| n <= 255))
+}
+
+/// A special URL's path: `.` and `..` segments (written `%2e` too) resolved, and what the path
+/// percent-encode set holds escaped.
+fn web_path(path: &str) -> String {
+    let segments: Vec<&str> = path.strip_prefix('/').unwrap_or(path).split('/').collect();
+    let n = segments.len();
+    let mut out: Vec<String> = Vec::new();
+    for (i, seg) in segments.into_iter().enumerate() {
+        let last = i + 1 == n;
+        let lower = seg.to_ascii_lowercase();
+        if matches!(lower.as_str(), ".." | ".%2e" | "%2e." | "%2e%2e") {
+            out.pop();
+            if last {
+                out.push(String::new());
+            }
+        } else if matches!(lower.as_str(), "." | "%2e") {
+            if last {
+                out.push(String::new());
+            }
+        } else {
+            let mut e = String::new();
+            for b in seg.bytes() {
+                if b <= b' ' || b > b'~' || b"\"#<>?`{}".contains(&b) {
+                    e.push_str(&format!("%{b:02X}"));
+                } else {
+                    e.push(b as char);
+                }
+            }
+            out.push(e);
+        }
+    }
+    format!("/{}", out.join("/"))
 }
 
 /// A tool input's field when it's a non-empty string (JavaScript's `i.x || …`).
@@ -365,5 +462,46 @@ mod tests {
     fn codex_agents() {
         assert_eq!(line(&summarize(&call("spawn_agent", json!({ "name": "fixer" })))), (ToolIcon::Bot, "Starting an agent", Some("fixer")));
         assert_eq!(line(&summarize(&answered(call("wait_agents", json!({})), json!({})))), (ToolIcon::Hourglass, "Waited for agents", None));
+    }
+
+    #[test]
+    fn web_addresses_read_as_the_url_parser_reads_them() {
+        let by_url = |u: &str| match url::Url::parse(u) {
+            Ok(p) => {
+                let mut h = p.host_str().unwrap_or("").to_string();
+                if let Some(port) = p.port() {
+                    h.push_str(&format!(":{port}"));
+                }
+                h + p.path().strip_suffix('/').unwrap_or(p.path())
+            }
+            Err(_) => u.to_string(),
+        };
+        let schemes = ["http://", "https://", "HTTPS://", "ws://", "wss://", "ftp://"];
+        let hosts = ["Example.com", "box", "a-b.c", "127.0.0.1", "localhost", "sub.EXAMPLE.org", "[::1]", "user:pw@docs.rs", "@x.io", "a.123", "10.0.0.256", "0xg.io"];
+        let ports = ["", ":80", ":443", ":4777", ":", ":0", ":021", ":65536", ":99999999999", ":x"];
+        let pieces = ["/", "docs", "a b", "é", "..", ".", "%2e", "%2E%2e", "%20", "?q=1", "#top", "{}", "`", "\"", "<", ">", "~", "%", "\u{7f}", "x.y", "-_"];
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        for _ in 0..6000 {
+            let scheme = schemes[next(schemes.len())];
+            let mut u = format!("{scheme}{}{}", hosts[next(hosts.len())], ports[next(ports.len())]);
+            let path = ["", "/", "?", "#"][next(4)];
+            u.push_str(path);
+            for _ in 0..if path.is_empty() { 0 } else { next(6) } {
+                u.push_str(pieces[next(pieces.len())]);
+            }
+            assert_eq!(host(&u), by_url(&u), "{u:?}");
+        }
+        // left as written, where the parser would bring in its Unicode tables
+        assert_eq!(host("https://bücher.de/x"), "https://bücher.de/x");
+        assert_eq!(host("mailto:sam@example.com"), "mailto:sam@example.com");
+        assert_eq!(host("file:///tmp/notes.md"), "file:///tmp/notes.md");
+        // and a shortened IPv4 address, which the parser writes out in full (1.2.0.3)
+        assert_eq!(host("http://1.2.3/"), "http://1.2.3/");
     }
 }

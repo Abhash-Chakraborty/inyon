@@ -45,6 +45,11 @@ fn agy_model_ids_name_the_effort() {
     assert_eq!(agy_model_id("gemini-3.1-pro", Some("max")), "gemini-3.1-pro-high");
     assert_eq!(agy_model_id("gemini-3.8-flash-low", Some("high")), "gemini-3.8-flash-low");
     assert_eq!(agy_model_id("gpt-oss-120b-medium", Some("low")), "gpt-oss-120b-medium");
+    // only a version of digits and dots names a family (`^gemini-[0-9.]+-(flash|pro)$`)
+    assert_eq!(agy_model_id("gemini--pro", None), "gemini--pro");
+    assert_eq!(agy_model_id("gemini-3a-flash", None), "gemini-3a-flash");
+    assert_eq!(agy_model_id("gemini-3-flash-pro", None), "gemini-3-flash-pro");
+    assert_eq!(agy_model_id("gemini-...-pro", None), "gemini-...-pro-high");
 }
 
 #[test]
