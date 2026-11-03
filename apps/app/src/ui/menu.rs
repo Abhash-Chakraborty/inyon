@@ -51,6 +51,8 @@ pub enum Action {
         host: String,
         pane: String,
     },
+    /// the session header's ⋯: Remote Control, compact, rewind, fork, exit…
+    Session(super::session_menu::SessionAct),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -442,6 +444,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
         Action::Page(op) => super::pages::run(op, here, hub),
         Action::Temp(op) => super::temp::run(op),
         Action::Settings(op) => super::settings::run(op),
+        Action::Session(act) => super::session_menu::run(act, here),
         Action::EndSession { host, pane } => {
             // from the session's own screen, the Overview after
             let own = matches!(&*here.peek(), Route::Session { host: h, pane: p, .. } if *h == host && *p == pane);

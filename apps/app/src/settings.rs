@@ -182,12 +182,15 @@ pub enum Permission {
     Unsupported,
 }
 
-/// The System notifications row's hint.
-pub fn notices_hint(secure: bool, perm: Permission, push: bool) -> &'static str {
+/// The System notifications row's hint. `push` when the browser can be reached while Inyon is
+/// closed; `home_screen` for Safari on an iPhone or iPad, which has notifications only for an app
+/// added to the Home Screen.
+pub fn notices_hint(secure: bool, perm: Permission, push: bool, home_screen: bool) -> &'static str {
     if !secure {
         return "Browsers only allow these over HTTPS or in the installed app. In-app notices still work.";
     }
     match perm {
+        Permission::Unsupported if home_screen => "On iPhone, add Inyon to the Home Screen to get these",
         Permission::Granted if push => "On for this device, also while Inyon is closed",
         Permission::Granted => "On for this device",
         Permission::Denied => "Turned off in your phone's settings for Inyon",
@@ -464,11 +467,14 @@ mod tests {
 
     #[test]
     fn the_notifications_row_says_why_they_are_off() {
-        assert!(notices_hint(false, Permission::Granted, true).starts_with("Browsers only allow"));
-        assert_eq!(notices_hint(true, Permission::Granted, true), "On for this device, also while Inyon is closed");
+        assert!(notices_hint(false, Permission::Granted, true, false).starts_with("Browsers only allow"));
+        assert_eq!(notices_hint(true, Permission::Granted, true, false), "On for this device, also while Inyon is closed");
+        // Safari in a tab: only the Home Screen app gets notifications
+        assert_eq!(notices_hint(true, Permission::Unsupported, false, true), "On iPhone, add Inyon to the Home Screen to get these");
+        assert_eq!(notices_hint(true, Permission::Default, false, true), "Alerts when an agent needs you, while Inyon is open");
         // without Web Push nothing reaches a closed tab
-        assert_eq!(notices_hint(true, Permission::Default, false), "Alerts when an agent needs you, while Inyon is open");
-        assert_eq!(notices_hint(true, Permission::Default, true), "Alerts when an agent needs you, even with Inyon closed");
+        assert_eq!(notices_hint(true, Permission::Default, false, false), "Alerts when an agent needs you, while Inyon is open");
+        assert_eq!(notices_hint(true, Permission::Default, true, false), "Alerts when an agent needs you, even with Inyon closed");
     }
 
     #[test]

@@ -156,12 +156,14 @@ pub fn Session(host: String, pane: String, view: Option<PaneView>) -> Element {
     let view_href = |v: PaneView| format!("{BASE}{}", pane_href(&host, &pane, (v != home).then_some(v)));
     let (chat_href, terminal_href) = (view_href(PaneView::Chat), view_href(PaneView::Terminal));
     dom::set_title(&format!("{title} · Inyon"));
-    // the header's ⋯: what the web app's session menu offers that this screen has so far
-    let mut more = Vec::new();
-    if let Some(id) = &session_id {
-        more.push(super::menu::Item::copy("Copy session ID", id));
-    }
-    more.push(super::menu::Item::new("End session…", Icon::CircleX, super::menu::Action::EndSession { host: host.clone(), pane: pane.clone() }).danger());
+    // the header's ⋯, as the web app's session menu
+    let now = super::session_menu::Now {
+        session_id: session_id.clone(),
+        remote: info.as_ref().and_then(|i| i.rc.as_ref()).map(|rc| rc.url.clone()),
+        ultracode: screen.as_ref().and_then(|s| s.ultracode).or(agent_info.and_then(|a| a.ultracode)).or(info.as_ref().and_then(|i| i.ultracode)) == Some(true),
+        shared: info.as_ref().is_some_and(|i| i.share.is_some()),
+    };
+    let more = super::session_menu::items(&host, &pane, agent, &now);
     let mut menu_at = use_context::<Signal<Option<super::menu::Menu>>>();
     let has_pane = r.is_some();
     drop(c);

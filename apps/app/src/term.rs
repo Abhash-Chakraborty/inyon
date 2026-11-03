@@ -209,6 +209,20 @@ pub mod js {
         SCREEN.with(|s| s.borrow().clone())
     }
 
+    /// How terminals draw on this device, as Settings › About says it: WebGL, or the page (also
+    /// before any terminal has opened, as in the web app).
+    pub fn drawing() -> &'static str {
+        let r = api().and_then(|a| {
+            let a = JsValue::from(a);
+            js_sys::Reflect::get(&a, &"renderer".into()).ok()?.dyn_into::<js_sys::Function>().ok()?.call0(&a).ok()?.as_string()
+        });
+        if r.as_deref() == Some("webgl") {
+            "WebGL"
+        } else {
+            "Page"
+        }
+    }
+
     fn api() -> Option<Api> {
         let win: JsValue = web_sys::window()?.into();
         let v = js_sys::Reflect::get(&win, &"inyonTerm".into()).ok()?;

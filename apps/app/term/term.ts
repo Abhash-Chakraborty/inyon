@@ -185,7 +185,8 @@ function open(el: HTMLElement, fontSize: number, onData: (d: string) => void, on
 
 declare global {
   interface Window {
-    inyonTerm?: { open: typeof open }
+    inyonTerm?: { open: typeof open; renderer: () => string }
   }
 }
-window.inyonTerm = { open }
+// renderer: how terminals draw on this device ('webgl' or 'dom'), for Settings › About
+window.inyonTerm = { open, renderer: () => getRenderer() }

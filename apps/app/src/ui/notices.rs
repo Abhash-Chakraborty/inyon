@@ -196,6 +196,29 @@ pub fn UpdatePrompt() -> Element {
     }
 }
 
+/// Hands the push subscription to the hub at start (subscriptions can change) and whenever the
+/// notice switches change, so a closed Inyon is told what an open one would show.
+#[component]
+pub fn PushWatch() -> Element {
+    let (done, pages) = {
+        let p = PREFS.read();
+        (p.notify_done, p.notify_pages)
+    };
+    use_hook(|| {
+        if crate::push::supported() {
+            crate::push::listen();
+        }
+    });
+    use_effect(use_reactive!(|done, pages| {
+        if crate::push::supported() {
+            spawn(async move {
+                let _ = crate::push::enable(done, pages).await;
+            });
+        }
+    }));
+    rsx! {}
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

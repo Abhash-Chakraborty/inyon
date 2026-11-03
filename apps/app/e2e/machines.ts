@@ -21,7 +21,7 @@ mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str = "([^"]+)"/.exec(rs)![1]!
+const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
 

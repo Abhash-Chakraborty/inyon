@@ -29,6 +29,9 @@ mod pages;
 mod phone;
 mod platform;
 mod prompt;
+// Web Push is the browser build's; the key handling is tested everywhere
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+mod push;
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 mod route;
 mod settings;

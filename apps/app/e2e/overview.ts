@@ -21,10 +21,10 @@ mkdirSync(shots, { recursive: true })
 
 // the policy the hub sends with the page, read from the hub's source so the two can't drift
 const rs = await Bun.file(path.join(root, 'crates/inyon-hub/src/static_files.rs')).text()
-const NEXT_CSP = /pub const NEXT_CSP: &str = "([^"]+)"/.exec(rs)![1]!
+const NEXT_CSP = /pub const NEXT_CSP: &str =\s*"([^"]+)"/.exec(rs)![1]!
 
 const PASSWORD = 'correct horse'
-const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0 }
+const state = { setup: false, setupCode: false, authed: false, refuse: false, answers: [] as unknown[], sends: [] as unknown[], drafts: [] as unknown[], frames: [] as unknown[], slow: 0, controls: [] as Record<string, unknown>[] }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
 
@@ -85,6 +85,13 @@ const server = Bun.serve({
       state.setup = false
       state.authed = true
       return json({ ok: true })
+    }
+    // the session menu's calls: exit to the shell, Remote Control, Codex's rewind, ultracode, fork
+    const control = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(exit|rc|rewind|ultracode|fork)$/.exec(p)
+    if (control && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}))
+      state.controls.push({ pane: control[2], what: control[3], ...body })
+      return json(control[3] === 'fork' ? { pane: '%99' } : { ok: true })
     }
     const action = /^\/api\/hosts\/([^/]+)\/panes\/([^/]+)\/(answer|send)$/.exec(p)
     if (action && req.method === 'POST') {
@@ -663,6 +670,51 @@ try {
     await page.getByRole('heading', { name: 'Welcome back' }).waitFor({ timeout: 15_000 })
     await ctx.close()
   }
+
+  // ---- the session header's ⋯: the web app's session menu ----
+  {
+    const until = async (ok: () => boolean, ms = 3000) => {
+      const end = Date.now() + ms
+      while (!ok() && Date.now() < end) await Bun.sleep(50)
+      return ok()
+    }
+    state.authed = true
+    resetChats()
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light', reducedMotion: 'reduce' })
+    const page = await ctx.newPage()
+    watch(page)
+    await page.goto(`${base}/next/m/local/p/11`)
+    const more = page.locator('.session-head').getByRole('button', { name: 'More' })
+    await more.click()
+    const items = await page.getByRole('menuitem').allTextContents()
+    for (const want of ['Turn on Remote Control', 'Compact context', 'Rewind…', 'Clear conversation', 'Exit to shell', 'End session…']) check(items.some((i) => i.includes(want)), `session menu: ${want} (${items.join(' | ')})`)
+    await page.screenshot({ path: path.join(shots, 'session-menu-1440-light.png') })
+    // a slash command, typed into the agent
+    const sent = state.sends.length
+    await page.getByRole('menuitem', { name: 'Compact context' }).click()
+    check(await until(() => state.sends.length > sent && (state.sends.at(-1) as { text: string }).text === '/compact'), `session menu: compact sent ${JSON.stringify(state.sends.at(-1))}`)
+    // Remote Control through the hub
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Turn on Remote Control' }).click()
+    await page.getByText('Remote Control on').waitFor()
+    check(JSON.stringify(state.controls.at(-1)) === JSON.stringify({ pane: '11', what: 'rc', on: true }), `session menu: rc ${JSON.stringify(state.controls.at(-1))}`)
+    // exiting asks first
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Exit to shell' }).click()
+    const ask = page.getByRole('dialog', { name: 'Exit Claude Code to the shell?' })
+    await ask.waitFor()
+    await ask.getByRole('button', { name: 'Exit' }).click()
+    await page.getByText('Claude Code exited').waitFor()
+    check(state.controls.at(-1)?.what === 'exit', 'session menu: exited at the hub')
+    // Codex rewinds through the hub, after asking
+    await page.goto(`${base}/next/m/local/p/12`)
+    await more.click()
+    await page.getByRole('menuitem', { name: 'Rewind…' }).click()
+    await page.getByRole('dialog', { name: 'Rewind your last message?' }).getByRole('button', { name: 'Rewind' }).click()
+    await page.getByText('Conversation rewound').waitFor()
+    check(state.controls.at(-1)?.what === 'rewind' && state.controls.at(-1)?.pane === '12', `session menu: rewound ${JSON.stringify(state.controls.at(-1))}`)
+    await ctx.close()
+  }
 } finally {
   await browser.close()
   server.stop(true)
@@ -675,4 +727,4 @@ if (problems.length) {
   console.error(problems.join('\n'))
   process.exit(1)
 }
-console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, the terminal, filtering, folding, reconnecting; screenshots in ${shots}`)
+console.log(`ok: sign-in, setup, the overview and a session at 390x844 and 1440x900 in light and dark, sending, older messages, answering from a card and from the chat, the terminal, the session menu, filtering, folding, reconnecting; screenshots in ${shots}`)

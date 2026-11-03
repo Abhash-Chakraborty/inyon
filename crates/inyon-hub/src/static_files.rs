@@ -35,8 +35,10 @@ pub const PAGE_CSP: &str = "frame-ancestors 'none'; img-src 'self' data: blob:; 
 struct Next;
 
 /// PAGE_CSP for the new app: its scripts are under /next/assets/, it shares the web app's theme
-/// script, and it is wasm, which a page may compile only with 'wasm-unsafe-eval'.
-pub const NEXT_CSP: &str = "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/next/assets/ *:*/theme.js 'wasm-unsafe-eval'";
+/// script and service worker (which shows push notifications), and it is wasm, which a page may
+/// compile only with 'wasm-unsafe-eval'.
+pub const NEXT_CSP: &str =
+    "frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; script-src *:*/next/assets/ *:*/theme.js *:*/sw.js 'wasm-unsafe-eval'";
 
 /// What /next says on a hub built without the new app.
 pub const NEXT_MISSING: &str = "The new app isn't in this build of the hub. Build it with apps/app/build.sh before the hub.";
@@ -308,7 +310,7 @@ mod tests {
     #[test]
     fn the_new_app_may_compile_wasm_and_runs_only_its_own_scripts() {
         let scripts = NEXT_CSP.split("; ").find_map(|d| d.strip_prefix("script-src ")).unwrap();
-        assert_eq!(scripts.split(' ').collect::<Vec<_>>(), ["*:*/next/assets/", "*:*/theme.js", "'wasm-unsafe-eval'"]);
+        assert_eq!(scripts.split(' ').collect::<Vec<_>>(), ["*:*/next/assets/", "*:*/theme.js", "*:*/sw.js", "'wasm-unsafe-eval'"]);
         // the rest of the policy is the web app's
         assert_eq!(NEXT_CSP.split("; script-src").next(), PAGE_CSP.split("; script-src").next());
         // the page loads nothing from elsewhere
