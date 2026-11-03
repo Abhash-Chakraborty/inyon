@@ -2,10 +2,8 @@
 //! they can go.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
 
 use inyon_protocol::{ChatItem, SendState, SendStatus};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::js::{cut16, len16, parse_date, squash_spaces, trim};
@@ -53,26 +51,132 @@ pub fn norm(s: &str) -> String {
     trim(&squash_spaces(s)).to_string()
 }
 
-static IMAGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"<image\s+name=(\[Image #[0-9]+\])\s+path="([^"]+)">[\s\S]*?</image>"#).unwrap());
-static ATTACHED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(Attached files:\s*)([\s\S]*)$").unwrap());
-static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[Image #[0-9]+\]").unwrap());
-// `</?pasted_content\b[^>]*>` with JavaScript's ASCII word boundary
-static PASTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"</?pasted_content(?:[^A-Za-z0-9_>][^>]*)?>").unwrap());
-static NOT_WORDS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^\p{L}\p{N}!/]+").unwrap());
+// The patterns pending.ts cleans with, matched by hand to keep regex out of the app's wasm (the
+// tests check each against the pattern itself):
+//   <image\s+name=(\[Image #[0-9]+\])\s+path="([^"]+)">[\s\S]*?</image>
+//   (Attached files:\s*)([\s\S]*)$
+//   \[Image #[0-9]+\]
+//   </?pasted_content\b[^>]*>     (JavaScript's ASCII \b)
+//   [^\p{L}\p{N}!/]+
+
+/// `s` from `at` past one or more characters `ok` takes; None when there are none.
+fn some(s: &str, at: usize, ok: impl Fn(char) -> bool) -> Option<usize> {
+    let end = s[at..].find(|c: char| !ok(c)).map_or(s.len(), |n| at + n);
+    (end > at).then_some(end)
+}
+
+/// `[Image #12]` at `at`: where it ends.
+fn image_label(s: &str, at: usize) -> Option<usize> {
+    let digits = lit(s, at, "[Image #")?;
+    let end = some(s, digits, |c| c.is_ascii_digit())?;
+    lit(s, end, "]")
+}
+
+/// `lit` at `at`: where it ends.
+fn lit(s: &str, at: usize, lit: &str) -> Option<usize> {
+    s.get(at..)?.starts_with(lit).then_some(at + lit.len())
+}
+
+/// An image envelope at `at`: its label, its path and where it ends.
+fn image_envelope(s: &str, at: usize) -> Option<(&str, &str, usize)> {
+    let i = lit(s, at, "<image")?;
+    let i = some(s, i, char::is_whitespace)?;
+    let label_at = lit(s, i, "name=")?;
+    let label_end = image_label(s, label_at)?;
+    let i = some(s, label_end, char::is_whitespace)?;
+    let path_at = lit(s, i, "path=\"")?;
+    let path_end = some(s, path_at, |c| c != '"')?;
+    let body = lit(s, path_end, "\">")?;
+    let close = s[body..].find("</image>")?;
+    Some((&s[label_at..label_end], &s[path_at..path_end], body + close + "</image>".len()))
+}
+
+/// Takes the image envelopes out, noting each label's path.
+fn strip_images(s: &str, images: &mut HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some(n) = s[i..].find("<image") {
+        let at = i + n;
+        match image_envelope(s, at) {
+            Some((label, path, end)) => {
+                out.push_str(&s[i..at]);
+                images.insert(label.to_string(), path.to_string());
+                i = end;
+            }
+            None => {
+                out.push_str(&s[i..at + 1]);
+                i = at + 1;
+            }
+        }
+    }
+    out.push_str(&s[i..]);
+    out
+}
+
+/// The image labels in the attachment list back to their paths.
+fn label_paths(s: &str, images: &HashMap<String, String>) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some(n) = s[i..].find("[Image #") {
+        let at = i + n;
+        match image_label(s, at) {
+            Some(end) => {
+                out.push_str(&s[i..at]);
+                out.push_str(images.get(&s[at..end]).map_or(&s[at..end], String::as_str));
+                i = end;
+            }
+            None => {
+                out.push_str(&s[i..at + 1]);
+                i = at + 1;
+            }
+        }
+    }
+    out.push_str(&s[i..]);
+    out
+}
+
+/// A `<pasted_content …>` or `</pasted_content>` tag at `at`: where it ends.
+fn paste_tag(s: &str, at: usize) -> Option<usize> {
+    let i = lit(s, at, "<")?;
+    let i = lit(s, lit(s, i, "/").unwrap_or(i), "pasted_content")?;
+    match s[i..].chars().next()? {
+        '>' => Some(i + 1),
+        c if c.is_ascii_alphanumeric() || c == '_' => None,
+        _ => s[i..].find('>').map(|n| i + n + 1),
+    }
+}
+
+fn strip_pastes(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while let Some(n) = s[i..].find('<') {
+        let at = i + n;
+        match paste_tag(s, at) {
+            Some(end) => {
+                out.push_str(&s[i..at]);
+                i = end;
+            }
+            None => {
+                out.push_str(&s[i..at + 1]);
+                i = at + 1;
+            }
+        }
+    }
+    out.push_str(&s[i..]);
+    out
+}
 
 fn clean(s: &str) -> String {
     // Codex expands attachment paths into image envelopes and substitutes numbered labels.
     // Restore their paths before comparing; the full text and each attachment must still match.
     let mut images: HashMap<String, String> = HashMap::new();
-    let s = IMAGE.replace_all(s, |c: &regex::Captures| {
-        images.insert(c[1].to_string(), c[2].to_string());
-        String::new()
-    });
-    let s = ATTACHED.replace(&s, |c: &regex::Captures| {
-        let files = LABEL.replace_all(&c[2], |l: &regex::Captures| images.get(&l[0]).cloned().unwrap_or_else(|| l[0].to_string()));
-        format!("{}{files}", &c[1])
-    });
-    let s = norm(&PASTE.replace_all(&s, ""));
+    let mut s = strip_images(s, &mut images);
+    if let Some(at) = s.find("Attached files:") {
+        let head = some(&s, at + "Attached files:".len(), char::is_whitespace).unwrap_or(at + "Attached files:".len());
+        let files = label_paths(&s[head..], &images);
+        s = format!("{}{files}", &s[..head]);
+    }
+    let s = norm(&strip_pastes(&s));
     // "! ls" and "!ls" are the same shell command
     match s.strip_prefix('!') {
         Some(rest) => format!("!{}", rest.trim_start_matches(crate::js::is_space)),
@@ -91,7 +195,14 @@ pub const PENDING_MS: u64 = 10 * 60_000;
 // A receipt and its message share their words. Spacing, quotes and markup can differ: agents
 // rewrap pastes, and some swap straight quotes for curly ones.
 fn loose(s: &str) -> String {
-    NOT_WORDS.replace_all(&clean(s).to_lowercase(), "").into_owned()
+    clean(s).to_lowercase().chars().filter(|c| word_char(*c)).collect()
+}
+
+/// What `[^\p{L}\p{N}!/]` leaves: letters and numbers of any script, `!` and `/`. Rust's
+/// `is_alphabetic` also keeps the combining vowel signs of scripts like Devanagari, which only
+/// makes both sides of the comparison keep a little more.
+fn word_char(c: char) -> bool {
+    c == '!' || c == '/' || c.is_alphabetic() || c.is_numeric()
 }
 
 // The transcript is stamped by the agent's machine and the message by this device; phones and
@@ -444,5 +555,105 @@ mod tests {
     fn the_saved_json_is_what_the_web_app_writes() {
         let p = PendingMessage { queued: true, ..PendingMessage::new("a", "hi", PendingStatus::Sent, 5) };
         assert_eq!(serde_json::to_string(&p).unwrap(), r#"{"id":"a","text":"hi","status":"sent","at":5,"queued":true}"#);
+    }
+
+    /// The cleaning as it was, with the patterns themselves.
+    fn clean_by_regex(s: &str) -> String {
+        use regex::{Captures, Regex};
+        let image = Regex::new(r#"<image\s+name=(\[Image #[0-9]+\])\s+path="([^"]+)">[\s\S]*?</image>"#).unwrap();
+        let attached = Regex::new(r"(Attached files:\s*)([\s\S]*)$").unwrap();
+        let label = Regex::new(r"\[Image #[0-9]+\]").unwrap();
+        let paste = Regex::new(r"</?pasted_content(?:[^A-Za-z0-9_>][^>]*)?>").unwrap();
+        let mut images: HashMap<String, String> = HashMap::new();
+        let s = image.replace_all(s, |c: &Captures| {
+            images.insert(c[1].to_string(), c[2].to_string());
+            String::new()
+        });
+        let s = attached.replace(&s, |c: &Captures| {
+            let files = label.replace_all(&c[2], |l: &Captures| images.get(&l[0]).cloned().unwrap_or_else(|| l[0].to_string()));
+            format!("{}{files}", &c[1])
+        });
+        let s = norm(&paste.replace_all(&s, ""));
+        match s.strip_prefix('!') {
+            Some(rest) => format!("!{}", rest.trim_start_matches(crate::js::is_space)),
+            None => s,
+        }
+    }
+
+    /// Strings put together from the pieces the patterns care about, the same ones every run.
+    fn mixes(pieces: &[&str], n: usize) -> Vec<String> {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        (0..n)
+            .map(|_| {
+                let len = 1 + (seed % 9) as usize;
+                (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        pieces[(seed % pieces.len() as u64) as usize]
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cleaning_by_hand_matches_the_patterns() {
+        let pieces = [
+            "<image",
+            " ",
+            "\n",
+            "\t",
+            "name=",
+            "[Image #",
+            "1",
+            "23",
+            "]",
+            "path=\"",
+            "/tmp/a.png",
+            "\"",
+            "\">",
+            "</image>",
+            "</image",
+            "Attached files:",
+            "  ",
+            "<pasted_content",
+            "</pasted_content",
+            ">",
+            "<pasted_contentx>",
+            "<pasted_content_",
+            " id=\"3\"",
+            "<",
+            "/",
+            "!",
+            " ls",
+            "é",
+            "日本",
+            "x",
+            "-",
+            "[Image #4]",
+        ];
+        let samples = [
+            r#"Look <image name=[Image #1] path="/tmp/a.png">data</image> here. Attached files: [Image #1], [Image #2]"#,
+            "<pasted_content id=\"1\">long text</pasted_content> and more",
+            "<pasted_contentx>kept</pasted_contentx>",
+            "!  ls -la",
+            "Attached files:\n\n  [Image #9]",
+        ];
+        for s in samples.iter().map(|s| s.to_string()).chain(mixes(&pieces, 4000)) {
+            assert_eq!(clean(&s), clean_by_regex(&s), "{s:?}");
+        }
+    }
+
+    #[test]
+    fn the_words_compared_are_what_the_pattern_leaves() {
+        let not_words = regex::Regex::new(r"[^\p{L}\p{N}!/]+").unwrap();
+        // letters and numbers of Latin, Cyrillic, Greek, CJK and digits, with punctuation, quotes and emoji between
+        let pieces = ["Fix", "the", " ", "“", "”", "'", "\"", "!", "/", "-", "_", ".", ",", "é", "ß", "Привет", "Ωμέγα", "日本語", "한국어", "٣", "²", "½", "🙂", "\n", "Ⅻ"];
+        for s in mixes(&pieces, 2000) {
+            let by_hand: String = s.to_lowercase().chars().filter(|c| word_char(*c)).collect();
+            assert_eq!(by_hand, not_words.replace_all(&s.to_lowercase(), ""), "{s:?}");
+        }
     }
 }

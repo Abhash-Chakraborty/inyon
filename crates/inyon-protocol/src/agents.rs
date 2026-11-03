@@ -5,7 +5,6 @@
 use std::sync::OnceLock;
 
 use indexmap::IndexMap;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use ts_rs::TS;
@@ -327,16 +326,25 @@ pub fn agents() -> &'static IndexMap<AgentKind, AgentDef> {
 /// agy names a model and its effort together ("gemini-3.8-flash-high"). A bare family keeps the
 /// session's effort when the model has it (Pro has only low and high), else gets high, agy's default.
 pub fn agy_model_id(id: &str, effort: Option<&str>) -> String {
-    static FAMILY: OnceLock<Regex> = OnceLock::new();
-    let family = FAMILY.get_or_init(|| Regex::new(r"^gemini-[0-9.]+-(flash|pro)$").unwrap());
-    let Some(m) = family.captures(id) else { return id.to_owned() };
-    let ok: &[&str] = if &m[1] == "pro" { &["low", "high"] } else { &["low", "medium", "high"] };
+    let Some(family) = gemini_family(id) else { return id.to_owned() };
+    let ok: &[&str] = if family == "pro" { &["low", "high"] } else { &["low", "medium", "high"] };
     let level = effort.filter(|e| ok.contains(e)).unwrap_or("high");
     format!("{id}-{level}")
 }
 
+/// `gemini-<version>-flash` or `gemini-<version>-pro` (`^gemini-[0-9.]+-(flash|pro)$`): the
+/// family, else None.
+fn gemini_family(id: &str) -> Option<&'static str> {
+    let rest = id.strip_prefix("gemini-")?;
+    let (version, family) = if let Some(v) = rest.strip_suffix("-flash") { (v, "flash") } else { (rest.strip_suffix("-pro")?, "pro") };
+    (!version.is_empty() && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')).then_some(family)
+}
+
 /// Which agent (if any) a process is. `comm` alone is too generic, so it needs a matching argv.
+/// Only the engine needs it (the `detect` feature), which keeps regex out of the app.
+#[cfg(feature = "detect")]
 pub fn detect_agent(comm: &str, args: &str) -> Option<AgentKind> {
+    use regex::Regex;
     static PATTERNS: OnceLock<Vec<(AgentKind, Vec<Regex>)>> = OnceLock::new();
     let patterns = PATTERNS.get_or_init(|| agents().values().map(|a| (a.kind, a.args.iter().map(|s| Regex::new(s).expect("agent args pattern")).collect())).collect());
     let shell = matches!(comm, "sh" | "bash" | "zsh" | "-zsh" | "-bash" | "fish" | "tmux");

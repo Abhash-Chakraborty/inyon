@@ -4,10 +4,7 @@
 //! the local clock is a UTC offset in minutes east (the opposite sign of `getTimezoneOffset()`);
 //! dates print the way an en-US browser prints them.
 
-use std::sync::LazyLock;
-
 use inyon_protocol::RateWindow;
-use regex::Regex;
 
 use crate::js::{js_round, len16, local_time, parse_date, to_fixed};
 
@@ -196,15 +193,48 @@ pub fn clock(ts: &str, offset_min: i32) -> String {
     }
 }
 
-static MODEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"claude-([a-z]+)-([0-9]+)(?:-([0-9]{1,2}))?(?:[-\[]|$)").unwrap());
+/// The family, major and minor of the first `claude-<family>-<major>[-<minor>]` in `id`, as
+/// `claude-([a-z]+)-([0-9]+)(?:-([0-9]{1,2}))?(?:[-\[]|$)` finds it (by hand, to keep regex out
+/// of the app's wasm).
+fn claude_model(id: &str) -> Option<(&str, &str, Option<&str>)> {
+    let run = |at: usize, ok: fn(&u8) -> bool| at + id.as_bytes()[at..].iter().take_while(|b| ok(b)).count();
+    // a model name ends here: at the end, or at '-' or '['
+    let ends = |at: usize| matches!(id.as_bytes().get(at), None | Some(b'-' | b'['));
+    let mut from = 0;
+    while let Some(n) = id[from..].find("claude-") {
+        let start = from + n + "claude-".len();
+        from = from + n + 1;
+        let family_end = run(start, u8::is_ascii_lowercase);
+        if family_end == start || id.as_bytes().get(family_end) != Some(&b'-') {
+            continue;
+        }
+        let major_end = run(family_end + 1, u8::is_ascii_digit);
+        if major_end == family_end + 1 {
+            continue;
+        }
+        let (family, major) = (&id[start..family_end], &id[family_end + 1..major_end]);
+        // a minor of one or two digits, when a model name ends after it
+        if id.as_bytes().get(major_end) == Some(&b'-') {
+            let minor_end = run(major_end + 1, u8::is_ascii_digit);
+            for end in (major_end + 2..=minor_end.min(major_end + 3)).rev() {
+                if ends(end) {
+                    return Some((family, major, Some(&id[major_end + 1..end])));
+                }
+            }
+        }
+        if ends(major_end) {
+            return Some((family, major, None));
+        }
+    }
+    None
+}
 
 pub fn model_name(id: Option<&str>) -> String {
     let Some(id) = id.filter(|id| !id.is_empty()) else { return String::new() };
     // "claude-opus-4-6[1m]" is the 1M-context variant of the same model
-    let Some(m) = MODEL.captures(id) else { return id.to_string() };
-    let family = &m[1];
-    let minor = m.get(3).map(|x| format!(".{}", x.as_str())).unwrap_or_default();
-    format!("{}{} {}{minor}", family[..1].to_uppercase(), &family[1..], &m[2])
+    let Some((family, major, minor)) = claude_model(id) else { return id.to_string() };
+    let minor = minor.map(|m| format!(".{m}")).unwrap_or_default();
+    format!("{}{} {major}{minor}", family[..1].to_uppercase(), &family[1..])
 }
 
 /// "%12" → "12" for display
@@ -541,5 +571,43 @@ mod tests {
         assert!(!is_web_link(Some("javascript:alert(1)")));
         assert!(!is_web_link(Some("file:///etc/passwd")));
         assert!(!is_web_link(None));
+    }
+
+    #[test]
+    fn model_names_by_hand_match_the_pattern() {
+        let model = regex::Regex::new(r"claude-([a-z]+)-([0-9]+)(?:-([0-9]{1,2}))?(?:[-\[]|$)").unwrap();
+        let by_regex = |id: &str| model.captures(id).map(|m| (m[1].to_string(), m[2].to_string(), m.get(3).map(|x| x.as_str().to_string())));
+        let pieces = ["claude-", "opus", "sonnet", "-", "4", "5", "123", "[1m]", "[", "x", "us.anthropic.", "Claude-", "2025", "-v1", ""];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut ids: Vec<String> = [
+            "claude-opus-4-6[1m]",
+            "claude-sonnet-4-5-20250929",
+            "claude-3-5-sonnet",
+            "claude-opus-4-123",
+            "claude-haiku-4",
+            "us.anthropic.claude-opus-4-1-v1:0",
+            "claude-opus-4x",
+            "claude-opus-",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        for _ in 0..4000 {
+            let len = 1 + (seed % 8) as usize;
+            ids.push(
+                (0..len)
+                    .map(|_| {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        pieces[(seed % pieces.len() as u64) as usize]
+                    })
+                    .collect(),
+            );
+        }
+        for id in ids {
+            let by_hand = claude_model(&id).map(|(f, a, b)| (f.to_string(), a.to_string(), b.map(str::to_string)));
+            assert_eq!(by_hand, by_regex(&id), "{id:?}");
+        }
     }
 }
