@@ -6,10 +6,10 @@
 use dioxus::prelude::*;
 
 use super::icons::{Glyph, Icon, Logo};
-use super::menu::MenuLayer;
+use super::menu::{Menu, MenuLayer};
 use super::overview::Overview;
 use super::session::Session;
-use super::{add, companion, connect, machines, notices, organize, pages, settings, sidebar, temp, toast};
+use super::{add, companion, connect, machines, notices, organize, pages, quick, settings, sidebar, temp, toast};
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -24,6 +24,17 @@ const TEMP_KEY: &str = "temp";
 #[component]
 pub fn Shell() -> Element {
     let here = use_context::<Signal<Route>>();
+    let hub = use_context::<Signal<Hub>>();
+    let menu_at = use_context::<Signal<Option<Menu>>>();
+    // a right click on nothing in particular offers Search… and New session… (ContextMenu.tsx)
+    use_hook(move || {
+        crate::dom::on_page_menu(move |x, y| {
+            let online = hub.peek().hosts.iter().any(|h| h.status == inyon_protocol::HostStatus::Online);
+            let mut m = menu_at;
+            m.set(Some(Menu::at(x, y, quick::page_items(online, crate::dom::mac()))));
+            true
+        })
+    });
     let route = here();
     let section = match route {
         Route::Overview => Section::Overview,
@@ -82,6 +93,7 @@ pub fn Shell() -> Element {
                 }
             }
             organize::SelectionBar {}
+            quick::QuickAccess {}
             MenuLayer {}
             add::ActionSheets {}
             organize::OrgSheets {}
@@ -131,6 +143,8 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
         (l.changed(), l.pages.as_ref().map_or(0, Vec::len))
     };
     let hub = use_context::<Signal<Hub>>();
+    let mut here = use_context::<Signal<Route>>();
+    let mac = crate::dom::mac();
     let h = hub.read();
     let online = h.hosts.iter().filter(|x| x.status == inyon_protocol::HostStatus::Online).count();
     let total = h.hosts.len();
@@ -150,6 +164,18 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                         onclick: move |_| connect::open_connect_help(None),
                         Glyph { icon: Icon::WifiOff, size: 16 }
                     }
+                }
+            }
+            div { class: "sidebar-start",
+                button { class: "sidebar-search press", r#type: "button", onclick: move |_| quick::open_fresh(crate::quick::Tab::Sessions),
+                    Glyph { icon: Icon::Search, size: 14 }
+                    span { class: "truncate", "Search or jump to…" }
+                    kbd { class: "sidebar-key mono", {crate::quick::search_key(mac)} }
+                }
+                button { class: "nav-item", r#type: "button", onclick: move |_| quick::new_session(hub, &mut here),
+                    Glyph { icon: Icon::Plus, size: 16 }
+                    "New session"
+                    kbd { class: "nav-key mono", {crate::quick::new_key(mac)} }
                 }
             }
             nav { class: "sidebar-nav",
@@ -198,6 +224,7 @@ fn TabBar(section: Section) -> Element {
     let on_settings = section == Section::Settings;
     let changed = pages::PAGES.read().changed();
     let hub = use_context::<Signal<Hub>>();
+    let mut here = use_context::<Signal<Route>>();
     let waiting = model::agent_panes(&hub.read().hosts).iter().filter(|r| r.agent().state == inyon_protocol::AgentState::Waiting).count();
     rsx! {
         nav { class: "tabbar",
@@ -218,6 +245,9 @@ fn TabBar(section: Section) -> Element {
                     }
                 }
                 "Blueprints"
+            }
+            button { class: "tab tab-new", r#type: "button", "aria-label": "New session", onclick: move |_| quick::new_session(hub, &mut here),
+                span { class: "tab-plus press", Glyph { icon: Icon::Plus, size: 20 } }
             }
             a { class: tab_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
                 Glyph { icon: Icon::Monitor, size: 21 }

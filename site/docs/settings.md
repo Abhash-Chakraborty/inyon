@@ -101,6 +101,9 @@ The version and build, the Android app's version, how the terminal is drawn, and
 | `Ctrl K` / `⌘ K` | Search and jump to a session |
 | `Alt N` / `⌥ N` | New session, even while typing a message (from 0.16; not in the terminal) |
 | `N` | New session, when you aren't typing |
+| `Ctrl P` / `⌘ P` | [Quick access](overview.md#quick-access) on **Sessions** (from 1.1, new app) |
+| `Ctrl Shift P` / `⌘ ⇧ P` | Quick access on **Commands** (from 1.1, new app) |
+| `Ctrl O` / `⌘ O` | Quick access on **Files** (from 1.1, new app) |
 | `Enter` / `Shift Enter` | Send / new line |
 | `Alt Enter` / `⌥ Enter` | [Hold the message](sessions.md#holding-a-message-until-the-agent-is-free) until the agent is free (from 0.22) |
 | `Esc` | Stop the agent (with an empty message box), close a sheet or menu |

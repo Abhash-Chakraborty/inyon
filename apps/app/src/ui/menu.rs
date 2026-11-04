@@ -56,6 +56,8 @@ pub enum Action {
     Session(super::session_menu::SessionAct),
     /// pins, parking, snoozes, tags and notes on one session or a selection (from 1.1)
     Org(super::organize::OrgOp),
+    /// Quick access's own: a tab, a saved prompt sent, starred or removed (from 1.1)
+    Quick(super::quick::QuickOp),
     /// nothing: a heading, or an item that opens a submenu
     None,
 }
@@ -70,6 +72,8 @@ pub struct Item {
     pub separated: bool,
     /// a second line under the label
     pub hint: Option<String>,
+    /// its key, written on the right ("⌘K", "Alt N")
+    pub keys: Option<String>,
     /// one of a few to pick from (a part of a page, a note), and whether it's the one picked
     pub checked: Option<bool>,
     /// an on/off of its own (`menuitemcheckbox`) rather than one choice of several
@@ -84,7 +88,7 @@ pub struct Item {
 
 impl Item {
     pub fn new(label: impl Into<String>, icon: Icon, action: Action) -> Item {
-        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, toggle: false, disabled: false, sub: None, header: false }
+        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, keys: None, checked: None, toggle: false, disabled: false, sub: None, header: false }
     }
 
     /// An item that opens a submenu.
@@ -110,6 +114,11 @@ impl Item {
     pub fn toggled(mut self, on: bool) -> Item {
         self.checked = Some(on);
         self.toggle = true;
+        self
+    }
+
+    pub fn keys(mut self, k: impl Into<String>) -> Item {
+        self.keys = Some(k.into());
         self
     }
 
@@ -186,6 +195,13 @@ pub struct Menu {
     x: f64,
     y: f64,
     items: Vec<Item>,
+}
+
+impl Menu {
+    /// A menu of `items` opened at a point on the screen.
+    pub fn at(x: f64, y: f64, items: Vec<Item>) -> Menu {
+        Menu { x, y, items }
+    }
 }
 
 /// An `oncontextmenu` handler that opens a menu with `items` where the pointer is.
@@ -635,6 +651,9 @@ fn MenuRow(id: String, item: Item, first: bool, expanded: bool, on_hover: EventH
             } else {
                 span { class: "menu-words truncate", "{item.label}" }
             }
+            if let Some(k) = &item.keys {
+                kbd { class: "menu-keys mono", "{k}" }
+            }
             if item.checked == Some(true) {
                 Glyph { icon: Icon::Check, size: 16, class: "menu-check" }
             }
@@ -684,6 +703,7 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
             });
         }
         Action::Org(op) => super::organize::run(op, hub),
+        Action::Quick(op) => super::quick::run(op, here, hub),
         Action::None => {}
     }
 }
