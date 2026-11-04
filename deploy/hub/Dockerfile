@@ -24,9 +24,16 @@ RUN set -eu; \
       *) echo "No Inyon release for $TARGETARCH"; exit 1;; \
     esac; \
     base="https://github.com/Abhash-Chakraborty/inyon/releases/download/v$INYON_VERSION"; \
-    curl -fsSL --retry 3 "$base/SHA256SUMS" -o SHA256SUMS; \
-    curl -fsSL --retry 3 "$base/SHA256SUMS.minisig" -o SHA256SUMS.minisig; \
-    minisign -V -P "$RELEASE_PUBLIC_KEY" -m SHA256SUMS -x SHA256SUMS.minisig; \
+    # the release workflows upload the list and its signature one after the other, and the
+    # Android build signs the list again with its APK added: a pair read in between doesn't
+    # match, so read both again until they do (up to 15 minutes, for an image built mid-release)
+    for i in $(seq 1 30); do \
+      curl -fsSL --retry 3 "$base/SHA256SUMS" -o SHA256SUMS && \
+        curl -fsSL --retry 3 "$base/SHA256SUMS.minisig" -o SHA256SUMS.minisig && \
+        minisign -V -P "$RELEASE_PUBLIC_KEY" -m SHA256SUMS -x SHA256SUMS.minisig && break; \
+      [ "$i" = 30 ] && { echo "SHA256SUMS never carried a good signature"; exit 1; }; \
+      sleep 30; \
+    done; \
     curl -fsSL --retry 3 "$base/$file" -o "$file"; \
     grep -E "^[0-9a-f]{64}  $file\$" SHA256SUMS > want; \
     [ "$(wc -l < want)" = 1 ] || { echo "$file isn't listed once in SHA256SUMS"; exit 1; }; \

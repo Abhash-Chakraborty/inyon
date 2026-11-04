@@ -482,7 +482,8 @@ jobs:
               echo "::warning::MINISIGN_SECRET_KEY isn't set, so SHA256SUMS keeps its signature and the APK isn't listed in it"
               exit 0
             fi
-            for i in $(seq 1 30); do
+            # node.yml's builds take about 20 minutes, longer than the APK, so wait up to 30
+            for i in $(seq 1 90); do
               rm -rf "$sums" && mkdir -p "$sums"
               gh release download "$GITHUB_REF_NAME" -p SHA256SUMS -p SHA256SUMS.minisig -p "inyon-$VERSION.apk" -D "$sums" 2>/dev/null || true
               [ -f "$sums/SHA256SUMS" ] && [ -f "$sums/SHA256SUMS.minisig" ] &&
