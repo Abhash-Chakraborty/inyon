@@ -11,6 +11,7 @@ pub use inyon_api::{clients, core_routes, http, multipart};
 
 pub mod auth;
 pub mod boards;
+pub mod cleanup;
 pub mod cli;
 pub mod companions;
 pub mod finding;

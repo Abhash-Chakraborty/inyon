@@ -3,7 +3,7 @@ import { act, fireEvent, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import type { PageEntry } from '@inyon/protocol'
-import { PagesPage } from './Pages.tsx'
+import { PagesPage, cleanedText } from './Pages.tsx'
 import { AppShell } from '../components/AppShell.tsx'
 import { PreviewTab } from '../components/session/Panels.tsx'
 import { useStore } from '../lib/store.ts'
@@ -116,6 +116,21 @@ describe('the list on a phone', () => {
     expect(screen.getByText('No blueprints yet')).toBeTruthy()
     expect(screen.getByText(/^inyon blueprints add /)).toBeTruthy()
     expect(screen.getByRole('button', { name: /Add a folder/ })).toBeTruthy()
+  })
+
+  test('blueprints the hub cleaned up are named in one line until dismissed', async () => {
+    api.cleanedPages.mockResolvedValue({ at: 1, days: 14, pages: [{ host: 'local', slug: 'a', name: 'Checkout redesign' }, { host: 'local', slug: 'b', name: 'Cart mockups' }] })
+    await at('/blueprints')
+    const line = await screen.findByText('Cleaned up 2 blueprints: their sessions ended and they hadn\'t changed in 14 days. Folders stay where they were.')
+    expect(line.closest('p')?.getAttribute('title')).toBe('Checkout redesign, Cart mockups')
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(api.dismissCleaned).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/^Cleaned up/)).toBeNull()
+  })
+
+  test('the clean-up line names a single blueprint', () => {
+    expect(cleanedText([{ host: 'local', slug: 'a', name: 'Plan' }], 7)).toBe('Cleaned up “Plan”: its session ended and it hadn\'t changed in 7 days.')
+    expect(cleanedText([{ host: 'local', slug: 'a', name: 'Plan' }], 1)).toBe('Cleaned up “Plan”: its session ended and it hadn\'t changed in 1 day.')
   })
 
   test('a computer whose inyon is too old to serve its pages is named, with what to do', async () => {

@@ -64,6 +64,8 @@ const state = {
   pages: pages(Date.now()),
   calls: [] as { method: string; path: string; body?: unknown }[],
   minted: 0,
+  /** what the hub's last clean-up took off, until dismissed */
+  cleaned: { pages: [] } as { at?: number; days?: number; pages: unknown[] },
 }
 type Socket = ServerWebSocket<{ subs: Set<string> }>
 const sockets = new Set<Socket>()
@@ -116,6 +118,10 @@ const server = Bun.serve({
       state.calls.push({ method: req.method, path: p + url.search, body })
     }
     if (p === '/api/settings') return json({})
+    if (p === '/api/pages-cleaned') {
+      if (req.method === 'DELETE') state.cleaned = { pages: [] }
+      return req.method === 'DELETE' ? json({ ok: true }) : json(state.cleaned)
+    }
     const m = /^\/api\/pages\/([^/]+)(?:\/([^/]+))?(\/open|\/revoke)?$/.exec(p)
     if (m) {
       const host = decodeURIComponent(m[1]!)
@@ -237,6 +243,7 @@ const watch = (page: Page) => {
 const phone = { ...devices['iPhone 13'], viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' as const }
 const desktop = { viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' as const }
 const reset = () => {
+  state.cleaned = { at: Date.now(), days: 14, pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan', folder: '/home/sam/code/storefront/private/plans/old-plan' }, { host: 'local', slug: 'spike', name: 'Search spike', folder: '/home/sam/code/storefront/private/plans/spike' }] }
   state.pages = pages(Date.now())
   state.hosts = hosts()
   publishPages()
@@ -267,8 +274,16 @@ try {
     check((await card.getAttribute('aria-label'))?.startsWith('Checkout redesign, changed, 3 of 8 done'), `${label}: the card's label`)
     check((await page.locator('.changed-dot').count()) === 4, `${label}: every page new here is marked`)
     check((await page.locator('.tab-badge-pages').textContent()) === '4', `${label}: the tab bar counts changed pages`)
+    // what the hub cleaned up, in one line over the list
+    const cleaned = page.locator('.cleaned-line')
+    check((await cleaned.textContent()) === "Cleaned up 2 blueprints: their sessions ended and they hadn't changed in 14 days. Folders stay where they were.", `${label}: the clean-up line (${await cleaned.textContent()})`)
+    check((await cleaned.getAttribute('title')) === 'Old plan, Search spike', `${label}: the clean-up line names them`)
     await page.screenshot({ path: path.join(shots, `pages-390-${scheme}.png`) })
     await layout(page, label)
+    const dismissed = called('DELETE', '/api/pages-cleaned').length
+    await cleaned.getByRole('button', { name: 'Dismiss' }).click()
+    check(await until(() => called('DELETE', '/api/pages-cleaned').length === dismissed + 1), `${label}: dismissed on the hub`)
+    check((await cleaned.count()) === 0, `${label}: the clean-up line goes`)
 
     // live progress, from the stream
     state.pages[0]!.progress = { ...state.pages[0]!.progress, done: 4, updated: new Date().toISOString() }
@@ -353,6 +368,7 @@ try {
     const label = `desktop ${scheme}`
     // nothing picked: the first changed page in the tree opens (the hub's machine, its projects by name)
     await page.waitForURL(/\/next\/blueprints\/local\/passkeys$/)
+    check(await page.locator('.pages-tree-list .cleaned-line').isVisible(), `${label}: the clean-up line in the tree`)
     await page.locator('.tree-row', { hasText: 'Checkout redesign' }).click()
     await page.waitForURL(/\/next\/blueprints\/local\/checkout-redesign$/)
     const inside = page.frameLocator('iframe.page-frame')

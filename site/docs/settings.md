@@ -49,9 +49,19 @@ From 0.21, **Agent temp files** below the machines opens [Temp files](temp-files
 
 From 0.17 the hub tidies every machine by itself about every six hours, and again when a machine comes back online: it deletes uploads past their age, then the oldest ones while the folder is over **Keep at most**. A file whose upload broke off keeps a `.part` ending and is deleted after an hour, so a half-sent file never looks finished. From 0.24 the hub also forgets an upload that got nothing for an hour, and deletes its `.part` file then; sending the file again starts it over. Computers paired only with a phone tidy their own uploads the same way, with the rules the hub last used there (7 days and 1 GB if there never was one).
 
+## Blueprints
+
+From 0.25.
+
+| Setting | Choices | Default |
+|---|---|---|
+| Clean up old blueprints after | 7, 14 or 30 days, Never | 14 days |
+
+A blueprint whose tmux session and conversation have both ended, and that hasn't changed in that long, leaves the list the way **Remove** takes it off. Its folder stays. **Clean up now** does it at once, by the same rule (14 days while it's set to **Never**). See [Old blueprints are cleaned up](pages.md#old-blueprints-are-cleaned-up).
+
 ## Notifications
 
-**Allow**, **Send a test**, *When an agent finishes* and *When a page moves on*. On Android, also **Stay connected** and **Battery limits**. See [Notifications](notifications.md).
+**Allow**, **Send a test**, *When an agent finishes* and *When a blueprint moves on*. On Android, also **Stay connected** and **Battery limits**. See [Notifications](notifications.md).
 
 ## Computers or Machines
 

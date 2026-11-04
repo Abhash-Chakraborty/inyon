@@ -55,8 +55,10 @@ const fresh = (): Entry[] => [
   { host: 'local', slug: 'passkeys', name: 'Passkeys rollout', project: '/home/sam/code/storefront', by: 'claude', added: now - 3 * HOUR, folder: '/home/sam/code/storefront/private/plans/passkeys', session: 'chat-acc', tmux: 'accounts', tmuxId: '$12' },
   { host: 'build', slug: 'release-notes', name: 'Release notes site', project: '/srv/docs-site', by: 'cli', added: now - 5 * HOUR, folder: '/srv/docs-site/out' },
 ]
-const state = { pages: fresh(), tmux: 'storefront', opened: [] as string[] }
-const reset = () => Object.assign(state, { pages: fresh(), tmux: 'storefront', opened: [] })
+const note = () => ({ at: now, days: 14, pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan' }, { host: 'local', slug: 'spike', name: 'Search spike' }] })
+const hubSettings = () => ({ uploads: { retentionDays: 7, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, futureKey: 'kept' })
+const state = { pages: fresh(), tmux: 'storefront', opened: [] as string[], cleaned: note() as { pages: unknown[] }, settings: hubSettings() as Record<string, any>, calls: [] as string[] }
+const reset = () => Object.assign(state, { pages: fresh(), tmux: 'storefront', opened: [], cleaned: note(), settings: hubSettings(), calls: [] })
 
 const ts = new Date(now).toISOString()
 const items = [
@@ -83,6 +85,17 @@ async function open(kind: 'phone' | 'desktop', scheme: 'light' | 'dark') {
     const u = new URL(r.request().url())
     if (u.pathname === '/api/session') return r.fulfill({ json: { authed: true } })
     if (u.pathname === '/api/pages') return r.fulfill({ json: { pages: state.pages } })
+    state.calls.push(`${r.request().method()} ${u.pathname}`)
+    if (u.pathname === '/api/pages-cleaned') {
+      if (r.request().method() === 'DELETE') state.cleaned = { pages: [] }
+      return r.fulfill({ json: r.request().method() === 'DELETE' ? { ok: true } : state.cleaned })
+    }
+    if (/^\/api\/hosts\/[^/]+\/uploads$/.test(u.pathname)) return r.fulfill({ json: { bytes: 2048, files: 1, expired: 0, dir: '/home/sam/.inyon/uploads' } })
+    if (u.pathname === '/api/pages-cleanup') return r.fulfill({ json: { pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan' }], days: state.settings.pagesCleanupDays || 14 } })
+    if (u.pathname === '/api/settings') {
+      if (r.request().method() === 'PUT') state.settings = r.request().postDataJSON()
+      return r.fulfill({ json: state.settings })
+    }
     const o = /^\/api\/pages\/([^/]+)\/([^/]+)\/open$/.exec(u.pathname)
     if (o) {
       state.opened.push(o[2]!)
@@ -189,6 +202,27 @@ try {
       await ctx.close()
     }
 
+    // ---- Settings: when old blueprints are cleaned up, and Clean up now ----
+    {
+      reset()
+      const { ctx, page } = await open('desktop', scheme)
+      const label = `settings ${scheme}`
+      await page.goto(`${base}/settings#blueprints`)
+      const days = page.getByRole('radiogroup', { name: 'Clean up old blueprints after' })
+      await days.waitFor()
+      check((await days.getByRole('radio', { name: '14 days' }).getAttribute('aria-checked')) === 'true', `${label}: 14 days unless set`)
+      await days.getByRole('radio', { name: 'Never' }).click()
+      check(await until(() => state.settings.pagesCleanupDays === 0 && state.settings.futureKey === 'kept'), `${label}: never, the rest kept (${JSON.stringify(state.settings)})`)
+      await days.getByRole('radio', { name: '30 days' }).click()
+      check(await until(() => state.settings.pagesCleanupDays === 30), `${label}: after 30 days`)
+      await page.getByRole('button', { name: 'Clean up', exact: true }).click()
+      await page.getByText('Cleaned up “Old plan”').waitFor()
+      check(state.calls.filter((c) => c === 'POST /api/pages-cleanup').length === 1, `${label}: cleaned up on the hub`)
+      await page.locator('#blueprints').screenshot({ path: path.join(shots, `settings-blueprints-1440-${scheme}.png`) })
+      await layout(page, label)
+      await ctx.close()
+    }
+
     // ---- on a phone: the list, then a session's blueprints in its Activity sheet ----
     {
       reset()
@@ -197,8 +231,16 @@ try {
       await page.goto(`${base}/blueprints`)
       await page.locator('.group-heading-name').first().waitFor()
       check((await heads(page)).join('|') === 'accounts|storefront|docs-site', `${label}: tmux sessions first (${await heads(page)})`)
+      // what the hub cleaned up, in one line over the list until dismissed
+      const cleaned = page.locator('.cleaned-line')
+      await cleaned.waitFor()
+      check((await cleaned.textContent()) === "Cleaned up 2 blueprints: their sessions ended and they hadn't changed in 14 days. Folders stay where they were.", `${label}: the clean-up line (${await cleaned.textContent()})`)
+      check((await cleaned.getAttribute('title')) === 'Old plan, Search spike', `${label}: the clean-up line names them`)
       await page.screenshot({ path: path.join(shots, `blueprints-390-${scheme}.png`) })
       await layout(page, label)
+      await cleaned.getByRole('button', { name: 'Dismiss' }).click()
+      check(await until(() => state.calls.includes('DELETE /api/pages-cleaned')), `${label}: dismissed on the hub`)
+      check((await cleaned.count()) === 0, `${label}: the clean-up line goes`)
       await page.goto(`${base}/m/local/p/11`)
       await page.getByRole('button', { name: 'Running tasks, subagents and changes' }).click()
       const sheet = page.getByRole('dialog')
@@ -220,6 +262,7 @@ try {
     }
   }
 } catch (e) {
+  console.error(problems.join('\n'))
   // what was on screen when a step gave up
   for (const c of browser.contexts()) for (const [i, t] of c.pages().entries()) await t.screenshot({ path: path.join(shots, `failed-${i}.png`) }).catch(() => {})
   throw e

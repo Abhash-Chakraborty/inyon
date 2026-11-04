@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { act, screen } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { VERSION } from '@inyon/protocol'
@@ -64,9 +64,30 @@ describe('Settings keeps what you type while live data flows', () => {
     const user = userEvent.setup()
     api.saveSettings.mockImplementation(async (s) => s as any)
     await render(page())
-    await user.click(screen.getByText('30 days'))
+    await user.click(within(screen.getByRole('radiogroup', { name: 'Delete uploads after' })).getByText('30 days'))
     await flush()
     expect(api.saveSettings.mock.calls[0][0]).toEqual({ uploads: { retentionDays: 30, maxMB: 100, maxTotalMB: 1024, longPasteLines: 40 }, autoResume: false })
+  })
+
+  test('old blueprints are cleaned up after 14 days unless set otherwise, and on demand', async () => {
+    const user = userEvent.setup()
+    api.saveSettings.mockImplementation(async (s) => s as any)
+    await render(page())
+    const days = screen.getByRole('radiogroup', { name: 'Clean up old blueprints after' })
+    expect(within(days).getByRole('radio', { name: '14 days' }).getAttribute('aria-checked')).toBe('true')
+    await user.click(within(days).getByText('Never'))
+    await flush()
+    expect(api.saveSettings.mock.calls[0][0]).toMatchObject({ pagesCleanupDays: 0, autoResume: false })
+    // now: what went, or that nothing did
+    api.cleanupPages.mockResolvedValueOnce({ pages: [{ host: 'local', slug: 'a', name: 'Checkout redesign' }], days: 14 })
+    await user.click(screen.getByRole('button', { name: 'Clean up' }))
+    await flush()
+    expect(api.cleanupPages).toHaveBeenCalledTimes(1)
+    expect(useStore.getState().toasts.at(-1)).toMatchObject({ title: 'Cleaned up “Checkout redesign”', tone: 'success' })
+    api.cleanupPages.mockResolvedValueOnce({ pages: [], days: 14 })
+    await user.click(screen.getByRole('button', { name: 'Clean up' }))
+    await flush()
+    expect(useStore.getState().toasts.at(-1)?.title).toBe('Nothing to clean up')
   })
 
   test('machines can message agents only once the switch is on', async () => {

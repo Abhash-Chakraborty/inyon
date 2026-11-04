@@ -1331,6 +1331,13 @@ input:focus-visible { outline: none; }
 .pages-tree-filter { flex-shrink: 0; padding: 0 12px 8px; }
 .pages-tree-list { min-height: 0; flex: 1; overflow-y: auto; padding: 2px 8px 12px; }
 .pages-tree-empty { padding: 16px 12px; font-size: 13px; color: var(--fg-3); }
+/* what the hub's clean-up took off, one line over the list until dismissed */
+.cleaned-line { display: flex; align-items: flex-start; gap: 6px; margin: 8px 4px; font-size: 13px; line-height: 1.45; color: var(--fg-2); }
+.pages-phone .cleaned-line { margin: 8px 4px 18px; }
+.pages-tree-list .cleaned-line { margin: 4px 8px 8px; }
+.cleaned-line .cleaned-icon { flex-shrink: 0; margin-top: 3px; }
+.cleaned-line .cleaned-text { min-width: 0; flex: 1; }
+.cleaned-line .icon-button { flex-shrink: 0; width: 28px; height: 28px; margin: -4px 0; }
 .pages-tree-foot { flex-shrink: 0; border-top: 1px solid var(--line); padding: 10px 16px; font-size: 12px; color: var(--fg-3); }
 .pages-tree-foot code { font-size: 12px; color: var(--fg-2); }
 .tree-section + .tree-section { margin-top: 2px; }

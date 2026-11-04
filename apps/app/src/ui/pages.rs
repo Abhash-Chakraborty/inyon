@@ -625,6 +625,38 @@ fn run_copy(path: String) {
 }
 
 /// The command an agent runs, with a copy button.
+/// What the hub's clean-up took off the list, in one line until it's dismissed (from 0.25).
+#[component]
+fn CleanedLine() -> Element {
+    let mut note = use_signal(|| None::<api::Cleaned>);
+    use_hook(|| {
+        spawn(async move {
+            if let Ok(n) = api::cleaned_pages().await {
+                note.set(Some(n));
+            }
+        })
+    });
+    let Some(n) = note().filter(|n| !n.pages.is_empty()) else { return rsx! {} };
+    let names: Vec<String> = n.pages.iter().map(|p| p.name.clone()).collect();
+    let text = pg::cleaned_text(&names, n.days.map_or(14, |d| d as u64));
+    let all = names.join(", ");
+    rsx! {
+        p { class: "cleaned-line", role: "status", title: "{all}",
+            Glyph { icon: Icon::Trash2, size: 14, class: "fg-3 cleaned-icon" }
+            span { class: "cleaned-text", "{text} Folders stay where they were." }
+            button { class: "icon-button press", r#type: "button", "aria-label": "Dismiss", title: "Dismiss",
+                onclick: move |_| {
+                    note.set(None);
+                    spawn(async {
+                        let _ = api::dismiss_cleaned().await;
+                    });
+                },
+                Glyph { icon: Icon::X, size: 14 }
+            }
+        }
+    }
+}
+
 #[component]
 fn AddCommand() -> Element {
     rsx! {
@@ -812,6 +844,7 @@ fn PhoneList() -> Element {
                 if filtering() {
                     FilterInput { q, placeholder: "Filter blueprints" }
                 }
+                CleanedLine {}
                 match list.pages.as_deref() {
                     None => rsx! { WaitRows { label: "Loading blueprints", count: 2 } },
                     Some([]) => rsx! { NoPages {} },
@@ -1123,6 +1156,7 @@ fn DesktopPages(selected: Option<(String, String)>) -> Element {
                     }
                 }
                 div { class: "pages-tree-list",
+                    CleanedLine {}
                     if !loaded {
                         WaitRows { label: "Loading blueprints", count: 3 }
                     } else if count == 0 {

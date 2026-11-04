@@ -516,6 +516,15 @@ pub fn note_title(name: &str) -> String {
 
 // ---------- words ----------
 
+/// What the hub's clean-up took off the list, in one line (from 0.25).
+pub fn cleaned_text(names: &[String], days: u64) -> String {
+    let unit = if days == 1 { "day" } else { "days" };
+    match names {
+        [one] => format!("Cleaned up \u{201c}{one}\u{201d}: its session ended and it hadn't changed in {days} {unit}."),
+        _ => format!("Cleaned up {} blueprints: their sessions ended and they hadn't changed in {days} {unit}.", names.len()),
+    }
+}
+
 /// "just now", "3 min ago", "2 h ago", "4 d ago", or a date.
 pub fn ago_text(t: f64, clock: Clock) -> String {
     let s = ((clock.now - t) / 1000.0).max(0.0);
@@ -658,6 +667,14 @@ pub fn machine_of(hosts: &[HostState], host: &str) -> PageMachine {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_clean_up_line_names_one_blueprint_or_counts_them() {
+        let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(super::cleaned_text(&names(&["Plan"]), 7), "Cleaned up \u{201c}Plan\u{201d}: its session ended and it hadn't changed in 7 days.");
+        assert_eq!(super::cleaned_text(&names(&["Plan"]), 1), "Cleaned up \u{201c}Plan\u{201d}: its session ended and it hadn't changed in 1 day.");
+        assert_eq!(super::cleaned_text(&names(&["A", "B"]), 14), "Cleaned up 2 blueprints: their sessions ended and they hadn't changed in 14 days.");
+    }
+
     use super::*;
     use inyon_protocol::PageProgress;
 

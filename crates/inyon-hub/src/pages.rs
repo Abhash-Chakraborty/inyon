@@ -975,14 +975,21 @@ async fn remove_page(req: Req) -> HubResult<Resp> {
     if !is_slug(&slug) {
         return Err(http(404, UNKNOWN_PAGE));
     }
-    let p = pages();
+    take_off(&pages(), &host, &slug).await?;
+    Ok(ok())
+}
+
+/// Takes a page off its machine's list, as Remove does: its links end, its folder stays, and the
+/// hub doesn't find that folder again by itself.
+pub async fn take_off(p: &Pages, host: &str, slug: &str) -> HubResult<()> {
+    let (host, slug) = (host.to_owned(), slug.to_owned());
     if host != LOCAL_HOST {
         p.page(&host, &slug).await?;
         pages_remote::remove(&host, &slug).await?;
         p.remote.forget(&host);
         // its links end now, and stay dead if the slug comes back
         p.epochs.bump(&host, &slug)?;
-        return Ok(ok());
+        return Ok(());
     }
     let folders: Vec<String> = p.registry.records().iter().filter(|r| r.slug == slug).map(|r| real_or(&r.path)).collect();
     let gone = p
@@ -1002,7 +1009,7 @@ async fn remove_page(req: Req) -> HubResult<Resp> {
     for r in gone {
         p.progress.drop_folder(&r.path);
     }
-    Ok(ok())
+    Ok(())
 }
 
 /// Adds a folder on another machine, through its own inyon (which checks the folder by the same

@@ -253,11 +253,21 @@ export interface ServerForm {
   passphrase?: string
 }
 
+/** A blueprint the hub cleaned up: off the list, its folder kept. */
+export interface CleanedPage {
+  host: string
+  slug: string
+  name: string
+  folder?: string
+}
+
 export interface HubSettings {
   uploads: { retentionDays: number; maxMB: number; maxTotalMB: number; longPasteLines: number }
   autoResume?: boolean
   /** joined machines may hold messages for agents with `inyon send` */
   machinesSend?: boolean
+  /** days a blueprint whose session ended stays unchanged before the hub cleans it up; 0 never, unset 14 (from 0.25) */
+  pagesCleanupDays?: number
   /** your own agents; missing until the first is saved, and the Bun hub never keeps them */
   customAgents?: CustomAgent[]
 }
@@ -471,6 +481,11 @@ export const api = {
   pages: () => request<PageList>('GET', '/api/pages', undefined, 20_000),
   /** a paired hub's pages (the phone app), with the phone's token */
   hubPages: (hub: PairedHub) => hubRequest<PageList>(hub, 'GET', '/api/pages', 20_000),
+  /** "Clean up old blueprints": takes them off now, and says which went (from 0.25) */
+  cleanupPages: () => request<{ pages: CleanedPage[]; days: number }>('POST', '/api/pages-cleanup', undefined, 60_000),
+  /** what the hub's last clean-up took off, until it's dismissed */
+  cleanedPages: () => request<{ at?: number; days?: number; pages: CleanedPage[] }>('GET', '/api/pages-cleaned'),
+  dismissCleaned: () => request('DELETE', '/api/pages-cleaned'),
   /** a link to the page, good for 12 hours; `url` is a path on the page's hub */
   openPage: (host: string, slug: string) => request<PageOpen>('POST', `${pg(host, slug)}/open`, undefined, 20_000),
   /** every link to the page stops working */

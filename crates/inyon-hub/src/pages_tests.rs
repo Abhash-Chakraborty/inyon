@@ -2074,3 +2074,74 @@ fn an_app_following_the_pages_stream_hears_a_page_added_and_removed_through_the_
         crate::clients::close_client(&app);
     });
 }
+
+fn h_cleanup(r: Req) -> futures_util::future::LocalBoxFuture<'static, HubResult<Resp>> {
+    Box::pin(crate::cleanup::cleanup(r))
+}
+fn h_cleaned(r: Req) -> futures_util::future::LocalBoxFuture<'static, HubResult<Resp>> {
+    Box::pin(crate::cleanup::cleaned(r))
+}
+fn h_dismiss(r: Req) -> futures_util::future::LocalBoxFuture<'static, HubResult<Resp>> {
+    Box::pin(crate::cleanup::dismiss(r))
+}
+
+#[test]
+fn cleaning_up_takes_off_old_blueprints_whose_session_is_gone_as_remove_does() {
+    let tmp = Tmp::new("cleanup");
+    let home = tmp.join("home");
+    let (old, live, by_hand) = (site(&tmp, "old", true), site(&tmp, "live", false), site(&tmp, "by-hand", false));
+    let entry = |slug: &str, path: &str, owner: Value| {
+        let mut e = record(slug, path);
+        for (k, v) in owner.as_object().unwrap() {
+            e[k] = v.clone();
+        }
+        e
+    };
+    write_list(
+        &pages_file(&home),
+        json!([
+            entry("old", &old, json!({ "by": "claude", "session": "chat-old", "tmux": "cardboard", "tmuxId": "$9" })),
+            entry("live", &live, json!({ "by": "claude", "session": "chat-live", "tmux": "shop", "tmuxId": "$2" })),
+            record("by-hand", &by_hand),
+        ]),
+    );
+    crate::test_util::block(async {
+        hub(&home, clock(now_ms()));
+        // this machine, connected, with chat-live running in tmux session shop
+        let state: inyon_protocol::HostState = serde_json::from_value(json!({
+            "config": { "id": "local", "name": "studio", "kind": "local" }, "status": "online", "integration": "unknown", "tmux": "ok", "agents": [], "updatedAt": 0,
+            "sessions": [{ "id": "$2", "name": "shop", "attached": 0, "windows": [{ "id": "@1", "index": 0, "name": "w", "active": true, "activity": 0, "panes": [
+                { "id": "%1", "index": 0, "active": true, "command": "claude", "cwd": "/x", "title": "", "width": 80, "height": 24, "dead": false, "agent": { "kind": "claude", "pid": 1, "state": "idle", "sessionId": "chat-live" } }
+            ] }] }]
+        }))
+        .unwrap();
+        let rt = Rc::new(RefCell::new(inyon_core::hosts::registry::HostRuntime::new(inyon_core::hosts::host::Host::new(state.config.clone()), state)));
+        rt.borrow_mut().hold_polls();
+        inyon_core::hosts::registry::registry().insert_runtime(LOCAL_HOST, rt.clone());
+        let url = open_url("old").await;
+        let got = call(h_cleanup, "POST", &[], None, &[]).await.unwrap();
+        assert_eq!(got["days"], json!(crate::cleanup::DEFAULT_DAYS));
+        assert_eq!(got["pages"].as_array().unwrap().iter().map(|p| p["slug"].clone()).collect::<Vec<_>>(), [json!("old")]);
+        // gone from the list as Remove takes it: its folder remembered, its links ended
+        let list = read_list(&pages_file(&home));
+        let slugs: Vec<Value> = list["pages"].as_array().unwrap().iter().map(|p| p["slug"].clone()).collect();
+        assert_eq!(slugs, [json!("live"), json!("by-hand")]);
+        assert_eq!(list["removed"], json!([std::fs::canonicalize(&old).unwrap().to_string_lossy()]));
+        assert_eq!(view_status(&url).await, 403);
+        assert!(Path::new(&old).is_dir(), "its folder stays");
+        // the automatic one leaves a note for the list, until it's dismissed
+        assert_eq!(call(h_cleaned, "GET", &[], None, &[]).await.unwrap(), json!({ "pages": [] }));
+        rt.borrow_mut().state.sessions.clear();
+        let mut last = 0;
+        crate::cleanup::auto(&mut last, now_ms()).await;
+        let note = call(h_cleaned, "GET", &[], None, &[]).await.unwrap();
+        assert_eq!(note["pages"].as_array().unwrap().iter().map(|p| p["slug"].clone()).collect::<Vec<_>>(), [json!("live")]);
+        assert_eq!(note["days"], json!(crate::cleanup::DEFAULT_DAYS));
+        // within the hour it doesn't look again
+        let at = last;
+        crate::cleanup::auto(&mut last, at + 1000).await;
+        assert_eq!(last, at);
+        assert_eq!(call(h_dismiss, "DELETE", &[], None, &[]).await, Ok(json!({ "ok": true })));
+        assert_eq!(call(h_cleaned, "GET", &[], None, &[]).await.unwrap(), json!({ "pages": [] }));
+    });
+}

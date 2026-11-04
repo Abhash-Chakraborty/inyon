@@ -24,12 +24,13 @@ use crate::{dom, platform};
 const OLD_HUB: &str = "This hub runs on Bun, which keeps no custom agents. Run the default Rust hub to add them.";
 
 /// The sections the desktop's side list jumps to, in order.
-const NAV: [(&str, &str); 12] = [
+const NAV: [(&str, &str); 13] = [
     ("appearance", "Appearance"),
     ("agents", "Agents"),
     ("companion", "Companion"),
     ("sessions", "Live numbers"),
     ("uploads", "Uploads and clipboard"),
+    ("blueprints", "Blueprints"),
     ("notifications", "Notifications"),
     ("machines", "Machines"),
     ("devices", "Other devices"),
@@ -355,6 +356,7 @@ pub fn SettingsPage() -> Element {
                     }
                     LiveNumbers {}
                     Uploads { hosts: h.hosts.clone() }
+                    Blueprints {}
                     Notifications {}
                     Machines { hosts: h.hosts.clone() }
                     OtherDevices {}
@@ -846,6 +848,57 @@ fn Uploads(hosts: Vec<HostState>) -> Element {
                     span { class: "set-hint", "Pasted images, screenshots and scratch files agents leave behind." }
                 }
                 Glyph { icon: Icon::ChevronRight, size: 16, class: "fg-3" }
+            }
+        }
+    }
+}
+
+// ---------- blueprints ----------
+
+#[component]
+fn Blueprints() -> Element {
+    let s = HUB.read().clone();
+    let mut busy = use_signal(|| false);
+    let days = s.as_ref().and_then(|s| s.pages_cleanup_days).map_or(14, |d| d as u64);
+    let now = move |_| {
+        busy.set(true);
+        spawn(async move {
+            match api::cleanup_pages().await {
+                Ok(r) if r.pages.is_empty() => {
+                    let days = r.days.map_or(14, |d| d as u64);
+                    toast::toast("Nothing to clean up", Some(format!("Every blueprint\u{2019}s session is still around, or it changed in the last {days} days.")), ToastTone::Info)
+                }
+                Ok(r) => {
+                    let title = match &r.pages[..] {
+                        [one] => format!("Cleaned up \u{201c}{}\u{201d}", one.name),
+                        all => format!("Cleaned up {} blueprints", all.len()),
+                    };
+                    // the list follows by itself: the hub sends it again
+                    toast::toast(title, Some("Their folders stay where they were.".into()), ToastTone::Success);
+                }
+                Err(e) => toast::toast("Couldn't clean up", Some(e.message), ToastTone::Error),
+            }
+            busy.set(false);
+        });
+    };
+    rsx! {
+        Section { id: "blueprints", title: "Blueprints",
+            if let Some(s) = s {
+                Row { label: "Clean up old blueprints after", hint: "A blueprint whose tmux session and conversation have both ended, and that hasn't changed in this long, leaves the list the way Remove takes it off. Its folder stays. Checked every hour while Inyon is open.",
+                    Segmented {
+                        value: num(s.pages_cleanup_days.unwrap_or(14.0)),
+                        options: opts(&[("7", "7 days"), ("14", "14 days"), ("30", "30 days"), ("0", "Never")]),
+                        label: "Clean up old blueprints after",
+                        on_change: move |v: String| save_hub(|h| h.pages_cleanup_days = Some(v.parse().unwrap_or(14.0))),
+                    }
+                }
+                Row { label: "Clean up now", hint: format!("By the same rule: a blueprint whose session ended, unchanged for {} days.", if days == 0 { 14 } else { days }),
+                    button { class: "button button-sm button-quiet press", r#type: "button", disabled: busy(), onclick: now,
+                        if busy() { "Cleaning up\u{2026}" } else { "Clean up" }
+                    }
+                }
+            } else {
+                WaitRows { label: "Loading blueprint settings", count: 2, class: "set-wait" }
             }
         }
     }
@@ -1501,7 +1554,10 @@ mod tests {
     #[test]
     fn every_section_the_side_list_names_is_on_the_page() {
         let ids: Vec<&str> = NAV.iter().map(|(id, _)| *id).collect();
-        assert_eq!(ids, ["appearance", "agents", "companion", "sessions", "uploads", "notifications", "machines", "devices", "paired", "account", "updates", "about"]);
+        assert_eq!(
+            ids,
+            ["appearance", "agents", "companion", "sessions", "uploads", "blueprints", "notifications", "machines", "devices", "paired", "account", "updates", "about"]
+        );
     }
 
     #[test]
