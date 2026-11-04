@@ -2000,9 +2000,9 @@ fn a_page_lists_under_the_tmux_session_it_belongs_to_by_its_name_now() {
         assert_eq!(tmux(&list().await)[0], pair("robot", Some("cardboard")));
         // a machine that's away keeps the panes it had last: they aren't running now
         rt.borrow_mut().state.sessions = running("elsewhere", false);
-        assert!(inyon_core::features::pages_remote::live_tmux("laptop", "chat-9").is_some());
+        assert!(inyon_core::features::pages_remote::live_tmux("laptop", "chat-9", None).is_some());
         rt.borrow_mut().state.status = inyon_protocol::HostStatus::Error;
-        assert_eq!(inyon_core::features::pages_remote::live_tmux("laptop", "chat-9"), None);
+        assert_eq!(inyon_core::features::pages_remote::live_tmux("laptop", "chat-9", None), None);
         rt.borrow_mut().state.status = inyon_protocol::HostStatus::Online;
         rt.borrow_mut().state.sessions = vec![];
         crate::pages::pages().remote.forget("laptop");

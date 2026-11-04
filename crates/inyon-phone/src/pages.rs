@@ -281,7 +281,7 @@ fn entry(host: &str, p: &RemotePage) -> Value {
     // the tmux session its conversation runs in now, else the one it was added from, by the name
     // that session has now when it was renamed since
     use inyon_core::features::pages_remote::{live_tmux, renamed};
-    let live = r.session.as_deref().and_then(|s| live_tmux(host, s));
+    let live = r.session.as_deref().and_then(|s| live_tmux(host, s, r.tmux_id.as_deref()));
     let kept = || {
         let (id, name) = (r.tmux_id.clone().unwrap_or_default(), r.tmux.clone()?);
         let now = (!id.is_empty()).then(|| renamed(host, &id, &name)).flatten();

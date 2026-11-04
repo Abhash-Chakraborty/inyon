@@ -245,13 +245,20 @@ mod tests {
     #[test]
     fn a_conversation_is_found_in_its_tmux_session_by_the_name_it_has_now() {
         let mut state = two_sessions();
-        assert_eq!(tmux_of(&state, "conv-a"), Some(("$2".into(), "cardboard".into())));
+        assert_eq!(tmux_of(&state, "conv-a", None), Some(("$2".into(), "cardboard".into())));
         state.sessions[0].name = "robots".into();
-        assert_eq!(tmux_of(&state, "conv-a"), Some(("$2".into(), "robots".into())));
-        assert_eq!(tmux_of(&state, "gone"), None);
+        assert_eq!(tmux_of(&state, "conv-a", None), Some(("$2".into(), "robots".into())));
+        assert_eq!(tmux_of(&state, "gone", None), None);
+        // in panes of two tmux sessions: the one the page is kept under stays its own
+        let mut both = state.clone();
+        both.sessions[1].windows[0].panes[0].agent.as_mut().unwrap().session_id = Some("conv-a".into());
+        assert_eq!(tmux_of(&both, "conv-a", None), Some(("$2".into(), "robots".into())));
+        assert_eq!(tmux_of(&both, "conv-a", Some("$5")), Some(("$5".into(), "notes".into())));
+        assert_eq!(tmux_of(&both, "conv-a", Some("$2")), Some(("$2".into(), "robots".into())));
+        assert_eq!(tmux_of(&both, "conv-a", Some("$9")), Some(("$2".into(), "robots".into())));
         // an agent that ended doesn't count
         state.sessions[1].windows[0].panes[0].dead = true;
-        assert_eq!(tmux_of(&state, "conv-b"), None);
+        assert_eq!(tmux_of(&state, "conv-b", None), None);
     }
 
     #[test]
@@ -301,6 +308,45 @@ mod tests {
         note_renames("box-r", &restarted, &renamed_new);
         assert_eq!(renamed_in(&renamed_new, "box-r", "$2", "robots").as_deref(), Some("zines"));
         assert_eq!(renamed_in(&renamed_new, "box-r", "$2", "cardboard"), None);
+        // a clock that went back is a gap as well
+        let mut earlier = renamed_new.clone();
+        earlier.updated_at = renamed_new.updated_at - 60_000;
+        earlier.sessions[1].name = "jotter".into();
+        note_renames("box-r", &renamed_new, &earlier);
+        assert_eq!(renamed_in(&earlier, "box-r", "$5", "notes"), None);
+        assert_eq!(renamed_in(&earlier, "box-r", "$2", "robots"), None);
+    }
+
+    #[test]
+    fn a_session_that_ended_takes_its_renames_along() {
+        use inyon_core::features::pages_remote::{note_renames, renamed_in};
+        let mut prev = two_sessions();
+        prev.status = inyon_protocol::HostStatus::Online;
+        prev.updated_at = 10_000;
+        let mut next = prev.clone();
+        next.updated_at = 12_000;
+        next.sessions[0].name = "robots".into();
+        note_renames("box-end", &prev, &next);
+        assert_eq!(renamed_in(&next, "box-end", "$2", "cardboard").as_deref(), Some("robots"));
+        // it ends, and a session under that id and the new name turns up a poll later
+        let mut ended = next.clone();
+        ended.updated_at = 14_000;
+        ended.sessions.remove(0);
+        note_renames("box-end", &next, &ended);
+        let mut back = next.clone();
+        back.updated_at = 16_000;
+        note_renames("box-end", &ended, &back);
+        assert_eq!(renamed_in(&back, "box-end", "$2", "cardboard"), None);
+        // the other session's renames stay
+        let mut other = back.clone();
+        other.updated_at = 18_000;
+        other.sessions[1].name = "jotter".into();
+        note_renames("box-end", &back, &other);
+        let mut later = other.clone();
+        later.updated_at = 20_000;
+        later.sessions.remove(0);
+        note_renames("box-end", &other, &later);
+        assert_eq!(renamed_in(&later, "box-end", "$5", "notes").as_deref(), Some("jotter"));
     }
 
     #[test]

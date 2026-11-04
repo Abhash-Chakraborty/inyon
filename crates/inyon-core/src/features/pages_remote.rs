@@ -97,23 +97,26 @@ pub fn is_tmux_id(s: &str) -> bool {
 }
 
 /// The tmux session a conversation runs in on a machine now, as (id, name): renaming the session
-/// shows up here at once.
-pub fn tmux_of(state: &inyon_protocol::HostState, session: &str) -> Option<(String, String)> {
-    state.sessions.iter().find_map(|t| {
-        let here = t.windows.iter().flat_map(|w| &w.panes).any(|p| !p.dead && p.agent.as_ref().and_then(|a| a.session_id.as_deref()) == Some(session));
-        here.then(|| (t.id.clone(), t.name.clone()))
-    })
+/// shows up here at once. When it runs in panes of more than one, the one with the id `kept` (the
+/// session the page was added from, or last seen in) stays its own; else the first.
+pub fn tmux_of(state: &inyon_protocol::HostState, session: &str, kept: Option<&str>) -> Option<(String, String)> {
+    let mut found =
+        state.sessions.iter().filter(|t| t.windows.iter().flat_map(|w| &w.panes).any(|p| !p.dead && p.agent.as_ref().and_then(|a| a.session_id.as_deref()) == Some(session)));
+    let first = found.next()?;
+    let t = if kept.is_some_and(|k| k != first.id) { found.find(|t| Some(t.id.as_str()) == kept).unwrap_or(first) } else { first };
+    Some((t.id.clone(), t.name.clone()))
 }
 
-/// The tmux session a page's conversation runs in now on a connected machine, as (id, name).
-pub fn live_tmux(host: &str, session: &str) -> Option<(String, String)> {
+/// The tmux session a page's conversation runs in now on a connected machine, as (id, name); see
+/// [`tmux_of`] for `kept`.
+pub fn live_tmux(host: &str, session: &str, kept: Option<&str>) -> Option<(String, String)> {
     let rt = registry().get(host)?;
     let state = rt.borrow().state.clone();
     // a machine that's away keeps the panes it had last; they aren't running now
     if state.status != HostStatus::Online {
         return None;
     }
-    tmux_of(&state, session)
+    tmux_of(&state, session, kept)
 }
 
 /// The longest wait between two polls of a machine for a tmux session that kept its id and changed
@@ -136,12 +139,18 @@ fn rename_key(host: &str, id: &str, name: &str) -> String {
 /// name. Pages kept under the old name follow it (see [`renamed`]), including those whose
 /// conversation has ended, which [`tmux_of`] can't find any more.
 pub fn note_renames(host: &str, prev: &inyon_protocol::HostState, next: &inyon_protocol::HostState) {
-    if prev.status != HostStatus::Online || next.updated_at.saturating_sub(prev.updated_at) > RENAME_GAP_MS {
+    // a clock that went back counts as a gap too: how long it was away isn't known
+    if prev.status != HostStatus::Online || next.updated_at < prev.updated_at || next.updated_at - prev.updated_at > RENAME_GAP_MS {
         // the machine was away: its tmux may have started again, and an id it hands out now is a new
         // session's, so the renames seen before don't carry on from here
         let mine = format!("{host}\n");
         RENAMES.with(|r| r.borrow_mut().retain(|k, _| !k.starts_with(&mine)));
         return;
+    }
+    // a session that ended takes its renames along: its id coming back later is another session
+    for o in prev.sessions.iter().filter(|o| !next.sessions.iter().any(|s| s.id == o.id)) {
+        let gone = format!("{host}\n{}\n", o.id);
+        RENAMES.with(|r| r.borrow_mut().retain(|k, _| !k.starts_with(&gone)));
     }
     for s in &next.sessions {
         let Some(old) = prev.sessions.iter().find(|o| o.id == s.id) else { continue };

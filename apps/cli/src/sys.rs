@@ -266,6 +266,9 @@ pub fn run(cmd: &[&str]) -> Output {
 /// [`run`] with a deadline: a command still running after `limit` is stopped, and None comes back.
 /// Its output is read while it runs, so a full pipe can't hold it up, and only until the deadline:
 /// something it started in the background that keeps the pipes open doesn't hold this up either.
+/// Past the deadline the readers keep nothing more and let go of the pipes the next time it
+/// writes, so a chatty leftover gets a broken pipe instead of a growing buffer here; and at most
+/// [`RUN_FOR_MAX`] bytes of each pipe are kept.
 pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
     use std::io::Read;
     use std::sync::{Arc, Mutex};
@@ -274,15 +277,22 @@ pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
     c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     quiet(&mut c);
     let mut child = c.spawn().ok()?;
+    use std::sync::atomic::{AtomicBool, Ordering};
     let (got, done) = (Arc::new(Mutex::new([Vec::new(), Vec::new()])), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let over = Arc::new(AtomicBool::new(false));
     let read = |at: usize, pipe: Option<Box<dyn Read + Send>>| {
-        let (got, done) = (got.clone(), done.clone());
+        let (got, done, over) = (got.clone(), done.clone(), over.clone());
         std::thread::spawn(move || {
             let mut buf = [0u8; 8192];
             if let Some(mut p) = pipe {
                 while let Ok(n @ 1..) = p.read(&mut buf) {
+                    if over.load(Ordering::SeqCst) {
+                        // answered already: drop the pipe, so whatever still writes to it gets a broken pipe
+                        break;
+                    }
                     if let Ok(mut g) = got.lock() {
-                        g[at].extend_from_slice(&buf[..n]);
+                        let room = RUN_FOR_MAX.saturating_sub(g[at].len());
+                        g[at].extend_from_slice(&buf[..n.min(room)]);
                     }
                 }
             }
@@ -299,16 +309,21 @@ pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
+                over.store(true, Ordering::SeqCst);
                 return None;
             }
         }
     };
-    while done.load(std::sync::atomic::Ordering::SeqCst) < 2 && std::time::Instant::now() < end {
+    while done.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < end {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    let [out, err] = got.lock().map(|g| g.clone()).unwrap_or_default();
+    over.store(true, Ordering::SeqCst);
+    let [out, err] = got.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
     Some(Output { ok: status.success(), out: format!("{}{}", String::from_utf8_lossy(&out), String::from_utf8_lossy(&err)).trim().to_string() })
 }
+
+/// The most of each of a command's pipes [`run_for`] keeps.
+pub const RUN_FOR_MAX: usize = 4 << 20;
 
 pub fn run_with_stdin(cmd: &[&str], stdin: Option<&str>) -> Output {
     let Some((prog, args)) = cmd.split_first() else {
@@ -463,6 +478,32 @@ mod tests {
         let t = Instant::now();
         let left = run_for(&["sh", "-c", "echo hi; sleep 4 &"], Duration::from_millis(500)).unwrap();
         assert!(left.ok && left.out == "hi" && t.elapsed() < Duration::from_secs(2), "{:?} {:?}", left.out, t.elapsed());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_for_lets_go_of_a_leftover_that_keeps_writing() {
+        use std::time::{Duration, Instant};
+        // something left in the background writes on after the answer: the pipe is let go, so it
+        // gets a broken pipe and stops, instead of being read into a buffer for as long as it runs
+        let pid = std::env::temp_dir().join(format!("inyon-run-for-{}", std::process::id()));
+        let script = format!("echo hi; (echo $$ > '{}'; while :; do echo more; sleep 0.05; done) & exit 0", pid.display());
+        let got = run_for(&["sh", "-c", &script], Duration::from_millis(500)).unwrap();
+        assert!(got.out.starts_with("hi"), "{:?}", got.out);
+        let t = Instant::now();
+        let alive = || {
+            let id = fs::read_to_string(&pid).unwrap_or_default();
+            !id.trim().is_empty() && Command::new("kill").args(["-0", id.trim()]).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+        };
+        while alive() && t.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let still = alive();
+        if still {
+            let _ = Command::new("kill").arg(fs::read_to_string(&pid).unwrap_or_default().trim()).status();
+        }
+        let _ = fs::remove_file(&pid);
+        assert!(!still, "the leftover still runs");
     }
 
     #[test]

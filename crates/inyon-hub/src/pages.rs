@@ -83,7 +83,7 @@ fn with_owner(v: &mut Value, host: &str, r: &Record) {
     let added = r.added.as_u64();
     let kept = crate::finding::owner_of(host, &r.slug, added);
     let session = r.session.clone().or_else(|| kept.session.clone());
-    let live = session.as_deref().and_then(|s| pages_remote::live_tmux(host, s));
+    let live = session.as_deref().and_then(|s| pages_remote::live_tmux(host, s, kept.tmux_id.as_deref().or(r.tmux_id.as_deref())));
     let (tmux_id, tmux) = match live {
         Some((id, name)) => {
             if kept.tmux.as_deref() != Some(name.as_str()) || kept.tmux_id.as_deref() != Some(id.as_str()) {
