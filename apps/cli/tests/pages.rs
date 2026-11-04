@@ -46,7 +46,15 @@ impl Home {
 
     fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_inyon"));
-        c.args(args).env("HOME", &self.dir).env("USERPROFILE", &self.dir).env_remove("INYON_HUB").env_remove("TETHER_HUB").current_dir(&self.dir);
+        // never the tmux this test runs in: an add from a pane records its session
+        c.args(args)
+            .env("HOME", &self.dir)
+            .env("USERPROFILE", &self.dir)
+            .env_remove("INYON_HUB")
+            .env_remove("TETHER_HUB")
+            .env_remove("TMUX")
+            .env_remove("TMUX_PANE")
+            .current_dir(&self.dir);
         for v in AGENT_VARS {
             c.env_remove(v);
         }
@@ -304,6 +312,32 @@ fn the_agents_conversation_is_recorded_and_the_latest_add_wins() {
     assert_eq!(add(&[]), Some("019a-thread".into()));
     // something that isn't an id is ignored
     assert_eq!(add(&[("CLAUDE_CODE_SESSION_ID", "a b; rm -rf")]), Some("019a-thread".into()));
+}
+
+// a site added from a pane is listed under that pane's tmux session (from 0.25)
+#[cfg(unix)]
+#[test]
+fn an_add_from_a_tmux_pane_records_its_session() {
+    if Command::new("tmux").arg("-V").output().is_err() {
+        return;
+    }
+    let h = Home::new("tmux");
+    let site = h.site("robot", "Robot");
+    // a tmux server of the test's own, on its own socket
+    let sock = format!("inyon-pages-test-{}", std::process::id());
+    let tmux = |args: &[&str]| -> String {
+        let o = Command::new("tmux").env_remove("TMUX").arg("-L").arg(&sock).args(args).output().unwrap();
+        String::from_utf8_lossy(&o.stdout).trim().to_owned()
+    };
+    tmux(&["-f", "/dev/null", "new-session", "-d", "-s", "cardboard robot", "-x", "80", "-y", "24"]);
+    let (pane, path, id) = (tmux(&["display-message", "-p", "#{pane_id}"]), tmux(&["display-message", "-p", "#{socket_path}"]), tmux(&["display-message", "-p", "#{session_id}"]));
+    let mut c = h.cmd(&["pages", "add", s(&site), "--json"]);
+    c.env("TMUX", format!("{path},1,0")).env("TMUX_PANE", &pane);
+    let code = out(c).0;
+    tmux(&["kill-server"]);
+    assert_eq!(code, 0);
+    let page = &h.list()["pages"][0];
+    assert_eq!((page["tmux"].as_str(), page["tmuxId"].as_str()), (Some("cardboard robot"), Some(id.as_str())));
 }
 
 #[test]

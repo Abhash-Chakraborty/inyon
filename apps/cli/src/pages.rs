@@ -3,7 +3,7 @@
 //! hub all write, and which the hub reads again whenever it changes, so adding a page needs no hub
 //! running. Each site also gets `.inyon-page.json` in its own folder, so it keeps its slug and name.
 //!
-//!   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added","session"?}]}
+//!   ~/.inyon/pages.json     {"v":1,"pages":[{"slug","name","path","project","by","added","session"?,"tmux"?,"tmuxId"?}]}
 //!   <site>/.inyon-page.json {"v":1,"slug","name","kind":"blueprint","created"}
 //!
 //! The rules (slugs, which folders may be pages, the messages) are the hubs' own, from
@@ -260,6 +260,37 @@ pub fn agent_session(env: impl Fn(&str) -> Option<String>) -> Option<String> {
 /// A conversation id as pages.json keeps it: letters, digits and `._:-`, at most 128 of them.
 pub fn is_session(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._:-".contains(&b))
+}
+
+/// Who is adding a page: the agent's conversation, and the tmux session this command runs in as
+/// (id, name), so the app lists the page under that session (from 0.25).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Owner {
+    pub session: Option<String>,
+    pub tmux: Option<(String, String)>,
+}
+
+/// How long `pages add` waits for tmux to say which session it runs in.
+const TMUX_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The tmux session holding `$TMUX_PANE`, as (id, name), asked of tmux with `ask` (which returns
+/// what tmux printed, or None when it failed).
+pub fn tmux_session(env: impl Fn(&str) -> Option<String>, ask: impl Fn(&[&str]) -> Option<String>) -> Option<(String, String)> {
+    let pane = env("TMUX_PANE").filter(|p| p.starts_with('%') && p.len() > 1 && p[1..].bytes().all(|b| b.is_ascii_digit()))?;
+    let out = ask(&["tmux", "display-message", "-p", "-t", &pane, "#{session_id}\t#{session_name}"])?;
+    let (id, name) = out.trim_end_matches(['\n', '\r']).split_once('\t')?;
+    (is_tmux_id(id) && is_tmux_name(name)).then(|| (id.to_owned(), name.to_owned()))
+}
+
+/// A tmux session's name as pages.json keeps it: some text, at most 200 bytes, without control
+/// characters (the hub's rule, pages_remote.rs).
+pub fn is_tmux_name(s: &str) -> bool {
+    !s.trim().is_empty() && s.len() <= 200 && !s.chars().any(char::is_control)
+}
+
+/// A tmux session id: `$` and digits.
+pub fn is_tmux_id(s: &str) -> bool {
+    s.len() > 1 && s.len() <= 12 && s.starts_with('$') && s[1..].bytes().all(|b| b.is_ascii_digit())
 }
 
 /// The text of the first `<title>` in an HTML page, entities decoded and spaces collapsed.
@@ -700,10 +731,11 @@ pub struct Added {
 }
 
 /// Adds a site's folder to `file`, or updates its entry when the folder is there already, so
-/// adding again is safe. `home` is the user's home folder; `by` who is adding it; `session` the
-/// agent's conversation, which the latest add sets; `now` ms since 1970.
+/// adding again is safe. `home` is the user's home folder; `by` who is adding it; `owner` the
+/// agent's conversation and tmux session, which the latest add that knows them sets; `now` ms
+/// since 1970.
 #[allow(clippy::too_many_arguments)]
-pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Option<&str>, by: &str, session: Option<&str>, now: u64) -> Result<Added, String> {
+pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Option<&str>, by: &str, owner: &Owner, now: u64) -> Result<Added, String> {
     let folder = absolute(dir)?;
     let path = text_of(&folder)?;
     let home_text = text_of(home)?;
@@ -775,8 +807,12 @@ pub fn add(file: &Path, home: &Path, dir: &Path, name: Option<&str>, slug: Optio
         if !entry.get("added").is_some_and(Value::is_number) {
             entry.insert("added".into(), json!(now));
         }
-        if let Some(s) = session.filter(|s| is_session(s)) {
+        if let Some(s) = owner.session.as_deref().filter(|s| is_session(s)) {
             entry.insert("session".into(), json!(s));
+        }
+        if let Some((id, name)) = &owner.tmux {
+            entry.insert("tmux".into(), json!(name));
+            entry.insert("tmuxId".into(), json!(id));
         }
         let page = Value::Object(entry);
         let changed = old.as_ref() != Some(&page);
@@ -926,7 +962,7 @@ pub fn find(file: &Path, home: &Path, dirs: &[PathBuf], by: &str, now: u64) -> R
         }
         known.insert(path);
         // one that can't be added (a broken list, a site out of a private folder) is skipped
-        if let Ok(a) = add(file, home, &site, None, None, by, None, now) {
+        if let Ok(a) = add(file, home, &site, None, None, by, &Owner::default(), now) {
             added.push(a.page);
         }
     }
@@ -992,9 +1028,12 @@ fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bo
 
 pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcome {
     let by = agent(|k| std::env::var(k).ok());
-    let session = agent_session(|k| std::env::var(k).ok());
+    let env = |k: &str| std::env::var(k).ok();
+    // a tmux that doesn't answer in time leaves the page without its session, not the command stuck
+    let ask = |cmd: &[&str]| crate::sys::run_for(cmd, TMUX_WAIT).filter(|r| r.ok).map(|r| r.out);
+    let owner = Owner { session: agent_session(env), tmux: tmux_session(env, ask) };
     let now = crate::state::now_ms() as u64;
-    let a = add(&pages_file(), &paths::home(), dir, name, slug, by, session.as_deref(), now)?;
+    let a = add(&pages_file(), &paths::home(), dir, name, slug, by, &owner, now)?;
     let machine = inyon_engine::hostname();
     let slug = field(&a.page, "slug").to_string();
     let project = paths::basename(field(&a.page, "project").trim_end_matches(['/', '\\'])).to_string();
@@ -1487,6 +1526,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_tmux_session_comes_from_the_pane_this_command_runs_in() {
+        let env = |pane: Option<&'static str>| move |k: &str| (k == "TMUX_PANE").then(|| pane.map(str::to_owned)).flatten();
+        let asked = std::cell::RefCell::new(vec![]);
+        let ask = |out: &'static str| {
+            let asked = &asked;
+            move |cmd: &[&str]| {
+                asked.borrow_mut().push(cmd.join(" "));
+                Some(out.to_owned())
+            }
+        };
+        assert_eq!(tmux_session(env(Some("%12")), ask("$3\tcardboard robot\n")), Some(("$3".into(), "cardboard robot".into())));
+        assert_eq!(asked.borrow()[0], "tmux display-message -p -t %12 #{session_id}\t#{session_name}");
+        // not in tmux, a pane id that isn't one, tmux failing or printing something else
+        assert_eq!(tmux_session(env(None), ask("$3\tx")), None);
+        assert_eq!(tmux_session(env(Some("%1; rm")), ask("$3\tx")), None);
+        assert_eq!(tmux_session(env(Some("%1")), |_: &[&str]| None), None);
+        assert_eq!(tmux_session(env(Some("%1")), ask("no server running")), None);
+        assert_eq!(tmux_session(env(Some("%1")), ask("3\tx")), None);
+        assert_eq!(tmux_session(env(Some("%1")), ask("$3\t\u{7}bell")), None);
+        assert_eq!(asked.borrow().len(), 4, "only a real pane id is asked about");
+    }
+
+    #[test]
+    fn an_add_from_a_tmux_session_records_it_and_a_plain_one_leaves_it() {
+        let dir = std::env::temp_dir().join(format!("inyon-cli-owner-{}-{}", std::process::id(), random_tag()));
+        let home = dir.join("home");
+        let site = home.join("work/robot");
+        fs::create_dir_all(&site).unwrap();
+        fs::write(site.join("index.html"), "<title>Robot</title>").unwrap();
+        let file = home.join(".inyon/pages.json");
+        let owner = Owner { session: Some("conv-1".into()), tmux: Some(("$2".into(), "cardboard".into())) };
+        let page = add(&file, &home, &site, None, None, "claude", &owner, 1).unwrap().page;
+        assert_eq!((field(&page, "session"), field(&page, "tmux"), field(&page, "tmuxId")), ("conv-1", "cardboard", "$2"));
+        // from a terminal outside tmux: what it had stays
+        let page = add(&file, &home, &site, None, None, "cli", &Owner::default(), 2).unwrap().page;
+        assert_eq!((field(&page, "tmux"), field(&page, "tmuxId")), ("cardboard", "$2"));
+        // from another tmux session: that one now
+        let page = add(&file, &home, &site, None, None, "cli", &Owner { session: None, tmux: Some(("$7".into(), "mob".into())) }, 3).unwrap().page;
+        assert_eq!((field(&page, "session"), field(&page, "tmux"), field(&page, "tmuxId")), ("conv-1", "mob", "$7"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_fifo_in_the_site_or_as_the_list_is_skipped_at_once_not_read_until_something_writes_to_it() {
@@ -1501,7 +1583,7 @@ mod tests {
             // the marker: the slug comes from the folder, the name from the title
             let _w = Fifo::at(&site.join(".inyon-page.json"));
             let at = Instant::now();
-            let added = add(&file, &home, &site, None, None, "cli", None, 1).unwrap();
+            let added = add(&file, &home, &site, None, None, "cli", &Owner::default(), 1).unwrap();
             quick(at);
             assert_eq!((field(&added.page, "slug"), field(&added.page, "name")), ("piped", "Piped plan"));
         }
@@ -1518,7 +1600,7 @@ mod tests {
             fs::remove_file(site.join("index.html")).unwrap();
             fs::write(site.join("index.html"), "<title>Piped plan</title>").unwrap();
             let at = Instant::now();
-            assert_eq!(add(&file, &home, &site, None, None, "cli", None, 1).err().as_deref(), Some(BROKEN_FILE));
+            assert_eq!(add(&file, &home, &site, None, None, "cli", &Owner::default(), 1).err().as_deref(), Some(BROKEN_FILE));
             quick(at);
         }
         let _ = fs::remove_dir_all(&dir);

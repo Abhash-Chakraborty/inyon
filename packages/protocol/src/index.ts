@@ -659,6 +659,10 @@ export interface PageEntry {
   session?: string
   /** the name Inyon last gave that session, for when it isn't running */
   sessionName?: string
+  /** the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs in, else the one it was added or found in, followed through a rename the hub saw */
+  tmux?: string
+  /** that tmux session's id ("$3"), as tmux last gave it */
+  tmuxId?: string
 }
 
 /** GET /api/pages */
@@ -695,6 +699,12 @@ export interface PageRecord {
   by: string
   /** unix ms */
   added: number
+  /** the agent conversation that last added it (from 0.22.5) */
+  session?: string
+  /** the tmux session it was last added from, by name (from 0.25) */
+  tmux?: string
+  /** that tmux session's id ("$3") */
+  tmuxId?: string
 }
 
 /** ~/.inyon/pages.json. Written to a temp file and renamed, under pages.json.lock. */
