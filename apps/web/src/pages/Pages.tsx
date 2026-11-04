@@ -3,10 +3,10 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import clsx from 'clsx'
 import {
   BookOpen, ChevronDown, ChevronLeft, ChevronRight, CircleArrowUp, CloudOff, Copy, Ellipsis, ExternalLink, FileText, Folder, FolderOpen, FolderPlus, Link2Off, PanelsTopLeft,
-  NotebookText, RotateCw, Search, ShieldCheck, Smartphone, SquareTerminal, Tablet, Monitor, Trash2,
+  NotebookText, RotateCw, Search, ShieldCheck, Smartphone, SquareTerminal, Tablet, Monitor, Trash2, X,
 } from 'lucide-react'
 import { useStore } from '../lib/store.ts'
-import { ApiError } from '../lib/api.ts'
+import { ApiError, api, type CleanedPage } from '../lib/api.ts'
 import { copyText } from '../lib/clipboard.ts'
 import { toast } from '../lib/store.ts'
 import { useBackCloses } from '../lib/back.ts'
@@ -101,6 +101,7 @@ function NoticeLines({ className }: { className?: string }) {
   const machine = useMachines()
   return (
     <>
+      <CleanedLine className={className} />
       {forgotten.map((id) => (
         <p key={id} role="status" className={clsx('flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
           <Link2Off className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
@@ -114,6 +115,34 @@ function NoticeLines({ className }: { className?: string }) {
         </p>
       ))}
     </>
+  )
+}
+
+/** What the hub's clean-up took off the list in one line, until it's dismissed (from 0.25). */
+export function cleanedText(pages: CleanedPage[], days = 14) {
+  const sat = `ended and it hadn't changed in ${days} day${days === 1 ? '' : 's'}`
+  return pages.length === 1 ? `Cleaned up “${pages[0]!.name}”: its session ${sat}.` : `Cleaned up ${pages.length} blueprints: their sessions ${sat.replace('it hadn', 'they hadn')}.`
+}
+
+function CleanedLine({ className }: { className?: string }) {
+  const [note, setNote] = useState<{ days?: number; pages: CleanedPage[] }>()
+  useEffect(() => {
+    let on = true
+    // the hub this app came from; a phone reading its paired hubs has none, and shows nothing
+    api.cleanedPages().then((n) => on && setNote(n), () => {})
+    return () => void (on = false)
+  }, [])
+  if (!note?.pages?.length) return null
+  const dismiss = () => {
+    setNote(undefined)
+    api.dismissCleaned().catch(() => {})
+  }
+  return (
+    <p role="status" title={note.pages.map((p) => p.name).join(', ')} className={clsx('cleaned-line flex items-start gap-1.5 text-[13px] text-fg-2', className)}>
+      <Trash2 className="mt-[3px] size-3.5 shrink-0 text-fg-3" />
+      <span className="min-w-0 flex-1">{cleanedText(note.pages, note.days)} Folders stay where they were.</span>
+      <IconButton label="Dismiss" className="-my-1 size-7 shrink-0" onClick={dismiss}><X className="size-3.5" /></IconButton>
+    </p>
   )
 }
 

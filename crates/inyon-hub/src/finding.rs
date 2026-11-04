@@ -171,10 +171,12 @@ pub fn owner_of(host: &str, slug: &str, added: Option<u64>) -> Owner {
     }
 }
 
-/// Looks every EVERY_MS while an app is connected or a browser wants page notices.
+/// Looks every EVERY_MS while an app is connected or a browser wants page notices, and cleans up
+/// old blueprints (see [`crate::cleanup`]).
 pub fn start() {
     spawn(async {
         let mut not_before = HashMap::new();
+        let mut cleaned = crate::cleanup::started(inyon_core::clock::now_ms());
         // a minute after the hub starts, then every EVERY_MS
         let mut wait = 60_000;
         loop {
@@ -184,6 +186,7 @@ pub fn start() {
                 continue;
             }
             find_all(&mut not_before, inyon_core::clock::now_ms()).await;
+            crate::cleanup::auto(&mut cleaned, inyon_core::clock::now_ms()).await;
         }
     });
 }

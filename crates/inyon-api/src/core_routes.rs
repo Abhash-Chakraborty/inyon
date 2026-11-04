@@ -176,6 +176,10 @@ fn settings_put(b: &Value, cur: HubSettings) -> HubResult<Value> {
     if let Some(Value::Bool(a)) = b.get("machinesSend") {
         next.insert("machinesSend".into(), json!(a));
     }
+    // days a blueprint whose session is gone stays unchanged before it's cleaned up; 0 keeps them
+    if let Some(n) = b.get("pagesCleanupDays").filter(|v| v.is_number()) {
+        next.insert("pagesCleanupDays".into(), json!(clamp(js_number(Some(n)), 0, 365)));
+    }
     // checked whole: a bad entry is refused rather than dropped (inyon_core::agents::custom)
     let custom = match b.get("customAgents") {
         None | Some(Value::Null) => None,
@@ -1121,6 +1125,12 @@ mod tests {
             inyon_core::js::stringify(&next),
             r#"{"keepSession":{"a":true},"uploads":{"retentionDays":365,"maxMB":1,"maxTotalMB":1024,"longPasteLines":5},"other":"x","autoResume":true}"#
         );
+        // the days before an old blueprint is cleaned up: a number, kept within 0 to 365
+        let days = |v: Value| settings_put(&json!({ "pagesCleanupDays": v }), HubSettings(obj(json!({ "pagesCleanupDays": 14 })))).map(|n| n["pagesCleanupDays"].clone());
+        assert_eq!(days(json!(30)), Ok(json!(30)));
+        assert_eq!(days(json!(9000)), Ok(json!(365)));
+        assert_eq!(days(json!(-3)), Ok(json!(0)));
+        assert_eq!(days(json!("7")), Ok(json!(14)));
     }
 
     #[test]

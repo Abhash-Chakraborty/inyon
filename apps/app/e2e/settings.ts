@@ -147,6 +147,7 @@ const server = Bun.serve({
       return json(state.settings)
     }
     if (p === '/api/organize') return json({ v: 2, pins: [], parked: [], sleep: state.sleep })
+    if (p === '/api/pages-cleanup') return json({ pages: [{ host: 'local', slug: 'old-plan', name: 'Old plan' }], days: state.settings.pagesCleanupDays || 14 })
     if (p === '/api/organize/sleep') {
       // a slow change is taken when it arrives, late
       const lag = state.sleepLag.shift() ?? 0
@@ -435,10 +436,20 @@ try {
     await page.getByRole('switch', { name: 'Finished notices' }).click()
 
     // the hub's settings go back whole, with what this app doesn't read
-    await page.getByRole('radio', { name: '30 days' }).click()
+    await page.getByRole('radiogroup', { name: 'Delete uploads after' }).getByRole('radio', { name: '30 days' }).click()
     check(await until(() => called('PUT', '/api/settings').length > 0), 'uploads: saved to the hub')
     const put = called('PUT', '/api/settings').at(-1)?.body
     check(put?.uploads?.retentionDays === 30 && put?.uploads?.maxMB === 100 && put?.uploads?.keepMe === 1 && put?.futureKey === 'kept', `uploads: the whole settings back (${JSON.stringify(put)})`)
+    // old blueprints: 14 days unless set, and Clean up now
+    const cleanup = page.getByRole('radiogroup', { name: 'Clean up old blueprints after' })
+    check((await cleanup.getByRole('radio', { name: '14 days' }).getAttribute('aria-checked')) === 'true', 'blueprints: 14 days unless set')
+    await cleanup.getByRole('radio', { name: 'Never' }).click()
+    check(await until(() => state.settings.pagesCleanupDays === 0), `blueprints: never cleaned up (${state.settings.pagesCleanupDays})`)
+    await cleanup.getByRole('radio', { name: '30 days' }).click()
+    check(await until(() => state.settings.pagesCleanupDays === 30), 'blueprints: after 30 days')
+    await page.getByRole('button', { name: 'Clean up', exact: true }).click()
+    await page.getByText('Cleaned up “Old plan”').waitFor()
+    check(called('POST', '/api/pages-cleanup').length === 1, 'blueprints: cleaned up on the hub')
     await page.getByRole('switch', { name: 'Machines can message agents' }).click()
     check(await until(() => state.settings.machinesSend === true), 'machines: inyon send turned on')
     // off and on again quickly, the first save taken slowly: the hub ends up with the last

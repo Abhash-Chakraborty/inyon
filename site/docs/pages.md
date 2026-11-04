@@ -113,6 +113,18 @@ The app opens each page with a link the hub signs for that page alone. A link la
 
 Changing the hub's password ends the links of every page, and forgetting a phone ends the links it made.
 
+### Old blueprints are cleaned up
+
+From 0.25 the hub tidies the list by itself. A blueprint goes when both its tmux session and the conversation that made it have ended, and it hasn't changed for 14 days. A change means it was added or its progress board moved. It leaves the list the way **Remove** takes it off: its links stop working, its folder and files stay where they are, and the hub doesn't [find](#blueprints-the-hub-finds) that folder again by itself.
+
+The hub looks once an hour while Inyon is open somewhere. A line over the list names what went, until you dismiss it. Set the days, or turn it off, in [Settings › Blueprints](settings.md#blueprints). **Clean up now** there does it at once.
+
+A blueprint only goes when Inyon can tell its session is over:
+
+- Inyon has to know which session it came from. One added by hand outside tmux stays.
+- Its computer has to be connected. A blueprint on a computer that's away stays.
+- If a tmux session still has its name or its id, it stays, because that may be the same session, renamed.
+
 ## What a page can't do
 
 An agent wrote the page, and an agent can be talked into writing anything, so Inyon treats every page as a stranger's website:

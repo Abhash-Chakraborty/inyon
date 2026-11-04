@@ -5,6 +5,7 @@ import { Bell, BookOpen, Check, ChevronRight, Copy, Download, Heart, KeyRound, L
 import { AGENTS, INSTALL_URL, type CompanionScope, type PairedCompanion } from '@inyon/protocol'
 import { api, type HubSettings, type HubUpdate } from '../lib/api.ts'
 import { canSleep, toast, useStore } from '../lib/store.ts'
+import { loadPages } from '../lib/pages.ts'
 import { haptic } from '../lib/haptics.ts'
 import { AgentLogo } from '../lib/skin.tsx'
 import { Button, Menu, Pulse, Segmented, Sheet, Toggle, Waiting, inputClass, type MenuItem } from '../components/ui/primitives.tsx'
@@ -330,6 +331,29 @@ function SleepRow() {
   )
 }
 
+/** "Clean up now", by the days set above (14 while it's set to Never). */
+function CleanupRow({ days }: { days: number }) {
+  const [busy, setBusy] = useState(false)
+  const run = async () => {
+    setBusy(true)
+    try {
+      const r = await api.cleanupPages()
+      const n = r.pages.length
+      toast(n ? { title: n === 1 ? `Cleaned up “${r.pages[0]!.name}”` : `Cleaned up ${n} blueprints`, body: 'Their folders stay where they were.', tone: 'success' } : { title: 'Nothing to clean up', body: `Every blueprint's session is still around, or it changed in the last ${r.days} days.`, tone: 'info' })
+      if (n) void loadPages()
+    } catch (e) {
+      toast({ title: "Couldn't clean up", body: (e as Error).message, tone: 'error' })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Row label="Clean up now" hint={`By the same rule: a blueprint whose session ended, unchanged for ${days || 14} days.`}>
+      <Button size="sm" disabled={busy} onClick={() => void run()}>{busy ? 'Cleaning up…' : 'Clean up'}</Button>
+    </Row>
+  )
+}
+
 function Row({ label, hint, children }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3.5">
@@ -347,6 +371,7 @@ const NAV = [
   ['agents', 'Agents'],
   ...(isPhone() ? [] : ([['companion', 'Companion']] as const)),
   ['uploads', 'Uploads and clipboard'],
+  ['blueprints', 'Blueprints'],
   ['notifications', 'Notifications'],
   ['machines', isPhone() ? 'Computers' : 'Machines'],
   ...(isPhone()
@@ -519,7 +544,7 @@ export function Settings() {
               ) : (
                 <>
                   <Row label="Delete uploads after" hint="Checked when a machine connects, every few hours, and after an upload. A file cut off half way is deleted after an hour.">
-                    <Segmented size="sm" value={String(hub.uploads.retentionDays)} onChange={(v) => saveHub({ retentionDays: Number(v) })} options={[{ v: '1', label: '1 day' }, { v: '7', label: '7 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
+                    <Segmented size="sm" label="Delete uploads after" value={String(hub.uploads.retentionDays)} onChange={(v) => saveHub({ retentionDays: Number(v) })} options={[{ v: '1', label: '1 day' }, { v: '7', label: '7 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
                   </Row>
                   <Row label="Keep at most" hint="Per machine. Past this, the oldest uploads go first.">
                     <Segmented size="sm" value={String(hub.uploads.maxTotalMB ?? 1024)} onChange={(v) => saveHub({ maxTotalMB: Number(v) })} options={[{ v: '512', label: '500 MB' }, { v: '1024', label: '1 GB' }, { v: '5120', label: '5 GB' }, { v: '0', label: 'No limit' }]} />
@@ -544,6 +569,18 @@ export function Settings() {
             </Link>
           </section>
 
+          <Section id="blueprints" title="Blueprints">
+            {!hub ? (
+              <Waiting shape="rows" count={2} label="Loading blueprint settings" className="px-4 py-3.5" />
+            ) : (
+              <>
+                <Row label="Clean up old blueprints after" hint="A blueprint whose tmux session and conversation have both ended, and that hasn't changed in this long, leaves the list the way Remove takes it off. Its folder stays. Checked every hour while Inyon is open.">
+                  <Segmented size="sm" label="Clean up old blueprints after" value={String(hub.pagesCleanupDays ?? 14)} onChange={(v) => saveHub({}, { pagesCleanupDays: Number(v) })} options={[{ v: '7', label: '7 days' }, { v: '14', label: '14 days' }, { v: '30', label: '30 days' }, { v: '0', label: 'Never' }]} />
+                </Row>
+                <CleanupRow days={hub.pagesCleanupDays ?? 14} />
+              </>
+            )}
+          </Section>
           <Section id="notifications" title="Notifications">
             <Row label="When an agent finishes" hint="A notice when a session goes from working to idle. Needs-you alerts are always on.">
               <Toggle on={settings.notifyDone} onChange={(notifyDone) => set({ notifyDone })} label="Finished notices" />

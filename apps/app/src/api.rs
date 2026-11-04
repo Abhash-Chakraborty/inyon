@@ -333,6 +333,10 @@ pub struct HubSettings {
     /// missing until the first is saved
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_agents: Option<Vec<CustomAgent>>,
+    /// days a blueprint whose session ended stays unchanged before the hub cleans it up; 0 never,
+    /// unset 14 (from 0.25)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pages_cleanup_days: Option<f64>,
     #[serde(flatten)]
     pub rest: serde_json::Map<String, serde_json::Value>,
 }
@@ -949,6 +953,41 @@ pub struct PageBody {
 
 pub async fn add_page(host: &str, b: &PageBody) -> Result<inyon_protocol::PageEntry, ApiError> {
     parse(&request("POST", &page_path(host, None), json(b)).await?)
+}
+
+/// A blueprint the hub cleaned up: off the list, its folder kept.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct CleanedPage {
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub name: String,
+}
+
+/// What the hub's clean-up took off: the last automatic one's note (`GET /api/pages-cleaned`), or
+/// the one just asked for (`POST /api/pages-cleanup`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct Cleaned {
+    #[serde(default)]
+    pub days: Option<f64>,
+    #[serde(default)]
+    pub pages: Vec<CleanedPage>,
+}
+
+/// "Clean up old blueprints": takes them off now (from 0.25).
+pub async fn cleanup_pages() -> Result<Cleaned, ApiError> {
+    parse(&request("POST", "/api/pages-cleanup", None).await?)
+}
+
+/// What the hub's last clean-up took off, until it's dismissed.
+pub async fn cleaned_pages() -> Result<Cleaned, ApiError> {
+    parse(&request("GET", "/api/pages-cleaned", None).await?)
+}
+
+pub async fn dismiss_cleaned() -> Result<(), ApiError> {
+    request("DELETE", "/api/pages-cleaned", None).await.map(drop)
 }
 
 /// Takes a page off the list; its folder stays.
