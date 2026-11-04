@@ -109,6 +109,10 @@ pub fn tmux_of(state: &inyon_protocol::HostState, session: &str) -> Option<(Stri
 pub fn live_tmux(host: &str, session: &str) -> Option<(String, String)> {
     let rt = registry().get(host)?;
     let state = rt.borrow().state.clone();
+    // a machine that's away keeps the panes it had last; they aren't running now
+    if state.status != HostStatus::Online {
+        return None;
+    }
     tmux_of(&state, session)
 }
 
@@ -169,6 +173,9 @@ pub fn renamed_in(state: &inyon_protocol::HostState, host: &str, id: &str, name:
 pub fn renamed(host: &str, id: &str, name: &str) -> Option<String> {
     let rt = registry().get(host)?;
     let state = rt.borrow().state.clone();
+    if state.status != HostStatus::Online {
+        return None;
+    }
     renamed_in(&state, host, id, name)
 }
 

@@ -263,6 +263,42 @@ pub fn run(cmd: &[&str]) -> Output {
     run_with_stdin(cmd, None)
 }
 
+/// [`run`] with a deadline: a command still running after `limit` is stopped, and None comes back.
+/// Its output is read while it runs, so a full pipe can't hold it up.
+pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
+    use std::io::Read;
+    let (prog, args) = cmd.split_first()?;
+    let mut c = Command::new(prog);
+    c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    quiet(&mut c);
+    let mut child = c.spawn().ok()?;
+    let read = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let end = std::time::Instant::now() + limit;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if std::time::Instant::now() < end => std::thread::sleep(std::time::Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    Some(Output { ok: status.success(), out: format!("{}{}", String::from_utf8_lossy(&out), String::from_utf8_lossy(&err)).trim().to_string() })
+}
+
 pub fn run_with_stdin(cmd: &[&str], stdin: Option<&str>) -> Output {
     let Some((prog, args)) = cmd.split_first() else {
         return Output { ok: false, out: String::new() };
@@ -395,6 +431,22 @@ mod tests {
         assert!(!r.ok);
         assert!(r.out.contains("isn't available here"));
         assert!(run(&["true"]).ok || cfg!(windows));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_past_its_deadline_is_stopped_and_one_in_time_answers() {
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert!(run_for(&["sleep", "5"], Duration::from_millis(200)).is_none());
+        assert!(t.elapsed() < Duration::from_secs(3));
+        let r = run_for(&["sh", "-c", "echo out; echo err >&2"], Duration::from_secs(5)).unwrap();
+        assert!(r.ok && r.out.contains("out") && r.out.contains("err"));
+        // more than a pipe holds, read while it runs
+        let big = run_for(&["sh", "-c", "head -c 200000 /dev/zero | tr '\\0' x"], Duration::from_secs(5)).unwrap();
+        assert_eq!(big.out.len(), 200_000);
+        assert!(!run_for(&["false"], Duration::from_secs(5)).unwrap().ok);
+        assert!(run_for(&["inyon-no-such-program-here"], Duration::from_secs(1)).is_none());
     }
 
     #[test]

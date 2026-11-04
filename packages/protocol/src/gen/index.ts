@@ -864,7 +864,7 @@ session?: string,
 sessionName?: string, 
 /**
  * the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs
- * in, else the one it was added or found in. The app lists a machine's pages under it
+ * in, else the one it was added or found in, followed through a rename the hub saw
  */
 tmux?: string, 
 /**

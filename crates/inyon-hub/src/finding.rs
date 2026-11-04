@@ -89,7 +89,7 @@ pub async fn find_all(not_before: &mut HashMap<String, u64>, now: u64) {
                     for page in found {
                         let (Some(slug), Some(path)) = (page.get("slug").and_then(Value::as_str), page.get("path").and_then(Value::as_str)) else { continue };
                         if let Some(owner) = owner_for(path, &dirs) {
-                            remember(&id, slug, &owner);
+                            remember(&id, slug, &owner, page.get("added").and_then(Value::as_u64));
                         }
                     }
                 }
@@ -123,9 +123,10 @@ pub fn owner_for(page: &str, dirs: &BTreeMap<String, Owner>) -> Option<Owner> {
         .filter(|o| !o.is_empty())
 }
 
-/// Keeps whose a page is (the parts that look right), moved to the end of the list; past
-/// SESSIONS_MAX the first ones go.
-pub fn remember(host: &str, slug: &str, owner: &Owner) {
+/// Keeps whose a page is (the parts that look right), with when the page was added so a later
+/// page under the same slug doesn't inherit it, moved to the end of the list; past SESSIONS_MAX
+/// the first ones go.
+pub fn remember(host: &str, slug: &str, owner: &Owner, added: Option<u64>) {
     let mut o = Map::new();
     if let Some(s) = owner.session.as_deref().filter(|s| is_session(s)) {
         o.insert("session".into(), Value::String(s.to_owned()));
@@ -139,6 +140,9 @@ pub fn remember(host: &str, slug: &str, owner: &Owner) {
     if o.is_empty() {
         return;
     }
+    if let Some(a) = added {
+        o.insert("added".into(), Value::from(a));
+    }
     let mut all: Map<String, Value> = kv::get("page-sessions").unwrap_or_default();
     let key = format!("{host}/{slug}");
     all.remove(&key);
@@ -150,10 +154,16 @@ pub fn remember(host: &str, slug: &str, owner: &Owner) {
     let _ = kv::set("page-sessions", &all);
 }
 
-/// Whose the hub found a page to be, or last saw it to be. Before 0.25 the hub kept only the
-/// conversation, as a string.
-pub fn owner_of(host: &str, slug: &str) -> Owner {
+/// Whose the hub found a page to be, or last saw it to be. Nothing when what's kept was about an
+/// earlier page under that slug (one removed, then another added as `added`). Before 0.25 the hub
+/// kept only the conversation, as a string.
+pub fn owner_of(host: &str, slug: &str, added: Option<u64>) -> Owner {
     let Some(v) = kv::get::<Map<String, Value>>("page-sessions").and_then(|mut all| all.remove(&format!("{host}/{slug}"))) else { return Owner::default() };
+    if let (Some(kept), Some(now)) = (v.get("added").and_then(Value::as_u64), added) {
+        if kept != now {
+            return Owner::default();
+        }
+    }
     let text = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_owned);
     match &v {
         Value::String(s) => Owner { session: Some(s.clone()).filter(|s| is_session(s)), ..Owner::default() },

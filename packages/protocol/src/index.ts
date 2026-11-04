@@ -659,7 +659,7 @@ export interface PageEntry {
   session?: string
   /** the name Inyon last gave that session, for when it isn't running */
   sessionName?: string
-  /** the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs in, else the one it was added or found in. The app lists a machine's pages under it */
+  /** the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs in, else the one it was added or found in, followed through a rename the hub saw */
   tmux?: string
   /** that tmux session's id ("$3"), as tmux last gave it */
   tmuxId?: string

@@ -80,13 +80,14 @@ fn record_json(r: &Record) -> Value {
 /// it was added from, under the name that session has now if the hub saw it renamed. A name seen
 /// now is kept, so it stays once the agent has stopped.
 fn with_owner(v: &mut Value, host: &str, r: &Record) {
-    let kept = crate::finding::owner_of(host, &r.slug);
+    let added = r.added.as_u64();
+    let kept = crate::finding::owner_of(host, &r.slug, added);
     let session = r.session.clone().or_else(|| kept.session.clone());
     let live = session.as_deref().and_then(|s| pages_remote::live_tmux(host, s));
     let (tmux_id, tmux) = match live {
         Some((id, name)) => {
             if kept.tmux.as_deref() != Some(name.as_str()) || kept.tmux_id.as_deref() != Some(id.as_str()) {
-                crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(name.clone()), tmux_id: Some(id.clone()) });
+                crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(name.clone()), tmux_id: Some(id.clone()) }, added);
             }
             (Some(id), Some(name))
         }
@@ -95,7 +96,7 @@ fn with_owner(v: &mut Value, host: &str, r: &Record) {
             // renamed since, with its conversation over: the page follows the session's new name
             match id.as_deref().zip(name.as_deref()).and_then(|(i, n)| pages_remote::renamed(host, i, n)) {
                 Some(now) => {
-                    crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(now.clone()), tmux_id: id.clone() });
+                    crate::finding::remember(host, &r.slug, &crate::finding::Owner { session: session.clone(), tmux: Some(now.clone()), tmux_id: id.clone() }, added);
                     (id, Some(now))
                 }
                 None => (id, name),

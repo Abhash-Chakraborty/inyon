@@ -270,6 +270,9 @@ pub struct Owner {
     pub tmux: Option<(String, String)>,
 }
 
+/// How long `pages add` waits for tmux to say which session it runs in.
+const TMUX_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// The tmux session holding `$TMUX_PANE`, as (id, name), asked of tmux with `ask` (which returns
 /// what tmux printed, or None when it failed).
 pub fn tmux_session(env: impl Fn(&str) -> Option<String>, ask: impl Fn(&[&str]) -> Option<String>) -> Option<(String, String)> {
@@ -1026,7 +1029,8 @@ fn added_lines(name: &str, machine: &str, project: &str, slug: &str, changed: bo
 pub fn add_command(dir: &Path, name: Option<&str>, slug: Option<&str>) -> Outcome {
     let by = agent(|k| std::env::var(k).ok());
     let env = |k: &str| std::env::var(k).ok();
-    let ask = |cmd: &[&str]| Some(crate::sys::run(cmd)).filter(|r| r.ok).map(|r| r.out);
+    // a tmux that doesn't answer in time leaves the page without its session, not the command stuck
+    let ask = |cmd: &[&str]| crate::sys::run_for(cmd, TMUX_WAIT).filter(|r| r.ok).map(|r| r.out);
     let owner = Owner { session: agent_session(env), tmux: tmux_session(env, ask) };
     let now = crate::state::now_ms() as u64;
     let a = add(&pages_file(), &paths::home(), dir, name, slug, by, &owner, now)?;

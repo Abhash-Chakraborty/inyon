@@ -1044,7 +1044,7 @@ pub struct PageEntry {
     #[serde(rename = "sessionName")]
     pub session_name: Option<String>,
     /// the tmux session it belongs to, by its name now (from 0.25): the one its conversation runs
-    /// in, else the one it was added or found in. The app lists a machine's pages under it
+    /// in, else the one it was added or found in, followed through a rename the hub saw
     pub tmux: Option<String>,
     /// that tmux session's id ("$3"), as tmux last gave it
     #[serde(rename = "tmuxId")]
