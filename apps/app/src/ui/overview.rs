@@ -7,10 +7,14 @@ use dioxus::prelude::*;
 use inyon_protocol::{AgentState, HostState, HostStatus};
 
 use super::icons::{AgentMark, Glyph, Icon, Logo, MachineGlyph};
+use super::menu;
+use super::organize::{pick_click, row_items, wakes_at_here, ORG, SELECTION};
 use crate::format::{self, Clock};
-use crate::model::{self, AgentPane, Filter, PaneRef, Shown};
+use crate::model::{self, AgentPane, Filter, Shown};
+use crate::organize::{key_of, note_line, Key};
 use crate::state::Hub;
 use crate::{api, platform};
+use inyon_chat_core::organize::{mark_for, place_of, shown_title, sort_panes, Place};
 
 /// Folded machine groups, in the web app's key (`inyon.folded`, entries `home:<machine>`), so a
 /// group folded in one app is folded in the other.
@@ -31,8 +35,31 @@ pub fn Overview() -> Element {
     // the switch goes with the sessions it would sort; with few of them it's back to all
     let filtering = panes.len() >= model::FILTER_FROM;
     let shown_filter = if filtering { filter() } else { Filter::All };
-    let groups = model::group_panes(&h.hosts, shown_filter);
+    let all_groups = model::group_panes(&h.hosts, shown_filter);
     let grouped = h.hosts.len() > 1;
+    // pinned sessions come first across machines, parked and snoozed ones wait folded at the end
+    let org = ORG.read().clone();
+    let now_ms = clock.now as u64;
+    let sorted = sort_panes(all_groups.iter().flat_map(|g| g.panes.iter().copied()).collect(), &org.org, now_ms);
+    let groups: Vec<model::HostGroup> = all_groups
+        .into_iter()
+        .map(|mut g| {
+            g.panes.retain(|r| place_of(mark_for(&org.org, &r.host.config.id, &r.pane.id), now_ms) == Place::Sessions);
+            g
+        })
+        .filter(|g| !g.panes.is_empty())
+        .collect();
+    let pinned: Vec<Key> = sorted.pinned.iter().map(key_of).collect();
+    let set_aside: Vec<Key> = sorted.snoozed.iter().chain(sorted.parked.iter()).map(key_of).collect();
+    // folded until opened, as in the web app: the set stores the opened one
+    let aside_open = folded.read().contains("home:~set-aside-open");
+    // the order a Shift-click picks a range in: as the cards are laid out
+    let order: Vec<Key> = pinned
+        .iter()
+        .cloned()
+        .chain(groups.iter().filter(|g| !grouped || !folded.read().contains(&format!("home:{}", g.host.config.id))).flat_map(|g| g.panes.iter().map(key_of)))
+        .chain(if aside_open { set_aside.clone() } else { vec![] })
+        .collect();
     let mut toggle = move |id: String| {
         let key = format!("home:{id}");
         let mut f = folded.write();
@@ -98,12 +125,22 @@ pub fn Overview() -> Element {
                                     }
                                 }
                             }
-                            if groups.is_empty() && !panes.is_empty() {
+                            if !pinned.is_empty() {
+                                div { class: "pinned",
+                                    h3 { class: "subsection", Glyph { icon: Icon::Pin, size: 14 } "Pinned" }
+                                    div { class: "cards",
+                                        for k in pinned.iter().cloned() {
+                                            Card { key: "{k.0}{k.1}", k, show_host: grouped, order: order.clone() }
+                                        }
+                                    }
+                                }
+                            }
+                            if groups.is_empty() && pinned.is_empty() && set_aside.is_empty() && !panes.is_empty() {
                                 div { class: "empty",
                                     p { class: "empty-title", "Nothing here" }
                                     p { class: "empty-text", "Try another filter." }
                                 }
-                            } else if groups.is_empty() {
+                            } else if groups.is_empty() && pinned.is_empty() && set_aside.is_empty() {
                                 div { class: "empty",
                                     p { class: "empty-title", "No agent sessions" }
                                     p { class: "empty-text", "Start Claude Code, Codex or another agent in tmux on any machine, or press N in the current app to start one from here." }
@@ -133,8 +170,8 @@ pub fn Overview() -> Element {
                                                     div { class: "expand", "data-open": "{open}",
                                                         div { "inert": (!open).then_some(""),
                                                             div { class: "cards cards-grouped",
-                                                                for r in g.panes.iter() {
-                                                                    {card(r, false, clock)}
+                                                                for k in g.panes.iter().map(key_of) {
+                                                                    Card { key: "{k.0}{k.1}", k, show_host: false, order: order.clone() }
                                                                 }
                                                             }
                                                         }
@@ -147,8 +184,31 @@ pub fn Overview() -> Element {
                             } else {
                                 div { class: "cards",
                                     for g in groups.iter() {
-                                        for r in g.panes.iter() {
-                                            {card(r, true, clock)}
+                                        for k in g.panes.iter().map(key_of) {
+                                            Card { key: "{k.0}{k.1}", k, show_host: true, order: order.clone() }
+                                        }
+                                    }
+                                }
+                            }
+                            if !set_aside.is_empty() {
+                                div { class: "set-aside",
+                                    button {
+                                        class: "group-head",
+                                        r#type: "button",
+                                        "aria-expanded": "{aside_open}",
+                                        onclick: move |_| toggle("~set-aside-open".into()),
+                                        Glyph { icon: Icon::ChevronRight, size: 16, class: if aside_open { "chevron chevron-open" } else { "chevron" } }
+                                        Glyph { icon: Icon::Archive, size: 16, class: "fg-2" }
+                                        span { class: "group-name", "Parked and snoozed" }
+                                        span { class: "group-count mono tabular", "{set_aside.len()}" }
+                                    }
+                                    div { class: "expand", "data-open": "{aside_open}",
+                                        div { "inert": (!aside_open).then_some(""),
+                                            div { class: "cards cards-grouped",
+                                                for k in set_aside.iter().cloned() {
+                                                    Card { key: "{k.0}{k.1}", k, show_host: grouped, order: order.clone() }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -172,11 +232,24 @@ pub fn Overview() -> Element {
 }
 
 /// An agent session as a card. The whole card opens the session; one that asks something shows its
-/// answers in place and keeps its size, so nothing around it moves.
-fn card(r: &PaneRef, show_host: bool, clock: Clock) -> Element {
+/// answers in place and keeps its size, so nothing around it moves. Cmd/Ctrl- or Shift-click picks
+/// it for a bulk action, and a right click or long press opens its menu.
+#[component]
+fn Card(k: Key, show_host: bool, order: Vec<Key>) -> Element {
+    let hub = use_context::<Signal<Hub>>();
+    let h = hub.read();
+    let org = ORG.read().clone();
+    let sel = SELECTION.read().clone();
+    let clock = platform::clock();
+    let panes = model::all_panes(&h.hosts);
+    let r = panes.iter().find(|r| r.host.config.id == k.0 && r.pane.id == k.1 && r.pane.agent.is_some());
+    let items = r.map(|r| row_items(r, &org, &sel, clock, cfg!(target_arch = "wasm32"))).unwrap_or_default();
+    let press = menu::long_press(items.clone());
+    let Some(r) = r else { return rsx! {} };
+    let (p1, p2, p3, p4) = (press.clone(), press.clone(), press.clone(), press);
     let a = r.agent();
     let shown = Shown::of(a, r.host);
-    let title = model::pane_title(r);
+    let title = shown_title(r, &org.org);
     let href = model::pane_href(&r.host.config.id, &r.pane.id);
     let waiting = a.state == AgentState::Waiting;
     let st = a.status.as_ref();
@@ -184,12 +257,50 @@ fn card(r: &PaneRef, show_host: bool, clock: Clock) -> Element {
     let ctx = st.and_then(|s| s.context_pct).map(|p| *p);
     let ctx_title = format!("{} of {} tokens", format::tokens(st.and_then(|s| s.context_used).map(|n| *n)), format::tokens(st.and_then(|s| s.context_size).map(|n| *n)));
     let options: Vec<(u32, String)> = a.options.iter().flatten().map(|o| (o.n, o.label.clone())).collect();
+    let m = mark_for(&org.org, &k.0, &k.1);
+    let pinned = m.is_some_and(|m| m.pinned.is_some());
+    let until = m.and_then(|m| m.snoozed_until).filter(|t| *t > clock.now as u64);
+    let tags = m.and_then(|m| m.tags.clone()).unwrap_or_default();
+    let note = m.and_then(|m| m.note.as_deref()).map(note_line).filter(|n| !n.is_empty()).map(str::to_owned);
+    let picked = sel.has(&k);
+    let class = match (waiting, picked) {
+        (true, true) => "card card-waiting card-picked",
+        (true, false) => "card card-waiting",
+        (false, true) => "card card-picked",
+        (false, false) => "card",
+    };
+    let kc = k.clone();
     rsx! {
-        div { key: "{r.key()}", class: if waiting { "card card-waiting" } else { "card" }, "data-waiting": waiting.then_some("true"),
-            a { class: "card-link", href: "{href}", "aria-label": "{title}" }
+        div { class, "data-waiting": waiting.then_some("true"), oncontextmenu: menu::open(items),
+            a {
+                class: "card-link",
+                href: "{href}",
+                // a screen reader hears which cards a bulk action will change
+                "aria-label": if picked { format!("{title}, selected") } else { title.clone() },
+                onpointerdown: move |e| p1.down(&e),
+                onpointermove: move |e| p2.moved(&e),
+                onpointerup: move |_| p3.up(),
+                onclick: move |e| {
+                    if !p4.click(&e) {
+                        pick_click(&e, kc.clone(), &order);
+                    }
+                },
+            }
             div { class: "card-top",
                 AgentMark { kind: a.kind, size: 26 }
+                if picked {
+                    span { class: "card-check", Glyph { icon: Icon::Check, size: 14 } }
+                }
                 span { class: "card-agent", {model::agent_name(a)} }
+                if pinned {
+                    span { class: "card-mark", title: "Pinned", Glyph { icon: Icon::Pin, size: 14 } }
+                }
+                if let Some(t) = until {
+                    span { class: "card-mark mono", title: "Snoozed", Glyph { icon: Icon::AlarmClock, size: 14 } {wakes_at_here(t, clock)} }
+                }
+                if let Some(n) = &note {
+                    span { class: "card-mark", title: "{n}", Glyph { icon: Icon::StickyNote, size: 14 } }
+                }
                 span { class: "pill", title: a.background.clone(),
                     span { class: "dot dot-{shown.class()}" }
                     "{shown.label()}"
@@ -197,7 +308,12 @@ fn card(r: &PaneRef, show_host: bool, clock: Clock) -> Element {
             }
             div { class: "card-head",
                 div { class: "card-title", "{title}" }
-                div { class: "card-meta mono", {model::card_meta(r, show_host)} }
+                div { class: "card-meta mono",
+                    {model::card_meta(r, show_host)}
+                    for t in tags.iter() {
+                        span { key: "{t}", class: "card-tag", " · #{t}" }
+                    }
+                }
             }
             div { class: "card-line", {model::card_line(r, clock)} }
             div { class: "card-foot mono",

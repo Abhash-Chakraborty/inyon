@@ -146,6 +146,27 @@ pub async fn hold(host: &str, pane: &str, text: &str) -> Result<(), ApiError> {
     request("POST", &format!("{}/held", pane_path(host, pane)), Some(serde_json::to_string(&Text { text }).unwrap())).await.map(drop)
 }
 
+/// Changes what the hub keeps about a session (pins, parking, snoozes, tags, notes; from 0.24):
+/// `PATCH …/organize` with only the fields that change, `null` clearing one.
+pub async fn organize_pane(host: &str, pane: &str, patch: &serde_json::Value) -> Result<(), ApiError> {
+    request("PATCH", &format!("{}/organize", pane_path(host, pane)), Some(patch.to_string())).await.map(drop)
+}
+
+#[derive(Serialize)]
+struct Name<'a> {
+    name: &'a str,
+}
+
+/// Gives a session the name it shows in Inyon; an empty name goes back to the agent's own title.
+/// Puts the pinned sessions in this order (their mark ids): `PUT /api/organize/order`.
+pub async fn pin_order(ids: &[String]) -> Result<(), ApiError> {
+    request("PUT", "/api/organize/order", Some(serde_json::json!({ "pins": ids }).to_string())).await.map(drop)
+}
+
+pub async fn rename(host: &str, pane: &str, name: &str) -> Result<(), ApiError> {
+    request("PUT", &format!("{}/name", pane_path(host, pane)), Some(serde_json::to_string(&Name { name }).unwrap())).await.map(drop)
+}
+
 /// A dropped connection or a busy server, as opposed to a refusal that a retry won't change.
 pub fn is_transient(e: &ApiError) -> bool {
     e.status == 0 || e.status == 408 || e.status == 429 || e.status >= 500

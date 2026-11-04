@@ -14,17 +14,11 @@ use crate::format::{self, Clock};
 pub trait AgentPane<'a> {
     /// Only for panes running an agent; the overview shows no others.
     fn agent(&self) -> &'a AgentPaneInfo;
-    /// A key that stays the same while the pane lives.
-    fn key(&self) -> String;
 }
 
 impl<'a> AgentPane<'a> for PaneRef<'a> {
     fn agent(&self) -> &'a AgentPaneInfo {
         self.pane.agent.as_ref().expect("an agent pane")
-    }
-
-    fn key(&self) -> String {
-        format!("{}{}", self.host.config.id, self.pane.id)
     }
 }
 

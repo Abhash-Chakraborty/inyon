@@ -305,7 +305,7 @@ try {
       check(await page.getByText('Plan limits').isVisible(), `${label}: the plan limits`)
       check(await page.locator(phone ? '.machine-list' : '.machine-table').isVisible(), `${label}: the machines as a ${phone ? 'list' : 'table'}`)
       check(await page.locator(phone ? '.tabbar' : '.sidebar').isVisible(), `${label}: the ${phone ? 'tab bar' : 'sidebar'}`)
-      check((await page.locator('a[href="/next/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in this app`)
+      check((await page.locator('a.card-link[href="/next/m/local/p/11"]').count()) === 1, `${label}: a card opens its session in this app`)
       await layout(page, label)
       await page.screenshot({ path: path.join(shots, `overview-${w}-${scheme}.png`) })
       // the page scrolls inside the shell, so the lower half is a second picture
@@ -363,7 +363,7 @@ try {
     watch(page)
     // from the Overview's card, without loading the page again
     await page.goto(`${base}/next/`)
-    await page.locator('a[href="/next/m/local/p/11"]').click()
+    await page.locator('a.card-link[href="/next/m/local/p/11"]').click()
     await page.getByRole('heading', { name: 'Fix flaky checkout test' }).waitFor()
     check(await page.evaluate(() => performance.getEntriesByType('navigation').length === 1 && location.pathname === '/next/m/local/p/11'), 'route: the card opens the session in place')
 

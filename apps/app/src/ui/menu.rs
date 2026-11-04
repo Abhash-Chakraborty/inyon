@@ -54,6 +54,10 @@ pub enum Action {
     },
     /// the session header's ⋯: Remote Control, compact, rewind, fork, exit…
     Session(super::session_menu::SessionAct),
+    /// pins, parking, snoozes, tags and notes on one session or a selection (from 1.1)
+    Org(super::organize::OrgOp),
+    /// nothing: a heading, or an item that opens a submenu
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,11 +73,26 @@ pub struct Item {
     /// one of a few to pick from (a part of a page, a note), and whether it's the one picked
     pub checked: Option<bool>,
     pub disabled: bool,
+    /// opens these instead of doing something: beside the menu on a wide screen, in its place on a
+    /// phone
+    pub sub: Option<Vec<Item>>,
+    /// a heading over the items after it, not something to pick
+    pub header: bool,
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, icon: Icon, action: Action) -> Item {
-        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, disabled: false }
+        Item { label: label.into(), icon, action, danger: false, separated: false, hint: None, checked: None, disabled: false, sub: None, header: false }
+    }
+
+    /// An item that opens a submenu.
+    pub fn sub(label: impl Into<String>, icon: Icon, items: Vec<Item>) -> Item {
+        Item { sub: Some(items), ..Item::new(label, icon, Action::None) }
+    }
+
+    /// A heading in a menu ("3 sessions selected").
+    pub fn header(label: impl Into<String>) -> Item {
+        Item { header: true, ..Item::new(label, Icon::Ellipsis, Action::None) }
     }
 
     pub fn copy(label: &str, text: &str) -> Item {
@@ -326,7 +345,47 @@ pub fn place(x: f64, y: f64, n: usize, w: f64, h: f64) -> (f64, f64) {
     (left, top)
 }
 
-const FIRST: &str = "menu-item-0";
+/// Where a submenu of `n` rows opens beside the item at `item` (left, top, right): to its right,
+/// or to its left when there's no room, and moved up to stay on the screen.
+pub fn place_sub(item: (f64, f64, f64), n: usize, w: f64, h: f64) -> (f64, f64) {
+    const WIDTH: f64 = 220.0;
+    let (left, top, right) = item;
+    let height = 12.0 + 40.0 * n as f64;
+    let x = if right - 4.0 + WIDTH + 8.0 > w { (left - WIDTH + 4.0).max(8.0) } else { right - 4.0 };
+    let y = if top - 6.0 + height + 8.0 > h { (h - 8.0 - height).max(8.0) } else { top - 6.0 };
+    (x, y)
+}
+
+/// Below this width a submenu takes the menu's place instead of opening beside it.
+const SIDE_BY_SIDE: f64 = 640.0;
+
+/// How many 40px rows `items` take: a hint makes its row about half a row taller.
+fn rows(items: &[Item]) -> usize {
+    items.len() + items.iter().filter(|i| i.hint.is_some()).count().div_ceil(2)
+}
+
+/// Where item `i` of a menu at `top` starts, for when the page can't say (the native build).
+fn row_top(items: &[Item], i: usize, top: f64) -> f64 {
+    top + 6.0 + 40.0 * rows(&items[..i.min(items.len())]) as f64
+}
+
+/// The first item that can be picked, for the focus when a menu or submenu opens.
+fn first_pick(items: &[Item]) -> usize {
+    items.iter().position(|i| !i.header && !i.disabled).unwrap_or(0)
+}
+
+/// The next item from `at` that can be picked, going down (or up), round the end.
+fn step(items: &[Item], at: Option<usize>, down: bool) -> usize {
+    let n = items.len();
+    let mut i = at.unwrap_or(if down { n - 1 } else { 0 });
+    for _ in 0..n {
+        i = if down { (i + 1) % n } else { (i + n - 1) % n };
+        if !items[i].header && !items[i].disabled {
+            return i;
+        }
+    }
+    i
+}
 
 #[component]
 pub fn MenuLayer() -> Element {
@@ -334,18 +393,40 @@ pub fn MenuLayer() -> Element {
     let chats = use_context::<Signal<crate::state::Chats>>();
     let here = use_context::<Signal<Route>>();
     let hub = use_context::<Signal<crate::state::Hub>>();
+    // the submenu open now: which item of the menu holds it
+    let mut open_sub = use_signal(|| None::<usize>);
     // the first item takes focus as the menu opens, so the keys work at once
     use_effect(move || {
-        if menu.read().is_some() {
-            dom::focus(FIRST);
+        if let Some(m) = menu.read().as_ref() {
+            open_sub.set(None);
+            dom::focus(&format!("menu-item-{}", first_pick(&m.items)));
         }
     });
     let Some(m) = menu() else { return rsx! {} };
     let (w, h) = dom::viewport();
-    // a hint makes its row a little taller
-    let rows = m.items.len() + m.items.iter().filter(|i| i.hint.is_some()).count().div_ceil(2);
-    let (left, top) = place(m.x, m.y, rows, w, h);
-    let n = m.items.len();
+    let narrow = w < SIDE_BY_SIDE;
+    let (left, top) = place(m.x, m.y, rows(&m.items), w, h);
+    let sub = open_sub().and_then(|i| m.items.get(i).and_then(|it| it.sub.clone().map(|s| (i, it.label.clone(), s))));
+    let mut close_sub = move |back_to: usize| {
+        open_sub.set(None);
+        // on a narrow screen the menu comes back only once this has drawn
+        spawn(async move {
+            platform::sleep(10).await;
+            dom::focus(&format!("menu-item-{back_to}"));
+        });
+    };
+    let mut enter_sub = move |i: usize, items: &[Item]| {
+        open_sub.set(Some(i));
+        let first = first_pick(items);
+        spawn(async move {
+            // once it's drawn
+            platform::sleep(10).await;
+            dom::focus(&format!("menu-sub-{first}"));
+        });
+    };
+    let main_items = m.items.clone();
+    let main_keys = main_items.clone();
+    let all_items = main_items.clone();
     rsx! {
         div {
             class: "menu-backdrop",
@@ -365,51 +446,175 @@ pub fn MenuLayer() -> Element {
                 }
             },
         }
-        div {
-            class: "menu",
-            role: "menu",
-            style: "left:{left}px;top:{top}px",
-            onkeydown: move |e: KeyboardEvent| {
-                let at = dom::active_id().and_then(|id| id.strip_prefix("menu-item-").and_then(|i| i.parse::<usize>().ok()));
-                match e.key() {
-                    Key::Escape => menu.set(None),
-                    Key::ArrowDown => dom::focus(&format!("menu-item-{}", at.map_or(0, |i| (i + 1) % n))),
-                    Key::ArrowUp => dom::focus(&format!("menu-item-{}", at.map_or(n - 1, |i| (i + n - 1) % n))),
-                    _ => return,
-                }
-                e.prevent_default();
-            },
-            for (i , item) in m.items.into_iter().enumerate() {
-                button {
-                    key: "{i}",
-                    id: "menu-item-{i}",
-                    class: match (item.danger, item.separated && i > 0) {
-                        (true, true) => "menu-item menu-danger menu-group",
-                        (true, false) => "menu-item menu-danger",
-                        (false, true) => "menu-item menu-group",
-                        (false, false) => "menu-item",
-                    },
-                    role: if item.checked.is_some() { "menuitemradio" } else { "menuitem" },
-                    "aria-checked": item.checked.map(|on| if on { "true" } else { "false" }),
-                    r#type: "button",
-                    disabled: item.disabled,
-                    onclick: move |_| {
-                        menu.set(None);
-                        run(item.action.clone(), chats, here, hub);
-                    },
-                    Glyph { icon: item.icon, size: 16 }
-                    if let Some(hint) = &item.hint {
-                        span { class: "menu-words",
-                            span { class: "truncate", "{item.label}" }
-                            span { class: "menu-hint truncate", "{hint}" }
+        if !(narrow && sub.is_some()) {
+            div {
+                class: "menu",
+                role: "menu",
+                style: "left:{left}px;top:{top}px",
+                onkeydown: move |e: KeyboardEvent| {
+                    let at = dom::active_id().and_then(|id| id.strip_prefix("menu-item-").and_then(|i| i.parse::<usize>().ok()));
+                    match e.key() {
+                        // closing the menu shouldn't also let go of the sessions picked
+                        Key::Escape => {
+                            e.stop_propagation();
+                            menu.set(None);
                         }
-                    } else {
-                        span { class: "menu-words truncate", "{item.label}" }
+                        Key::ArrowDown => dom::focus(&format!("menu-item-{}", step(&main_keys, at, true))),
+                        Key::ArrowUp => dom::focus(&format!("menu-item-{}", step(&main_keys, at, false))),
+                        Key::ArrowRight => match at.and_then(|i| main_keys.get(i).and_then(|it| it.sub.clone()).map(|s| (i, s))) {
+                            Some((i, s)) => enter_sub(i, &s),
+                            None => return,
+                        },
+                        _ => return,
                     }
-                    if item.checked == Some(true) {
-                        Glyph { icon: Icon::Check, size: 16, class: "menu-check" }
+                    e.prevent_default();
+                },
+                for (i , item) in main_items.into_iter().enumerate() {
+                    {
+                        let opens = item.sub.clone();
+                        let on = open_sub() == Some(i);
+                        rsx! {
+                            MenuRow {
+                                key: "{i}",
+                                id: format!("menu-item-{i}"),
+                                item: item.clone(),
+                                first: i == 0,
+                                expanded: on,
+                                on_hover: move |_| {
+                                    // on a pointer, resting on an item opens its submenu and leaves any other
+                                    if narrow {
+                                        return;
+                                    }
+                                    match &opens {
+                                        Some(_) => open_sub.set(Some(i)),
+                                        None if open_sub.peek().is_some() => open_sub.set(None),
+                                        None => {}
+                                    }
+                                },
+                                on_pick: {
+                                    let item = item.clone();
+                                    move |_| match &item.sub {
+                                        Some(s) => enter_sub(i, s),
+                                        None => {
+                                            menu.set(None);
+                                            run(item.action.clone(), chats, here, hub);
+                                        }
+                                    }
+                                },
+                            }
+                        }
                     }
                 }
+            }
+        }
+        if let Some((parent, label, items)) = sub {
+            {
+                let n = rows(&items);
+                let (sx, sy) = if narrow {
+                    (left, top)
+                } else {
+                    let r = dom::rect(&format!("menu-item-{parent}"))
+                        .map_or((left, row_top(&all_items, parent, top), left + 220.0), |(l, t, r, _)| (l, t, r));
+                    place_sub(r, n, w, h)
+                };
+                let keys = items.clone();
+                rsx! {
+                    div {
+                        class: "menu menu-sub",
+                        role: "menu",
+                        "aria-label": "{label}",
+                        style: "left:{sx}px;top:{sy}px",
+                        onkeydown: move |e: KeyboardEvent| {
+                            let at = dom::active_id().and_then(|id| id.strip_prefix("menu-sub-").and_then(|i| i.parse::<usize>().ok()));
+                            match e.key() {
+                                Key::Escape | Key::ArrowLeft => close_sub(parent),
+                                Key::ArrowDown => dom::focus(&format!("menu-sub-{}", step(&keys, at, true))),
+                                Key::ArrowUp => dom::focus(&format!("menu-sub-{}", step(&keys, at, false))),
+                                _ => return,
+                            }
+                            e.stop_propagation();
+                            e.prevent_default();
+                        },
+                        if narrow {
+                            button { class: "menu-item menu-back", r#type: "button", onclick: move |_| close_sub(parent),
+                                Glyph { icon: Icon::ChevronLeft, size: 16 }
+                                span { class: "menu-words truncate", "{label}" }
+                            }
+                        }
+                        for (i , item) in items.into_iter().enumerate() {
+                            MenuRow {
+                                key: "{i}",
+                                id: format!("menu-sub-{i}"),
+                                item: item.clone(),
+                                first: i == 0 && !narrow,
+                                expanded: false,
+                                on_hover: move |_| {},
+                                on_pick: move |_| {
+                                    menu.set(None);
+                                    run(item.action.clone(), chats, here, hub);
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One row of a menu: an item, or a heading over the items after it.
+#[component]
+fn MenuRow(id: String, item: Item, first: bool, expanded: bool, on_hover: EventHandler<()>, on_pick: EventHandler<()>) -> Element {
+    if item.header {
+        return rsx! {
+            div { class: if item.separated && !first { "menu-header menu-group" } else { "menu-header" }, role: "presentation", "{item.label}" }
+        };
+    }
+    let class = match (item.danger, item.separated && !first) {
+        (true, true) => "menu-item menu-danger menu-group",
+        (true, false) => "menu-item menu-danger",
+        (false, true) => "menu-item menu-group",
+        (false, false) => "menu-item",
+    };
+    let opens = item.sub.is_some();
+    rsx! {
+        button {
+            id: "{id}",
+            class: if expanded { format!("{class} menu-open") } else { class.to_string() },
+            role: if item.checked.is_some() { "menuitemradio" } else { "menuitem" },
+            "aria-checked": item.checked.map(|on| if on { "true" } else { "false" }),
+            "aria-haspopup": opens.then_some("menu"),
+            "aria-expanded": opens.then_some(if expanded { "true" } else { "false" }),
+            r#type: "button",
+            disabled: item.disabled,
+            onpointerenter: move |e: PointerEvent| {
+                if e.pointer_type() == "mouse" {
+                    on_hover.call(());
+                }
+            },
+            // the click a long press brings as the finger lifts lands on whatever item the menu
+            // opened under it; it isn't a pick
+            onclick: move |e: MouseEvent| {
+                if lift_click() {
+                    e.prevent_default();
+                    return;
+                }
+                on_pick.call(());
+            },
+            Glyph { icon: item.icon, size: 16 }
+            if let Some(hint) = &item.hint {
+                span { class: "menu-words",
+                    span { class: "truncate", "{item.label}" }
+                    span { class: "menu-hint truncate", "{hint}" }
+                }
+            } else {
+                span { class: "menu-words truncate", "{item.label}" }
+            }
+            if item.checked == Some(true) {
+                Glyph { icon: Icon::Check, size: 16, class: "menu-check" }
+            }
+            if opens {
+                Glyph { icon: Icon::ChevronRight, size: 16, class: "menu-more" }
             }
         }
     }
@@ -453,6 +658,8 @@ pub fn run(action: Action, chats: Signal<crate::state::Chats>, mut here: Signal<
                 super::session::end_session(hub, &host, &pane, own.then_some(here)).await;
             });
         }
+        Action::Org(op) => super::organize::run(op, hub),
+        Action::None => {}
     }
 }
 
@@ -479,6 +686,39 @@ mod tests {
         // near the right edge it opens to the left of the pointer, near the bottom above it
         assert_eq!(place(300.0, 820.0, 2, 390.0, 844.0), (80.0, 728.0));
         assert_eq!(place(10.0, 10.0, 3, 200.0, 100.0), (8.0, 8.0));
+    }
+
+    #[test]
+    fn a_submenu_opens_beside_its_item_and_stays_on_the_screen() {
+        // room on the right: beside it, a little over the menu's edge
+        assert_eq!(place_sub((100.0, 200.0, 320.0), 3, 1440.0, 900.0), (316.0, 194.0));
+        // no room: on the left
+        assert_eq!(place_sub((1200.0, 200.0, 1420.0), 3, 1440.0, 900.0), (984.0, 194.0));
+        // near the bottom: moved up
+        assert_eq!(place_sub((100.0, 860.0, 320.0), 4, 1440.0, 900.0), (316.0, 720.0));
+    }
+
+    #[test]
+    fn hinted_rows_count_as_taller_and_place_a_native_submenu_by_its_row() {
+        let snooze: Vec<Item> = (0..4).map(|i| Item::copy(&format!("{i}"), "x").hint("9:00")).collect();
+        // four hinted rows are about six plain ones, so the last one stays on the screen
+        assert_eq!(rows(&snooze), 6);
+        let (_, y) = place_sub((100.0, 760.0, 320.0), rows(&snooze), 1440.0, 900.0);
+        assert!(y + 12.0 + 40.0 * 6.0 <= 892.0, "{y}");
+        // without the page's measure, item 3 of a menu at 100 starts three rows down
+        let menu = vec![Item::copy("A", "a"), Item::copy("B", "b"), Item::copy("C", "c"), Item::copy("D", "d")];
+        assert_eq!(row_top(&menu, 3, 100.0), 226.0);
+        assert_eq!(row_top(&menu, 0, 100.0), 106.0);
+    }
+
+    #[test]
+    fn the_keys_skip_headings_and_disabled_items() {
+        let items = vec![Item::header("2 selected"), Item::copy("A", "a"), Item::copy("B", "b").disabled(true), Item::copy("C", "c")];
+        assert_eq!(first_pick(&items), 1);
+        assert_eq!(step(&items, Some(1), true), 3);
+        assert_eq!(step(&items, Some(3), true), 1, "round the end, past the heading");
+        assert_eq!(step(&items, Some(1), false), 3);
+        assert_eq!(step(&items, None, true), 1);
     }
 
     fn host(v: serde_json::Value) -> HostState {

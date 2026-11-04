@@ -746,15 +746,15 @@ try {
     state.endFails = true
     await page.goto(`${base}/next/m/build-box/p/13`)
     await styled(page)
-    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('button', { name: 'More', exact: true }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await toast(page, 'Could not end the session').waitFor()
     check(!(await toast(page, 'Session ended').count()), "end: no \"Session ended\" for one that wasn't")
     check(/\/m\/build-box\/p\/13$/.test(page.url()), `end: a failure stays on the session (${page.url()})`)
-    await page.getByRole('button', { name: 'More' }).waitFor()
+    await page.getByRole('button', { name: 'More', exact: true }).waitFor()
     state.endFails = false
-    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('button', { name: 'More', exact: true }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await toast(page, 'Session ended').waitFor()
@@ -764,7 +764,7 @@ try {
     await page.goto(`${base}/next/m/local/p/12`)
     await styled(page)
     state.endLag = 1500
-    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('button', { name: 'More', exact: true }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await page.locator('.sidebar').getByRole('link', { name: 'Blueprints' }).click()
@@ -778,7 +778,7 @@ try {
     await page.goto(`${base}/next/m/local/p/11`)
     await styled(page)
     state.endGone = true
-    await page.getByRole('button', { name: 'More' }).click()
+    await page.getByRole('button', { name: 'More', exact: true }).click()
     await page.getByRole('menuitem', { name: 'End session…' }).click()
     await ask.getByRole('button', { name: 'End session' }).click()
     await toast(page, 'Session ended').waitFor()

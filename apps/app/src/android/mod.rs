@@ -31,11 +31,17 @@ pub fn log(error: bool, line: &str) {
 
 /// The phone's time zone, as minutes east of UTC.
 pub fn tz_minutes() -> i32 {
+    // SAFETY: time with a null pointer only returns the time
+    tz_minutes_at(unsafe { libc::time(std::ptr::null_mut()) } as i64 * 1000)
+}
+
+/// The phone's offset from UTC at `ms` (unix ms), in minutes east, daylight saving included.
+pub fn tz_minutes_at(ms: i64) -> i32 {
     // SAFETY: localtime_r writes only into the tm it's given
     unsafe {
-        let now = libc::time(std::ptr::null_mut());
+        let at = (ms / 1000) as libc::time_t;
         let mut tm: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&now, &mut tm).is_null() {
+        if libc::localtime_r(&at, &mut tm).is_null() {
             return 0;
         }
         (tm.tm_gmtoff / 60) as i32

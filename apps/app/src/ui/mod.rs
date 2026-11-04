@@ -12,6 +12,7 @@ mod machines;
 mod md;
 mod menu;
 mod notices;
+mod organize;
 mod overview;
 mod pages;
 mod phone;
@@ -22,6 +23,7 @@ mod session_menu;
 mod settings;
 mod setup;
 mod shell;
+mod sidebar;
 // xterm.js and the page's events reach it only in the browser build
 mod companion;
 mod intro;
@@ -31,7 +33,7 @@ mod terminal;
 pub mod toast;
 
 use dioxus::prelude::*;
-use inyon_protocol::v2::{OVERVIEW, PAGES};
+use inyon_protocol::v2::{ORGANIZE, OVERVIEW, PAGES};
 
 use crate::route;
 #[cfg(any(target_arch = "wasm32", feature = "phone"))]
@@ -125,6 +127,7 @@ fn Connected(auth: Signal<Auth>) -> Element {
         // a new sign-in: the screens start empty, so the streams start over
         state::reset_feed();
         pages::PAGES.write().pages = None;
+        organize::reset();
         let (outbox, inbox) = socket::channel();
         let out = outbox.clone();
         spawn(socket::run(inbox, move |ev| match ev {
@@ -172,6 +175,15 @@ fn Connected(auth: Signal<Auth>) -> Element {
                     let (list, resync) = state::with_feed(|feed| feed.pages(&f));
                     if let Some(list) = list {
                         pages::PAGES.write().pages = Some(list);
+                    }
+                    if let Some(m) = resync {
+                        out.send(state::wire2(&m));
+                    }
+                }
+                Incoming::Frame(f) if f.stream() == Some(ORGANIZE) => {
+                    let (org, resync) = state::with_feed(|feed| feed.organize(&f));
+                    if let Some(org) = org {
+                        organize::set(org);
                     }
                     if let Some(m) = resync {
                         out.send(state::wire2(&m));

@@ -111,6 +111,14 @@ pub enum Icon {
     // the message box's Attach files and Take a photo
     Paperclip,
     Camera,
+    Pin,
+    PinOff,
+    Archive,
+    ArchiveRestore,
+    AlarmClock,
+    AlarmClockOff,
+    Tag,
+    StickyNote,
 }
 
 #[component]
@@ -619,6 +627,52 @@ pub fn Glyph(icon: Icon, size: u32, #[props(default)] class: String) -> Element 
                 Icon::Tablet => rsx! {
                     rect { width: "16", height: "20", x: "4", y: "2", rx: "2", ry: "2" }
                     line { x1: "12", x2: "12.01", y1: "18", y2: "18" }
+                },
+                Icon::Pin => rsx! {
+                    path { d: "M12 17v5" }
+                    path { d: "M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" }
+                },
+                Icon::PinOff => rsx! {
+                    path { d: "M12 17v5" }
+                    path { d: "M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89" }
+                    path { d: "m2 2 20 20" }
+                    path { d: "M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11" }
+                },
+                Icon::Archive => rsx! {
+                    rect { width: "20", height: "5", x: "2", y: "3", rx: "1" }
+                    path { d: "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" }
+                    path { d: "M10 12h4" }
+                },
+                Icon::ArchiveRestore => rsx! {
+                    rect { width: "20", height: "5", x: "2", y: "3", rx: "1" }
+                    path { d: "M4 8v11a2 2 0 0 0 2 2h2" }
+                    path { d: "M20 8v11a2 2 0 0 1-2 2h-2" }
+                    path { d: "m9 15 3-3 3 3" }
+                    path { d: "M12 12v9" }
+                },
+                Icon::AlarmClock => rsx! {
+                    circle { cx: "12", cy: "13", r: "8" }
+                    path { d: "M12 9v4l2 2" }
+                    path { d: "M5 3 2 6" }
+                    path { d: "m22 6-3-3" }
+                    path { d: "M6.38 18.7 4 21" }
+                    path { d: "M17.64 18.67 20 21" }
+                },
+                Icon::AlarmClockOff => rsx! {
+                    path { d: "M6.87 6.87a8 8 0 1 0 11.26 11.26" }
+                    path { d: "M19.9 14.25a8 8 0 0 0-9.15-9.15" }
+                    path { d: "m22 6-3-3" }
+                    path { d: "M6.26 18.67 4 21" }
+                    path { d: "m2 2 20 20" }
+                    path { d: "M4 4 2 6" }
+                },
+                Icon::Tag => rsx! {
+                    path { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" }
+                    circle { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" }
+                },
+                Icon::StickyNote => rsx! {
+                    path { d: "M21 9a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 15 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2z" }
+                    path { d: "M15 3v5a1 1 0 0 0 1 1h5" }
                 },
                 Icon::CircleArrowUp => rsx! {
                     circle { cx: "12", cy: "12", r: "10" }

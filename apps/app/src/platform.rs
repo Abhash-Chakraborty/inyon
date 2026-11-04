@@ -18,6 +18,10 @@ mod imp {
         -(js_sys::Date::new_0().get_timezone_offset() as i32)
     }
 
+    pub fn tz_at(ms: u64) -> i32 {
+        -(js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(ms as f64)).get_timezone_offset() as i32)
+    }
+
     pub fn random() -> f64 {
         js_sys::Math::random()
     }
@@ -102,6 +106,16 @@ mod imp {
 
     #[cfg(not(target_os = "android"))]
     pub fn tz_minutes() -> i32 {
+        0
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn tz_at(ms: u64) -> i32 {
+        crate::android::tz_minutes_at(ms as i64)
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub fn tz_at(_ms: u64) -> i32 {
         0
     }
 
@@ -249,6 +263,12 @@ pub use imp::follow_theme;
 pub use imp::request;
 #[cfg(target_arch = "wasm32")]
 pub use imp::{now, random};
+
+/// This device's offset from UTC at `ms` (unix ms), in minutes east: the one in effect then, so
+/// a time past a daylight-saving change shows as its own clock will.
+pub fn tz_at(ms: u64) -> i32 {
+    imp::tz_at(ms)
+}
 
 pub fn clock() -> Clock {
     Clock { now: imp::now(), tz_minutes: imp::tz_minutes() }

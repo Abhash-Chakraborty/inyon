@@ -9,7 +9,7 @@ use super::icons::{Glyph, Icon, Logo};
 use super::menu::MenuLayer;
 use super::overview::Overview;
 use super::session::Session;
-use super::{add, companion, connect, machines, notices, pages, settings, temp, toast};
+use super::{add, companion, connect, machines, notices, organize, pages, settings, sidebar, temp, toast};
 use crate::model::{self, AgentPane};
 use crate::route::Route;
 use crate::state::Hub;
@@ -37,7 +37,14 @@ pub fn Shell() -> Element {
         _ => None,
     };
     rsx! {
-        div { class: "shell",
+        div {
+            class: "shell",
+            // Esc lets go of the sessions picked for a bulk action
+            onkeydown: move |e: KeyboardEvent| {
+                if e.key() == Key::Escape && !organize::SELECTION.peek().is_empty() {
+                    organize::SELECTION.write().clear();
+                }
+            },
             Sidebar { section, current }
             main { class: "main",
                 match route {
@@ -74,8 +81,10 @@ pub fn Shell() -> Element {
                     },
                 }
             }
+            organize::SelectionBar {}
             MenuLayer {}
             add::ActionSheets {}
+            organize::OrgSheets {}
             pages::PageSheets {}
             connect::ConnectHelpHost {}
             toast::ConfirmHost {}
@@ -148,7 +157,8 @@ fn Sidebar(section: Section, current: Option<(String, String)>) -> Element {
                     Glyph { icon: Icon::LayoutGrid, size: 16 }
                     "Overview"
                 }
-                companion::CompanionNav { current }
+                companion::CompanionNav { current: current.clone() }
+                sidebar::SessionList { current }
             }
             div { class: "sidebar-foot",
                 a { class: nav_class(on_machines), href: "/next/machines", "aria-current": on_machines.then_some("page"),
