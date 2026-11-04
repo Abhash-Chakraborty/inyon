@@ -137,6 +137,10 @@ fn rename_key(host: &str, id: &str, name: &str) -> String {
 /// conversation has ended, which [`tmux_of`] can't find any more.
 pub fn note_renames(host: &str, prev: &inyon_protocol::HostState, next: &inyon_protocol::HostState) {
     if prev.status != HostStatus::Online || next.updated_at.saturating_sub(prev.updated_at) > RENAME_GAP_MS {
+        // the machine was away: its tmux may have started again, and an id it hands out now is a new
+        // session's, so the renames seen before don't carry on from here
+        let mine = format!("{host}\n");
+        RENAMES.with(|r| r.borrow_mut().retain(|k, _| !k.starts_with(&mine)));
         return;
     }
     for s in &next.sessions {
@@ -160,7 +164,7 @@ pub fn note_renames(host: &str, prev: &inyon_protocol::HostState, next: &inyon_p
 /// another session's by now.
 pub fn renamed_in(state: &inyon_protocol::HostState, host: &str, id: &str, name: &str) -> Option<String> {
     let mut now = name.to_string();
-    for _ in 0..16 {
+    for _ in 0..RENAMES_MAX {
         match RENAMES.with(|r| r.borrow().get(&rename_key(host, id, &now)).cloned()) {
             Some(next) if next != name => now = next,
             _ => break,

@@ -264,25 +264,33 @@ pub fn run(cmd: &[&str]) -> Output {
 }
 
 /// [`run`] with a deadline: a command still running after `limit` is stopped, and None comes back.
-/// Its output is read while it runs, so a full pipe can't hold it up.
+/// Its output is read while it runs, so a full pipe can't hold it up, and only until the deadline:
+/// something it started in the background that keeps the pipes open doesn't hold this up either.
 pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
     use std::io::Read;
+    use std::sync::{Arc, Mutex};
     let (prog, args) = cmd.split_first()?;
     let mut c = Command::new(prog);
     c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     quiet(&mut c);
     let mut child = c.spawn().ok()?;
-    let read = |pipe: Option<Box<dyn Read + Send>>| {
+    let (got, done) = (Arc::new(Mutex::new([Vec::new(), Vec::new()])), Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+    let read = |at: usize, pipe: Option<Box<dyn Read + Send>>| {
+        let (got, done) = (got.clone(), done.clone());
         std::thread::spawn(move || {
-            let mut buf = Vec::new();
+            let mut buf = [0u8; 8192];
             if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut buf);
+                while let Ok(n @ 1..) = p.read(&mut buf) {
+                    if let Ok(mut g) = got.lock() {
+                        g[at].extend_from_slice(&buf[..n]);
+                    }
+                }
             }
-            buf
-        })
+            done.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        });
     };
-    let out = read(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
-    let err = read(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    read(0, child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    read(1, child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
     let end = std::time::Instant::now() + limit;
     let status = loop {
         match child.try_wait() {
@@ -295,7 +303,10 @@ pub fn run_for(cmd: &[&str], limit: std::time::Duration) -> Option<Output> {
             }
         }
     };
-    let (out, err) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    while done.load(std::sync::atomic::Ordering::SeqCst) < 2 && std::time::Instant::now() < end {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let [out, err] = got.lock().map(|g| g.clone()).unwrap_or_default();
     Some(Output { ok: status.success(), out: format!("{}{}", String::from_utf8_lossy(&out), String::from_utf8_lossy(&err)).trim().to_string() })
 }
 
@@ -447,6 +458,11 @@ mod tests {
         assert_eq!(big.out.len(), 200_000);
         assert!(!run_for(&["false"], Duration::from_secs(5)).unwrap().ok);
         assert!(run_for(&["inyon-no-such-program-here"], Duration::from_secs(1)).is_none());
+        // it answers by the deadline with what it printed, even when something it left running in
+        // the background still holds its output open
+        let t = Instant::now();
+        let left = run_for(&["sh", "-c", "echo hi; sleep 4 &"], Duration::from_millis(500)).unwrap();
+        assert!(left.ok && left.out == "hi" && t.elapsed() < Duration::from_secs(2), "{:?} {:?}", left.out, t.elapsed());
     }
 
     #[test]

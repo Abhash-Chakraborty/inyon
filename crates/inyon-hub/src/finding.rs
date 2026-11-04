@@ -290,6 +290,34 @@ mod tests {
         after.sessions[1].name = "fresh".into();
         note_renames("box-r", &offline, &after);
         assert_eq!(renamed_in(&after, "box-r", "$5", "notes"), None);
+        // nor do the renames seen before it: a new session under that id, renamed, isn't the old one's
+        let mut restarted = back.clone();
+        restarted.updated_at = back.updated_at + 2_000;
+        restarted.sessions[0].name = "robots".into();
+        note_renames("box-r", &back, &restarted);
+        let mut renamed_new = restarted.clone();
+        renamed_new.updated_at = restarted.updated_at + 2_000;
+        renamed_new.sessions[0].name = "zines".into();
+        note_renames("box-r", &restarted, &renamed_new);
+        assert_eq!(renamed_in(&renamed_new, "box-r", "$2", "robots").as_deref(), Some("zines"));
+        assert_eq!(renamed_in(&renamed_new, "box-r", "$2", "cardboard"), None);
+    }
+
+    #[test]
+    fn a_session_renamed_many_times_is_followed_to_its_newest_name() {
+        use inyon_core::features::pages_remote::{note_renames, renamed_in};
+        let mut prev = two_sessions();
+        prev.status = inyon_protocol::HostStatus::Online;
+        prev.updated_at = 10_000;
+        prev.sessions[0].name = "draft-0".into();
+        for i in 1..=40 {
+            let mut next = prev.clone();
+            next.updated_at += 2_000;
+            next.sessions[0].name = format!("draft-{i}");
+            note_renames("box-many", &prev, &next);
+            prev = next;
+        }
+        assert_eq!(renamed_in(&prev, "box-many", "$2", "draft-0").as_deref(), Some("draft-40"));
     }
 
     #[test]
