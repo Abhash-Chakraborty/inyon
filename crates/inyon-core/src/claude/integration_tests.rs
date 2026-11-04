@@ -66,14 +66,38 @@ fn hook_stamps_a_compaction_and_only_a_compaction() {
     assert!(home.read(".inyon/panes/9.compact").trim().parse::<f64>().unwrap() > 0.0);
 }
 
-/// psmux numbers panes per session, so two sessions both run in %1; the hub calls them %<session>.<pane>
-fn run_psmux(home: &TempDir, script: &str, input: &str, answer: &str) {
+/// A stand-in for psmux. Each session has a server of its own, and a pane's $TMUX names its port:
+/// 7001 is session $36 ("checkout"), 7002 is $40 ("billing"), the newest. Like psmux, it answers a
+/// target it can't place ("__warm__", the name a server psmux made ahead keeps in its shells) for
+/// the newest session. `answers: false` is a psmux that says nothing. Every call goes in calls.log.
+fn psmux_bin(answers: bool) -> TempDir {
     let bin = TempDir::new("inyon-psmux-");
-    bin.write("tmux", &format!("#!/bin/sh\n[ \"$*\" = \"display -p -t checkout #{{session_id}}\" ] && printf '{answer}'\n"));
+    let say = if answers { "" } else { "exit 0\n" };
+    bin.write(
+        "tmux",
+        &format!(
+            r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/calls.log"
+{say}case "$*" in
+  "display -p #{{session_id}}") case "${{TMUX:-}}" in *,7001,*) printf '$36\r\n' ;; *,7002,*) printf '$40\n' ;; esac ;;
+  "display -p -t checkout #{{session_id}}") printf '$36\n' ;;
+  "display -p -t billing #{{session_id}}" | "display -p -t __warm__ #{{session_id}}") printf '$40\n' ;;
+esac
+"#
+        ),
+    );
     sh(&format!("chmod 755 '{}'", bin.path("tmux").display()), None, &[]);
+    bin
+}
+
+/// Runs a script as a pane's agent would, in pane %1, with `env` on top (TMUX, PSMUX_SESSION).
+fn run_in_pane(home: &TempDir, bin: &TempDir, script: &str, input: &str, env: &[(&str, &str)]) {
     let path = format!("{}:{}", bin.s(), std::env::var("PATH").unwrap_or_default());
     let mut c = std::process::Command::new("sh");
-    c.arg("-c").arg(script).env_clear().env("HOME", home.s()).env("TMUX_PANE", "%1").env("PSMUX_SESSION", "checkout").env("PATH", path);
+    c.arg("-c").arg(script).env_clear().env("HOME", home.s()).env("TMUX_PANE", "%1").env("PATH", path);
+    for (k, v) in env {
+        c.env(k, v);
+    }
     c.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     let mut child = c.spawn().unwrap();
     {
@@ -83,21 +107,77 @@ fn run_psmux(home: &TempDir, script: &str, input: &str, answer: &str) {
     child.wait().unwrap();
 }
 
+/// psmux numbers panes per session, so two sessions both run in %1; the hub calls them %<session>.<pane>
+fn run_psmux(home: &TempDir, script: &str, input: &str, answers: bool) {
+    let bin = psmux_bin(answers);
+    run_in_pane(home, &bin, script, input, &[("PSMUX_SESSION", "checkout"), ("TMUX", "/tmp/psmux-11/default,7001,0")]);
+}
+
 #[test]
 fn psmux_the_status_line_and_hook_name_the_pane_as_the_hub_does_so_two_sessions_keep_their_own_files() {
     let home = TempDir::new("inyon-int-");
     write_config(&home, "acct-A");
-    run_psmux(&home, STATUS_SCRIPT, &payload("s-psmux"), r"$36\r\n");
+    run_psmux(&home, STATUS_SCRIPT, &payload("s-psmux"), true);
     assert_eq!(parse(&home.read(".inyon/status/36.1.json"))["session_id"], "s-psmux");
-    run_psmux(&home, HOOK_SCRIPT, r#"{"session_id":"s-psmux","hook_event_name":"Stop"}"#, r"$36\n");
+    run_psmux(&home, HOOK_SCRIPT, r#"{"session_id":"s-psmux","hook_event_name":"Stop"}"#, true);
     assert_eq!(parse(&home.read(".inyon/panes/36.1.json"))["pane"], "%36.1");
+}
+
+/// A session opened in a terminal takes a server psmux started ahead of time, and its shell keeps
+/// PSMUX_SESSION=__warm__. Asked by that name psmux answered for the newest session, so two
+/// sessions' agents wrote to one pane's file and the chat showed both conversations by turns (Abhash's
+/// laptop, 4 Nov 2026: two Claude sessions in %69.2 and %70.2 both reporting as %70.2).
+#[test]
+fn psmux_a_session_opened_in_a_terminal_still_names_its_own_pane_not_the_newest_session() {
+    let home = TempDir::new("inyon-int-");
+    write_config(&home, "acct-A");
+    let bin = psmux_bin(true);
+    let warm = [("PSMUX_SESSION", "__warm__"), ("TMUX", "/tmp/psmux-11/default,7001,0")];
+    run_in_pane(&home, &bin, HOOK_SCRIPT, r#"{"session_id":"s-a","hook_event_name":"Stop"}"#, &warm);
+    run_in_pane(&home, &bin, STATUS_SCRIPT, &payload("s-a"), &warm);
+    run_in_pane(&home, &bin, AGY_STATUS_SCRIPT, r#"{"x":1}"#, &warm);
+    assert_eq!(parse(&home.read(".inyon/panes/36.1.json"))["data"]["session_id"], "s-a");
+    assert_eq!(parse(&home.read(".inyon/status/36.1.json"))["session_id"], "s-a");
+    assert!(home.exists(".inyon/agy-status/36.1.json"));
+    assert!(!home.exists(".inyon/panes/40.1.json") && !home.exists(".inyon/status/40.1.json"));
+    // the other session's agent, in its own server, keeps its own file
+    run_in_pane(&home, &bin, HOOK_SCRIPT, r#"{"session_id":"s-b","hook_event_name":"Stop"}"#, &[("PSMUX_SESSION", "billing"), ("TMUX", "/tmp/psmux-12/default,7002,0")]);
+    assert_eq!(parse(&home.read(".inyon/panes/40.1.json"))["data"]["session_id"], "s-b");
+    assert_eq!(parse(&home.read(".inyon/panes/36.1.json"))["data"]["session_id"], "s-a");
+}
+
+#[test]
+fn psmux_without_tmux_set_the_session_name_is_asked_unless_it_is_the_warm_placeholder() {
+    let home = TempDir::new("inyon-int-");
+    let bin = psmux_bin(true);
+    run_in_pane(&home, &bin, HOOK_SCRIPT, r#"{"session_id":"s-a","hook_event_name":"Stop"}"#, &[("PSMUX_SESSION", "checkout")]);
+    assert_eq!(parse(&home.read(".inyon/panes/36.1.json"))["pane"], "%36.1");
+    // a name psmux can't place would be answered for another session: better no session than the wrong one
+    run_in_pane(&home, &bin, HOOK_SCRIPT, r#"{"session_id":"s-w","hook_event_name":"Stop"}"#, &[("PSMUX_SESSION", "__warm__")]);
+    assert_eq!(parse(&home.read(".inyon/panes/1.json"))["data"]["session_id"], "s-w");
+    assert!(!home.exists(".inyon/panes/40.1.json"));
+}
+
+/// tmux on Linux and macOS: the pane id is unique already, and tmux is never asked.
+#[test]
+fn tmux_outside_windows_the_pane_is_tmux_pane_and_tmux_is_not_asked() {
+    let home = TempDir::new("inyon-int-");
+    let bin = psmux_bin(true);
+    let env = [("TMUX", "/tmp/tmux-1000/default,4242,0")];
+    run_in_pane(&home, &bin, HOOK_SCRIPT, r#"{"session_id":"s-l","hook_event_name":"Stop"}"#, &env);
+    run_in_pane(&home, &bin, STATUS_SCRIPT, &payload("s-l"), &env);
+    assert_eq!(parse(&home.read(".inyon/panes/1.json"))["pane"], "%1");
+    assert_eq!(parse(&home.read(".inyon/status/1.json"))["session_id"], "s-l");
+    assert!(!bin.exists("calls.log"));
 }
 
 #[test]
 fn psmux_without_an_answer_from_psmux_the_pane_keeps_its_own_name() {
     let home = TempDir::new("inyon-int-");
-    run_psmux(&home, STATUS_SCRIPT, &payload("s-plain"), "");
+    run_psmux(&home, STATUS_SCRIPT, &payload("s-plain"), false);
     assert_eq!(parse(&home.read(".inyon/status/1.json"))["session_id"], "s-plain");
+    run_psmux(&home, HOOK_SCRIPT, r#"{"session_id":"s-plain","hook_event_name":"Stop"}"#, false);
+    assert_eq!(parse(&home.read(".inyon/panes/1.json"))["pane"], "%1");
 }
 
 #[test]
